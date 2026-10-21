@@ -4,7 +4,7 @@
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
 use nerust_render_traits::renderer::{OsdAnchor, OsdLayer, ViewInsets, osd_font_px};
-use std::{collections::HashMap, rc::Rc, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 /// Port-owned OSD DTOs, re-exported for frontends that only name the rasterizer crate.
 pub use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
@@ -87,7 +87,7 @@ pub struct OsdRaster {
     ui_scale: f32,
     safe_insets: ViewInsets,
     /// Flat shape cache keyed by (text, size); LRU order in `shape_lru`.
-    shape_cache: HashMap<ShapeKey, Rc<ShapedSpan>>,
+    shape_cache: HashMap<ShapeKey, Arc<ShapedSpan>>,
     shape_lru: std::collections::VecDeque<ShapeKey>,
     gap_key: Arc<str>,
     empty_key: Arc<str>,
@@ -468,30 +468,30 @@ impl OsdRaster {
     /// Cached shape: identical lines shape once per pixel size.
     /// Flat-key lookup hits without allocating; misses intern one `Arc<str>`.
     #[cfg(test)]
-    fn shape_cached(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
+    fn shape_cached(&mut self, line: &str, font_px: u32) -> Arc<ShapedSpan> {
         let key: Arc<str> = Arc::from(line);
         if let Some(hit) = self.shape_cache.get(&(Arc::clone(&key), font_px)).cloned() {
             self.touch_lru(&key, font_px);
             return hit;
         }
-        let span = Rc::new(self.shape_uncached(line, font_px));
-        self.insert_lru(key, font_px, Rc::clone(&span));
+        let span = Arc::new(self.shape_uncached(line, font_px));
+        self.insert_lru(key, font_px, Arc::clone(&span));
         span
     }
 
     /// Shared-key shape: the caller's `Arc` keys the cache, so hits never allocate.
-    fn shape_cached_shared(&mut self, key: &Arc<str>, font_px: u32) -> Rc<ShapedSpan> {
+    fn shape_cached_shared(&mut self, key: &Arc<str>, font_px: u32) -> Arc<ShapedSpan> {
         if let Some(hit) = self.shape_cache.get(&(Arc::clone(key), font_px)).cloned() {
             self.touch_lru(key, font_px);
             return hit;
         }
-        let span = Rc::new(self.shape_uncached(key, font_px));
-        self.insert_lru(Arc::clone(key), font_px, Rc::clone(&span));
+        let span = Arc::new(self.shape_uncached(key, font_px));
+        self.insert_lru(Arc::clone(key), font_px, Arc::clone(&span));
         span
     }
 
     /// Interned-key variant: gap and empty spans share one allocation.
-    fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Rc<ShapedSpan> {
+    fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Arc<ShapedSpan> {
         let interned = match key {
             GAP_STR => Arc::clone(&self.gap_key),
             EMPTY_STR => Arc::clone(&self.empty_key),
@@ -502,7 +502,7 @@ impl OsdRaster {
 
     /// Test seam for shaping assertions: production shapes through the cache.
     #[cfg(test)]
-    fn shape_line(&mut self, line: &str, font_px: u32) -> Rc<ShapedSpan> {
+    fn shape_line(&mut self, line: &str, font_px: u32) -> Arc<ShapedSpan> {
         self.shape_cached(line, font_px)
     }
 
@@ -521,7 +521,7 @@ impl OsdRaster {
 
     /// Record a miss; past the cap evict the single oldest entry (proper LRU).
     /// LRU mirrors the map keys, so the popped entry always drops its map entry.
-    fn insert_lru(&mut self, key: Arc<str>, font_px: u32, span: Rc<ShapedSpan>) {
+    fn insert_lru(&mut self, key: Arc<str>, font_px: u32, span: Arc<ShapedSpan>) {
         self.shape_cache.insert((Arc::clone(&key), font_px), span);
         self.shape_lru.push_back((key, font_px));
         while self.shape_lru.len() > SHAPE_CACHE_CAP {
@@ -675,8 +675,8 @@ struct Shaped {
 
 enum RowBody {
     Line {
-        tag: Rc<ShapedSpan>,
-        text: Rc<ShapedSpan>,
+        tag: Arc<ShapedSpan>,
+        text: Arc<ShapedSpan>,
         gap: u32,
         ascent: f32,
         descent: f32,
@@ -691,7 +691,7 @@ enum RowBody {
 }
 
 struct StatusSpan {
-    span: Rc<ShapedSpan>,
+    span: Arc<ShapedSpan>,
 }
 
 /// Baseline that centers the content block in the pill. The pill is
@@ -1067,11 +1067,11 @@ mod tests {
         let first = raster.shape_cached("Paused", 16);
         let second = raster.shape_cached("Paused", 16);
         // Borrowed lookup: same `Rc` back, no reshape and no new span.
-        assert!(Rc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(raster.shape_cache_len(), 1);
         // Different size is a distinct entry under the same interned text.
         let big = raster.shape_cached("Paused", 32);
-        assert!(!Rc::ptr_eq(&first, &big));
+        assert!(!Arc::ptr_eq(&first, &big));
         assert_eq!(raster.shape_cache_len(), 2);
     }
 
@@ -1080,11 +1080,11 @@ mod tests {
         let mut raster = OsdRaster::new();
         let gap = raster.shape_cached(" ", 16);
         let gap_again = raster.shape_cached_rc(GAP_STR, 16);
-        assert!(Rc::ptr_eq(&gap, &gap_again));
+        assert!(Arc::ptr_eq(&gap, &gap_again));
         let empty = raster.shape_cached("", 16);
         let empty_again = raster.shape_cached_rc(EMPTY_STR, 16);
-        assert!(Rc::ptr_eq(&empty, &empty_again));
-        assert!(!Rc::ptr_eq(&gap, &empty));
+        assert!(Arc::ptr_eq(&empty, &empty_again));
+        assert!(!Arc::ptr_eq(&gap, &empty));
     }
 
     #[test]
@@ -1096,7 +1096,7 @@ mod tests {
         ] {
             let first = raster.shape_cached_rc(literal, 16);
             for _ in 0..8 {
-                assert!(Rc::ptr_eq(&first, &raster.shape_cached_rc(literal, 16)));
+                assert!(Arc::ptr_eq(&first, &raster.shape_cached_rc(literal, 16)));
                 let (cached, _) = raster
                     .shape_cache
                     .keys()
@@ -1119,7 +1119,7 @@ mod tests {
         let mut raster = OsdRaster::new();
         let first = raster.shape_line("[INFO]", 16);
         let second = raster.shape_line("[INFO]", 16);
-        assert!(Rc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&first, &second));
     }
 
     #[test]
@@ -1150,12 +1150,12 @@ mod tests {
         assert!(raster.shape_cache_len() > super::SHAPE_CACHE_CAP / 2);
         // Untouched oldest entries evicted; re-touch keeps a survivor hot.
         let hot_again = raster.shape_cached("hot", 16);
-        assert!(!Rc::ptr_eq(&hot, &hot_again), "cold head must evict");
+        assert!(!Arc::ptr_eq(&hot, &hot_again), "cold head must evict");
         let warm = raster.shape_cached("warm", 16);
         for i in 0..64 {
             raster.shape_cached(&format!("fresh{i:04}"), 16);
             raster.shape_cached("warm", 16);
         }
-        assert!(Rc::ptr_eq(&warm, &raster.shape_cached("warm", 16)));
+        assert!(Arc::ptr_eq(&warm, &raster.shape_cached("warm", 16)));
     }
 }
