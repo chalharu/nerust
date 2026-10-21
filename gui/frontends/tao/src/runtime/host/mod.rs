@@ -280,7 +280,9 @@ impl HostState {
 
     /// Cached window title for the chrome gate.
     pub(crate) fn cached_title(&mut self, tick: &TickMetrics) -> String {
-        self.session.window_title_cached(tick).to_owned()
+        self.session
+            .window_title_cached(tick.paused, tick.loaded)
+            .to_owned()
     }
 
     #[cfg(test)]

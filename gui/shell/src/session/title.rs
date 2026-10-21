@@ -164,16 +164,9 @@ mod title_cov_tests {
 
     #[test]
     fn cached_and_direct_titles_agree() {
-        use crate::session::osd::TickMetrics;
-        let tick = TickMetrics {
+        let input = TitleInput {
             paused: true,
             loaded: true,
-            fps: 60.0,
-            frame_counter: 7,
-        };
-        let input = TitleInput {
-            paused: tick.paused,
-            loaded: tick.loaded,
             system_name: Some("Nes"),
             active_slot: Some(2),
             slot_count: 3,
