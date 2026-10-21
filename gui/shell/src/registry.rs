@@ -259,7 +259,7 @@ mod tests {
         }
     }
 
-    impl RomLoadTarget for RecordingTarget {
+    impl crate::load::LoadEnvironment for RecordingTarget {
         fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
             Some(NoopSystemLoadOptions.into())
         }
@@ -268,6 +268,16 @@ mod tests {
             &self.snapshot
         }
 
+        fn set_active_system(
+            &mut self,
+            system_id: &dyn SystemId,
+        ) -> Result<(), crate::load::SystemActivationError> {
+            self.active_system = Some(system_id.clone_box());
+            Ok(())
+        }
+    }
+
+    impl RomLoadTarget for RecordingTarget {
         fn load_resolved(
             &mut self,
             media: MediaObject,
@@ -279,14 +289,6 @@ mod tests {
 
         fn resume(&mut self) {
             self.resumed = true;
-        }
-
-        fn set_active_system(
-            &mut self,
-            system_id: &dyn SystemId,
-        ) -> Result<(), crate::load::SystemActivationError> {
-            self.active_system = Some(system_id.clone_box());
-            Ok(())
         }
     }
 

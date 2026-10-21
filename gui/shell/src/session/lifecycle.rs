@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Loader boundary straight on the session: no adapter between `RomLoader` and `SessionHandle`.
-impl RomLoadTarget for SessionHandle {
+impl crate::load::LoadEnvironment for SessionHandle {
     fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
         SessionHandle::default_load_options(self)
     }
@@ -22,6 +22,15 @@ impl RomLoadTarget for SessionHandle {
         SessionHandle::settings_snapshot(self)
     }
 
+    fn set_active_system(
+        &mut self,
+        system_id: &dyn nerust_core_traits::identity::SystemId,
+    ) -> Result<(), SystemActivationError> {
+        SessionHandle::set_active_system(self, system_id)
+    }
+}
+
+impl RomLoadTarget for SessionHandle {
     fn load_resolved(
         &mut self,
         media: MediaObject,
@@ -32,13 +41,6 @@ impl RomLoadTarget for SessionHandle {
 
     fn resume(&mut self) {
         let _ = SessionHandle::run_command(self, crate::session::commands::SessionCommand::Resume);
-    }
-
-    fn set_active_system(
-        &mut self,
-        system_id: &dyn nerust_core_traits::identity::SystemId,
-    ) -> Result<(), SystemActivationError> {
-        SessionHandle::set_active_system(self, system_id)
     }
 }
 
