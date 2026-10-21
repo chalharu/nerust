@@ -106,3 +106,18 @@ fn document_relative_paths_and_child_names_reject_traversal() {
         }
     }
 }
+
+#[test]
+fn infallible_conversions_only_build_native_paths() {
+    use std::path::{Path, PathBuf};
+    // DocumentTree has no From impl: untrusted input must pass
+    // document_tree()/child() validation; these never bypass it.
+    for location in [
+        StorageLocation::from(PathBuf::from("/tmp/saves")),
+        StorageLocation::from(Path::new("/tmp/saves")),
+        StorageLocation::from("/tmp/saves"),
+        StorageLocation::from("content://provider/tree/saves"),
+    ] {
+        assert!(matches!(location, StorageLocation::Native(_)));
+    }
+}
