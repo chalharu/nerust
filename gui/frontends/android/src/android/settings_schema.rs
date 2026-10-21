@@ -81,6 +81,9 @@ impl AndroidSettings {
     }
 }
 
+/// Key shared by the visibility rule and the tolerance below: one literal.
+const STATUS_AREA_MODE_KEY: &str = "status.area_mode";
+
 struct Binding {
     key: &'static str,
     label: &'static str,
@@ -88,13 +91,15 @@ struct Binding {
     choices: Vec<String>,
     read: fn(&AndroidSettings) -> usize,
     write: fn(&mut AndroidSettings, usize) -> Option<()>,
+    /// Missing keys abort decoding, except rows hidden by the same-edge rule.
+    required: bool,
 }
 
 fn bindings() -> Vec<Binding> {
     macro_rules! choice {
         ($field:ident, $key:literal, $label:literal, [$($value:expr => $text:literal),+ $(,)?]) => {
             Binding {
-                key: $key, label: $label, range: None,
+                key: $key, label: $label, range: None, required: true,
                 choices: vec![$($text.into()),+],
                 read: |s| [$($value),+].iter().position(|v| *v == s.$field).unwrap_or_default(),
                 write: |s, index| { s.$field = *[$($value),+].get(index)?; Some(()) },
@@ -111,6 +116,7 @@ fn bindings() -> Vec<Binding> {
             Binding {
                 key: $key,
                 label: $label,
+                required: true,
                 range: Some(RangeSpec {
                     min: i64::from($min),
                     max: i64::from($max),
@@ -138,6 +144,7 @@ fn bindings() -> Vec<Binding> {
                 key: $key,
                 label: $label,
                 range: None,
+                required: true,
                 choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
                     .map(str::to_string)
                     .to_vec(),
@@ -149,7 +156,7 @@ fn bindings() -> Vec<Binding> {
             }
         };
     }
-    vec![
+    let mut bindings = vec![
         toggle!(audio_muted, "audio_muted", "Mute"),
         range!(
             master_volume_percent,
@@ -171,6 +178,7 @@ fn bindings() -> Vec<Binding> {
             key: "sample_rate",
             label: "Sample Rate (Hz)",
             range: None,
+            required: true,
             choices: SAMPLE_RATE_CHOICES
                 .iter()
                 .map(|rate| format!("{rate} Hz"))
@@ -262,7 +270,13 @@ fn bindings() -> Vec<Binding> {
         toggle!(status_enabled, "status.enabled", "Status Display"),
         position!(status_position, "status.position", "Status Position"),
         choice!(status_area_mode, "status.area_mode", "Status Area", [NotificationAreaMode::Overlay => "Overlay", NotificationAreaMode::Strip => "Strip"]),
-    ]
+    ];
+    for binding in &mut bindings {
+        if binding.key == STATUS_AREA_MODE_KEY {
+            binding.required = false;
+        }
+    }
+    bindings
 }
 
 pub(super) fn defs(current: &AndroidSettings) -> Vec<SettingDef> {
@@ -274,7 +288,7 @@ pub(super) fn defs(current: &AndroidSettings) -> Vec<SettingDef> {
             current: (binding.read)(current),
             choices: binding.choices,
             range: binding.range,
-            visible: binding.key != "status.area_mode"
+            visible: binding.key != STATUS_AREA_MODE_KEY
                 || current.notifications_position.is_top() != current.status_position.is_top(),
         })
         .collect();
@@ -307,7 +321,7 @@ pub(super) fn decode(
     for binding in bindings() {
         match by_key(binding.key) {
             Some(value) => (binding.write)(&mut next, value)?,
-            None if binding.key == "status.area_mode" => {}
+            None if !binding.required => {}
             None => return None,
         }
     }
