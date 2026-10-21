@@ -16,25 +16,20 @@ SPEC = importlib.util.spec_from_file_location("generator", Path(__file__).with_n
 GEN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GEN)
 
+SCHEMA_SPEC = importlib.util.spec_from_file_location(
+    "bridge_schema", Path(__file__).with_name("bridge_schema.py"))
+SCHEMA = importlib.util.module_from_spec(SCHEMA_SPEC)
+SCHEMA_SPEC.loader.exec_module(SCHEMA)
 
-class ContractError(ValueError):
-    pass
+ContractError = SCHEMA.ContractError
 
 
 #: Shared rejection for a decoder without the typed event enum.
 MISSING_DECODER = "missing typed event decoder"
 
 
-def require(condition, message):
-    if not condition:
-        raise ContractError(message)
-
-
-def uncomment(text):
-    # Preserve strings containing comment-like characters, including
-    # Kotlin raw strings and Rust raw strings.
-    return re.sub(r'"""[\s\S]*?"""|r(#+)"[\s\S]*?"\1|"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
-                  lambda m: m[0] if m[0][0] in '"r' else " ", text, flags=re.DOTALL)
+require = SCHEMA.require
+uncomment = SCHEMA.uncomment
 
 
 def sources():
