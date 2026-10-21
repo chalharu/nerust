@@ -176,11 +176,11 @@ impl FrameSink for WgpuRenderer {
             return RenderResult::Skipped;
         }
 
-        if let Some(palette) = frame.palette_as_rgba8() {
-            if self.last_palette != Some(palette) {
-                pipeline.update_palette_texture(&palette);
-                self.last_palette = Some(palette);
-            }
+        if let Some(palette) = frame.palette_as_rgba8()
+            && self.last_palette != Some(palette)
+        {
+            pipeline.update_palette_texture(&palette);
+            self.last_palette = Some(palette);
         }
         if self.osd_dirty {
             let accepted = crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
