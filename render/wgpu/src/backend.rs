@@ -24,6 +24,7 @@ pub struct WgpuRenderer {
     surface: Option<wgpu::Surface<'static>>,
     size: SurfaceSize,
     last_render_error: Option<String>,
+    last_palette: Option<[u8; 256]>,
     osd: Option<OsdLayer>,
     osd_dirty: bool,
     /// Shared OSD upload budget: repeated rejections drop the layer.
@@ -129,6 +130,8 @@ impl SurfaceLifecycle for WgpuRenderer {
         self.size = size;
         self.surface = Some(wgpu_surface);
         self.pipeline = Some(pipeline);
+        // Fresh GPU objects: re-upload the palette on the next frame.
+        self.last_palette = None;
         self.reapply_osd();
         Ok(())
     }
@@ -136,6 +139,7 @@ impl SurfaceLifecycle for WgpuRenderer {
     fn detach(&mut self) {
         self.surface = None;
         self.pipeline = None;
+        self.last_palette = None;
     }
 
     fn resize(&mut self, size: SurfaceSize) {
@@ -172,8 +176,11 @@ impl FrameSink for WgpuRenderer {
             return RenderResult::Skipped;
         }
 
-        if let Some(p) = frame.palette_as_rgba8() {
-            pipeline.update_palette_texture(&p);
+        if let Some(palette) = frame.palette_as_rgba8() {
+            if self.last_palette != Some(palette) {
+                pipeline.update_palette_texture(&palette);
+                self.last_palette = Some(palette);
+            }
         }
         if self.osd_dirty {
             let accepted = crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
@@ -218,6 +225,7 @@ impl ProfileSwitch for WgpuRenderer {
                 Self::build_pipeline(&self.instance, surface, self.size, profile, self.vsync)?;
             pipeline.set_reserved_strip(self.reserved);
             self.pipeline = Some(pipeline);
+            self.last_palette = None;
         }
         // Commit only after a successful rebuild; detached updates stage for attach.
         self.render_profile = profile.clone();
@@ -257,6 +265,7 @@ impl WgpuFactory {
             surface: None,
             size: SurfaceSize::new(0, 0),
             last_render_error: None,
+            last_palette: None,
             osd: None,
             osd_dirty: false,
             osd_policy: UploadBudget::new(config.upload_budget()),
@@ -463,6 +472,7 @@ mod tests {
             surface: None,
             size: nerust_render_traits::SurfaceSize::new(0, 0),
             last_render_error: None,
+            last_palette: None,
             osd: None,
             osd_dirty: false,
             osd_policy: super::UploadBudget::new(3),
@@ -577,6 +587,15 @@ mod tests {
                 .to_string()
                 .contains("update")
         );
+    }
+
+    #[test]
+    fn palette_memo_resets_with_gpu_objects() {
+        use nerust_render_traits::renderer::SurfaceLifecycle;
+        let mut renderer = detached_renderer();
+        renderer.last_palette = Some([0x12; 256]);
+        renderer.detach();
+        assert_eq!(renderer.last_palette, None);
     }
 
     #[test]
