@@ -202,8 +202,6 @@ impl CompositeGuard {
 }
 
 /// Fallback upload attempts before a failing OSD layer drops.
-/// Production views take the max from `RendererConfig`.
-pub const MAX_OSD_UPLOAD_RETRIES: u8 = 3;
 
 /// OSD pipeline resources: layer, program, retry, staging. One owner for
 /// the overlay domain; the frame pipeline never touches these.
@@ -235,7 +233,9 @@ impl Default for OsdView {
             osd_size: (0, 0),
             osd_prev: None,
             osd_dirty: false,
-            osd_retry: UploadBudget::new(MAX_OSD_UPLOAD_RETRIES),
+            osd_retry: UploadBudget::new(
+                nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
+            ),
             osd_shader: None,
             osd_layer: None,
             osd_clear_scratch: StagingBuf::new(),
