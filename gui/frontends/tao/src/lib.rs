@@ -14,6 +14,11 @@ mod event;
 mod gtk_embed;
 mod menu;
 mod ports;
+
+pub(crate) mod aux;
+pub(crate) mod runtime;
+pub(crate) mod util;
+
 #[cfg(test)]
 pub(crate) mod test_dialogs;
 #[cfg(test)]
@@ -26,10 +31,6 @@ pub(crate) mod test_opener;
 pub(crate) mod test_session;
 #[cfg(test)]
 pub(crate) mod testkit;
-
-pub(crate) mod aux;
-pub(crate) mod runtime;
-pub(crate) mod util;
 
 use nerust_crash_guard::GuardOutcome;
 use nerust_gui_shell::context::FrontendContext;
