@@ -102,7 +102,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
         writeSessions.close()
     }
 
-    /** Delete same-name markers older than a fresh commit, so listings stay O(files). */
+    /** Delete same-name markers older than a fresh commit, plus their data files. */
     private fun sweepSupersededMarkers(directory: DocumentFile, name: String, order: String) {
         for (marker in directory.listFiles()) {
             val markerName = marker.name
@@ -112,6 +112,9 @@ class SafRepository(private val context: Context) : AutoCloseable {
                 val raw = readCommitMarker(marker) ?: continue
                 val record = JSONObject(raw)
                 if (isSupersededMarker(record.optString("name"), record.optString("order"), name, order)) {
+                    record.optString("data").takeIf { it.startsWith(PREFIX) }?.let { data ->
+                        runCatching { directory.findFile(data)?.delete() }
+                    }
                     marker.delete()
                 }
             } catch (error: Exception) {
@@ -192,8 +195,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
         val data = if (record.isNull("data")) null else {
             val file = byName[record.getString("data")] ?: return null
             // Null SIZE is unknown, not an empty file. Verify at EOF on read.
+            // A known-size mismatch skips this marker so the previous
+            // generation keeps serving; the corrupt marker is swept on
+            // the next successful publish.
             val length = knownSize(file)
-            if (length != null && length != size) return null
+            if (length != null && length != size) {
+                Log.w(TAG, "SAF marker size mismatch; keeping previous generation")
+                return null
+            }
             file
         }
         return name to Generation(order, data, size)
@@ -218,6 +227,10 @@ class SafRepository(private val context: Context) : AutoCloseable {
             true
         } catch (error: Exception) {
             runCatching { marker.delete() }
+            // The staged data belongs to this failed commit only; drop it too.
+            data?.takeIf { it.startsWith(PREFIX) }?.let { staged ->
+                runCatching { directory.findFile(staged)?.delete() }
+            }
             Log.w(TAG, "SAF commit failed; previous generation retained", error)
             false
         }
