@@ -346,6 +346,16 @@ fn display_name_for(
 }
 
 impl SessionHandle {
+    /// Publish a rebuilt runtime: swap, clear debugger/input state, rebind fields.
+    /// Single home for the replace tail shared by load and settings paths.
+    pub(crate) fn publish_runtime(&mut self, runtime: ActiveRuntime) {
+        self.emu.replace(runtime);
+        self.debug_clear_write();
+        self.clear_input();
+        self.input.invalidate_topology();
+        self.rebuild_key_field_map();
+    }
+
     /// Load persisted controller assignments or fall back to defaults.
     fn load_assignments(
         factory: &Arc<dyn CoreFactory>,
