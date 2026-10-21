@@ -596,7 +596,7 @@ fn rebuild_replaces_peripherals_and_input_mapping_together() {
     );
     let old = session.emu.runtime.as_mut().unwrap();
     old.host_peripherals.accelerometer = Some(handle.clone());
-    old.field_map.insert(old_field, 99);
+    let _ = old.field_map.insert(old_field, 99);
     assert!(session.host_peripherals().accelerometer.is_some());
 
     let next = with_visual_delta(&session);
@@ -630,7 +630,7 @@ fn failed_rebuild_restores_input_peripherals_and_running_state() {
     let old = session.emu.runtime.as_mut().unwrap();
     let input = old.input.as_ref() as *const dyn nerust_input_traits::GuiInputPort as *const ();
     old.host_peripherals.accelerometer = Some(handle);
-    old.field_map.insert(old_field, 99);
+    let _ = old.field_map.insert(old_field, 99);
 
     let next = with_visual_delta(&session);
     assert!(matches!(
