@@ -115,7 +115,7 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
 #[cfg(test)]
 mod tests {
     use super::{OsdReject, RetryDecision, checked_clear_need, checked_osd_rect, checked_osd_y};
-    use crate::upload::BoundedUploadPolicy;
+    use nerust_render_traits::renderer::UploadBudget;
     use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(RetryDecision::from_policy(false), RetryDecision::Retry);
         assert_eq!(RetryDecision::from_policy(true), RetryDecision::DropLayer);
         // End to end through the single budget: two retries, then drop.
-        let mut budget = BoundedUploadPolicy::new(3);
+        let mut budget = UploadBudget::new(3);
         assert_eq!(
             RetryDecision::from_policy(budget.record_failure()),
             RetryDecision::Retry

@@ -42,8 +42,8 @@ pub struct GlRenderer {
     display: Display,
     gl_config: glutin::config::Config,
     render_profile: VideoRenderProfile,
-    /// Fresh upload policies for rebuilt overlay views (injectable for tests).
-    osd_policy: Box<dyn nerust_render_traits::renderer::OsdUploadPolicyFactory>,
+    /// Fresh upload budget for rebuilt overlay views, minted from the config knob.
+    osd_budget: u8,
     frame: FrameView,
     osd: crate::osd_view::OsdView,
     surface: crate::surface_view::SurfaceView,
@@ -98,7 +98,9 @@ impl GlRenderer {
             }
         };
         let mut osd = crate::osd_view::OsdView::new();
-        osd.set_osd_policy(self.osd_policy.create_policy());
+        osd.set_osd_policy(nerust_render_traits::renderer::UploadBudget::new(
+            self.osd_budget,
+        ));
         osd.reset_for_load();
         osd.init_osd(is_gles);
         if let Err(e) = crate::frame_view::ok_gl(nerust_glwrap::check_frame()) {
@@ -630,11 +632,8 @@ impl GlFactory {
             display,
             gl_config,
             render_profile: config.render_profile.clone(),
-            // Injected policy factory: every rebuilt overlay view mints its
-            // own budget from the single config knob (impl-owned policy).
-            osd_policy: Box::new(crate::upload::RetryPolicyFactory::new(
-                config.max_osd_upload_retries,
-            )),
+            // Every rebuilt overlay view mints its budget from the config knob.
+            osd_budget: config.upload_budget(),
             frame: FrameView::new(),
             osd: crate::osd_view::OsdView::new(),
             surface: crate::surface_view::SurfaceView::new(),
@@ -1066,30 +1065,6 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn osd_policy_factory_mints_independent_budgets() {
-        use crate::upload::RetryPolicyFactory;
-        use nerust_render_traits::renderer::{
-            DEFAULT_OSD_UPLOAD_RETRIES, OsdUploadPolicyFactory as _, RendererConfig,
-        };
-        let config = RendererConfig {
-            render_profile: gl_test_profile(),
-            vsync: true,
-            max_osd_upload_retries: DEFAULT_OSD_UPLOAD_RETRIES,
-        };
-        let factory = RetryPolicyFactory::new(config.upload_budget());
-        let mut first = factory.create_policy();
-        assert!(!first.record_failure());
-        assert!(!first.record_failure());
-        // A second view starts with a fresh budget, not the spent one.
-        let mut second = factory.create_policy();
-        assert!(!second.record_failure());
-        assert!(!second.record_failure());
-        assert!(first.record_failure());
-        assert!(second.record_failure());
-    }
-
-    #[cfg(unix)]
     fn gl_test_profile() -> nerust_render_traits::VideoRenderProfile {
         use nerust_render_traits::{logical::LogicalSize, physical::PhysicalSize};
         nerust_render_traits::VideoRenderProfile {
@@ -1113,14 +1088,6 @@ mod tests {
     #[cfg(unix)]
     fn gl_test_layer() -> nerust_render_traits::renderer::OsdLayer {
         nerust_render_traits::renderer::OsdLayer::new(0, 0, 2, 1, vec![255; 8])
-    }
-
-    /// Fresh-budget factory for renderer literals in tests (mirrors `GlFactory`).
-    #[cfg(unix)]
-    fn test_policy_factory() -> Box<dyn nerust_render_traits::renderer::OsdUploadPolicyFactory> {
-        use crate::upload::RetryPolicyFactory;
-        use nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES;
-        Box::new(RetryPolicyFactory::new(DEFAULT_OSD_UPLOAD_RETRIES))
     }
 
     /// Renderer rebuild on a real context (Xvfb + llvmpipe in CI).
@@ -1155,7 +1122,7 @@ mod tests {
             display,
             gl_config,
             render_profile: profile.clone(),
-            osd_policy: test_policy_factory(),
+            osd_budget: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
             frame: FrameView::new(),
             osd: OsdView::new(),
             surface: SurfaceView::new(),
