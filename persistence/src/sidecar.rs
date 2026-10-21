@@ -46,6 +46,10 @@ impl DocumentRelativePath {
     }
 }
 
+/// Storage key shared by all backends: a native path or a document-tree
+/// address plus validated relative path. The enum carries no platform types
+/// (no JNI, no provider handles); each backend interprets its own variant
+/// and delegates the other to the filesystem implementation.
 impl StorageLocation {
     pub fn document_tree(uri: &str, relative: impl Into<String>) -> Result<Self, PersistenceError> {
         let authority = uri
