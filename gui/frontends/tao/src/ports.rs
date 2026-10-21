@@ -182,52 +182,47 @@ impl WindowOpener for TaoWindowOpener<'_> {
     }
 
     fn create_aux(&self, kind: AuxKind, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-        AuxFactoryRegistry::new(self.target).create(kind, params)
+        create_aux_window(self.target, kind, params)
     }
 }
 
-/// One factory per aux kind: kind-keyed creation, mismatch impossible.
-pub(crate) trait AuxFactory {
-    fn kind(&self) -> AuxKind;
-    fn create(&self, params: AuxOpenParams) -> Option<Box<dyn AuxController>>;
-}
-
-/// Kind-keyed factory table: no `(kind, params)` match, no mismatch arm.
-pub(crate) struct AuxFactoryRegistry<'a> {
-    factories: std::collections::HashMap<AuxKind, Box<dyn AuxFactory + 'a>>,
-}
-
-impl<'a> AuxFactoryRegistry<'a> {
-    /// Production table: one factory per aux kind on the live event loop.
-    pub(crate) fn new(target: &'a EventLoopWindowTarget<UserEvent>) -> Self {
-        let factories: Vec<Box<dyn AuxFactory + 'a>> = vec![
-            Box::new(SettingsFactory { target }),
-            Box::new(DebugFactory { target }),
-            Box::new(PpuFactory { target }),
-            Box::new(HistoryFactory { target }),
-        ];
-        Self {
-            factories: factories.into_iter().map(|f| (f.kind(), f)).collect(),
+/// Direct kind dispatch: the closed `AuxKind` needs no table, and a
+/// foreign variant fails closed in the splitter below.
+fn create_aux_window(
+    target: &EventLoopWindowTarget<UserEvent>,
+    kind: AuxKind,
+    params: AuxOpenParams,
+) -> Option<Box<dyn AuxController>> {
+    match kind {
+        AuxKind::Settings => {
+            let (snapshot, registry, audio) = settings_parts(params)?;
+            crate::aux::settings::window::SettingsWindowHandle::new(
+                snapshot, registry, audio, target,
+            )
+            .map(aux_box)
         }
-    }
-
-    /// Create the window of this kind: unknown kinds fail closed.
-    pub(crate) fn create(
-        &self,
-        kind: AuxKind,
-        params: AuxOpenParams,
-    ) -> Option<Box<dyn AuxController>> {
-        self.factories.get(&kind)?.create(params)
+        AuxKind::Debug => {
+            let (display, spaces, mem_addr, language, position) = debug_parts(params)?;
+            crate::aux::debug::DebugWindowHandle::new(
+                display, spaces, mem_addr, language, target, position,
+            )
+            .map(aux_box)
+        }
+        AuxKind::Ppu => {
+            let (bridge, position) = ppu_parts(params)?;
+            crate::aux::ppu::PpuWindowHandle::new(Arc::clone(&bridge), target, position)
+                .map(aux_box)
+        }
+        AuxKind::History => {
+            let language = history_parts(params)?;
+            crate::aux::osd::HistoryWindowHandle::new(target, language).map(aux_box)
+        }
     }
 }
 
 /// Box a concrete aux handle behind its capability ports.
 fn aux_box<T: AuxController + 'static>(handle: T) -> Box<dyn AuxController> {
     Box::new(handle)
-}
-
-struct SettingsFactory<'a> {
-    target: &'a EventLoopWindowTarget<UserEvent>,
 }
 
 /// Split settings inputs: snapshot, registry, and audio backend.
@@ -249,46 +244,6 @@ fn settings_parts(params: AuxOpenParams) -> Option<SettingsParts> {
         return None;
     };
     Some((snapshot, registry, audio))
-}
-
-impl AuxFactory for SettingsFactory<'_> {
-    fn kind(&self) -> AuxKind {
-        AuxKind::Settings
-    }
-
-    fn create(&self, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-        let (snapshot, registry, audio) = settings_parts(params)?;
-        crate::aux::settings::window::SettingsWindowHandle::new(
-            snapshot,
-            registry,
-            audio,
-            self.target,
-        )
-        .map(aux_box)
-    }
-}
-
-struct DebugFactory<'a> {
-    target: &'a EventLoopWindowTarget<UserEvent>,
-}
-
-impl AuxFactory for DebugFactory<'_> {
-    fn kind(&self) -> AuxKind {
-        AuxKind::Debug
-    }
-
-    fn create(&self, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-        let (display, spaces, mem_addr, language, position) = debug_parts(params)?;
-        crate::aux::debug::DebugWindowHandle::new(
-            display,
-            spaces,
-            mem_addr,
-            language,
-            self.target,
-            position,
-        )
-        .map(aux_box)
-    }
 }
 
 /// Split one debugger open: pure variant check, display-free tests.
@@ -315,22 +270,6 @@ fn debug_parts(params: AuxOpenParams) -> Option<DebugParts> {
     Some((display, spaces, mem_addr, language, position))
 }
 
-struct PpuFactory<'a> {
-    target: &'a EventLoopWindowTarget<UserEvent>,
-}
-
-impl AuxFactory for PpuFactory<'_> {
-    fn kind(&self) -> AuxKind {
-        AuxKind::Ppu
-    }
-
-    fn create(&self, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-        let (bridge, position) = ppu_parts(params)?;
-        crate::aux::ppu::PpuWindowHandle::new(Arc::clone(&bridge), self.target, position)
-            .map(aux_box)
-    }
-}
-
 /// Split one viewer open: pure variant check, display-free tests.
 type PpuParts = (Arc<DebugBridge>, Option<(i32, i32)>);
 
@@ -339,21 +278,6 @@ fn ppu_parts(params: AuxOpenParams) -> Option<PpuParts> {
         return None;
     };
     Some((bridge, position))
-}
-
-struct HistoryFactory<'a> {
-    target: &'a EventLoopWindowTarget<UserEvent>,
-}
-
-impl AuxFactory for HistoryFactory<'_> {
-    fn kind(&self) -> AuxKind {
-        AuxKind::History
-    }
-
-    fn create(&self, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-        let language = history_parts(params)?;
-        crate::aux::osd::HistoryWindowHandle::new(self.target, language).map(aux_box)
-    }
 }
 
 /// Split one history open: pure variant check, display-free tests.
@@ -418,60 +342,12 @@ mod tests {
     }
 
     #[test]
-    fn modal_actor_is_singleton_and_never_blocks_caller() {
-        // One worker for every error; ack or dead receiver are both
-        // designed host paths, so this only asserts plumbing.
+    fn modal_actor_is_singleton() {
+        // Singleton identity only: enqueueing here would pollute the
+        // process-global queue, so plumbing stays untested by unit tests.
         let first = ModalActor::global() as *const _;
         let second = ModalActor::global() as *const _;
         assert_eq!(first, second);
-        let _ = NativeDialogs.show_error_async(AppLanguage::English, "boom".to_string());
-    }
-
-    struct ProbeFactory {
-        kind: AuxKind,
-    }
-
-    impl AuxFactory for ProbeFactory {
-        fn kind(&self) -> AuxKind {
-            self.kind
-        }
-
-        fn create(&self, _params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-            Some(aux_box(ProbeAux { kind: self.kind }))
-        }
-    }
-
-    #[test]
-    fn factory_registry_routes_by_kind_without_match() {
-        use std::collections::HashMap;
-        let registry = AuxFactoryRegistry {
-            factories: HashMap::from([(
-                AuxKind::Settings,
-                Box::new(ProbeFactory {
-                    kind: AuxKind::Settings,
-                }) as Box<dyn AuxFactory>,
-            )]),
-        };
-        // Registered kind routes; unknown kinds fail closed.
-        let handle = registry
-            .create(
-                AuxKind::Settings,
-                AuxOpenParams::History {
-                    language: AppLanguage::English,
-                },
-            )
-            .expect("registered kind routes");
-        assert_eq!(handle.kind(), AuxKind::Settings);
-        assert!(
-            registry
-                .create(
-                    AuxKind::Debug,
-                    AuxOpenParams::History {
-                        language: AppLanguage::English,
-                    },
-                )
-                .is_none()
-        );
     }
 
     #[test]
