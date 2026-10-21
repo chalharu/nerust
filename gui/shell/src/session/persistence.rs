@@ -37,10 +37,6 @@ impl std::error::Error for MapperFlushError {}
 
 /// Classify a persistence-layer failure for user-facing messages.
 /// Single conversion point; see [`SlotOpFailure`].
-fn classify(error: &PersistenceError) -> SlotOpFailure {
-    SlotOpFailure::from(error)
-}
-
 /// Outcome of a mapper-save flush. Callers distinguish "nothing
 /// to do" from "wrote" without re-reading manager state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +199,7 @@ impl PersistenceManager {
 
                 Ok(())
             }
-            Err(error) => Err(classify(&error)),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
@@ -231,7 +227,7 @@ impl PersistenceManager {
             None => match self.slot_backend.allocate_next_id(dir) {
                 Ok(slot_id) => slot_id,
                 Err(error) => {
-                    return Err(classify(&error));
+                    return Err(SlotOpFailure::from(&error));
                 }
             },
         };
@@ -245,7 +241,7 @@ impl PersistenceManager {
         };
         match self.slot_backend.allocate_next_id(dir) {
             Ok(slot_id) => self.save_slot(slot_id, emu, SlotActivation::Activate),
-            Err(error) => Err(classify(&error)),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
@@ -271,7 +267,7 @@ impl PersistenceManager {
                 }
             }
             Ok(None) => Err(SlotOpFailure::Missing),
-            Err(error) => Err(classify(&error)),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
@@ -300,7 +296,7 @@ impl PersistenceManager {
                     .collect();
                 Ok(())
             }
-            Err(error) => Err(classify(&error)),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
