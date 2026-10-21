@@ -194,8 +194,9 @@ impl InputAssignments {
         let mut seen = std::collections::HashSet::new();
         let mut plan = vec![None; slots.len()];
         for (slot, profile) in &self.slots {
-            let slot_index =
-                index_of(*slot).ok_or(CreateSplitError::SlotNotFound { slot: *slot })?;
+            if index_of(*slot).is_none() {
+                return Err(CreateSplitError::SlotNotFound { slot: *slot });
+            }
             if !seen.insert(*slot) {
                 return Err(CreateSplitError::SlotConflict { a: *slot, b: *slot });
             }
@@ -225,7 +226,6 @@ impl InputAssignments {
                 if plan[index].is_some() {
                     return Err(CreateSplitError::SlotConflict { a: *slot, b: *port });
                 }
-                let _ = slot_index;
                 plan[index] = Some((Rc::clone(profile), group));
             }
         }
