@@ -59,7 +59,7 @@ fn publish_if_latest(seq: u64, result: RomPickerResult) {
         if !FETCH_SEQ.is_latest(seq) {
             return false;
         }
-        state.in_flight = false;
+        state.in_flight = None;
         state.result = Some((seq, result));
         true
     });
@@ -152,7 +152,7 @@ pub(super) fn take_result() -> Option<RomPickerResult> {
 
 pub(super) fn has_pending_result() -> bool {
     bridge::with_picker(|state| {
-        state.in_flight
+        state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq))
             || state
                 .result
                 .as_ref()
@@ -164,14 +164,14 @@ pub(super) fn reset_transient() {
     bridge::with_picker(|state| {
         FETCH_SEQ.next();
         state.result = None;
-        state.in_flight = false;
+        state.in_flight = None;
     });
 }
 
 pub(super) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
     if bridge::with_picker(|state| {
-        let busy = state.in_flight;
-        state.in_flight = true;
+        let busy = state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq));
+        state.in_flight = Some(FETCH_SEQ.next());
         busy
     }) {
         return Ok(false);
@@ -192,7 +192,7 @@ pub(super) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
             Ok(())
         },
         Some(Box::new(|| {
-            bridge::with_picker(|state| state.in_flight = false);
+            bridge::with_picker(|state| state.in_flight = None);
             bridge::wake();
         })),
     );
@@ -201,8 +201,8 @@ pub(super) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
 
 pub(super) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, String> {
     if bridge::with_picker(|state| {
-        let busy = state.in_flight;
-        state.in_flight = true;
+        let busy = state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq));
+        state.in_flight = Some(FETCH_SEQ.next());
         busy
     }) {
         return Ok(false);
@@ -220,7 +220,7 @@ pub(super) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
             Ok(())
         },
         Some(Box::new(|| {
-            bridge::with_picker(|state| state.in_flight = false);
+            bridge::with_picker(|state| state.in_flight = None);
             bridge::wake();
         })),
     );
@@ -458,15 +458,17 @@ fn read_stream_bytes_inner(
 fn begin_fetch() -> u64 {
     bridge::with_picker(|state| {
         state.result = None;
-        state.in_flight = true;
-        FETCH_SEQ.next()
+        let seq = FETCH_SEQ.next();
+        state.in_flight = Some(seq);
+        seq
     })
 }
 
 fn publish_result(result: RomPickerResult) {
     bridge::with_picker(|state| {
-        state.result = Some((FETCH_SEQ.next(), result));
-        state.in_flight = false;
+        let seq = FETCH_SEQ.next();
+        state.result = Some((seq, result));
+        state.in_flight = None;
     });
     bridge::wake();
 }
