@@ -21,6 +21,10 @@ class ContractError(ValueError):
     pass
 
 
+#: Shared rejection for a decoder without the typed event enum.
+MISSING_DECODER = "missing typed event decoder"
+
+
 def require(condition, message):
     if not condition:
         raise ContractError(message)
@@ -84,7 +88,7 @@ def _callback_symbols(callbacks):
     symbols = {}
     for text in callbacks:
         for match in re.finditer(
-                r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\(([^()]*)\)\s*([^\{]*)\{',
+                r'pub\s+extern\s+"system"\s+fn\s+(Java_\w+)\s*\(([^()]*)\)([^\{]*+)\{',
                 uncomment(text)):
             symbol, args, result = match.groups()
             require(not result.strip(), f"unsupported JNI callback return: {symbol}")
@@ -163,7 +167,7 @@ def validate_jni(registration, table, activity, callbacks):
 def _enum_body(decoder):
     """Raw text inside the typed event enum braces."""
     match = re.search(r'enum BridgeEventV1\s*\{', decoder)
-    require(match, "missing typed event decoder")
+    require(match, MISSING_DECODER)
     depth = 0
     for index in range(match.end() - 1, len(decoder)):
         if decoder[index] == "{":
@@ -171,9 +175,9 @@ def _enum_body(decoder):
         elif decoder[index] == "}":
             depth -= 1
             if depth == 0:
-                require(decoder[index - 1] == "\n", "missing typed event decoder")
+                require(decoder[index - 1] == "\n", MISSING_DECODER)
                 return decoder[match.end():index - 1]
-    raise ContractError("missing typed event decoder")
+    raise ContractError(MISSING_DECODER)
 
 
 def validate_decoder(definitions, decoder):
@@ -181,7 +185,7 @@ def validate_decoder(definitions, decoder):
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
     body = _enum_body(decoder)
-    variant_pattern = r'(\w+)\s*\{([^{}]*)\}\s*,?'
+    variant_pattern = r'(\w+)\s*\{([^{}]*+)\}\s*+,?+'
     variants = re.findall(variant_pattern, body)
     require(not re.sub(variant_pattern, '', body).strip(), "unparsed decoder variant")
     expected = {}
