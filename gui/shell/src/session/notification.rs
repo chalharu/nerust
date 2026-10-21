@@ -256,8 +256,13 @@ impl Message {
         mix(&self.slot.unwrap_or(u64::MAX).to_le_bytes());
         mix(&[self.reason.map_or(u8::MAX, |r| r as u8)]);
         mix(&[self.origin.map_or(u8::MAX, |o| o as u8)]);
-        mix(self.id.as_bytes());
-        mix(self.detail.as_bytes());
+        // Common messages carry no text: skip the byte walk entirely.
+        if !self.id.is_empty() {
+            mix(self.id.as_bytes());
+        }
+        if !self.detail.is_empty() {
+            mix(self.detail.as_bytes());
+        }
         hash
     }
 }
