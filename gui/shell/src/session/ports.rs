@@ -122,7 +122,6 @@ pub trait MapperSaveBackend: Send {
 
 #[cfg(test)]
 mod ports_cov_tests {
-    use crate::session::error::SlotOpFailure;
     use crate::session::ports::*;
 
     #[test]
