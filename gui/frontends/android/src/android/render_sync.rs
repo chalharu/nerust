@@ -24,7 +24,7 @@ use super::osd::{AndroidOsd, OsdSyncCtx};
 /// Borrows the session buffer instead of cloning the `Vec` every frame.
 pub(super) struct FrameInput<'session> {
     pub tick: TickMetrics,
-    pub notifications: NotificationSettings,
+    pub notifications: &'session NotificationSettings,
     pub language: AppLanguage,
     pub profile: Option<PhysicalSize>,
     pub fb: Option<&'session FrameBuffer>,
@@ -201,7 +201,7 @@ impl RenderSync {
         session.swap_frame_buffer();
         let profile = session.render_profile().map(|p| p.physical_size);
         let snapshot = session.settings_snapshot();
-        let notifications = snapshot.local.notifications.clone();
+        let notifications = &snapshot.local.notifications;
         let language = snapshot.shared.general.language;
         let fb = session.frame_buffer();
         FrameInput {
@@ -238,7 +238,7 @@ impl RenderSync {
         // First frames use the default until Kotlin pushes.
         let system = osd.system_insets(window_size, scale_factor);
         let insets = AndroidOsd::safe_insets(scale_factor, content, window_size, system);
-        let settings = &input.notifications;
+        let settings = input.notifications;
         let language = input.language;
         let Some(fb) = input.fb.as_ref() else {
             shell.needs_redraw = false;
