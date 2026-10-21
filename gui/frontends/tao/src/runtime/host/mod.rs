@@ -251,8 +251,51 @@ impl HostState {
         &self.ctx.gpu_factory
     }
 
+    #[cfg(test)]
     pub(crate) fn session(&self) -> &SessionHandle {
         &self.session
+    }
+
+    /// Current tick liveness; the only liveness read outside the frame cache.
+    pub(crate) fn tick(&self) -> nerust_gui_shell::session::osd::TickMetrics {
+        self.session.tick_metrics()
+    }
+
+    /// Shared settings snapshot for chrome and target math.
+    pub(crate) fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot {
+        self.session.settings_snapshot()
+    }
+
+    /// Render profile for surface attach.
+    pub(crate) fn render_profile(&self) -> Option<nerust_render_traits::VideoRenderProfile> {
+        self.session.render_profile().cloned()
+    }
+
+    /// Debug epoch for drain invalidation.
+    pub(crate) fn debug_epoch(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.session.debug_epoch()
+    }
+
+    /// Owned context for one async drain flight.
+    pub(crate) fn debug_drain_begin(
+        &self,
+        actions: &[nerust_gui_shell::debug::DebugAction],
+        input: &nerust_gui_shell::debug::DebugDrainInput,
+    ) -> nerust_gui_shell::debug::DrainFlight {
+        self.session.debug_drain_begin(actions, input)
+    }
+
+    /// Owned context for one live image fetch.
+    pub(crate) fn debug_live_images_begin(
+        &self,
+        need_images: bool,
+    ) -> nerust_gui_shell::debug::LiveImagesFlight {
+        self.session.debug_live_images_begin(need_images)
+    }
+
+    /// Mapped debugger spaces for aux open.
+    pub(crate) fn debug_spaces(&self) -> Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> {
+        crate::aux::registry::debug_spaces(&self.session)
     }
 
     /// Narrow live-core swap for the frame pump; the port stays inside.
