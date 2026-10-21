@@ -1,7 +1,8 @@
 //! Persistence ports: slot/autosave/mapper backends plus the manager-facing traits.
 //! Platform adapters implement these; `fs` holds the desktop filesystem one.
 
-use crate::emu_core::{PreviewRgba, SlotOpFailure};
+use crate::emu_core::PreviewRgba;
+use crate::session::error::SlotOpFailure;
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_persistence::{
     error::PersistenceError,
@@ -148,7 +149,7 @@ pub trait MapperSaveBackend: Send {
 
 #[cfg(test)]
 mod ports_cov_tests {
-    use crate::emu_core::SlotOpFailure;
+    use crate::session::error::SlotOpFailure;
     use crate::session::ports::*;
 
     #[test]

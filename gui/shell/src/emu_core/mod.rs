@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use crate::session::error::SlotOpFailure;
 use crate::session::ports::StateExporter;
 use nerust_core_traits::{
     CoreConfig, CoreOptions, EmuCommand, LoadCommand, StateDataCommand, SwapAudioCommand,
@@ -70,101 +71,18 @@ pub enum CorePersistenceError {
 }
 
 impl CorePersistenceError {
-    /// Typed fault for this error; single mapping point.
-    pub fn fault(&self) -> StateFault {
-        match self {
-            Self::WorkerUnavailable | Self::NoReply => StateFault::Transport,
-            Self::Core(error) => StateFault::from(error.fault()),
-        }
-    }
-
     /// Typed slot failure for this error; single mapping point.
     pub fn slot_failure(&self) -> SlotOpFailure {
-        state_fault_to_failure(self.fault())
-    }
-}
-
-/// Why a state-slot save/load did not execute.
-/// Lives beside [`StateFault`]: the single mapping below is the only adapter in the shell.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum SlotOpFailure {
-    /// No active slot (nothing saved yet, or no core loaded).
-    Empty,
-    /// The slot file does not exist.
-    Missing,
-    /// Storage/backend I/O failure (filesystem, Android SAF, ...).
-    Storage,
-    /// The slot archive or its payload does not decode.
-    Corrupt,
-    /// The core rejected the payload (foreign ROM, options or schema
-    /// mismatch, invalid state).
-    Incompatible,
-    /// Cannot operate (no states dir, no media identity, core export
-    /// or thread failure).
-    #[default]
-    Unavailable,
-}
-
-/// Single mapping from core faults into slot failures; the only such adapter in the shell.
-pub fn state_fault_to_failure(fault: StateFault) -> SlotOpFailure {
-    use SlotOpFailure as F;
-    match fault {
-        StateFault::Transport => F::Unavailable,
-        StateFault::Storage => F::Storage,
-        StateFault::Missing => F::Missing,
-        StateFault::Corrupt => F::Corrupt,
-        StateFault::Incompatible => F::Incompatible,
-        StateFault::Other(_) => F::Corrupt,
-    }
-}
-
-/// Typed state fault end to end: transport vs storage vs undecodable vs rejected.
-/// Single mapping point; no string sniffing at call sites.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StateFault {
-    /// Thread gone or never answered.
-    Transport,
-    /// Backend I/O failure.
-    Storage,
-    /// Missing slot file.
-    Missing,
-    /// Undecodable payload.
-    Corrupt,
-    /// Core rejected the payload.
-    Incompatible,
-    /// Detail preserved for logs; never matched on.
-    Other(String),
-}
-
-impl StateFault {
-    /// Short code for logs and tests.
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::Transport => "transport",
-            Self::Storage => "storage",
-            Self::Missing => "missing",
-            Self::Corrupt => "corrupt",
-            Self::Incompatible => "incompatible",
-            Self::Other(_) => "other",
-        }
-    }
-}
-
-impl From<CorePersistenceError> for StateFault {
-    fn from(error: CorePersistenceError) -> Self {
-        error.fault()
-    }
-}
-
-impl From<nerust_core_traits::CoreFault> for StateFault {
-    fn from(fault: nerust_core_traits::CoreFault) -> Self {
         use nerust_core_traits::CoreFault;
-        match fault {
-            CoreFault::Unavailable => Self::Transport,
-            CoreFault::Storage => Self::Storage,
-            CoreFault::Missing => Self::Missing,
-            CoreFault::Corrupt => Self::Corrupt,
-            CoreFault::Incompatible => Self::Incompatible,
+        match self {
+            Self::WorkerUnavailable | Self::NoReply => SlotOpFailure::Unavailable,
+            Self::Core(error) => match error.fault() {
+                CoreFault::Storage => SlotOpFailure::Storage,
+                CoreFault::Missing => SlotOpFailure::Missing,
+                CoreFault::Corrupt => SlotOpFailure::Corrupt,
+                CoreFault::Incompatible => SlotOpFailure::Incompatible,
+                CoreFault::Unavailable => SlotOpFailure::Unavailable,
+            },
         }
     }
 }
@@ -1886,78 +1804,35 @@ mod fault_tests {
 
     #[test]
     fn fault_classification_uses_typed_source_not_diagnostic_words() {
+        use crate::session::error::SlotOpFailure;
         use nerust_core_traits::{CoreError, CoreFault};
         for (kind, expected) in [
-            (CoreFault::Storage, StateFault::Storage),
-            (CoreFault::Missing, StateFault::Missing),
-            (CoreFault::Corrupt, StateFault::Corrupt),
-            (CoreFault::Incompatible, StateFault::Incompatible),
-            (CoreFault::Unavailable, StateFault::Transport),
+            (CoreFault::Storage, SlotOpFailure::Storage),
+            (CoreFault::Missing, SlotOpFailure::Missing),
+            (CoreFault::Corrupt, SlotOpFailure::Corrupt),
+            (CoreFault::Incompatible, SlotOpFailure::Incompatible),
+            (CoreFault::Unavailable, SlotOpFailure::Unavailable),
         ] {
             let error = CorePersistenceError::Core(CoreError::Persistence {
                 kind,
                 source: "foreign missing storage version mismatch".into(),
             });
-            assert_eq!(error.fault(), expected);
+            assert_eq!(error.slot_failure(), expected);
         }
         assert_eq!(
-            StateFault::from(CorePersistenceError::WorkerUnavailable),
-            StateFault::Transport
+            CorePersistenceError::WorkerUnavailable.slot_failure(),
+            SlotOpFailure::Unavailable
         );
         assert_eq!(
-            StateFault::from(CorePersistenceError::NoReply),
-            StateFault::Transport
-        );
-    }
-
-    #[test]
-    fn fault_covers_codes_and_remaining_branches() {
-        for (fault, code) in [
-            (StateFault::Transport, "transport"),
-            (StateFault::Storage, "storage"),
-            (StateFault::Missing, "missing"),
-            (StateFault::Corrupt, "corrupt"),
-            (StateFault::Incompatible, "incompatible"),
-            (StateFault::Other("x".into()), "other"),
-        ] {
-            assert_eq!(fault.code(), code);
-        }
-        assert_eq!(
-            StateFault::from(CorePersistenceError::NoReply),
-            StateFault::Transport
+            CorePersistenceError::NoReply.slot_failure(),
+            SlotOpFailure::Unavailable
         );
         assert_eq!(
-            StateFault::from(CorePersistenceError::Core(
-                nerust_core_traits::CoreError::Core("gone".into())
-            )),
-            StateFault::Corrupt
-        );
-        assert_eq!(
-            CorePersistenceError::WorkerUnavailable.fault(),
-            StateFault::Transport
-        );
-        assert_eq!(CorePersistenceError::NoReply.fault(), StateFault::Transport);
-        assert_eq!(
-            CorePersistenceError::Core(nerust_core_traits::CoreError::Core("absent".into()))
-                .fault(),
-            StateFault::Corrupt
+            CorePersistenceError::Core(nerust_core_traits::CoreError::Core("gone".into()))
+                .slot_failure(),
+            SlotOpFailure::Corrupt
         );
         assert!(!CorePersistenceError::NoReply.to_string().is_empty());
-    }
-
-    #[test]
-    fn slot_failure_maps_every_arm_once() {
-        use SlotOpFailure as F;
-        for (fault, failure) in [
-            (StateFault::Transport, F::Unavailable),
-            (StateFault::Storage, F::Storage),
-            (StateFault::Missing, F::Missing),
-            (StateFault::Corrupt, F::Corrupt),
-            (StateFault::Incompatible, F::Incompatible),
-            (StateFault::Other("x".into()), F::Corrupt),
-        ] {
-            assert_eq!(state_fault_to_failure(fault), failure);
-        }
     }
 
     #[test]
