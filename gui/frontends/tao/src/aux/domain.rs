@@ -35,6 +35,15 @@ pub(crate) enum AuxButton {
     Middle,
 }
 
+/// Modifier selector for [`AuxModifiers::with_flag`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModifierFlag {
+    Shift,
+    Control,
+    Alt,
+    Logo,
+}
+
 /// Domain modifiers: plain data, no toolkit import.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct AuxModifiers {
@@ -66,27 +75,14 @@ impl AuxModifiers {
         self.logo
     }
 
-    /// Setters for the tao adapter: one flag per call, chainable.
-    pub(crate) fn with_shift(mut self) -> Self {
-        self.shift = true;
-        self
-    }
-
-    /// Setters for the tao adapter: one flag per call, chainable.
-    pub(crate) fn with_ctrl(mut self) -> Self {
-        self.ctrl = true;
-        self
-    }
-
-    /// Setters for the tao adapter: one flag per call, chainable.
-    pub(crate) fn with_alt(mut self) -> Self {
-        self.alt = true;
-        self
-    }
-
-    /// Setters for the tao adapter: one flag per call, chainable.
-    pub(crate) fn with_logo(mut self) -> Self {
-        self.logo = true;
+    /// Set one modifier flag; chainable.
+    pub(crate) fn with_flag(mut self, flag: ModifierFlag) -> Self {
+        match flag {
+            ModifierFlag::Shift => self.shift = true,
+            ModifierFlag::Control => self.ctrl = true,
+            ModifierFlag::Alt => self.alt = true,
+            ModifierFlag::Logo => self.logo = true,
+        }
         self
     }
 }

@@ -1,7 +1,7 @@
 //! Single tao mapping leaf: codes, buttons, modifiers (tao to domain only).
 //! Iced conversion lives in `crate::convert` (domain to iced).
 
-use super::domain::{AuxButton, AuxModifiers};
+use super::domain::{AuxButton, AuxModifiers, ModifierFlag};
 use nerust_keyboard::Key;
 use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
 
@@ -9,16 +9,16 @@ use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
 pub(crate) fn tao_modifiers_to_domain(m: TaoModifiers) -> AuxModifiers {
     let mut out = AuxModifiers::empty();
     if m.contains(TaoModifiers::SHIFT) {
-        out = out.with_shift();
+        out = out.with_flag(ModifierFlag::Shift);
     }
     if m.contains(TaoModifiers::CONTROL) {
-        out = out.with_ctrl();
+        out = out.with_flag(ModifierFlag::Control);
     }
     if m.contains(TaoModifiers::ALT) {
-        out = out.with_alt();
+        out = out.with_flag(ModifierFlag::Alt);
     }
     if m.contains(TaoModifiers::SUPER) {
-        out = out.with_logo();
+        out = out.with_flag(ModifierFlag::Logo);
     }
     out
 }
