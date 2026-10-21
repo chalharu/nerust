@@ -12,7 +12,7 @@ use nerust_core_traits::{
     debugger::{InspectRequest, SpaceInfo, StepUnit},
 };
 use nerust_gui_shell::emu_core::EmuCore;
-use nerust_input_traits::{InputAssignments, InputValue};
+use nerust_input_traits::{InputAssignments, InputPorts, InputValue};
 use nerust_render_traits::FrameBuffer;
 use nerust_system_traits::factory::{
     CoreFactory,
@@ -119,7 +119,7 @@ fn resolve_case_options(
 }
 
 /// Create the core plus adapter against the factory default assignments.
-/// P2 runs the P1 profile clone: the suite drives both pads plus the microphone.
+/// Multi-port profiles already supply their occupied ports; do not duplicate them.
 fn create_core_parts(
     factory: &dyn CoreFactory,
     case_id: &str,
@@ -127,10 +127,7 @@ fn create_core_parts(
     resolved: nerust_system_traits::factory::load::ResolvedLoadRequest,
     audio_sample_rate: u32,
 ) -> Result<LoadedCoreParts, RomTestError> {
-    let base = factory.input_system_factory().default_assignments();
-    let assignments = duplicate_p1_to_p2(&base).ok_or_else(|| {
-        construction(case_id, "factory default assigns no P1 profile".to_string())
-    })?;
+    let assignments = factory.input_system_factory().default_assignments();
     let speaker: Box<dyn AudioBackend> = Box::new(NullAudioBackend(audio_sample_rate));
     let parts = factory
         .create_core_and_adapter_with_assignments(view, speaker, &assignments)
@@ -179,7 +176,12 @@ fn assemble_test_system(
     let spaces = emu
         .memory_spaces()
         .map_err(|error| construction(case_id, format!("memory spaces: {error:?}")))?;
-    let pad_buttons = resolve_pad_buttons(case_id, &assignments, &field_map)?;
+    let pad_buttons = resolve_pad_buttons(
+        case_id,
+        factory.input_system_factory(),
+        &assignments,
+        &field_map,
+    )?;
     let (tap, channels, serial_taps) = attach_taps(case_id, &emu)?;
     Ok(TestSystem {
         emu,
@@ -193,36 +195,43 @@ fn assemble_test_system(
     })
 }
 
-/// Pad buttons resolve through the slot profiles to buffer fields.
-/// Present but unmapped is loud drift; digital controls resolve directly.
+/// Resolve digital controls through the canonical physical placement plan.
+/// Multi-port groups expand once; unconnected ports keep their pad index.
 fn resolve_pad_buttons(
     case_id: &str,
+    ports: &dyn InputPorts,
     assignments: &InputAssignments,
     field_map: &nerust_input_traits::UnifiedFieldMap,
 ) -> Result<Vec<Vec<(&'static str, usize)>>, RomTestError> {
-    let mut pad_buttons = Vec::with_capacity(assignments.slots().len());
-    for (pad, (attachment, profile)) in assignments.slots().iter().enumerate() {
-        let profile = profile.as_ref().ok_or_else(|| {
-            construction(case_id, format!("slot {pad} assigns no controller profile"))
+    let plan = assignments
+        .placement_plan(ports)
+        .map_err(|error| construction(case_id, format!("input assignments: {error}")))?;
+    let mut pad_buttons = Vec::with_capacity(plan.len());
+    for (slot, placement) in ports.slots().iter().zip(plan) {
+        let Some((controller, group_index)) = placement else {
+            pad_buttons.push(Vec::new());
+            continue;
+        };
+        let profile = ports
+            .resolve_controller(controller.as_str())
+            .ok_or_else(|| {
+                construction(case_id, format!("controller profile missing: {controller}"))
+            })?;
+        let group = profile.port_groups().get(group_index).ok_or_else(|| {
+            construction(case_id, format!("slot {} has no control group", slot.id))
         })?;
-        let group = profile
-            .port_groups()
-            .get(pad)
-            .ok_or_else(|| construction(case_id, format!("slot {pad} has no control group")))?;
         let mut buttons = Vec::with_capacity(group.len());
         for info in group.iter() {
             let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
             let field = nerust_system_traits::factory::resolve_unified_field(
-                field_map,
-                *attachment,
-                control_id,
+                field_map, slot.id, control_id,
             )
             .ok_or_else(|| {
                 construction(
                     case_id,
-                    format!("test input field missing: {attachment}/{control_id}"),
+                    format!("test input field missing: {}/{control_id}", slot.id),
                 )
             })?;
             buttons.push((control_id.as_str(), field));
@@ -275,16 +284,6 @@ fn headless_view(
         language: Language::English,
         system_config: Some(system_config),
     })
-}
-
-/// Clone the P1 profile onto P2: the suite drives both pads.
-fn duplicate_p1_to_p2(base: &InputAssignments) -> Option<InputAssignments> {
-    let p1 = base.slots().first()?.1.clone()?;
-    let mut slots = base.slots().to_vec();
-    if slots.len() > 1 {
-        slots[1].1 = Some(p1);
-    }
-    Some(InputAssignments::new(slots))
 }
 
 /// One address read through the Spaces table: mapped value, open bus on
@@ -504,7 +503,6 @@ impl AudioBackend for NullAudioBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_input_traits::AttachmentId;
 
     #[test]
     fn empty_factories_yield_no_matching_system() {
@@ -528,41 +526,111 @@ mod tests {
         }
     }
 
+    #[cfg(any(feature = "nes", feature = "gbc", feature = "gba"))]
     #[test]
-    fn duplicate_p1_needs_a_profile_to_clone() {
-        use nerust_input_traits::InputAssignments;
-        // Empty table: nothing to clone.
-        assert!(duplicate_p1_to_p2(&InputAssignments::new(Vec::new())).is_none());
-        // P1 without a profile: no source, no clone.
-        let attachment = AttachmentId::new("test.pad");
-        let lonely = InputAssignments::new(vec![(attachment, None)]);
-        assert!(duplicate_p1_to_p2(&lonely).is_none());
+    fn enabled_factories_preserve_default_assignments_and_map_all_ports() {
+        let factories = crate::system_factories();
+        assert!(!factories.is_empty());
+        for factory in factories {
+            let view = headless_view(factory.as_ref(), "defaults").unwrap();
+            let resolved = resolve_case_options(factory.as_ref(), "defaults", &view, &[]).unwrap();
+            let core =
+                create_core_parts(factory.as_ref(), "defaults", &view, resolved, 48_000).unwrap();
+            let ports = factory.input_system_factory();
+            assert_eq!(core.assignments, ports.default_assignments());
+            let pads =
+                resolve_pad_buttons("defaults", ports, &core.assignments, &core.parts.field_map)
+                    .unwrap();
+            assert_eq!(pads.len(), ports.slots().len());
+            assert!(pads.iter().all(|buttons| !buttons.is_empty()));
+        }
     }
 
-    #[test]
-    fn pad_map_resolves_empty_and_rejects_unprofiled_slots() {
-        use nerust_input_traits::InputAssignments;
-        // Empty table resolves to an empty map.
-        let empty = resolve_pad_buttons(
-            "case",
-            &InputAssignments::new(Vec::new()),
-            &Default::default(),
-        )
-        .expect("empty table resolves");
-        assert!(empty.is_empty());
-        // A slot without a profile fails loudly, naming the slot.
-        let attachment = AttachmentId::new("test.pad");
-        let unprofiled = InputAssignments::new(vec![(attachment, None)]);
-        match resolve_pad_buttons("case", &unprofiled, &Default::default()) {
-            Err(RomTestError::CoreConstruction { case_id, message }) => {
-                assert_eq!(case_id, "case");
-                assert!(
-                    message.contains("slot 0 assigns no controller profile"),
-                    "{message}"
-                );
+    #[cfg(feature = "nes")]
+    mod nes {
+        use super::*;
+        use nerust_input_traits::AttachmentId;
+        use nerust_nes_factory::NesFactory;
+
+        const P1: AttachmentId = AttachmentId::new("nes.attachment.player1");
+        const P2: AttachmentId = AttachmentId::new("nes.attachment.player2");
+
+        fn pad_map(assignments: InputAssignments) -> Vec<Vec<(&'static str, usize)>> {
+            let view = headless_view(&NesFactory, "pads").unwrap();
+            let parts = NesFactory
+                .create_core_and_adapter_with_assignments(
+                    &view,
+                    Box::new(NullAudioBackend(48_000)),
+                    &assignments,
+                )
+                .unwrap();
+            resolve_pad_buttons("pads", &NesFactory, &assignments, &parts.field_map).unwrap()
+        }
+
+        #[test]
+        fn multiport_default_maps_both_players_and_microphone_once() {
+            let pads = pad_map(NesFactory.input_system_factory().default_assignments());
+            assert_eq!(pads.len(), 2);
+            assert_eq!(pads[0].len(), 8);
+            assert_eq!(pads[1].len(), 7);
+            assert!(pads[0].contains(&("nes.control.a", 0)));
+            assert!(pads[1].contains(&("nes.control.a", 8)));
+            assert!(pads[1].contains(&("famicom.microphone", 16)));
+            assert!(!pads[1].iter().any(|(id, _)| *id == "nes.control.start"));
+        }
+
+        #[test]
+        fn singleport_player_two_uses_group_zero_and_keeps_empty_player_one() {
+            let profile = NesFactory.resolve_controller("nes.standard_pad").unwrap();
+            for slots in [
+                vec![(P2, Some(profile.clone()))],
+                vec![(P2, Some(profile.clone())), (P1, None)],
+            ] {
+                let pads = pad_map(InputAssignments::new(slots));
+                assert_eq!(pads.len(), 2);
+                assert!(pads[0].is_empty());
+                assert_eq!(pads[1].len(), 8);
+                assert!(pads[1].contains(&("nes.control.a", 8)));
+                assert!(pads[1].contains(&("nes.control.start", 11)));
             }
-            Err(other) => panic!("unexpected error: {other:?}"),
-            Ok(_) => panic!("unprofiled slot must fail"),
+        }
+
+        #[test]
+        fn pad_indices_follow_physical_ports_not_assignment_order() {
+            let profile = NesFactory.resolve_controller("nes.standard_pad").unwrap();
+            let ordered = pad_map(InputAssignments::new(vec![
+                (P1, Some(profile.clone())),
+                (P2, Some(profile.clone())),
+            ]));
+            let reversed = pad_map(InputAssignments::new(vec![
+                (P2, Some(profile.clone())),
+                (P1, Some(profile)),
+            ]));
+            assert_eq!(ordered, reversed);
+            assert!(reversed[0].contains(&("nes.control.a", 0)));
+            assert!(reversed[1].contains(&("nes.control.a", 8)));
+            let empty = resolve_pad_buttons(
+                "empty",
+                &NesFactory,
+                &InputAssignments::new(Vec::new()),
+                &HashMap::new(),
+            )
+            .unwrap();
+            assert_eq!(empty, vec![vec![], vec![]]);
+        }
+
+        #[test]
+        fn missing_field_still_reports_case_and_control() {
+            let assignments = NesFactory.input_system_factory().default_assignments();
+            match resolve_pad_buttons("missing-field", &NesFactory, &assignments, &HashMap::new()) {
+                Err(RomTestError::CoreConstruction { case_id, message }) => {
+                    assert_eq!(case_id, "missing-field");
+                    assert!(message.contains("test input field missing"), "{message}");
+                    assert!(message.contains("nes.control.a"), "{message}");
+                }
+                Err(other) => panic!("unexpected error: {other:?}"),
+                Ok(_) => panic!("missing field must fail"),
+            }
         }
     }
 }
