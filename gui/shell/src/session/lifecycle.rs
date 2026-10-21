@@ -7,7 +7,7 @@ use crate::{
     load::{RomLoadTarget, RomLoaderError, SystemActivationError},
     session::{
         SessionError, SessionHandle,
-        osd::{PumpReport, PumpTarget, PushInput},
+        osd::{OsdManager, PumpReport, PushInput},
         persistence_setup::PersistenceBinder,
     },
 };
@@ -139,7 +139,7 @@ impl SessionHandle {
         self.notifications.drain()
     }
 
-    pub fn pump_osd(&mut self, osd: &mut dyn PumpTarget, input: PushInput) -> PumpReport {
+    pub fn pump_osd(&mut self, osd: &mut OsdManager, input: PushInput) -> PumpReport {
         let PushInput {
             policy,
             language,
@@ -149,9 +149,9 @@ impl SessionHandle {
         let before = osd.generation();
         let channel = tick.frame_channel();
         let drained = self.drain_notifications();
-        osd.push_notifications(drained, &policy, language, now, channel);
-        osd.poll_queue(now);
-        let modal_queued = osd.pump_modal_queue();
+        osd.push_all_with_policy(drained, &policy, language, now, channel);
+        osd.poll(now);
+        let modal_queued = osd.pump_modal();
         PumpReport {
             changed: osd.generation() != before,
             modal_queued,
