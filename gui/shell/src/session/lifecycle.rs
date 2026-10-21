@@ -1,13 +1,46 @@
 //! Session lifecycle orchestration: load/unload/flush plus the per-tick pump.
 //! Domain work lives in sibling modules; this file only sequences the flow.
 
-use nerust_system_traits::factory::load::{MediaObject, ResolvedLoadRequest};
+use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
-use crate::session::{
-    SessionError, SessionHandle,
-    osd::{PumpReport, PumpTarget, PushInput},
-    persistence_setup::PersistenceBinder,
+use crate::{
+    load::{RomLoadTarget, RomLoaderError, SystemActivationError},
+    session::{
+        SessionError, SessionHandle,
+        osd::{PumpReport, PumpTarget, PushInput},
+        persistence_setup::PersistenceBinder,
+    },
 };
+
+/// Loader boundary straight on the session: no adapter between `RomLoader` and `SessionHandle`.
+impl RomLoadTarget for SessionHandle {
+    fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
+        SessionHandle::default_load_options(self)
+    }
+
+    fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot {
+        SessionHandle::settings_snapshot(self)
+    }
+
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), RomLoaderError> {
+        SessionHandle::load_resolved(self, media, resolved).map_err(RomLoaderError::from_session)
+    }
+
+    fn resume(&mut self) {
+        let _ = SessionHandle::run_command(self, crate::session::commands::SessionCommand::Resume);
+    }
+
+    fn set_active_system(
+        &mut self,
+        system_id: &dyn nerust_core_traits::identity::SystemId,
+    ) -> Result<(), SystemActivationError> {
+        SessionHandle::set_active_system(self, system_id)
+    }
+}
 
 impl SessionHandle {
     pub fn restart_audio(&mut self) {

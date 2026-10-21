@@ -56,33 +56,6 @@ pub struct PersistenceBackends {
     pub mapper: Box<dyn MapperSaveBackend>,
 }
 
-/// Loader-facing load leg: options, resolved loads, resume, activation.
-pub trait LoadPorts {
-    /// Default load options for the active system.
-    fn default_load_options(
-        &self,
-    ) -> Option<Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptions>>;
-    /// Load resolved media.
-    fn load_resolved(
-        &mut self,
-        media: nerust_system_traits::factory::load::MediaObject,
-        resolved: nerust_system_traits::factory::load::ResolvedLoadRequest,
-    ) -> Result<(), crate::load::RomLoaderError>;
-    /// Resume after load.
-    fn resume(&mut self);
-    /// Activate a system before load.
-    fn set_active_system(
-        &mut self,
-        system_id: &dyn nerust_core_traits::identity::SystemId,
-    ) -> Result<(), crate::load::SystemActivationError>;
-}
-
-/// Loader-facing snapshot leg: current settings snapshot.
-pub trait SnapshotPort {
-    /// Current settings snapshot.
-    fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot;
-}
-
 /// Platform abstraction for state slot I/O (Desktop fs / Android SAF).
 pub trait SlotBackend: Send {
     fn scan(

@@ -92,9 +92,7 @@ impl State {
     /// Load a ROM, flagging a renderer rebuild on success.
     /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        let mut target =
-            nerust_gui_shell::session::load_adapter::SessionLoadAdapter::new(&mut self.session);
-        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut target) {
+        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
             log::warn!("ROM load failed: {error}");
             return Err(error.to_string());
         }
