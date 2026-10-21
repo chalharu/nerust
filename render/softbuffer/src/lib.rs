@@ -92,6 +92,11 @@ pub(crate) enum PixelIndexer<'a> {
     Rgba { src: &'a [u8] },
     /// Palette indices plus the console palette (u32 `0xRRGGBBAA` words).
     Palette { src: &'a [u8], palette: &'a [u32] },
+    /// Palette indices with the per-frame converted table (no per-texel convert).
+    PaletteTable {
+        src: &'a [u8],
+        table: [[u8; 4]; 256],
+    },
     /// Pre-simulated NTSC words (`0xRRGGBBAA` layout, see [`Ntsc`]).
     Ntsc { buf: &'a [u32] },
 }
@@ -113,6 +118,19 @@ fn palette_texel(src: &[u8], palette: &[u32], row_base: usize, i: usize) -> [u8;
     RgbaWord::from_u32(palette.get(index).copied().unwrap_or(0)).to_bytes_be()
 }
 
+/// Per-frame palette conversion: one 1KiB table, no per-texel convert.
+fn palette_table(palette: &[u32]) -> [[u8; 4]; 256] {
+    let mut table = [[0, 0, 0, 255]; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        *slot = RgbaWord::from_u32(palette.get(i).copied().unwrap_or(0)).to_bytes_be();
+    }
+    table
+}
+
+fn palette_table_texel(src: &[u8], table: &[[u8; 4]; 256], row_base: usize, i: usize) -> [u8; 4] {
+    table[src.get(row_base.saturating_add(i)).copied().unwrap_or(0) as usize]
+}
+
 /// Pre-simulated NTSC word texel at `i` past a hoisted row base.
 fn ntsc_texel(buf: &[u32], row_base: usize, i: usize) -> [u8; 4] {
     RgbaWord::from_u32(buf.get(row_base.saturating_add(i)).copied().unwrap_or(0)).to_bytes_be()
@@ -125,6 +143,7 @@ impl PixelIndexer<'_> {
         match *self {
             Self::Rgba { src } => rgba_texel(src, 0, i),
             Self::Palette { src, palette } => palette_texel(src, palette, 0, i),
+            Self::PaletteTable { src, table } => palette_table_texel(src, &table, 0, i),
             Self::Ntsc { buf } => ntsc_texel(buf, 0, i),
         }
     }
@@ -220,6 +239,11 @@ impl SoftbufferRenderer {
                 PixelIndexer::Palette { src, palette } => {
                     Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
                         palette_texel(src, palette, src_y_index, i)
+                    });
+                }
+                PixelIndexer::PaletteTable { src, table } => {
+                    Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
+                        palette_table_texel(src, &table, src_y_index, i)
                     });
                 }
                 PixelIndexer::Ntsc { buf } => {
@@ -607,7 +631,11 @@ impl FrameSink for SoftbufferRenderer {
                 } else {
                     // Out-of-range indices render black instead of
                     // panicking the UI thread (see mismatch guard).
-                    let indexer = PixelIndexer::Palette { src, palette };
+                    // Convert once per frame; the hot loop only indexes.
+                    let indexer = PixelIndexer::PaletteTable {
+                        src,
+                        table: palette_table(palette),
+                    };
                     Self::rendering(
                         dst,
                         src_stride,
