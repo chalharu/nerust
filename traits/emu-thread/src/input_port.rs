@@ -297,7 +297,6 @@ impl<B: InputStateBuffer> nerust_input_traits::GuiInputPort for TypedGuiInput<B>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_input_traits::{InputPublish as _, InputStaging as _};
 
     /// Single-field digital buffer for port tests.
     #[derive(Debug, Default)]
