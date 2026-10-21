@@ -66,43 +66,69 @@ impl DialogPorts for NativeDialogs {
         language: AppLanguage,
         detail: String,
     ) -> std::sync::mpsc::Receiver<()> {
-        ModalActor::global().show(language, detail)
+        ModalActor::show(language, detail)
     }
 }
 
 /// Single modal actor: one queue, one worker thread for all error dialogs.
-/// Per-batch spawn-a-thread is gone; dead-queue means a dead ack channel.
+/// Per-batch spawn-a-thread is gone; a dead worker respawns on next use,
+/// so one dialog-thread crash never disables later error modals.
 struct ModalActor {
-    tx: std::sync::mpsc::Sender<(AppLanguage, String, std::sync::mpsc::Sender<()>)>,
+    tx: Option<std::sync::mpsc::Sender<(AppLanguage, String, std::sync::mpsc::Sender<()>)>>,
 }
 
 impl ModalActor {
-    /// Process-wide actor: the worker spawns once, on first error.
-    fn global() -> &'static Self {
-        static ACTOR: std::sync::OnceLock<ModalActor> = std::sync::OnceLock::new();
-        ACTOR.get_or_init(|| {
-            let (tx, rx) =
-                std::sync::mpsc::channel::<(AppLanguage, String, std::sync::mpsc::Sender<()>)>();
-            if let Err(error) = std::thread::Builder::new()
-                .name("nerust-error-dialog".to_string())
-                .spawn(move || {
-                    for (language, detail, done) in rx {
-                        show_blocking(language, &detail);
-                        let _ = done.send(());
-                    }
-                })
-            {
-                log::error!("error dialog worker failed to spawn: {error}");
-            }
-            ModalActor { tx }
-        })
+    /// Process-wide actor behind a lock; the worker (re)spawns on demand.
+    fn global() -> &'static std::sync::Mutex<Self> {
+        static ACTOR: std::sync::OnceLock<std::sync::Mutex<ModalActor>> =
+            std::sync::OnceLock::new();
+        ACTOR.get_or_init(|| std::sync::Mutex::new(ModalActor { tx: None }))
+    }
+
+    fn spawn_worker()
+    -> Option<std::sync::mpsc::Sender<(AppLanguage, String, std::sync::mpsc::Sender<()>)>> {
+        let (tx, rx) =
+            std::sync::mpsc::channel::<(AppLanguage, String, std::sync::mpsc::Sender<()>)>();
+        if let Err(error) = std::thread::Builder::new()
+            .name("nerust-error-dialog".to_string())
+            .spawn(move || {
+                for (language, detail, done) in rx {
+                    show_blocking(language, &detail);
+                    let _ = done.send(());
+                }
+            })
+        {
+            log::error!("error dialog worker failed to spawn: {error}");
+            return None;
+        }
+        Some(tx)
     }
 
     /// Queue one modal: the worker shows it, then acks through the channel.
-    /// A dead channel means the worker died; the host reaps it as a failed ack.
-    fn show(&self, language: AppLanguage, detail: String) -> std::sync::mpsc::Receiver<()> {
+    /// A dead worker respawns once; only a spawn failure surfaces as a dead ack.
+    fn show(language: AppLanguage, detail: String) -> std::sync::mpsc::Receiver<()> {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
-        if self.tx.send((language, detail, done_tx)).is_err() {
+        let mut actor = Self::global()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if actor.tx.is_none() {
+            actor.tx = Self::spawn_worker();
+        }
+        let mut sent = actor
+            .tx
+            .as_ref()
+            .is_some_and(|tx| tx.send((language, detail.clone(), done_tx)).is_ok());
+        if !sent {
+            // Worker died between health check and send: one respawn, one retry.
+            actor.tx = Self::spawn_worker();
+            let (retry_tx, retry_rx) = std::sync::mpsc::channel();
+            sent = actor
+                .tx
+                .as_ref()
+                .is_some_and(|tx| tx.send((language, detail, retry_tx)).is_ok());
+            if sent {
+                return retry_rx;
+            }
             log::error!("error dialog worker gone; ack will fail");
         }
         done_rx
