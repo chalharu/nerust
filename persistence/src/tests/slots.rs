@@ -160,6 +160,28 @@ fn save_slot_summary_matches_loaded_summary() {
 }
 
 #[test]
+fn summary_bytes_match_full_load_without_materializing_state() {
+    use crate::{
+        sidecar::StorageLocation,
+        slots::{build_state_slot_bytes, load_state_summary_bytes},
+    };
+    let identity = test_identity();
+    let path = StorageLocation::document_tree(
+        "content://provider/tree/primary%3Atest",
+        "nes/id/states/7.state",
+    )
+    .unwrap();
+    let big_state = vec![7u8; 1024 * 1024];
+    let (bytes, written) =
+        build_state_slot_bytes(path.clone(), 7, &big_state, &identity, None).unwrap();
+    let summary = load_state_summary_bytes(path.clone(), bytes, Some(&identity))
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary, written);
+    assert!(load_state_summary_bytes(path, vec![0u8; 64], Some(&identity)).is_err());
+}
+
+#[test]
 fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
     use crate::{
         sidecar::StorageLocation,

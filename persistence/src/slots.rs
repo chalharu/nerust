@@ -7,6 +7,7 @@ use std::{
 
 use nerust_core_traits::identity::SystemIdentity;
 
+pub use crate::archive::MAX_SLOT_ARCHIVE_BYTES;
 use crate::{
     archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
     error::PersistenceError,
@@ -144,6 +145,15 @@ pub fn build_state_slot_bytes(
     let bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
     let summary = summary_from_metadata(path, saved_at, &metadata, has_thumbnail);
     Ok((bytes, summary))
+}
+
+/// Scan entry point: summary only, never the machine state or thumbnail.
+pub fn load_state_summary_bytes(
+    path: StorageLocation,
+    bytes: Vec<u8>,
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<StateSlotSummary>, PersistenceError> {
+    crate::archive::read_state_summary_bytes(path, bytes, identity)
 }
 
 pub fn load_state_slot_bytes(

@@ -14,7 +14,10 @@ use nerust_persistence::{
     error::PersistenceError,
     model::{LoadedStateSlot, StateSlotSummary},
     sidecar::StorageLocation,
-    slots::{build_state_slot_bytes, load_state_slot_bytes},
+    slots::{
+        MAX_SLOT_ARCHIVE_BYTES, build_state_slot_bytes, load_state_slot_bytes,
+        load_state_summary_bytes,
+    },
     thumbnail::ThumbnailSource,
 };
 use winit::platform::android::activity::AndroidApp;
@@ -264,6 +267,11 @@ impl AndroidStorageBackend {
         .map_err(Self::persist)
     }
 
+    /// Scan transfer guard: known-oversized files cannot load, so scans skip early.
+    fn scan_candidate(size: Option<i64>) -> bool {
+        size.is_none_or(|size| (size as u64) <= MAX_SLOT_ARCHIVE_BYTES)
+    }
+
     fn state_path(
         dir: &StorageLocation,
         slot_id: u64,
@@ -304,7 +312,8 @@ impl SlotBackend for AndroidStorageBackend {
             .filter(|(name, _)| name.ends_with(".state"))
         {
             // Empty files cannot hold an archive; unknown sizes still read.
-            if size == Some(0) {
+            // Oversized files cannot load, so scans skip before transfer.
+            if size == Some(0) || !Self::scan_candidate(size) {
                 continue;
             }
             let path = dir.child(&name)?;
@@ -312,8 +321,8 @@ impl SlotBackend for AndroidStorageBackend {
             let Some(bytes) = bytes else {
                 continue;
             };
-            if let Some(slot) = load_state_slot_bytes(path, bytes, Some(identity))? {
-                result.push(slot.summary);
+            if let Some(summary) = load_state_summary_bytes(path, bytes, Some(identity))? {
+                result.push(summary);
             }
         }
         result.sort_by_key(|slot| slot.slot_id);
@@ -489,5 +498,18 @@ mod tests {
         assert_eq!(entries[1].known_size(), None);
         // Negative Kotlin lengths normalize to unknown.
         assert_eq!(entries[2].known_size(), None);
+    }
+
+    #[test]
+    fn scan_skips_only_known_oversized_files() {
+        use super::AndroidStorageBackend;
+        assert!(AndroidStorageBackend::scan_candidate(None));
+        assert!(AndroidStorageBackend::scan_candidate(Some(42)));
+        assert!(AndroidStorageBackend::scan_candidate(Some(
+            super::MAX_SLOT_ARCHIVE_BYTES as i64
+        )));
+        assert!(!AndroidStorageBackend::scan_candidate(Some(
+            super::MAX_SLOT_ARCHIVE_BYTES as i64 + 1
+        )));
     }
 }
