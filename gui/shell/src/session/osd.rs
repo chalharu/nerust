@@ -83,9 +83,9 @@ impl OsdManager {
         let mut changed = false;
         let router = ModalRouter { policy, channel };
         for n in notifications {
-            // One message build per event: the row and the key share it, never re-rendered.
-            let message = n.kind.message();
-            match router.route(&n.kind) {
+            // The stored message feeds the row, the key, and the route: no rebuilds.
+            let message = n.message.clone();
+            match router.route(&n.message) {
                 // No composited frame and not modal-worthy: drop.
                 // Disabled levels never display.
                 ModalRoute::Drop => continue,
@@ -111,7 +111,7 @@ impl OsdManager {
                 count: n.count,
                 duration: policy.duration(n.level),
                 deadline: now + policy.duration(n.level),
-                group: n.kind.replace_group(),
+                group: n.message.replace_group(),
             };
             if self.transient.route_row(item) == RouteEffect::ShowingChanged {
                 changed = true;
@@ -269,7 +269,7 @@ impl crate::session::osd_presenter::OsdState for OsdManager {
 
 #[cfg(test)]
 mod tests {
-    use super::super::notification::NotificationKind;
+    use super::super::notification::Message;
     use super::*;
     use crate::session::error::SlotOpFailure;
     use crate::session::notification::NotificationLevel;
@@ -292,7 +292,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -333,7 +333,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Warning,
-                kind: NotificationKind::PersistenceUnavailable,
+                message: Message::persistence_unavailable(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -361,7 +361,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Warning,
-                kind: NotificationKind::PersistenceUnavailable,
+                message: Message::persistence_unavailable(),
                 count: 1,
                 seq: 1,
                 at: std::time::UNIX_EPOCH,
@@ -388,14 +388,14 @@ mod tests {
 
     #[test]
     fn generation_advances_only_on_visible_change() {
-        use super::super::notification::NotificationKind as K;
+        use super::super::notification::Message as K;
         let mut manager = OsdManager::new();
         let now = Instant::now();
         let base = manager.generation();
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
-                kind: K::Paused,
+                message: K::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::SystemTime::now(),
@@ -410,11 +410,11 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
-                kind: K::CommandFailure {
-                    origin: super::super::notification::FailureOrigin::Host,
-                    id: "",
-                    detail: "boom".to_string(),
-                },
+                message: K::command_failure(
+                    super::super::notification::FailureOrigin::Host,
+                    "",
+                    "boom".to_string(),
+                ),
                 count: 1,
                 seq: 1,
                 at: std::time::SystemTime::now(),
@@ -429,21 +429,17 @@ mod tests {
 
     #[test]
     fn external_error_routes_modal_without_frame() {
-        use super::super::notification::{FailureOrigin, NotificationKind as K};
-        let kind = K::CommandFailure {
-            origin: FailureOrigin::Selection,
-            id: "",
-            detail: "picker failed".to_string(),
-        };
-        assert_eq!(kind.level(), NotificationLevel::Error);
-        assert!(kind.wants_modal());
-        assert_eq!(kind.text(AppLanguage::English), "Picker: picker failed");
-        assert_eq!(kind.text(AppLanguage::Japanese), "選択: picker failed");
+        use super::super::notification::{FailureOrigin, Message as K};
+        let message = K::command_failure(FailureOrigin::Selection, "", "picker failed".to_string());
+        assert_eq!(message.level(), NotificationLevel::Error);
+        assert!(message.wants_modal());
+        assert_eq!(message.text(AppLanguage::English), "Picker: picker failed");
+        assert_eq!(message.text(AppLanguage::Japanese), "選択: picker failed");
         let mut manager = OsdManager::new();
         manager.push_all_with_policy(
             vec![UiNotification {
-                level: kind.level(),
-                kind,
+                level: message.level(),
+                message,
                 count: 1,
                 seq: 0,
                 at: std::time::SystemTime::now(),
@@ -465,10 +461,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
-                kind: NotificationKind::SlotFailed {
-                    slot: Some(1),
-                    reason: SlotOpFailure::Storage,
-                },
+                message: Message::slot_failed(Some(1), SlotOpFailure::Storage),
                 count: 1,
                 seq: 0,
                 at: std::time::SystemTime::now(),
@@ -489,27 +482,21 @@ mod tests {
         let mut without_modal = settings();
         without_modal.error_modal = false;
         let now = Instant::now();
-        for (level, kind) in [
+        for (level, message) in [
             (
                 NotificationLevel::Error,
-                NotificationKind::SlotFailed {
-                    slot: Some(1),
-                    reason: SlotOpFailure::Storage,
-                },
+                Message::slot_failed(Some(1), SlotOpFailure::Storage),
             ),
             (
                 NotificationLevel::Warning,
-                NotificationKind::SlotFailed {
-                    slot: None,
-                    reason: SlotOpFailure::Missing,
-                },
+                Message::slot_failed(None, SlotOpFailure::Missing),
             ),
-            (NotificationLevel::Info, NotificationKind::Paused),
+            (NotificationLevel::Info, Message::paused()),
         ] {
             manager.push_all_with_policy(
                 vec![UiNotification {
                     level,
-                    kind,
+                    message,
                     count: 1,
                     seq: 0,
                     at: std::time::SystemTime::now(),
@@ -536,7 +523,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::SystemTime::now(),
@@ -560,7 +547,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::SystemTime::now(),
@@ -588,10 +575,10 @@ mod tests {
             manager.push_all_with_policy(
                 vec![UiNotification {
                     level: NotificationLevel::Info,
-                    kind: if seq == 0 {
-                        NotificationKind::Paused
+                    message: if seq == 0 {
+                        Message::paused()
                     } else {
-                        NotificationKind::Resumed
+                        Message::resumed()
                     },
                     count: 1,
                     seq,
@@ -627,12 +614,12 @@ mod tests {
         let mut manager = OsdManager::new();
         let now = Instant::now();
         // Five distinct pushes: showing + two queued, oldest dropped.
-        for (seq, kind) in [
-            NotificationKind::Paused,
-            NotificationKind::Resumed,
-            NotificationKind::Reset,
-            NotificationKind::CreatedSlot,
-            NotificationKind::Paused,
+        for (seq, message) in [
+            Message::paused(),
+            Message::resumed(),
+            Message::reset(),
+            Message::created_slot(),
+            Message::paused(),
         ]
         .into_iter()
         .enumerate()
@@ -640,7 +627,7 @@ mod tests {
             manager.push_all_with_policy(
                 vec![UiNotification {
                     level: NotificationLevel::Info,
-                    kind,
+                    message,
                     count: 1,
                     seq: seq as u64,
                     at: std::time::SystemTime::now(),
@@ -655,7 +642,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 99,
                 at: std::time::SystemTime::now(),
@@ -695,10 +682,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Error,
-                kind: NotificationKind::SlotFailed {
-                    slot: None,
-                    reason: SlotOpFailure::Storage,
-                },
+                message: Message::slot_failed(None, SlotOpFailure::Storage),
                 count: 1,
                 seq: 0,
                 at: std::time::SystemTime::now(),
@@ -730,26 +714,23 @@ mod tests {
         altered.error_modal = false;
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        let note = |kind, level| UiNotification {
+        let note = |message, level| UiNotification {
             level,
-            kind,
+            message,
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
         let error = || UiNotification {
             level: L::Error,
-            kind: NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Storage,
-            },
+            message: Message::slot_failed(None, SlotOpFailure::Storage),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
         // Showing Info; two Infos queued (full).
         manager.push_all_with_policy(
-            vec![note(NotificationKind::Paused, L::Info)],
+            vec![note(Message::paused(), L::Info)],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
@@ -759,14 +740,14 @@ mod tests {
         manager.poll(now);
         assert_ne!(manager.generation(), base);
         manager.push_all_with_policy(
-            vec![note(NotificationKind::Resumed, L::Info)],
+            vec![note(Message::resumed(), L::Info)],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
             FrameChannel::Composited,
         );
         manager.push_all_with_policy(
-            vec![note(NotificationKind::Reset, L::Info)],
+            vec![note(Message::reset(), L::Info)],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
@@ -802,7 +783,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -819,10 +800,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Error,
-                kind: NotificationKind::SlotFailed {
-                    slot: None,
-                    reason: SlotOpFailure::Storage,
-                },
+                message: Message::slot_failed(None, SlotOpFailure::Storage),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -848,7 +826,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -864,10 +842,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Warning,
-                kind: NotificationKind::SlotFailed {
-                    slot: None,
-                    reason: SlotOpFailure::Missing,
-                },
+                message: Message::slot_failed(None, SlotOpFailure::Missing),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -894,27 +869,21 @@ mod tests {
         let now = Instant::now();
         let error = |slot| UiNotification {
             level: L::Error,
-            kind: NotificationKind::SlotFailed {
-                slot,
-                reason: SlotOpFailure::Storage,
-            },
+            message: Message::slot_failed(slot, SlotOpFailure::Storage),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
         let warning = UiNotification {
             level: L::Warning,
-            kind: NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Missing,
-            },
+            message: Message::slot_failed(None, SlotOpFailure::Missing),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        let info = |kind| UiNotification {
+        let info = |message| UiNotification {
             level: L::Info,
-            kind,
+            message,
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -938,7 +907,7 @@ mod tests {
             FrameChannel::Composited,
         );
         manager.push_all_with_policy(
-            vec![info(NotificationKind::Paused)],
+            vec![info(Message::paused())],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
@@ -947,7 +916,7 @@ mod tests {
         // A second Info overflows: the oldest Info drops, Warning and
         // Error survive.
         manager.push_all_with_policy(
-            vec![info(NotificationKind::Reset)],
+            vec![info(Message::reset())],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
@@ -973,10 +942,7 @@ mod tests {
         let now = Instant::now();
         let error = |slot| UiNotification {
             level: L::Error,
-            kind: NotificationKind::SlotFailed {
-                slot,
-                reason: SlotOpFailure::Storage,
-            },
+            message: Message::slot_failed(slot, SlotOpFailure::Storage),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1022,17 +988,14 @@ mod tests {
         let now = Instant::now();
         let error = |slot| UiNotification {
             level: L::Error,
-            kind: NotificationKind::SlotFailed {
-                slot,
-                reason: SlotOpFailure::Storage,
-            },
+            message: Message::slot_failed(slot, SlotOpFailure::Storage),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
-        let info = |kind| UiNotification {
+        let info = |message| UiNotification {
             level: L::Info,
-            kind,
+            message,
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1040,7 +1003,7 @@ mod tests {
         // Errors preempt a showing Info, so a full Error queue here is unreachable.
         // The demote victim in this shape is the tail Info.
         manager.push_all_with_policy(
-            vec![info(NotificationKind::Paused)],
+            vec![info(Message::paused())],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
@@ -1052,10 +1015,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Warning,
-                kind: NotificationKind::SlotFailed {
-                    slot: None,
-                    reason: SlotOpFailure::Missing,
-                },
+                message: Message::slot_failed(None, SlotOpFailure::Missing),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -1066,7 +1026,7 @@ mod tests {
             FrameChannel::Composited,
         );
         manager.push_all_with_policy(
-            vec![info(NotificationKind::Reset)],
+            vec![info(Message::reset())],
             &TransientPolicy::from(&altered),
             AppLanguage::English,
             now,
@@ -1103,7 +1063,7 @@ mod tests {
         let now = Instant::now();
         let note = |slot| UiNotification {
             level: L::Info,
-            kind: NotificationKind::SelectedSlot(slot),
+            message: Message::selected_slot(slot),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1141,7 +1101,7 @@ mod tests {
         let now = Instant::now();
         let note = |slot| UiNotification {
             level: L::Info,
-            kind: NotificationKind::SelectedSlot(slot),
+            message: Message::selected_slot(slot),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1206,14 +1166,14 @@ mod tests {
 
     #[test]
     fn interleaved_pause_resume_queues_sequentially() {
-        use super::super::notification::NotificationKind as K;
+        use super::super::notification::Message as K;
         use super::super::notification::NotificationLevel as L;
         let mut manager = OsdManager::new();
         let t0 = Instant::now();
         let at = |ms| t0 + Duration::from_millis(ms);
-        let note = |kind| UiNotification {
+        let note = |message| UiNotification {
             level: L::Info,
-            kind,
+            message,
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1225,7 +1185,7 @@ mod tests {
         }
         // Pause, +0.5s resume, +0.5s pause, +0.5s resume (2s slots).
         manager.push_all_with_policy(
-            vec![note(K::Paused)],
+            vec![note(K::paused())],
             &policy(),
             AppLanguage::English,
             at(0),
@@ -1236,7 +1196,7 @@ mod tests {
         assert_ne!(manager.generation(), base);
         assert_eq!(shown!().as_deref(), Some("Paused"));
         manager.push_all_with_policy(
-            vec![note(K::Resumed)],
+            vec![note(K::resumed())],
             &policy(),
             AppLanguage::English,
             at(500),
@@ -1247,7 +1207,7 @@ mod tests {
         assert_eq!(manager.generation(), base);
         // Interleaved: must queue behind, never merge into the showing label.
         manager.push_all_with_policy(
-            vec![note(K::Paused)],
+            vec![note(K::paused())],
             &policy(),
             AppLanguage::English,
             at(1000),
@@ -1255,7 +1215,7 @@ mod tests {
         );
         assert_eq!(shown!().as_deref(), Some("Paused"));
         manager.push_all_with_policy(
-            vec![note(K::Resumed)],
+            vec![note(K::resumed())],
             &policy(),
             AppLanguage::English,
             at(1500),
@@ -1293,7 +1253,7 @@ mod tests {
         let now = Instant::now();
         let note = |count| UiNotification {
             level: L::Info,
-            kind: NotificationKind::Paused,
+            message: Message::paused(),
             count,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1337,7 +1297,7 @@ mod tests {
         manager.push_all_with_policy(
             vec![UiNotification {
                 level: L::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,
@@ -1361,15 +1321,15 @@ mod tests {
         use super::super::notification::NotificationLevel as L;
         let mut manager = OsdManager::new();
         let now = Instant::now();
-        let note = |kind| UiNotification {
+        let note = |message| UiNotification {
             level: L::Info,
-            kind,
+            message,
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
         };
         manager.push_all_with_policy(
-            vec![note(NotificationKind::Paused)],
+            vec![note(Message::paused())],
             &policy(),
             AppLanguage::English,
             now,
@@ -1381,7 +1341,7 @@ mod tests {
         // Queued behind the showing row: no dirty, deadline armed.
         let base = manager.generation();
         manager.push_all_with_policy(
-            vec![note(NotificationKind::Resumed)],
+            vec![note(Message::resumed())],
             &policy(),
             AppLanguage::English,
             now,
@@ -1402,7 +1362,7 @@ mod tests {
         let now = Instant::now();
         let note = UiNotification {
             level: L::Info,
-            kind: NotificationKind::Paused,
+            message: Message::paused(),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,

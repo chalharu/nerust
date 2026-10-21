@@ -59,7 +59,7 @@ impl SessionHandle {
     pub(crate) fn note_persistence_setup(&mut self, setup: PersistenceSetup) {
         if setup == PersistenceSetup::Unavailable {
             self.notifications
-                .push(crate::session::notification::NotificationKind::PersistenceUnavailable);
+                .push(crate::session::notification::Message::persistence_unavailable());
         }
     }
 

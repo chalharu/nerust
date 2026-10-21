@@ -137,7 +137,7 @@ impl SessionHandle {
             return;
         }
         self.notifications
-            .push(super::notification::NotificationKind::command_failure(
+            .push(super::notification::Message::command_failure(
                 origin, "", detail,
             ));
     }
@@ -151,7 +151,7 @@ mod lifecycle_cov_tests {
     #[test]
     fn empty_notification_pump_still_relocalizes_and_filters_visible_rows() {
         use crate::session::{
-            notification::{NotificationKind, NotificationLevel, UiNotification},
+            notification::{Message, NotificationLevel, UiNotification},
             osd::{FrameChannel, OsdManager, TickMetrics, TransientPolicy},
         };
         use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
@@ -162,7 +162,7 @@ mod lifecycle_cov_tests {
         osd.push_all_with_policy(
             vec![UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 1,
                 seq: 0,
                 at: std::time::UNIX_EPOCH,

@@ -31,7 +31,7 @@ pub trait SessionCmd {
         &self,
         outcome: &SessionCommandOutcome,
         active_slot: Option<u64>,
-    ) -> Option<crate::session::notification::NotificationKind>;
+    ) -> Option<crate::session::notification::Message>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,33 +91,29 @@ impl SessionCmd for SessionCommand {
         &self,
         outcome: &SessionCommandOutcome,
         active_slot: Option<u64>,
-    ) -> Option<crate::session::notification::NotificationKind> {
-        use crate::session::notification::NotificationKind;
+    ) -> Option<crate::session::notification::Message> {
+        use crate::session::notification::Message;
         if let Some(reason) = outcome.slot_failure {
             let slot = self.slot_affinity(active_slot);
-            return Some(NotificationKind::SlotFailed { slot, reason });
+            return Some(Message::slot_failed(slot, reason));
         }
         if !outcome.executed {
             return None;
         }
         Some(match self {
-            SessionCommand::Pause | SessionCommand::TogglePause => NotificationKind::Paused,
-            SessionCommand::Resume => NotificationKind::Resumed,
-            SessionCommand::Reset => NotificationKind::Reset,
-            SessionCommand::CreateSlot => NotificationKind::CreatedSlot,
-            SessionCommand::SaveActiveSlotOrNew => {
-                NotificationKind::SavedSlot(active_slot.unwrap_or(0))
-            }
-            SessionCommand::LoadActiveSlot => {
-                NotificationKind::LoadedSlot(active_slot.unwrap_or(0))
-            }
-            SessionCommand::SelectActiveSlot(id) => NotificationKind::SelectedSlot(*id),
+            SessionCommand::Pause | SessionCommand::TogglePause => Message::paused(),
+            SessionCommand::Resume => Message::resumed(),
+            SessionCommand::Reset => Message::reset(),
+            SessionCommand::CreateSlot => Message::created_slot(),
+            SessionCommand::SaveActiveSlotOrNew => Message::saved_slot(active_slot.unwrap_or(0)),
+            SessionCommand::LoadActiveSlot => Message::loaded_slot(active_slot.unwrap_or(0)),
+            SessionCommand::SelectActiveSlot(id) => Message::selected_slot(*id),
             SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => {
-                NotificationKind::SelectedSlot(active_slot.unwrap_or(0))
+                Message::selected_slot(active_slot.unwrap_or(0))
             }
-            SessionCommand::SaveSlot(id) => NotificationKind::SavedSlot(*id),
-            SessionCommand::LoadSlot(id) => NotificationKind::LoadedSlot(*id),
-            SessionCommand::DeleteSlot(id) => NotificationKind::DeletedSlot(*id),
+            SessionCommand::SaveSlot(id) => Message::saved_slot(*id),
+            SessionCommand::LoadSlot(id) => Message::loaded_slot(*id),
+            SessionCommand::DeleteSlot(id) => Message::deleted_slot(*id),
         })
     }
 }
@@ -134,7 +130,7 @@ impl SessionCommand {
         &self,
         outcome: &SessionCommandOutcome,
         active_slot: Option<u64>,
-    ) -> Option<crate::session::notification::NotificationKind> {
+    ) -> Option<crate::session::notification::Message> {
         self.success_notification(outcome, active_slot)
     }
 }
@@ -153,7 +149,7 @@ pub fn outcome_notification(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
-) -> Option<crate::session::notification::NotificationKind> {
+) -> Option<crate::session::notification::Message> {
     notification_for(command, outcome, active_slot)
 }
 
@@ -162,7 +158,7 @@ pub fn notification_for(
     command: SessionCommand,
     outcome: &SessionCommandOutcome,
     active_slot: Option<u64>,
-) -> Option<crate::session::notification::NotificationKind> {
+) -> Option<crate::session::notification::Message> {
     command.success_notification(outcome, active_slot)
 }
 
@@ -202,7 +198,7 @@ mod tests {
         resolve_toggle,
     };
     use crate::session::error::SlotOpFailure;
-    use crate::session::notification::{NotificationKind, NotificationLevel};
+    use crate::session::notification::{Message, NotificationLevel};
 
     #[test]
     fn slot_failure_maps_to_warning_or_error() {
@@ -217,10 +213,7 @@ mod tests {
         );
         assert_eq!(
             warn,
-            Some(NotificationKind::SlotFailed {
-                slot: Some(2),
-                reason: SlotOpFailure::Missing,
-            })
+            Some(Message::slot_failed(Some(2), SlotOpFailure::Missing,))
         );
         assert_eq!(warn.unwrap().level(), NotificationLevel::Warning);
         let err = outcome_notification(
@@ -250,7 +243,7 @@ mod tests {
         };
         assert_eq!(
             outcome_notification(resolve_toggle(C::TogglePause, true), &ok, None),
-            Some(NotificationKind::Resumed)
+            Some(Message::resumed())
         );
     }
 
@@ -262,28 +255,19 @@ mod tests {
             slot_failure: None,
         };
         let cases = [
-            (SessionCommand::Pause, NotificationKind::Paused),
-            (SessionCommand::Resume, NotificationKind::Resumed),
-            (SessionCommand::Reset, NotificationKind::Reset),
-            (SessionCommand::CreateSlot, NotificationKind::CreatedSlot),
-            (
-                SessionCommand::SelectNextSlot,
-                NotificationKind::SelectedSlot(0),
-            ),
+            (SessionCommand::Pause, Message::paused()),
+            (SessionCommand::Resume, Message::resumed()),
+            (SessionCommand::Reset, Message::reset()),
+            (SessionCommand::CreateSlot, Message::created_slot()),
+            (SessionCommand::SelectNextSlot, Message::selected_slot(0)),
             (
                 SessionCommand::SelectPreviousSlot,
-                NotificationKind::SelectedSlot(0),
+                Message::selected_slot(0),
             ),
-            (SessionCommand::SaveSlot(2), NotificationKind::SavedSlot(2)),
-            (SessionCommand::LoadSlot(2), NotificationKind::LoadedSlot(2)),
-            (
-                SessionCommand::DeleteSlot(2),
-                NotificationKind::DeletedSlot(2),
-            ),
-            (
-                SessionCommand::LoadActiveSlot,
-                NotificationKind::LoadedSlot(0),
-            ),
+            (SessionCommand::SaveSlot(2), Message::saved_slot(2)),
+            (SessionCommand::LoadSlot(2), Message::loaded_slot(2)),
+            (SessionCommand::DeleteSlot(2), Message::deleted_slot(2)),
+            (SessionCommand::LoadActiveSlot, Message::loaded_slot(0)),
         ];
         for (command, expected) in cases {
             assert_eq!(outcome_notification(command, &ok, Some(0)), Some(expected));
@@ -328,17 +312,11 @@ mod tests {
         };
         assert_eq!(
             outcome_notification(C::SaveActiveSlotOrNew, &failed, Some(7)),
-            Some(NotificationKind::SlotFailed {
-                slot: Some(7),
-                reason: SlotOpFailure::Missing,
-            })
+            Some(Message::slot_failed(Some(7), SlotOpFailure::Missing,))
         );
         assert_eq!(
             outcome_notification(C::Pause, &failed, Some(7)),
-            Some(NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Missing,
-            })
+            Some(Message::slot_failed(None, SlotOpFailure::Missing,))
         );
     }
 
@@ -384,11 +362,11 @@ mod tests {
         };
         assert_eq!(
             outcome_notification(SessionCommand::SaveActiveSlotOrNew, &ok, Some(3)),
-            Some(NotificationKind::SavedSlot(3))
+            Some(Message::saved_slot(3))
         );
         assert_eq!(
             outcome_notification(SessionCommand::SelectActiveSlot(5), &ok, Some(3)),
-            Some(NotificationKind::SelectedSlot(5))
+            Some(Message::selected_slot(5))
         );
     }
 }

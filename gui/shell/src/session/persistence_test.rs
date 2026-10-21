@@ -431,7 +431,7 @@ fn flush_mapper_save_propagates_export_failure() {
 
 #[test]
 fn setup_failure_pushes_persistence_unavailable() {
-    use crate::session::notification::NotificationKind;
+    use crate::session::notification::Message;
 
     // Core active but no ROM loaded: no media identity, so setup fails.
     let mut session = test_session();
@@ -442,10 +442,7 @@ fn setup_failure_pushes_persistence_unavailable() {
     session.note_persistence_setup(PersistenceSetup::Unavailable);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
-    assert!(matches!(
-        notes[0].kind,
-        NotificationKind::PersistenceUnavailable
-    ));
+    assert_eq!(notes[0].message, Message::persistence_unavailable());
 }
 
 #[test]

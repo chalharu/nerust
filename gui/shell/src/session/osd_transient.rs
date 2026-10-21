@@ -6,9 +6,7 @@ use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
 
-use crate::session::notification::{
-    NotificationKind, NotificationLevel, ReplaceGroup, append_count,
-};
+use crate::session::notification::{Message, NotificationLevel, ReplaceGroup, append_count};
 
 #[derive(Debug, Clone)]
 pub struct OsdRow {
@@ -79,7 +77,7 @@ pub enum FrameChannel {
 /// Modal fallback: without a composited frame only errors and warnings go modal; info drops.
 /// A new channel must pick its route here.
 pub(crate) fn falls_back_to_modal(
-    kind: &NotificationKind,
+    kind: &Message,
     policy: &TransientPolicy,
     channel: FrameChannel,
 ) -> bool {
@@ -249,11 +247,10 @@ impl TransientQueue {
     /// Reports where the merge landed for dirty gating.
     fn merge_consecutive(&mut self, item: &OsdItem) -> Option<MergeTarget> {
         if !self.pending.is_empty() {
-            // Key comparison first: equal keys skip the O(n) message walk.
+            // Key-only merge: collisions only over-coalesce, never misroute.
             let matches = self.pending.back().is_some_and(|back| {
                 back.level == item.level
                     && back.message.coalescing_key() == item.message.coalescing_key()
-                    && back.message == item.message
             });
             if !matches {
                 return None;
@@ -272,7 +269,6 @@ impl TransientQueue {
         let current = self.current.as_mut()?;
         if current.level != item.level
             || current.message.coalescing_key() != item.message.coalescing_key()
-            || current.message != item.message
         {
             return None;
         }
@@ -435,19 +431,13 @@ mod tests {
 
     #[test]
     fn falls_back_to_modal_covers_levels_and_channels() {
-        use crate::session::notification::NotificationKind as K;
+        use crate::session::notification::Message as K;
         let mut modal = settings();
         modal.error_modal = true;
         let mut osd = settings();
         osd.error_modal = false;
-        let error = K::SlotFailed {
-            slot: Some(1),
-            reason: crate::session::error::SlotOpFailure::Storage,
-        };
-        let warning = K::SlotFailed {
-            slot: None,
-            reason: crate::session::error::SlotOpFailure::Missing,
-        };
+        let error = K::slot_failed(Some(1), crate::session::error::SlotOpFailure::Storage);
+        let warning = K::slot_failed(None, crate::session::error::SlotOpFailure::Missing);
         // Composited: only Error with modal enabled.
         assert!(falls_back_to_modal(
             &error,
@@ -465,7 +455,7 @@ mod tests {
             FrameChannel::Composited
         ));
         assert!(!falls_back_to_modal(
-            &K::Paused,
+            &K::paused(),
             &TransientPolicy::from(&modal),
             FrameChannel::Composited
         ));
@@ -492,12 +482,12 @@ mod tests {
         ));
         // Unpresented: Info is dropped, never modal.
         assert!(!falls_back_to_modal(
-            &K::Paused,
+            &K::paused(),
             &TransientPolicy::from(&modal),
             FrameChannel::Unpresented
         ));
         assert!(!falls_back_to_modal(
-            &K::Paused,
+            &K::paused(),
             &TransientPolicy::from(&osd),
             FrameChannel::Unpresented
         ));
@@ -741,20 +731,20 @@ mod transient_cov_tests {
 
     #[test]
     fn modal_fallback_routes_by_channel() {
-        use crate::session::notification::NotificationKind;
+        use crate::session::notification::Message;
         let policy = TransientPolicy::from(
             &nerust_settings_core::model::local::NotificationSettings::default(),
         );
         assert!(falls_back_to_modal(
-            &NotificationKind::PersistenceUnavailable,
+            &Message::persistence_unavailable(),
             &policy,
             FrameChannel::Unpresented
         ));
         assert!(!falls_back_to_modal(
-            &NotificationKind::Paused,
+            &Message::paused(),
             &policy,
             FrameChannel::Unpresented
         ));
-        let _ = falls_back_to_modal(&NotificationKind::Paused, &policy, FrameChannel::Composited);
+        let _ = falls_back_to_modal(&Message::paused(), &policy, FrameChannel::Composited);
     }
 }

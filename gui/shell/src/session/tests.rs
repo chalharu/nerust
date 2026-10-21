@@ -1473,24 +1473,15 @@ fn delete_slot_without_core_reports_not_executed() {
 
 #[test]
 fn report_external_error_truncates_and_labels_source() {
-    use crate::session::notification::{FailureOrigin, MAX_EXTERNAL_DETAIL, NotificationKind};
+    use crate::session::notification::{FailureOrigin, MAX_EXTERNAL_DETAIL};
 
     let mut session = test_session();
     let long = "x".repeat(MAX_EXTERNAL_DETAIL + 100);
     session.report_external_error(FailureOrigin::Host, long);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
-    match &notes[0].kind {
-        NotificationKind::CommandFailure {
-            origin: source,
-            detail,
-            ..
-        } => {
-            assert_eq!(*source, FailureOrigin::Host);
-            assert_eq!(detail.len(), MAX_EXTERNAL_DETAIL);
-        }
-        other => panic!("unexpected kind: {other:?}"),
-    }
+    assert_eq!(notes[0].message.origin, Some(FailureOrigin::Host));
+    assert_eq!(notes[0].message.detail.len(), MAX_EXTERNAL_DETAIL);
     assert_eq!(
         notes[0].level,
         crate::session::notification::NotificationLevel::Error
@@ -1504,7 +1495,7 @@ fn pump_osd_drops_info_without_frame() {
     use std::time::Instant;
 
     use crate::session::{
-        notification::NotificationKind,
+        notification::Message,
         osd::{OsdManager, PushInput, TransientPolicy},
     };
 
@@ -1521,7 +1512,7 @@ fn pump_osd_drops_info_without_frame() {
         now: Instant::now(),
         tick,
     };
-    session.notifications.push(NotificationKind::Paused);
+    session.notifications.push(Message::paused());
     let report = session.pump_osd(&mut manager, input());
     assert!(!report.changed);
     assert!(!report.modal_queued);
@@ -1529,7 +1520,7 @@ fn pump_osd_drops_info_without_frame() {
     assert_eq!(manager.modal_pending(), 0);
     session
         .notifications
-        .push(NotificationKind::PersistenceUnavailable);
+        .push(Message::persistence_unavailable());
     let report = session.pump_osd(&mut manager, input());
     assert!(report.modal_queued);
     assert_eq!(manager.modal_pending(), 1);
@@ -1538,7 +1529,7 @@ fn pump_osd_drops_info_without_frame() {
 /// Cached frame data (title, history rows, touch overlay) rebuilds only on key change.
 #[test]
 fn cached_frame_data_rebuilds_only_on_key_change() {
-    use crate::session::notification::NotificationKind;
+    use crate::session::notification::Message;
 
     let mut session = test_session();
     let tick = session.tick_metrics();
@@ -1547,7 +1538,7 @@ fn cached_frame_data_rebuilds_only_on_key_change() {
     assert_eq!(session.window_title_cached(&tick), first);
     assert_eq!(first, session.window_title(&tick));
     // History cache: same seq and language reuses the stored rows.
-    session.notifications.push(NotificationKind::Paused);
+    session.notifications.push(Message::paused());
     let rows = session.notification_history_lines_cached(AppLanguage::English);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].text, "Paused");

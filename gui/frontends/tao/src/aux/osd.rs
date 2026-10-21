@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn merged_history_line_carries_single_count_suffix() {
         use nerust_gui_shell::session::{
-            notification::{NotificationKind, UiNotification},
+            notification::{Message, UiNotification},
             osd::history_lines,
         };
         // Pins the shell/view contract without restructuring shell
@@ -587,7 +587,7 @@ mod tests {
         for language in [en(), ja()] {
             let line = UiNotification {
                 level: NotificationLevel::Info,
-                kind: NotificationKind::Paused,
+                message: Message::paused(),
                 count: 3,
                 seq: 0,
                 at: std::time::SystemTime::UNIX_EPOCH,

@@ -31,34 +31,6 @@ impl NotificationLevel {
     }
 }
 
-/// Structured notification content. Frontends render via [`NotificationKind::text`];
-/// no per-frontend message table is needed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NotificationKind {
-    Paused,
-    Resumed,
-    Reset,
-    SavedSlot(u64),
-    LoadedSlot(u64),
-    DeletedSlot(u64),
-    CreatedSlot,
-    SelectedSlot(u64),
-    /// Persistence paths could not be resolved: the game runs, but saves have nowhere to go.
-    /// Pushed once at setup time instead of failing every later flush.
-    PersistenceUnavailable,
-    SlotFailed {
-        slot: Option<u64>,
-        reason: SlotOpFailure,
-    },
-    /// Command and out-of-band frontend failures share one shape: a stable id plus detail.
-    /// The modal queue is capped in count but not in bytes, so detail stays truncated.
-    CommandFailure {
-        origin: FailureOrigin,
-        id: &'static str,
-        detail: String,
-    },
-}
-
 /// Where a failure surfaced. Filter key for the history grid; also
 /// selects the localized origin prefix (see `text`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +79,132 @@ pub struct Message {
 }
 
 impl Message {
+    /// Unit events with no args.
+    pub fn paused() -> Self {
+        Self::unit(MessageKey::Paused)
+    }
+
+    /// Unit events with no args.
+    pub fn resumed() -> Self {
+        Self::unit(MessageKey::Resumed)
+    }
+
+    /// Unit events with no args.
+    pub fn reset() -> Self {
+        Self::unit(MessageKey::Reset)
+    }
+
+    /// Unit events with no args.
+    pub fn created_slot() -> Self {
+        Self::unit(MessageKey::SlotCreated)
+    }
+
+    /// Slot-bound events carrying one slot id.
+    pub fn saved_slot(id: u64) -> Self {
+        Self::slot(MessageKey::SlotSaved, Some(id))
+    }
+
+    /// Slot-bound events carrying one slot id.
+    pub fn loaded_slot(id: u64) -> Self {
+        Self::slot(MessageKey::SlotLoaded, Some(id))
+    }
+
+    /// Slot-bound events carrying one slot id.
+    pub fn deleted_slot(id: u64) -> Self {
+        Self::slot(MessageKey::SlotDeleted, Some(id))
+    }
+
+    /// Slot-bound events carrying one slot id.
+    pub fn selected_slot(id: u64) -> Self {
+        Self::slot(MessageKey::SlotSelected, Some(id))
+    }
+
+    /// Persistence paths could not be resolved: pushed once at setup time.
+    pub fn persistence_unavailable() -> Self {
+        Self::unit(MessageKey::SavesUnavailable)
+    }
+
+    /// Slot failure carrying the typed reason.
+    pub fn slot_failed(slot: Option<u64>, reason: SlotOpFailure) -> Self {
+        Self {
+            key: MessageKey::SlotFailed,
+            slot,
+            reason: Some(reason),
+            origin: None,
+            id: "",
+            detail: String::new(),
+        }
+    }
+
+    /// Single truncation point for failure details; both paths funnel here.
+    /// A pathological message cannot wedge the count-capped modal queue.
+    pub fn command_failure(origin: FailureOrigin, id: &'static str, detail: String) -> Self {
+        Self {
+            key: MessageKey::CommandFailed,
+            slot: None,
+            reason: None,
+            origin: Some(origin),
+            id,
+            detail: detail.chars().take(MAX_EXTERNAL_DETAIL).collect(),
+        }
+    }
+
+    /// Typed failure entry: the source chain renders to text once, at this boundary.
+    /// Truncation and shaping stay in [`command_failure`](Self::command_failure).
+    pub fn command_failure_from<E: std::fmt::Display + ?Sized>(
+        origin: FailureOrigin,
+        id: &'static str,
+        error: &E,
+    ) -> Self {
+        Self::command_failure(origin, id, error.to_string())
+    }
+
+    /// Severity for display and logging.
+    pub fn level(&self) -> NotificationLevel {
+        match self.key {
+            MessageKey::SlotFailed => match self.reason.unwrap_or(SlotOpFailure::Unavailable) {
+                SlotOpFailure::Storage | SlotOpFailure::Corrupt | SlotOpFailure::Incompatible => {
+                    NotificationLevel::Error
+                }
+                SlotOpFailure::Empty | SlotOpFailure::Missing | SlotOpFailure::Unavailable => {
+                    NotificationLevel::Warning
+                }
+            },
+            MessageKey::CommandFailed => NotificationLevel::Error,
+            MessageKey::SavesUnavailable => NotificationLevel::Warning,
+            _ => NotificationLevel::Info,
+        }
+    }
+
+    /// Latest-wins group for OSD replacement, if any. Only
+    /// selection echoes collapse; everything else queues.
+    pub fn replace_group(&self) -> Option<ReplaceGroup> {
+        match self.key {
+            MessageKey::SlotSelected => Some(ReplaceGroup::SelectedSlot),
+            _ => None,
+        }
+    }
+
+    /// Modal fallback without a composited frame: errors and
+    /// warnings stay visible, info is dropped (nothing to show on).
+    pub fn wants_modal(&self) -> bool {
+        !matches!(self.level(), NotificationLevel::Info)
+    }
+
+    /// Channel policy: the log line for this event, or `None` when screen-only.
+    /// New keys declare their channel here instead of editing `push`.
+    pub fn log_level(&self) -> Option<NotificationLevel> {
+        match self.key {
+            MessageKey::SlotSelected => None,
+            _ => Some(self.level()),
+        }
+    }
+
+    /// Localized text via the single renderer adapter.
+    pub fn text(&self, language: AppLanguage) -> String {
+        NotificationRenderer { language }.render_message(self)
+    }
+
     /// Key-only message with no args.
     pub fn unit(key: MessageKey) -> Self {
         Self {
@@ -172,12 +270,7 @@ pub struct NotificationRenderer {
 }
 
 impl NotificationRenderer {
-    /// Render one domain event in the adapter language.
-    pub fn render(&self, kind: &NotificationKind) -> String {
-        self.render_message(&kind.message())
-    }
-
-    /// Render one prebuilt domain message: the single format point shared
+    /// Render one domain message: the single format point shared
     /// by the row and the coalescing key.
     pub fn render_message(&self, message: &Message) -> String {
         render_message(message, self.language)
@@ -311,171 +404,6 @@ pub enum ReplaceGroup {
     SelectedSlot,
 }
 
-impl NotificationKind {
-    /// 64-bit coalescing key over the full content: equal kinds hash equal;
-    /// collisions only over-coalesce.
-    pub fn coalescing_key(&self) -> u64 {
-        const OFFSET: u64 = 0xcbf29ce484222325;
-        const PRIME: u64 = 0x100000001b3;
-        let mut hash = OFFSET;
-        let mut mix = |bytes: &[u8]| {
-            for &byte in bytes {
-                hash ^= u64::from(byte);
-                hash = hash.wrapping_mul(PRIME);
-            }
-        };
-        match self {
-            Self::Paused => mix(b"paused"),
-            Self::Resumed => mix(b"resumed"),
-            Self::Reset => mix(b"reset"),
-            Self::SavedSlot(id) => {
-                mix(b"saved");
-                mix(&id.to_le_bytes());
-            }
-            Self::LoadedSlot(id) => {
-                mix(b"loaded");
-                mix(&id.to_le_bytes());
-            }
-            Self::DeletedSlot(id) => {
-                mix(b"deleted");
-                mix(&id.to_le_bytes());
-            }
-            Self::CreatedSlot => mix(b"created"),
-            Self::SelectedSlot(id) => {
-                mix(b"selected");
-                mix(&id.to_le_bytes());
-            }
-            Self::PersistenceUnavailable => mix(b"unavailable"),
-            Self::SlotFailed { slot, reason } => {
-                mix(b"slotfailed");
-                mix(&slot.unwrap_or(u64::MAX).to_le_bytes());
-                mix(&[*reason as u8]);
-            }
-            Self::CommandFailure { origin, id, detail } => {
-                mix(b"command");
-                mix(&[*origin as u8]);
-                mix(id.as_bytes());
-                mix(detail.as_bytes());
-            }
-        }
-        hash
-    }
-
-    /// Single truncation point for failure details; both paths funnel here.
-    /// A pathological message cannot wedge the count-capped modal queue.
-    pub fn command_failure(origin: FailureOrigin, id: &'static str, detail: String) -> Self {
-        Self::CommandFailure {
-            origin,
-            id,
-            detail: detail.chars().take(MAX_EXTERNAL_DETAIL).collect(),
-        }
-    }
-
-    /// Typed failure entry: the source chain renders to text once, at this boundary.
-    /// Truncation and shaping stay in [`command_failure`](Self::command_failure).
-    pub fn command_failure_from<E: std::fmt::Display + ?Sized>(
-        origin: FailureOrigin,
-        id: &'static str,
-        error: &E,
-    ) -> Self {
-        Self::command_failure(origin, id, error.to_string())
-    }
-
-    pub fn level(&self) -> NotificationLevel {
-        match self {
-            NotificationKind::SlotFailed { reason, .. } => match reason {
-                SlotOpFailure::Storage | SlotOpFailure::Corrupt | SlotOpFailure::Incompatible => {
-                    NotificationLevel::Error
-                }
-                SlotOpFailure::Empty | SlotOpFailure::Missing | SlotOpFailure::Unavailable => {
-                    NotificationLevel::Warning
-                }
-            },
-            NotificationKind::CommandFailure { .. } => NotificationLevel::Error,
-            NotificationKind::PersistenceUnavailable => NotificationLevel::Warning,
-            NotificationKind::Paused
-            | NotificationKind::Resumed
-            | NotificationKind::Reset
-            | NotificationKind::SavedSlot(_)
-            | NotificationKind::LoadedSlot(_)
-            | NotificationKind::DeletedSlot(_)
-            | NotificationKind::CreatedSlot
-            | NotificationKind::SelectedSlot(_) => NotificationLevel::Info,
-        }
-    }
-
-    /// Latest-wins group for OSD replacement, if any. Only
-    /// selection echoes collapse; everything else queues.
-    pub fn replace_group(&self) -> Option<ReplaceGroup> {
-        match self {
-            NotificationKind::SelectedSlot(_) => Some(ReplaceGroup::SelectedSlot),
-            _ => None,
-        }
-    }
-
-    /// Modal fallback without a composited frame: errors and
-    /// warnings stay visible, info is dropped (nothing to show on).
-    pub fn wants_modal(&self) -> bool {
-        !matches!(self.level(), NotificationLevel::Info)
-    }
-
-    /// Channel policy: the log line for this kind, or `None` when the kind is screen-only.
-    /// New kinds declare their channel here instead of editing `push`.
-    pub fn log_level(&self) -> Option<NotificationLevel> {
-        match self {
-            NotificationKind::SelectedSlot(_) => None,
-            NotificationKind::Paused
-            | NotificationKind::Resumed
-            | NotificationKind::Reset
-            | NotificationKind::SavedSlot(_)
-            | NotificationKind::LoadedSlot(_)
-            | NotificationKind::DeletedSlot(_)
-            | NotificationKind::CreatedSlot
-            | NotificationKind::PersistenceUnavailable
-            | NotificationKind::SlotFailed { .. }
-            | NotificationKind::CommandFailure { .. } => Some(self.level()),
-        }
-    }
-
-    /// Domain payload for this event: stable key plus raw args, no language.
-    pub fn message(&self) -> Message {
-        match self {
-            NotificationKind::Paused => Message::unit(MessageKey::Paused),
-            NotificationKind::Resumed => Message::unit(MessageKey::Resumed),
-            NotificationKind::Reset => Message::unit(MessageKey::Reset),
-            NotificationKind::CreatedSlot => Message::unit(MessageKey::SlotCreated),
-            NotificationKind::SavedSlot(id) => Message::slot(MessageKey::SlotSaved, Some(*id)),
-            NotificationKind::LoadedSlot(id) => Message::slot(MessageKey::SlotLoaded, Some(*id)),
-            NotificationKind::DeletedSlot(id) => Message::slot(MessageKey::SlotDeleted, Some(*id)),
-            NotificationKind::SelectedSlot(id) => {
-                Message::slot(MessageKey::SlotSelected, Some(*id))
-            }
-            NotificationKind::PersistenceUnavailable => Message::unit(MessageKey::SavesUnavailable),
-            NotificationKind::SlotFailed { slot, reason } => Message {
-                key: MessageKey::SlotFailed,
-                slot: *slot,
-                reason: Some(*reason),
-                origin: None,
-                id: "",
-                detail: String::new(),
-            },
-            NotificationKind::CommandFailure { origin, id, detail } => Message {
-                key: MessageKey::CommandFailed,
-                slot: None,
-                reason: None,
-                origin: Some(*origin),
-                id,
-                detail: detail.clone(),
-            },
-        }
-    }
-
-    /// Localized text via the single renderer adapter.
-    pub fn text(&self, language: AppLanguage) -> String {
-        NotificationRenderer { language }.render(self)
-    }
-}
-
 /// Clock port for deterministic tests. Production reads the real
 /// system clock; tests inject a fixed timestamp via `push_at`.
 pub trait Clock {
@@ -493,7 +421,7 @@ impl Clock for SystemClock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiNotification {
     pub level: NotificationLevel,
-    pub kind: NotificationKind,
+    pub message: Message,
     /// Coalesced repeat count (1 = shown once).
     pub count: u32,
     pub seq: u64,
@@ -512,13 +440,13 @@ pub struct EventLog {
 
 impl EventLog {
     /// Record one event, assigning its sequence number.
-    pub fn record(&mut self, kind: NotificationKind, at: std::time::SystemTime) -> UiNotification {
+    pub fn record(&mut self, message: Message, at: std::time::SystemTime) -> UiNotification {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.history_seq += 1;
         let event = UiNotification {
-            level: kind.level(),
-            kind,
+            level: message.level(),
+            message,
             count: 1,
             seq,
             at,
@@ -555,11 +483,11 @@ pub struct PendingQueue {
 
 impl PendingQueue {
     /// Offer one logged event; identical neighbours coalesce.
-    /// Key comparison is O(1); kinds keep `PartialEq` for tests only.
+    /// Key comparison is O(1); messages keep `PartialEq` for tests only.
     pub fn offer(&mut self, event: UiNotification) {
         if let Some(back) = self.pending.back_mut()
             && back.level == event.level
-            && back.kind.coalescing_key() == event.kind.coalescing_key()
+            && back.message.coalescing_key() == event.message.coalescing_key()
         {
             back.count += 1;
             return;
@@ -593,8 +521,8 @@ pub struct LogSink;
 impl LogSink {
     /// Emit the log line for one event; screen-only kinds stay silent.
     pub fn emit(&self, event: &UiNotification) {
-        // Screen-only kinds skip the log line; steady-state pushes skip formatting when gated.
-        if let Some(emit) = event.kind.log_level() {
+        // Screen-only keys skip the log line; steady-state pushes skip formatting when gated.
+        if let Some(emit) = event.message.log_level() {
             let text;
             match emit {
                 NotificationLevel::Info => {
@@ -633,14 +561,14 @@ impl NotificationCenter {
     }
 
     /// Push one event: history records every event; the pending queue coalesces neighbours.
-    /// Screen-only kinds skip the log line (see [`NotificationKind::log_level`]).
-    pub fn push(&mut self, kind: NotificationKind) {
-        self.push_at(kind, SystemClock::now_system());
+    /// Screen-only keys skip the log line (see [`Message::log_level`]).
+    pub fn push(&mut self, message: Message) {
+        self.push_at(message, SystemClock::now_system());
     }
 
     /// Push with an explicit timestamp. Tests inject fixed times.
-    pub fn push_at(&mut self, kind: NotificationKind, at: std::time::SystemTime) {
-        let event = self.log.record(kind, at);
+    pub fn push_at(&mut self, message: Message, at: std::time::SystemTime) {
+        let event = self.log.record(message, at);
         self.sink.emit(&event);
         self.queue.offer(event);
     }
@@ -669,8 +597,11 @@ impl NotificationCenter {
 
 /// Single text source for history rows and OSD labels: base
 /// text plus the `×N` suffix for coalesced repeats.
-pub fn render_text(kind: &NotificationKind, count: u32, language: AppLanguage) -> String {
-    append_count(NotificationRenderer { language }.render(kind), count)
+pub fn render_text(message: &Message, count: u32, language: AppLanguage) -> String {
+    append_count(
+        NotificationRenderer { language }.render_message(message),
+        count,
+    )
 }
 
 /// Suffix rule shared by [`render_text`] and OSD rows (which keep
@@ -689,44 +620,32 @@ pub const LOG_MODULE: &str = "notifications";
 
 fn kind_text(event: &UiNotification) -> String {
     // Logs stay English for grep stability; UI text is localized at render.
-    event.kind.text(AppLanguage::English)
+    event.message.text(AppLanguage::English)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::session::error::SlotOpFailure;
     use crate::session::notification::{
-        FailureOrigin, MAX_PENDING, NotificationCenter, NotificationKind, NotificationLevel,
-        ReplaceGroup, render_text,
+        FailureOrigin, MAX_PENDING, Message, NotificationCenter, NotificationLevel, ReplaceGroup,
+        render_text,
     };
     use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn log_level_marks_selection_screen_only() {
-        assert_eq!(NotificationKind::SelectedSlot(3).log_level(), None);
+        assert_eq!(Message::selected_slot(3).log_level(), None);
+        assert_eq!(Message::paused().log_level(), Some(NotificationLevel::Info));
         assert_eq!(
-            NotificationKind::Paused.log_level(),
-            Some(NotificationLevel::Info)
-        );
-        assert_eq!(
-            NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Unavailable,
-            }
-            .log_level(),
+            Message::slot_failed(None, SlotOpFailure::Unavailable).log_level(),
             Some(NotificationLevel::Warning)
         );
         assert_eq!(
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Command,
-                id: "Reset",
-                detail: String::new()
-            }
-            .log_level(),
+            Message::command_failure(FailureOrigin::Command, "Reset", String::new()).log_level(),
             Some(NotificationLevel::Error)
         );
         assert_eq!(
-            NotificationKind::PersistenceUnavailable.log_level(),
+            Message::persistence_unavailable().log_level(),
             Some(NotificationLevel::Warning)
         );
     }
@@ -734,17 +653,17 @@ mod tests {
     #[test]
     fn coalesces_identical_neighbours_and_caps_pending() {
         let mut center = NotificationCenter::new();
-        center.push(NotificationKind::Paused);
-        center.push(NotificationKind::Paused);
+        center.push(Message::paused());
+        center.push(Message::paused());
         assert_eq!(center.pending_len(), 1);
-        center.push(NotificationKind::Resumed);
-        center.push(NotificationKind::Reset);
-        center.push(NotificationKind::CreatedSlot);
+        center.push(Message::resumed());
+        center.push(Message::reset());
+        center.push(Message::created_slot());
         assert_eq!(center.pending_len(), MAX_PENDING);
         let drained = center.drain();
         assert_eq!(drained.len(), MAX_PENDING);
         // Oldest (coalesced Paused ×2) dropped off.
-        assert_eq!(drained[0].kind, NotificationKind::Resumed);
+        assert_eq!(drained[0].message, Message::resumed());
         // History keeps every event.
         assert_eq!(center.history().count(), 5);
     }
@@ -752,29 +671,21 @@ mod tests {
     #[test]
     fn texts_cover_every_variant_in_both_languages() {
         let variants = vec![
-            NotificationKind::Paused,
-            NotificationKind::Resumed,
-            NotificationKind::Reset,
-            NotificationKind::SavedSlot(1),
-            NotificationKind::LoadedSlot(2),
-            NotificationKind::DeletedSlot(3),
-            NotificationKind::CreatedSlot,
-            NotificationKind::SelectedSlot(4),
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Command,
-                id: "Reset",
-                detail: String::new(),
-            },
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Selection,
-                id: "",
-                detail: "boom".to_string(),
-            },
-            NotificationKind::PersistenceUnavailable,
+            Message::paused(),
+            Message::resumed(),
+            Message::reset(),
+            Message::saved_slot(1),
+            Message::loaded_slot(2),
+            Message::deleted_slot(3),
+            Message::created_slot(),
+            Message::selected_slot(4),
+            Message::command_failure(FailureOrigin::Command, "Reset", String::new()),
+            Message::command_failure(FailureOrigin::Selection, "", "boom".to_string()),
+            Message::persistence_unavailable(),
         ];
-        for kind in &variants {
-            assert!(!kind.text(AppLanguage::English).is_empty());
-            assert!(!kind.text(AppLanguage::Japanese).is_empty());
+        for message in &variants {
+            assert!(!message.text(AppLanguage::English).is_empty());
+            assert!(!message.text(AppLanguage::Japanese).is_empty());
         }
         // Slot suffixes and failure reasons in both languages.
         for reason in [
@@ -786,23 +697,20 @@ mod tests {
             SlotOpFailure::Unavailable,
         ] {
             for slot in [None, Some(7)] {
-                let kind = NotificationKind::SlotFailed { slot, reason };
-                assert!(!kind.text(AppLanguage::English).is_empty());
-                assert!(!kind.text(AppLanguage::Japanese).is_empty());
+                let message = Message::slot_failed(slot, reason);
+                assert!(!message.text(AppLanguage::English).is_empty());
+                assert!(!message.text(AppLanguage::Japanese).is_empty());
             }
         }
         assert!(
-            NotificationKind::SavedSlot(7)
+            Message::saved_slot(7)
                 .text(AppLanguage::English)
                 .contains('7')
         );
         assert!(
-            NotificationKind::SlotFailed {
-                slot: Some(7),
-                reason: SlotOpFailure::Storage,
-            }
-            .text(AppLanguage::Japanese)
-            .contains("スロット7")
+            Message::slot_failed(Some(7), SlotOpFailure::Storage)
+                .text(AppLanguage::Japanese)
+                .contains("スロット7")
         );
     }
 
@@ -816,8 +724,8 @@ mod tests {
     fn history_seq_advances_on_push_and_clear_only() {
         let mut center = NotificationCenter::new();
         assert_eq!(center.history_seq(), 0);
-        center.push(NotificationKind::Paused);
-        center.push(NotificationKind::Paused);
+        center.push(Message::paused());
+        center.push(Message::paused());
         assert_eq!(center.history_seq(), 2);
         let _ = center.drain();
         assert_eq!(center.history_seq(), 2);
@@ -828,93 +736,61 @@ mod tests {
     #[test]
     fn replace_group_flags_only_selection() {
         assert_eq!(
-            NotificationKind::SelectedSlot(2).replace_group(),
+            Message::selected_slot(2).replace_group(),
             Some(ReplaceGroup::SelectedSlot)
         );
-        for kind in [
-            NotificationKind::Paused,
-            NotificationKind::SavedSlot(1),
-            NotificationKind::PersistenceUnavailable,
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Command,
-                id: "Reset",
-                detail: String::new(),
-            },
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Host,
-                id: "",
-                detail: "x".to_string(),
-            },
+        for message in [
+            Message::paused(),
+            Message::saved_slot(1),
+            Message::persistence_unavailable(),
+            Message::command_failure(FailureOrigin::Command, "Reset", String::new()),
+            Message::command_failure(FailureOrigin::Host, "", "x".to_string()),
         ] {
-            assert_eq!(kind.replace_group(), None);
+            assert_eq!(message.replace_group(), None);
         }
     }
 
     #[test]
     fn wants_modal_keeps_errors_and_warnings() {
         assert!(
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Command,
-                id: "Reset",
-                detail: String::new()
-            }
-            .wants_modal()
+            Message::command_failure(FailureOrigin::Command, "Reset", String::new()).wants_modal()
         );
-        assert!(NotificationKind::PersistenceUnavailable.wants_modal());
-        assert!(
-            NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Storage,
-            }
-            .wants_modal()
-        );
-        assert!(
-            NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Missing,
-            }
-            .wants_modal()
-        );
-        assert!(!NotificationKind::Paused.wants_modal());
-        assert!(!NotificationKind::SelectedSlot(1).wants_modal());
+        assert!(Message::persistence_unavailable().wants_modal());
+        assert!(Message::slot_failed(None, SlotOpFailure::Storage).wants_modal());
+        assert!(Message::slot_failed(None, SlotOpFailure::Missing).wants_modal());
+        assert!(!Message::paused().wants_modal());
+        assert!(!Message::selected_slot(1).wants_modal());
     }
 
     #[test]
     fn command_failure_from_renders_typed_source_at_boundary() {
         use crate::session::SessionError;
         let error = SessionError::NoCore;
-        let kind = NotificationKind::command_failure_from(FailureOrigin::Command, "Pause", &error);
-        match &kind {
-            NotificationKind::CommandFailure { origin, id, detail } => {
-                assert_eq!(*origin, FailureOrigin::Command);
-                assert_eq!(*id, "Pause");
-                assert_eq!(detail, &error.to_string());
-            }
-            other => panic!("unexpected kind: {other:?}"),
-        }
-        assert!(!kind.text(AppLanguage::English).is_empty());
-        assert!(!kind.text(AppLanguage::Japanese).is_empty());
+        let message = Message::command_failure_from(FailureOrigin::Command, "Pause", &error);
+        assert_eq!(message.origin, Some(FailureOrigin::Command));
+        assert_eq!(message.id, "Pause");
+        assert_eq!(message.detail, error.to_string());
+        assert!(!message.text(AppLanguage::English).is_empty());
+        assert!(!message.text(AppLanguage::Japanese).is_empty());
     }
 
     #[test]
     fn render_text_adds_count_suffix() {
         assert_eq!(
-            render_text(&NotificationKind::Paused, 1, AppLanguage::English),
+            render_text(&Message::paused(), 1, AppLanguage::English),
             "Paused"
         );
         assert_eq!(
-            render_text(&NotificationKind::Paused, 3, AppLanguage::English),
+            render_text(&Message::paused(), 3, AppLanguage::English),
             "Paused ×3"
         );
-        assert!(
-            render_text(&NotificationKind::SavedSlot(7), 2, AppLanguage::Japanese).contains("×2")
-        );
+        assert!(render_text(&Message::saved_slot(7), 2, AppLanguage::Japanese).contains("×2"));
     }
 
     #[test]
     fn push_shares_one_event_between_history_and_queue() {
         let mut center = NotificationCenter::new();
-        center.push(NotificationKind::Paused);
+        center.push(Message::paused());
         let drained = center.drain();
         let history: Vec<_> = center.history().collect();
         assert_eq!(drained.len(), 1);
@@ -928,50 +804,42 @@ mod tests {
 
 #[cfg(test)]
 mod message_key_tests {
+    use crate::session::error::SlotOpFailure;
     use crate::session::notification::*;
 
     #[test]
     fn equal_messages_hash_equal_and_differ_otherwise() {
-        let a = NotificationKind::SavedSlot(1).message();
-        let b = NotificationKind::SavedSlot(1).message();
-        let c = NotificationKind::SavedSlot(2).message();
-        let d = NotificationKind::SavedSlot(1);
+        let a = Message::saved_slot(1);
+        let b = Message::saved_slot(1);
+        let c = Message::saved_slot(2);
         assert_eq!(a.coalescing_key(), b.coalescing_key());
         assert_ne!(a.coalescing_key(), c.coalescing_key());
-        // Kind keys are stable per content within their own space.
-        assert_eq!(d.coalescing_key(), d.coalescing_key());
+        // Keys are stable per content.
+        assert_eq!(a.coalescing_key(), a.coalescing_key());
         // Every variant produces a stable key across calls.
-        for kind in [
-            NotificationKind::Paused,
-            NotificationKind::CommandFailure {
-                origin: FailureOrigin::Host,
-                id: "x",
-                detail: "boom".to_string(),
-            },
-            NotificationKind::SlotFailed {
-                slot: None,
-                reason: SlotOpFailure::Corrupt,
-            },
+        for message in [
+            Message::paused(),
+            Message::command_failure(FailureOrigin::Host, "x", "boom".to_string()),
+            Message::slot_failed(None, SlotOpFailure::Corrupt),
         ] {
-            assert_eq!(kind.coalescing_key(), kind.coalescing_key());
+            assert_eq!(message.coalescing_key(), message.coalescing_key());
         }
     }
 
     #[test]
-    fn render_message_matches_render() {
+    fn renderer_is_the_single_format_point() {
         let renderer = NotificationRenderer {
             language: AppLanguage::English,
         };
-        for kind in [
-            NotificationKind::Paused,
-            NotificationKind::SavedSlot(3),
-            NotificationKind::SlotFailed {
-                slot: Some(1),
-                reason: SlotOpFailure::Storage,
-            },
+        for message in [
+            Message::paused(),
+            Message::saved_slot(3),
+            Message::slot_failed(Some(1), SlotOpFailure::Storage),
         ] {
-            let message = kind.message();
-            assert_eq!(renderer.render(&kind), renderer.render_message(&message));
+            assert_eq!(
+                renderer.render_message(&message),
+                message.text(AppLanguage::English)
+            );
         }
     }
 }
@@ -982,9 +850,9 @@ mod key_tests {
 
     #[test]
     fn queue_keys_on_message_not_text() {
-        let a = NotificationKind::SavedSlot(1).message();
-        let b = NotificationKind::SavedSlot(1).message();
-        let c = NotificationKind::SavedSlot(2).message();
+        let a = Message::saved_slot(1);
+        let b = Message::saved_slot(1);
+        let c = Message::saved_slot(2);
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_eq!(a.key, MessageKey::SlotSaved);
@@ -996,8 +864,8 @@ mod key_tests {
         let renderer = NotificationRenderer {
             language: AppLanguage::English,
         };
-        assert_eq!(renderer.render(&NotificationKind::Paused), "Paused");
-        assert!(!renderer.render(&NotificationKind::SavedSlot(7)).is_empty());
+        assert_eq!(renderer.render_message(&Message::paused()), "Paused");
+        assert!(!renderer.render_message(&Message::saved_slot(7)).is_empty());
     }
 }
 
@@ -1012,7 +880,7 @@ mod notification_cov_tests {
         assert_eq!(queue.len(), 0);
         queue.offer(UiNotification {
             level: NotificationLevel::Info,
-            kind: NotificationKind::Paused,
+            message: Message::paused(),
             count: 1,
             seq: 0,
             at: std::time::UNIX_EPOCH,
@@ -1026,13 +894,8 @@ mod notification_cov_tests {
     #[test]
     fn failure_detail_truncates_at_cap() {
         let long = "y".repeat(MAX_EXTERNAL_DETAIL + 50);
-        let kind = NotificationKind::command_failure(FailureOrigin::Host, "id", long);
-        match kind {
-            NotificationKind::CommandFailure { detail, .. } => {
-                assert_eq!(detail.chars().count(), MAX_EXTERNAL_DETAIL);
-            }
-            other => panic!("unexpected {other:?}"),
-        }
+        let message = Message::command_failure(FailureOrigin::Host, "id", long);
+        assert_eq!(message.detail.chars().count(), MAX_EXTERNAL_DETAIL);
     }
 
     #[test]
@@ -1047,7 +910,7 @@ mod notification_cov_tests {
         assert_eq!(append_count("a".to_string(), 1), "a");
         let _ = SystemClock::now_system();
         let mut log = EventLog::default();
-        let _ = log.record(NotificationKind::Paused, std::time::UNIX_EPOCH);
+        let _ = log.record(Message::paused(), std::time::UNIX_EPOCH);
         assert_eq!(log.history_seq(), 1);
         log.clear();
         assert_eq!(log.history_seq(), 2);
