@@ -1,6 +1,8 @@
 //! Actual SAF stream collection, host-tested: only an empty chunk is EOF.
 //! Errors discard the partial buffer; short chunks are data, not EOF.
 
+// Test-only unbounded path; production uses the capped form below.
+#[cfg(test)]
 pub(crate) fn collect_stream<E>(read: impl FnMut() -> Result<Vec<u8>, E>) -> Result<Vec<u8>, E> {
     collect_stream_capped(read, usize::MAX).map_err(|error| match error {
         CollectError::Read(error) => error,

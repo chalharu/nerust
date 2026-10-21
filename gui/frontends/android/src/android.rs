@@ -44,7 +44,7 @@ use nerust_gui_shell::{
         persistence::PersistenceBackends,
     },
 };
-use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
+use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::shared::StoragePolicy;
 use winit::{
     application::ApplicationHandler,
