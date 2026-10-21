@@ -140,6 +140,22 @@ def prepare_probe(root, schema):
     (root / "Cargo.lock").write_bytes((GEN.ROOT / "Cargo.lock").read_bytes())
 
 
+def _shared_cache_dir(env):
+    """Owner-private shared cargo cache; `None` means use the run temp dir."""
+    if "CARGO_TARGET_DIR" in env:
+        return Path(env["CARGO_TARGET_DIR"])
+    # The temp root is world-writable: only reuse a cache the current user owns.
+    root = Path(tempfile.gettempdir()) / "nerust-android-contract-target"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+    except OSError:
+        return None
+    if root.stat().st_uid != os.getuid():
+        return None
+    return root
+
+
 def main():
     schema = json.loads((GEN.RUST / "bridge_events.v1.json").read_text())
     with tempfile.TemporaryDirectory(prefix="nerust-android-decoder-") as directory:
@@ -148,8 +164,7 @@ def main():
         env = dict(os.environ, RUSTC_WRAPPER="")
         env.setdefault("CARGO_BUILD_JOBS", "2")
         # Share the build cache without hardcoding a public directory.
-        cache = Path(env.get("CARGO_TARGET_DIR",
-                             Path(tempfile.gettempdir()) / "nerust-android-contract-target"))
+        cache = _shared_cache_dir(env) or root
         env["CARGO_TARGET_DIR"] = str(cache.resolve() / "decoder-probes")
         # A cold CI cache must be allowed to fetch locked dependencies. Explicit
         # caller policy (e.g. CARGO_NET_OFFLINE) is still inherited via env.

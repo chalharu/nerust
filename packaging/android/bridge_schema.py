@@ -19,11 +19,25 @@ def require(condition, message):
         raise ContractError(message)
 
 
+_STRINGS = re.compile(r'"""(.*?)"""|r(#+)"(.*?)"\1|"(?:\\.|[^"\\])*"', re.DOTALL)
+_COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+
+
 def uncomment(text):
     # Preserve strings containing comment-like characters, including
-    # Kotlin raw strings and Rust raw strings.
-    return re.sub(r'"""[\s\S]*?"""|r(#+)"[\s\S]*?"\1|"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
-                  lambda m: m[0] if m[0][0] in '"r' else " ", text, flags=re.DOTALL)
+    # Kotlin raw strings and Rust raw strings. Strings are masked first
+    # so comment syntax inside them survives; each pattern stays simple.
+    kept = []
+
+    def stash(match):
+        kept.append(match[0])
+        return f"\0{len(kept) - 1}\0"
+
+    masked = _STRINGS.sub(stash, text)
+    masked = _COMMENTS.sub(" ", masked)
+    for index, literal in enumerate(kept):
+        masked = masked.replace(f"\0{index}\0", literal)
+    return masked
 
 
 def repo_root():
