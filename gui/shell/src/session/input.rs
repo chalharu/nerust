@@ -328,7 +328,7 @@ mod tests {
         let attachment = AttachmentId::new("test.topology.slot");
         let control = ControlId::digital(DigitalControlId::new("test.topology.a"));
         let mut field_map = UnifiedFieldMap::new();
-        field_map.insert((attachment, control), 7);
+        let _ = field_map.insert((attachment, control), 7);
         let bindings = [KeyboardBinding::new(
             attachment.as_str(),
             PersistedControlId::digital(control.as_str()),
@@ -401,7 +401,7 @@ mod tests {
         let attachment = AttachmentId::new("test.topology.slot");
         let control = ControlId::digital(DigitalControlId::new("test.topology.a"));
         let mut field_map = UnifiedFieldMap::new();
-        field_map.insert((attachment, control), 7);
+        let _ = field_map.insert((attachment, control), 7);
         let bindings = [
             KeyboardBinding::new(
                 attachment.as_str(),
