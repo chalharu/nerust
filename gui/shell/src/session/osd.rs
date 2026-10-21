@@ -83,19 +83,18 @@ impl OsdManager {
         let mut changed = false;
         let router = ModalRouter { policy, channel };
         for n in notifications {
-            // The stored message feeds the row, the key, and the route: no rebuilds.
-            let message = n.message.clone();
             match router.route(&n.message) {
-                // No composited frame and not modal-worthy: drop.
-                // Disabled levels never display.
                 ModalRoute::Drop => continue,
                 ModalRoute::Modal => {
-                    self.modal.push_message(message, n.count, n.level);
+                    self.modal.push_message(n.message, n.count, n.level);
                     changed = true;
                     continue;
                 }
                 ModalRoute::Transient => {}
             }
+            // Adopted only here: dropped/modal paths pay no clone or render.
+            let group = n.message.replace_group();
+            let message = n.message;
             let renderer = super::notification::NotificationRenderer { language };
             let base: std::sync::Arc<str> = renderer.render_message(&message).into();
             let item = OsdItem {
@@ -111,7 +110,7 @@ impl OsdManager {
                 count: n.count,
                 duration: policy.duration(n.level),
                 deadline: now + policy.duration(n.level),
-                group: n.message.replace_group(),
+                group,
             };
             if self.transient.route_row(item) == RouteEffect::ShowingChanged {
                 changed = true;
