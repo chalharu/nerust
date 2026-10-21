@@ -1,7 +1,6 @@
 //! Persistence ports: slot/autosave/mapper backends plus the manager-facing traits.
 //! Platform adapters implement these; `fs` holds the desktop filesystem one.
 
-use crate::emu_core::PreviewRgba;
 use crate::session::error::SlotOpFailure;
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_persistence::{
@@ -10,6 +9,18 @@ use nerust_persistence::{
     sidecar::StorageLocation,
     thumbnail::ThumbnailSource,
 };
+
+/// Shell-owned preview frame: width plus packed RGBA bytes.
+/// Domain-owned; the live core produces it, never defines it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewRgba {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Packed RGBA bytes, `width * height * 4` long.
+    pub rgba: Vec<u8>,
+}
 
 /// Persistence-facing view of the live core: slot bytes are stored verbatim.
 /// Domain-owned port; the live core implements it, never defines it.
