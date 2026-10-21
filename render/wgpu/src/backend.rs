@@ -187,8 +187,8 @@ impl FrameSink for WgpuRenderer {
             if note_osd_upload(accepted, &mut self.osd, &mut self.osd_policy) {
                 log::warn!("wgpu: dropping OSD layer after repeated upload failures");
             }
-            // Retry while a layer remains; a drop clears the slot.
-            self.osd_dirty = self.osd.is_some();
+            // Retry only a rejected layer; success clears until the next stage.
+            self.osd_dirty = self.osd.is_some() && !accepted;
         }
 
         let outcome = pipeline.render(surface, self.size, frame.as_ref(), frame.stride());
