@@ -21,6 +21,9 @@ use crate::{
 
 const MAX_MACHINE_STATE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES: usize = 8 * 1024 * 1024;
+/// Scan transfer guard: above this no archive can load, so scans skip early.
+pub const MAX_SLOT_ARCHIVE_BYTES: u64 =
+    (MAX_MACHINE_STATE_BYTES + MAX_THUMBNAIL_BYTES + 1024 * 1024) as u64;
 
 pub(crate) struct LoadedArchive {
     pub(crate) metadata: StateArchiveMetadata,
@@ -34,7 +37,27 @@ pub(crate) fn read_state_summary(
 ) -> Result<Option<StateSlotSummary>, PersistenceError> {
     let file = File::open(path)?;
     let mut archive = ZipArchive::new(file)?;
-    let metadata = read_metadata(&mut archive)?;
+    summarize_open_archive(&mut archive, path.into(), identity)
+}
+
+/// Metadata-only summary over transferred bytes: no machine-state or
+/// thumbnail materialization. Scans use this; loads use the full reader.
+pub(crate) fn read_state_summary_bytes(
+    path: StorageLocation,
+    bytes: Vec<u8>,
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<StateSlotSummary>, PersistenceError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    summarize_open_archive(&mut archive, path, identity)
+}
+
+/// Shared summary tail: identity gate, state-entry presence, thumbnail flag.
+fn summarize_open_archive<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    path: StorageLocation,
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<StateSlotSummary>, PersistenceError> {
+    let metadata = read_metadata(archive)?;
     if let Some(identity) = identity
         && !slot_matches_identity(&metadata, identity)
     {
@@ -47,7 +70,7 @@ pub(crate) fn read_state_summary(
     }
     let has_thumbnail = archive.by_name(THUMBNAIL_ENTRY).is_ok();
     Ok(Some(summary_from_metadata(
-        path.into(),
+        path,
         system_time_from_millis(metadata.saved_at_unix_ms),
         &metadata,
         has_thumbnail,
