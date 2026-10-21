@@ -73,8 +73,20 @@ impl Default for PersistenceManager {
 }
 
 /// UI-thread state budget: one envelope round-trip per slot op.
-/// The cap only trips on corrupt oversized payloads in debug builds.
+/// Oversized exports are corrupt payloads; saves refuse them in all builds.
 pub const MAX_SLOT_BLOB_BYTES: usize = 64 << 20;
+
+/// Refuse an oversized core export before it reaches the slot backend.
+fn check_blob_budget(core_bytes: &[u8]) -> Result<(), SlotOpFailure> {
+    if core_bytes.len() > MAX_SLOT_BLOB_BYTES {
+        log::warn!(
+            "slot blob exceeds UI-thread budget: {} bytes",
+            core_bytes.len()
+        );
+        return Err(SlotOpFailure::Corrupt);
+    }
+    Ok(())
+}
 
 impl PersistenceManager {
     pub fn new() -> Self {
@@ -160,10 +172,7 @@ impl PersistenceManager {
         };
 
         let core_bytes = emu.export_state()?;
-        debug_assert!(
-            core_bytes.len() <= MAX_SLOT_BLOB_BYTES,
-            "slot blob exceeds UI-thread budget"
-        );
+        check_blob_budget(&core_bytes)?;
         let state_blob = save_state_with_header(core_bytes);
         let preview =
             emu.export_preview()
@@ -428,6 +437,9 @@ impl PersistenceManager {
         };
         match emu.export_state() {
             Ok(core_bytes) => {
+                if check_blob_budget(&core_bytes).is_err() {
+                    return false;
+                }
                 let state_blob = save_state_with_header(core_bytes);
                 self.autosave_backend
                     .write_autosave(dir, &state_blob, &identity)
@@ -849,5 +861,21 @@ mod persistence_cov_tests {
         manager.flush_mapper_save(&RejectImport).unwrap();
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod blob_budget_tests {
+    use crate::session::error::SlotOpFailure;
+    use crate::session::persistence::{MAX_SLOT_BLOB_BYTES, check_blob_budget};
+
+    #[test]
+    fn budget_accepts_at_cap_and_rejects_above() {
+        assert!(check_blob_budget(&vec![0u8; MAX_SLOT_BLOB_BYTES]).is_ok());
+        assert!(check_blob_budget(&[]).is_ok());
+        assert_eq!(
+            check_blob_budget(&vec![0u8; MAX_SLOT_BLOB_BYTES + 1]).unwrap_err(),
+            SlotOpFailure::Corrupt
+        );
     }
 }
