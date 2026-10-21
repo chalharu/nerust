@@ -1,12 +1,5 @@
 use nerust_core_traits::save_state::load_state_from_header;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreviewFrame {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
-
 /// Pre-Phase-7b save-state format: no longer written, still loadable.
 /// Only `core_state` is extracted; other fields use serde defaults.
 #[derive(serde::Deserialize)]
