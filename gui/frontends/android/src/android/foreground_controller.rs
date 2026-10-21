@@ -1,8 +1,6 @@
 //! ForegroundController: window-ready retry owned by one module.
 //! Drives `Lifecycle`, `RenderSync`, and `Storage`; the frontend executes.
 
-use std::time::Instant;
-
 use nerust_gui_shell::session::access::PauseControl as _;
 use winit::event_loop::ActiveEventLoop;
 
