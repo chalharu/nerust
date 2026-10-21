@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
 
-use crate::session::notification::{Message, NotificationLevel, ReplaceGroup, append_count};
+use crate::session::notification::{NotificationLevel, ReplaceGroup, append_count};
 
 #[derive(Debug, Clone)]
 pub struct OsdRow {
@@ -72,19 +72,6 @@ pub(crate) enum VictimEdge {
 pub enum FrameChannel {
     Composited,
     Unpresented,
-}
-
-/// Modal fallback: without a composited frame only errors and warnings go modal; info drops.
-/// A new channel must pick its route here.
-pub(crate) fn falls_back_to_modal(
-    kind: &Message,
-    policy: &TransientPolicy,
-    channel: FrameChannel,
-) -> bool {
-    match channel {
-        FrameChannel::Unpresented => kind.wants_modal(),
-        FrameChannel::Composited => kind.level() == NotificationLevel::Error && policy.error_modal,
-    }
 }
 
 /// Narrow display policy for transient rows; decision code takes this, never the settings surface.
@@ -431,70 +418,6 @@ mod tests {
         assert_eq!(policy.error_rgb, settings.error_color.rgb());
     }
 
-    #[test]
-    fn falls_back_to_modal_covers_levels_and_channels() {
-        use crate::session::notification::Message as K;
-        let mut modal = settings();
-        modal.error_modal = true;
-        let mut osd = settings();
-        osd.error_modal = false;
-        let error = K::slot_failed(Some(1), crate::session::error::SlotOpFailure::Storage);
-        let warning = K::slot_failed(None, crate::session::error::SlotOpFailure::Missing);
-        // Composited: only Error with modal enabled.
-        assert!(falls_back_to_modal(
-            &error,
-            &TransientPolicy::from(&modal),
-            FrameChannel::Composited
-        ));
-        assert!(!falls_back_to_modal(
-            &error,
-            &TransientPolicy::from(&osd),
-            FrameChannel::Composited
-        ));
-        assert!(!falls_back_to_modal(
-            &warning,
-            &TransientPolicy::from(&modal),
-            FrameChannel::Composited
-        ));
-        assert!(!falls_back_to_modal(
-            &K::paused(),
-            &TransientPolicy::from(&modal),
-            FrameChannel::Composited
-        ));
-        // Unpresented: Error and Warning go modal even with it off.
-        assert!(falls_back_to_modal(
-            &error,
-            &TransientPolicy::from(&modal),
-            FrameChannel::Unpresented
-        ));
-        assert!(falls_back_to_modal(
-            &warning,
-            &TransientPolicy::from(&modal),
-            FrameChannel::Unpresented
-        ));
-        assert!(falls_back_to_modal(
-            &error,
-            &TransientPolicy::from(&osd),
-            FrameChannel::Unpresented
-        ));
-        assert!(falls_back_to_modal(
-            &warning,
-            &TransientPolicy::from(&osd),
-            FrameChannel::Unpresented
-        ));
-        // Unpresented: Info is dropped, never modal.
-        assert!(!falls_back_to_modal(
-            &K::paused(),
-            &TransientPolicy::from(&modal),
-            FrameChannel::Unpresented
-        ));
-        assert!(!falls_back_to_modal(
-            &K::paused(),
-            &TransientPolicy::from(&osd),
-            FrameChannel::Unpresented
-        ));
-    }
-
     fn test_item(level: NotificationLevel, key: &str, now: Instant) -> OsdItem {
         use crate::session::notification::{Message, MessageKey};
         let message = match key {
@@ -734,19 +657,29 @@ mod transient_cov_tests {
     #[test]
     fn modal_fallback_routes_by_channel() {
         use crate::session::notification::Message;
+        use crate::session::osd_presenter::{ModalRoute, ModalRouter};
         let policy = TransientPolicy::from(
             &nerust_settings_core::model::local::NotificationSettings::default(),
         );
-        assert!(falls_back_to_modal(
-            &Message::persistence_unavailable(),
-            &policy,
-            FrameChannel::Unpresented
+        let unpresented = ModalRouter {
+            policy: &policy,
+            channel: FrameChannel::Unpresented,
+        };
+        assert!(matches!(
+            unpresented.route(&Message::persistence_unavailable()),
+            ModalRoute::Modal
         ));
-        assert!(!falls_back_to_modal(
-            &Message::paused(),
-            &policy,
-            FrameChannel::Unpresented
+        assert!(matches!(
+            unpresented.route(&Message::paused()),
+            ModalRoute::Drop
         ));
-        let _ = falls_back_to_modal(&Message::paused(), &policy, FrameChannel::Composited);
+        let composited = ModalRouter {
+            policy: &policy,
+            channel: FrameChannel::Composited,
+        };
+        assert!(matches!(
+            composited.route(&Message::paused()),
+            ModalRoute::Transient
+        ));
     }
 }
