@@ -22,6 +22,53 @@ impl InputPorts for crate::GbcFactory {
     }
 }
 
+impl crate::GbcFactory {
+    pub(crate) fn create_split(
+        &self,
+        assignments: &InputAssignments,
+    ) -> Result<
+        nerust_input_traits::TypedInputResources<nerust_gbc_core::input_types::GbcInputBuffer>,
+        crate::FactoryError,
+    > {
+        use nerust_input_traits::CreateSplitError;
+        if assignments.slots().len() != 1 || assignments.slots()[0].0 != GBC_ATTACHMENT {
+            return Err(crate::FactoryError::Create(
+                "GBC requires exactly one player1 assignment".to_string(),
+            ));
+        }
+        let (attachment, profile) = assignments.slots().first().ok_or_else(|| {
+            crate::FactoryError::Create("GBC controller is not assigned".to_string())
+        })?;
+        let _ = attachment;
+        let profile = profile.as_ref().ok_or_else(|| {
+            crate::FactoryError::Create("GBC controller is not assigned".to_string())
+        })?;
+        if profile.profile_id() != ProfileId::new("gbc.standard_pad") {
+            return Err(crate::FactoryError::Create(format!(
+                "unsupported GBC controller: {}",
+                profile.profile_id()
+            )));
+        }
+        let map = nerust_input_traits::collect_first_wins(
+            nerust_gbc_device::StandardPad::input_fields(&GBC_PORT)
+                .into_iter()
+                .map(|entry| ((entry.attachment, entry.control), entry.field)),
+        );
+        if map.is_empty() {
+            return Err(crate::FactoryError::Create(
+                CreateSplitError::ControllerNotFound {
+                    controller: ProfileId::new("gbc.standard_pad"),
+                }
+                .to_string(),
+            ));
+        }
+        Ok(nerust_input_traits::TypedInputResources::new(
+            map,
+            nerust_gbc_core::input_types::GbcInputBuffer::default,
+        ))
+    }
+}
+
 impl InputSystemFactory for crate::GbcFactory {
     fn default_assignments(&self) -> InputAssignments {
         let standard = self

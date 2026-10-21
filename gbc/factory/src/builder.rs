@@ -3,9 +3,8 @@ use nerust_core_traits::{
     peripheral::{HostPeripheralHandles, accelerometer_channel, rumble_channel},
 };
 use nerust_gbc_core::console_core::GbcConsoleCore;
-use nerust_gbc_core::input_types::GbcInputBuffer;
 use nerust_gbc_settings::GbcSettings;
-use nerust_input_traits::{InputAssignments, ProfileId};
+use nerust_input_traits::InputAssignments;
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
@@ -22,30 +21,8 @@ pub(crate) fn create_core_and_adapter(
         .as_deref()
         .and_then(|value| value.downcast_ref::<GbcSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    if assignments.slots().len() != 1 || assignments.slots()[0].0 != GBC_ATTACHMENT {
-        return Err(FactoryError::Create(
-            "GBC requires exactly one player1 assignment".to_string(),
-        ));
-    }
-    let profile = assignments.slots()[0]
-        .1
-        .as_ref()
-        .ok_or_else(|| FactoryError::Create("GBC controller is not assigned".to_string()))?;
-    if profile.profile_id() != ProfileId::new("gbc.standard_pad") {
-        return Err(FactoryError::Create(format!(
-            "unsupported GBC controller: {}",
-            profile.profile_id()
-        )));
-    }
-
-    let resources = nerust_input_traits::TypedInputResources::new(
-        nerust_input_traits::collect_first_wins(
-            nerust_gbc_device::StandardPad::input_fields(&crate::input_profiles::GBC_PORT)
-                .into_iter()
-                .map(|entry| ((entry.attachment, entry.control), entry.field)),
-        ),
-        GbcInputBuffer::default,
-    );
+    // NES mirrors this: the factory validates assignments and builds entries.
+    let resources = crate::GbcFactory.create_split(assignments)?;
     // Unified map travels end to end; no lossy projection.
     let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     speaker.start();
