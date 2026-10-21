@@ -1,20 +1,18 @@
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{CoreParts, FactoryError, settings::FactorySettingsView},
-};
-use nerust_emu_thread::{EmuInput, InputPort};
+use nerust_core_traits::audio::AudioBackend;
 use nerust_gba_core::console_core::GbaConsoleCore;
+use nerust_gba_core::input_types::GbaInputBuffer;
 use nerust_gba_settings::GbaSettings;
-use nerust_input_traits::{ControllerCollection, InputAssignments, InputSystemFactory};
+use nerust_input_traits::InputAssignments;
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
+use nerust_system_traits::factory::{CoreParts, FactoryError, settings::FactorySettingsView};
 
 use crate::input_profiles::GBA_ATTACHMENT;
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
-    speaker: Box<dyn AudioBackend>,
+    mut speaker: Box<dyn AudioBackend>,
     assignments: &InputAssignments,
 ) -> Result<CoreParts, FactoryError> {
     view.system_config
@@ -37,45 +35,28 @@ pub(crate) fn create_core_and_adapter(
         )));
     }
 
-    let controllers =
-        ControllerCollection::new(vec![Box::new(nerust_gba_device::StandardPad::new())]);
-    let resources =
-        <crate::GbaFactory as InputSystemFactory>::create_split(&crate::GbaFactory, &controllers)
-            .map_err(|e| FactoryError::Create(e.to_string()))?;
+    let resources = nerust_input_traits::InputResources::new(
+        nerust_gba_device::StandardPad::input_fields(&crate::input_profiles::GBA_PORT)
+            .into_iter()
+            .map(|entry| ((entry.attachment, entry.control), entry.field))
+            .collect(),
+        Box::new(|| Box::<GbaInputBuffer>::default()),
+    );
     // Unified map travels end to end; no lossy projection.
-    let (split, field_map) = nerust_emu_thread::InputSplit::from_resources(resources);
-
-    let gui_input = split.gui_endpoint();
-    let emu_input = split.emu_endpoint();
-    create_core_and_adapter_with_inputs(
-        view,
-        speaker,
-        Box::new(gui_input),
-        emu_input,
-        field_map,
-        controllers,
-    )
-}
-
-pub(crate) fn create_core_and_adapter_with_inputs(
-    _view: &FactorySettingsView,
-    mut speaker: Box<dyn AudioBackend>,
-    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
-    emu_input: EmuInput,
-    field_map: nerust_input_traits::UnifiedFieldMap,
-    _controller_collection: ControllerCollection,
-) -> Result<CoreParts, FactoryError> {
+    let (gui_input, emu_input, field_map) =
+        nerust_emu_thread::InputSplit::typed_resources::<GbaInputBuffer>(resources)
+            .map_err(|e| FactoryError::Create(e.to_string()))?;
     let logical_size = LogicalSize {
         width: 240,
         height: 160,
     };
     // The backend stays silent until `start`; the emu thread owns it after.
     speaker.start();
-    let core = GbaConsoleCore::new(Box::new(emu_input));
+    let core = GbaConsoleCore::new(emu_input);
     Ok(CoreParts {
         core: Box::new(core),
         audio: speaker,
-        gui_input,
+        gui_input: Box::new(gui_input),
         field_map,
         render_profile: VideoRenderProfile {
             source_logical_size: logical_size,
@@ -92,9 +73,9 @@ pub(crate) fn create_core_and_adapter_with_inputs(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::audio::NullAudio;
-    use nerust_core_traits::factory::settings::Language;
     use nerust_gba_settings::GbaSettings;
     use nerust_input_traits::InputSystemFactory;
+    use nerust_system_traits::factory::settings::Language;
 
     use super::*;
 

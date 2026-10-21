@@ -99,8 +99,8 @@ impl RgbaWord {
         self.0 as u8
     }
 
-    /// Straight-alpha composite of `src` over `self` in one word pass. Strength-reduced
-    /// divide-by-255 (`(v*257 + 32895) >> 16`, exact for every `v` in range); alpha complement hoisted out of the channels.
+    /// Straight-alpha source-over, including destination alpha. RGB remains
+    /// unassociated, so translucent raster output can be blended once by GPUs.
     pub fn blend_src_over(self, src: [u8; 4]) -> Self {
         let alpha = u32::from(src[3]);
         // Fully opaque source replaces; fully transparent keeps dst.
@@ -111,17 +111,54 @@ impl RgbaWord {
             return self;
         }
         let inv = 255 - alpha;
+        let [dr, dg, db, da] = self.to_bytes_be();
+        let dst_weight = u32::from(da) * inv;
+        let out_weight = alpha * 255 + dst_weight;
         let mix = |s: u8, d: u8| {
-            (((u32::from(s) * alpha + u32::from(d) * inv) * 257 + 32_895) >> 16) as u8
+            ((u32::from(s) * alpha * 255 + u32::from(d) * dst_weight + out_weight / 2) / out_weight)
+                as u8
         };
-        let [dr, dg, db, _] = self.to_bytes_be();
-        Self::from_rgba(mix(src[0], dr), mix(src[1], dg), mix(src[2], db), 255)
+        Self::from_rgba(
+            mix(src[0], dr),
+            mix(src[1], dg),
+            mix(src[2], db),
+            ((out_weight + 127) / 255) as u8,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::RgbaWord;
+
+    #[test]
+    fn translucent_source_over_matches_reference_for_all_alpha_pairs() {
+        for da in 0..=255u8 {
+            for sa in 0..=255u8 {
+                let dst = RgbaWord::from_rgba(20, 90, 240, da);
+                let actual = dst.blend_src_over([230, 100, 40, sa]).to_bytes_be();
+                if sa == 0 {
+                    assert_eq!(actual, dst.to_bytes_be());
+                    continue;
+                }
+                let s = f64::from(sa) / 255.0;
+                let d = f64::from(da) / 255.0;
+                let alpha = s + d * (1.0 - s);
+                let expected = [
+                    ((230.0 * s + 20.0 * d * (1.0 - s)) / alpha).round() as u8,
+                    ((100.0 * s + 90.0 * d * (1.0 - s)) / alpha).round() as u8,
+                    ((40.0 * s + 240.0 * d * (1.0 - s)) / alpha).round() as u8,
+                    (alpha * 255.0).round() as u8,
+                ];
+                for (got, want) in actual.into_iter().zip(expected) {
+                    assert!(
+                        (i16::from(got) - i16::from(want)).abs() <= 1,
+                        "sa={sa}, da={da}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn be_bytes_round_trip_on_any_host() {

@@ -28,6 +28,43 @@ pub struct InputSplit {
 }
 
 impl InputSplit {
+    /// Check the erased factory once at assembly, then use typed swaps on the
+    /// frame path. No core or frame-time receive needs a runtime downcast.
+    pub fn typed_resources<B: InputStateBuffer + 'static>(
+        resources: InputResources,
+    ) -> Result<
+        (
+            impl nerust_input_traits::GuiInputPort,
+            InputReceiver<B>,
+            UnifiedFieldMap,
+        ),
+        BufferError,
+    > {
+        let (fields, make) = resources.into_parts();
+        let buffer = || {
+            make()
+                .downcast::<B>()
+                .map(|state| *state)
+                .map_err(|_| BufferError::MismatchedBuffer {
+                    expected: std::any::type_name::<B>(),
+                    actual: "factory input buffer",
+                })
+        };
+        let shared = Arc::new(Mutex::new(buffer()?));
+        let flag = Arc::new(AtomicBool::new(false));
+        let gui = TypedGuiInput {
+            shared: Arc::clone(&shared),
+            flag: Arc::clone(&flag),
+            state: buffer()?,
+            write: buffer()?,
+            dirty: false,
+        };
+        let receiver = InputReceiver::new(buffer()?, move |state| {
+            consume(&shared, &flag, state, || {});
+        });
+        Ok((gui, receiver, fields))
+    }
+
     /// Typed init-time constructor: the concrete buffer type is fixed at
     /// compile time, so a factory/endpoint mismatch cannot be expressed.
     pub fn spawn_typed<B>(make: impl Fn() -> B + Send + Sync + 'static) -> Self
@@ -151,7 +188,7 @@ impl GuiInput {
     }
 }
 
-impl nerust_core_traits::factory::GuiInputPort for GuiInput {
+impl nerust_input_traits::GuiInputPort for GuiInput {
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         GuiInput::set(self, field, value)
     }
@@ -190,20 +227,61 @@ impl EmuInput {
 
     /// Must be called every frame start. Takes latest input from GUI.
     pub fn take(&mut self) {
-        if self.flag.swap(false, Ordering::Acquire) {
-            let mut lock = self
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::mem::swap(&mut *lock, &mut self.read_buf);
-        }
+        consume(&self.shared, &self.flag, &mut self.read_buf, || {});
     }
 }
 
-impl InputReceiver for EmuInput {
-    fn receive(&mut self) -> &dyn InputStateBuffer {
-        self.take();
-        self.read_buffer()
+/// Probe without locking on clean frames, but consume the notification only
+/// under the same lock as the payload. A publisher arriving between the probe
+/// and the lock is consumed with its payload, never as a stale second swap.
+fn consume<B>(shared: &Mutex<B>, flag: &AtomicBool, state: &mut B, before_lock: impl FnOnce()) {
+    if !flag.load(Ordering::Acquire) {
+        return;
+    }
+    before_lock();
+    let mut latest = shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if flag.swap(false, Ordering::Acquire) {
+        std::mem::swap(&mut *latest, state);
+    }
+}
+
+struct TypedGuiInput<B> {
+    shared: Arc<Mutex<B>>,
+    flag: Arc<AtomicBool>,
+    state: B,
+    write: B,
+    dirty: bool,
+}
+
+impl<B: InputStateBuffer> nerust_input_traits::GuiInputPort for TypedGuiInput<B> {
+    fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
+        self.state.set(field, value)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn publish(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        if let Err(error) = self.write.copy_state(&self.state) {
+            log::warn!("input publish skipped: {error}");
+            return;
+        }
+        let mut latest = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::swap(&mut *latest, &mut self.write);
+        self.flag.store(true, Ordering::Release);
+        self.dirty = false;
+    }
+
+    fn clear(&mut self) {
+        self.state.clear();
+        self.dirty = true;
     }
 }
 
@@ -278,33 +356,61 @@ mod tests {
 
     #[test]
     fn receiver_contract_delivers_latest_and_retains_snapshot() {
-        let split = bit_split();
-        let mut gui = split.gui_endpoint();
-        let mut receiver: Box<dyn InputReceiver> = Box::new(split.emu_endpoint());
-        let pressed = |receiver: &mut dyn InputReceiver| {
-            receiver
-                .receive()
-                .downcast_ref::<BitBuffer>()
-                .unwrap()
-                .pressed
-        };
-        assert!(!pressed(&mut *receiver));
+        use nerust_input_traits::GuiInputPort;
+        let (mut gui, mut receiver, _) =
+            InputSplit::typed_resources::<BitBuffer>(bit_resources()).unwrap();
+        let pressed = |receiver: &mut InputReceiver<BitBuffer>| receiver.receive().pressed;
+        assert!(!pressed(&mut receiver));
         gui.set(0, InputValue::Digital(true)).unwrap();
         // Staging alone is not visible to the receiver.
-        assert!(!pressed(&mut *receiver));
+        assert!(!pressed(&mut receiver));
         gui.publish();
-        assert!(pressed(&mut *receiver));
-        assert!(pressed(&mut *receiver));
+        assert!(pressed(&mut receiver));
+        assert!(pressed(&mut receiver));
         // Multiple pending publications coalesce to the latest full state.
         gui.set(0, InputValue::Digital(false)).unwrap();
         gui.publish();
         gui.set(0, InputValue::Digital(true)).unwrap();
         gui.publish();
-        assert!(pressed(&mut *receiver));
+        assert!(pressed(&mut receiver));
         gui.clear();
         gui.publish();
-        assert!(!pressed(&mut *receiver));
-        assert!(!pressed(&mut *receiver));
+        assert!(!pressed(&mut receiver));
+        assert!(!pressed(&mut receiver));
+    }
+
+    #[test]
+    fn publication_between_probe_and_lock_never_resurrects_old_snapshot() {
+        let split = bit_split();
+        let mut gui = split.gui_endpoint();
+        let mut emu = split.emu_endpoint();
+        gui.set(0, InputValue::Digital(false)).unwrap();
+        gui.publish();
+        // Precisely the old failing interleaving, with no timing or sleeps:
+        // observe A, publish B, acquire lock, consume B, then poll clean.
+        consume(&emu.shared, &emu.flag, &mut emu.read_buf, || {
+            gui.set(0, InputValue::Digital(true)).unwrap();
+            gui.publish();
+        });
+        assert!(!split.flag.load(Ordering::Acquire));
+        assert!(
+            emu.read_buffer()
+                .downcast_ref::<BitBuffer>()
+                .unwrap()
+                .pressed
+        );
+        emu.take();
+        assert!(
+            emu.read_buffer()
+                .downcast_ref::<BitBuffer>()
+                .unwrap()
+                .pressed
+        );
+    }
+
+    #[test]
+    fn typed_resources_reject_wrong_buffer_before_core_construction() {
+        assert!(InputSplit::typed_resources::<OtherBuffer>(bit_resources()).is_err());
     }
 
     /// Test-only resources: `InputSplit::from_resources` is the single

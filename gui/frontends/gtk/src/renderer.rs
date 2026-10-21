@@ -3,7 +3,7 @@ use std::rc::Rc;
 use nerust_render_traits::{
     FrameBuffer, SurfaceSize, VideoRenderProfile,
     renderer::{
-        OpaqueError, PipelineFactory, RenderPipeline, RendererConfig, RendererError,
+        OpaqueError, PipelineFactory, RenderPipeline, RenderResult, RendererConfig, RendererError,
         reattach_surface,
     },
 };
@@ -17,6 +17,7 @@ pub(crate) struct GtkRenderer {
     /// Set only by a successful attach. `render` must check this instead of
     /// `renderer.is_some()`: rendering unattached segfaults in native code.
     attached: bool,
+    output_generation: u64,
 }
 
 impl GtkRenderer {
@@ -26,6 +27,7 @@ impl GtkRenderer {
             renderer: None,
             last_size: SurfaceSize::new(0, 0),
             attached: false,
+            output_generation: 0,
         }
     }
 
@@ -35,32 +37,29 @@ impl GtkRenderer {
         display_handle: RawDisplayHandle,
         physical_size: SurfaceSize,
         profile: &VideoRenderProfile,
-    ) {
+    ) -> Result<(), RendererError> {
         self.last_size = physical_size;
+        self.attached = false;
         drop(self.renderer.take());
         let config = RendererConfig {
             render_profile: profile.clone(),
             vsync: true,
             max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
-        match self.factory.create_pipeline(&config, display_handle) {
-            Ok(mut r) => {
-                match r.attach(window_handle, display_handle, physical_size) {
-                    Ok(()) => {
-                        self.attached = true;
-                    }
-                    Err(e) => {
-                        self.attached = false;
-                        log::error!("GtkRenderer: attach failed: {e}");
-                    }
-                }
-                self.renderer = Some(r);
-            }
-            Err(e) => {
-                self.attached = false;
-                log::error!("GtkRenderer: create failed: {e}");
-            }
-        }
+        let mut renderer = self.factory.create_pipeline(&config, display_handle)?;
+        renderer.attach(window_handle, display_handle, physical_size)?;
+        self.renderer = Some(renderer);
+        self.attached = true;
+        self.output_generation = self.output_generation.wrapping_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn attached(&self) -> bool {
+        self.attached
+    }
+
+    pub(crate) fn output_generation(&self) -> u64 {
+        self.output_generation
     }
 
     pub(crate) fn reattach(
@@ -74,6 +73,9 @@ impl GtkRenderer {
             Some(r) => {
                 let result = reattach_surface(r.as_mut(), window_handle, display_handle, size);
                 self.attached = result.is_ok();
+                if self.attached {
+                    self.output_generation = self.output_generation.wrapping_add(1);
+                }
                 result
             }
             None => {
@@ -101,18 +103,26 @@ impl GtkRenderer {
         }
     }
 
-    pub(crate) fn render(&mut self, frame_buffer: &FrameBuffer, window_size: SurfaceSize) {
+    pub(crate) fn render(
+        &mut self,
+        frame_buffer: &FrameBuffer,
+        window_size: SurfaceSize,
+    ) -> RenderResult {
         if !self.attached {
-            return;
+            return RenderResult::Skipped;
         }
         let Some(renderer) = self.renderer.as_mut() else {
-            return;
+            return RenderResult::Skipped;
         };
         if self.last_size != window_size {
             renderer.resize(window_size);
             self.last_size = window_size;
         }
-        renderer.render(frame_buffer);
+        let result = renderer.render(frame_buffer);
+        if matches!(result, RenderResult::Error) {
+            self.attached = false;
+        }
+        result
     }
 }
 
@@ -162,6 +172,7 @@ mod tests {
     struct StubRenderer {
         renders: Rc<Cell<usize>>,
         fail_attach: bool,
+        lose_first_frame: bool,
     }
 
     impl SurfaceLifecycle for StubRenderer {
@@ -189,6 +200,9 @@ mod tests {
     impl FrameSink for StubRenderer {
         fn render(&mut self, _frame: &FrameBuffer) -> RenderResult {
             self.renders.set(self.renders.get() + 1);
+            if self.lose_first_frame && self.renders.get() == 1 {
+                return RenderResult::Error;
+            }
             RenderResult::Presented
         }
     }
@@ -230,6 +244,7 @@ mod tests {
             Ok(Box::new(StubRenderer {
                 renders: Rc::clone(&self.renders),
                 fail_attach: self.fail_attach,
+                lose_first_frame: false,
             }))
         }
     }
@@ -248,7 +263,10 @@ mod tests {
         let factory_obj: Rc<dyn PipelineFactory> = factory.clone();
         let mut gtk = GtkRenderer::new(factory_obj);
         let (wh, dh) = dummy_handles();
-        gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile());
+        assert!(
+            gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile())
+                .is_err()
+        );
         // Create failed: render and reattach refuse without touching a stub.
         gtk.render(&test_frame(), SurfaceSize::new(64, 64));
         assert_eq!(factory.renders.get(), 0);
@@ -267,7 +285,10 @@ mod tests {
         });
         let mut gtk = GtkRenderer::new(factory_obj);
         let (wh, dh) = dummy_handles();
-        gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile());
+        assert!(
+            gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile())
+                .is_ok()
+        );
         gtk.render(&test_frame(), SurfaceSize::new(64, 64));
         assert_eq!(renders.get(), 1);
         // Size change resizes before rendering.
@@ -288,10 +309,107 @@ mod tests {
         });
         let mut gtk = GtkRenderer::new(factory_obj);
         let (wh, dh) = dummy_handles();
-        gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile());
+        assert!(
+            gtk.realize(wh, dh, SurfaceSize::new(64, 64), &test_profile())
+                .is_err()
+        );
         // Attach refused: renders stay inert and reattach reports it.
         gtk.render(&test_frame(), SurfaceSize::new(64, 64));
         assert_eq!(renders.get(), 0);
         assert!(gtk.reattach(wh, dh, SurfaceSize::new(64, 64)).is_err());
+    }
+
+    #[test]
+    fn unchanged_size_recovers_after_create_and_attach_failures() {
+        #[derive(Debug)]
+        struct RecoveringFactory {
+            attempts: Cell<usize>,
+            renders: Rc<Cell<usize>>,
+        }
+        impl PipelineFactory for RecoveringFactory {
+            fn create_pipeline(
+                &self,
+                config: &RendererConfig,
+                display: RawDisplayHandle,
+            ) -> Result<Box<dyn RenderPipeline>, RendererError> {
+                let attempt = self.attempts.get();
+                self.attempts.set(attempt + 1);
+                StubFactory {
+                    renders: self.renders.clone(),
+                    fail: attempt == 0,
+                    fail_attach: attempt == 1,
+                }
+                .create_pipeline(config, display)
+            }
+        }
+        let renders = Rc::new(Cell::new(0));
+        let mut renderer = GtkRenderer::new(Rc::new(RecoveringFactory {
+            attempts: Cell::new(0),
+            renders: renders.clone(),
+        }));
+        let (wh, dh) = dummy_handles();
+        let size = SurfaceSize::new(64, 64);
+        for _ in 0..2 {
+            assert!(renderer.realize(wh, dh, size, &test_profile()).is_err());
+            assert!(!renderer.attached());
+            assert_eq!(renderer.output_generation(), 0);
+            renderer.render(&test_frame(), size);
+            assert_eq!(renders.get(), 0);
+        }
+        renderer.realize(wh, dh, size, &test_profile()).unwrap();
+        assert!(renderer.attached());
+        assert_eq!(renderer.output_generation(), 1);
+        renderer.render(&test_frame(), size);
+        assert_eq!(renders.get(), 1);
+        renderer.reattach(wh, dh, size).unwrap();
+        assert_eq!(renderer.output_generation(), 2);
+        renderer.render(&test_frame(), size);
+        assert_eq!(renders.get(), 2);
+    }
+
+    #[test]
+    fn surface_loss_forces_real_attach_retry_at_unchanged_size() {
+        #[derive(Debug)]
+        struct LossFactory {
+            creates: Rc<Cell<usize>>,
+            renders: Rc<Cell<usize>>,
+        }
+        impl PipelineFactory for LossFactory {
+            fn create_pipeline(
+                &self,
+                _: &RendererConfig,
+                _: RawDisplayHandle,
+            ) -> Result<Box<dyn RenderPipeline>, RendererError> {
+                self.creates.set(self.creates.get() + 1);
+                Ok(Box::new(StubRenderer {
+                    renders: self.renders.clone(),
+                    fail_attach: false,
+                    lose_first_frame: true,
+                }))
+            }
+        }
+        let creates = Rc::new(Cell::new(0));
+        let renders = Rc::new(Cell::new(0));
+        let mut renderer = GtkRenderer::new(Rc::new(LossFactory {
+            creates: creates.clone(),
+            renders,
+        }));
+        let (wh, dh) = dummy_handles();
+        let size = SurfaceSize::new(64, 64);
+        renderer.realize(wh, dh, size, &test_profile()).unwrap();
+        assert_eq!(renderer.render(&test_frame(), size), RenderResult::Error);
+        assert!(!renderer.attached());
+        assert_eq!(renderer.render(&test_frame(), size), RenderResult::Skipped);
+        // Same condition as SurfaceCore::tick: detached triggers realize, even
+        // without a resize or explicit settings reload.
+        if !renderer.attached() {
+            renderer.realize(wh, dh, size, &test_profile()).unwrap();
+        }
+        assert_eq!(creates.get(), 2);
+        assert_eq!(renderer.output_generation(), 2);
+        assert_eq!(
+            renderer.render(&test_frame(), size),
+            RenderResult::Presented
+        );
     }
 }

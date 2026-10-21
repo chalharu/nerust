@@ -5,7 +5,7 @@ use super::HostState;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     SessionError,
-    access::{PauseControl, SessionControl, SettingsResult},
+    access::{SessionControl, SettingsResult},
 };
 
 use crate::ports::WindowOpener;
@@ -28,32 +28,24 @@ impl HostState {
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        if !self.settings_open() {
+        if !self
+            .pause_policy
+            .owns(nerust_frontend_kernel::pause::PauseOwner::Settings)
+        {
             return;
         }
-        let should_resume = self.settings.take_resume_after();
-        self.settings.close_all();
-        if should_resume {
-            self.resume();
-        } else {
-            let ctx = self.frame_ctx();
-            self.sync_chrome(&ctx, false);
-        }
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, false);
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, false);
     }
 
     pub(super) fn open_settings_window(&mut self, opener: &dyn WindowOpener) {
         if self.settings_open() {
             return;
         }
-        let tick = self.session.tick_metrics();
-        let resume_after = tick.loaded && !tick.paused;
-        self.settings.set_resume_after(resume_after);
-        if resume_after {
-            self.pause();
-        } else {
-            let ctx = self.frame_ctx();
-            self.sync_menu_state(&ctx);
-        }
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+        let ctx = self.frame_ctx();
+        self.sync_menu_state(&ctx);
 
         match opener.create_aux(
             crate::aux::focus::AuxKind::Settings,
@@ -72,13 +64,7 @@ impl HostState {
             }
             None => {
                 log::error!("failed to open settings window");
-                self.settings.close_all();
-                if resume_after {
-                    self.resume();
-                } else {
-                    let ctx = self.frame_ctx();
-                    self.sync_menu_state(&ctx);
-                }
+                self.on_settings_closed();
             }
         }
     }
@@ -87,16 +73,19 @@ impl HostState {
         &mut self,
         pending: Option<SettingsSnapshot>,
     ) -> Option<SettingsResult> {
-        self.on_settings_closed();
-        if let Some(snapshot) = pending {
+        let result = if let Some(snapshot) = pending {
             match self.apply_settings(snapshot) {
-                Ok(plan) => return Some(plan),
+                Ok(plan) => Some(plan),
                 Err(error) => {
                     log::warn!("settings apply failed after close: {error}");
+                    None
                 }
             }
-        }
-        None
+        } else {
+            None
+        };
+        self.on_settings_closed();
+        result
     }
 }
 
@@ -147,16 +136,13 @@ mod tests {
     }
 
     #[test]
-    fn settings_close_without_handle_is_noop() {
-        // Without a handle, close is a no-op even with a stale resume
-        // flag: the handle is the only open truth.
+    fn settings_close_releases_its_owner_even_after_registry_removal() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.settings.set_resume_after(true);
+        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
         host.on_settings_closed();
         assert!(!host.settings_open());
-        assert!(host.settings.take_resume_after());
-        assert!(support.menu.updates().is_empty());
+        assert!(!host.pause_policy.paused());
     }
 
     #[test]
@@ -165,26 +151,35 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.aux.insert(Box::new(StubAux::new(AuxKind::Settings)));
+        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
         assert!(host.settings_open());
         // Registry removal is the caller's job; close teardown only
-        // clears the resume flag and syncs chrome while still open.
+        // releases its pause owner and syncs chrome while still open.
         host.on_settings_closed();
         assert!(host.settings_open());
-        assert!(!host.settings.take_resume_after());
+        assert!(!host.pause_policy.paused());
         assert_eq!(support.menu.updates().len(), 1);
     }
 
     #[test]
-    fn settings_close_with_resume_flag_resumes() {
+    fn settings_close_preserves_modal_owner() {
         use crate::aux::focus::AuxKind;
         let support = TestHost::new();
         let mut host = support.host;
         host.aux.insert(Box::new(StubAux::new(AuxKind::Settings)));
-        host.settings.set_resume_after(true);
+        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         host.on_settings_closed();
         assert!(host.settings_open());
-        assert!(!host.settings.take_resume_after());
-        assert!(support.menu.updates().is_empty());
+        assert!(
+            host.pause_policy
+                .owns(nerust_frontend_kernel::pause::PauseOwner::Modal)
+        );
+        assert!(
+            !host
+                .pause_policy
+                .owns(nerust_frontend_kernel::pause::PauseOwner::Settings)
+        );
     }
 
     #[test]

@@ -51,8 +51,7 @@ pub(crate) fn import_machine_state(
     expected_options: GbcCoreOptions,
     now: SystemTime,
 ) -> Result<(), GbcPersistenceError> {
-    let payload: MachineStatePayload = rmp_serde::from_slice(data)?;
-    validate_version(payload.schema_version)?;
+    let payload: MachineStatePayload = decode_payload(data)?;
     if payload.rom_identity != expected_identity {
         return Err(GbcPersistenceError::RomIdentityMismatch);
     }
@@ -64,10 +63,7 @@ pub(crate) fn import_machine_state(
         crate::cpu_opcodes::handler_table()[usize::from(opcode)]
     })
     .map_err(GbcPersistenceError::InvalidState)?;
-    system
-        .bus
-        .import_state(payload.memory)
-        .map_err(GbcPersistenceError::InvalidState)?;
+    system.bus.import_state(payload.memory)?;
     if expected_options.rtc_sync.syncs_snapshots()
         && let Some(captured_at) = payload.captured_at_unix_seconds
         && let Some(captured_at) = UNIX_EPOCH.checked_add(Duration::from_secs(captured_at))
@@ -83,11 +79,7 @@ pub(crate) fn export_mapper_save(
     rom_identity: GbcRomIdentity,
     now: std::time::SystemTime,
 ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
-    let Some(cartridge) = system
-        .bus
-        .export_cartridge_save(now)
-        .map_err(GbcPersistenceError::InvalidState)?
-    else {
+    let Some(cartridge) = system.bus.export_cartridge_save(now)? else {
         return Ok(None);
     };
     Ok(Some(rmp_serde::to_vec_named(&MapperSavePayload {
@@ -102,15 +94,21 @@ pub(crate) fn import_mapper_save(
     data: &[u8],
     expected_identity: GbcRomIdentity,
 ) -> Result<(), GbcPersistenceError> {
-    let payload: MapperSavePayload = rmp_serde::from_slice(data)?;
-    validate_version(payload.schema_version)?;
+    let payload: MapperSavePayload = decode_payload(data)?;
     if payload.rom_identity != expected_identity {
         return Err(GbcPersistenceError::RomIdentityMismatch);
     }
-    system
-        .bus
-        .import_cartridge_save(&payload.cartridge)
-        .map_err(GbcPersistenceError::InvalidState)
+    system.bus.import_cartridge_save(&payload.cartridge)
+}
+
+fn decode_payload<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, GbcPersistenceError> {
+    #[derive(serde::Deserialize)]
+    struct Header {
+        schema_version: u32,
+    }
+    let header: Header = rmp_serde::from_slice(data)?;
+    validate_version(header.schema_version)?;
+    Ok(rmp_serde::from_slice(data)?)
 }
 
 fn validate_version(version: u32) -> Result<(), GbcPersistenceError> {
@@ -438,7 +436,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             import_mapper_save(&mut huc3_target, &cross_mapper, huc3_identity),
-            Err(GbcPersistenceError::InvalidState(_))
+            Err(GbcPersistenceError::MapperKindMismatch { .. })
         ));
     }
 

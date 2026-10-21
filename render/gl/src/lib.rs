@@ -14,6 +14,9 @@ mod vertex_data;
 #[cfg(all(test, unix))]
 mod test_display;
 
+#[cfg(all(test, unix))]
+mod regression_tests;
+
 mod renderer;
 
 pub use renderer::{GlFactory, GlRenderer};

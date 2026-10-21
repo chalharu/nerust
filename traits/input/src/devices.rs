@@ -101,7 +101,7 @@ pub trait ControllerHub: std::fmt::Debug + Send {
 
 /// A collection of per-port controllers.
 pub struct ControllerCollection {
-    devices: Vec<Box<dyn Controller + Send>>,
+    devices: Vec<Option<Box<dyn Controller + Send>>>,
 }
 
 impl std::fmt::Debug for ControllerCollection {
@@ -114,6 +114,11 @@ impl std::fmt::Debug for ControllerCollection {
 
 impl ControllerCollection {
     pub fn new(devices: Vec<Box<dyn Controller + Send>>) -> Self {
+        Self::from_slots(devices.into_iter().map(Some).collect())
+    }
+
+    /// Indexed physical slots, including unconnected ports. Never compact holes.
+    pub fn from_slots(devices: Vec<Option<Box<dyn Controller + Send>>>) -> Self {
         Self { devices }
     }
 
@@ -122,22 +127,19 @@ impl ControllerCollection {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.devices.is_empty()
+        self.devices.iter().all(Option::is_none)
     }
 
     /// The single indexed access: borrow a controller by collection index.
     pub fn get(&self, index: usize) -> Option<&(dyn Controller + Send)> {
-        match self.devices.get(index) {
-            Some(b) => Some(&**b),
-            None => None,
-        }
+        self.devices.get(index)?.as_deref()
     }
 
     /// Borrow all controllers mutably (hub fan-out, input sync).
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (dyn Controller + Send)> {
         self.devices
             .iter_mut()
-            .map(|b| &mut **b as &mut (dyn Controller + Send))
+            .filter_map(|b| b.as_mut().map(|b| &mut **b as &mut (dyn Controller + Send)))
     }
 }
 
@@ -145,15 +147,16 @@ impl ControllerHub for ControllerCollection {
     fn read_port(&mut self, port: &dyn Port) -> OpenBusReadResult {
         self.devices
             .get_mut(port.index())
+            .and_then(Option::as_mut)
             .map_or_else(|| OpenBusReadResult::new(0, 0), |d| d.read(port))
     }
     fn write_strobe(&mut self, value: u8) {
-        for d in self.devices.iter_mut() {
+        for d in self.devices.iter_mut().flatten() {
             d.strobe(value);
         }
     }
     fn sync_input(&mut self, state: &[u8]) {
-        for d in &mut self.devices {
+        for d in self.devices.iter_mut().flatten() {
             d.sync_input(state);
         }
     }

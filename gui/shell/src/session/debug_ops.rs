@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use nerust_gui_viewmodel::debugger as debug_vm;
+use nerust_gui_runtime::debugger as debug_vm;
 
 use super::{SessionHandle, osd::TickMetrics};
 use crate::debug::{CoreFailure, ImageNeed, TrafficKind};
@@ -56,11 +56,15 @@ impl SessionHandle {
             ImageNeed::from_flag(need_images),
             crate::debug::DEBUG_DRAIN_TIMEOUT,
         )
+        .with_epoch(Arc::clone(&self.emu.debug_epoch))
     }
 
     /// Scoped transaction access: the guard never escapes, so holders cannot deadlock.
     /// Exactly one logging point for the poison recovery.
-    fn with_txn<R>(&self, f: impl FnOnce(&mut debug_vm::WriteTransaction) -> R) -> R {
+    fn with_txn<R>(
+        &self,
+        f: impl FnOnce(&mut nerust_gui_runtime::debug_transaction::WriteTransaction) -> R,
+    ) -> R {
         match self.debug_txn.lock() {
             Ok(mut txn) => f(&mut txn),
             Err(error) => {
@@ -97,6 +101,8 @@ impl SessionHandle {
             self.emu.core().ok().map(|core| core.drain_handle()),
             Arc::clone(&self.debug_txn),
         )
+        .with_epoch(Arc::clone(&self.emu.debug_epoch))
+        .with_execution_held(self.execution_held)
     }
 
     /// Single batched snapshot for one drain: one inspect, one disassembly, one images pass.
@@ -288,6 +294,9 @@ impl SessionHandle {
 
     /// Resume for debugger control.
     pub fn debug_resume(&self) -> debug_vm::StatusMessage {
+        if self.execution_held && self.emu.core().is_ok() {
+            return debug_vm::StatusMessage::Paused;
+        }
         match self.emu.core().ok() {
             Some(core) => match core.resume() {
                 Ok(()) => debug_vm::StatusMessage::Resume,
@@ -318,6 +327,63 @@ impl SessionHandle {
 #[cfg(test)]
 mod drain_ctx_cov_tests {
     use crate::session::test_util::test_session;
+
+    #[test]
+    fn unload_invalidates_live_images_and_stale_drain_preserves_new_transaction() {
+        use crate::debug::{DebugAction, DebugDrainInput, DrainPoll, LiveImagesPoll};
+        use nerust_core_traits::debugger::SpaceId;
+        let mut session = test_session();
+        let input = DebugDrainInput {
+            space: Some(SpaceId(0)),
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: None,
+            prev_dump_rows: &[],
+            need_images: true,
+        };
+        let mut drain = session.debug_drain_begin(&[DebugAction::SelectRow(0)], &input);
+        let mut images = session.debug_live_images_begin(true);
+        session.unload().unwrap();
+        session.debug_prepare_write(SpaceId(0), 0x20);
+        session.debug_stage_write(17);
+        let pending = session.debug_pending_text();
+        assert!(matches!(images.poll(), LiveImagesPoll::Done(None)));
+        assert!(matches!(drain.poll(), DrainPoll::Done(_)));
+        assert_eq!(session.debug_pending_text(), pending);
+        assert_eq!(pending.unwrap().value, 17);
+    }
+
+    #[test]
+    fn unload_invalidates_old_flight_before_it_can_stage_or_commit() {
+        use crate::debug::{DebugAction, DebugDrainInput, DrainPoll};
+        use nerust_core_traits::debugger::SpaceId;
+        let mut session = test_session();
+        let input = DebugDrainInput {
+            space: Some(SpaceId(0)),
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: Some((0, 99)),
+            prev_dump_rows: &[],
+            need_images: true,
+        };
+        let mut flight = session.debug_drain_begin(
+            &[DebugAction::SelectRow(0), DebugAction::EditStage(88)],
+            &input,
+        );
+        session.unload().unwrap();
+        let DrainPoll::Done(output) = flight.poll() else {
+            panic!("stale flight must finish immediately")
+        };
+        assert!(matches!(
+            output.display.status,
+            nerust_gui_runtime::debugger::StatusMessage::NoCore
+        ));
+        assert!(session.debug_pending_text().is_none());
+    }
 
     #[test]
     fn drain_ctx_exposes_narrow_debug_port() {
@@ -392,7 +458,7 @@ mod debug_ops_cov_tests {
 
     #[test]
     fn loaded_debug_paths_answer() {
-        use nerust_core_traits::factory::load::MediaObject;
+        use nerust_system_traits::factory::load::MediaObject;
         let temp_dir = crate::test_helpers::unique_temp_dir("debug-ops-loaded");
         let mut session = test_session();
         let factory = session.active_factory_cloned().unwrap();
@@ -409,6 +475,10 @@ mod debug_ops_cov_tests {
             )
             .unwrap();
         assert_eq!(session.debug_spaces().len(), 1);
+        assert!(matches!(
+            session.debug_pause(),
+            debug_vm::StatusMessage::Paused
+        ));
         assert!(session.debug_read_byte(SpaceId(0), 0).is_some());
         assert!(session.debug_write_byte(SpaceId(0), 0x10, 0xAB));
         assert_eq!(session.debug_read_byte(SpaceId(0), 0x10), Some(0xAB));
@@ -423,8 +493,8 @@ mod debug_ops_cov_tests {
 
     #[test]
     fn debug_write_register_round_trips_and_refuses() {
-        use nerust_core_traits::factory::load::MediaObject;
-        use nerust_gui_viewmodel::debugger::StatusMessage as S;
+        use nerust_gui_runtime::debugger::StatusMessage as S;
+        use nerust_system_traits::factory::load::MediaObject;
         let temp_dir = crate::test_helpers::unique_temp_dir("debug-ops-reg");
         let mut session = test_session();
         // ROM-less core has no debugger: refusal without transport noise.

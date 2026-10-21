@@ -7,11 +7,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-gl.workspace = true
 glutin.workspace = true
 log.workspace = true
 nerust_glwrap.workspace = true
 nerust_render_ntsc.workspace = true
-nerust_render_traits.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
 raw-window-handle.workspace = true
 thiserror.workspace = true

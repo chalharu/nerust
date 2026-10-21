@@ -3,21 +3,15 @@
 
 use std::collections::BTreeMap;
 
-use nerust_core_traits::factory::CoreFactory;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_settings_core::model::{
-    local::{
-        NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
-        TouchOverlayVisibility,
-    },
-    shared::StoragePolicy,
+#[cfg(test)]
+use nerust_settings_core::model::local::{
+    NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
 };
+use nerust_settings_core::model::shared::StoragePolicy;
+use nerust_system_traits::factory::CoreFactory;
 
-use super::settings_model::{
-    AndroidSettings, CORNERS, LATENCY_MAX, LATENCY_MIN, OVERLAY_OFFSET_MAX, OVERLAY_OFFSET_MIN,
-    OVERLAY_SCALE_MAX, OVERLAY_SCALE_MIN, SAMPLE_RATE_CHOICES, SETTINGS_SCHEMA_VERSION, SettingDef,
-    VOLUME_MAX,
-};
+use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION, SettingDef};
 
 impl AndroidSettings {
     pub(super) fn from_keyed_indices(
@@ -42,126 +36,7 @@ impl AndroidSettings {
 
     /// Shared decode core over a key→index lookup for the dialog codec.
     fn decode_with(current: &Self, by_key: &dyn Fn(&str) -> Option<usize>) -> Option<Self> {
-        let off_on = |key: &str| -> Option<bool> {
-            match by_key(key)? {
-                0 => Some(false),
-                1 => Some(true),
-                _ => None,
-            }
-        };
-        let position =
-            |key: &str| -> Option<NotificationPosition> { CORNERS.get(by_key(key)?).copied() };
-        let area_mode = |key: &str| -> Option<NotificationAreaMode> {
-            match by_key(key)? {
-                0 => Some(NotificationAreaMode::Overlay),
-                1 => Some(NotificationAreaMode::Strip),
-                _ => None,
-            }
-        };
-
-        let audio_muted = off_on("audio_muted")?;
-        let master_volume_percent = u8::try_from(by_key("master_volume")?)
-            .ok()
-            .filter(|value| *value <= VOLUME_MAX)?;
-        let latency_ms = u16::try_from(by_key("latency_ms")?)
-            .ok()
-            .filter(|value| *value <= LATENCY_MAX - LATENCY_MIN)
-            .map(|value| value + LATENCY_MIN)?;
-        let sample_rate = *SAMPLE_RATE_CHOICES.get(by_key("sample_rate")?)?;
-        let vsync = off_on("vsync")?;
-        let screen_orientation = match by_key("screen.orientation")? {
-            0 => ScreenOrientation::Auto,
-            1 => ScreenOrientation::Portrait,
-            2 => ScreenOrientation::Landscape,
-            _ => return None,
-        };
-        let storage_policy = match by_key("storage.policy")? {
-            0 => StoragePolicy::Sidecar,
-            1 => StoragePolicy::AppSharedData,
-            2 => StoragePolicy::CustomDirectory,
-            _ => return None,
-        };
-        let overlay_visibility = match by_key("controls.overlay.visibility")? {
-            0 => TouchOverlayVisibility::Always,
-            1 => TouchOverlayVisibility::Auto,
-            2 => TouchOverlayVisibility::Hidden,
-            _ => return None,
-        };
-        let overlay_opacity_percent = u8::try_from(by_key("controls.overlay.opacity")?)
-            .ok()
-            .filter(|value| *value <= 100)?;
-        let overlay_scale_percent = u8::try_from(by_key("controls.overlay.scale")?)
-            .ok()
-            .filter(|value| *value <= OVERLAY_SCALE_MAX - OVERLAY_SCALE_MIN)?
-            + OVERLAY_SCALE_MIN;
-        let overlay_vertical_offset_percent =
-            i8::try_from(by_key("controls.overlay.vertical_offset")?)
-                .ok()
-                .filter(|value| *value <= OVERLAY_OFFSET_MAX - OVERLAY_OFFSET_MIN)?
-                + OVERLAY_OFFSET_MIN;
-        let overlay_haptics = off_on("controls.overlay.haptics")?;
-        let motion_enabled = off_on("controls.cartridge.motion")?;
-        let rumble_enabled = off_on("controls.cartridge.rumble")?;
-        let rumble_strength_percent = u8::try_from(by_key("controls.cartridge.rumble_strength")?)
-            .ok()
-            .filter(|value| *value <= 100)?;
-        let rumble_target = match by_key("controls.cartridge.rumble_target")? {
-            0 => RumbleTarget::Auto,
-            1 => RumbleTarget::Handset,
-            2 => RumbleTarget::Controller,
-            _ => return None,
-        };
-        let notifications_info_enabled = off_on("notifications.info")?;
-        let notifications_warning_enabled = off_on("notifications.warning")?;
-        let notifications_error_enabled = off_on("notifications.error")?;
-        let notifications_position = position("notifications.position")?;
-        let notifications_area_mode = area_mode("notifications.area_mode")?;
-        let status_enabled = off_on("status.enabled")?;
-        let status_position = position("status.position")?;
-        // Absent when same-edge (follows the notification mode):
-        // keep the current value instead of rejecting the payload.
-        let status_area_mode = match by_key("status.area_mode") {
-            Some(index) => match index {
-                0 => NotificationAreaMode::Overlay,
-                1 => NotificationAreaMode::Strip,
-                _ => return None,
-            },
-            None => current.status_area_mode,
-        };
-        let mut system_choices = current.system_choices.clone();
-        for choice in system_choices.iter_mut() {
-            let key = format!("system.{}.{}", choice.system_id, choice.field_id.as_str());
-            let selected_index = by_key(&key)?;
-            choice.selected = choice.options.get(selected_index)?.0.clone();
-        }
-
-        Some(Self {
-            audio_muted,
-            master_volume_percent,
-            latency_ms,
-            sample_rate,
-            vsync,
-            screen_orientation,
-            storage_policy,
-            overlay_visibility,
-            overlay_opacity_percent,
-            overlay_scale_percent,
-            overlay_vertical_offset_percent,
-            overlay_haptics,
-            motion_enabled,
-            rumble_enabled,
-            rumble_strength_percent,
-            rumble_target,
-            notifications_info_enabled,
-            notifications_warning_enabled,
-            notifications_error_enabled,
-            notifications_position,
-            notifications_area_mode,
-            status_enabled,
-            status_position,
-            status_area_mode,
-            system_choices,
-        })
+        super::settings_schema::decode(current, by_key)
     }
 
     /// Locked payload builder: `begin_request` already holds the bridge state.
@@ -283,8 +158,6 @@ mod tests {
     use super::super::settings_model::RangeSpec;
     use crate::settings_sections::{SETTINGS_SECTION_IDS, section_label};
 
-    use nerust_core_traits::factory::CoreFactory;
-    use nerust_core_traits::factory::descriptor::SystemSettingsChoiceId;
     use nerust_gba_factory::GbaFactory;
     use nerust_gba_settings::GbaSettings;
     use nerust_gbc_factory::GbcFactory;
@@ -296,6 +169,8 @@ mod tests {
     use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
+    use nerust_system_traits::factory::CoreFactory;
+    use nerust_system_traits::factory::descriptor::SystemSettingsChoiceId;
 
     use super::*;
 
@@ -373,6 +248,44 @@ mod tests {
         let changed = AndroidSettings::cached_setting_defs_locked(&mut cache, &current);
         assert!(!Arc::ptr_eq(&first, &changed));
         assert_eq!(*changed, current.setting_defs());
+    }
+
+    #[test]
+    fn every_schema_value_round_trips_and_first_invalid_value_is_rejected() {
+        let registry = registry();
+        let current = android_settings(&default_snapshot(), &registry);
+        let defs = current.setting_defs();
+        for def in &defs {
+            let count = def.range.map_or(def.choices.len(), |range| {
+                (range.max - range.min + 1) as usize
+            });
+            for index in 0..count {
+                let mut values = keyed_currents(&current);
+                values.insert(def.key.clone(), index);
+                let decoded =
+                    AndroidSettings::from_keyed_indices(&values, &current, &defs).unwrap();
+                assert_eq!(
+                    decoded
+                        .setting_defs()
+                        .iter()
+                        .find(|row| row.key == def.key)
+                        .unwrap()
+                        .current,
+                    index,
+                    "{}",
+                    def.key
+                );
+            }
+            for invalid in [count, usize::MAX] {
+                let mut values = keyed_currents(&current);
+                values.insert(def.key.clone(), invalid);
+                assert!(
+                    AndroidSettings::from_keyed_indices(&values, &current, &defs).is_none(),
+                    "{}={invalid}",
+                    def.key
+                );
+            }
+        }
     }
 
     #[test]
@@ -932,35 +845,59 @@ mod tests {
     }
 
     #[test]
-    fn defs_fingerprint_tracks_every_scalar_field() {
-        // Each scalar flip must change the key, or the cache serves stale defs.
+    fn defs_cache_tracks_model_changes_without_a_parallel_field_list() {
         let registry = registry();
         let base = android_settings(&default_snapshot(), &registry);
-        let key = base.defs_fingerprint();
+        let mut cache = None;
+        let first = AndroidSettings::cached_setting_defs_locked(&mut cache, &base);
         let mut flip = base.clone();
         flip.audio_muted = !flip.audio_muted;
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert!(!Arc::ptr_eq(
+            &first,
+            &AndroidSettings::cached_setting_defs_locked(&mut cache, &flip)
+        ));
         let mut flip = base.clone();
         flip.master_volume_percent = flip.master_volume_percent.wrapping_add(1);
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
         let mut flip = base.clone();
         flip.latency_ms = flip.latency_ms.wrapping_add(1);
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
         let mut flip = base.clone();
         flip.screen_orientation = ScreenOrientation::Landscape;
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
         let mut flip = base.clone();
         flip.overlay_vertical_offset_percent = flip.overlay_vertical_offset_percent.wrapping_add(1);
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
         let mut flip = base.clone();
         flip.notifications_position = NotificationPosition::TopRight;
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
         let mut flip = base.clone();
         flip.status_area_mode = NotificationAreaMode::Strip;
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
         let mut flip = base.clone();
         flip.rumble_target = RumbleTarget::Controller;
-        assert_ne!(flip.defs_fingerprint(), key);
+        assert_eq!(
+            *AndroidSettings::cached_setting_defs_locked(&mut cache, &flip),
+            flip.setting_defs()
+        );
     }
 
     fn current_values(android: &AndroidSettings) -> BTreeMap<String, usize> {

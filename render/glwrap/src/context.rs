@@ -3,14 +3,19 @@
 
 /// Proof that the GL context is current on this thread.
 /// Build only with [`Current::assert_current`]; destroy takes `Option<Self>`.
+///
+/// ```compile_fail
+/// fn send<T: Send>() {}
+/// send::<nerust_glwrap::Current>();
+/// ```
 #[derive(Debug, Clone, Copy)]
-pub struct Current(());
+pub struct Current(std::marker::PhantomData<std::rc::Rc<()>>);
 
 impl Current {
     /// Checked proof: `Some` only when the caller verified `ctx.is_current()`.
     /// Takes the `bool` verdict so this crate stays free of a glutin dependency.
     pub fn assert_current(is_current: bool) -> Option<Self> {
-        is_current.then_some(Self(()))
+        (is_current && crate::bindings::has_current()).then_some(Self(std::marker::PhantomData))
     }
 }
 
@@ -95,6 +100,9 @@ mod tests {
 
     #[test]
     fn assert_current_gates_the_proof() {
+        assert!(Current::assert_current(true).is_none());
+        let api = unsafe { crate::Context::load_with(|_| std::ptr::null()) };
+        let _scope = unsafe { api.enter() };
         assert!(Current::assert_current(true).is_some());
         assert!(Current::assert_current(false).is_none());
     }

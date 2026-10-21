@@ -18,8 +18,14 @@ impl FrameUploadLayout {
             .checked_mul(bytes_per_pixel as usize)
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| "frame upload row size overflowed u32".to_string())?;
-        let upload_bytes_per_row =
-            align_copy_bytes_per_row(copy_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        if copy_bytes_per_row == 0 || logical_size.height == 0 {
+            return Err("empty frame upload".into());
+        }
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let upload_bytes_per_row = copy_bytes_per_row
+            .checked_add(alignment - 1)
+            .map(|n| n / alignment * alignment)
+            .ok_or_else(|| "frame upload row alignment overflowed u32".to_string())?;
         let buffer_size = u64::from(upload_bytes_per_row)
             .checked_mul(logical_size.height as u64)
             .ok_or_else(|| "frame upload buffer size overflowed u64".to_string())?;
@@ -32,35 +38,42 @@ impl FrameUploadLayout {
     }
 }
 
-fn align_copy_bytes_per_row(bytes_per_row: u32, alignment: u32) -> u32 {
-    bytes_per_row.div_ceil(alignment) * alignment
-}
-
 pub(crate) fn pack_frame_rows(
     source: &[u8],
     source_bytes_per_row: usize,
     height: usize,
     destination: &mut [u8],
     layout: FrameUploadLayout,
-) {
+) -> Result<(), nerust_render_traits::FrameError> {
     let copy_bytes_per_row = layout.copy_bytes_per_row as usize;
     let upload_bytes_per_row = layout.upload_bytes_per_row as usize;
-    debug_assert!(source_bytes_per_row >= copy_bytes_per_row);
-    debug_assert_eq!(source.len(), source_bytes_per_row * height);
-    debug_assert!(destination.len() >= upload_bytes_per_row * height);
-
-    if source_bytes_per_row == upload_bytes_per_row {
-        destination[..source.len()].copy_from_slice(source);
-        return;
+    nerust_render_traits::FrameLayout::checked(
+        LogicalSize {
+            width: copy_bytes_per_row / layout.bytes_per_pixel as usize,
+            height,
+        },
+        layout.bytes_per_pixel as usize,
+        source_bytes_per_row,
+        source.len(),
+    )?;
+    let needed = upload_bytes_per_row
+        .checked_mul(height)
+        .ok_or(nerust_render_traits::FrameError::InvalidDimensions)?;
+    if destination.len() < needed {
+        return Err(nerust_render_traits::FrameError::TooShort {
+            need: needed,
+            have: destination.len(),
+        });
     }
-
-    for (source_row, destination_row) in source
-        .chunks_exact(source_bytes_per_row)
-        .zip(destination.chunks_exact_mut(upload_bytes_per_row))
-        .take(height)
-    {
-        destination_row[..copy_bytes_per_row].copy_from_slice(&source_row[..copy_bytes_per_row]);
+    destination[..needed].fill(0);
+    for row in 0..height {
+        destination[row * upload_bytes_per_row..row * upload_bytes_per_row + copy_bytes_per_row]
+            .copy_from_slice(
+                &source
+                    [row * source_bytes_per_row..row * source_bytes_per_row + copy_bytes_per_row],
+            );
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -68,6 +81,43 @@ mod tests {
     use nerust_render_traits::logical::LogicalSize;
 
     use super::{FrameUploadLayout, pack_frame_rows};
+
+    #[test]
+    fn final_row_padding_is_optional_extra_bytes_are_ignored_and_short_rows_rejected() {
+        let layout = FrameUploadLayout {
+            bytes_per_pixel: 4,
+            copy_bytes_per_row: 8,
+            upload_bytes_per_row: 16,
+            buffer_size: 32,
+        };
+        for source in [vec![7; 20], vec![7; 99]] {
+            let mut destination = [255; 32];
+            pack_frame_rows(&source, 12, 2, &mut destination, layout).unwrap();
+            assert_eq!(&destination[..8], &[7; 8]);
+            assert_eq!(&destination[16..24], &[7; 8]);
+            assert_eq!(&destination[8..16], &[0; 8]);
+            assert_eq!(&destination[24..32], &[0; 8]);
+        }
+        for stride in [0, 4, 9, usize::MAX] {
+            assert!(pack_frame_rows(&[7; 20], stride, 2, &mut [0; 32], layout).is_err());
+        }
+        assert!(pack_frame_rows(&[7; 19], 12, 2, &mut [0; 32], layout).is_err());
+        assert!(pack_frame_rows(&[7; 20], 12, 2, &mut [0; 31], layout).is_err());
+    }
+
+    #[test]
+    fn alignment_overflow_and_empty_layouts_return_errors() {
+        for (width, height, bpp) in [
+            (u32::MAX as usize, 1, 1),
+            (0, 1, 4),
+            (1, 0, 4),
+            (usize::MAX, 1, 4),
+        ] {
+            assert!(
+                FrameUploadLayout::for_logical_size(LogicalSize { width, height }, bpp).is_err()
+            );
+        }
+    }
 
     #[test]
     fn aligned_upload_layout_keeps_native_row_pitch() {
@@ -120,7 +170,7 @@ mod tests {
         ];
         let mut destination = [0_u8; 32];
 
-        pack_frame_rows(&source, 8, 2, &mut destination, layout);
+        pack_frame_rows(&source, 8, 2, &mut destination, layout).unwrap();
 
         assert_eq!(&destination[0..8], &source[0..8]);
         assert_eq!(&destination[16..24], &source[8..16]);
@@ -142,7 +192,7 @@ mod tests {
         ];
         let mut destination = [0_u8; 32];
 
-        pack_frame_rows(&source, 12, 2, &mut destination, layout);
+        pack_frame_rows(&source, 12, 2, &mut destination, layout).unwrap();
 
         assert_eq!(&destination[0..8], &source[0..8]);
         assert_eq!(&destination[16..24], &source[12..20]);

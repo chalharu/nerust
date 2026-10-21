@@ -1,14 +1,15 @@
 //! Slot persistence orchestration: save/load/delete plus mapper-save flushing.
 //! Ports live in [`ports`](super::ports); the filesystem backend in [`fs`](super::fs).
 
-use std::{io::ErrorKind, path::PathBuf, sync::Arc};
+use std::{io::ErrorKind, sync::Arc};
 
 use nerust_core_traits::{
     identity::SystemIdentity,
     save_state::{SaveStateHeader, save_state_with_header},
 };
 use nerust_persistence::{
-    error::PersistenceError, model::StateSlotSummary, time::latest_saved_slot_id,
+    error::PersistenceError, model::StateSlotSummary, sidecar::StorageLocation,
+    time::latest_saved_slot_id,
 };
 
 use super::error::SlotOpFailure;
@@ -57,8 +58,8 @@ pub struct PersistenceManager {
     slot_backend: Box<dyn SlotBackend>,
     autosave_backend: Box<dyn AutoSaveBackend>,
     mapper_backend: Box<dyn MapperSaveBackend>,
-    states_dir: Option<PathBuf>,
-    mapper_save_path: Option<PathBuf>,
+    states_dir: Option<StorageLocation>,
+    mapper_save_path: Option<StorageLocation>,
     mapper_save_flush_allowed: bool,
     mapper_save_recovery_written: bool,
     slots: Arc<[StateSlotSummary]>,
@@ -138,7 +139,7 @@ impl PersistenceManager {
     }
 
     /// Configured save locations, if setup resolved them: cloned paths for the session boundary.
-    pub(crate) fn configured_sidecars(&self) -> Option<(PathBuf, PathBuf)> {
+    pub(crate) fn configured_sidecars(&self) -> Option<(StorageLocation, StorageLocation)> {
         match (&self.states_dir, &self.mapper_save_path) {
             (Some(states), Some(mapper)) => Some((states.clone(), mapper.clone())),
             _ => None,
@@ -164,7 +165,13 @@ impl PersistenceManager {
             "slot blob exceeds UI-thread budget"
         );
         let state_blob = save_state_with_header(core_bytes);
-        let preview = emu.export_preview();
+        let preview =
+            emu.export_preview()
+                .map(|frame| nerust_persistence::thumbnail::ThumbnailSource {
+                    width: frame.width,
+                    height: frame.height,
+                    rgba: frame.rgba,
+                });
         match self
             .slot_backend
             .write_slot(dir, slot_id, &state_blob, &identity, preview.as_ref())
@@ -320,12 +327,17 @@ impl PersistenceManager {
         }
     }
 
-    pub fn configure(&mut self, states_dir: PathBuf, mapper_save_path: PathBuf) {
+    pub fn configure(&mut self, states_dir: StorageLocation, mapper_save_path: StorageLocation) {
+        if self.mapper_save_path.as_ref() != Some(&mapper_save_path) {
+            self.mapper_save_flush_allowed = true;
+            self.mapper_save_recovery_written = false;
+        }
+        if self.states_dir.as_ref() != Some(&states_dir) {
+            self.active_slot_id = None;
+            self.slots = Arc::from([]);
+        }
         self.states_dir = Some(states_dir);
         self.mapper_save_path = Some(mapper_save_path);
-        self.mapper_save_flush_allowed = true;
-        self.mapper_save_recovery_written = false;
-        self.active_slot_id = None;
     }
 
     pub fn reset(&mut self) {
@@ -349,7 +361,10 @@ impl PersistenceManager {
             if self.mapper_save_recovery_written {
                 return Ok(MapperFlush::DegradedRecoveryWritten);
             }
-            if let Some(bytes) = emu.export_mapper().ok().flatten() {
+            if let Some(bytes) = emu
+                .export_mapper()
+                .map_err(|fault| MapperFlushError { fault })?
+            {
                 let _recovery_path = self
                     .mapper_backend
                     .write_recovery_mapper_save(path, &bytes)
@@ -387,15 +402,19 @@ impl PersistenceManager {
             return Ok(());
         };
         match self.mapper_backend.read_mapper_save(path) {
-            Ok(Some(bytes)) => {
-                let _ = emu.import_mapper(bytes);
-                Ok(())
-            }
+            Ok(Some(bytes)) => match emu.import_mapper(bytes) {
+                Ok(()) => Ok(()),
+                Err(fault) => {
+                    self.mapper_save_flush_allowed = false;
+                    Err(PersistenceError::Validation(format!(
+                        "mapper import failed: {fault:?}"
+                    )))
+                }
+            },
             Ok(None) => Ok(()),
-            Err(_) => {
+            Err(error) => {
                 self.mapper_save_flush_allowed = false;
-
-                Ok(())
+                Err(error)
             }
         }
     }
@@ -523,7 +542,7 @@ mod persistence_cov_tests {
         fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
             self.state.clone().map(|_| ())
         }
-        fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
+        fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
             None
         }
         fn export_identity(&self) -> Option<SystemIdentity> {
@@ -602,7 +621,7 @@ mod persistence_cov_tests {
         let dir = std::env::temp_dir().join("nerust-persist-cov-noid");
         std::fs::create_dir_all(&dir).ok();
         let mut manager = PersistenceManager::new();
-        manager.configure(dir.clone(), dir.join("g.sav"));
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
         let exporter = OkExporter {
             identity: None,
             state: Ok(vec![1]),
@@ -623,7 +642,7 @@ mod persistence_cov_tests {
         let dir = std::env::temp_dir().join("nerust-persist-cov-export");
         std::fs::create_dir_all(&dir).ok();
         let mut manager = PersistenceManager::new();
-        manager.configure(dir.clone(), dir.join("g.sav"));
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
         let exporter = OkExporter {
             identity: Some(identity()),
             state: Err(SlotOpFailure::Corrupt),
@@ -649,7 +668,7 @@ mod persistence_cov_tests {
             Box::new(FailingSlotBackend),
             Box::new(FsMapper),
         );
-        manager.configure(dir.clone(), dir.join("g.sav"));
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
         manager.mapper_save_flush_allowed = false;
         let exporter = exporter_ok();
         assert_eq!(
@@ -666,13 +685,13 @@ mod persistence_cov_tests {
             mapper: Ok(None),
         };
         let mut fresh = failing_manager();
-        fresh.configure(dir.clone(), dir.join("h.sav"));
+        fresh.configure(dir.clone().into(), dir.join("h.sav").into());
         fresh.mapper_save_flush_allowed = false;
         assert_eq!(
             fresh.flush_mapper_save(&none_mapper).unwrap(),
             MapperFlush::SkippedNoPath
         );
-        assert!(fresh.load_mapper_save_if_needed(&exporter).is_ok());
+        assert!(fresh.load_mapper_save_if_needed(&exporter).is_err());
         assert!(!fresh.mapper_save_flush_allowed);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -684,7 +703,7 @@ mod persistence_cov_tests {
         let mk = |id: u64| S {
             schema_version: 1,
             slot_id: id,
-            path: std::path::PathBuf::from("/tmp/x"),
+            path: std::path::PathBuf::from("/tmp/x").into(),
             saved_at: std::time::UNIX_EPOCH,
             has_thumbnail: false,
             emulator_version: String::new(),
@@ -715,7 +734,7 @@ mod persistence_cov_tests {
         let dir = std::env::temp_dir().join("nerust-persist-cov-upsert");
         std::fs::create_dir_all(&dir).ok();
         let mut manager = PersistenceManager::new();
-        manager.configure(dir.clone(), dir.join("g.sav"));
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
         let exporter = exporter_ok();
         // Two saves: the cache upserts from the write summary both times.
         manager
@@ -761,8 +780,8 @@ mod persistence_cov_tests {
         assert_eq!(manager.active_slot_id(), None);
         assert_eq!(manager.configured_sidecars(), None);
         manager.configure(
-            std::path::PathBuf::from("/tmp/a"),
-            std::path::PathBuf::from("/tmp/b"),
+            std::path::PathBuf::from("/tmp/a").into(),
+            std::path::PathBuf::from("/tmp/b").into(),
         );
         assert!(manager.configured_sidecars().is_some());
         manager.reset();
@@ -782,5 +801,53 @@ mod persistence_cov_tests {
         manager.select_active_slot(9);
         manager.refresh_slots(&exporter);
         assert_eq!(manager.active_slot_id(), None);
+    }
+
+    #[test]
+    fn rejected_mapper_import_and_same_path_rebind_preserve_original() {
+        struct RejectImport;
+        impl StateExporter for RejectImport {
+            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+                Ok(vec![])
+            }
+            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
+                None
+            }
+            fn export_identity(&self) -> Option<SystemIdentity> {
+                None
+            }
+            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+                Ok(Some(b"replacement".to_vec()))
+            }
+            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Err(SlotOpFailure::Incompatible)
+            }
+        }
+        let dir = crate::test_helpers::unique_temp_dir("rejected-mapper");
+        let path = dir.join("game.sav");
+        std::fs::write(&path, b"original").unwrap();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&RejectImport).is_err());
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert_eq!(
+            manager.flush_mapper_save(&RejectImport).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        let recoveries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".recovered."))
+            .collect();
+        assert_eq!(recoveries.len(), 1);
+        assert_eq!(std::fs::read(recoveries[0].path()).unwrap(), b"replacement");
+        manager.configure(dir.clone().into(), path.into());
+        manager.flush_mapper_save(&RejectImport).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

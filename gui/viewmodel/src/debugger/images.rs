@@ -1,29 +1,11 @@
 //! System image blit and scaling. Pure; frontends share these
 //! so the PPU viewer shows identical pixels everywhere.
 
-use nerust_core_traits::debugger::{DebugImage, ImageFormat};
+pub use nerust_gui_runtime::debugger::rgba_image;
 
 /// PPU viewer empty-hover hint. Canonical wording for every
 /// frontend; PPU image titles render the raw kernel label.
 pub const PPU_HOVER_HINT: &str = "hover a tile";
-
-/// Blit an indexed system image to `(label, width, height, rgba)`.
-/// The blit is mechanical (no system knowledge): indexed pixels
-/// through the descriptor palette, opaque alpha.
-pub fn rgba_image(image: &DebugImage) -> (String, u32, u32, Vec<u8>) {
-    let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
-    for &pixel in &image.pixels {
-        let rgb = match image.format {
-            ImageFormat::Indexed2bpp | ImageFormat::Indexed4bpp => image
-                .palette
-                .get(pixel as usize)
-                .copied()
-                .unwrap_or([0, 0, 0]),
-        };
-        rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
-    }
-    (image.label_id.to_string(), image.width, image.height, rgba)
-}
 
 /// Nearest-neighbor 2x scale of blitted RGBA bytes. Pure; frontends
 /// share it so the PPU viewer shows identical pixels everywhere.

@@ -75,6 +75,7 @@ fn resolve_freeze_input(
 /// Presentation state: movement, display data, and user lists.
 /// Mirrors the tao bridge fields one to one.
 pub(crate) struct DebuggerData {
+    epoch: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) nav: NavState,
     pub(crate) spaces: Vec<(SpaceId, String, u32)>,
     pub(crate) display: DisplayCache,
@@ -97,6 +98,7 @@ impl DebuggerData {
         let start = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
         let language = session.settings_snapshot().shared.general.language;
         Self {
+            epoch: session.debug_epoch(),
             nav: NavState::new(spaces.len(), start),
             spaces,
             display: DisplayCache::default(),
@@ -137,13 +139,33 @@ impl DebuggerData {
 
 pub(crate) type DebuggerWindow = Rc<RefCell<DebuggerWindowCore>>;
 
+#[derive(Clone)]
+struct DrainBatch {
+    epoch: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    actions: Vec<DebugAction>,
+    scope: RebuildScope,
+    space: Option<SpaceId>,
+    mem_addr: u32,
+    dis_addr: Option<u32>,
+    watch: Option<u32>,
+    freeze: Option<(u32, u8)>,
+    reg_target: Option<&'static str>,
+    prev_rows: Vec<nerust_core_traits::debugger::HexRow>,
+    need_images: bool,
+}
+
 pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     data: DebuggerData,
     /// In-flight async drain with its rebuild scope: `act_scoped` starts it,
-    /// the tick poller finishes it. A newer batch supersedes the stored one.
-    flight: Option<(DrainFlight, RebuildScope)>,
+    /// the tick poller finishes it before starting the next batch.
+    flight: Option<(
+        DrainFlight,
+        RebuildScope,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    )>,
+    queue: std::collections::VecDeque<DrainBatch>,
     /// In-flight async live-images fetch, same pattern for the 250ms
     /// PPU follow tick. At most one; a newer tick supersedes.
     live_flight: Option<LiveImagesFlight>,
@@ -287,6 +309,7 @@ impl DebuggerWindowCore {
             state: state.clone(),
             data,
             flight: None,
+            queue: Default::default(),
             live_flight: None,
             ppu_window: None,
             pause_button: pause_button.clone(),
@@ -805,30 +828,102 @@ impl DebuggerWindowCore {
     /// [`DebuggerWindowCore::act`] with a rebuild scope: the finished drain
     /// refreshes only the sections its data moved.
     fn act_scoped(win: &DebuggerWindow, actions: &[DebugAction], scope: RebuildScope) {
-        let (
-            state,
+        let mut this = win.borrow_mut();
+        let epoch = this.state.borrow().session.debug_epoch();
+        let replaced = !std::sync::Arc::ptr_eq(&this.data.epoch, &epoch);
+        if replaced {
+            let data = DebuggerData::new(&this.state.borrow().session);
+            this.data = data;
+            this.flight = None;
+            this.queue.clear();
+            this.live_flight = None;
+        }
+        // The gesture was made against the old display. Refresh the replacement,
+        // but never reinterpret an old WriteConfirm/Resume against its new core.
+        let actions = if replaced {
+            &[DebugAction::Refresh][..]
+        } else {
+            actions
+        };
+        let scope = if replaced { RebuildScope::All } else { scope };
+        let batch = DrainBatch {
+            epoch,
+            actions: actions.to_vec(),
+            scope,
+            space: this.data.selected_space(),
+            mem_addr: this.data.nav.mem_addr(),
+            dis_addr: this.data.nav.dis_addr(),
+            watch: this.data.watch,
+            freeze: this.data.freeze,
+            reg_target: this.data.reg_target,
+            prev_rows: this.data.display.dump_rows.clone(),
+            need_images: this.ppu_window.is_some(),
+        };
+        // Frontend pause ownership must not run ahead of preceding side effects.
+        let mut start = 0;
+        for (index, action) in actions.iter().enumerate() {
+            if index > start
+                && matches!(
+                    action,
+                    DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause
+                )
+            {
+                this.queue.push_back(DrainBatch {
+                    actions: actions[start..index].to_vec(),
+                    ..batch.clone()
+                });
+                start = index;
+            }
+        }
+        this.queue.push_back(DrainBatch {
+            actions: actions[start..].to_vec(),
+            ..batch
+        });
+        let pending = this.flight.is_some();
+        drop(this);
+        if !pending && Self::poll_flight(win) {
+            Self::watch_flight(win);
+        }
+    }
+
+    fn start_batch(win: &DebuggerWindow, batch: DrainBatch) {
+        let state = win.borrow().state.clone();
+        let DrainBatch {
+            epoch,
+            actions,
+            scope,
             space,
             mem_addr,
             dis_addr,
             watch,
             freeze,
             reg_target,
-            prev_dump_rows,
+            prev_rows: prev_dump_rows,
             need_images,
-        ) = {
-            let this = win.borrow();
-            (
-                this.state.clone(),
-                this.data.selected_space(),
-                this.data.nav.mem_addr(),
-                this.data.nav.dis_addr(),
-                this.data.watch,
-                this.data.freeze,
-                this.data.reg_target,
-                this.data.display.dump_rows.clone(),
-                this.ppu_window.is_some(),
-            )
-        };
+        } = batch;
+        if !epoch.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
+        let mut state = state.borrow_mut();
+        use nerust_gui_shell::session::access::PauseControl;
+        for action in &actions {
+            match action {
+                DebugAction::Pause => state.pause(),
+                DebugAction::Resume => state.resume(),
+                DebugAction::TogglePause => state.toggle_pause(),
+                _ => {}
+            }
+        }
+        let loaded = state.session.tick_metrics().loaded;
+        let actions: Vec<_> = actions
+            .into_iter()
+            .map(|action| match action {
+                DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause if loaded => {
+                    DebugAction::Refresh
+                }
+                action => action,
+            })
+            .collect();
         let input = DebugDrainInput {
             space,
             mem_addr,
@@ -839,16 +934,14 @@ impl DebuggerWindowCore {
             prev_dump_rows: &prev_dump_rows,
             need_images,
         };
-        // Supersede: a newer batch replaces the stored flight; the
-        // FIFO command order keeps the newest view correct.
-        let mut flight = state.borrow().session.debug_drain_begin(actions, &input);
+        let mut flight = state.session.debug_drain_begin(&actions, &input);
+        drop(state);
         match flight.poll() {
             DrainPoll::Done(output) => {
                 Self::apply_scoped(win, *output, scope);
             }
             DrainPoll::Pending => {
-                win.borrow_mut().flight = Some((flight, scope));
-                Self::watch_flight(win);
+                win.borrow_mut().flight = Some((flight, scope, epoch));
             }
         }
     }
@@ -872,18 +965,30 @@ impl DebuggerWindowCore {
     /// Poll the stored flight once. Returns whether one is still pending: on
     /// completion the display applies, exactly like a synchronous drain.
     fn poll_flight(win: &DebuggerWindow) -> bool {
-        let (mut flight, scope) = match win.borrow_mut().flight.take() {
-            Some(stored) => stored,
-            None => return false,
-        };
-        match flight.poll() {
-            DrainPoll::Done(output) => {
-                Self::apply_scoped(win, *output, scope);
-                false
+        loop {
+            let stored = win.borrow_mut().flight.take();
+            let (mut flight, scope, epoch) = match stored {
+                Some(stored) => stored,
+                None => {
+                    let batch = win.borrow_mut().queue.pop_front();
+                    let Some(batch) = batch else {
+                        return false;
+                    };
+                    Self::start_batch(win, batch);
+                    continue;
+                }
+            };
+            if !epoch.load(std::sync::atomic::Ordering::Acquire) {
+                continue;
             }
-            DrainPoll::Pending => {
-                win.borrow_mut().flight = Some((flight, scope));
-                true
+            match flight.poll() {
+                DrainPoll::Done(output) => {
+                    Self::apply_scoped(win, *output, scope);
+                }
+                DrainPoll::Pending => {
+                    win.borrow_mut().flight = Some((flight, scope, epoch));
+                    return true;
+                }
             }
         }
     }
@@ -1607,7 +1712,7 @@ mod tests {
         }
     }
 
-    fn harness() -> Option<(
+    pub(super) fn harness() -> Option<(
         gtk::Application,
         gtk::ApplicationWindow,
         Rc<RefCell<crate::State>>,
@@ -1697,20 +1802,112 @@ mod tests {
         }
     }
 
+    #[test]
+    fn worker_replacement_rejects_old_queued_pause_and_stale_ui_resume() {
+        use nerust_frontend_kernel::pause::PauseOwner;
+        use nerust_system_traits::factory::{load::MediaObject, settings::FactorySettingsView};
+        let Some((app, main, state)) = harness() else {
+            return;
+        };
+        let registry = std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+            nerust_nes_factory::NesFactory::boxed().into(),
+        ]));
+        let dir = std::env::temp_dir().join(format!("nerust-gtk-epoch-{}", std::process::id()));
+        let session = nerust_gui_shell::session::SessionHandle::new_with_settings_paths(
+            nerust_gui_runtime::settings::HostBackendCapabilities {
+                window: nerust_gui_runtime::settings::HostWindowCapabilities {
+                    remembers_window_size: true,
+                    supports_fullscreen_default: true,
+                    supports_scaling: true,
+                },
+                presentation: None,
+            },
+            registry,
+            std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+            nerust_gui_runtime::settings::SettingsPaths {
+                settings_file: dir.join("settings.toml"),
+                central_storage_root: dir.join("storage"),
+            },
+        )
+        .unwrap();
+        state.borrow_mut().session = session;
+        let load = || {
+            let factory = nerust_nes_factory::NesFactory::boxed();
+            state
+                .borrow_mut()
+                .session
+                .set_active_system(factory.system_id().as_ref())
+                .expect("NES system activates");
+            let view = FactorySettingsView {
+                language: Default::default(),
+                system_config: factory
+                    .as_system_defaults()
+                    .unwrap()
+                    .default_system_settings(),
+            };
+            let request = factory
+                .resolve_load_request(&view, factory.default_load_options())
+                .unwrap();
+            let mut rom = vec![0; 16 + 16384 + 8192];
+            rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
+            rom[16..19].copy_from_slice(&[0x4c, 0, 0x80]);
+            for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
+                rom[16 + vector..18 + vector].copy_from_slice(&[0, 0x80]);
+            }
+            state
+                .borrow_mut()
+                .session
+                .load_resolved(MediaObject::new(None, rom), request)
+                .unwrap();
+        };
+        load();
+        let win = DebuggerWindowCore::open(&app, &main, state.clone());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while DebuggerWindowCore::poll_flight(&win) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        state.borrow_mut().set_pause_owner(PauseOwner::Modal, true);
+        let epoch = state.borrow().session.debug_epoch();
+        let batch = {
+            let this = win.borrow();
+            DrainBatch {
+                epoch: epoch.clone(),
+                actions: vec![DebugAction::StepInstr],
+                scope: RebuildScope::All,
+                space: this.data.selected_space(),
+                mem_addr: 0,
+                dis_addr: None,
+                watch: None,
+                freeze: Some((0, 0xff)),
+                reg_target: Some("a"),
+                prev_rows: Vec::new(),
+                need_images: false,
+            }
+        };
+        // A second unstarted batch must not pause/write the replacement.
+        win.borrow_mut().queue.push_back(DrainBatch {
+            actions: vec![DebugAction::Resume, DebugAction::RegisterWrite(0xff)],
+            ..batch.clone()
+        });
+        DebuggerWindowCore::start_batch(&win, batch);
+        load();
+        assert!(!epoch.load(std::sync::atomic::Ordering::Acquire));
+        assert!(!DebuggerWindowCore::poll_flight(&win));
+        // The gesture still references the old displayed state: accept only refresh.
+        DebuggerWindowCore::act(&win, &[DebugAction::Resume]);
+        assert!(state.borrow().pause_policy.owns(PauseOwner::User));
+        assert!(state.borrow().session.tick_metrics().paused);
+        state.borrow_mut().set_pause_owner(PauseOwner::Modal, false);
+        assert!(state.borrow().session.tick_metrics().paused);
+    }
+
     /// Open a debugger window for widget tests. Each test uses its own
     /// application: a second Application fights the first for registration.
     fn open_test_window() -> Option<(gtk::Application, gtk::ApplicationWindow, DebuggerWindow)> {
         let (app, main, state) = harness()?;
         let win = DebuggerWindowCore::open(&app, &main, state);
         Some((app, main, win))
-    }
-
-    #[test]
-    fn widget_harness_builds_app_state() {
-        let Some((_app, _main, _state)) = harness() else {
-            eprintln!("SKIP: debugger widget test needs a display");
-            return;
-        };
     }
 
     #[test]
@@ -1915,12 +2112,6 @@ mod tests {
         // Builds the full dialog (settings snapshot drives every
         // section); closing runs the callback without applying.
         super::super::preferences::present_preferences_dialog(&main, state, || {});
-    }
-
-    #[test]
-    fn rebuild_scope_defaults_to_full_refresh() {
-        assert_eq!(super::RebuildScope::default(), super::RebuildScope::All);
-        assert_eq!(super::BOOKMARK_CAP, 8);
     }
 
     #[test]

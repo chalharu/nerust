@@ -1,7 +1,5 @@
-#![expect(
-    clippy::not_unsafe_ptr_arg_deref,
-    reason = "this module intentionally mirrors pointer-based OpenGL C APIs"
-)]
+//! Low-level calls. Pointer-bearing functions require the caller to uphold GL memory rules.
+use crate::bindings as gl;
 
 use std::{ffi::CStr, os::raw::c_void};
 
@@ -11,7 +9,18 @@ use gl::types::{
 
 use super::{Error, error::ErrorKind, gl_error_handle};
 
-pub fn get_programiv(program: GLuint, pname: GLenum, params: *mut GLint) -> Result<(), Error> {
+pub fn get_programiv(program: GLuint, pname: GLenum, params: &mut GLint) -> Result<(), Error> {
+    if !matches!(
+        pname,
+        gl::LINK_STATUS
+            | gl::INFO_LOG_LENGTH
+            | gl::ACTIVE_ATTRIBUTES
+            | gl::ACTIVE_ATTRIBUTE_MAX_LENGTH
+            | gl::ACTIVE_UNIFORMS
+            | gl::ACTIVE_UNIFORM_MAX_LENGTH
+    ) {
+        return Err(Error::new(vec![ErrorKind::InvalidEnum]));
+    }
     gl_error_handle(|| unsafe { gl::GetProgramiv(program, pname, params) })
 }
 
@@ -19,13 +28,22 @@ pub fn get_active_attrib(
     program: GLuint,
     index: GLuint,
     buf_size: GLsizei,
-    length: *mut GLsizei,
-    size: *mut GLint,
-    type_: *mut GLenum,
-    name: *mut GLchar,
+    length: &mut GLsizei,
+    size: &mut GLint,
+    type_: &mut GLenum,
+    name: &mut [GLchar],
 ) -> Result<(), Error> {
+    validate_count(buf_size, name.len())?;
     gl_error_handle(|| unsafe {
-        gl::GetActiveAttrib(program, index, buf_size, length, size, type_, name)
+        gl::GetActiveAttrib(
+            program,
+            index,
+            buf_size,
+            length,
+            size,
+            type_,
+            name.as_mut_ptr(),
+        )
     })
 }
 
@@ -33,13 +51,22 @@ pub fn get_active_uniform(
     program: GLuint,
     index: GLuint,
     buf_size: GLsizei,
-    length: *mut GLsizei,
-    size: *mut GLint,
-    type_: *mut GLenum,
-    name: *mut GLchar,
+    length: &mut GLsizei,
+    size: &mut GLint,
+    type_: &mut GLenum,
+    name: &mut [GLchar],
 ) -> Result<(), Error> {
+    validate_count(buf_size, name.len())?;
     gl_error_handle(|| unsafe {
-        gl::GetActiveUniform(program, index, buf_size, length, size, type_, name)
+        gl::GetActiveUniform(
+            program,
+            index,
+            buf_size,
+            length,
+            size,
+            type_,
+            name.as_mut_ptr(),
+        )
     })
 }
 
@@ -51,8 +78,17 @@ pub fn get_uniform_location(program: GLuint, name: &CStr) -> Result<GLint, Error
     gl_error_handle(|| unsafe { gl::GetUniformLocation(program, name.as_ptr()) })
 }
 
-pub fn gen_textures(n: GLsizei, textures: *mut GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::GenTextures(n, textures) })
+fn validate_count(n: GLsizei, len: usize) -> Result<(), Error> {
+    if usize::try_from(n).is_ok_and(|n| n <= len) {
+        Ok(())
+    } else {
+        Err(Error::new(vec![ErrorKind::InvalidValue]))
+    }
+}
+
+pub fn gen_textures(n: GLsizei, textures: &mut [GLuint]) -> Result<(), Error> {
+    validate_count(n, textures.len())?;
+    gl_error_handle(|| unsafe { gl::GenTextures(n, textures.as_mut_ptr()) })
 }
 
 pub fn pixel_storei(pname: GLenum, param: GLint) -> Result<(), Error> {
@@ -71,7 +107,9 @@ pub fn active_texture(texture: GLenum) -> Result<(), Error> {
     clippy::too_many_arguments,
     reason = "OpenGL texture upload parameters map directly to the C API"
 )]
-pub fn tex_image_2d(
+/// # Safety
+/// `pixels` must satisfy GL's format, extent, pixel-store and PBO memory requirements.
+pub unsafe fn tex_image_2d(
     target: GLenum,
     level: GLint,
     internalformat: GLint,
@@ -101,29 +139,37 @@ pub fn tex_parameteri(target: GLenum, pname: GLenum, param: GLint) -> Result<(),
     gl_error_handle(|| unsafe { gl::TexParameteri(target, pname, param) })
 }
 
-pub fn gen_buffers(n: GLsizei, buffers: *mut GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::GenBuffers(n, buffers) })
+pub fn gen_buffers(n: GLsizei, buffers: &mut [GLuint]) -> Result<(), Error> {
+    validate_count(n, buffers.len())?;
+    gl_error_handle(|| unsafe { gl::GenBuffers(n, buffers.as_mut_ptr()) })
 }
 
 pub fn bind_buffer(target: GLenum, buffer: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::BindBuffer(target, buffer) })
 }
 
-pub fn delete_textures(n: GLsizei, textures: *const GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::DeleteTextures(n, textures) })
+pub fn delete_textures(n: GLsizei, textures: &[GLuint]) -> Result<(), Error> {
+    validate_count(n, textures.len())?;
+    gl_error_handle(|| unsafe { gl::DeleteTextures(n, textures.as_ptr()) })?;
+    super::check_frame()
 }
 
-pub fn delete_buffers(n: GLsizei, buffers: *const GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::DeleteBuffers(n, buffers) })
+pub fn delete_buffers(n: GLsizei, buffers: &[GLuint]) -> Result<(), Error> {
+    validate_count(n, buffers.len())?;
+    gl_error_handle(|| unsafe { gl::DeleteBuffers(n, buffers.as_ptr()) })?;
+    super::check_frame()
 }
 
 /// Delete a program name (symmetric with the other raw wrappers).
 /// Call only with a current context; best-effort at teardown.
 pub fn delete_program(program: GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::DeleteProgram(program) })
+    gl_error_handle(|| unsafe { gl::DeleteProgram(program) })?;
+    super::check_frame()
 }
 
-pub fn buffer_data(
+/// # Safety
+/// `data` must address `size` initialized bytes, or be null to allocate storage.
+pub unsafe fn buffer_data(
     target: GLenum,
     size: GLsizeiptr,
     data: *const c_void,
@@ -161,12 +207,17 @@ pub fn uniform_matrix_4fv(
     location: GLint,
     count: GLsizei,
     transpose: GLboolean,
-    value: *const GLfloat,
+    value: &[GLfloat; 16],
 ) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::UniformMatrix4fv(location, count, transpose, value) })
+    if count != 1 {
+        return Err(Error::new(vec![ErrorKind::InvalidValue]));
+    }
+    gl_error_handle(|| unsafe { gl::UniformMatrix4fv(location, count, transpose, value.as_ptr()) })
 }
 
-pub fn vertex_attrib_pointer(
+/// # Safety
+/// The pointer and bound buffer must remain valid for all subsequent draws.
+pub unsafe fn vertex_attrib_pointer(
     index: GLuint,
     size: GLint,
     type_: GLenum,
@@ -183,7 +234,9 @@ pub fn vertex_attrib_pointer(
     clippy::too_many_arguments,
     reason = "OpenGL texture upload parameters map directly to the C API"
 )]
-pub fn tex_sub_image_2d(
+/// # Safety
+/// `pixels` must satisfy GL's format, extent, pixel-store and PBO memory requirements.
+pub unsafe fn tex_sub_image_2d(
     target: GLenum,
     level: GLint,
     xoffset: GLint,
@@ -201,7 +254,9 @@ pub fn tex_sub_image_2d(
     })
 }
 
-pub fn draw_arrays(mode: GLenum, first: GLint, count: GLsizei) -> Result<(), Error> {
+/// # Safety
+/// All enabled vertex arrays must have sufficient backing storage for this draw.
+pub unsafe fn draw_arrays(mode: GLenum, first: GLint, count: GLsizei) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::DrawArrays(mode, first, count) })
 }
 
@@ -210,7 +265,9 @@ pub(crate) fn index_offset(offset: u32) -> *const std::ffi::c_void {
     std::ptr::without_provenance::<std::ffi::c_void>(offset as usize)
 }
 
-pub fn draw_elements(
+/// # Safety
+/// Index and vertex storage must cover every element referenced by this draw.
+pub unsafe fn draw_elements(
     mode: GLenum,
     count: GLsizei,
     type_: GLenum,
@@ -228,16 +285,19 @@ pub fn draw_elements(
     })
 }
 
-pub fn gen_vertex_arrays(n: GLsizei, arrays: *mut GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::GenVertexArrays(n, arrays) })
+pub fn gen_vertex_arrays(n: GLsizei, arrays: &mut [GLuint]) -> Result<(), Error> {
+    validate_count(n, arrays.len())?;
+    gl_error_handle(|| unsafe { gl::GenVertexArrays(n, arrays.as_mut_ptr()) })
 }
 
 pub fn bind_vertex_array(array: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::BindVertexArray(array) })
 }
 
-pub fn delete_vertex_arrays(n: GLsizei, arrays: *mut GLuint) -> Result<(), Error> {
-    gl_error_handle(|| unsafe { gl::DeleteVertexArrays(n, arrays) })
+pub fn delete_vertex_arrays(n: GLsizei, arrays: &[GLuint]) -> Result<(), Error> {
+    validate_count(n, arrays.len())?;
+    gl_error_handle(|| unsafe { gl::DeleteVertexArrays(n, arrays.as_ptr()) })?;
+    super::check_frame()
 }
 
 pub fn viewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei) -> Result<(), Error> {
@@ -267,6 +327,23 @@ pub fn is_enabled(cap: GLenum) -> Result<bool, Error> {
 /// Single-integer `glGetIntegerv` for save/restore guards
 /// (program, active texture, blend factors, bindings).
 pub fn get_integer(pname: GLenum) -> Result<GLint, Error> {
+    // Never pass an unclassified query to a one-element stack allocation.
+    if !matches!(
+        pname,
+        gl::CURRENT_PROGRAM
+            | gl::ACTIVE_TEXTURE
+            | gl::VERTEX_ARRAY_BINDING
+            | gl::ARRAY_BUFFER_BINDING
+            | gl::BLEND_SRC_RGB
+            | gl::BLEND_DST_RGB
+            | gl::BLEND_SRC_ALPHA
+            | gl::BLEND_DST_ALPHA
+            | gl::UNPACK_ALIGNMENT
+            | gl::UNPACK_ROW_LENGTH
+            | gl::MAX_TEXTURE_SIZE
+    ) {
+        return Err(Error::new(vec![ErrorKind::InvalidEnum]));
+    }
     let mut value: GLint = 0;
     gl_error_handle(|| unsafe {
         gl::GetIntegerv(pname, &mut value);
@@ -304,7 +381,9 @@ pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
 }
 
-pub fn get_tex_image(
+/// # Safety
+/// The output must cover the complete texture using the current pack/PBO state.
+pub unsafe fn get_tex_image(
     target: GLenum,
     level: GLint,
     format: GLenum,
@@ -330,6 +409,20 @@ pub fn gl_string(name: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::super::error::{Error, ErrorKind};
+    use crate::bindings as gl;
+
+    #[test]
+    fn rejects_vector_queries_and_short_output_slices_before_ffi() {
+        assert!(super::get_integer(gl::VIEWPORT).is_err());
+        assert!(super::get_integer(gl::MAX_VIEWPORT_DIMS).is_err());
+        assert!(super::get_integer(u32::MAX).is_err());
+        assert!(super::gen_textures(2, &mut [0]).is_err());
+        assert!(super::gen_buffers(-1, &mut []).is_err());
+        assert!(super::gen_vertex_arrays(1, &mut []).is_err());
+        assert!(super::delete_textures(2, &[0]).is_err());
+        assert!(super::get_programiv(0, gl::COMPUTE_WORK_GROUP_SIZE, &mut 0).is_err());
+        assert!(super::uniform_matrix_4fv(0, 2, gl::FALSE, &[0.0; 16]).is_err());
+    }
 
     #[test]
     fn index_offset_carries_no_provenance() {

@@ -15,14 +15,15 @@ use nerust_core_traits::{
         DebugImage, DebuggerError, InspectError, InspectRequest, InspectResult, MemoryWrite,
         SnapshotRequest, SnapshotResult, SpaceInfo, StepUnit,
     },
-    factory::{CoreParts, load::MediaObject},
     identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
 use nerust_input_traits::{AttachmentId, ControlId};
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
+use nerust_system_traits::factory::{CoreParts, load::MediaObject};
 
 pub(crate) mod images;
+mod pause_stable;
 
 // Narrow live-core ports: playback, frame, audio, debug, persist. Single home for the persistence
 // port; session depends down. Shell-owned preview frame: width plus packed RGBA bytes. The core names only this type; the persistence envelope adapts at the boundary.
@@ -64,17 +65,16 @@ pub enum CorePersistenceError {
     #[error("emu thread reply channel closed")]
     NoReply,
     #[error("{0}")]
-    Core(String),
+    Core(#[source] nerust_core_traits::CoreError),
 }
 
 impl CorePersistenceError {
     /// Typed fault for this error; single mapping point.
     pub fn fault(&self) -> StateFault {
-        StateFault::from(match self {
-            Self::WorkerUnavailable => OperationError::WorkerUnavailable,
-            Self::NoReply => OperationError::NoReply,
-            Self::Core(message) => OperationError::Reply(message.clone()),
-        })
+        match self {
+            Self::WorkerUnavailable | Self::NoReply => StateFault::Transport,
+            Self::Core(error) => StateFault::from(error.fault()),
+        }
     }
 
     /// Typed slot failure for this error; single mapping point.
@@ -125,7 +125,7 @@ pub trait StateExporter {
     /// Import raw core state bytes previously resolved by the caller.
     fn import_state(&self, data: Vec<u8>) -> Result<(), SlotOpFailure>;
     /// Preview pixels for the slot thumbnail, if a frame is available.
-    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource>;
+    fn export_preview(&self) -> Option<PreviewRgba>;
     /// Identity the slot is filed under.
     fn export_identity(&self) -> Option<SystemIdentity>;
     /// Canonical media identity for slot filing; defaults to [`export_identity`](Self::export_identity).
@@ -162,26 +162,6 @@ pub enum StateFault {
 }
 
 impl StateFault {
-    /// Single message classification; the only string matching in the shell.
-    /// Typed protocol mapping enters via `From<OperationError>`; this stays crate-local.
-    pub(crate) fn from_message(message: &str) -> Self {
-        let lower = message.to_lowercase();
-        if lower.contains("mismatch")
-            || lower.contains("unsupported")
-            || lower.contains("version")
-            || lower.contains("incompatible")
-            || lower.contains("foreign")
-        {
-            Self::Incompatible
-        } else if lower.contains("not found") || lower.contains("missing") {
-            Self::Missing
-        } else if lower.contains("io") || lower.contains("storage") {
-            Self::Storage
-        } else {
-            Self::Corrupt
-        }
-    }
-
     /// Short code for logs and tests.
     pub fn code(&self) -> &'static str {
         match self {
@@ -195,22 +175,21 @@ impl StateFault {
     }
 }
 
-impl From<OperationError> for StateFault {
-    fn from(error: OperationError) -> Self {
-        match error {
-            OperationError::WorkerUnavailable | OperationError::NoReply => Self::Transport,
-            OperationError::Reply(detail) => Self::from_message(&detail),
-        }
+impl From<CorePersistenceError> for StateFault {
+    fn from(error: CorePersistenceError) -> Self {
+        error.fault()
     }
 }
 
-impl From<CorePersistenceError> for StateFault {
-    fn from(error: CorePersistenceError) -> Self {
-        match error {
-            CorePersistenceError::WorkerUnavailable | CorePersistenceError::NoReply => {
-                Self::Transport
-            }
-            CorePersistenceError::Core(message) => Self::from_message(&message),
+impl From<nerust_core_traits::CoreFault> for StateFault {
+    fn from(fault: nerust_core_traits::CoreFault) -> Self {
+        use nerust_core_traits::CoreFault;
+        match fault {
+            CoreFault::Unavailable => Self::Transport,
+            CoreFault::Storage => Self::Storage,
+            CoreFault::Missing => Self::Missing,
+            CoreFault::Corrupt => Self::Corrupt,
+            CoreFault::Incompatible => Self::Incompatible,
         }
     }
 }
@@ -491,7 +470,7 @@ impl EmuCore {
 /// adapter, field map, and host peripheral handles.
 pub type CoreSpawnParts = (
     EmuCore,
-    Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    Box<dyn nerust_input_traits::GuiInputPort>,
     std::collections::HashMap<(AttachmentId, ControlId), usize>,
     nerust_core_traits::peripheral::HostPeripheralHandles,
 );
@@ -554,7 +533,7 @@ impl EmuCore {
 
         let frame_ready = Arc::new(AtomicBool::new(false));
         let emu = EmuThread::spawn(
-            parts.core,
+            Box::new(pause_stable::PauseStableCore(parts.core)),
             Arc::clone(&shared_fb),
             Arc::clone(&frame_ready),
             frame_slot,
@@ -692,8 +671,9 @@ impl EmuCore {
         }
         let slot_result = self.swap_frame_slot(fresh_frame_buffer(&profile, palette.as_ref()));
         if slot_result.is_err() {
-            if was_running {
-                let _ = self.resume();
+            if was_running && self.resume().is_err() {
+                // The pause already happened. This is not an unchanged queue rejection.
+                return Err(OperationError::NoReply);
             }
             return slot_result;
         }
@@ -716,7 +696,9 @@ impl EmuCore {
         self.frame_ready.store(false, Ordering::Release);
         self.mark_images_dirty();
         if was_running {
-            self.resume()?;
+            // The frame slot and profile are already committed. Signal an uncertain/
+            // partial compound outcome so callers compensate even if Resume was rejected.
+            self.resume().map_err(|_| OperationError::NoReply)?;
         }
         Ok(())
     }
@@ -738,6 +720,7 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::Resume)
             .map_err(|_| OperationError::WorkerUnavailable)?;
+        self.mark_images_dirty();
         match self.metrics.lock() {
             Ok(mut guard) => {
                 guard.paused = false;
@@ -752,6 +735,8 @@ impl EmuCore {
         self.emu
             .send(EmuCommand::Pause)
             .map_err(|_| OperationError::WorkerUnavailable)?;
+        // Frames may have advanced since the last image fetch, even if no viewer polled.
+        self.mark_images_dirty();
         match self.metrics.lock() {
             Ok(mut guard) => {
                 guard.paused = true;
@@ -850,44 +835,16 @@ impl EmuCore {
     }
 
     pub fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, OperationError> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
-            .send(EmuCommand::MapperSave { reply: reply_tx })
-            .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx
-            .recv()
-            .map_err(|_| OperationError::NoReply)?
-            .map_err(|e| OperationError::Reply(e.to_string()))
+        LivePersistPort::save_mapper_raw(self).map_err(persistence_to_operation)
     }
 
     pub fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), OperationError> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
-            .send(EmuCommand::ImportMapperSave(Box::new(StateDataCommand {
-                data: bytes,
-                reply: reply_tx,
-            })))
-            .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = reply_rx
-            .recv()
-            .map_err(|_| OperationError::NoReply)?
-            .map_err(|e| OperationError::Reply(e.to_string()));
-        if result.is_ok() {
-            self.mark_images_dirty();
-        }
-        result
+        LivePersistPort::load_mapper_raw(self, bytes).map_err(persistence_to_operation)
     }
 
     /// Raw state save: Send SaveState, return core bytes (no header, no preview).
     pub fn save_state_raw(&self) -> Result<Vec<u8>, OperationError> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
-            .send(EmuCommand::SaveState { reply: reply_tx })
-            .map_err(|_| OperationError::WorkerUnavailable)?;
-        reply_rx
-            .recv()
-            .map_err(|_| OperationError::NoReply)?
-            .map_err(|e| OperationError::Reply(e.to_string()))
+        LivePersistPort::save_state_raw(self).map_err(persistence_to_operation)
     }
 
     /// Preview frame from the shared buffer; `None` without a frame.
@@ -1142,21 +1099,7 @@ impl EmuCore {
 
     /// Raw state load: Send LoadState with raw core bytes. No format fallback.
     pub fn load_state_raw(&self, data: Vec<u8>) -> Result<(), OperationError> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.emu
-            .send(EmuCommand::LoadState(Box::new(StateDataCommand {
-                data,
-                reply: reply_tx,
-            })))
-            .map_err(|_| OperationError::WorkerUnavailable)?;
-        let result = reply_rx
-            .recv()
-            .map_err(|_| OperationError::NoReply)?
-            .map_err(|e| OperationError::Reply(e.to_string()));
-        if result.is_ok() {
-            self.mark_images_dirty();
-        }
-        result
+        LivePersistPort::load_state_raw(self, data).map_err(persistence_to_operation)
     }
 }
 
@@ -1247,11 +1190,21 @@ impl EmuCore {
 
 impl LivePersistPort for EmuCore {
     fn save_state_raw(&self) -> Result<Vec<u8>, CorePersistenceError> {
-        self.save_state_raw().map_err(op_to_persistence)
+        EmuThread::request_via(
+            |cmd| self.emu.send(cmd),
+            |reply| EmuCommand::SaveState { reply },
+        )
+        .map_err(op_to_persistence)
     }
 
     fn load_state_raw(&self, data: Vec<u8>) -> Result<(), CorePersistenceError> {
-        self.load_state_raw(data).map_err(op_to_persistence)
+        let result = EmuThread::request_via(
+            |cmd| self.emu.send(cmd),
+            |reply| EmuCommand::LoadState(Box::new(StateDataCommand { data, reply })),
+        )
+        .map_err(op_to_persistence);
+        self.mark_images_dirty();
+        result
     }
 
     fn generate_preview(&self) -> Option<PreviewRgba> {
@@ -1263,11 +1216,21 @@ impl LivePersistPort for EmuCore {
     }
 
     fn save_mapper_raw(&self) -> Result<Option<Vec<u8>>, CorePersistenceError> {
-        self.save_mapper_raw().map_err(op_to_persistence)
+        EmuThread::request_via(
+            |cmd| self.emu.send(cmd),
+            |reply| EmuCommand::MapperSave { reply },
+        )
+        .map_err(op_to_persistence)
     }
 
     fn load_mapper_raw(&self, bytes: Vec<u8>) -> Result<(), CorePersistenceError> {
-        self.load_mapper_raw(bytes).map_err(op_to_persistence)
+        let result = EmuThread::request_via(
+            |cmd| self.emu.send(cmd),
+            |reply| EmuCommand::ImportMapperSave(Box::new(StateDataCommand { data: bytes, reply })),
+        )
+        .map_err(op_to_persistence);
+        self.mark_images_dirty();
+        result
     }
 }
 
@@ -1484,14 +1447,8 @@ impl StateExporter for EmuCore {
         LivePersistPort::load_state_raw(self, data).map_err(|error| error.slot_failure())
     }
 
-    fn export_preview(&self) -> Option<nerust_persistence::thumbnail::ThumbnailSource> {
-        LivePersistPort::generate_preview(self).map(|frame| {
-            nerust_persistence::thumbnail::ThumbnailSource {
-                width: frame.width,
-                height: frame.height,
-                rgba: frame.rgba,
-            }
-        })
+    fn export_preview(&self) -> Option<PreviewRgba> {
+        LivePersistPort::generate_preview(self)
     }
 
     fn export_identity(&self) -> Option<SystemIdentity> {
@@ -1507,11 +1464,21 @@ impl StateExporter for EmuCore {
     }
 }
 
-fn op_to_persistence(e: OperationError) -> CorePersistenceError {
+fn op_to_persistence(e: OperationError<nerust_core_traits::CoreError>) -> CorePersistenceError {
     match e {
         OperationError::WorkerUnavailable => CorePersistenceError::WorkerUnavailable,
         OperationError::NoReply => CorePersistenceError::NoReply,
         OperationError::Reply(s) => CorePersistenceError::Core(s),
+    }
+}
+
+/// Compatibility boundary for the older playback-facing raw helpers. Persistence
+/// orchestration uses the typed port directly; diagnostic text is never classified.
+fn persistence_to_operation(error: CorePersistenceError) -> OperationError {
+    match error {
+        CorePersistenceError::WorkerUnavailable => OperationError::WorkerUnavailable,
+        CorePersistenceError::NoReply => OperationError::NoReply,
+        CorePersistenceError::Core(error) => OperationError::Reply(error.to_string()),
     }
 }
 
@@ -1697,6 +1664,70 @@ mod tests {
     }
 
     #[test]
+    fn resume_then_pause_invalidates_images_without_intermediate_fetch() {
+        let core = loaded_core();
+        core.pause().unwrap();
+        core.images_store(vec![DebugImage {
+            id: "tiles",
+            label_id: "Tiles",
+            width: 1,
+            height: 1,
+            format: nerust_core_traits::debugger::ImageFormat::Indexed2bpp,
+            palette: vec![[0, 0, 0]],
+            pixels: vec![0],
+        }]);
+        assert!(core.images_cache_lookup().is_some());
+        core.resume().unwrap();
+        core.pause().unwrap();
+        assert!(core.images_cache_lookup().is_none());
+    }
+
+    #[test]
+    fn presentation_resume_rejection_is_partial_not_unchanged() {
+        #[derive(Debug)]
+        struct RejectResume;
+        impl EmuThreadPort for RejectResume {
+            fn send(&self, command: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+                match command {
+                    EmuCommand::Pause => Ok(()),
+                    EmuCommand::SwapFrameSlot(command) => {
+                        command.reply.send(()).unwrap();
+                        Ok(())
+                    }
+                    other => Err(mpsc::TrySendError::Disconnected(other)),
+                }
+            }
+            fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+                panic!("unused")
+            }
+            fn frame_count(&self) -> u64 {
+                0
+            }
+            fn fps(&self) -> f32 {
+                0.0
+            }
+        }
+        let profile = build_test_core_parts().render_profile;
+        let frame = fresh_frame_buffer(&profile, &[0; 256]);
+        let mut core = EmuCore::new(
+            Arc::new(RejectResume),
+            profile.clone(),
+            Arc::new(Mutex::new(frame)),
+            fresh_frame_buffer(&profile, &[0; 256]),
+            Arc::new(AtomicBool::new(false)),
+        );
+        core.metrics.lock().unwrap().paused = false;
+        let mut changed = profile;
+        changed.logical_size.width = 602;
+        assert!(matches!(
+            core.apply_presentation(changed, vec![0; 256].into_boxed_slice()),
+            Err(OperationError::NoReply)
+        ));
+        assert_eq!(core.render_profile().logical_size.width, 602);
+        assert!(core.is_paused());
+    }
+
+    #[test]
     fn debug_images_cache_serves_paused_repeats() {
         let core = loaded_core();
         let (gen0, images0) = core.debug_images().expect("thread").expect("images");
@@ -1800,7 +1831,7 @@ mod port_tests {
     use super::{LiveAudioPort, LiveFramePort, LivePersistPort, LivePlayback, LiveSnapshotPort};
     use crate::emu_core::*;
     use crate::test_helpers::build_test_core_parts;
-    use nerust_core_traits::factory::load::MediaObject;
+    use nerust_system_traits::factory::load::MediaObject;
 
     fn loaded_core() -> EmuCore {
         let (core, _, _, _) = EmuCore::from_parts(build_test_core_parts());
@@ -1817,7 +1848,8 @@ mod port_tests {
         LivePlayback::reset(&core).expect("reset");
         let _ = LivePlayback::metrics(&core);
         let snapshot = LivePlayback::tick_snapshot(&core);
-        assert!((snapshot.fps, snapshot.paused, snapshot.loaded) != (0.0, false, false) || true);
+        assert!(snapshot.loaded);
+        assert!(!snapshot.paused);
         let _ = LiveFramePort::render_profile(&core);
         let _ = LiveFramePort::frame_buffer(&core);
         LiveAudioPort::set_volume(&core, 0.5).expect("volume");
@@ -1921,32 +1953,28 @@ mod fault_tests {
     use crate::emu_core::*;
 
     #[test]
-    fn fault_maps_messages_to_typed_kinds() {
-        // Typed arms never sniff strings: transport maps without touching the message.
+    fn fault_classification_uses_typed_source_not_diagnostic_words() {
+        use nerust_core_traits::{CoreError, CoreFault};
+        for (kind, expected) in [
+            (CoreFault::Storage, StateFault::Storage),
+            (CoreFault::Missing, StateFault::Missing),
+            (CoreFault::Corrupt, StateFault::Corrupt),
+            (CoreFault::Incompatible, StateFault::Incompatible),
+            (CoreFault::Unavailable, StateFault::Transport),
+        ] {
+            let error = CorePersistenceError::Core(CoreError::Persistence {
+                kind,
+                source: "foreign missing storage version mismatch".into(),
+            });
+            assert_eq!(error.fault(), expected);
+        }
         assert_eq!(
-            StateFault::from(OperationError::WorkerUnavailable),
+            StateFault::from(CorePersistenceError::WorkerUnavailable),
             StateFault::Transport
         );
         assert_eq!(
             StateFault::from(CorePersistenceError::NoReply),
             StateFault::Transport
-        );
-        // Boundary decode only: the single crate-local classifier for reply strings.
-        assert_eq!(
-            StateFault::from_message("ROM identity mismatch"),
-            StateFault::Incompatible
-        );
-        assert_eq!(
-            StateFault::from_message("unsupported schema version 9"),
-            StateFault::Incompatible
-        );
-        assert_eq!(
-            StateFault::from_message("slot file not found"),
-            StateFault::Missing
-        );
-        assert_eq!(
-            StateFault::from_message("decode error: truncated"),
-            StateFault::Corrupt
         );
     }
 
@@ -1963,35 +1991,13 @@ mod fault_tests {
             assert_eq!(fault.code(), code);
         }
         assert_eq!(
-            StateFault::from_message("foreign cartridge"),
-            StateFault::Incompatible
-        );
-        assert_eq!(
-            StateFault::from_message("version skew"),
-            StateFault::Incompatible
-        );
-        assert_eq!(
-            StateFault::from_message("io error on storage"),
-            StateFault::Storage
-        );
-        assert_eq!(
-            StateFault::from_message("missing sector"),
-            StateFault::Missing
-        );
-        assert_eq!(
-            StateFault::from(OperationError::Reply("io failure".into())),
-            StateFault::Storage
-        );
-        assert_eq!(
-            StateFault::from(OperationError::Reply("mismatch".into())),
-            StateFault::Incompatible
-        );
-        assert_eq!(
             StateFault::from(CorePersistenceError::NoReply),
             StateFault::Transport
         );
         assert_eq!(
-            StateFault::from(CorePersistenceError::Core("gone".into())),
+            StateFault::from(CorePersistenceError::Core(
+                nerust_core_traits::CoreError::Core("gone".into())
+            )),
             StateFault::Corrupt
         );
         assert_eq!(
@@ -2000,7 +2006,8 @@ mod fault_tests {
         );
         assert_eq!(CorePersistenceError::NoReply.fault(), StateFault::Transport);
         assert_eq!(
-            CorePersistenceError::Core("absent".into()).fault(),
+            CorePersistenceError::Core(nerust_core_traits::CoreError::Core("absent".into()))
+                .fault(),
             StateFault::Corrupt
         );
         assert!(!CorePersistenceError::NoReply.to_string().is_empty());

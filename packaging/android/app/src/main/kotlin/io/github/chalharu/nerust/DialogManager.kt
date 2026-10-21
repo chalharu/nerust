@@ -24,8 +24,8 @@ internal class ComposeOwnerFrameLayout(
     }
 }
 
-/** Full-screen Compose dialog host. Owns the window and dismiss routing; replacing a dialog
- * never notifies the old dismiss callback. */
+/** Full-screen Compose dialog host. Replacement acknowledges the old request;
+ * request-scoped callbacks cannot release the replacement's native gate. */
 class DialogManager(private val activity: MainActivity) {
     private var dialog: Dialog? = null
     private var rootView: View? = null
@@ -66,7 +66,7 @@ class DialogManager(private val activity: MainActivity) {
         ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
-        dismiss(notifyDismiss = false)
+        dismiss(notifyDismiss = !this.ownedByTest)
 
         lateinit var dialog: Dialog
         val root =
@@ -117,9 +117,13 @@ class DialogManager(private val activity: MainActivity) {
         dismissCallback = onDismiss
         this.ownedByTest = ownedByTest
         dialog.setOnDismissListener {
-            val callback = dismissCallback
-            clearReferences()
-            callback?.invoke()
+            // Android may already have queued this listener before replacement.
+            // Never consume the replacement dialog's callback or references.
+            if (this.dialog === dialog) {
+                val callback = dismissCallback
+                clearReferences()
+                callback?.invoke()
+            }
         }
         try {
             Log.i(TAG, "showComposeDialog: showing $dialogTag")

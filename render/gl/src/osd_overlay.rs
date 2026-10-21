@@ -85,16 +85,9 @@ pub(crate) fn checked_osd_rect(
     })
 }
 
-/// Test-only unchecked row flip. Production uploads go through
-/// the checked [`checked_osd_gl_y`] below.
-#[cfg(test)]
-pub(crate) fn osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> i32 {
-    surface_h - ly - lh
-}
-
-/// Checked row flip: refuses negative geometry, overflow, and rows
-/// past the surface instead of wrapping the `TexSubImage` offset.
-pub(crate) fn checked_osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> Result<i32, OsdReject> {
+/// Checked top-first texture row. Our quad samples v=0 at its top, so
+/// framebuffer bottom-left addressing must not be applied to texture uploads.
+pub(crate) fn checked_osd_y(surface_h: i32, ly: i32, lh: i32) -> Result<i32, OsdReject> {
     if surface_h <= 0 || ly < 0 || lh <= 0 {
         return Err(OsdReject::OutOfBounds);
     }
@@ -102,7 +95,7 @@ pub(crate) fn checked_osd_gl_y(surface_h: i32, ly: i32, lh: i32) -> Result<i32, 
     if bottom > surface_h {
         return Err(OsdReject::OutOfBounds);
     }
-    surface_h.checked_sub(bottom).ok_or(OsdReject::OutOfBounds)
+    Ok(ly)
 }
 
 /// Checked OSD scratch need: `w > 0 && h > 0`, then checked `w * h * 4`.
@@ -118,12 +111,10 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
         .ok_or(OsdReject::Empty)
 }
 
-/// Pure policy (`RetryDecision`, `checked_osd_rect`, `osd_gl_y`, `checked_clear_need`).
+/// Pure upload policy and geometry validation.
 #[cfg(test)]
 mod tests {
-    use super::{
-        OsdReject, RetryDecision, checked_clear_need, checked_osd_gl_y, checked_osd_rect, osd_gl_y,
-    };
+    use super::{OsdReject, RetryDecision, checked_clear_need, checked_osd_rect, checked_osd_y};
     use crate::upload::BoundedUploadPolicy;
     use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
 
@@ -157,23 +148,22 @@ mod tests {
     }
 
     #[test]
-    fn y_flip_matches_bottom_left_origin() {
-        // 64px surface, 2x1 layer at top-left rows: GL row = 64-6-1.
-        assert_eq!(osd_gl_y(64, 6, 1), 57);
-        assert_eq!(osd_gl_y(64, 0, 1), 63);
-        assert_eq!(osd_gl_y(64, 63, 1), 0);
+    fn texture_rows_match_top_first_uvs() {
+        assert_eq!(checked_osd_y(64, 6, 1), Ok(6));
+        assert_eq!(checked_osd_y(64, 0, 1), Ok(0));
+        assert_eq!(checked_osd_y(64, 63, 1), Ok(63));
     }
 
     #[test]
-    fn checked_flip_rejects_bad_geometry() {
-        assert_eq!(checked_osd_gl_y(64, 6, 1), Ok(57));
-        assert_eq!(checked_osd_gl_y(64, 0, 1), Ok(63));
-        assert_eq!(checked_osd_gl_y(64, 63, 1), Ok(0));
-        assert_eq!(checked_osd_gl_y(64, 64, 1), Err(OsdReject::OutOfBounds));
-        assert_eq!(checked_osd_gl_y(64, 0, 65), Err(OsdReject::OutOfBounds));
-        assert_eq!(checked_osd_gl_y(64, -1, 1), Err(OsdReject::OutOfBounds));
+    fn checked_rows_reject_bad_geometry() {
+        assert_eq!(checked_osd_y(64, 6, 1), Ok(6));
+        assert_eq!(checked_osd_y(64, 0, 1), Ok(0));
+        assert_eq!(checked_osd_y(64, 63, 1), Ok(63));
+        assert_eq!(checked_osd_y(64, 64, 1), Err(OsdReject::OutOfBounds));
+        assert_eq!(checked_osd_y(64, 0, 65), Err(OsdReject::OutOfBounds));
+        assert_eq!(checked_osd_y(64, -1, 1), Err(OsdReject::OutOfBounds));
         assert_eq!(
-            checked_osd_gl_y(i32::MAX, i32::MAX, 1),
+            checked_osd_y(i32::MAX, i32::MAX, 1),
             Err(OsdReject::OutOfBounds)
         );
     }
@@ -221,8 +211,8 @@ mod tests {
     }
 
     #[test]
-    fn checked_flip_rejects_empty_surface() {
-        assert_eq!(checked_osd_gl_y(0, 0, 1), Err(OsdReject::OutOfBounds));
-        assert_eq!(checked_osd_gl_y(64, 0, 0), Err(OsdReject::OutOfBounds));
+    fn checked_rows_reject_empty_surface() {
+        assert_eq!(checked_osd_y(0, 0, 1), Err(OsdReject::OutOfBounds));
+        assert_eq!(checked_osd_y(64, 0, 0), Err(OsdReject::OutOfBounds));
     }
 }

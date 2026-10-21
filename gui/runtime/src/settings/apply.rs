@@ -106,16 +106,7 @@ pub fn derive_apply_plan(
 }
 
 pub fn validate_shared_settings(settings: &DesktopSharedSettings) -> Result<(), SettingsError> {
-    if matches!(
-        settings.persistence.storage_policy,
-        StoragePolicy::CustomDirectory
-    ) {
-        if settings.persistence.storage_document_tree_uri.is_some() {
-            return Ok(());
-        }
-        let Some(path) = settings.persistence.storage_directory.as_ref() else {
-            return Err(SettingsError::MissingCustomStorageDirectory);
-        };
+    if let Some(path) = custom_storage_path(settings)? {
         validate_directory_path_typed(path).map_err(|e| match e {
             DirectoryValidationError::NotDirectory => SettingsError::Io(std::io::Error::other(
                 "custom storage path is not a directory",
@@ -124,6 +115,34 @@ pub fn validate_shared_settings(settings: &DesktopSharedSettings) -> Result<(), 
         })?;
     }
     Ok(())
+}
+
+/// Shared native/SAF selection rules. Platform-specific path access is validated by the caller.
+pub fn custom_storage_path(
+    settings: &DesktopSharedSettings,
+) -> Result<Option<&Path>, SettingsError> {
+    if settings.persistence.storage_policy == StoragePolicy::AppSharedData {
+        return Ok(None);
+    }
+    if let Some(uri) = settings.persistence.storage_document_tree_uri.as_deref() {
+        if nerust_persistence::sidecar::StorageLocation::document_tree(uri, "validation").is_err() {
+            return Err(SettingsError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid storage document tree URI",
+            )));
+        }
+        return Ok(None);
+    }
+    if settings.persistence.storage_policy == StoragePolicy::Sidecar {
+        return Ok(None);
+    }
+    settings
+        .persistence
+        .storage_directory
+        .as_deref()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(Some)
+        .ok_or(SettingsError::MissingCustomStorageDirectory)
 }
 
 pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<(), SettingsError> {
@@ -205,6 +224,19 @@ mod tests {
     };
 
     use crate::test::{DummyOtherSystemId, DummySystemId};
+
+    #[test]
+    fn custom_storage_requires_valid_saf_uri_or_nonempty_native_path() {
+        let mut shared = test_shared_defaults();
+        shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+        shared.persistence.storage_document_tree_uri = Some("content://provider/tree/saves".into());
+        assert!(validate_shared_settings(&shared).is_ok());
+        shared.persistence.storage_document_tree_uri = Some("".into());
+        assert!(validate_shared_settings(&shared).is_err());
+        shared.persistence.storage_document_tree_uri = None;
+        shared.persistence.storage_directory = Some("".into());
+        assert!(validate_shared_settings(&shared).is_err());
+    }
 
     use super::{
         super::{

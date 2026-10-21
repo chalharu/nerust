@@ -343,6 +343,9 @@ pub trait SurfaceLifecycle: std::fmt::Debug {
     fn size(&self) -> SurfaceSize;
 
     /// Attach a native window. Must be called before render().
+    /// The native window/display owner must stay alive until detach, and
+    /// calls must obey the window system's thread requirements. Raw handles
+    /// do not transfer ownership or permit resurrection after native teardown.
     fn attach(
         &mut self,
         window_handle: RawWindowHandle,
@@ -350,7 +353,7 @@ pub trait SurfaceLifecycle: std::fmt::Debug {
         size: SurfaceSize,
     ) -> Result<(), RendererError>;
 
-    /// Detach from the native window (device/pipeline are kept).
+    /// Detach before destroying the native window. Backends may discard GPU resources.
     fn detach(&mut self);
 
     /// Resize the output (swapchain for wgpu; stored for GL).

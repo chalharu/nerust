@@ -26,6 +26,7 @@ pub(crate) struct UiShell<P: Program<Theme = iced::Theme, Renderer = Renderer>> 
     pub(super) tree: ViewTree<P>,
     /// Reused event-draw scratch: pumps and redraws never allocate per event.
     scratch: Vec<P::Message>,
+    pub(super) deadline: Option<std::time::Instant>,
 }
 
 /// What a pumped event needs after `update`: nothing, a repaint,
@@ -35,12 +36,17 @@ pub(crate) enum PumpOutcome {
     Idle,
     Repaint,
     Rebuild,
+    At(std::time::Instant),
 }
 
 /// Pump policy: map iced's update result onto [`PumpOutcome`]. Pure, so tests cover it.
 pub(crate) fn pump_outcome(state: &State) -> PumpOutcome {
     match state {
         State::Outdated => PumpOutcome::Rebuild,
+        State::Updated {
+            redraw_request: RedrawRequest::At(deadline),
+            ..
+        } => PumpOutcome::At(*deadline),
         State::Updated { redraw_request, .. } if *redraw_request != RedrawRequest::Wait => {
             PumpOutcome::Repaint
         }
@@ -63,18 +69,13 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
                 bounds,
             },
             scratch: Vec::new(),
+            deadline: None,
         }
     }
 
     /// Record new layout bounds. Infallible: the next pump builds against them.
     pub(crate) fn relayout(&mut self, bounds: Size) {
         self.tree.bounds = bounds;
-    }
-
-    /// Record new layout bounds via the shell (single mutator: no
-    /// direct `tree.bounds` writes outside this impl).
-    pub(crate) fn set_bounds(&mut self, bounds: Size) {
-        self.relayout(bounds);
     }
 
     /// Take the reused scratch buffer for one pump pass.
@@ -119,8 +120,15 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         clipboard: &mut Clipboard,
         backend: &mut Renderer,
         out: &mut Vec<P::Message>,
+        draw: Option<(&iced::Theme, &iced::advanced::renderer::Style)>,
     ) -> PumpOutcome {
         out.clear();
+        if matches!(
+            mapped,
+            iced::Event::Window(iced::window::Event::RedrawRequested(_))
+        ) {
+            self.deadline = None;
+        }
         // Disjoint tree fields: the interface borrows the instance
         // while the cache slot is taken out and folded back.
         let mut ui = Self::build_transient(
@@ -132,6 +140,16 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         );
         let (state, _) = ui.update(&[mapped], cursor, backend, clipboard, out);
         let outcome = pump_outcome(&state);
+        if let PumpOutcome::At(deadline) = outcome {
+            self.deadline = Some(
+                self.deadline
+                    .map_or(deadline, |pending| pending.min(deadline)),
+            );
+        }
+        if let Some((theme, style)) = draw {
+            // Keep overlay layout and widget state from this update for this draw.
+            ui.draw(backend, theme, style, cursor);
+        }
         Self::retire_transient(&mut self.tree.cache, ui);
         outcome
     }
@@ -173,6 +191,7 @@ mod tests {
     struct StubProgram {
         view_calls: Arc<AtomicUsize>,
         updates: Arc<std::sync::Mutex<Vec<u8>>>,
+        redraw: Option<(std::time::Instant, bool)>,
     }
     #[derive(Debug, Clone, Default)]
     struct StubState;
@@ -220,7 +239,126 @@ mod tests {
             _window: iced::window::Id,
         ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
             self.view_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some((deadline, rebuild)) = self.redraw {
+                return iced::Element::new(RedrawWidget { deadline, rebuild });
+            }
             iced::widget::text("stub").into()
+        }
+    }
+
+    struct RedrawWidget {
+        deadline: std::time::Instant,
+        rebuild: bool,
+    }
+
+    impl iced::advanced::Widget<StubMessage, iced::Theme, Renderer> for RedrawWidget {
+        fn size(&self) -> iced::Size<iced::Length> {
+            iced::Size::new(iced::Length::Fill, iced::Length::Fill)
+        }
+
+        fn layout(
+            &mut self,
+            _: &mut iced::advanced::widget::Tree,
+            _: &Renderer,
+            limits: &iced::advanced::layout::Limits,
+        ) -> iced::advanced::layout::Node {
+            iced::advanced::layout::Node::new(limits.max())
+        }
+
+        fn draw(
+            &self,
+            _: &iced::advanced::widget::Tree,
+            _: &mut Renderer,
+            _: &iced::Theme,
+            _: &iced::advanced::renderer::Style,
+            _: iced::advanced::Layout<'_>,
+            _: mouse::Cursor,
+            _: &iced::Rectangle,
+        ) {
+        }
+
+        fn update(
+            &mut self,
+            _: &mut iced::advanced::widget::Tree,
+            event: &iced::Event,
+            _: iced::advanced::Layout<'_>,
+            _: mouse::Cursor,
+            _: &Renderer,
+            _: &mut dyn iced::advanced::Clipboard,
+            shell: &mut iced::advanced::Shell<'_, StubMessage>,
+            _: &iced::Rectangle,
+        ) {
+            if matches!(
+                event,
+                iced::Event::Window(iced::window::Event::RedrawRequested(_))
+            ) {
+                shell.publish(StubMessage::Ping(9));
+                shell.request_redraw_at(self.deadline);
+                if self.rebuild {
+                    shell.invalidate_widgets();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn redraw_widget_outputs_messages_deadline_and_rebuild_through_real_ui() {
+        for rebuild in [false, true] {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            let program = StubProgram {
+                redraw: Some((deadline, rebuild)),
+                ..Default::default()
+            };
+            let updates = program.updates.clone();
+            let (instance, _) = program::Instance::new(program);
+            let mut shell = UiShell::new(
+                instance,
+                iced::window::Id::unique(),
+                iced::Size::new(100.0, 100.0),
+            );
+            let mut renderer = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+            let mut clipboard = Clipboard::unconnected();
+            let mut messages = Vec::new();
+            let outcome = shell.pump(
+                iced::Event::Window(iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                )),
+                mouse::Cursor::default(),
+                &mut clipboard,
+                &mut renderer,
+                &mut messages,
+                Some((
+                    &iced::Theme::Light,
+                    &iced::advanced::renderer::Style::default(),
+                )),
+            );
+            if rebuild {
+                assert_eq!(outcome, PumpOutcome::Rebuild);
+            } else {
+                assert_eq!(outcome, PumpOutcome::At(deadline));
+                assert_eq!(shell.deadline, Some(deadline));
+            }
+            assert!(matches!(messages.as_slice(), [StubMessage::Ping(9)]));
+            assert!(shell.process_messages(messages, &mut renderer, &AtomicBool::new(rebuild)));
+            assert_eq!(*updates.lock().unwrap(), [9]);
+            if !rebuild {
+                assert_eq!(
+                    shell.pump(
+                        iced::Event::Window(iced::window::Event::Focused),
+                        mouse::Cursor::default(),
+                        &mut clipboard,
+                        &mut renderer,
+                        &mut Vec::new(),
+                        None,
+                    ),
+                    PumpOutcome::Idle
+                );
+                assert_eq!(
+                    shell.deadline,
+                    Some(deadline),
+                    "unrelated Wait must preserve the timer"
+                );
+            }
         }
     }
 
@@ -285,19 +423,13 @@ mod tests {
             &mut clipboard,
             &mut backend,
             &mut messages,
+            None,
         );
         assert!(messages.is_empty());
         assert_eq!(outcome, PumpOutcome::Idle);
         // Relayout only records bounds.
         shell.relayout(iced::Size::new(640.0, 480.0));
         assert_eq!(shell.tree.bounds, iced::Size::new(640.0, 480.0));
-    }
-
-    #[test]
-    fn shell_drops_cleanly_without_retained_ui() {
-        // No self-reference remains; no manual drop order is needed.
-        let (shell, _, _, _, _) = stub_shell();
-        drop(shell);
     }
 
     #[test]
@@ -309,13 +441,6 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(!shell.process_messages(std::iter::empty(), &mut backend, &invalidated));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn set_bounds_aliases_relayout() {
-        let (mut shell, _, _, _, _) = stub_shell();
-        shell.set_bounds(iced::Size::new(0.0, 0.0));
-        assert_eq!(shell.tree.bounds, iced::Size::new(0.0, 0.0));
     }
 
     #[test]

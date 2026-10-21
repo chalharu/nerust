@@ -91,7 +91,7 @@ pub(crate) enum Message {
     SetStatusAreaMode(ChoiceView<NotificationAreaMode>),
     SetSystemChoice(
         String,
-        ChoiceView<nerust_core_traits::factory::descriptor::SystemSettingsChoiceId>,
+        ChoiceView<nerust_system_traits::factory::descriptor::SystemSettingsChoiceId>,
     ),
     StartCapture(CaptureTarget),
     ClearCapture(CaptureTarget),
@@ -179,7 +179,7 @@ pub(crate) struct SettingsAppState {
     pub(super) error_message: Option<String>,
 }
 
-fn system_id_key(factory: &Arc<dyn nerust_core_traits::factory::CoreFactory>) -> String {
+fn system_id_key(factory: &Arc<dyn nerust_system_traits::factory::CoreFactory>) -> String {
     factory.system_id().to_string()
 }
 
@@ -224,7 +224,7 @@ fn deduped_by_key<T>(
 /// duplicates are logged and dropped.
 fn deduped_factories(
     registry: &SystemRegistry,
-) -> Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>> {
+) -> Vec<Arc<dyn nerust_system_traits::factory::CoreFactory>> {
     deduped_by_key(registry.all().iter().cloned(), system_id_key, |factory| {
         log::warn!(
             "ignoring factory '{}' with duplicate SystemId",
@@ -484,13 +484,13 @@ impl SettingsAppState {
     fn set_system_choice(
         &mut self,
         field: String,
-        choice: ChoiceView<nerust_core_traits::factory::descriptor::SystemSettingsChoiceId>,
+        choice: ChoiceView<nerust_system_traits::factory::descriptor::SystemSettingsChoiceId>,
     ) {
         let system_tab_index = self.system_tab_index;
         if let Some(idx) = system_tab_index
             && let Some(system_vm) = self.vm.systems().get(idx)
             && let Err(e) = system_vm.set_choice(
-                &nerust_core_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
+                &nerust_system_traits::factory::descriptor::SystemSettingsFieldId(field.into()),
                 &choice.value,
             )
         {
@@ -898,7 +898,7 @@ mod tests {
             Message::SetSystemChoice(
                 "unknown".into(),
                 ChoiceView {
-                    value: nerust_core_traits::factory::descriptor::SystemSettingsChoiceId(
+                    value: nerust_system_traits::factory::descriptor::SystemSettingsChoiceId(
                         Cow::Borrowed("none"),
                     ),
                     label: "none".into(),

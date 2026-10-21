@@ -426,6 +426,7 @@ fn uishell_headless_build_pump_relayout_draw() {
         &mut clipboard,
         &mut backend,
         &mut messages,
+        None,
     );
     assert!(messages.is_empty());
     let invalidated = AtomicBool::new(true);
@@ -447,6 +448,7 @@ fn uishell_headless_build_pump_relayout_draw() {
         &mut clipboard,
         &mut backend,
         &mut messages,
+        None,
     );
     assert!(messages.is_empty());
 }

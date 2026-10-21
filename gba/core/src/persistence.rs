@@ -65,8 +65,7 @@ pub(crate) fn import_machine_state(
     expected_options: GbaCoreOptions,
     audio_rate: u32,
 ) -> Result<GbaSystem, GbaPersistenceError> {
-    let payload: MachineStatePayload = rmp_serde::from_slice(data)?;
-    validate_version(payload.schema_version)?;
+    let payload: MachineStatePayload = decode_payload(data)?;
     if &payload.rom_identity != expected_identity {
         return Err(GbaPersistenceError::RomIdentityMismatch);
     }
@@ -112,17 +111,16 @@ pub(crate) fn import_mapper_save(
     data: &[u8],
     expected_identity: &GbaRomIdentity,
 ) -> Result<(), GbaPersistenceError> {
-    let payload: MapperSavePayload = rmp_serde::from_slice(data)?;
-    validate_version(payload.schema_version)?;
+    let payload: MapperSavePayload = decode_payload(data)?;
     if &payload.rom_identity != expected_identity {
         return Err(GbaPersistenceError::RomIdentityMismatch);
     }
     let expected_kind = SaveTypeSer::from(cartridge.save.save_type());
     if payload.save_kind != expected_kind {
-        return Err(GbaPersistenceError::Cartridge(format!(
-            "mapper save kind mismatch: wire={:?} actual={expected_kind:?}",
-            payload.save_kind
-        )));
+        return Err(GbaPersistenceError::MapperSaveKindMismatch {
+            wire: payload.save_kind,
+            actual: expected_kind,
+        });
     }
     let Some(current) = cartridge.save.ram_data() else {
         return Err(GbaPersistenceError::Cartridge(
@@ -148,4 +146,14 @@ pub(crate) fn import_mapper_save(
         ));
     }
     Ok(())
+}
+
+fn decode_payload<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, GbaPersistenceError> {
+    #[derive(serde::Deserialize)]
+    struct Header {
+        schema_version: u32,
+    }
+    let header: Header = rmp_serde::from_slice(data)?;
+    validate_version(header.schema_version)?;
+    Ok(rmp_serde::from_slice(data)?)
 }

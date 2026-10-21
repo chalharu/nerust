@@ -30,7 +30,7 @@ struct LoadedGba {
 
 pub struct GbaConsoleCore {
     loaded: Option<LoadedGba>,
-    emu_input: Box<dyn InputReceiver>,
+    emu_input: InputReceiver<GbaInputBuffer>,
     paused: bool,
     /// Device sample rate for the APU resampler, stamped at load.
     /// Data only; the core never sees the backend.
@@ -38,16 +38,16 @@ pub struct GbaConsoleCore {
 }
 
 impl GbaConsoleCore {
-    pub fn new(emu_input: Box<dyn InputReceiver>) -> Self {
+    pub fn new(emu_input: impl Into<InputReceiver<GbaInputBuffer>>) -> Self {
         Self {
             loaded: None,
-            emu_input,
+            emu_input: emu_input.into(),
             paused: false,
             sample_rate: 48_000,
         }
     }
 
-    pub fn new_empty(emu_input: Box<dyn InputReceiver>) -> Self {
+    pub fn new_empty(emu_input: impl Into<InputReceiver<GbaInputBuffer>>) -> Self {
         Self::new(emu_input)
     }
 
@@ -87,12 +87,7 @@ impl GbaConsoleCore {
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
     ) -> Result<u64, CoreError> {
-        let input = self
-            .emu_input
-            .receive()
-            .downcast_ref::<GbaInputBuffer>()
-            .ok_or_else(|| CoreError::Core(Box::new(GbaLoadError::InvalidInputBuffer)))?
-            .0;
+        let input = self.emu_input.receive().0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system.bus.set_keyinput(input);
         // Run one LCD frame (228 lines * 1232 cycles), batched to the
@@ -207,7 +202,7 @@ impl ConsoleCore for GbaConsoleCore {
             loaded.options,
             self.sample_rate,
         )
-        .map_err(|e| CoreError::Core(Box::new(e)))
+        .map_err(CoreError::from)
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
@@ -219,7 +214,7 @@ impl ConsoleCore for GbaConsoleCore {
             loaded.options,
             self.sample_rate,
         )
-        .map_err(|e| CoreError::Core(Box::new(e)))?;
+        .map_err(CoreError::from)?;
         // Solar level lives in options; re-apply it onto the restored GPIO.
         if let Some(cart) = candidate.bus.cartridge_mut() {
             cart.gpio.set_solar_level(loaded.options.solar_light_level);
@@ -234,19 +229,19 @@ impl ConsoleCore for GbaConsoleCore {
         let Some(cart) = loaded.system.bus.cartridge() else {
             return Ok(None);
         };
-        export_mapper_save(cart, loaded.identity.clone()).map_err(|e| CoreError::Core(Box::new(e)))
+        export_mapper_save(cart, loaded.identity.clone()).map_err(CoreError::from)
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         let Some(cart) = loaded.system.bus.cartridge_mut() else {
-            return Err(CoreError::Core(Box::new(
+            return Err(CoreError::from(
                 crate::persistence_error::GbaPersistenceError::Cartridge(
                     "no cartridge loaded".to_string(),
                 ),
-            )));
+            ));
         };
-        import_mapper_save(cart, data, &loaded.identity).map_err(|e| CoreError::Core(Box::new(e)))
+        import_mapper_save(cart, data, &loaded.identity).map_err(CoreError::from)
     }
 
     fn identity(&self) -> Result<SystemIdentity, CoreError> {
@@ -388,8 +383,53 @@ mod tests {
     use super::*;
     use crate::{debugger::SPACE_MEMORY, input_types::GbaInputBuffer};
 
-    fn test_emu_input() -> Box<dyn InputReceiver> {
-        Box::<GbaInputBuffer>::default()
+    fn test_emu_input() -> InputReceiver<GbaInputBuffer> {
+        GbaInputBuffer::default().into()
+    }
+
+    #[test]
+    fn persistence_faults_distinguish_schema_audio_rate_and_decode() {
+        use crate::persistence_error::GbaPersistenceError;
+        use nerust_core_traits::CoreFault;
+        #[derive(serde::Serialize)]
+        struct Header {
+            schema_version: u32,
+        }
+        let mut console = load_console();
+        let before = console.save_state().unwrap();
+        for (version, fault) in [(2, CoreFault::Incompatible), (1, CoreFault::Corrupt)] {
+            let bytes = rmp_serde::to_vec_named(&Header {
+                schema_version: version,
+            })
+            .unwrap();
+            assert_eq!(console.load_state(&bytes).unwrap_err().fault(), fault);
+            assert_eq!(
+                console.import_mapper_save(&bytes).unwrap_err().fault(),
+                fault
+            );
+        }
+        let error = console.load_state(&before[..before.len() / 2]).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Corrupt);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped decode error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<GbaPersistenceError>(),
+            Some(GbaPersistenceError::Decode(_))
+        ));
+        assert_eq!(console.save_state().unwrap(), before);
+        console.set_audio_sample_rate(44_100);
+        let error = console.load_state(&before).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Incompatible);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped audio rate error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<GbaPersistenceError>(),
+            Some(GbaPersistenceError::AudioRateMismatch(48_000, 44_100))
+        ));
+        console.set_audio_sample_rate(48_000);
+        console.load_state(&before).unwrap();
     }
 
     #[test]
@@ -584,7 +624,10 @@ mod tests {
         rom2[0x200] ^= 1;
         crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
         other.load(&rom2, &config).unwrap();
-        assert!(other.import_mapper_save(&payload).is_err());
+        assert_eq!(
+            other.import_mapper_save(&payload).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
         // Garbage must not panic or wipe RAM.
         a.loaded
             .as_mut()
@@ -592,7 +635,10 @@ mod tests {
             .system
             .bus
             .write8(0x0E000123, 0x5A);
-        assert!(a.import_mapper_save(&[1, 2, 3]).is_err());
+        assert_eq!(
+            a.import_mapper_save(&[1, 2, 3]).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Corrupt
+        );
         assert_eq!(
             a.loaded.as_mut().unwrap().system.bus.read8(0x0E000123),
             0x5A
@@ -756,7 +802,10 @@ mod tests {
             audio_sample_rate: None,
         };
         core.load(&rom(), &config).unwrap();
-        assert!(core.load_state(&saved).is_err());
+        assert_eq!(
+            core.load_state(&saved).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
         // The refused import changed nothing: a fresh export validates
         // against the current (new-options) system.
         let fresh = core.save_state().unwrap();
@@ -857,7 +906,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(b.load_state(&state).is_err());
+        assert_eq!(
+            b.load_state(&state).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
     }
 
     #[test]

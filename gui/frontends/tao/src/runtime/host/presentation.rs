@@ -116,8 +116,13 @@ impl HostState {
     }
 
     /// Refresh chrome after a ROM (re)load: menu, title, frame.
-    pub(super) fn after_rom_load(&mut self, ctx: &FrameCtx) {
-        self.sync_chrome(ctx, true);
+    pub(super) fn after_rom_load(&mut self) {
+        self.reconcile_pause();
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, true);
+        if self.is_debug_open() {
+            self.run_debug_drain(&[nerust_gui_shell::debug::DebugAction::Refresh]);
+        }
     }
 
     /// Single chrome-sync choke point: menu, title, and optionally a frame.
@@ -235,8 +240,7 @@ mod tests {
     fn rom_load_refresh_routes_through_chrome() {
         let support = TestHost::new();
         let mut host = support.host;
-        let ctx = host.frame_ctx();
-        host.after_rom_load(&ctx);
+        host.after_rom_load();
         assert_eq!(support.menu.updates().len(), 1);
     }
 

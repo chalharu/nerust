@@ -13,6 +13,7 @@ use crate::{
     fs_ops::write_atomic,
     metadata::encode_slot_metadata,
     model::{LoadedStateSlot, StateSlotSummary},
+    sidecar::StorageLocation,
     thumbnail::{ThumbnailSource, encode_thumbnail_png},
     time::{system_time_from_millis, unix_millis},
 };
@@ -130,7 +131,7 @@ pub fn write_state_slot(
 }
 
 pub fn build_state_slot_bytes(
-    path: PathBuf,
+    path: StorageLocation,
     slot_id: u64,
     machine_state: &[u8],
     identity: &SystemIdentity,
@@ -146,7 +147,7 @@ pub fn build_state_slot_bytes(
 }
 
 pub fn load_state_slot_bytes(
-    path: PathBuf,
+    path: StorageLocation,
     bytes: Vec<u8>,
     identity: Option<&SystemIdentity>,
 ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
@@ -156,7 +157,7 @@ pub fn load_state_slot_bytes(
     }) {
         return Ok(None);
     }
-    Ok(Some(loaded_state_slot_from_archive(&path, archive)))
+    Ok(Some(loaded_state_slot_from_archive(path, archive)))
 }
 
 pub fn write_autosave_state_slot(
@@ -182,7 +183,7 @@ pub fn load_state_slot_for_identity(
     if !crate::metadata::slot_matches_identity(&archive.metadata, identity) {
         return Ok(None);
     }
-    Ok(Some(loaded_state_slot_from_archive(path, archive)))
+    Ok(Some(loaded_state_slot_from_archive(path.into(), archive)))
 }
 
 fn write_state_slot_to_path(
@@ -195,8 +196,13 @@ fn write_state_slot_to_path(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let (archive_bytes, summary) =
-        build_state_slot_bytes(path.clone(), slot_id, machine_state, identity, preview)?;
+    let (archive_bytes, summary) = build_state_slot_bytes(
+        path.clone().into(),
+        slot_id,
+        machine_state,
+        identity,
+        preview,
+    )?;
     write_atomic(&path, &archive_bytes)?;
 
     // If we created a reservation file earlier, attempt to remove it now that the
@@ -212,16 +218,16 @@ fn write_state_slot_to_path(
 
 pub fn load_state_slot(path: &Path) -> Result<LoadedStateSlot, PersistenceError> {
     let archive = load_state_archive(path)?;
-    Ok(loaded_state_slot_from_archive(path, archive))
+    Ok(loaded_state_slot_from_archive(path.into(), archive))
 }
 
 pub(crate) fn loaded_state_slot_from_archive(
-    path: &Path,
+    path: StorageLocation,
     archive: crate::archive::LoadedArchive,
 ) -> LoadedStateSlot {
     let has_thumbnail = archive.thumbnail_png.is_some();
     let summary = summary_from_metadata(
-        path.to_path_buf(),
+        path,
         system_time_from_millis(archive.metadata.saved_at_unix_ms),
         &archive.metadata,
         has_thumbnail,

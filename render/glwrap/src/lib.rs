@@ -1,8 +1,11 @@
+pub mod bindings;
 pub mod context;
 mod error;
 pub mod raw;
 pub mod vertex;
 
+use bindings as gl;
+pub use bindings::Context;
 pub use context::{Current, DeletionPolicy, GlObject, ScopeGuard};
 pub use error::Error as GlError;
 /// Re-exported for typed test construction; production reads kinds from drains.
@@ -110,11 +113,20 @@ pub struct Shader {
     attributes: HashMap<String, GLuint>,
     uniforms: HashMap<String, GLint>,
     deleted: bool,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 /// RAII shader-object guard: deleting happens on drop.
 /// Failed compiles/links orphan nothing; success paths detach then drop.
 struct ShaderId(GLuint);
+
+struct ProgramId(GLuint);
+
+impl Drop for ProgramId {
+    fn drop(&mut self) {
+        unsafe { gl::DeleteProgram(self.0) };
+    }
+}
 
 impl ShaderId {
     fn id(&self) -> GLuint {
@@ -124,8 +136,10 @@ impl ShaderId {
 
 impl Drop for ShaderId {
     fn drop(&mut self) {
-        unsafe {
-            gl::DeleteShader(self.0);
+        if self.0 != 0 {
+            unsafe {
+                gl::DeleteShader(self.0);
+            }
         }
     }
 }
@@ -136,7 +150,8 @@ impl Shader {
     pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, ShaderError> {
         let vtx = ShaderId(compile_shader(vert_src, gl::VERTEX_SHADER)?);
         let frag = ShaderId(compile_shader(flag_src, gl::FRAGMENT_SHADER)?);
-        let program_id = link_program(vtx.id(), frag.id())?;
+        let program = ProgramId(link_program(vtx.id(), frag.id())?);
+        let program_id = program.0;
         // Link keeps its own copy: detach then delete via Drop.
         unsafe {
             gl::DetachShader(program_id, vtx.id());
@@ -145,11 +160,19 @@ impl Shader {
         drop(vtx);
         drop(frag);
 
+        let attributes = get_attributes(program_id)?;
+        let uniforms = get_uniforms(program_id)?;
+        check_frame().map_err(|e| ShaderError::Query {
+            stage: QueryStage::LinkStatus,
+            detail: e.to_string(),
+        })?;
+        std::mem::forget(program);
         Ok(Self {
             program: program_id,
-            attributes: get_attributes(program_id)?,
-            uniforms: get_uniforms(program_id)?,
+            attributes,
+            uniforms,
             deleted: false,
+            _thread: std::marker::PhantomData,
         })
     }
 
@@ -213,8 +236,15 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderE
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
-    const BUF_SIZE: GLsizei = 16;
-    let mut name_buf = vec![GLchar::default(); BUF_SIZE as usize];
+    let mut buf_size = 0;
+    get_programiv(program_id, gl::ACTIVE_ATTRIBUTE_MAX_LENGTH, &mut buf_size).map_err(|e| {
+        ShaderError::Query {
+            stage: QueryStage::AttribName,
+            detail: e.to_string(),
+        }
+    })?;
+    let buf_size = buf_size.max(1);
+    let mut name_buf = vec![GLchar::default(); buf_size as usize];
     let mut length: GLsizei = 0;
 
     let mut result = HashMap::new();
@@ -223,11 +253,11 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderE
         get_active_attrib(
             program_id,
             i,
-            BUF_SIZE,
+            buf_size,
             &mut length,
             &mut size,
             &mut ty,
-            name_buf.as_mut_ptr(),
+            &mut name_buf,
         )
         .map_err(|e| ShaderError::Query {
             stage: QueryStage::ActiveAttrib,
@@ -266,8 +296,15 @@ fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderErro
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
-    const BUF_SIZE: GLsizei = 16;
-    let mut name_buf = vec![GLchar::default(); BUF_SIZE as usize];
+    let mut buf_size = 0;
+    get_programiv(program_id, gl::ACTIVE_UNIFORM_MAX_LENGTH, &mut buf_size).map_err(|e| {
+        ShaderError::Query {
+            stage: QueryStage::UniformName,
+            detail: e.to_string(),
+        }
+    })?;
+    let buf_size = buf_size.max(1);
+    let mut name_buf = vec![GLchar::default(); buf_size as usize];
     let mut length: GLsizei = 0;
 
     let mut result = HashMap::new();
@@ -276,11 +313,11 @@ fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderErro
         get_active_uniform(
             program_id,
             i,
-            BUF_SIZE,
+            buf_size,
             &mut length,
             &mut size,
             &mut ty,
-            name_buf.as_mut_ptr(),
+            &mut name_buf,
         )
         .map_err(|e| ShaderError::Query {
             stage: QueryStage::ActiveUniform,
@@ -320,7 +357,6 @@ fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> String {
 }
 
 fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
-    let shader = unsafe { gl::CreateShader(ty) };
     let c_str = CString::new(src.as_bytes()).map_err(|e| ShaderError::Compile {
         stage: if ty == gl::VERTEX_SHADER {
             "vertex"
@@ -329,6 +365,8 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
         },
         log: e.to_string(),
     })?;
+    let guard = ShaderId(unsafe { gl::CreateShader(ty) });
+    let shader = guard.id();
     unsafe {
         gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
         gl::CompileShader(shader);
@@ -342,7 +380,6 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
             let mut written = 0;
             let mut buf = info_log_buffer(len);
             gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr().cast());
-            gl::DeleteShader(shader);
             return Err(ShaderError::Compile {
                 stage: if ty == gl::VERTEX_SHADER {
                     "vertex"
@@ -353,14 +390,19 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
             });
         }
     }
+    std::mem::forget(guard);
     Ok(shader)
 }
 
 fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
     unsafe {
-        let program = gl::CreateProgram();
+        let guard = ProgramId(gl::CreateProgram());
+        let program = guard.0;
         gl::AttachShader(program, vs);
         gl::AttachShader(program, fs);
+        // Both pipelines share quad geometry; never depend on linker ordering.
+        gl::BindAttribLocation(program, 0, c"position".as_ptr());
+        gl::BindAttribLocation(program, 1, c"uv".as_ptr());
         gl::LinkProgram(program);
 
         let mut status = GLint::from(gl::FALSE);
@@ -380,11 +422,11 @@ fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
             let mut written = 0;
             let mut buf = info_log_buffer(len);
             gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr().cast());
-            gl::DeleteProgram(program);
             return Err(ShaderError::Link {
                 log: trim_info_log(&mut buf, written),
             });
         }
+        std::mem::forget(guard);
         Ok(program)
     }
 }

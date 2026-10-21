@@ -36,9 +36,9 @@ impl SettingsEditor {
         storage_validator: Rc<dyn StoragePathValidator>,
         validator: impl Fn(&EditorState) -> ValidationState + 'static,
     ) -> Self {
+        let draft = Arc::new(snapshot);
         let editor_state = EditorState {
-            cached_snapshot: Arc::new(snapshot.clone()),
-            draft: Arc::new(snapshot),
+            draft,
             capture_target: None,
             validation: ValidationState { issues: vec![] },
             revision: 0,
@@ -46,6 +46,7 @@ impl SettingsEditor {
             supported_sample_rates,
             storage_validator,
             conflicts_cache: RefCell::new(None),
+            topology_cache: RefCell::new(Default::default()),
         };
         let initial_validation = validator(&editor_state);
         let current = Rc::new(RefCell::new(EditorState {
@@ -77,7 +78,7 @@ impl SettingsEditor {
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
-        self.current.borrow().cached_snapshot.as_ref().clone()
+        self.current.borrow().draft.as_ref().clone()
     }
 
     pub(crate) fn projections(&self) -> &ProjectionHub {
@@ -92,28 +93,23 @@ impl SettingsEditor {
             return Err(ViewModelError::ReentrantMutation);
         }
 
-        // Capture pre-mutation state for no-op detection
-        let (prev_draft, prev_capture, prev_revision) = {
-            let s = self.current.borrow();
-            (Arc::clone(&s.draft), s.capture_target.clone(), s.revision)
-        };
         let mut candidate = self.current.borrow().clone();
         let result = mutate(&mut candidate)?;
-
-        if candidate.capture_target != prev_capture {
-            // capture_target changed — cannot skip
-        } else if Arc::ptr_eq(&candidate.draft, &prev_draft) {
-            // draft not touched by mutate — true no-op
-            return Ok(result);
-        } else if *candidate.draft == *prev_draft {
-            // draft_mut() was called but values are identical — restore Arc
-            candidate.draft = prev_draft;
+        let previous = self.current.borrow();
+        let draft_changed =
+            !Arc::ptr_eq(&candidate.draft, &previous.draft) && *candidate.draft != *previous.draft;
+        if !draft_changed && candidate.capture_target == previous.capture_target {
             return Ok(result);
         }
-
-        candidate.validation = (self.validator)(&candidate);
-        candidate.revision = prev_revision + 1;
-        candidate.cached_snapshot = Arc::new((*candidate.draft).clone());
+        if draft_changed {
+            candidate.validation = (self.validator)(&candidate);
+        } else {
+            candidate.draft = Arc::clone(&previous.draft);
+            candidate.conflicts_cache = previous.conflicts_cache.clone();
+            candidate.topology_cache = previous.topology_cache.clone();
+        }
+        candidate.revision = previous.revision.wrapping_add(1);
+        drop(previous);
         let rev_value = candidate.revision;
         let prepared = self.projections.prepare_all(&candidate);
 
@@ -195,6 +191,42 @@ mod tests {
         let result: Result<(), ViewModelError> = editor.transact(|_| Ok(()));
         assert!(result.is_ok());
         assert_eq!(editor.revision(), rev_before);
+    }
+
+    #[test]
+    fn capture_only_transaction_reuses_draft_and_validation() {
+        let validations = Rc::new(Cell::new(0));
+        let calls = Rc::clone(&validations);
+        let editor = SettingsEditor::new(
+            empty_snapshot(),
+            FactoryCatalog::new(vec![]).unwrap(),
+            Arc::new([]),
+            Rc::new(NoopStoragePathValidator),
+            move |_| {
+                calls.set(calls.get() + 1);
+                ValidationState { issues: vec![] }
+            },
+        );
+        let draft = Arc::clone(&editor.current().draft);
+        editor
+            .transact(|state| {
+                state.capture_target = Some(nerust_settings_core::editor::CaptureTarget::Shortcut(
+                    nerust_settings_core::model::input::ShortcutAction::TogglePause,
+                ));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(validations.get(), 1, "capture does not revalidate settings");
+        assert!(Arc::ptr_eq(&draft, &editor.current().draft));
+        assert_eq!(editor.revision(), 1);
+        editor
+            .transact(|state| {
+                state.draft_mut().local.audio.muted = true;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(validations.get(), 2);
+        assert!(!Arc::ptr_eq(&draft, &editor.current().draft));
     }
 
     #[test]

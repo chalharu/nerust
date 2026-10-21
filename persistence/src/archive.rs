@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{Cursor, Write},
-    path::{Path, PathBuf},
+    path::Path,
     time::SystemTime,
 };
 
@@ -15,6 +15,7 @@ use crate::{
         slot_matches_identity,
     },
     model::StateSlotSummary,
+    sidecar::StorageLocation,
     time::system_time_from_millis,
 };
 
@@ -46,7 +47,7 @@ pub(crate) fn read_state_summary(
     }
     let has_thumbnail = archive.by_name(THUMBNAIL_ENTRY).is_ok();
     Ok(Some(summary_from_metadata(
-        path.to_path_buf(),
+        path.into(),
         system_time_from_millis(metadata.saved_at_unix_ms),
         &metadata,
         has_thumbnail,
@@ -108,7 +109,7 @@ pub(crate) fn build_state_archive(
 }
 
 pub(crate) fn summary_from_metadata(
-    path: PathBuf,
+    path: StorageLocation,
     saved_at: SystemTime,
     metadata: &StateArchiveMetadata,
     has_thumbnail: bool,

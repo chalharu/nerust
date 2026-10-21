@@ -30,6 +30,30 @@ impl StandardPad {
     pub fn new() -> Self {
         Self { cached: 0xFF }
     }
+
+    /// Static joypad wiring; no controller runtime is needed by the GBC bus.
+    pub fn input_fields(port: &dyn Port) -> Vec<FieldEntry> {
+        let attachment = port.attachment_id();
+        [
+            ("gbc.control.a", FIELD_A),
+            ("gbc.control.b", FIELD_B),
+            ("gbc.control.select", FIELD_SELECT),
+            ("gbc.control.start", FIELD_START),
+            ("gbc.control.right", FIELD_RIGHT),
+            ("gbc.control.left", FIELD_LEFT),
+            ("gbc.control.up", FIELD_UP),
+            ("gbc.control.down", FIELD_DOWN),
+        ]
+        .into_iter()
+        .map(|(id, field)| {
+            FieldEntry::new(
+                attachment,
+                ControlId::digital(DigitalControlId::new(id)),
+                field,
+            )
+        })
+        .collect()
+    }
 }
 
 impl Default for StandardPad {
@@ -56,24 +80,7 @@ impl Controller for StandardPad {
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
 
     fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
-        let attachment = port.attachment_id();
-        let digital = |id: &'static str, field: usize| {
-            FieldEntry::new(
-                attachment,
-                ControlId::digital(DigitalControlId::new(id)),
-                field,
-            )
-        };
-        vec![
-            digital("gbc.control.a", FIELD_A),
-            digital("gbc.control.b", FIELD_B),
-            digital("gbc.control.select", FIELD_SELECT),
-            digital("gbc.control.start", FIELD_START),
-            digital("gbc.control.right", FIELD_RIGHT),
-            digital("gbc.control.left", FIELD_LEFT),
-            digital("gbc.control.up", FIELD_UP),
-            digital("gbc.control.down", FIELD_DOWN),
-        ]
+        Self::input_fields(port)
     }
 }
 

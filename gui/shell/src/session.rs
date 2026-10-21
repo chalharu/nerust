@@ -27,30 +27,26 @@ pub(crate) mod title;
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
-use nerust_core_traits::{
-    audio::AudioBackendRegistry,
-    factory::{
-        CoreFactory, FactoryError,
-        load::{DynSystemLoadOptions, MediaObject},
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_emu_thread::OperationError;
+use nerust_gui_runtime::debugger as debug_vm;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_gui_viewmodel::debugger as debug_vm;
 use nerust_input_traits::{AttachmentId, ControlId, InputAssignments};
 use nerust_keyboard::Key;
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
 use nerust_settings_core::model::input::ShortcutAction;
+use nerust_system_traits::factory::{
+    CoreFactory, FactoryError,
+    load::{DynSystemLoadOptions, MediaObject},
+};
 use thiserror::Error;
 
 use crate::{
@@ -64,13 +60,13 @@ pub use crate::emu_core::images::LiveImages;
 
 struct CoreRuntime {
     emu_core: EmuCore,
-    gui_input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    gui_input: Box<dyn nerust_input_traits::GuiInputPort>,
     field_map: HashMap<(AttachmentId, ControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
 impl CoreRuntime {
-    fn from_factory_parts(parts: nerust_core_traits::factory::CoreParts) -> Self {
+    fn from_factory_parts(parts: nerust_system_traits::factory::CoreParts) -> Self {
         let (emu_core, gui_input, field_map, host_peripherals) = EmuCore::from_parts(parts);
         Self {
             emu_core,
@@ -89,7 +85,7 @@ struct CoreCreation {
 /// The factory's live resources share one lifetime and are replaced as a unit.
 struct ActiveRuntime {
     core: Box<dyn LiveCore>,
-    input: Box<dyn nerust_core_traits::factory::GuiInputPort>,
+    input: Box<dyn nerust_input_traits::GuiInputPort>,
     field_map: HashMap<(AttachmentId, ControlId), usize>,
     host_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
@@ -108,6 +104,7 @@ impl From<CoreRuntime> for ActiveRuntime {
 #[derive(Debug, Clone)]
 pub(super) struct LoadedMedia {
     media: MediaObject,
+    options: Box<dyn nerust_core_traits::CoreOptions>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,8 +123,8 @@ struct InputDept {
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_keyboard::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
-    /// Last served touch overlay, keyed by the caller revision.
-    /// A repeat revision always means identical controls.
+    topology_epoch: u64,
+    /// Last served overlay, keyed by caller revision and topology epoch.
     touch_cache: TouchCache,
 }
 
@@ -138,8 +135,13 @@ impl InputDept {
             current_assignments,
             key_field_map: HashMap::new(),
             pressed_keys: std::collections::HashSet::new(),
+            topology_epoch: 0,
             touch_cache: Default::default(),
         }
+    }
+
+    fn invalidate_topology(&mut self) {
+        self.topology_epoch = self.topology_epoch.wrapping_add(1);
     }
 
     /// Rebuild the keyboard reverse map from the implicit profile.
@@ -189,6 +191,7 @@ impl InputDept {
 #[derive(Debug, Default)]
 pub(crate) struct TouchCache {
     pub(crate) rev: Option<u64>,
+    pub(crate) topology_epoch: u64,
     pub(crate) model: nerust_core_traits::touch::TouchOverlayModel,
 }
 
@@ -238,6 +241,7 @@ impl MediaDept {
 /// Everything touching the running core goes through these typed methods.
 struct EmuCluster {
     runtime: Option<ActiveRuntime>,
+    debug_epoch: Arc<std::sync::atomic::AtomicBool>,
     empty_peripherals: nerust_core_traits::peripheral::HostPeripheralHandles,
 }
 
@@ -245,6 +249,7 @@ impl EmuCluster {
     fn new() -> Self {
         Self {
             runtime: None,
+            debug_epoch: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             empty_peripherals: Default::default(),
         }
     }
@@ -294,11 +299,19 @@ impl EmuCluster {
 
     /// Keep the previous aggregate alive until a settings transaction commits.
     fn replace(&mut self, next: ActiveRuntime) -> Option<ActiveRuntime> {
+        self.invalidate_debug();
         self.runtime.replace(next)
     }
 
     fn restore(&mut self, previous: Option<ActiveRuntime>) {
+        self.invalidate_debug();
         self.runtime = previous;
+    }
+
+    fn invalidate_debug(&mut self) {
+        self.debug_epoch
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.debug_epoch = Arc::new(std::sync::atomic::AtomicBool::new(true));
     }
 
     fn field_map(&self) -> Option<&HashMap<(AttachmentId, ControlId), usize>> {
@@ -311,14 +324,13 @@ impl EmuCluster {
             .map_or(&self.empty_peripherals, |runtime| &runtime.host_peripherals)
     }
 
-    fn input_mut(
-        &mut self,
-    ) -> Option<&mut (dyn nerust_core_traits::factory::GuiInputPort + 'static)> {
+    fn input_mut(&mut self) -> Option<&mut (dyn nerust_input_traits::GuiInputPort + 'static)> {
         self.runtime.as_mut().map(|runtime| runtime.input.as_mut())
     }
 }
 
 pub struct SessionHandle {
+    execution_held: bool,
     registry: Arc<SystemRegistry>,
     active_system_id: Option<Box<dyn SystemId>>,
     input: InputDept,
@@ -500,6 +512,7 @@ impl SessionHandle {
             (None, InputAssignments::new(vec![]))
         };
         let mut result = Self {
+            execution_held: false,
             input: InputDept::new(assignments),
             emu: EmuCluster::new(),
             registry,
@@ -607,7 +620,12 @@ impl SessionHandle {
 
     /// Configured save locations, if persistence setup resolved them.
     /// Narrow sidecar view: cloned paths, no manager access needed.
-    pub fn sidecars(&self) -> Option<(PathBuf, PathBuf)> {
+    pub fn sidecars(
+        &self,
+    ) -> Option<(
+        nerust_persistence::sidecar::StorageLocation,
+        nerust_persistence::sidecar::StorageLocation,
+    )> {
         self.media.persistence.configured_sidecars()
     }
 
@@ -798,6 +816,8 @@ impl SessionHandle {
         self.emu.replace(ActiveRuntime::from(created.runtime));
         self.media.clear_runtime();
         self.input.pressed_keys.clear();
+        self.input.invalidate_topology();
+        self.debug_clear_write();
         self.rebuild_key_field_map();
         Ok(())
     }
@@ -807,11 +827,9 @@ impl SessionHandle {
 pub(crate) mod test_util {
     use std::sync::Arc;
 
-    use nerust_core_traits::{
-        audio::AudioBackendRegistry,
-        factory::{CoreFactory, settings::FactorySettingsView},
-    };
+    use nerust_core_traits::audio::AudioBackendRegistry;
     use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
+    use nerust_system_traits::factory::{CoreFactory, settings::FactorySettingsView};
 
     use crate::test_helpers::MockFactory;
     use crate::{registry::SystemRegistry, session::SessionHandle};
@@ -892,12 +910,12 @@ pub(crate) mod test_util {
         let snapshot = session.settings_snapshot();
         let language = match snapshot.shared.general.language {
             nerust_settings_core::model::language::AppLanguage::Japanese => {
-                nerust_core_traits::factory::settings::Language::Japanese
+                nerust_system_traits::factory::settings::Language::Japanese
             }
             nerust_settings_core::model::language::AppLanguage::English => {
-                nerust_core_traits::factory::settings::Language::English
+                nerust_system_traits::factory::settings::Language::English
             }
-            _ => nerust_core_traits::factory::settings::Language::SystemDefault,
+            _ => nerust_system_traits::factory::settings::Language::SystemDefault,
         };
         FactorySettingsView {
             language,

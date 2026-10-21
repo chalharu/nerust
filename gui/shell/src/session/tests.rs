@@ -1,20 +1,17 @@
 use std::sync::{Arc, atomic::Ordering::AcqRel};
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
+use nerust_gui_runtime::debugger::{PendingWrite, StatusMessage};
 use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsApplyPlan, SettingsSnapshot};
-use nerust_gui_viewmodel::debugger::{PendingWrite, StatusMessage};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
 use nerust_settings_core::factory::settings_view;
 use nerust_settings_core::model::language::AppLanguage;
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
+};
 
 use super::test_util::*;
 use crate::test_helpers::*;
@@ -100,7 +97,7 @@ impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
 
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         // CLI parsing not exercised in this test path
         unreachable!()
     }
@@ -268,7 +265,7 @@ impl CoreFactory for LiveSwapFactory {
     }
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         MockFactory.load_options_schema()
     }
     fn create_core_and_adapter_with_assignments(
@@ -631,8 +628,7 @@ fn failed_rebuild_restores_input_peripherals_and_running_state() {
         ControlId::digital(DigitalControlId::new("old.control")),
     );
     let old = session.emu.runtime.as_mut().unwrap();
-    let input =
-        old.input.as_ref() as *const dyn nerust_core_traits::factory::GuiInputPort as *const ();
+    let input = old.input.as_ref() as *const dyn nerust_input_traits::GuiInputPort as *const ();
     old.host_peripherals.accelerometer = Some(handle);
     old.field_map.insert(old_field, 99);
 
@@ -643,8 +639,7 @@ fn failed_rebuild_restores_input_peripherals_and_running_state() {
     ));
     let restored = session.emu.runtime.as_ref().unwrap();
     assert_eq!(
-        restored.input.as_ref() as *const dyn nerust_core_traits::factory::GuiInputPort
-            as *const (),
+        restored.input.as_ref() as *const dyn nerust_input_traits::GuiInputPort as *const (),
         input
     );
     assert_eq!(session.emu.field_map().unwrap().get(&old_field), Some(&99));

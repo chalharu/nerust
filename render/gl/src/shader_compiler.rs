@@ -2,6 +2,7 @@
 //! Compiles the GL shader sources with an optional preamble.
 
 use nerust_glwrap::Shader;
+use nerust_glwrap::bindings as gl;
 
 pub(crate) const DIRECT_FRAGMENT_DESKTOP: &str = r#"
 uniform sampler2D frame_texture;
@@ -229,6 +230,7 @@ pub(crate) fn supports_unpack_row_length(version: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::gl;
     use super::{compose_glsl_source, is_gles_context, supports_unpack_row_length};
 
     #[test]
@@ -271,20 +273,40 @@ mod tests {
             eprintln!("SKIP GL context tests: no GL display");
             return;
         };
-        let Some(_current) = display.make_pbuffer_current(16, 16) else {
-            eprintln!("SKIP GL context tests: no GL context");
-            return;
-        };
+        let _current = display
+            .make_pbuffer_current(16, 16)
+            .expect("GL display available but pbuffer creation failed");
         let loader = |name: &'static str| {
             std::ffi::CString::new(name)
                 .ok()
                 .map(|owned| display.display.get_proc_address(&owned))
                 .unwrap_or(std::ptr::null())
         };
-        gl::load_with(loader);
+        let api = unsafe { nerust_glwrap::Context::load_with(loader) };
+        let _dispatch = unsafe { api.enter() };
         let version = nerust_glwrap::raw::gl_string(gl::VERSION);
         let is_gles = is_gles_context(version.as_deref());
-        assert!(super::compile_shader_program(false, is_gles).is_ok());
-        assert!(super::compile_osd_program(is_gles).is_some());
+        let mut game = super::compile_shader_program(false, is_gles).unwrap();
+        let mut osd = super::compile_osd_program(is_gles).unwrap();
+        let current = nerust_glwrap::Current::assert_current(true);
+        assert!(!game.destroy_if_current(current));
+        assert!(!osd.destroy_if_current(current));
+
+        let attribute = "position_attribute_name_that_is_much_longer_than_sixteen_bytes";
+        let uniform = "matrix_uniform_name_that_is_much_longer_than_sixteen_bytes";
+        let vertex = format!(
+            "#version 150\nin vec2 {attribute};\nuniform float {uniform};\nvoid main() {{ gl_Position = vec4({attribute} * {uniform}, 0.0, 1.0); }}"
+        );
+        let fragment = "#version 150\nout vec4 color;\nvoid main() { color = vec4(1.0); }";
+        let mut long_names = nerust_glwrap::Shader::try_new(&vertex, fragment).unwrap();
+        assert!(long_names.attribute_opt(attribute).is_some());
+        assert!(long_names.uniform_opt(uniform).is_some());
+        assert!(!long_names.destroy_if_current(current));
+        assert!(nerust_glwrap::Shader::try_new(&vertex, "interior\0nul").is_err());
+        assert!(nerust_glwrap::Shader::try_new("not valid GLSL", fragment).is_err());
+        let mismatch_vertex = "#version 150\nout vec2 bridge;\nvoid main() { bridge = vec2(1.0); gl_Position = vec4(1.0); }";
+        let mismatch_fragment = "#version 150\nin vec3 bridge;\nout vec4 color;\nvoid main() { color = vec4(bridge, 1.0); }";
+        assert!(nerust_glwrap::Shader::try_new(mismatch_vertex, mismatch_fragment).is_err());
+        assert!(nerust_glwrap::check_frame().is_ok());
     }
 }

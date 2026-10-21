@@ -268,8 +268,6 @@ pub struct OsdPresenter {
     last_chrome: Option<OsdChrome>,
     last_raster: Option<(ViewInsets, u32)>,
     active: bool,
-    /// Reused render buffer: steady renders extend it instead of allocating per frame.
-    row_buffer: Vec<OsdRow>,
 }
 
 impl OsdPresenter {
@@ -373,6 +371,7 @@ impl OsdPresenter {
         // Recorded only after the size decision, so a zero-size bump is never swallowed.
         let changed = state.generation() != self.last_seen;
         if width == 0 || height == 0 {
+            self.last_size = None;
             if self.active {
                 self.active = false;
                 return OsdSync::Clear;
@@ -399,7 +398,7 @@ impl OsdPresenter {
             return OsdSync::Skip;
         }
         self.active = true;
-        // Borrowed fingerprint: `Rc` clones share; rows reuse the buffer.
+        // Borrowed fingerprint: status strings share their allocation via `Rc`.
         let (label_value, position, status_position) = match self.last_status.as_ref() {
             Some(fingerprint) => (
                 Some((Rc::clone(&fingerprint.label), Rc::clone(&fingerprint.value))),
@@ -408,12 +407,8 @@ impl OsdPresenter {
             ),
             None => (None, chrome.position, chrome.status_position),
         };
-        // Swap keeps the buffer capacity across renders; `take` would reset it to zero.
-        let mut rows = Vec::with_capacity(self.row_buffer.len());
-        std::mem::swap(&mut self.row_buffer, &mut rows);
-        rows.extend(state.rows().iter().cloned());
         OsdSync::Render(OsdPlan {
-            rows,
+            rows: state.rows().to_vec(),
             status: label_value,
             position,
             status_position,
@@ -943,6 +938,35 @@ mod tests {
         };
         assert!(matches!(presenter.sync(&cleared, input()), OsdSync::Clear));
         assert!(matches!(presenter.sync(&cleared, input()), OsdSync::Skip));
+    }
+
+    #[test]
+    fn zero_size_then_same_size_republishes_unchanged_layer() {
+        let state = row_state("Paused");
+        let mut presenter = OsdPresenter::new();
+        let settings = presenter_settings();
+        let now = Instant::now();
+        let input = |width| {
+            sync_input(
+                chrome_of(&settings),
+                now,
+                width,
+                720,
+                1.0,
+                Default::default(),
+            )
+        };
+        assert!(matches!(
+            presenter.sync(&state, input(960)),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(presenter.sync(&state, input(0)), OsdSync::Clear));
+        assert!(matches!(presenter.sync(&state, input(0)), OsdSync::Skip));
+        assert!(matches!(
+            presenter.sync(&state, input(960)),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(presenter.sync(&state, input(960)), OsdSync::Skip));
     }
 
     #[test]

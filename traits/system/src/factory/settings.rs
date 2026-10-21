@@ -9,13 +9,8 @@ pub enum Language {
     English,
 }
 
-/// Lightweight settings view passed to CoreFactory methods.
-///
-/// Avoids coupling CoreFactory to gui/runtime's SettingsSnapshot.
-/// The factory downcasts the trait object to its concrete system type.
+/// Factory settings without a dependency on the GUI's settings snapshot.
 pub struct FactorySettingsView {
     pub language: Language,
-    /// System-specific configuration as a trait object.
-    /// For NES: downcast to `NesSettings`.
     pub system_config: Option<Box<dyn SystemSettings>>,
 }

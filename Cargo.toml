@@ -46,6 +46,7 @@ members = [
   "traits/emu-thread",
   "traits/input",
   "traits/settings",
+  "traits/system",
 ]
 resolver = "3"
 
@@ -64,6 +65,7 @@ version.workspace = true
 clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
+nerust_system_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
@@ -72,7 +74,7 @@ nerust_gba_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
 nerust_render_gl = { optional = true, workspace = true }
 nerust_render_softbuffer = { optional = true, workspace = true }
-nerust_render_traits.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_render_wgpu = { optional = true, workspace = true }
 nerust_run_options.workspace = true
 nerust_sound_cpal = { optional = true, workspace = true }
@@ -173,6 +175,7 @@ log = { default-features = false, version = "=0.4.34" }
 muda = { default-features = false, features = ["gtk3"], version = "=0.21.2" }
 nerust_android = { path = "gui/frontends/android" }
 nerust_core_traits = { path = "traits/core" }
+nerust_system_traits = { path = "traits/system" }
 nerust_emu_thread = { path = "traits/emu-thread" }
 nerust_gba_core = { path = "gba/core" }
 nerust_gba_device = { path = "gba/device" }
@@ -204,7 +207,7 @@ ab_glyph = { version = "=0.2.32" }
 cosmic-text = { version = "=0.19.0" }
 fontdb = { version = "=0.23.0" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
-nerust_render_traits = { path = "render/traits" }
+nerust_render_traits = { default-features = false, path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
 nerust_rom_test = { path = "gui/frontends/headless" }
 nerust_crash_guard = { path = "crash-guard" }

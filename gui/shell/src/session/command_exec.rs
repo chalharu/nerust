@@ -211,7 +211,7 @@ impl SessionHandle {
     }
 
     fn cmd_resume(&mut self, tick: &TickMetrics) -> Result<SessionCommandOutcome, SessionError> {
-        if !tick.paused {
+        if !tick.paused || self.execution_held {
             return Ok(SessionCommandOutcome::default());
         }
         crate::emu_core::LivePlayback::resume(self.emu.require_live()?)?;
@@ -223,6 +223,8 @@ impl SessionHandle {
     }
 
     fn cmd_reset(&mut self) -> Result<SessionCommandOutcome, SessionError> {
+        self.emu.invalidate_debug();
+        self.debug_clear_write();
         crate::emu_core::LivePlayback::reset(self.emu.require_live()?)?;
         Ok(SessionCommandOutcome {
             executed: true,
@@ -291,6 +293,8 @@ impl SessionHandle {
 
     /// Single live access: absence maps once to `Empty` in `live_or_empty`.
     fn run_load_op(&mut self, op: LoadOp, tick: &TickMetrics) -> SessionCommandOutcome {
+        self.emu.invalidate_debug();
+        self.debug_clear_write();
         let slot_failure = match self.emu.live_or_empty() {
             Ok(core) => {
                 let live = core.as_exporter();
@@ -435,7 +439,8 @@ mod exec_cov_tests {
         let prev = run_adjacent_previous(&mut session, C::SelectPreviousSlot, &tick).unwrap();
         assert!(!prev.executed);
         let toggle = run_toggle(&mut session, C::TogglePause, &tick).unwrap();
-        assert!(toggle.executed || !toggle.executed);
+        assert!(toggle.executed);
+        assert!(session.tick_metrics().paused);
         let reset = run_reset(&mut session, C::Reset, &tick).unwrap();
         assert!(reset.executed);
     }

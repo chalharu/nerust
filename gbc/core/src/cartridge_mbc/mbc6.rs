@@ -1,3 +1,4 @@
+use crate::persistence_error::GbcPersistenceError;
 use std::time::SystemTime;
 
 use super::{Mbc, MbcKind};
@@ -497,7 +498,10 @@ impl Mbc for Mbc6 {
         self.flash_mode = FlashMode::ReadArray;
     }
 
-    fn export_persistent_state(&self, _now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    fn export_persistent_state(
+        &self,
+        _now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         rmp_serde::to_vec_named(&Mbc6PersistentState {
             schema_version: PERSISTENT_STATE_SCHEMA_VERSION,
             kind: self.kind(),
@@ -507,21 +511,16 @@ impl Mbc for Mbc6 {
             sector0_protected: self.sector0_protected,
         })
         .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(GbcPersistenceError::from)
     }
 
-    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc6PersistentState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != PERSISTENT_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported MBC6 persistent state version: {}",
-                state.schema_version
-            ));
-        }
-        if state.kind != self.kind() {
-            return Err("MBC6 persistent state kind mismatch".into());
-        }
+    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc6PersistentState = super::decode_mapper_state(
+            data,
+            PERSISTENT_STATE_SCHEMA_VERSION,
+            "MBC6 persistent state",
+            Some(self.kind()),
+        )?;
         if state.sram.len() != SRAM_SIZE
             || state.flash.len() != FLASH_SIZE
             || state.hidden.len() != HIDDEN_SIZE
@@ -556,15 +555,13 @@ impl Mbc for Mbc6 {
         .expect("MBC6 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc6MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported MBC6 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc6MachineState = super::decode_mapper_state(
+            data,
+            MACHINE_STATE_SCHEMA_VERSION,
+            "MBC6 machine state",
+            None,
+        )?;
         if !Self::machine_state_valid(&state) {
             return Err("invalid MBC6 machine state".into());
         }

@@ -110,6 +110,11 @@ impl RenderPipeline {
         self.reserved = strip;
     }
 
+    #[cfg(test)]
+    pub(crate) fn reserved_strip(&self) -> nerust_render_traits::ReservedStrip {
+        self.reserved
+    }
+
     /// Composite the OSD layer after the game pass, if one is set.
     /// Same surface, viewport clipped to the layer rect.
     pub fn draw_osd(&self, encoder: &mut CommandEncoder, view: &TextureView) {

@@ -7,7 +7,11 @@ pub(crate) trait AuxShellOps {
     fn request_redraw(&self);
     fn handle_common(&mut self, event: &crate::aux::domain::AuxNativeEvent);
     fn feed_event(&mut self, event: crate::aux::domain::AuxNativeEvent) -> Option<iced::Event>;
-    fn render_tagged(&mut self, tag: &'static str);
+    fn render_tagged(&mut self, tag: &'static str) -> Option<String>;
+    fn wake_deadline(&self) -> Option<std::time::Instant> {
+        None
+    }
+    fn wake_due(&mut self, _now: std::time::Instant) {}
 }
 
 mod presenter;

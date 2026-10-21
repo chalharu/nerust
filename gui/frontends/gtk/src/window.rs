@@ -356,16 +356,22 @@ impl WindowExtend for Window {
 
         {
             let result = result.clone();
-            let _ = settings_action.connect_activate(move |_, _| {
-                let was_running = !result.state().borrow().paused();
-                result.state().borrow_mut().pause();
+            let _ = settings_action.connect_activate(move |action, _| {
+                action.set_enabled(false);
+                let action = action.clone();
+                result
+                    .state()
+                    .borrow_mut()
+                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
                 let state = result.state();
                 let window = result.window();
                 let result_for_close = result.clone();
                 present_preferences_dialog(&window, state, move || {
-                    if was_running {
-                        result_for_close.state().borrow_mut().resume();
-                    }
+                    result_for_close.state().borrow_mut().set_pause_owner(
+                        nerust_frontend_kernel::pause::PauseOwner::Settings,
+                        false,
+                    );
+                    action.set_enabled(true);
                     result_for_close.rebuild_menubar();
                     result_for_close.update_actions();
                 });
@@ -710,25 +716,12 @@ fn rebuild_slot_menu(
     }
 }
 
-/// Modal error dialog for ROM load failures: mirrors the tao frontend so a
-/// bad file explains itself instead of failing silently.
-fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
-    use gtk::prelude::*;
-    use nerust_settings_core::i18n::{UiText, text};
-    let language = state.borrow().settings_snapshot().shared.general.language;
-    let dialog = gtk::MessageDialog::builder()
-        .transient_for(parent)
-        .modal(true)
-        .message_type(gtk::MessageType::Error)
-        .buttons(gtk::ButtonsType::Close)
-        .text(text(language, UiText::RomLoadFailed))
-        .secondary_text(detail)
-        .build();
-    let dialog_clone = dialog.clone();
-    let _ = dialog.connect_response(move |_, _| {
-        dialog_clone.hide();
-    });
-    dialog.present();
+/// Use the single modal queue, including its pause ownership and acknowledgement path.
+fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
+    state.borrow_mut().session.report_external_error(
+        nerust_gui_shell::session::notification::FailureOrigin::Host,
+        detail.to_owned(),
+    );
 }
 
 #[cfg(test)]
@@ -795,7 +788,7 @@ mod tests {
             StateSlotSummary {
                 schema_version: 1,
                 slot_id: 1,
-                path: std::path::PathBuf::from("slot1"),
+                path: "slot1".into(),
                 saved_at: std::time::SystemTime::UNIX_EPOCH,
                 has_thumbnail: false,
                 emulator_version: "test".to_string(),
@@ -803,7 +796,7 @@ mod tests {
             StateSlotSummary {
                 schema_version: 1,
                 slot_id: 2,
-                path: std::path::PathBuf::from("slot2"),
+                path: "slot2".into(),
                 saved_at: std::time::SystemTime::UNIX_EPOCH,
                 has_thumbnail: false,
                 emulator_version: "test".to_string(),

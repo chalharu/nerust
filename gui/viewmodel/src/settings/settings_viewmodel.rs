@@ -2,10 +2,9 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
-use nerust_core_traits::factory::CoreFactory;
 use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
-use nerust_settings_core::model::shared::StoragePolicy;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
+use nerust_system_traits::factory::CoreFactory;
 
 use super::{
     ValidationState,
@@ -37,7 +36,7 @@ pub struct SettingsViewModel {
 impl SettingsViewModel {
     pub fn new(
         snapshot: SettingsSnapshot,
-        factories: Vec<Arc<dyn nerust_core_traits::factory::CoreFactory>>,
+        factories: Vec<Arc<dyn nerust_system_traits::factory::CoreFactory>>,
         supported_sample_rates: Arc<[u32]>,
         storage_validator: Rc<dyn StoragePathValidator>,
     ) -> Result<Self, super::catalog::CatalogError> {
@@ -101,23 +100,22 @@ impl SettingsViewModel {
 }
 
 fn validate_storage_policy(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
-    if matches!(
-        state.draft.shared.persistence.storage_policy,
-        StoragePolicy::CustomDirectory
-    ) {
-        if let Some(ref path) = state.draft.shared.persistence.storage_directory {
+    match nerust_gui_runtime::settings::apply::custom_storage_path(&state.draft.shared) {
+        Ok(Some(path)) => {
             if let Err(e) = state.storage_validator.validate(path) {
                 issues.push(super::ValidationIssue {
                     scope: super::ValidationScope::Persistence,
                     message: e.to_string(),
                 });
             }
-        } else {
+        }
+        Err(error) => {
             issues.push(super::ValidationIssue {
                 scope: super::ValidationScope::Persistence,
-                message: "Custom storage directory required".into(),
+                message: error.to_string(),
             });
         }
+        Ok(None) => {}
     }
 }
 
@@ -248,6 +246,11 @@ fn validate_factory_settings(
         });
     }
     let topology = build_topology(&assignments, input_factory.slots());
+    let topology = Rc::new(topology);
+    state
+        .topology_cache
+        .borrow_mut()
+        .insert(sid.clone_box(), Rc::clone(&topology));
     // Profile index built once per validation pass, probed per descriptor.
     let index = state
         .draft
@@ -293,7 +296,53 @@ mod tests {
     use super::*;
     use crate::settings::editor::SettingsEditor;
     use crate::settings::test_support::{P1_SLOT, TestCoreFactory, TestInputFactory};
-    use nerust_core_traits::factory::CoreFactory;
+    use nerust_system_traits::factory::CoreFactory;
+
+    #[test]
+    fn saf_custom_storage_uses_shared_selection_validation() {
+        use nerust_settings_core::model::shared::StoragePolicy;
+        let mut snapshot = SettingsSnapshot {
+            shared: Default::default(),
+            local: Default::default(),
+            app_state: Default::default(),
+        };
+        snapshot.shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+        snapshot.shared.persistence.storage_document_tree_uri =
+            Some("content://provider/tree/saves".into());
+        let make = |snapshot| {
+            SettingsViewModel::new(
+                snapshot,
+                vec![],
+                Arc::new([]),
+                Rc::new(crate::settings::NoopStoragePathValidator),
+            )
+            .unwrap()
+        };
+        for policy in [StoragePolicy::Sidecar, StoragePolicy::CustomDirectory] {
+            snapshot.shared.persistence.storage_policy = policy;
+            for uri in [
+                "content://provider/tree/saves",
+                "",
+                "content:///tree/saves",
+                "file:///tmp/saves",
+                "content://provider/ bad",
+                "content://provider/\0",
+            ] {
+                snapshot.shared.persistence.storage_document_tree_uri = Some(uri.into());
+                let runtime_valid =
+                    nerust_gui_runtime::settings::apply::validate_shared_settings(&snapshot.shared)
+                        .is_ok();
+                assert_eq!(
+                    make(snapshot.clone()).finish().is_ok(),
+                    runtime_valid,
+                    "{policy:?}: {uri:?}"
+                );
+                assert_eq!(runtime_valid, uri == "content://provider/tree/saves");
+            }
+        }
+        snapshot.shared.persistence.storage_document_tree_uri = None;
+        assert!(make(snapshot).finish().is_err());
+    }
 
     #[test]
     fn validator_detects_unknown_profile() {
@@ -317,7 +366,7 @@ mod tests {
             vec![(P1_SLOT.to_string(), Some("unknown.profile.id".into()))],
         );
 
-        let factory: Arc<dyn nerust_core_traits::factory::CoreFactory> = Arc::new(test_factory);
+        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> = Arc::new(test_factory);
         let catalog = crate::settings::catalog::FactoryCatalog::new(vec![factory]).unwrap();
         let supported_sample_rates: Arc<[u32]> = Arc::new([]);
 

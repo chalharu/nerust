@@ -26,6 +26,12 @@ mod saf_decision;
 mod settings_sections;
 
 #[cfg(any(target_os = "android", test))]
+mod settings_flight;
+
+#[cfg(any(target_os = "android", test))]
+mod wake_deadline;
+
+#[cfg(any(target_os = "android", test))]
 // Initializer is already const; the lint misfires on the macro span.
 #[allow(clippy::missing_const_for_thread_local)]
 mod reentrancy;
@@ -40,6 +46,9 @@ mod settings_codec;
 #[cfg(all(test, not(target_os = "android")))]
 #[path = "android/settings_model.rs"]
 mod settings_model;
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/settings_schema.rs"]
+mod settings_schema;
 
 #[cfg(any(target_os = "android", test))]
 use std::sync::Arc;
@@ -54,8 +63,6 @@ use jni::{
 };
 #[cfg(target_os = "android")]
 use nerust_core_traits::audio::AudioBackendRegistry;
-#[cfg(any(target_os = "android", test))]
-use nerust_core_traits::factory::CoreFactory;
 #[cfg(target_os = "android")]
 use nerust_crash_guard::GuardOutcome;
 #[cfg(any(target_os = "android", test))]
@@ -68,6 +75,8 @@ use nerust_gui_shell::registry::SystemRegistry;
 use nerust_nes_factory::NesFactory;
 #[cfg(target_os = "android")]
 use nerust_render_traits::renderer::PipelineFactory;
+#[cfg(any(target_os = "android", test))]
+use nerust_system_traits::factory::CoreFactory;
 #[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
@@ -182,7 +191,7 @@ pub unsafe extern "system" fn JNI_OnLoad(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::load::MediaObject;
+    use nerust_system_traits::factory::load::MediaObject;
 
     use super::*;
 

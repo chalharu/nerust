@@ -2,6 +2,10 @@
 //! The shell `ModalBox` stays the only queue gate.
 use nerust_gui_shell::session::osd::{ModalSink, ModalSource};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(transparent)]
+pub(crate) struct DialogRequestId(pub(crate) u64);
+
 /// JNI handoff for a dialog that should be presented now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShowTransition {
@@ -52,6 +56,8 @@ impl Screen {
 pub(crate) struct ErrorDialogController {
     current: Option<String>,
     auto_paused: bool,
+    next_id: u64,
+    current_id: Option<DialogRequestId>,
 }
 
 impl ErrorDialogController {
@@ -67,6 +73,22 @@ impl ErrorDialogController {
     /// Whether the session is paused on behalf of the error dialog.
     pub(crate) fn auto_paused(&self) -> bool {
         self.auto_paused
+    }
+
+    pub(crate) fn current_id(&self) -> Option<DialogRequestId> {
+        self.current_id
+    }
+
+    pub(crate) fn on_dismissed_for(
+        &mut self,
+        id: DialogRequestId,
+        queue: &mut (impl ModalSink + ModalSource),
+        screen: Screen,
+    ) -> DismissTransition {
+        if self.current_id != Some(id) {
+            return DismissTransition::Idle;
+        }
+        self.on_dismissed(queue, screen)
     }
 
     /// Whether an error dialog is currently presented.
@@ -90,12 +112,13 @@ impl ErrorDialogController {
         }
         let detail = queue.take_modal_batch()?;
         self.current = Some(detail);
-        if can_pause {
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+        self.current_id = Some(DialogRequestId(self.next_id));
+        let auto_pause = can_pause && !self.auto_paused;
+        if auto_pause {
             self.auto_paused = true;
         }
-        Some(ShowTransition::Present {
-            auto_pause: can_pause,
-        })
+        Some(ShowTransition::Present { auto_pause })
     }
 
     /// Dismiss hook: resumes only our own auto-pause, then asks for the next batch.
@@ -107,11 +130,11 @@ impl ErrorDialogController {
     ) -> DismissTransition {
         const IDLE: DismissTransition = DismissTransition::Idle;
         if self.current.is_none() {
-            queue.modal_closed();
             return IDLE;
         }
+        self.current_id = None;
         queue.modal_closed();
-        if screen == Screen::SettingsOpen {
+        if matches!(screen, Screen::SettingsOpen | Screen::Suspended) {
             // Preempted, never acked: requeue the head so the ack
             // guarantee survives the replacement in display order.
             if let Some(detail) = self.current.take() {
@@ -120,12 +143,7 @@ impl ErrorDialogController {
             return IDLE;
         }
         self.current = None;
-        // A dismiss racing suspend resumes nothing; suspend owns the requeue.
-        // The resume path replays from the preserved pause flag and queue.
-        if screen == Screen::Suspended {
-            return IDLE;
-        }
-        if self.auto_paused {
+        if self.auto_paused && queue.modal_pending() == 0 {
             self.auto_paused = false;
             return DismissTransition::ResumeAndReshow;
         }
@@ -135,6 +153,7 @@ impl ErrorDialogController {
     /// Activity suspend kills transient UI: release the gate and requeue
     /// the unacked head; the pause flag survives for the resume path.
     pub(crate) fn on_suspended(&mut self, queue: &mut (impl ModalSink + ModalSource)) {
+        self.current_id = None;
         queue.modal_closed();
         if let Some(detail) = self.current.take() {
             queue.requeue_front(detail);
@@ -158,7 +177,11 @@ impl ErrorDialogController {
         if let Some(ShowTransition::Present { auto_pause }) = self.poll_show(queue, unshielded) {
             return SettingsClosedTransition::Show { auto_pause };
         }
-        if !self.is_showing() && queue.modal_pending() == 0 && self.auto_paused {
+        if matches!(screen, Screen::Foreground { .. })
+            && !self.is_showing()
+            && queue.modal_pending() == 0
+            && self.auto_paused
+        {
             self.auto_paused = false;
             return SettingsClosedTransition::Resume;
         }
@@ -175,6 +198,60 @@ mod tests {
         let mut manager = OsdManager::new();
         manager.queue_modal(detail.to_string());
         manager
+    }
+
+    #[test]
+    fn old_ack_cannot_close_next_dialog_or_release_pause() {
+        let mut controller = ErrorDialogController::new();
+        let mut manager = queued("first");
+        manager.queue_modal("second".into());
+        let screen = Screen::Foreground { can_pause: true };
+        controller.poll_show(&mut manager, screen).unwrap();
+        let old = controller.current_id().unwrap();
+        assert_eq!(
+            controller.on_dismissed_for(old, &mut manager, screen),
+            DismissTransition::Reshow
+        );
+        assert_eq!(
+            controller.poll_show(&mut manager, screen),
+            Some(ShowTransition::Present { auto_pause: false })
+        );
+        let live = controller.current_id().unwrap();
+        assert_ne!(old, live);
+        assert_eq!(
+            controller.on_dismissed_for(old, &mut manager, screen),
+            DismissTransition::Idle
+        );
+        assert_eq!(controller.current_detail(), Some("second"));
+        assert!(controller.auto_paused());
+        assert_eq!(
+            controller.on_dismissed_for(live, &mut manager, screen),
+            DismissTransition::ResumeAndReshow
+        );
+    }
+
+    #[test]
+    fn stale_ack_after_suspend_cannot_release_replayed_modal() {
+        let mut controller = ErrorDialogController::new();
+        let mut manager = queued("unacknowledged");
+        let screen = Screen::Foreground { can_pause: true };
+        controller.poll_show(&mut manager, screen).unwrap();
+        let old = controller.current_id().unwrap();
+        controller.on_suspended(&mut manager);
+        controller
+            .poll_show(&mut manager, Screen::Foreground { can_pause: false })
+            .unwrap();
+        assert_eq!(
+            controller.on_dismissed_for(old, &mut manager, screen),
+            DismissTransition::Idle
+        );
+        assert_eq!(controller.current_detail(), Some("unacknowledged"));
+        assert!(controller.auto_paused());
+        let live = controller.current_id().unwrap();
+        assert_eq!(
+            controller.on_dismissed_for(live, &mut manager, screen),
+            DismissTransition::ResumeAndReshow
+        );
     }
 
     #[test]
@@ -236,13 +313,16 @@ mod tests {
             .expect("batch queued");
         let transition =
             controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
-        assert_eq!(transition, DismissTransition::ResumeAndReshow);
-        assert!(!controller.auto_paused());
+        assert_eq!(transition, DismissTransition::Reshow);
+        assert!(controller.auto_paused());
         // Next batch is still queued behind the released gate.
         let next = controller
             .poll_show(&mut manager, Screen::show_gate(true, false, true))
             .expect("second batch queued");
-        assert!(matches!(next, ShowTransition::Present { auto_pause: true }));
+        assert!(matches!(
+            next,
+            ShowTransition::Present { auto_pause: false }
+        ));
         assert_eq!(controller.current_detail(), Some("second"));
     }
 
@@ -275,7 +355,7 @@ mod tests {
             controller.on_settings_closed(&mut manager, Screen::show_gate(true, false, true));
         assert_eq!(
             replayed,
-            SettingsClosedTransition::Show { auto_pause: true }
+            SettingsClosedTransition::Show { auto_pause: false }
         );
         assert_eq!(controller.current_detail(), Some("preempted"));
     }
@@ -309,7 +389,6 @@ mod tests {
     #[test]
     fn dismiss_racing_suspend_resumes_nothing_and_keeps_queue() {
         // Suspend has not run yet but the activity is already gone.
-        // Dropping here is safe: suspend owns the requeue.
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("racing");
         controller
@@ -319,10 +398,9 @@ mod tests {
             controller.on_dismissed(&mut manager, Screen::show_gate(false, false, false));
         assert_eq!(transition, DismissTransition::Idle);
         assert!(controller.auto_paused());
-        // Dismiss consumed the unacked head; suspend finds nothing to
-        // requeue but the pause flag still drives the resume path.
+        // Requeue exactly once even if the native suspend follows the callback.
         controller.on_suspended(&mut manager);
-        assert_eq!(manager.modal_pending(), 0);
+        assert_eq!(manager.modal_pending(), 1);
         assert!(controller.auto_paused());
     }
 

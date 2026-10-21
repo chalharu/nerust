@@ -7,10 +7,10 @@ use glutin::{
         PossiblyCurrentGlContext as _, Version,
     },
     display::{Display, DisplayApiPreference, GlDisplay as _},
-    surface::{GlSurface as _, SurfaceAttributesBuilder, WindowSurface},
+    surface::{GlSurface as _, SurfaceAttributesBuilder, SwapInterval, WindowSurface},
 };
 use nerust_render_traits::{
-    FrameBuffer, SurfaceSize, VideoFrameFormat, VideoRenderProfile,
+    FrameBuffer, SurfaceSize, VideoRenderProfile,
     renderer::{
         FrameSink, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererConfig, RendererError,
         RendererErrorKind, StripSink, SurfaceLifecycle,
@@ -37,6 +37,8 @@ fn proc_loader(display: &Display) -> impl FnMut(&'static str) -> *const std::os:
 }
 
 pub struct GlRenderer {
+    api: Option<nerust_glwrap::Context>,
+    vsync: bool,
     display: Display,
     gl_config: glutin::config::Config,
     render_profile: VideoRenderProfile,
@@ -88,7 +90,10 @@ impl GlRenderer {
         let is_gles = match frame.load_frame(profile) {
             Ok(is_gles) => is_gles,
             Err(e) => {
-                let _ = frame.close(nerust_glwrap::Current::assert_current(true));
+                let report = crate::surface_view::CloseReport {
+                    leaked: frame.close(nerust_glwrap::Current::assert_current(true)),
+                };
+                self.log_close_report(&report);
                 return Err(e.into());
             }
         };
@@ -98,8 +103,11 @@ impl GlRenderer {
         osd.init_osd(is_gles);
         if let Err(e) = crate::frame_view::ok_gl(nerust_glwrap::check_frame()) {
             let current = nerust_glwrap::Current::assert_current(true);
-            let _ = frame.close(current);
-            let _ = osd.close(current);
+            let mut report = crate::surface_view::CloseReport {
+                leaked: frame.close(current),
+            };
+            report.leaked.extend(osd.close(current));
+            self.log_close_report(&report);
             return Err(e.into());
         }
         osd.set_osd_layer(self.osd_staged.clone());
@@ -109,7 +117,8 @@ impl GlRenderer {
     /// Load path shared by attach and profile rebuilds: tear down while
     /// current, then build the frame and overlay views on the profile.
     fn on_load(&mut self, profile: &VideoRenderProfile) -> Result<(), RendererError> {
-        let _ = self.on_close(nerust_glwrap::Current::assert_current(true));
+        let report = self.on_close(nerust_glwrap::Current::assert_current(true));
+        self.log_close_report(&report);
         debug_assert_eq!(self.frame.frame_texture, 0);
         self.surface.reset();
         let (frame, osd) = self.fresh_views(profile)?;
@@ -172,6 +181,9 @@ impl GlRenderer {
         wh: RawWindowHandle,
         size: SurfaceSize,
     ) -> Result<(), RendererError> {
+        if self.context.is_some() {
+            self.context_detach();
+        }
         self.size = size;
         let nc = unsafe {
             self.display
@@ -196,8 +208,18 @@ impl GlRenderer {
             .make_current(&surf)
             .map_err(|e| RendererError::attach("gl", "make_current", Box::new(e)))?;
 
-        FrameView::load_with(proc_loader(&self.display));
+        let interval = if self.vsync {
+            SwapInterval::Wait(NonZeroU32::MIN)
+        } else {
+            SwapInterval::DontWait
+        };
+        if let Err(e) = surf.set_swap_interval(&ctx, interval) {
+            log::warn!("GlRenderer: requested swap interval unavailable: {e}");
+        }
+        let api = FrameView::load_with(proc_loader(&self.display));
+        let _dispatch = unsafe { api.enter() };
         self.on_load(&self.render_profile.clone())?;
+        self.api = Some(api);
         self.context = Some(ctx);
         self.gl_surface = Some(surf);
         Ok(())
@@ -205,11 +227,21 @@ impl GlRenderer {
 
     /// Context detach: explicit teardown while current, then drop.
     fn context_detach(&mut self) {
+        if let (Some(ctx), Some(surf)) = (self.context.as_ref(), self.gl_surface.as_ref())
+            && !ctx.is_current()
+        {
+            let _ = ctx.make_current(surf);
+        }
         let current = self
             .context
             .as_ref()
             .map(|ctx| ctx.is_current())
             .unwrap_or(false);
+        let _dispatch = if current {
+            self.api.as_ref().map(|api| unsafe { api.enter() })
+        } else {
+            None
+        };
         let current = nerust_glwrap::Current::assert_current(current);
         if current.is_none() {
             log::debug!("GlRenderer: detach without current context");
@@ -218,6 +250,7 @@ impl GlRenderer {
         self.log_close_report(&report);
         self.context = None;
         drop(self.gl_surface.take());
+        self.api = None;
     }
 
     /// Explicit teardown. `None` (no current context) skips GL calls
@@ -325,11 +358,22 @@ impl GlRenderer {
         // Copy, don't borrow: the ~10KiB NTSC kernel rode along with
         // every frame before; only `update_render_profile` clones.
         let frame_format = self.render_profile.frame_format;
-        let logical_size = self.render_profile.logical_size;
-        let source_logical_size = self.render_profile.source_logical_size;
+        let fs = self.render_profile.input_size();
         if self.context.is_none() || self.gl_surface.is_none() {
             return RenderResult::Skipped;
         }
+        let layout = match crate::layout::validate_frame(
+            frame_buffer,
+            fs,
+            frame_format,
+            self.frame.supports_unpack_row_length(),
+        ) {
+            Ok(layout) => layout,
+            Err(e) => {
+                log::warn!("GlRenderer: invalid frame: {e}");
+                return RenderResult::Error;
+            }
+        };
         // Scoped context borrow: the view calls below take `&mut self`.
         {
             let (Some(ctx), Some(surf)) = (self.context.as_ref(), self.gl_surface.as_ref()) else {
@@ -342,6 +386,11 @@ impl GlRenderer {
                 return RenderResult::Error;
             }
         }
+
+        let Some(api) = self.api.as_ref() else {
+            return RenderResult::Error;
+        };
+        let _dispatch = unsafe { api.enter() };
 
         if let Err(e) = self.on_resize_with_strip(surf_w, surf_h, reserved) {
             log::warn!("GlRenderer: resize failed: {e}");
@@ -357,30 +406,7 @@ impl GlRenderer {
             }
             self.last_palette = Some(next);
         }
-        let fs = match frame_format {
-            VideoFrameFormat::Rgba => logical_size,
-            VideoFrameFormat::Palette => source_logical_size,
-        };
-        let bpp = frame_format.bytes_per_pixel();
-        let stride = frame_buffer.stride();
-        if fs.width == 0 || fs.height == 0 || stride == 0 {
-            log::warn!("GlRenderer: empty frame");
-            return RenderResult::Skipped;
-        }
         let data = frame_buffer.as_ref();
-        let layout = match FrameLayout::checked(
-            fs,
-            bpp,
-            stride,
-            data.len(),
-            self.frame.supports_unpack_row_length(),
-        ) {
-            Ok(layout) => layout,
-            Err(e) => {
-                log::warn!("GlRenderer: frame upload failed: {e}");
-                return RenderResult::Error;
-            }
-        };
         if let Err(e) = upload_frame(&mut self.frame, &mut self.tight, &layout, data) {
             log::warn!("GlRenderer: frame upload failed: {e}");
             return RenderResult::Error;
@@ -414,17 +440,26 @@ impl GlRenderer {
     }
 }
 
+impl Drop for GlRenderer {
+    fn drop(&mut self) {
+        self.context_detach();
+    }
+}
+
 impl SurfaceLifecycle for GlRenderer {
     fn size(&self) -> SurfaceSize {
         self.size
     }
 
     fn resize(&mut self, size: SurfaceSize) {
-        if let (Some(surf), Some(ctx)) = (self.gl_surface.as_ref(), self.context.as_ref()) {
+        if let (Some(surf), Some(ctx)) = (self.gl_surface.as_ref(), self.context.as_ref())
+            && (ctx.is_current() || ctx.make_current(surf).is_ok())
+        {
             let (w, h) = Self::nonzero_extent(size);
             surf.resize(ctx, w, h);
         }
         self.size = size;
+        self.surface.reset();
     }
 
     fn attach(
@@ -451,7 +486,9 @@ impl OsdSink for GlRenderer {
     /// Stage an OSD layer; header gate skips the clone on equality.
     /// Keeps the stored copy needed for profile rebuilds.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        if OsdLayer::same_option(self.osd_staged.as_ref(), layer.as_ref()) {
+        if OsdLayer::same_option(self.osd_staged.as_ref(), layer.as_ref())
+            && OsdLayer::same_option(self.osd.osd_layer.as_ref(), layer.as_ref())
+        {
             return;
         }
         self.osd.set_osd_layer(layer.clone());
@@ -475,6 +512,7 @@ impl ProfileSwitch for GlRenderer {
         if !ctx.is_current() {
             return Err(RendererError::not_current("update"));
         }
+        let _dispatch = self.api.as_ref().map(|api| unsafe { api.enter() });
         // Build before tearing down: a failed compile keeps the old
         // views live instead of leaving half-closed ones behind.
         let (frame, osd) = self.fresh_views(profile)?;
@@ -587,6 +625,8 @@ impl GlFactory {
                 })?
         };
         Ok(GlRenderer {
+            api: None,
+            vsync: config.vsync,
             display,
             gl_config,
             render_profile: config.render_profile.clone(),
@@ -632,7 +672,7 @@ fn pack_rows_stripped(
     row_bytes: usize,
 ) {
     for (source_row, destination_row) in source
-        .chunks_exact(source_stride)
+        .chunks(source_stride)
         .zip(destination.chunks_exact_mut(row_bytes))
         .take(height)
     {
@@ -644,6 +684,7 @@ fn pack_rows_stripped(
 mod tests {
     use super::{FrameView, pack_rows_stripped, palette_needs_upload};
     use crate::{osd_view::OsdView, surface_view::SurfaceView};
+    use nerust_glwrap::bindings as gl;
 
     #[test]
     fn palette_gate_skips_identical_upload() {
@@ -807,12 +848,11 @@ mod tests {
     }
 
     #[test]
-    fn osd_gl_y_flips_top_left_to_bottom_left() {
-        use crate::osd_overlay::osd_gl_y;
-        // 64px surface: top row (y=0,h=1) uploads at GL row 63.
-        assert_eq!(osd_gl_y(64, 0, 1), 63);
-        assert_eq!(osd_gl_y(64, 6, 1), 57);
-        assert_eq!(osd_gl_y(64, 63, 1), 0);
+    fn osd_texture_y_matches_top_first_uv() {
+        use crate::osd_overlay::checked_osd_y;
+        assert_eq!(checked_osd_y(64, 0, 1), Ok(0));
+        assert_eq!(checked_osd_y(64, 6, 1), Ok(6));
+        assert_eq!(checked_osd_y(64, 63, 1), Ok(63));
     }
 
     #[test]
@@ -1110,6 +1150,8 @@ mod tests {
         let (display, gl_config) = display.into_parts();
         let profile = gl_test_profile();
         let mut renderer = super::GlRenderer {
+            api: Some(FrameView::load_with(super::proc_loader(&display))),
+            vsync: true,
             display,
             gl_config,
             render_profile: profile.clone(),
@@ -1142,6 +1184,15 @@ mod tests {
         );
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
+        for _ in 0..3 {
+            renderer.osd.note_osd_upload_failure();
+        }
+        assert!(renderer.osd.osd_layer.is_none());
+        renderer.osd_drop_warned = true;
+        renderer.set_osd_layer(renderer.osd_staged.clone());
+        assert!(renderer.osd.osd_layer.is_some());
+        assert!(renderer.osd.osd_dirty);
+        assert!(!renderer.osd_drop_warned);
         let (frame, osd) = renderer.fresh_views(&profile).unwrap();
         renderer.frame = frame;
         renderer.osd = osd;
@@ -1282,8 +1333,8 @@ mod tests {
             // exact packed length/pixels via texture readback.
             let unpack_row_length = frame.unpack_row_length;
             frame.unpack_row_length = false;
-            let mut padded = vec![0xEE; 260 * 64];
-            for (row, bytes) in padded.chunks_exact_mut(260).enumerate() {
+            let mut padded = vec![0xEE; 260 * 63 + 256];
+            for (row, bytes) in padded.chunks_mut(260).enumerate() {
                 bytes[..256].fill(row as u8);
             }
             let layout = crate::layout::FrameLayout::checked(
@@ -1298,13 +1349,15 @@ mod tests {
             super::upload_frame(&mut frame, &mut tight, &layout, &padded).unwrap();
             assert_eq!(tight.len(), 256 * 64);
             let mut readback = vec![0; tight.len()];
-            nerust_glwrap::raw::get_tex_image(
-                gl::TEXTURE_2D,
-                0,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                readback.as_mut_ptr().cast(),
-            )
+            unsafe {
+                nerust_glwrap::raw::get_tex_image(
+                    gl::TEXTURE_2D,
+                    0,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    readback.as_mut_ptr().cast(),
+                )
+            }
             .unwrap();
             assert_eq!(readback, tight);
             assert!(nerust_glwrap::check_frame().is_ok());
@@ -1410,7 +1463,7 @@ mod tests {
         FrameView::load_with(super::proc_loader(&display.display));
         // 2x2 RGBA texture, zeroed.
         let mut names = [0u32; 2];
-        nerust_glwrap::raw::gen_textures(2, names.as_mut_ptr()).unwrap();
+        nerust_glwrap::raw::gen_textures(2, &mut names).unwrap();
         let osd_tex = names[0];
         upload_texture_bytes(0, osd_tex, 2, 2, gl::RGBA as i32, gl::RGBA, &[0; 16]).unwrap();
         // OSD top row (y=0) red, bottom row (y=1) green.
@@ -1419,21 +1472,23 @@ mod tests {
         OsdView::blit_bytes(osd_tex, 2, 0, 0, 2, 1, &red).unwrap();
         OsdView::blit_bytes(osd_tex, 2, 0, 1, 2, 1, &green).unwrap();
         let mut out = [0u8; 16];
-        nerust_glwrap::raw::get_tex_image(
-            gl::TEXTURE_2D,
-            0,
-            gl::RGBA,
-            gl::UNSIGNED_BYTE,
-            out.as_mut_ptr().cast(),
-        )
+        unsafe {
+            nerust_glwrap::raw::get_tex_image(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                out.as_mut_ptr().cast(),
+            )
+        }
         .unwrap();
-        // GL row 0 is bottom-first: the flip put OSD-bottom (green) at row 0;
-        // without it both rows would sit swapped.
-        assert_eq!(&out[..8], &green);
-        assert_eq!(&out[8..], &red);
+        // Texture coordinates (unlike framebuffer coordinates) are top-first
+        // here because the quad samples v=0 at its top.
+        assert_eq!(&out[..8], &red);
+        assert_eq!(&out[8..], &green);
         // Checked math agrees with the upload sites above.
-        assert_eq!(crate::osd_overlay::checked_osd_gl_y(2, 0, 1).unwrap(), 1);
-        assert_eq!(crate::osd_overlay::checked_osd_gl_y(2, 1, 1).unwrap(), 0);
+        assert_eq!(crate::osd_overlay::checked_osd_y(2, 0, 1).unwrap(), 0);
+        assert_eq!(crate::osd_overlay::checked_osd_y(2, 1, 1).unwrap(), 1);
         // NTSC kernel: GPU-upload bytes equal the CPU pack order
         // byte-for-byte (big-endian words `[R, G, B, A]`).
         let ntsc_tex = names[1];
@@ -1442,16 +1497,18 @@ mod tests {
         configure_ntsc_texture(1, ntsc_tex, 2, 2, &words, &mut scratch).unwrap();
         use_texture(1, ntsc_tex).unwrap();
         let mut ntsc_out = [0u8; 16];
-        nerust_glwrap::raw::get_tex_image(
-            gl::TEXTURE_2D,
-            0,
-            gl::RGBA,
-            gl::UNSIGNED_BYTE,
-            ntsc_out.as_mut_ptr().cast(),
-        )
+        unsafe {
+            nerust_glwrap::raw::get_tex_image(
+                gl::TEXTURE_2D,
+                0,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                ntsc_out.as_mut_ptr().cast(),
+            )
+        }
         .unwrap();
         assert_eq!(&ntsc_out, &words[..]);
-        nerust_glwrap::raw::delete_textures(2, names.as_ptr()).unwrap();
+        nerust_glwrap::raw::delete_textures(2, &names).unwrap();
     }
 
     #[cfg(unix)]

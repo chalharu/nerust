@@ -25,7 +25,7 @@ use crate::aux::registry::AuxRegistry;
 mod chrome;
 pub(crate) mod close;
 mod commands;
-mod debug;
+pub(super) mod debug;
 mod focus;
 mod frame;
 mod osd;
@@ -64,6 +64,31 @@ pub(crate) struct TestHost {
 
 #[cfg(test)]
 impl TestHost {
+    pub(crate) fn with_nes() -> Self {
+        let loader = crate::test_session::FakeRomLoader::succeeding();
+        let mut support = crate::test_session::TestContext::with_loader(loader.clone());
+        let paths = support.settings_paths();
+        support.ctx.registry =
+            std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+                nerust_nes_factory::NesFactory::boxed().into(),
+            ]));
+        let menu = crate::test_menu::MenuRecorderHandle::default();
+        let dialogs = crate::test_dialogs::FakeDialogs::default();
+        let host = HostState::new_with_settings_paths(
+            support.ctx,
+            menu.clone().into_box(),
+            std::sync::Arc::new(dialogs.clone()),
+            Some(paths),
+        )
+        .expect("NES host");
+        Self {
+            host,
+            menu,
+            loader,
+            dialogs,
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self::with_pick(None)
     }
@@ -109,38 +134,6 @@ fn backend_capabilities() -> HostBackendCapabilities {
     }
 }
 
-/// Settings-window cluster: the resume protocol only. The window
-/// itself lives in the aux registry; open truth is `contains(Settings)`.
-pub(super) struct SettingsHost {
-    resume_after: bool,
-}
-
-impl SettingsHost {
-    /// Record whether closing must resume the session (open path only).
-    pub(super) fn set_resume_after(&mut self, resume: bool) {
-        self.resume_after = resume;
-    }
-
-    /// Consume the pending resume flag for close teardown.
-    pub(super) fn take_resume_after(&mut self) -> bool {
-        std::mem::take(&mut self.resume_after)
-    }
-
-    /// Close teardown: clear the resume flag, so no stale
-    /// resume leaks past window close.
-    pub(super) fn close_all(&mut self) {
-        self.resume_after = false;
-    }
-}
-
-impl SettingsHost {
-    fn new() -> Self {
-        Self {
-            resume_after: false,
-        }
-    }
-}
-
 pub(crate) struct HostState {
     /// Main window cluster: handle, liveness, surface target.
     pub(super) windows: WindowCluster,
@@ -151,7 +144,6 @@ pub(crate) struct HostState {
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
-    settings: SettingsHost,
     /// Aux-window route table: every secondary window lives here.
     pub(super) aux: AuxRegistry,
     /// Focus truth plus the deferred auto-pause protocol; never poked field by field.
@@ -164,9 +156,43 @@ pub(crate) struct HostState {
     chrome: ChromeSync,
     /// Static chrome cache; tick metrics are never cached.
     frame_cache: FrameCache,
+    pause_policy: nerust_frontend_kernel::pause::PausePolicy,
+    render_retry: nerust_frontend_kernel::retry::RenderRetry,
 }
 
 impl HostState {
+    #[cfg(test)]
+    pub(crate) fn load_test_rom(&mut self) {
+        use nerust_system_traits::factory::settings::FactorySettingsView;
+        let factory = nerust_nes_factory::NesFactory::boxed();
+        self.session
+            .set_active_system(factory.system_id().as_ref())
+            .expect("NES system activates");
+        let view = FactorySettingsView {
+            language: Default::default(),
+            system_config: factory
+                .as_system_defaults()
+                .unwrap()
+                .default_system_settings(),
+        };
+        let resolved = factory
+            .resolve_load_request(&view, factory.default_load_options())
+            .unwrap();
+        let mut rom = vec![0; 16 + 16384 + 8192];
+        rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
+        rom[16..19].copy_from_slice(&[0x4c, 0x00, 0x80]);
+        for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
+            rom[16 + vector..18 + vector].copy_from_slice(&[0x00, 0x80]);
+        }
+        self.session
+            .load_resolved(
+                nerust_system_traits::factory::load::MediaObject::new(None, rom),
+                resolved,
+            )
+            .expect("valid NROM loads");
+        self.reconcile_pause();
+    }
+
     pub(crate) fn new(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
@@ -205,13 +231,14 @@ impl HostState {
             app_menu,
             dialogs,
             shell: NativeShellState::new(),
-            settings: SettingsHost::new(),
             aux: AuxRegistry::new(),
             focus: FocusCoordinator::new(),
             debug: DebugOrchestrator::new(),
             osd: OsdService::new(),
             chrome: ChromeSync::new(),
             frame_cache: FrameCache::new(),
+            pause_policy: Default::default(),
+            render_retry: Default::default(),
         })
     }
 
@@ -293,8 +320,8 @@ impl HostState {
     }
 
     /// Render the aux window of this kind, if open.
-    pub(super) fn render_aux(&mut self, kind: AuxKind) {
-        self.aux.render_kind(kind);
+    pub(super) fn render_aux(&mut self, kind: AuxKind) -> Option<crate::aux::registry::AuxOutcome> {
+        self.aux.render_kind(kind)
     }
 
     /// Settings window owns the screen iff registered.

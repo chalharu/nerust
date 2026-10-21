@@ -1,16 +1,26 @@
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use wgpu::{Instance, Surface};
 
-#[cfg(all(target_os = "android", target_arch = "x86_64"))]
-pub fn default_instance() -> Instance {
+fn instance_descriptor() -> wgpu::InstanceDescriptor {
+    #[allow(unused_mut)]
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-    descriptor.backends = wgpu::Backends::GL;
-    Instance::new(descriptor)
+    #[cfg(all(target_os = "android", target_arch = "x86_64"))]
+    {
+        descriptor.backends = wgpu::Backends::GL;
+    }
+    descriptor
 }
 
-#[cfg(not(all(target_os = "android", target_arch = "x86_64")))]
 pub fn default_instance() -> Instance {
-    Instance::default()
+    Instance::new(instance_descriptor())
+}
+
+/// GLES needs the display at instance creation. Keep a genuine native owner,
+/// not an unsafe Send/Sync wrapper around a borrowed raw pointer.
+pub fn instance_with_display(
+    display: impl raw_window_handle::HasDisplayHandle + std::fmt::Debug + Send + Sync + 'static,
+) -> Instance {
+    Instance::new(instance_descriptor().with_display_handle(Box::new(display)))
 }
 
 pub fn create_wgpu_surface(

@@ -1,15 +1,15 @@
 use nerust_core_traits::{
     audio::AudioBackend,
-    factory::{CoreParts, FactoryError, settings::FactorySettingsView},
     peripheral::{HostPeripheralHandles, accelerometer_channel, rumble_channel},
 };
-use nerust_emu_thread::InputPort;
 use nerust_gbc_core::console_core::GbcConsoleCore;
+use nerust_gbc_core::input_types::GbcInputBuffer;
 use nerust_gbc_settings::GbcSettings;
-use nerust_input_traits::{ControllerCollection, InputAssignments, InputSystemFactory, ProfileId};
+use nerust_input_traits::{InputAssignments, ProfileId};
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
+use nerust_system_traits::factory::{CoreParts, FactoryError, settings::FactorySettingsView};
 
 use crate::input_profiles::GBC_ATTACHMENT;
 
@@ -38,21 +38,21 @@ pub(crate) fn create_core_and_adapter(
         )));
     }
 
-    let controllers =
-        ControllerCollection::new(vec![Box::new(nerust_gbc_device::StandardPad::new())]);
-    let resources = crate::GbcFactory
-        .create_split(&controllers)
-        .map_err(|error| FactoryError::Create(error.to_string()))?;
+    let resources = nerust_input_traits::InputResources::new(
+        nerust_gbc_device::StandardPad::input_fields(&crate::input_profiles::GBC_PORT)
+            .into_iter()
+            .map(|entry| ((entry.attachment, entry.control), entry.field))
+            .collect(),
+        Box::new(|| Box::<GbcInputBuffer>::default()),
+    );
     // Unified map travels end to end; no lossy projection.
-    let (split, field_map) = nerust_emu_thread::InputSplit::from_resources(resources);
-
-    let gui_input = split.gui_endpoint();
-    let emu_input = split.emu_endpoint();
+    let (gui_input, emu_input, field_map) =
+        nerust_emu_thread::InputSplit::typed_resources::<GbcInputBuffer>(resources)
+            .map_err(|e| FactoryError::Create(e.to_string()))?;
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();
-    let core =
-        GbcConsoleCore::with_peripherals(Box::new(emu_input), accelerometer_port, rumble_port);
+    let core = GbcConsoleCore::with_peripherals(emu_input, accelerometer_port, rumble_port);
     let logical_size = LogicalSize {
         width: 160,
         height: 144,
@@ -80,9 +80,9 @@ pub(crate) fn create_core_and_adapter(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::audio::NullAudio;
-    use nerust_core_traits::factory::settings::Language;
     use nerust_gbc_settings::GbcSettings;
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
+    use nerust_system_traits::factory::settings::Language;
 
     use super::*;
 

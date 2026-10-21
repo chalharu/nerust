@@ -35,13 +35,14 @@ pub struct ConsoleMetrics {
 }
 
 #[derive(Debug, Error)]
-pub enum OperationError {
+pub enum OperationError<E = String> {
     #[error("emu thread channel unavailable")]
     WorkerUnavailable,
-    #[error("emu thread reply channel closed")]
+    /// The accepted operation may have completed; callers must not assume cancellation.
+    #[error("emu thread reply channel closed; operation outcome unknown")]
     NoReply,
     #[error("{0}")]
-    Reply(String),
+    Reply(E),
 }
 
 pub struct EmuThread {
@@ -109,6 +110,22 @@ impl EmuThread {
                                 timer.reset();
                             }
                             EmuCommand::Quit => return,
+                            EmuCommand::SaveState { reply } => {
+                                let _ = reply.send(core.save_state());
+                            }
+                            EmuCommand::LoadState(cmd) => {
+                                let _ = cmd.reply.send(core.load_state(&cmd.data));
+                                filter.reset();
+                            }
+                            EmuCommand::MapperSave { reply } => {
+                                let _ = reply.send(core.mapper_save());
+                            }
+                            EmuCommand::ImportMapperSave(cmd) => {
+                                let _ = cmd.reply.send(core.import_mapper_save(&cmd.data));
+                            }
+                            EmuCommand::Identity { reply } => {
+                                let _ = reply.send(core.identity());
+                            }
                             // Reply-bearing commands must answer even when
                             // idle: dropping the reply would hang the caller.
                             EmuCommand::Step { reply, .. } => {
@@ -125,6 +142,9 @@ impl EmuThread {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
                             EmuCommand::DebuggerPc { reply, .. } => {
+                                let _ = reply.send(Err(DebuggerError::Unsupported));
+                            }
+                            EmuCommand::DebuggerSnapshot { reply, .. } => {
                                 let _ = reply.send(Err(DebuggerError::Unsupported));
                             }
                             EmuCommand::WriteMemory { reply, .. } => {
@@ -412,6 +432,30 @@ impl EmuThread {
     /// Returns `Err(TrySendError)` if the channel is full or disconnected.
     pub fn send(&self, cmd: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
         self.cmd_tx.try_send(cmd)
+    }
+
+    /// Synchronous reply barrier retaining the core/debugger's structured
+    /// fault type. Queue rejection and disconnection remain transport faults.
+    /// Existing shell APIs can migrate without changing their command schema.
+    pub fn request<T, E>(
+        &self,
+        command: impl FnOnce(mpsc::Sender<Result<T, E>>) -> EmuCommand,
+    ) -> Result<T, OperationError<E>> {
+        Self::request_via(|command| self.send(command), command)
+    }
+
+    /// Same typed barrier for application transport seams and scripted tests.
+    /// A missing reply never means that an accepted command was cancelled.
+    pub fn request_via<T, E>(
+        send: impl FnOnce(EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>>,
+        command: impl FnOnce(mpsc::Sender<Result<T, E>>) -> EmuCommand,
+    ) -> Result<T, OperationError<E>> {
+        let (reply, receive) = mpsc::channel();
+        send(command(reply)).map_err(|_| OperationError::WorkerUnavailable)?;
+        receive
+            .recv()
+            .map_err(|_| OperationError::NoReply)?
+            .map_err(OperationError::Reply)
     }
 
     pub fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
@@ -836,7 +880,11 @@ mod tests {
         }
 
         fn save_state(&self) -> Result<Vec<u8>, CoreError> {
-            Ok(Vec::new())
+            if self.loaded {
+                Ok(Vec::new())
+            } else {
+                Err(CoreError::NoRomLoaded)
+            }
         }
 
         fn load_state(&mut self, _data: &[u8]) -> Result<(), CoreError> {
@@ -925,6 +973,45 @@ mod tests {
             .send(EmuCommand::Step { unit, reply: tx })
             .expect("step send");
         rx.recv().expect("step reply")
+    }
+
+    #[test]
+    fn request_preserves_structured_core_fault_even_while_idle() {
+        let thread = spawn_bare();
+        let result = thread.request(|reply| EmuCommand::SaveState { reply });
+        assert!(matches!(
+            result,
+            Err(OperationError::Reply(CoreError::NoRomLoaded))
+        ));
+        let thread = spawn_loaded();
+        let result = thread.request(|reply| EmuCommand::SaveState { reply });
+        assert_eq!(result.unwrap(), Vec::<u8>::new());
+        let result = thread.request(|reply| EmuCommand::Step {
+            unit: StepUnit::Instruction,
+            reply,
+        });
+        assert!(matches!(
+            result,
+            Err(OperationError::Reply(DebuggerError::UnsupportedStepUnit(
+                StepUnit::Instruction
+            )))
+        ));
+    }
+
+    #[test]
+    fn typed_request_keeps_transport_failures_separate_from_core_faults() {
+        let mut thread = spawn_bare();
+        // Deliberately omit a reply-bearing command: the sender is dropped,
+        // which must be a transport failure, never a formatted core fault.
+        let no_reply: Result<Vec<u8>, OperationError<CoreError>> =
+            thread.request(|_reply| EmuCommand::Pause);
+        assert!(matches!(no_reply, Err(OperationError::NoReply)));
+        thread.join();
+        let unavailable = thread.request(|reply| EmuCommand::SaveState { reply });
+        assert!(matches!(
+            unavailable,
+            Err(OperationError::WorkerUnavailable)
+        ));
     }
 
     #[test]

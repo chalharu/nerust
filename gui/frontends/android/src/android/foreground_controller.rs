@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use nerust_gui_shell::session::access::PauseControl as _;
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::ActiveEventLoop;
 
 use super::picker;
 use crate::lifecycle_decision::RestoreAction;
@@ -16,7 +16,6 @@ impl super::AndroidFrontend {
         }
         if let Some(retry_at) = self.flow.lifecycle.retry_deadline() {
             if Instant::now() < retry_at {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
                 return;
             }
             self.flow.lifecycle.clear_retry_deadline();
@@ -36,11 +35,7 @@ impl super::AndroidFrontend {
             Err(error) => {
                 let attempt = self.flow.lifecycle.attempt_index();
                 log::warn!("try_resume_foreground: attempt {attempt} failed: {error}");
-                if self.flow.lifecycle.schedule_retry(self.is_resumed)
-                    && let Some(retry_at) = self.flow.lifecycle.retry_deadline()
-                {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(retry_at));
-                }
+                self.flow.lifecycle.schedule_retry(self.is_resumed);
             }
         }
     }
@@ -51,9 +46,19 @@ impl super::AndroidFrontend {
         let attempt = self.flow.lifecycle.attempt_index();
         self.flow.lifecycle.record_success();
         // Single policy: the fetch lane dispatches, the retry gate resumes.
-        let (has_document, has_library) = self.restore_candidates();
-        let policy = self.flow.lifecycle.policy(
+        let loaded = self.core.session.tick_metrics().loaded;
+        let should_restore = crate::lifecycle_decision::should_fetch_restore(
             self.flow.lifecycle.restore_pending(),
+            loaded,
+            picker::has_pending_result(),
+        );
+        let (has_document, has_library) = if should_restore {
+            self.restore_candidates()
+        } else {
+            (false, false)
+        };
+        let policy = self.flow.lifecycle.policy(
+            should_restore,
             self.flow.dialogs.auto_paused(),
             has_document,
             has_library,
@@ -66,6 +71,10 @@ impl super::AndroidFrontend {
                 log::info!("try_resume_foreground: no last ROM recorded");
                 self.discard_restore_state();
             }
+        }
+        if loaded {
+            // Keep the on-disk crash/restart marker, but no in-process media reload is needed.
+            self.flow.lifecycle.clear_restore_pending();
         }
         if policy.should_resume_retry() {
             self.resume();

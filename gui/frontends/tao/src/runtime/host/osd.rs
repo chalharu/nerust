@@ -3,7 +3,6 @@
 
 use std::time::Instant;
 
-use nerust_gui_shell::session::access::PauseControl;
 use nerust_render_traits::renderer::RenderPipeline;
 use tao::event::WindowEvent;
 
@@ -16,10 +15,9 @@ use nerust_render_traits::ReservedStrip;
 use nerust_render_traits::renderer::strip_pixels;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
-/// `resume_after` resumes only what we paused, after the last ack.
+/// Pause ownership lives in the host arbiter for the entire queue lifetime.
 pub(crate) struct ModalFlight {
     pub(super) done: std::sync::mpsc::Receiver<()>,
-    pub(super) resume_after: bool,
 }
 
 /// Shell-side OSD sync gate, calling only public presenter/manager APIs.
@@ -120,12 +118,8 @@ impl HostState {
         detail: String,
         language: nerust_settings_core::model::language::AppLanguage,
     ) {
-        let resume_after = self.osd.modal.resume_after_modal;
         let ack = self.dialogs.show_error_async(language, detail);
-        self.osd.modal.flight = Some(ModalFlight {
-            done: ack,
-            resume_after,
-        });
+        self.osd.modal.flight = Some(ModalFlight { done: ack });
     }
 
     /// Reap a finished dialog, chain the next batch, and resume once the queue drains.
@@ -137,19 +131,17 @@ impl HostState {
                 .as_ref()
                 .and_then(|flight| match flight.done.try_recv() {
                     Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                    done => Some((flight.resume_after, done.is_ok())),
+                    done => Some(done.is_ok()),
                 });
-        if let Some((resume_after, normal)) = finished {
+        if let Some(normal) = finished {
             if !normal {
                 log::error!("error dialog thread died before ack");
             }
             self.osd.modal.flight = None;
             self.osd.modal_closed();
             if self.osd.modal_queue_len() == 0 {
-                self.osd.modal.resume_after_modal = false;
-                if resume_after {
-                    self.resume();
-                }
+                self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
+                self.request_redraw();
             }
         }
     }
@@ -179,12 +171,7 @@ impl HostState {
             },
         );
         if report.modal_queued {
-            // Auto-pause first, guarded by can_pause.
-            // Only what we paused resumes, after the last ack.
-            if tick.can_pause() && !tick.paused {
-                self.pause();
-                self.osd.modal.resume_after_modal = true;
-            }
+            self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         }
         self.reap_modal();
         self.present_modal(language);
@@ -209,6 +196,7 @@ impl HostState {
         }
         WakeNeed {
             osd_deadline,
+            flight_pending: self.osd.modal.flight.is_some(),
             ..WakeNeed::default()
         }
     }
@@ -303,6 +291,30 @@ mod tests {
         },
     };
     use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
+    #[test]
+    fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let mut host = TestHost::with_nes().host;
+        host.load_test_rom();
+        host.set_pause_owner(PauseOwner::Modal, true);
+        host.note_main_departure();
+        host.tick_focus_sync();
+        let (ack, done) = std::sync::mpsc::channel();
+        host.osd.inject_modal_flight_for_test(ModalFlight { done });
+        let ctx = host.frame_ctx();
+        let wake = host.tick_osd_pump(&ctx);
+        assert!(
+            wake.flight_pending,
+            "ACK must wake a paused, unfocused loop"
+        );
+        ack.send(()).unwrap();
+        host.reap_modal();
+        assert!(host.session().tick_metrics().paused, "focus still holds");
+        assert!(!host.pause_policy.owns(PauseOwner::Modal));
+        host.release_focus_pause();
+        assert!(!host.session().tick_metrics().paused);
+    }
 
     #[derive(Debug, Default)]
     struct StubRenderer {

@@ -1,4 +1,5 @@
 use super::{Mbc, MbcKind};
+use crate::persistence_error::GbcPersistenceError;
 
 const ROM_BANK_SIZE: usize = 0x4000;
 const RAM_BANK_SIZE: usize = 0x2000;
@@ -245,15 +246,9 @@ impl Mbc for Mmm01 {
         .expect("MMM01 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         let state: Mmm01MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != 1 {
-            return Err(format!(
-                "unsupported MMM01 machine state version: {}",
-                state.schema_version
-            ));
-        }
+            super::decode_mapper_state(data, 1, "MMM01 machine state", None)?;
         if state.ram.len() != self.ram.len()
             || state.rom_bank_low > 0x1F
             || state.rom_bank_mid > 0x03

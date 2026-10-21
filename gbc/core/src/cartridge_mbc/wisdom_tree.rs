@@ -1,4 +1,5 @@
 use super::{Mbc, MbcKind};
+use crate::persistence_error::GbcPersistenceError;
 
 const BANK_SIZE: usize = 0x8000;
 
@@ -60,15 +61,9 @@ impl Mbc for WisdomTree {
         .expect("Wisdom Tree machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         let state: WisdomTreeMachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != 1 {
-            return Err(format!(
-                "unsupported Wisdom Tree machine state version: {}",
-                state.schema_version
-            ));
-        }
+            super::decode_mapper_state(data, 1, "Wisdom Tree machine state", None)?;
         if state.bank > 0x3F {
             return Err("invalid Wisdom Tree machine state bank".into());
         }

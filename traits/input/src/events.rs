@@ -139,32 +139,11 @@ pub enum BufferError {
     },
 }
 
-/// Typed absolute field index for input buffers. New code passes this;
-/// the `usize` overloads stay for the frozen GUI port surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FieldId(usize);
-
-impl FieldId {
-    /// Absolute field index in `0..N`.
-    pub const fn new(index: usize) -> Self {
-        Self(index)
-    }
-
-    /// Raw index for the `usize` port surface.
-    pub const fn index(self) -> usize {
-        self.0
-    }
-}
-
 /// GUI-side write abstraction for input state.
-/// Emu side reads via `Any::downcast_ref`; `field` is a dense index in `0..N`.
+/// Type erasure is restricted to GUI writes and init-time factory assembly.
 pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
     /// Write one logical field.
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
-    /// Typed write; defaults to [`Self::set`].
-    fn set_field(&mut self, field: FieldId, value: InputValue) -> Result<(), BufferError> {
-        self.set(field.index(), value)
-    }
     /// Reset all fields to the neutral (released) state.
     /// Postcondition: the buffer equals a freshly constructed default.
     fn clear(&mut self);
@@ -175,18 +154,48 @@ pub trait InputStateBuffer: std::fmt::Debug + Send + Downcast {
 
 downcast_rs::impl_downcast!(InputStateBuffer);
 
-/// Core-facing input receiver, independent of any thread or transport.
-pub trait InputReceiver: Send {
-    /// Refresh once at frame start and borrow the latest complete snapshot.
-    /// Without new input, retain the previous state. The snapshot stays valid
-    /// for the borrow; implementations should avoid per-frame allocation.
-    fn receive(&mut self) -> &dyn InputStateBuffer;
+/// Session-owned GUI input writer. Transport implementations live outside cores.
+pub trait GuiInputPort: Send {
+    fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
+    fn publish(&mut self);
+    fn clear(&mut self);
 }
 
-/// A local buffer is also a receiver with a fixed snapshot (no transport).
-impl<B: InputStateBuffer> InputReceiver for B {
-    fn receive(&mut self) -> &dyn InputStateBuffer {
-        self
+/// Typed core-facing snapshot. The assembly layer supplies the transport-free
+/// refresh callback; cores never name channels, locks, or erased buffers.
+///
+/// A receiver for another system cannot be substituted:
+/// ```compile_fail
+/// use nerust_input_traits::InputReceiver;
+/// let wrong: InputReceiver<u16> = InputReceiver::from(0u8);
+/// ```
+pub struct InputReceiver<State> {
+    state: State,
+    refresh: Box<dyn FnMut(&mut State) + Send>,
+}
+
+impl<State> InputReceiver<State> {
+    pub fn new(state: State, refresh: impl FnMut(&mut State) + Send + 'static) -> Self {
+        Self {
+            state,
+            refresh: Box::new(refresh),
+        }
+    }
+
+    /// Poll exactly once at frame start. A clean poll retains the snapshot.
+    pub fn receive(&mut self) -> &State {
+        (self.refresh)(&mut self.state);
+        &self.state
+    }
+
+    pub fn snapshot(&self) -> &State {
+        &self.state
+    }
+}
+
+impl<State> From<State> for InputReceiver<State> {
+    fn from(state: State) -> Self {
+        Self::new(state, |_| {})
     }
 }
 
@@ -224,9 +233,9 @@ mod tests {
 
     #[test]
     fn local_buffer_receives_without_transport() {
-        let mut receiver: Box<dyn super::InputReceiver> = Box::new(Foreign);
-        assert!(receiver.receive().downcast_ref::<Foreign>().is_some());
-        assert!(receiver.receive().downcast_ref::<Foreign>().is_some());
+        let mut receiver = super::InputReceiver::from(Foreign);
+        let _: &Foreign = receiver.receive();
+        let _: &Foreign = receiver.receive();
     }
 
     #[test]
@@ -269,8 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_field_id_round_trips_through_set() {
-        use super::FieldId;
+    fn field_write_and_copy_contract() {
         #[derive(Debug, Default, PartialEq)]
         struct Bit {
             pressed: bool,
@@ -304,15 +312,9 @@ mod tests {
             }
         }
         let mut bit = Bit::default();
-        // Typed write delegates to the `usize` port.
-        bit.set_field(FieldId::new(0), InputValue::Digital(true))
-            .unwrap();
+        bit.set(0, InputValue::Digital(true)).unwrap();
         assert!(bit.pressed);
-        assert!(
-            bit.set_field(FieldId::new(9), InputValue::Digital(true))
-                .is_err()
-        );
-        assert_eq!(FieldId::new(3).index(), 3);
+        assert!(bit.set(9, InputValue::Digital(true)).is_err());
         // Copy-state contract shared by all buffers.
         assert_copy_contract(Bit::default(), bit, &Foreign);
     }

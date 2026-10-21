@@ -1,15 +1,12 @@
 //! Filesystem backend for the persistence ports: Desktop fs slot/autosave/mapper I/O.
 
-use std::{
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::io::ErrorKind;
 
 use nerust_core_traits::identity::SystemIdentity;
 use nerust_persistence::{
     error::PersistenceError,
     model::{LoadedStateSlot, StateSlotSummary},
-    sidecar::{load_mapper_save, write_mapper_save, write_recovery_mapper_save},
+    sidecar::{StorageLocation, load_mapper_save, write_mapper_save, write_recovery_mapper_save},
     slots::{
         allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
         load_state_slot_for_identity, scan_state_slots_for_identity, state_slot_path,
@@ -32,66 +29,70 @@ pub struct FsMapper;
 impl SlotBackend for FsSlots {
     fn scan(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-        scan_state_slots_for_identity(dir, identity)
+        scan_state_slots_for_identity(dir.native_path()?, identity)
     }
-    fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
-        allocate_next_slot_id(dir)
+    fn allocate_next_id(&self, dir: &StorageLocation) -> Result<u64, PersistenceError> {
+        allocate_next_slot_id(dir.native_path()?)
     }
     fn write_slot(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         slot_id: u64,
         data: &[u8],
         identity: &SystemIdentity,
         thumbnail: Option<&ThumbnailSource>,
     ) -> Result<StateSlotSummary, PersistenceError> {
-        write_state_slot(dir, slot_id, data, identity, thumbnail)
+        write_state_slot(dir.native_path()?, slot_id, data, identity, thumbnail)
     }
     fn read_slot(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        match load_state_slot(&state_slot_path(dir, slot_id)) {
+        match load_state_slot(&state_slot_path(dir.native_path()?, slot_id)) {
             Ok(slot) => Ok(Some(slot)),
             Err(PersistenceError::Io(e)) if e.kind() == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
     }
-    fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
-        delete_state_slot(&state_slot_path(dir, slot_id))
+    fn delete_slot(&self, dir: &StorageLocation, slot_id: u64) -> Result<(), PersistenceError> {
+        delete_state_slot(&state_slot_path(dir.native_path()?, slot_id))
     }
 }
 
 impl AutoSaveBackend for FsAutosave {
     fn write_autosave(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         data: &[u8],
         identity: &SystemIdentity,
     ) -> Result<StateSlotSummary, PersistenceError> {
-        write_autosave_state_slot(dir, data, identity, None)
+        write_autosave_state_slot(dir.native_path()?, data, identity, None)
     }
     fn read_autosave(
         &self,
-        dir: &Path,
+        dir: &StorageLocation,
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        load_state_slot_for_identity(&autosave_state_slot_path(dir), identity)
+        load_state_slot_for_identity(&autosave_state_slot_path(dir.native_path()?), identity)
     }
-    fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
-        delete_state_slot(&autosave_state_slot_path(dir))
+    fn delete_autosave(&self, dir: &StorageLocation) -> Result<(), PersistenceError> {
+        delete_state_slot(&autosave_state_slot_path(dir.native_path()?))
     }
-    fn quarantine_autosave(&self, dir: &Path) -> Result<Option<PathBuf>, PersistenceError> {
+    fn quarantine_autosave(
+        &self,
+        dir: &StorageLocation,
+    ) -> Result<Option<StorageLocation>, PersistenceError> {
+        let dir = dir.native_path()?;
         // Atomic rename: a missing source maps to `None`, no TOCTOU probe first.
         let path = autosave_state_slot_path(dir);
         let quarantined = dir.join(".autosave_slot.quarantined");
         let _ = std::fs::remove_file(&quarantined);
         match std::fs::rename(&path, &quarantined) {
-            Ok(()) => Ok(Some(quarantined)),
+            Ok(()) => Ok(Some(quarantined.into())),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -99,18 +100,25 @@ impl AutoSaveBackend for FsAutosave {
 }
 
 impl MapperSaveBackend for FsMapper {
-    fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
-        load_mapper_save(path)
+    fn read_mapper_save(
+        &self,
+        path: &StorageLocation,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
+        load_mapper_save(path.native_path()?)
     }
-    fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
-        write_mapper_save(path, data)
+    fn write_mapper_save(
+        &self,
+        path: &StorageLocation,
+        data: &[u8],
+    ) -> Result<(), PersistenceError> {
+        write_mapper_save(path.native_path()?, data)
     }
     fn write_recovery_mapper_save(
         &self,
-        path: &Path,
+        path: &StorageLocation,
         data: &[u8],
-    ) -> Result<PathBuf, PersistenceError> {
-        write_recovery_mapper_save(path, data)
+    ) -> Result<StorageLocation, PersistenceError> {
+        write_recovery_mapper_save(path.native_path()?, data).map(StorageLocation::Native)
     }
 }
 
@@ -121,21 +129,21 @@ pub struct FailingSlotBackend;
 impl SlotBackend for FailingSlotBackend {
     fn scan(
         &self,
-        _dir: &Path,
+        _dir: &StorageLocation,
         _identity: &SystemIdentity,
     ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
-    fn allocate_next_id(&self, _dir: &Path) -> Result<u64, PersistenceError> {
+    fn allocate_next_id(&self, _dir: &StorageLocation) -> Result<u64, PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
     fn write_slot(
         &self,
-        _dir: &Path,
+        _dir: &StorageLocation,
         _slot_id: u64,
         _data: &[u8],
         _identity: &SystemIdentity,
@@ -147,14 +155,14 @@ impl SlotBackend for FailingSlotBackend {
     }
     fn read_slot(
         &self,
-        _dir: &Path,
+        _dir: &StorageLocation,
         _slot_id: u64,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
-    fn delete_slot(&self, _dir: &Path, _slot_id: u64) -> Result<(), PersistenceError> {
+    fn delete_slot(&self, _dir: &StorageLocation, _slot_id: u64) -> Result<(), PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
@@ -163,7 +171,7 @@ impl SlotBackend for FailingSlotBackend {
 impl AutoSaveBackend for FailingSlotBackend {
     fn write_autosave(
         &self,
-        _dir: &Path,
+        _dir: &StorageLocation,
         _data: &[u8],
         _identity: &SystemIdentity,
     ) -> Result<StateSlotSummary, PersistenceError> {
@@ -173,35 +181,42 @@ impl AutoSaveBackend for FailingSlotBackend {
     }
     fn read_autosave(
         &self,
-        _dir: &Path,
+        _dir: &StorageLocation,
         _identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
-    fn delete_autosave(&self, _dir: &Path) -> Result<(), PersistenceError> {
+    fn delete_autosave(&self, _dir: &StorageLocation) -> Result<(), PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
 }
 impl MapperSaveBackend for FailingSlotBackend {
-    fn read_mapper_save(&self, _path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
+    fn read_mapper_save(
+        &self,
+        _path: &StorageLocation,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
-    fn write_mapper_save(&self, _path: &Path, _data: &[u8]) -> Result<(), PersistenceError> {
+    fn write_mapper_save(
+        &self,
+        _path: &StorageLocation,
+        _data: &[u8],
+    ) -> Result<(), PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
     }
     fn write_recovery_mapper_save(
         &self,
-        _path: &Path,
+        _path: &StorageLocation,
         _data: &[u8],
-    ) -> Result<PathBuf, PersistenceError> {
+    ) -> Result<StorageLocation, PersistenceError> {
         Err(PersistenceError::Io(std::io::Error::other(
             "simulated failure",
         )))
@@ -236,7 +251,7 @@ mod fs_cov_tests {
         assert!(back.read_slot(&d, next).unwrap().is_some());
         back.delete_slot(&d, next).unwrap();
         assert!(back.read_slot(&d, next).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(d.native_path().unwrap());
     }
 
     /// Each narrow leg serves its own round-trip.
@@ -251,7 +266,7 @@ mod fs_cov_tests {
         assert!(back.read_autosave(&d, &id).unwrap().is_some());
         assert!(back.quarantine_autosave(&d).unwrap().is_some());
         assert!(back.read_autosave(&d, &id).unwrap_or(None).is_none());
-        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(d.native_path().unwrap());
     }
 
     /// Each narrow leg serves its own round-trip.
@@ -259,13 +274,13 @@ mod fs_cov_tests {
     fn narrow_mapper_leg_round_trips() {
         let back = FsMapper;
         let d = dir("narrow-mapper");
-        let path = d.join("game.sav");
+        let path = d.child("game.sav").unwrap();
         assert_eq!(back.read_mapper_save(&path).unwrap(), None);
         back.write_mapper_save(&path, &[4, 5]).unwrap();
         assert_eq!(back.read_mapper_save(&path).unwrap(), Some(vec![4, 5]));
         let recovery = back.write_recovery_mapper_save(&path, &[6]).unwrap();
-        assert!(recovery.exists());
-        let _ = std::fs::remove_dir_all(&d);
+        assert!(recovery.native_path().unwrap().exists());
+        let _ = std::fs::remove_dir_all(d.native_path().unwrap());
     }
 
     /// Atomic quarantine maps a missing source to `None` without probing first.
@@ -273,10 +288,10 @@ mod fs_cov_tests {
     fn quarantine_missing_source_is_none_without_probe() {
         let d = dir("quarantine-missing");
         assert_eq!(FsAutosave.quarantine_autosave(&d).unwrap(), None);
-        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(d.native_path().unwrap());
     }
 
-    fn dir(label: &str) -> PathBuf {
+    fn dir(label: &str) -> StorageLocation {
         let base = std::env::temp_dir().join(format!(
             "nerust-fs-cov-{}-{}",
             label,
@@ -286,13 +301,13 @@ mod fs_cov_tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&base).expect("temp dir");
-        base
+        base.into()
     }
 
     #[test]
     fn failing_backend_errors_every_leg() {
         let back = FailingSlotBackend;
-        let dir = Path::new("/nonexistent-probe-dir");
+        let dir = &StorageLocation::from("/nonexistent-probe-dir");
         let id = identity();
         assert!(back.scan(dir, &id).is_err());
         assert!(back.allocate_next_id(dir).is_err());
@@ -312,6 +327,37 @@ mod fs_cov_tests {
         let back = FsSlots;
         let d = dir("missing");
         assert!(back.read_slot(&d, 999).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(d.native_path().unwrap());
+    }
+
+    #[test]
+    fn filesystem_backends_reject_document_tree_locations() {
+        let dir = StorageLocation::document_tree("content://provider/tree/saves", "nes/id/states")
+            .unwrap();
+        let identity = identity();
+        assert!(FsSlots.scan(&dir, &identity).is_err());
+        assert!(FsSlots.allocate_next_id(&dir).is_err());
+        assert!(
+            FsSlots
+                .write_slot(&dir, 1, b"state", &identity, None)
+                .is_err()
+        );
+        assert!(FsSlots.read_slot(&dir, 1).is_err());
+        assert!(FsSlots.delete_slot(&dir, 1).is_err());
+        assert!(
+            FsAutosave
+                .write_autosave(&dir, b"state", &identity)
+                .is_err()
+        );
+        assert!(FsAutosave.read_autosave(&dir, &identity).is_err());
+        assert!(FsAutosave.delete_autosave(&dir).is_err());
+        assert!(FsAutosave.quarantine_autosave(&dir).is_err());
+        assert!(FsMapper.read_mapper_save(&dir).is_err());
+        assert!(FsMapper.write_mapper_save(&dir, b"mapper").is_err());
+        assert!(
+            FsMapper
+                .write_recovery_mapper_save(&dir, b"mapper")
+                .is_err()
+        );
     }
 }

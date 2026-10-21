@@ -1,3 +1,4 @@
+use crate::persistence_error::GbcPersistenceError;
 use std::time::SystemTime;
 
 use super::{Mbc, MbcKind, decode_persistent_state, encode_persistent_state, rtc::Mbc3Rtc};
@@ -169,7 +170,10 @@ impl Mbc for Mbc3 {
         }
     }
 
-    fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    fn export_persistent_state(
+        &self,
+        now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         if !self.battery {
             return Ok(None);
         }
@@ -181,7 +185,7 @@ impl Mbc for Mbc3 {
         encode_persistent_state(self.kind(), &self.ram, rtc).map(Some)
     }
 
-    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
+    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         if !self.battery {
             return Err("cartridge has no battery-backed persistent state".into());
         }
@@ -191,7 +195,8 @@ impl Mbc for Mbc3 {
                 "persistent RAM length mismatch: expected {}, got {}",
                 self.ram.len(),
                 state.ram.len()
-            ));
+            )
+            .into());
         }
         let rtc = match (&self.rtc, state.rtc) {
             (Some(_), Some(data)) => Some(Mbc3Rtc::decode_persistent(&data)?),
@@ -216,21 +221,20 @@ impl Mbc for Mbc3 {
         .expect("MBC3 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc3MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported MBC3 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc3MachineState = super::decode_mapper_state(
+            data,
+            MACHINE_STATE_SCHEMA_VERSION,
+            "MBC3 machine state",
+            None,
+        )?;
         if state.ram.len() != self.ram.len() {
             return Err(format!(
                 "MBC3 machine RAM length mismatch: expected {}, got {}",
                 self.ram.len(),
                 state.ram.len()
-            ));
+            )
+            .into());
         }
         if state.rtc.is_some() != self.rtc.is_some() {
             return Err("MBC3 machine RTC capability mismatch".into());

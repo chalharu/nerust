@@ -1,3 +1,4 @@
+use crate::persistence_error::GbcPersistenceError;
 use std::time::SystemTime;
 
 use super::{Mbc, MbcKind, huc3_rtc::HuC3Rtc};
@@ -208,7 +209,10 @@ impl Mbc for HuC3 {
         self.ir_output = false;
     }
 
-    fn export_persistent_state(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    fn export_persistent_state(
+        &self,
+        now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         let saved_at_unix_seconds = now
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -222,27 +226,23 @@ impl Mbc for HuC3 {
             saved_at_unix_seconds,
         })
         .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(GbcPersistenceError::from)
     }
 
-    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: HuC3PersistentState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != PERSISTENT_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported HuC3 persistent state version: {}",
-                state.schema_version
-            ));
-        }
-        if state.kind != self.kind() {
-            return Err("HuC3 persistent state kind mismatch".into());
-        }
+    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: HuC3PersistentState = super::decode_mapper_state(
+            data,
+            PERSISTENT_STATE_SCHEMA_VERSION,
+            "HuC3 persistent state",
+            Some(self.kind()),
+        )?;
         if state.ram.len() != self.ram.len() {
             return Err(format!(
                 "HuC3 persistent RAM length mismatch: expected {}, got {}",
                 self.ram.len(),
                 state.ram.len()
-            ));
+            )
+            .into());
         }
         let rtc = HuC3Rtc::from_state(
             state.rtc_memory,
@@ -270,15 +270,13 @@ impl Mbc for HuC3 {
         .expect("HuC3 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: HuC3MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported HuC3 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: HuC3MachineState = super::decode_mapper_state(
+            data,
+            MACHINE_STATE_SCHEMA_VERSION,
+            "HuC3 machine state",
+            None,
+        )?;
         if state.rom_bank > 0x7F
             || state.ram_bank > 0x03
             || state.mode > 0x0F

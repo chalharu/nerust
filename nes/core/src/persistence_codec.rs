@@ -25,8 +25,18 @@ pub(crate) fn validate_schema_version(version: u32) -> Result<(), PersistenceErr
     if version == PERSISTENCE_SCHEMA_VERSION {
         Ok(())
     } else {
-        Err(PersistenceError::Validation(format!(
-            "unsupported persistence schema version: {version}"
-        )))
+        Err(PersistenceError::UnsupportedVersion(version))
     }
+}
+
+pub(crate) fn decode_versioned_payload<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+) -> Result<T, PersistenceError> {
+    #[derive(serde::Deserialize)]
+    struct Header {
+        schema_version: u32,
+    }
+    let header: Header = decode_payload(bytes)?;
+    validate_schema_version(header.schema_version)?;
+    decode_payload(bytes)
 }

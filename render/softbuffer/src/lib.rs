@@ -152,22 +152,27 @@ impl SoftbufferRenderer {
     }
 
     fn resize_lut(&mut self) {
+        let profile = &self.render_profile;
+        // Palette is still source-sized unless this backend performs NTSC;
+        // RGBA has already been filtered by the CPU producer.
+        let raster = if profile.frame_format == nerust_render_traits::VideoFrameFormat::Palette
+            && profile.ntsc_packed_rgba8.is_none()
+        {
+            profile.source_logical_size
+        } else {
+            profile.logical_size
+        };
         self.lut.resize_lut(
             SurfaceSize {
-                width: self.render_profile.logical_size.width as u32,
-                height: self.render_profile.logical_size.height as u32,
+                width: raster.width as u32,
+                height: raster.height as u32,
             },
             self.render_profile.physical_size.width / self.render_profile.physical_size.height,
             self.available_size(),
         );
-        self.ntsc_buffer.resize(
-            self.render_profile.logical_size.width * self.render_profile.logical_size.height,
-            0,
-        );
-        self.resize_buffer.resize(
-            self.size.width as usize * self.render_profile.logical_size.height,
-            0,
-        );
+        self.ntsc_buffer.resize(raster.width * raster.height, 0);
+        self.resize_buffer
+            .resize(self.size.width as usize * raster.height, 0);
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -557,18 +562,6 @@ impl FrameSink for SoftbufferRenderer {
         let game_rows = top.saturating_mul(dst_w);
         let game_len = avail_h.saturating_mul(dst_w);
         let dst = &mut buffer.as_mut()[game_rows..game_rows.saturating_add(game_len)];
-        // Short source images would panic every indexer below; the profile
-        // match above only pins dimensions, not length.
-        if src.len() < src_stride.saturating_mul(src_h) {
-            warn!(
-                "softbuffer source too small: have {}, need stride {}x{}",
-                src.len(),
-                src_stride,
-                src_h
-            );
-            return RenderResult::Skipped;
-        }
-
         // Monomorphic indexers: one enum replaces three closures, so the
         // hot loop never monomorphizes. Fallible reads render opaque black.
         match frame.format() {
@@ -589,6 +582,7 @@ impl FrameSink for SoftbufferRenderer {
                 if self.render_profile.ntsc_packed_rgba8.is_some() {
                     Ntsc::simulate_gpu_ntsc_rgba(
                         src_h,
+                        src_stride,
                         src,
                         &self.render_profile,
                         &mut self.ntsc_buffer,
@@ -848,10 +842,23 @@ mod tests {
     #[test]
     fn palette_index_out_of_range_renders_black() {
         let frame = vec![0x01u8; 4 * 4];
-        assert_eq!(Ntsc::palette_index(&frame, 4, 1, 1), 0x01);
-        assert_eq!(Ntsc::palette_index(&frame, 4, -1, 1), BLACK_PALETTE_INDEX);
-        assert_eq!(Ntsc::palette_index(&frame, 4, 4, 1), BLACK_PALETTE_INDEX);
-        assert_eq!(Ntsc::palette_index(&frame, 4, 1, 4), BLACK_PALETTE_INDEX);
+        let size = LogicalSize {
+            width: 4,
+            height: 4,
+        };
+        assert_eq!(Ntsc::palette_index(&frame, size, 4, 1, 1), 0x01);
+        assert_eq!(
+            Ntsc::palette_index(&frame, size, 4, -1, 1),
+            BLACK_PALETTE_INDEX
+        );
+        assert_eq!(
+            Ntsc::palette_index(&frame, size, 4, 4, 1),
+            BLACK_PALETTE_INDEX
+        );
+        assert_eq!(
+            Ntsc::palette_index(&frame, size, 4, 1, 4),
+            BLACK_PALETTE_INDEX
+        );
     }
 
     #[test]

@@ -36,6 +36,8 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-test-
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check Android bridge and packaging contracts (host only)
+        run: bash packaging/android/check-contract.sh
       - name: Clippy (default members)
         run: |
           cargo clippy --locked --all-targets --quiet \

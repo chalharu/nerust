@@ -100,6 +100,8 @@ impl WindowRuntime {
             Ok(renderer) => renderer,
             Err(e) => {
                 log::error!("failed to create renderer: {e}");
+                self.host
+                    .render_failed(format!("Failed to create renderer: {e}"));
                 return None;
             }
         };
@@ -109,6 +111,8 @@ impl WindowRuntime {
             SurfaceSize::new(size.width, size.height),
         ) {
             log::error!("failed to attach renderer: {e}");
+            self.host
+                .render_failed(format!("Failed to attach renderer: {e}"));
             return None;
         }
         self.surface_xid = xid;
@@ -183,7 +187,7 @@ impl WindowRuntime {
                         let opener = TaoWindowOpener::new(event_loop);
                         self.on_debug_redrawn(&opener);
                     } else {
-                        self.host.render_aux(kind);
+                        self.on_aux_redrawn(kind);
                     }
                 }
             }
@@ -206,9 +210,18 @@ impl WindowRuntime {
     }
 
     fn on_update(&mut self) {
+        if !self.host.render_ready() {
+            return;
+        }
+        if self.renderer.is_none() {
+            self.recreate_renderer();
+        }
         let Some(window_size) = self.host.window_surface_size() else {
             return;
         };
+        if window_size.width == 0 || window_size.height == 0 {
+            return;
+        }
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -234,11 +247,17 @@ impl WindowRuntime {
             let frame_counter = ctx.tick().frame_counter;
             let result = renderer.render(fb);
             self.host.on_render_result(result, frame_counter);
+            if matches!(result, nerust_render_traits::renderer::RenderResult::Error) {
+                self.renderer = None;
+            }
         }
     }
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
+        if !self.host.render_ready() {
+            return;
+        }
         // Owned display handle out; the attach below only borrows the host.
         let display = self
             .host
@@ -247,6 +266,8 @@ impl WindowRuntime {
             self.build_renderer_and_surface(raw_display);
         } else if display.is_some() {
             log::error!("failed to get display handle");
+            self.host
+                .render_failed("Failed to get display handle".into());
         }
     }
 }

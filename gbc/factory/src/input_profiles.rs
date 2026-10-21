@@ -1,9 +1,8 @@
 use std::rc::Rc;
 
-use nerust_gbc_core::input_types::GbcInputBuffer;
 use nerust_input_traits::{
-    AttachmentId, ControllerCollection, ControllerProfile, CreateSplitError, InputAssignments,
-    InputPorts, InputResources, InputSystemFactory, ProfileId, SimplePort, SlotInfo,
+    AttachmentId, ControllerProfile, InputAssignments, InputPorts, InputSystemFactory, ProfileId,
+    SimplePort, SlotInfo,
 };
 
 pub(crate) const GBC_ATTACHMENT: AttachmentId = AttachmentId::new("gbc.attachment.player1");
@@ -30,45 +29,10 @@ impl InputSystemFactory for crate::GbcFactory {
             .find(|profile| profile.profile_id() == ProfileId::new("gbc.standard_pad"));
         InputAssignments::new(vec![(GBC_ATTACHMENT, standard)])
     }
-
-    fn create_split(
-        &self,
-        controllers: &ControllerCollection,
-    ) -> Result<InputResources, CreateSplitError> {
-        if controllers.is_empty() {
-            return Err(CreateSplitError::ControllerNotFound {
-                controller: ProfileId::new("gbc.standard_pad"),
-            });
-        }
-        if controllers.len() != 1 {
-            return Err(CreateSplitError::IncompatibleController {
-                controller: ProfileId::new("gbc.standard_pad"),
-                slot: GBC_ATTACHMENT,
-            });
-        }
-
-        let field_map = {
-            let Some(dev) = controllers.get(0) else {
-                return Err(CreateSplitError::ControllerNotFound {
-                    controller: ProfileId::new("gbc.standard_pad"),
-                });
-            };
-            dev.field_entries(&GBC_PORT)
-                .into_iter()
-                .map(|entry| ((entry.attachment, entry.control), entry.field))
-                .collect()
-        };
-        Ok(InputResources::new(
-            field_map,
-            Box::new(|| Box::<GbcInputBuffer>::default()),
-        ))
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use nerust_gbc_device::StandardPad;
-
     use super::*;
 
     #[test]
@@ -84,27 +48,5 @@ mod tests {
                 .profile_id(),
             ProfileId::new("gbc.standard_pad")
         );
-    }
-
-    #[test]
-    fn split_maps_all_eight_controls_to_gbc_buffer() {
-        let controllers = ControllerCollection::new(vec![Box::new(StandardPad::new())]);
-        let resources = crate::GbcFactory.create_split(&controllers).unwrap();
-        assert_eq!(resources.field_map().len(), 8);
-        let (_, factory) = resources.into_parts();
-        let buffer = factory();
-        assert!(buffer.downcast_ref::<GbcInputBuffer>().is_some());
-    }
-
-    #[test]
-    fn split_rejects_missing_or_extra_controllers() {
-        let empty = ControllerCollection::new(vec![]);
-        assert!(crate::GbcFactory.create_split(&empty).is_err());
-
-        let extra = ControllerCollection::new(vec![
-            Box::new(StandardPad::new()),
-            Box::new(StandardPad::new()),
-        ]);
-        assert!(crate::GbcFactory.create_split(&extra).is_err());
     }
 }

@@ -18,6 +18,7 @@ muda.workspace = true
 nerust_crash_guard.workspace = true
 nerust_frontend_kernel.workspace = true
 nerust_core_traits.workspace = true
+nerust_system_traits.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_viewmodel.workspace = true
@@ -25,12 +26,15 @@ nerust_settings_core.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard = { features = ["iced"], workspace = true }
 nerust_persistence.workspace = true
-nerust_render_traits.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_render_osd.workspace = true
 nerust_run_options.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true
 tao.workspace = true
+
+[dev-dependencies]
+nerust_nes_factory.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"

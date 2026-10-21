@@ -183,15 +183,15 @@ impl SettingsManager {
     }
 
     pub fn shared(&self) -> Result<DesktopSharedSettings, SettingsError> {
-        Ok(self.snapshot()?.shared)
+        Ok(self.snapshot_arc()?.shared.clone())
     }
 
     pub fn local(&self) -> Result<HostBackendLocalSettings, SettingsError> {
-        Ok(self.snapshot()?.local)
+        Ok(self.snapshot_arc()?.local.clone())
     }
 
     pub fn app_state(&self) -> Result<DesktopAppState, SettingsError> {
-        Ok(self.snapshot()?.app_state)
+        Ok(self.snapshot_arc()?.app_state.clone())
     }
 
     pub fn paths(&self) -> Result<Option<SettingsPaths>, SettingsError> {
@@ -200,6 +200,14 @@ impl SettingsManager {
     }
 
     pub fn save_snapshot(&self, snapshot: SettingsSnapshot) -> Result<(), SettingsError> {
+        self.commit_snapshot(snapshot).map(|_| ())
+    }
+
+    /// Commit disk and publication under one lock, returning the exact committed revision.
+    pub fn commit_snapshot(
+        &self,
+        snapshot: SettingsSnapshot,
+    ) -> Result<Arc<SettingsSnapshot>, SettingsError> {
         validate_shared_settings(&snapshot.shared)?;
         validate_local_settings(&snapshot.local)?;
 
@@ -213,7 +221,7 @@ impl SettingsManager {
             guard.current = Arc::new(snapshot);
         }
         guard.document = document;
-        Ok(())
+        Ok(Arc::clone(&guard.current))
     }
 
     pub fn reload(&self) -> Result<SettingsSnapshot, SettingsError> {
@@ -255,7 +263,7 @@ impl SettingsManager {
         rom_path: Option<&Path>,
         identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
-        let snapshot = self.snapshot()?;
+        let snapshot = self.snapshot_arc()?;
         resolve_persistence_paths(
             &snapshot.shared,
             self.paths()?.as_ref(),
@@ -271,7 +279,7 @@ impl SettingsManager {
         rom_path: Option<&Path>,
         identity: &SystemIdentity,
     ) -> Result<SidecarPaths, SettingsError> {
-        let snapshot = self.snapshot()?;
+        let snapshot = self.snapshot_arc()?;
         let paths = self.paths()?;
         resolve_persistence_paths_with_import(
             &snapshot.shared,

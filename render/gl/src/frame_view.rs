@@ -4,13 +4,13 @@
 use std::{os::raw::c_void, ptr, rc::Rc};
 
 use gl::types::GLint;
+use nerust_glwrap::bindings as gl;
 use nerust_glwrap::{
     Current, DeletionPolicy, ScopeGuard, Shader,
     raw::{
         active_texture, bind_buffer, check_frame, clear, clear_color, delete_textures, draw_arrays,
-        enable_vertex_attrib_array, gen_textures, get_integer, gl_string, pixel_storei,
-        tex_sub_image_2d, uniform_1i, uniform_2f, uniform_matrix_4fv, vertex_attrib_pointer,
-        viewport,
+        enable_vertex_attrib_array, gen_textures, gl_string, pixel_storei, tex_sub_image_2d,
+        uniform_1i, uniform_2f, uniform_matrix_4fv, vertex_attrib_pointer, viewport,
     },
     vertex::{Attrib, VertexArray, VertexBuffer},
 };
@@ -66,6 +66,7 @@ pub(crate) struct FrameView {
     pub(crate) vbo: Option<Rc<VertexBuffer>>,
     pub(crate) logical_width: i32,
     pub(crate) logical_height: i32,
+    pub(crate) physical_size: (f64, f64),
     /// Separate staging for the NTSC kernel upload (load-time only).
     pub(crate) ntsc_scratch: StagingBuf,
     pub(crate) uniforms: GameUniforms,
@@ -105,9 +106,11 @@ impl FrameView {
         self.use_vao = value;
     }
 
-    /// Load GL symbols on this thread (facade keeps the `GlView::` spelling).
-    pub(crate) fn load_with<F: FnMut(&'static str) -> *const c_void>(get_proc_address: F) {
-        gl::load_with(get_proc_address);
+    /// Load a thread-affine table for a current native context.
+    pub(crate) fn load_with<F: FnMut(&'static str) -> *const c_void>(
+        get_proc_address: F,
+    ) -> nerust_glwrap::Context {
+        unsafe { nerust_glwrap::Context::load_with(get_proc_address) }
     }
 
     /// Use the game program, skipping the GL call when already current.
@@ -133,7 +136,7 @@ impl FrameView {
         let Some(loc) = self.uniforms.matrix else {
             return Err(ViewError::NoProgram { program: "game" });
         };
-        ok_gl(uniform_matrix_4fv(loc, 1, gl::FALSE, mat.as_ptr()))?;
+        ok_gl(uniform_matrix_4fv(loc, 1, gl::FALSE, mat))?;
         ok_gl(check_frame())?;
         self.last_matrix = Some(*mat);
         Ok(())
@@ -145,11 +148,7 @@ impl FrameView {
         &mut self,
         render_profile: &VideoRenderProfile,
     ) -> Result<(), ViewError> {
-        let frame_size = if self.is_palette_format {
-            render_profile.source_logical_size
-        } else {
-            render_profile.logical_size
-        };
+        let frame_size = render_profile.input_size();
         self.logical_width = i32::try_from(frame_size.width).map_err(|_| {
             crate::layout::FrameError::StrideTooWide {
                 have: frame_size.width,
@@ -166,8 +165,9 @@ impl FrameView {
             (gl::RGBA as GLint, gl::RGBA)
         };
         let mut tex_names = [0; 1];
-        ok_gl(gen_textures(1, tex_names.as_mut_ptr()))?;
+        let generated = gen_textures(1, &mut tex_names);
         self.frame_texture = tex_names[0];
+        ok_gl(generated)?;
         allocate_texture_store(
             0,
             self.frame_texture,
@@ -181,8 +181,9 @@ impl FrameView {
             self.palette_width = 64;
             self.palette_height = 1;
             let mut pal_names = [0; 1];
-            ok_gl(gen_textures(1, pal_names.as_mut_ptr()))?;
+            let generated = gen_textures(1, &mut pal_names);
             self.palette_texture = pal_names[0];
+            ok_gl(generated)?;
             // 64x1 RGBA8 placeholder, zeroed via a small stack upload;
             // real data syncs from `FrameBuffer::palette_as_rgba8`.
             upload_texture_bytes(
@@ -214,8 +215,9 @@ impl FrameView {
         if let Some(ntsc_data) = render_profile.ntsc_packed_rgba8.as_deref() {
             self.ntsc_enabled = true;
             let mut ntsc_names = [0; 1];
-            ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
+            let generated = gen_textures(1, &mut ntsc_names);
             self.ntsc_texture = ntsc_names[0];
+            ok_gl(generated)?;
             configure_ntsc_texture(
                 2,
                 self.ntsc_texture,
@@ -234,8 +236,9 @@ impl FrameView {
             ok_gl(uniform_1i(loc, 2))?;
         } else {
             let mut ntsc_names = [0; 1];
-            ok_gl(gen_textures(1, ntsc_names.as_mut_ptr()))?;
+            let generated = gen_textures(1, &mut ntsc_names);
             self.ntsc_texture = ntsc_names[0];
+            ok_gl(generated)?;
             let ntsc_height = NTSC_TEXTURE_HEIGHT as usize;
             allocate_texture_store(
                 2,
@@ -291,7 +294,6 @@ impl FrameView {
             VertexData::new(Vec2D::new(1.0, -1.0), Vec2D::new(1.0, 1.0)),
         ];
 
-        let vbo = Rc::new(ok_gl(VertexBuffer::from_slice(&vertex_data))?);
         let (position, uv) = {
             let Some(shader) = self.shader.as_ref() else {
                 return Err(ViewError::NoProgram { program: "game" });
@@ -301,32 +303,26 @@ impl FrameView {
                 required_attrib(shader, "game", "uv")?,
             )
         };
+        // VertexData is packed and contains only four initialized f32 values.
+        let vbo = Rc::new(ok_gl(unsafe { VertexBuffer::from_slice(&vertex_data) })?);
+        // Retain an explicit owner before any fallible attribute setup.
+        self.vbo = Some(vbo.clone());
         if self.use_vao {
             let vbo = vbo.clone();
             self.vba = Some(ok_gl(VertexArray::new(|vaic| {
-                vaic.bind_vbo(vbo, |vac| {
+                vaic.bind_vbo(vbo, |vac| unsafe {
                     vac.attr_pointer(Attrib { id: position }, 2, gl::FLOAT, 16, 0)?;
                     vac.attr_pointer(Attrib { id: uv }, 2, gl::FLOAT, 16, 8)
                 })
             }))?);
         } else {
-            ok_gl(vertex_attrib_pointer(
-                position,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                16,
-                ptr::null(),
-            ))?;
+            ok_gl(unsafe {
+                vertex_attrib_pointer(position, 2, gl::FLOAT, gl::FALSE, 16, ptr::null())
+            })?;
             ok_gl(enable_vertex_attrib_array(position))?;
-            ok_gl(vertex_attrib_pointer(
-                uv,
-                2,
-                gl::FLOAT,
-                gl::FALSE,
-                16,
-                8 as *const c_void,
-            ))?;
+            ok_gl(unsafe {
+                vertex_attrib_pointer(uv, 2, gl::FLOAT, gl::FALSE, 16, 8 as *const c_void)
+            })?;
             ok_gl(enable_vertex_attrib_array(uv))?;
             self.vbo = Some(vbo.clone());
         }
@@ -344,12 +340,7 @@ impl FrameView {
         self.uniforms.frame_texture = Some(frame_loc);
         let identity = Mat4::identity();
         let mat: [f32; 16] = identity.as_array();
-        ok_gl(uniform_matrix_4fv(
-            matrix_loc,
-            1,
-            gl::FALSE,
-            identity.as_ptr(),
-        ))?;
+        ok_gl(uniform_matrix_4fv(matrix_loc, 1, gl::FALSE, &mat))?;
         ok_gl(check_frame())?;
         self.last_matrix = Some(mat);
         ok_gl(uniform_1i(frame_loc, 0))?;
@@ -360,18 +351,21 @@ impl FrameView {
         if !self.is_palette_format {
             return Ok(());
         }
+        crate::frame_textures::prepare_cpu_unpack()?;
         use_texture(1, self.palette_texture)?;
-        ok_gl(tex_sub_image_2d(
-            gl::TEXTURE_2D,
-            0,
-            0,
-            0,
-            self.palette_width,
-            self.palette_height,
-            gl::RGBA,
-            gl::UNSIGNED_BYTE,
-            rgba8.as_ptr().cast(),
-        ))?;
+        ok_gl(unsafe {
+            tex_sub_image_2d(
+                gl::TEXTURE_2D,
+                0,
+                0,
+                0,
+                self.palette_width,
+                self.palette_height,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                rgba8.as_ptr().cast(),
+            )
+        })?;
         // Explicit restore: unit 0 + frame texture, so the game upload
         // below never samples the palette on unit 1.
         if self.frame_texture != 0 {
@@ -386,31 +380,38 @@ impl FrameView {
     pub(crate) fn on_update(&mut self, screen: &[u8], row_length: i32) -> Result<(), ViewError> {
         let screen_ptr = screen.as_ptr().cast();
         self.use_game_program()?;
+        let bpp = if self.is_palette_format { 1 } else { 4 };
+        let width = usize::try_from(self.logical_width).unwrap_or(0);
+        let height = usize::try_from(self.logical_height).unwrap_or(0);
+        let row = usize::try_from(row_length).unwrap_or(0);
+        let stride = row
+            .checked_mul(bpp)
+            .ok_or(crate::layout::FrameError::StrideOverflow { have: screen.len() })?;
+        crate::layout::FrameLayout::checked(
+            nerust_render_traits::logical::LogicalSize { width, height },
+            bpp,
+            stride,
+            screen.len(),
+            self.unpack_row_length,
+        )?;
+        crate::frame_textures::prepare_cpu_unpack()?;
 
         use_texture(0, self.frame_texture)?;
 
-        // Row-length override under a scope guard: construction failure
-        // leaves state untouched, and the drop restores best-effort.
-        let saved_state = if row_length != self.logical_width {
-            let alignment = ok_gl(get_integer(gl::UNPACK_ALIGNMENT))?;
-            debug_assert_eq!(
-                alignment, 1,
-                "FrameView owns UNPACK_ALIGNMENT=1; foreign value would mis-stride uploads",
-            );
-            let saved = ok_gl(get_integer(gl::UNPACK_ROW_LENGTH))?;
+        // The CPU-unpack helper established a tight baseline. Only padded
+        // input needs an override; no synchronous state readback is needed.
+        let padded = row_length != self.logical_width;
+        if padded {
+            if !self.unpack_row_length {
+                return Err(
+                    crate::layout::FrameError::StrideOverflow { have: screen.len() }.into(),
+                );
+            }
             ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, row_length))?;
-            Some((saved, alignment))
-        } else {
-            None
-        };
+        }
         let _row_guard = ScopeGuard::new(move || {
-            if let Some((saved, alignment)) = saved_state {
-                if pixel_storei(gl::UNPACK_ROW_LENGTH, saved).is_err() {
-                    log::debug!("FrameView: UNPACK_ROW_LENGTH reset failed");
-                }
-                if pixel_storei(gl::UNPACK_ALIGNMENT, alignment).is_err() {
-                    log::debug!("FrameView: UNPACK_ALIGNMENT reset failed");
-                }
+            if padded && pixel_storei(gl::UNPACK_ROW_LENGTH, 0).is_err() {
+                log::debug!("FrameView: UNPACK_ROW_LENGTH reset failed");
             }
         });
 
@@ -418,17 +419,19 @@ impl FrameView {
             use_texture(1, self.palette_texture)?;
             use_texture(2, self.ntsc_texture)?;
             use_texture(0, self.frame_texture)?;
-            ok_gl(tex_sub_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                0,
-                0,
-                self.logical_width,
-                self.logical_height,
-                gl::RED,
-                gl::UNSIGNED_BYTE,
-                screen_ptr,
-            ))?;
+            ok_gl(unsafe {
+                tex_sub_image_2d(
+                    gl::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    self.logical_width,
+                    self.logical_height,
+                    gl::RED,
+                    gl::UNSIGNED_BYTE,
+                    screen_ptr,
+                )
+            })?;
         }
 
         if self.use_vao {
@@ -446,20 +449,23 @@ impl FrameView {
         ok_gl(clear(gl::COLOR_BUFFER_BIT))?;
 
         if !self.is_palette_format {
-            ok_gl(tex_sub_image_2d(
-                gl::TEXTURE_2D,
-                0,
-                0,
-                0,
-                self.logical_width,
-                self.logical_height,
-                gl::RGBA,
-                gl::UNSIGNED_BYTE,
-                screen_ptr,
-            ))?;
+            ok_gl(unsafe {
+                tex_sub_image_2d(
+                    gl::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    self.logical_width,
+                    self.logical_height,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    screen_ptr,
+                )
+            })?;
         }
         drop(_row_guard);
-        ok_gl(draw_arrays(gl::TRIANGLE_STRIP, 0, 4))?;
+        // The quad VBO has four vertices and a validated fixed layout.
+        ok_gl(unsafe { draw_arrays(gl::TRIANGLE_STRIP, 0, 4) })?;
         // Explicit restore: back to unit 0 so the OSD pass starts clean.
         ok_gl(active_texture(gl::TEXTURE0))?;
         // Include state restoration in the release-time boundary.
@@ -514,10 +520,23 @@ impl FrameView {
         &mut self,
         render_profile: &VideoRenderProfile,
     ) -> Result<bool, ViewError> {
+        let size = render_profile.input_size();
+        let bpp = render_profile.frame_format.bytes_per_pixel();
+        let stride = size
+            .width
+            .checked_mul(bpp)
+            .ok_or(crate::layout::FrameError::DimensionsOverflow { have: 0 })?;
+        crate::layout::FrameLayout::checked(size, bpp, stride, usize::MAX, true)?;
+        let physical = (
+            render_profile.physical_size.width as f64,
+            render_profile.physical_size.height as f64,
+        );
+        crate::layout::fit_viewport_aspect(1, 1, Default::default(), physical)?;
         self.uniforms = GameUniforms::default();
         self.last_matrix = None;
         self.current_program = None;
         self.is_palette_format = render_profile.frame_format == VideoFrameFormat::Palette;
+        self.physical_size = physical;
         let version = gl_string(gl::VERSION);
         let is_gles = is_gles_context(version.as_deref());
         self.unpack_row_length = supports_unpack_row_length(version.as_deref());
@@ -526,8 +545,6 @@ impl FrameView {
         self.current_program = None;
         self.use_game_program()?;
         ok_gl(clear_color(0.0, 0.0, 0.0, 1.0))?;
-
-        ok_gl(pixel_storei(gl::UNPACK_ALIGNMENT, 1))?;
 
         self.load_frame_textures(render_profile)?;
 
@@ -550,12 +567,11 @@ impl FrameView {
     ) -> Result<[i32; 4], ViewError> {
         // Pure fit (f64 ratios, tested in `layout`): the view only
         // uploads the resulting box and matrix.
-        let (game_box, arr) = crate::layout::fit_viewport(
+        let (game_box, arr) = crate::layout::fit_viewport_aspect(
             viewport_width,
             viewport_height,
             strip,
-            self.logical_width,
-            self.logical_height,
+            self.physical_size,
         )?;
         let [_, bottom, area_width, area_height] = game_box;
 
@@ -586,19 +602,9 @@ impl FrameView {
         if self.ntsc_texture != 0 {
             ids.push(self.ntsc_texture);
         }
-        if !ids.is_empty() {
-            if !has_context {
-                leaked.extend(
-                    ids.iter()
-                        .filter(|_| policy.note(true))
-                        .map(|_| LeakedName::Texture(0)),
-                );
-                log::debug!("FrameView teardown skipped: no current context");
-            } else if delete_textures(ids.len() as i32, ids.as_ptr()).is_err() {
-                log::debug!("FrameView teardown failed");
-                if policy.note(true) {
-                    leaked.push(LeakedName::Texture(0));
-                }
+        for id in ids {
+            if policy.note(!has_context || delete_textures(1, &[id]).is_err()) {
+                leaked.push(LeakedName::Texture(id));
             }
         }
         self.frame_texture = 0;
@@ -611,12 +617,13 @@ impl FrameView {
         {
             leaked.push(LeakedName::Program(0));
         }
-        if let Some(mut vba) = self.vba.take()
-            && vba.destroy_if_current(current)
-        {
-            leaked.push(LeakedName::Array(0));
+        if let Some(mut vba) = self.vba.take() {
+            let (arrays, buffers) = vba.destroy_report(current);
+            leaked.extend(std::iter::repeat_n(LeakedName::Array(0), arrays));
+            leaked.extend(std::iter::repeat_n(LeakedName::Buffer(0), buffers));
         }
         if let Some(vbo) = self.vbo.take()
+            && Rc::strong_count(&vbo) == 1
             && vbo.destroy_if_current(current)
         {
             leaked.push(LeakedName::Buffer(0));

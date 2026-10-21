@@ -236,7 +236,9 @@ internal fun NerustSettingsDialogCard(
                         selectedIndex = selections[settingIndex],
                         onSelect = { choiceIndex ->
                             selections[settingIndex] = choiceIndex
-                            activeSettingIndex = null
+                            if (settings[settingIndex].kind != "range") {
+                                activeSettingIndex = null
+                            }
                         },
                     )
                 }

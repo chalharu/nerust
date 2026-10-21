@@ -8,7 +8,6 @@ use iced_tiny_skia::Renderer;
 use iced_winit::{
     graphics::Viewport,
     program::{self, Program},
-    runtime::user_interface::UserInterface,
 };
 
 use super::AuxShellOps;
@@ -49,8 +48,30 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxSh
         self.surface.feed_domain_event(event)
     }
 
-    fn render_tagged(&mut self, tag: &'static str) {
-        self.render(tag);
+    fn render_tagged(&mut self, tag: &'static str) -> Option<String> {
+        self.render(tag)
+    }
+
+    fn wake_deadline(&self) -> Option<std::time::Instant> {
+        self.ui_state
+            .deadline
+            .into_iter()
+            .chain(self.surface.retry_deadline())
+            .min()
+    }
+
+    fn wake_due(&mut self, now: std::time::Instant) {
+        if self
+            .ui_state
+            .deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.ui_state.deadline = None;
+            self.surface.request_redraw();
+        }
+        if self.surface.retry_due(now) {
+            self.surface.request_redraw();
+        }
     }
 }
 
@@ -68,7 +89,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         out: &mut Vec<P::Message>,
     ) -> PumpOutcome {
         let (backend, cursor, clipboard) = self.surface.draw_parts();
-        let outcome = self.ui_state.pump(mapped, cursor, clipboard, backend, out);
+        let outcome = self
+            .ui_state
+            .pump(mapped, cursor, clipboard, backend, out, None);
         if matches!(outcome, PumpOutcome::Repaint) {
             self.surface.request_redraw();
         }
@@ -107,7 +130,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         } else {
             false
         };
-        repainted || rebuilt
+        repainted || rebuilt || matches!(outcome, PumpOutcome::At(_))
     }
 
     /// Run pending messages against the retained cache, redrawing only on a real rebuild.
@@ -118,7 +141,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         invalidated: &AtomicBool,
     ) -> bool {
         let bounds = self.surface.logical_bounds();
-        self.ui_state.set_bounds(bounds);
+        self.ui_state.relayout(bounds);
         let rebuilt =
             self.ui_state
                 .process_messages(messages, self.surface.backend_mut(), invalidated);
@@ -142,22 +165,25 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     /// Full render through the shared pump; only the log tag differs.
-    pub(crate) fn render(&mut self, log_tag: &'static str) {
+    pub(crate) fn render(&mut self, log_tag: &'static str) -> Option<String> {
+        if !self.surface.render_ready() {
+            return None;
+        }
         let ui_state = &mut self.ui_state;
         self.surface
             .heal_scale(log_tag, &mut |bounds| ui_state.relayout(bounds));
         // Deferred surface configure: the realloc lands here, at most once per frame.
         self.surface.configure_surface();
-        self.render_ui(log_tag);
+        self.render_ui(log_tag)
     }
 
     /// Shared full render: Light theme, redraw pump, draw, present.
-    fn render_ui(&mut self, log_tag: &'static str) {
+    fn render_ui(&mut self, log_tag: &'static str) -> Option<String> {
         // Nothing to draw into yet (minimize/dock transient):
         // presenting a zero-size surface panics in pixel-map creation.
         let (width, height) = self.surface.viewport();
         if width == 0 || height == 0 {
-            return;
+            return None;
         }
         let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
@@ -165,33 +191,24 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
         ));
-        {
-            let mut sink = self.ui_state.take_scratch();
-            sink.clear();
-            let tree = &mut self.ui_state.tree;
-            let cache = std::mem::take(&mut tree.cache);
-            let (backend, cursor, clipboard) = self.surface.draw_parts();
-            let mut ui = UserInterface::build(
-                tree.instance.view(tree.window_id),
-                tree.bounds,
-                cache,
-                backend,
-            );
-            // Redraw-only pump: widget rebuild requests wait for the next
-            // event-driven pump (`pump_outcome` mapping lives there).
-            let _ = ui.update(&[redraw_event], cursor, backend, clipboard, &mut sink);
-            ui.draw(
-                backend,
+        let mut messages = self.ui_state.take_scratch();
+        let (backend, cursor, clipboard) = self.surface.draw_parts();
+        let outcome = self.ui_state.pump(
+            redraw_event,
+            cursor,
+            clipboard,
+            backend,
+            &mut messages,
+            Some((
                 &theme,
                 &renderer::Style {
                     text_color: style.text_color,
                 },
-                cursor,
-            );
-            tree.cache = ui.into_cache();
-            self.ui_state.restore_scratch(sink);
-        }
+            )),
+        );
+        self.finish(outcome, &mut messages, &AtomicBool::new(false));
+        self.ui_state.restore_scratch(messages);
         self.surface
-            .present(&viewport, style.background_color, log_tag);
+            .present(&viewport, style.background_color, log_tag)
     }
 }

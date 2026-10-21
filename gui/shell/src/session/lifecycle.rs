@@ -1,12 +1,12 @@
 //! Session lifecycle orchestration: load/unload/flush plus the per-tick pump.
 //! Domain work lives in sibling modules; this file only sequences the flow.
 
-use nerust_core_traits::factory::load::{MediaObject, ResolvedLoadRequest};
+use nerust_system_traits::factory::load::{MediaObject, ResolvedLoadRequest};
 
 use crate::session::{
     SessionError, SessionHandle,
     osd::{PumpReport, PumpTarget, PushInput},
-    persistence_setup::{MapperRestore, PersistenceBinder},
+    persistence_setup::PersistenceBinder,
 };
 
 impl SessionHandle {
@@ -23,34 +23,59 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        {
-            let Some(exporter) = self.emu.exporter().ok() else {
-                return Err(SessionError::NoCore);
-            };
-            // Best-effort: a stale battery-save write failure never vetoes opening a new ROM.
-            // The typed chain renders at the notification boundary.
-            if let Err(error) = self.media.persistence.flush_mapper_save(exporter) {
-                log::warn!("mapper-save flush before load failed: {error}");
-                self.notifications.push(
-                    crate::session::notification::NotificationKind::command_failure_from(
-                        crate::session::notification::FailureOrigin::Host,
-                        "mapper-flush",
-                        &error,
-                    ),
-                );
-            }
+        let tick = self.tick_metrics();
+        let options = resolved.options;
+        let factory = self.active_factory_cloned().ok_or(SessionError::NoCore)?;
+        let candidate = super::settings_apply::build_core_for_settings(
+            self.speaker_factory(),
+            &self.settings.snapshot,
+            &factory,
+            &self.input.current_assignments,
+        )?;
+        candidate
+            .emu_core
+            .load_paused(&media, Some(options.clone()))?;
+        // Freeze the previous core before its final export. Failure vetoes replacement
+        // and restores its execution state; no persistence configuration changed yet.
+        let was_running = tick.loaded && !tick.paused;
+        if was_running {
+            self.emu.core()?.pause()?;
         }
-        self.emu
-            .core_mut()
-            .ok()
-            .ok_or(SessionError::NoCore)?
-            .load(&media, Some(resolved.options))?;
-
-        PersistenceBinder::bind(self, media.native_path(), MapperRestore::Load);
+        let flush = self
+            .media
+            .persistence
+            .flush_mapper_save(self.emu.exporter()?);
+        if let Err(error) = flush {
+            if was_running
+                && !self.execution_held
+                && let Err(rollback) = self.emu.core()?.resume()
+            {
+                return Err(SessionError::Rollback {
+                    apply: Box::new(error.into()),
+                    rollback: Box::new(rollback.into()),
+                });
+            }
+            return Err(error.into());
+        }
+        PersistenceBinder::prepare(self, &candidate.emu_core, media.native_path());
+        self.emu.replace(super::ActiveRuntime::from(candidate));
+        self.debug_clear_write();
+        self.clear_input();
+        self.input.invalidate_topology();
+        self.rebuild_key_field_map();
 
         self.remember_last_successful_rom_directory(media.native_path());
         // Move, don't clone: the core borrowed the bytes above; the media travels into storage.
-        self.media.set_loaded(Some(super::LoadedMedia { media }));
+        self.media
+            .set_loaded(Some(super::LoadedMedia { media, options }));
+        if !self.execution_held {
+            // Replacement is already published: a resume rejection is a partial load,
+            // never proof that the old media is still active.
+            self.emu
+                .core()?
+                .resume()
+                .map_err(|_| nerust_emu_thread::OperationError::NoReply)?;
+        }
         Ok(())
     }
 
@@ -61,6 +86,8 @@ impl SessionHandle {
         if let Ok(core) = self.emu.core_mut() {
             core.unload()?;
         }
+        self.emu.invalidate_debug();
+        self.debug_clear_write();
         self.media.clear_runtime();
         Ok(())
     }
@@ -87,14 +114,6 @@ impl SessionHandle {
             tick,
         } = input;
         let before = osd.generation();
-        if self.notifications.pending_len() == 0 {
-            osd.poll_queue(now);
-            let modal_queued = osd.pump_modal_queue();
-            return PumpReport {
-                changed: osd.generation() != before,
-                modal_queued,
-            };
-        }
         let channel = tick.frame_channel();
         let drained = self.drain_notifications();
         osd.push_notifications(drained, &policy, language, now, channel);
@@ -128,6 +147,51 @@ impl SessionHandle {
 mod lifecycle_cov_tests {
     use crate::session::lifecycle::*;
     use crate::session::test_util::test_session;
+
+    #[test]
+    fn empty_notification_pump_still_relocalizes_and_filters_visible_rows() {
+        use crate::session::{
+            notification::{NotificationKind, NotificationLevel, UiNotification},
+            osd::{FrameChannel, OsdManager, TickMetrics, TransientPolicy},
+        };
+        use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
+        let mut session = test_session();
+        let mut osd = OsdManager::new();
+        let now = std::time::Instant::now();
+        let policy = TransientPolicy::from(&NotificationSettings::default());
+        osd.push_all_with_policy(
+            vec![UiNotification {
+                level: NotificationLevel::Info,
+                kind: NotificationKind::Paused,
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }],
+            &policy,
+            AppLanguage::English,
+            now,
+            FrameChannel::Composited,
+        );
+        osd.poll(now);
+        assert_eq!(osd.rows()[0].text.as_ref(), "Paused");
+        let input = |policy| PushInput {
+            policy,
+            language: AppLanguage::Japanese,
+            now,
+            tick: TickMetrics {
+                loaded: true,
+                ..Default::default()
+            },
+        };
+        assert!(session.pump_osd(&mut osd, input(policy)).changed);
+        assert_eq!(osd.rows()[0].text.as_ref(), "一時停止しました");
+        let off = TransientPolicy {
+            info_enabled: false,
+            ..policy
+        };
+        assert!(session.pump_osd(&mut osd, input(off)).changed);
+        assert!(osd.rows().is_empty());
+    }
 
     #[test]
     fn coreless_lifecycle_is_best_effort() {

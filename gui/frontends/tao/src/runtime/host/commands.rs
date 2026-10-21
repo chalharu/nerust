@@ -57,7 +57,14 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                let _ = self.session.run_command(command);
+                match command {
+                    SessionCommand::Pause => self.pause(),
+                    SessionCommand::Resume => self.resume(),
+                    SessionCommand::TogglePause => self.toggle_pause(),
+                    command => {
+                        let _ = self.session.run_command(command);
+                    }
+                }
                 let ctx = self.frame_ctx();
                 self.sync_chrome(&ctx, false);
                 HostAction::None
@@ -141,13 +148,16 @@ impl HostState {
 
 impl PauseControl for HostState {
     fn pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Pause);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
     }
     fn resume(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Resume);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
     }
     fn toggle_pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::TogglePause);
+        self.set_pause_owner(
+            nerust_frontend_kernel::pause::PauseOwner::User,
+            !self.session.tick_metrics().paused,
+        );
     }
 }
 
@@ -213,7 +223,9 @@ impl SessionControl for HostState {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
+        let plan = self.session.apply_settings(settings);
+        self.reconcile_pause();
+        let plan = plan?;
         Ok(SettingsResult {
             // The renderer follows presentation, not the session.
             renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
@@ -491,12 +503,12 @@ mod tests {
 
     #[test]
     fn error_modal_returns_without_blocking() {
-        use nerust_gui_shell::session::commands::SessionCommand;
         let support = TestHost::new();
         let mut host = support.host;
-        // No core: TogglePause fails into a CommandFailed error,
-        // which routes to the modal path (error_modal defaults on).
-        let _ = host.session.run_command(SessionCommand::TogglePause);
+        host.session.report_external_error(
+            nerust_gui_shell::session::notification::FailureOrigin::Host,
+            "test error".into(),
+        );
         let ctx = host.frame_ctx();
         host.poll_notifications(&ctx);
         // Bounded wait for the background ack; FakeDialogs answers instantly.
@@ -509,7 +521,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(support.dialogs.errors().len(), 1);
-        assert!(support.dialogs.errors()[0].contains("TogglePause"));
+        assert!(support.dialogs.errors()[0].contains("test error"));
         assert_eq!(host.osd.modal_pending(), 0);
     }
 
@@ -522,10 +534,8 @@ mod tests {
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
-        host.osd.inject_modal_flight_for_test(ModalFlight {
-            done: rx,
-            resume_after: false,
-        });
+        host.osd
+            .inject_modal_flight_for_test(ModalFlight { done: rx });
         let ctx = host.frame_ctx();
         host.poll_notifications(&ctx);
         // Reaped as a failed ack: flight gone, queue unblocked.
@@ -569,7 +579,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.resume_session();
-        host.pause_session();
+        super::PauseControl::pause(&mut host);
         host.clear_keys();
         host.sync_fullscreen_from_settings();
         let _ = host.persist_fullscreen_default(false);

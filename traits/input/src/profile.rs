@@ -3,7 +3,6 @@
 use std::{collections::HashMap, rc::Rc};
 
 use super::{
-    devices::ControllerCollection,
     events::InputStateBuffer,
     ids::{AttachmentId, ControlId, DeviceKindId, ProfileId},
 };
@@ -127,52 +126,54 @@ impl InputAssignments {
         &self.slots
     }
 
-    /// Assign a controller to a known slot; unknown slots refuse instead of
-    /// growing the topology behind the factory's back.
-    pub fn set_assignment(
-        &mut self,
-        slot: AttachmentId,
-        controller: Option<Rc<dyn ControllerProfile>>,
-    ) -> Result<(), CreateSplitError> {
-        let Some(entry) = self.slots.iter_mut().find(|(id, _)| *id == slot) else {
-            return Err(CreateSplitError::SlotNotFound { slot });
-        };
-        entry.1 = controller;
-        Ok(())
-    }
-
-    /// Clear every other slot sharing a multi-port set with `slot`.
-    /// Single owner for slot-topology mutation; settings layers delegate here.
-    pub fn clear_multi_port_conflicts(
-        &mut self,
-        slot: AttachmentId,
-        profile: &dyn ControllerProfile,
-    ) {
-        for ps in profile.port_sets() {
-            if ps.ports.len() <= 1 || !ps.ports.contains(&slot) {
-                continue;
+    /// Validate once and place (registered profile, port-group index) at each
+    /// physical slot. Canonical factory metadata, not caller-supplied metadata,
+    /// determines topology. Missing assignments remain unconnected holes.
+    pub fn placement_plan(
+        &self,
+        ports: &dyn InputPorts,
+    ) -> Result<Vec<Option<(ProfileId, usize)>>, CreateSplitError> {
+        let slots = ports.slots();
+        let mut seen = std::collections::HashSet::new();
+        let mut plan = vec![None; slots.len()];
+        for (slot, profile) in &self.slots {
+            if !slots.iter().any(|s| s.id == *slot) {
+                return Err(CreateSplitError::SlotNotFound { slot: *slot });
             }
-            for &port in ps.ports {
-                if port != slot
-                    && let Some(other) = self.slots.iter_mut().find(|(s, _)| *s == port)
-                {
-                    other.1 = None;
+            if !seen.insert(*slot) {
+                return Err(CreateSplitError::SlotConflict { a: *slot, b: *slot });
+            }
+            let Some(profile) = profile else { continue };
+            let controller = profile.profile_id();
+            let canonical = ports
+                .resolve_controller(controller.as_str())
+                .ok_or(CreateSplitError::ControllerNotFound { controller })?;
+            let set = canonical
+                .port_sets()
+                .iter()
+                .find(|set| set.ports.first() == Some(slot))
+                .ok_or(CreateSplitError::IncompatibleController {
+                    controller,
+                    slot: *slot,
+                })?;
+            if set.ports.len() != canonical.port_groups().len() {
+                return Err(CreateSplitError::IncompatibleController {
+                    controller,
+                    slot: *slot,
+                });
+            }
+            for (group, port) in set.ports.iter().enumerate() {
+                let index = slots
+                    .iter()
+                    .position(|s| s.id == *port)
+                    .ok_or(CreateSplitError::SlotNotFound { slot: *port })?;
+                if plan[index].is_some() {
+                    return Err(CreateSplitError::SlotConflict { a: *slot, b: *port });
                 }
+                plan[index] = Some((controller, group));
             }
         }
-    }
-
-    /// Explicit order-sensitive structural comparison used by `PartialEq`.
-    pub fn eq_ordered(&self, other: &Self) -> bool {
-        self.slots.len() == other.slots.len()
-            && self.slots.iter().zip(other.slots.iter()).all(|(a, b)| {
-                a.0 == b.0
-                    && match (&a.1, &b.1) {
-                        (None, None) => true,
-                        (Some(x), Some(y)) => x.profile_id() == y.profile_id(),
-                        _ => false,
-                    }
-            })
+        Ok(plan)
     }
 }
 
@@ -195,7 +196,15 @@ impl std::fmt::Debug for InputAssignments {
 /// compared pairwise; the persisted projection must preserve slot order.
 impl PartialEq for InputAssignments {
     fn eq(&self, other: &Self) -> bool {
-        self.eq_ordered(other)
+        self.slots.len() == other.slots.len()
+            && self.slots.iter().zip(other.slots.iter()).all(|(a, b)| {
+                a.0 == b.0
+                    && match (&a.1, &b.1) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => x.profile_id() == y.profile_id(),
+                        _ => false,
+                    }
+            })
     }
 }
 
@@ -218,13 +227,10 @@ pub enum CreateSplitError {
     SlotConflict { a: AttachmentId, b: AttachmentId },
 }
 
-/// Factory for creating input runtime state.
+/// System input metadata and defaults. Runtime assembly belongs to each system
+/// factory, not this frontend-facing contract (many systems need no devices).
 pub trait InputSystemFactory: InputPorts + std::fmt::Debug {
     fn default_assignments(&self) -> InputAssignments;
-    fn create_split(
-        &self,
-        controllers: &ControllerCollection,
-    ) -> Result<InputResources, CreateSplitError>;
 }
 
 /// Init-time factory output: field map plus a buffer factory.
@@ -271,7 +277,7 @@ mod tests {
         InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
     };
     use crate::{
-        AttachmentId, ControlId, ControllerCollection, DigitalControlId, InputValue, ProfileId,
+        AttachmentId, ControlId, DigitalControlId, InputValue, ProfileId,
         devices::{Port, SimplePort, StrobeTarget},
     };
 
@@ -336,14 +342,6 @@ mod tests {
                 Some(Rc::new(ProbeProfile) as Rc<dyn ControllerProfile>),
             )])
         }
-        fn create_split(
-            &self,
-            _controllers: &ControllerCollection,
-        ) -> Result<InputResources, CreateSplitError> {
-            Err(CreateSplitError::SlotNotFound {
-                slot: AttachmentId::new("test.p1"),
-            })
-        }
     }
 
     #[test]
@@ -367,35 +365,22 @@ mod tests {
             (AttachmentId::new("test.p1"), Some(Rc::clone(&profile))),
             (AttachmentId::new("test.p2"), None),
         ]);
-        assert!(first.eq_ordered(&same));
         assert_eq!(first, same);
         let swapped = InputAssignments::new(vec![
             (AttachmentId::new("test.p2"), None),
             (AttachmentId::new("test.p1"), Some(Rc::clone(&profile))),
         ]);
-        assert!(!first.eq_ordered(&swapped));
         assert_ne!(first, swapped);
         let dropped = InputAssignments::new(vec![
             (AttachmentId::new("test.p1"), Some(Rc::clone(&profile))),
             (AttachmentId::new("test.p2"), Some(Rc::clone(&profile))),
         ]);
-        assert!(!first.eq_ordered(&dropped));
-        let mut mutable = first.clone();
-        mutable
-            .set_assignment(AttachmentId::new("test.p2"), Some(Rc::clone(&profile)))
-            .unwrap();
-        assert_eq!(mutable.slots().len(), 2);
-        assert!(format!("{mutable:?}").contains("test.probe"));
-        // Unknown slots refuse instead of growing the topology.
-        assert!(
-            mutable
-                .set_assignment(AttachmentId::new("test.missing"), None)
-                .is_err()
-        );
+        assert_ne!(first, dropped);
+        assert!(format!("{first:?}").contains("test.probe"));
     }
 
     #[test]
-    fn assignments_own_multi_port_clearing() {
+    fn assignments_reject_unknown_multi_port_profile() {
         use super::PortSet;
         #[derive(Debug)]
         struct Multi;
@@ -419,13 +404,14 @@ mod tests {
             }
         }
         let pad: Rc<dyn ControllerProfile> = Rc::new(Multi);
-        let mut assignments = InputAssignments::new(vec![
+        let assignments = InputAssignments::new(vec![
             (AttachmentId::new("test.p1"), Some(Rc::clone(&pad))),
             (AttachmentId::new("test.p2"), Some(Rc::clone(&pad))),
         ]);
-        assignments.clear_multi_port_conflicts(AttachmentId::new("test.p1"), pad.as_ref());
-        assert!(assignments.slots()[0].1.is_some());
-        assert!(assignments.slots()[1].1.is_none());
+        assert!(matches!(
+            assignments.placement_plan(&ProbePorts),
+            Err(CreateSplitError::ControllerNotFound { .. })
+        ));
     }
 
     #[test]
@@ -447,8 +433,6 @@ mod tests {
         let factory = ProbeFactory;
         let defaults = factory.default_assignments();
         assert_eq!(defaults.slots().len(), 1);
-        let err = factory.create_split(&ControllerCollection::new(vec![]));
-        assert!(matches!(err, Err(CreateSplitError::SlotNotFound { .. })));
         for err in [
             CreateSplitError::ControllerNotFound {
                 controller: ProfileId::new("c"),

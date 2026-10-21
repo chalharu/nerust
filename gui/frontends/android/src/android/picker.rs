@@ -55,12 +55,13 @@ fn fetch_worker() -> &'static Sender<FetchJob> {
 
 /// Latest request wins: a stale completion drops before publishing.
 fn publish_if_latest(seq: u64, result: RomPickerResult) {
-    let latest = FETCH_SEQ.is_latest(seq);
-    bridge::with_picker(|state| {
-        state.in_flight = false;
-        if latest {
-            state.result = Some(result);
+    let latest = bridge::with_picker(|state| {
+        if !FETCH_SEQ.is_latest(seq) {
+            return false;
         }
+        state.in_flight = false;
+        state.result = Some((seq, result));
+        true
     });
     if !latest {
         log::debug!("dropping stale Android picker fetch result");
@@ -70,6 +71,12 @@ fn publish_if_latest(seq: u64, result: RomPickerResult) {
 }
 
 fn run_fetch_job(job: FetchJob) {
+    let seq = match &job {
+        FetchJob::Document { seq, .. } | FetchJob::Library { seq, .. } => *seq,
+    };
+    if !FETCH_SEQ.is_latest(seq) {
+        return;
+    }
     match job {
         FetchJob::Document {
             seq,
@@ -77,7 +84,7 @@ fn run_fetch_job(job: FetchJob) {
             uri,
             restore_hidden_state,
         } => {
-            match fetch_document_bytes(&app, &uri) {
+            match fetch_document_bytes(&app, &uri, seq) {
                 Ok((bytes, display_name)) => {
                     let (display, extension) =
                         import_metadata::infer_import_metadata(display_name.as_deref(), &uri);
@@ -113,30 +120,43 @@ fn run_fetch_job(job: FetchJob) {
                 }
             }
         }
-        FetchJob::Library { seq, path, id } => match std::fs::read(&path) {
-            Ok(bytes) => {
-                let digest: [u8; 32] = Sha256::digest(&bytes).into();
-                publish_if_latest(seq, RomPickerResult::LibraryBytes { id, bytes, digest });
+        FetchJob::Library { seq, path, id } => {
+            match std::fs::File::open(&path).and_then(|file| FETCH_SEQ.read_latest(seq, file)) {
+                Ok(bytes) => {
+                    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+                    publish_if_latest(seq, RomPickerResult::LibraryBytes { id, bytes, digest });
+                }
+                Err(error) => {
+                    log::error!("library fetch failed for {id}: {error}");
+                    publish_if_latest(
+                        seq,
+                        RomPickerResult::RestoreLibraryFailed(format!(
+                            "failed to load ROM from library: {error}"
+                        )),
+                    );
+                }
             }
-            Err(error) => {
-                log::error!("library fetch failed for {id}: {error}");
-                publish_if_latest(
-                    seq,
-                    RomPickerResult::RestoreLibraryFailed(format!(
-                        "failed to load ROM from library: {error}"
-                    )),
-                );
-            }
-        },
+        }
     }
 }
 
 pub(super) fn take_result() -> Option<RomPickerResult> {
-    bridge::with_picker(|state| state.result.take())
+    bridge::with_picker(|state| {
+        state
+            .result
+            .take()
+            .filter(|(seq, _)| FETCH_SEQ.is_latest(*seq))
+            .map(|(_, result)| result)
+    })
+}
+
+pub(super) fn has_pending_result() -> bool {
+    bridge::with_picker(|state| state.in_flight || state.result.is_some())
 }
 
 pub(super) fn reset_transient() {
     bridge::with_picker(|state| {
+        FETCH_SEQ.next();
         state.result = None;
         state.in_flight = false;
     });
@@ -204,7 +224,7 @@ pub(super) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
 /// Fetch the picked document on the single worker; the event thread
 /// only dispatches the completed buffer published here.
 pub(super) fn spawn_document_fetch(app: AndroidApp, uri: String, restore_hidden_state: bool) {
-    let seq = FETCH_SEQ.next();
+    let seq = begin_fetch();
     if fetch_worker()
         .send(FetchJob::Document {
             seq,
@@ -224,7 +244,7 @@ pub(super) fn spawn_document_fetch(app: AndroidApp, uri: String, restore_hidden_
 /// Fetch a library ROM on the single worker; same dispatch shape as documents.
 /// Reads through an owned path so the worker never borrows session storage.
 pub(super) fn spawn_library_fetch(path: std::path::PathBuf, id: String) {
-    let seq = FETCH_SEQ.next();
+    let seq = begin_fetch();
     if fetch_worker()
         .send(FetchJob::Library { seq, path, id })
         .is_err()
@@ -238,7 +258,11 @@ pub(super) fn spawn_library_fetch(path: std::path::PathBuf, id: String) {
 
 /// One attach per fetch: resolver, parsed URI, display name, and bytes
 /// share a single frame; the interned URI string is created once.
-fn fetch_document_bytes(app: &AndroidApp, uri: &str) -> Result<(Vec<u8>, Option<String>), String> {
+fn fetch_document_bytes(
+    app: &AndroidApp,
+    uri: &str,
+    seq: u64,
+) -> Result<(Vec<u8>, Option<String>), String> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     bridge::with_java_env(&vm, |env| {
         env.with_local_frame(32, |env| {
@@ -263,10 +287,15 @@ fn fetch_document_bytes(app: &AndroidApp, uri: &str) -> Result<(Vec<u8>, Option<
                 .l()?;
             let display_name =
                 read_display_name_inner(env, &resolver, &uri_object).unwrap_or_else(|error| {
+                    // Display metadata is optional. Do not let its exception
+                    // prevent the independent ROM stream from opening.
+                    if env.exception_check() {
+                        env.exception_clear();
+                    }
                     log::warn!("failed to read Android document display name for {uri}: {error:?}");
                     None
                 });
-            let bytes = read_stream_bytes_inner(env, &resolver, &uri_object)?;
+            let bytes = read_stream_bytes_inner(env, &resolver, &uri_object, seq)?;
             Ok::<_, jni::errors::Error>((bytes, display_name))
         })
     })
@@ -308,7 +337,7 @@ fn read_display_name_inner(
     if cursor.is_null() {
         return Ok(None);
     }
-    let read_result: jni::errors::Result<Option<String>> = (|| {
+    let mut read_result: jni::errors::Result<Option<String>> = (|| {
         if !env
             .call_method(&cursor, jni_str!("moveToFirst"), jni_sig!("()Z"), &[])?
             .z()?
@@ -342,6 +371,12 @@ fn read_display_name_inner(
         let value = value.trim();
         Ok((!value.is_empty()).then(|| value.to_string()))
     })();
+    if env.exception_check() {
+        env.exception_clear();
+        read_result = Err(read_result
+            .err()
+            .unwrap_or(jni::errors::Error::JavaException));
+    }
     let close_result = env.call_method(&cursor, jni_str!("close"), jni_sig!("()V"), &[]);
     let display_name = read_result?;
     close_result?;
@@ -352,6 +387,7 @@ fn read_stream_bytes_inner(
     env: &mut jni::Env<'_>,
     resolver: &JObject<'_>,
     uri_object: &JObject<'_>,
+    seq: u64,
 ) -> Result<Vec<u8>, jni::errors::Error> {
     let stream = env
         .call_method(
@@ -364,10 +400,14 @@ fn read_stream_bytes_inner(
     if stream.is_null() {
         return Err(jni::errors::Error::NullPtr("openInputStream returned null"));
     }
-    let buffer = env.new_byte_array(ROM_PICKER_BUFFER_CAPACITY)?;
     let mut bytes = Vec::new();
-    let read_result = (|| {
+    let mut read_result = (|| {
+        // Allocation can fail too: keep it inside the close-protected scope.
+        let buffer = env.new_byte_array(ROM_PICKER_BUFFER_CAPACITY)?;
         loop {
+            if !FETCH_SEQ.is_latest(seq) {
+                return Err(jni::errors::Error::NullPtr("ROM fetch cancelled"));
+            }
             let read = env
                 .call_method(
                     &stream,
@@ -380,6 +420,14 @@ fn read_stream_bytes_inner(
                 break;
             }
             if read == 0 {
+                // Force progress for providers that return zero without EOF.
+                let byte = env
+                    .call_method(&stream, jni_str!("read"), jni_sig!("()I"), &[])?
+                    .i()?;
+                if byte < 0 {
+                    break;
+                }
+                bytes.push(byte as u8);
                 continue;
             }
             // Copy only the bytes read, not the whole 64KB scratch.
@@ -389,15 +437,29 @@ fn read_stream_bytes_inner(
         }
         Ok::<(), jni::errors::Error>(())
     })();
+    if env.exception_check() {
+        env.exception_clear();
+        read_result = Err(read_result
+            .err()
+            .unwrap_or(jni::errors::Error::JavaException));
+    }
     let close_result = env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[]);
     read_result?;
     close_result?;
     Ok(bytes)
 }
 
+fn begin_fetch() -> u64 {
+    bridge::with_picker(|state| {
+        state.result = None;
+        state.in_flight = true;
+        FETCH_SEQ.next()
+    })
+}
+
 fn publish_result(result: RomPickerResult) {
     bridge::with_picker(|state| {
-        state.result = Some(result);
+        state.result = Some((FETCH_SEQ.next(), result));
         state.in_flight = false;
     });
     bridge::wake();

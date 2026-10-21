@@ -53,6 +53,48 @@ class MainActivityE2eTest {
         )
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun delayedDismissCannotAcknowledgeReplacementDialog() {
+        val activity = launchActivity()
+        val firstDismiss = AtomicReference<(() -> Unit)?>(null)
+        var oldAcks = 0
+        var newAcks = 0
+        lateinit var manager: DialogManager
+        runOnActivityThread(activity) {
+            manager = DialogManager(activity)
+            manager.show(
+                dialogTag = "audit-first",
+                contentDescription = "first",
+                presentation = DIALOG_PRESENTATION_FULL_SCREEN,
+                onDismiss = { oldAcks++ },
+            ) { dismiss -> firstDismiss.set(dismiss) }
+        }
+        try {
+            assertTrue(waitUntil(DIALOG_TIMEOUT_MS) { firstDismiss.get() != null })
+            runOnActivityThread(activity) {
+                // Dialog.dismiss queues its listener. Replace before that
+                // queued notification runs, on the very same UI turn.
+                requireNotNull(firstDismiss.get()).invoke()
+                manager.show(
+                    dialogTag = "audit-replacement",
+                    contentDescription = "replacement",
+                    presentation = DIALOG_PRESENTATION_FULL_SCREEN,
+                    onDismiss = { newAcks++ },
+                ) { _ -> }
+            }
+            // The old queued notification runs before this next UI turn.
+            runOnActivityThread(activity) {
+                assertEquals(1, oldAcks)
+                assertEquals(0, newAcks)
+                assertTrue(manager.isShowing("audit-replacement"))
+                manager.dismissForStop()
+                assertEquals(1, newAcks)
+            }
+        } finally {
+            runOnActivityThread(activity) { manager.dismissForStop() }
+        }
+    }
+
     @Suppress("DEPRECATION")
     @Test(timeout = TEST_TIMEOUT_MS)
     fun appLoadsGbcAndSupportsDrawerDialogsAndMenuActions() {

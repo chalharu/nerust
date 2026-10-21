@@ -33,6 +33,10 @@ impl<S: ScreenSource> DialogCoordinator<S> {
         self.controller.current_detail()
     }
 
+    pub(super) fn current_id(&self) -> Option<crate::error_dialog_controller::DialogRequestId> {
+        self.controller.current_id()
+    }
+
     /// Whether the settings dialog is up (source truth, never cached).
     pub(super) fn is_settings_open(&self) -> bool {
         self.source.is_settings_open()
@@ -65,12 +69,13 @@ impl<S: ScreenSource> DialogCoordinator<S> {
     /// auto-pause, then asks for the next batch. Takes the pass tick.
     pub(super) fn on_dismissed(
         &mut self,
+        id: crate::error_dialog_controller::DialogRequestId,
         queue: &mut (impl ModalSink + ModalSource),
         is_resumed: bool,
         tick: TickMetrics,
     ) -> DismissTransition {
         self.controller
-            .on_dismissed(queue, self.screen(is_resumed, tick))
+            .on_dismissed_for(id, queue, self.screen(is_resumed, tick))
     }
 
     /// Activity suspend kills transient UI: release the gate and requeue

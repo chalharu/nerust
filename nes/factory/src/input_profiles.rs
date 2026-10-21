@@ -35,13 +35,21 @@ impl InputSystemFactory for crate::NesFactory {
             (AttachmentId::new("nes.attachment.player2"), None),
         ])
     }
+}
 
-    fn create_split(
+impl crate::NesFactory {
+    pub(crate) fn create_split(
         &self,
         controllers: &ControllerCollection,
     ) -> Result<InputResources, CreateSplitError> {
         use nerust_nes_core::controller::NES_PORTS;
 
+        if controllers.len() > NES_PORTS.len() {
+            return Err(CreateSplitError::IncompatibleController {
+                controller: ProfileId::new("nes.standard_pad"),
+                slot: AttachmentId::new("nes.attachment.player2"),
+            });
+        }
         let mut field_map = std::collections::HashMap::new();
         for (idx, port) in NES_PORTS.iter().enumerate() {
             let Some(dev) = controllers.get(idx) else {
@@ -106,5 +114,14 @@ mod tests {
         assert!(buffer.downcast_ref::<NesInputBuffer>().is_some());
         let empty = ControllerCollection::new(vec![]);
         assert!(crate::NesFactory.create_split(&empty).is_err());
+        let extra = ControllerCollection::new(vec![
+            Box::new(StandardPad::default()),
+            Box::new(StandardPad::default()),
+            Box::new(StandardPad::default()),
+        ]);
+        assert!(matches!(
+            crate::NesFactory.create_split(&extra),
+            Err(CreateSplitError::IncompatibleController { .. })
+        ));
     }
 }

@@ -15,12 +15,13 @@ use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
 use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AuxOutcome {
     /// Close flag raised: drop the window.
     pub close: bool,
     /// History clear requested (history only).
     pub cleared: bool,
+    pub error: Option<String>,
 }
 
 /// Debug-drain port: batch take plus apply for one drain.
@@ -65,12 +66,18 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
         AuxOutcome {
             close: self.close_requested(),
             cleared: self.take_history_clear(),
+            error: None,
         }
     }
 
     /// Full render through the shared pump.
-    fn on_redraw(&mut self) {
-        super::focus::AuxRender::render(self);
+    fn on_redraw(&mut self) -> AuxOutcome {
+        let error = super::focus::AuxRender::render(self);
+        AuxOutcome {
+            close: self.close_requested(),
+            cleared: self.take_history_clear(),
+            error,
+        }
     }
 
     /// Rebuild the view from the bridge (debug/PPU only).
@@ -179,10 +186,20 @@ impl AuxRegistry {
     }
 
     /// Render the open window of this kind, if any.
-    pub(crate) fn render_kind(&mut self, kind: AuxKind) {
-        if let Some(entry) = self.entries.get_mut(&kind) {
-            entry.controller.on_redraw();
-        }
+    pub(crate) fn render_kind(&mut self, kind: AuxKind) -> Option<AuxOutcome> {
+        self.entries
+            .get_mut(&kind)
+            .map(|entry| entry.controller.on_redraw())
+    }
+
+    pub(crate) fn pump_deadlines(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        self.entries
+            .values_mut()
+            .filter_map(|entry| {
+                entry.controller.wake_due(now);
+                entry.controller.wake_deadline()
+            })
+            .min()
     }
 
     /// Drop the window of this kind, returning it for teardown.
@@ -345,6 +362,7 @@ pub(crate) mod test_double {
         pub drain_open: bool,
         pub debug_batch: Vec<DebugAction>,
         pub pending_settings: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
+        pub reg_target: Option<&'static str>,
     }
 
     impl StubAux {
@@ -359,6 +377,7 @@ pub(crate) mod test_double {
                 drain_open: false,
                 debug_batch: Vec::new(),
                 pending_settings: None,
+                reg_target: None,
             }
         }
     }
@@ -385,7 +404,9 @@ pub(crate) mod test_double {
         fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
             None
         }
-        fn render(&mut self) {}
+        fn render(&mut self) -> Option<String> {
+            None
+        }
     }
 
     impl AuxEvents for StubAux {
@@ -449,7 +470,7 @@ pub(crate) mod test_double {
                 dis_addr: None,
                 watch: None,
                 freeze: None,
-                reg_target: None,
+                reg_target: self.reg_target,
                 prev_rows: Arc::from([]),
                 ppu_open,
             })

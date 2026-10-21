@@ -24,7 +24,6 @@ pub(super) struct HistoryViewer {
 pub(super) struct ModalQueue {
     pub(super) manager: nerust_gui_shell::session::osd::OsdManager,
     pub(super) flight: Option<ModalFlight>,
-    pub(super) resume_after_modal: bool,
 }
 
 /// OSD service: layer sync plus history plus modal queue.
@@ -50,7 +49,6 @@ impl OsdService {
             modal: ModalQueue {
                 manager: nerust_gui_shell::session::osd::OsdManager::new(),
                 flight: None,
-                resume_after_modal: false,
             },
         }
     }
@@ -59,7 +57,6 @@ impl OsdService {
     pub(super) fn close_all(&mut self) {
         self.history.sync_key.clear();
         self.modal.flight.take();
-        self.modal.resume_after_modal = false;
     }
 
     /// Queued error batches awaiting a dialog (test read).

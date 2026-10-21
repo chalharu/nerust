@@ -47,7 +47,7 @@ pub(crate) struct AuxSurface {
     viewport_physical: (u32, u32),
     bounds: Size,
     compositor: Compositor,
-    surface: Surface,
+    surface: Option<Surface>,
     backend: Renderer,
     /// Last surface-configured size. Resize storms only relayout;
     /// the realloc happens in `render`, once per presented frame.
@@ -56,6 +56,7 @@ pub(crate) struct AuxSurface {
     should_close: Arc<AtomicBool>,
     cursor: mouse::Cursor,
     clipboard: Clipboard,
+    retry: nerust_frontend_kernel::retry::RenderRetry,
 }
 
 /// Why an aux window failed to open: which window plus the native error.
@@ -131,12 +132,13 @@ impl AuxSurface {
             bounds,
             compositor,
             backend: renderer,
-            surface,
+            surface: Some(surface),
             surface_size: viewport_physical,
             modifiers: iced::keyboard::Modifiers::default(),
             should_close,
             cursor: mouse::Cursor::default(),
             clipboard: Clipboard::unconnected(),
+            retry: Default::default(),
         })
     }
 
@@ -229,11 +231,20 @@ impl AuxSurface {
 
     /// Surface realloc, at most once per frame.
     pub(super) fn configure_surface(&mut self) {
-        if self.surface_size != self.viewport_physical {
-            let (width, height) = self.viewport_physical;
-            if width != 0 && height != 0 {
-                self.compositor
-                    .configure_surface(&mut self.surface, width, height);
+        let (width, height) = self.viewport_physical;
+        if width == 0 || height == 0 {
+            return;
+        }
+        if self.surface.is_none() {
+            self.surface = Some(self.compositor.create_surface(
+                Arc::clone(&self.window),
+                width,
+                height,
+            ));
+            self.surface_size = self.viewport_physical;
+        } else if self.surface_size != self.viewport_physical {
+            if let Some(surface) = self.surface.as_mut() {
+                self.compositor.configure_surface(surface, width, height);
             }
             self.surface_size = self.viewport_physical;
         }
@@ -258,16 +269,35 @@ impl AuxSurface {
         viewport: &Viewport,
         background_color: iced::Color,
         log_tag: &'static str,
-    ) {
+    ) -> Option<String> {
         if let Err(error) = self.compositor.present(
             &mut self.backend,
-            &mut self.surface,
+            self.surface.as_mut()?,
             viewport,
             background_color,
             || {},
         ) {
-            log::warn!("{log_tag} render present failed: {error}");
+            self.surface = None;
+            if self.retry.failed(std::time::Instant::now()) {
+                let detail =
+                    format!("{log_tag} render present failed; recreating with backoff: {error}");
+                log::error!("{detail}");
+                return Some(detail);
+            }
+        } else {
+            self.retry.succeeded();
         }
+        None
+    }
+
+    pub(super) fn retry_deadline(&self) -> Option<std::time::Instant> {
+        self.retry.deadline()
+    }
+    pub(super) fn render_ready(&self) -> bool {
+        self.retry.ready(std::time::Instant::now())
+    }
+    pub(super) fn retry_due(&mut self, now: std::time::Instant) -> bool {
+        self.retry.take_due(now)
     }
 
     /// Window-system id for program instance binding.

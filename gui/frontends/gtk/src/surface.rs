@@ -14,8 +14,7 @@ pub(crate) struct SurfaceCore {
     pub(crate) state: Rc<RefCell<State>>,
     pub(crate) osd: RefCell<super::osd::GtkOsd>,
     last_size: Cell<SurfaceSize>,
-    /// First realize done: resizes reattach only after this.
-    attached: Cell<bool>,
+    retry: RefCell<nerust_frontend_kernel::retry::RenderRetry>,
 }
 
 pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
@@ -44,7 +43,7 @@ impl SurfaceExtend for Surface {
             state,
             osd: RefCell::new(osd),
             last_size: Cell::new(SurfaceSize::new(0, 0)),
-            attached: Cell::new(false),
+            retry: RefCell::new(Default::default()),
         }));
         {
             let result = result.clone();
@@ -77,47 +76,69 @@ impl SurfaceExtend for Surface {
                 return true;
             }
         };
-        // Recreate the wgpu surface on resize; OpenGL is unaffected.
-        // First tick never reattaches: the realize path owns it.
-        if physical_size != s.last_size.get() {
-            s.last_size.set(physical_size);
-            if s.attached.get()
-                && let Some(surf) = s.window.surface()
-                && let Some(display) = gdk::Display::default()
-            {
-                super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                    let _ = s.renderer.borrow_mut().reattach(wh, dh, physical_size);
-                });
-            }
-        }
-
+        let now = std::time::Instant::now();
         state.swap_frame_buffer();
-
-        if state.take_renderer_reload_pending() {
-            log::info!("reinit physical={physical_size:?}");
-            if let Some(surf) = s.window.surface()
-                && let Some(display) = gdk::Display::default()
-                && let Some(profile) = state.render_profile()
-            {
+        let rebuild = state.renderer_reload_pending || !s.renderer.borrow().attached();
+        if s.retry.borrow().ready(now)
+            && (rebuild || physical_size != s.last_size.get())
+            && let Some(profile) = state.render_profile().cloned()
+        {
+            let result = s.window.surface().and_then(|surf| {
+                let display = gdk::Display::default()?;
                 super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                    s.renderer
-                        .borrow_mut()
-                        .realize(wh, dh, physical_size, profile);
-                });
-                // Fresh renderer holds no layer; re-push next sync.
-                s.osd.borrow_mut().invalidate();
+                    let mut renderer = s.renderer.borrow_mut();
+                    if rebuild {
+                        renderer.realize(wh, dh, physical_size, &profile)
+                    } else {
+                        renderer.reattach(wh, dh, physical_size)
+                    }
+                })
+            });
+            match result {
+                Some(Ok(())) => {
+                    s.last_size.set(physical_size);
+                    state.renderer_reload_pending = false;
+                }
+                failure => {
+                    if s.retry.borrow_mut().failed(now) {
+                        let detail = match failure {
+                            Some(Err(error)) => error.to_string(),
+                            _ => "native surface/display handles unavailable".into(),
+                        };
+                        state.session.report_external_error(
+                            nerust_gui_shell::session::notification::FailureOrigin::Host,
+                            format!("GTK renderer attach failed: {detail}"),
+                        );
+                    }
+                }
             }
-            s.attached.set(true);
         }
 
-        if let Some(fb) = state.frame_buffer() {
-            s.renderer.borrow_mut().render(fb, physical_size);
-        }
-
+        // Destination-generation invalidation and uploads precede the first
+        // frame on a fresh surface, including a same-size recovery attach.
         let surface = self.clone();
         s.osd
             .borrow_mut()
             .poll(&surface, &mut state, &s.renderer, &s.window);
+
+        if s.retry.borrow().ready(now)
+            && let Some(fb) = state.frame_buffer()
+        {
+            match s.renderer.borrow_mut().render(fb, physical_size) {
+                nerust_render_traits::renderer::RenderResult::Error => {
+                    if s.retry.borrow_mut().failed(now) {
+                        state.session.report_external_error(
+                            nerust_gui_shell::session::notification::FailureOrigin::Host,
+                            "GTK rendering failed; recreating renderer with backoff".into(),
+                        );
+                    }
+                }
+                nerust_render_traits::renderer::RenderResult::Presented => {
+                    s.retry.borrow_mut().succeeded()
+                }
+                _ => {}
+            }
+        }
 
         true
     }

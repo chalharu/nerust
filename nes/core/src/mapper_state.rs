@@ -1,4 +1,4 @@
-use crate::mirror::MirrorMode;
+use crate::{mirror::MirrorMode, persistence_error::PersistenceError};
 
 #[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug, Copy, Clone)]
 pub(crate) enum MappingMode {
@@ -40,15 +40,15 @@ impl MapperState {
         incoming: &MapperState,
         program_rom_len: usize,
         character_rom_len: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), PersistenceError> {
         if incoming.sram.len() != self.sram.len() || incoming.vram.len() != self.vram.len() {
-            return Err("mapper backing store length mismatch".into());
+            return Err(PersistenceError::MapperBackingLength);
         }
         if incoming.has_battery != self.has_battery {
-            return Err("mapper battery configuration mismatch".into());
+            return Err(PersistenceError::MapperBatteryConfiguration);
         }
         if incoming.character_mapping_mode != self.character_mapping_mode {
-            return Err("mapper character mapping mode mismatch".into());
+            return Err(PersistenceError::MapperCharacterMapping);
         }
 
         let program_page_count = program_rom_len >> 8;
@@ -80,13 +80,16 @@ impl Default for MapperState {
 fn validate_page_table_entry(
     page: Option<usize>,
     max_page_count: usize,
-    label: &str,
+    label: &'static str,
     index: usize,
-) -> Result<(), String> {
+) -> Result<(), PersistenceError> {
     if let Some(page) = page
         && page >= max_page_count
     {
-        return Err(format!("{label} page table entry {index} out of bounds"));
+        return Err(PersistenceError::PageTableBounds {
+            table: label,
+            index,
+        });
     }
     Ok(())
 }

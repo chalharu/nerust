@@ -27,13 +27,15 @@ fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
 }
 
 impl SessionHandle {
-    /// Last served touch overlay, keyed by the caller's revision.
-    /// Rebuilds only when the revision changes; otherwise serves the stored model.
+    /// Last served overlay, keyed by caller revision and the session topology epoch.
     pub fn touch_overlay_model_cached(&mut self, revision: u64) -> &TouchOverlayModel {
-        if self.input.touch_cache.rev != Some(revision) {
-            let model = build_touch_overlay(revision, &self.input.current_assignments);
+        if self.input.touch_cache.rev != Some(revision)
+            || self.input.touch_cache.topology_epoch != self.input.topology_epoch
+        {
+            let model = self.touch_overlay_model(revision);
             self.input.touch_cache = super::TouchCache {
                 rev: Some(revision),
+                topology_epoch: self.input.topology_epoch,
                 model,
             };
         }
@@ -41,7 +43,15 @@ impl SessionHandle {
     }
 
     pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
-        build_touch_overlay(revision, &self.input.current_assignments)
+        let cache = &self.input.touch_cache;
+        let served_revision = if cache.rev.is_none() {
+            revision
+        } else if cache.rev == Some(revision) && cache.topology_epoch == self.input.topology_epoch {
+            cache.model.revision
+        } else {
+            cache.model.revision.wrapping_add(1)
+        };
+        build_touch_overlay(served_revision, &self.input.current_assignments)
     }
 }
 
@@ -52,31 +62,36 @@ fn build_touch_overlay(
     assignments: &nerust_input_traits::InputAssignments,
 ) -> TouchOverlayModel {
     let mut controls = Vec::with_capacity(assignments.slots().len());
+    let mut seen = std::collections::HashSet::new();
     for (attachment_id, profile) in assignments.slots() {
         let Some(profile) = profile else {
             continue;
         };
-        let group = profile
+        let port_set = profile
             .port_sets()
             .iter()
-            .position(|set| set.ports.contains(attachment_id))
-            .and_then(|index| profile.port_groups().get(index));
-        let Some(group) = group else {
+            .find(|set| set.ports.contains(attachment_id));
+        let Some(port_set) = port_set else {
             continue;
         };
-        for info in *group {
-            let Some(control_id) = info.id.as_digital() else {
-                continue;
-            };
-            let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
-                continue;
-            };
-            controls.push(TouchControl {
-                attachment_id: *attachment_id,
-                control_id,
-                role,
-                label: info.label.to_string(),
-            });
+        for (&port, group) in port_set.ports.iter().zip(profile.port_groups()) {
+            for info in *group {
+                let Some(control_id) = info.id.as_digital() else {
+                    continue;
+                };
+                let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
+                    continue;
+                };
+                if !seen.insert((port, control_id)) {
+                    continue;
+                }
+                controls.push(TouchControl {
+                    attachment_id: port,
+                    control_id,
+                    role,
+                    label: info.label.to_string(),
+                });
+            }
         }
     }
     TouchOverlayModel { revision, controls }
@@ -325,6 +340,60 @@ mod tests {
     }
 
     #[test]
+    fn physical_key_conflicts_are_deterministic_and_analog_ids_do_not_alias() {
+        let slot = AttachmentId::new("test.slot");
+        let a = DigitalControlId::new("test.a");
+        let b = DigitalControlId::new("test.b");
+        let bindings = [
+            KeyboardBinding::new(
+                slot.as_str(),
+                PersistedControlId::analog(a.as_str()),
+                Key::KeyB,
+            ),
+            KeyboardBinding::new(
+                slot.as_str(),
+                PersistedControlId::digital(a.as_str()),
+                Key::KeyA,
+            ),
+            KeyboardBinding::new(
+                slot.as_str(),
+                PersistedControlId::digital(b.as_str()),
+                Key::KeyA,
+            ),
+        ];
+        for reverse in [false, true] {
+            let mut entries = vec![
+                ((slot, ControlId::digital(a)), 1),
+                ((slot, ControlId::digital(b)), 2),
+            ];
+            if reverse {
+                entries.reverse();
+            }
+            let fields = entries.into_iter().collect();
+            let mut result = HashMap::new();
+            let error = rebuild_input_map(&fields, &bindings, &mut result).unwrap_err();
+            assert_eq!(error.control, "test.b");
+            assert_eq!(result, HashMap::from([(Key::KeyA, 1)]));
+        }
+    }
+
+    #[test]
+    fn unrelated_fullscreen_apply_preserves_physical_key_state() {
+        let mut session = crate::session::test_util::test_session();
+        session.handle_keyboard_key(Key::KeyA, true);
+        let fullscreen = session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        session.set_fullscreen_default(!fullscreen).unwrap();
+        assert!(session.input.pressed_keys.contains(&Key::KeyA));
+        session.handle_keyboard_key(Key::KeyA, false);
+        assert!(!session.input.pressed_keys.contains(&Key::KeyA));
+    }
+
+    #[test]
     fn rebuild_input_map_reports_first_duplicate_for_caller_to_log() {
         use crate::session::input_map::DuplicateBinding;
         let attachment = AttachmentId::new("test.topology.slot");
@@ -395,6 +464,72 @@ mod tests {
         let expected = session.touch_overlay_model(42);
         assert_ne!(expected, before);
         assert_eq!(session.touch_overlay_model_cached(42), &expected);
+        assert_ne!(
+            expected.revision, before.revision,
+            "frontend must observe the topology change"
+        );
+    }
+
+    #[test]
+    fn topology_epoch_republishes_even_when_controls_are_equal() {
+        let mut session = crate::session::test_util::test_session();
+        let before = session.touch_overlay_model_cached(42).clone();
+        session.input.invalidate_topology();
+        let after = session.touch_overlay_model_cached(42).clone();
+        assert_eq!(before.controls, after.controls);
+        assert_ne!(before.revision, after.revision);
+        assert_eq!(session.touch_overlay_model_cached(42), &after);
+    }
+
+    #[test]
+    fn multi_port_overlay_uses_group_within_selected_port_set() {
+        #[derive(Debug)]
+        struct TwoPorts;
+        impl ControllerProfile for TwoPorts {
+            fn profile_id(&self) -> ProfileId {
+                ProfileId::new("two")
+            }
+            fn label(&self) -> &'static str {
+                "two"
+            }
+            fn port_sets(&self) -> &[PortSet] {
+                static PORTS: &[AttachmentId] = &[AttachmentId::new("p1"), AttachmentId::new("p2")];
+                static SETS: &[PortSet] = &[PortSet { ports: PORTS }];
+                SETS
+            }
+            fn port_groups(&self) -> &[&[ControlInfo]] {
+                static A: &[ControlInfo] = &[ControlInfo {
+                    id: ControlId::digital(DigitalControlId::new("a")),
+                    label: "A",
+                    kind: ControlKind::Digital,
+                    abstract_key: Some(AbstractKey::Button1),
+                }];
+                static B: &[ControlInfo] = &[ControlInfo {
+                    id: ControlId::digital(DigitalControlId::new("b")),
+                    label: "B",
+                    kind: ControlKind::Digital,
+                    abstract_key: Some(AbstractKey::Button2),
+                }];
+                static GROUPS: &[&[ControlInfo]] = &[A, B];
+                GROUPS
+            }
+        }
+        let primary_only =
+            InputAssignments::new(vec![(AttachmentId::new("p1"), Some(Rc::new(TwoPorts)))]);
+        let assignments = InputAssignments::new(vec![
+            (AttachmentId::new("p1"), Some(Rc::new(TwoPorts))),
+            (AttachmentId::new("p2"), Some(Rc::new(TwoPorts))),
+        ]);
+        let model = build_touch_overlay(0, &assignments);
+        assert_eq!(
+            build_touch_overlay(0, &primary_only),
+            model,
+            "a multi-port profile occupies all ports even when assigned only at its primary slot"
+        );
+        assert_eq!(model.controls.len(), 2);
+        assert_eq!(model.controls[0].control_id.as_str(), "a");
+        assert_eq!(model.controls[1].control_id.as_str(), "b");
+        assert_eq!(model.controls[1].role, TouchControlRole::FaceButton2);
     }
 
     #[test]

@@ -1,25 +1,23 @@
 mod builder;
+pub mod field;
 mod input_profiles;
 mod labels;
 mod settings;
 
 use std::rc::Rc;
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError, SystemDefaults,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-            SystemLoadOptions, SystemLoadOptionsSchema,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_gbc_settings::{GbcSettings, HardwareModel};
 use nerust_input_traits::{ControllerProfile, InputAssignments, InputSystemFactory};
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError, SystemDefaults,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{
+        DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        SystemLoadOptions, SystemLoadOptionsSchema,
+    },
+    settings::FactorySettingsView,
+};
 
 pub fn gbc_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_gbc_device::gbc_device_controller_profiles()
@@ -135,7 +133,7 @@ impl SystemLoadOptionsSchema for GbcLoadOptionsSchema {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::{CoreFactory, SystemDefaults, load::MediaObject};
+    use nerust_system_traits::factory::{CoreFactory, SystemDefaults, load::MediaObject};
 
     use super::*;
 

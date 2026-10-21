@@ -32,6 +32,32 @@ impl StandardPad {
     pub fn new() -> Self {
         Self { cached: 0x03FF }
     }
+
+    /// Static KEYINPUT wiring; no controller runtime is needed by the GBA bus.
+    pub fn input_fields(port: &dyn Port) -> Vec<FieldEntry> {
+        let attachment = port.attachment_id();
+        [
+            ("gba.control.a", FIELD_A),
+            ("gba.control.b", FIELD_B),
+            ("gba.control.select", FIELD_SELECT),
+            ("gba.control.start", FIELD_START),
+            ("gba.control.right", FIELD_RIGHT),
+            ("gba.control.left", FIELD_LEFT),
+            ("gba.control.up", FIELD_UP),
+            ("gba.control.down", FIELD_DOWN),
+            ("gba.control.l", FIELD_L),
+            ("gba.control.r", FIELD_R),
+        ]
+        .into_iter()
+        .map(|(id, field)| {
+            FieldEntry::new(
+                attachment,
+                ControlId::digital(DigitalControlId::new(id)),
+                field,
+            )
+        })
+        .collect()
+    }
 }
 
 impl Default for StandardPad {
@@ -61,26 +87,7 @@ impl Controller for StandardPad {
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
 
     fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
-        let attachment = port.attachment_id();
-        let digital = |id: &'static str, field: usize| {
-            FieldEntry::new(
-                attachment,
-                ControlId::digital(DigitalControlId::new(id)),
-                field,
-            )
-        };
-        vec![
-            digital("gba.control.a", FIELD_A),
-            digital("gba.control.b", FIELD_B),
-            digital("gba.control.select", FIELD_SELECT),
-            digital("gba.control.start", FIELD_START),
-            digital("gba.control.right", FIELD_RIGHT),
-            digital("gba.control.left", FIELD_LEFT),
-            digital("gba.control.up", FIELD_UP),
-            digital("gba.control.down", FIELD_DOWN),
-            digital("gba.control.l", FIELD_L),
-            digital("gba.control.r", FIELD_R),
-        ]
+        Self::input_fields(port)
     }
 }
 

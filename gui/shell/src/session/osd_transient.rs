@@ -91,7 +91,7 @@ pub(crate) fn falls_back_to_modal(
 }
 
 /// Narrow display policy for transient rows; decision code takes this, never the settings surface.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransientPolicy {
     pub info_enabled: bool,
     pub warning_enabled: bool,
@@ -159,6 +159,52 @@ pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Rc<str
 }
 
 impl TransientQueue {
+    /// Re-project retained domain messages under current presentation policy.
+    pub(crate) fn refresh(
+        &mut self,
+        policy: &TransientPolicy,
+        language: nerust_settings_core::model::language::AppLanguage,
+        now: Instant,
+        channel: FrameChannel,
+    ) -> Vec<(
+        crate::session::notification::Message,
+        u32,
+        NotificationLevel,
+    )> {
+        let renderer = crate::session::notification::NotificationRenderer { language };
+        let mut modal = Vec::new();
+        let mut update = |item: &mut OsdItem| {
+            if !policy.enabled(item.level) {
+                return false;
+            }
+            item.base = renderer.render_message(&item.message).into();
+            item.row = counted_row(
+                &item.base,
+                item.count,
+                policy.color(item.level),
+                Rc::clone(&item.row.tag),
+            );
+            item.duration = policy.duration(item.level);
+            item.deadline = item.deadline.min(now + item.duration);
+            if channel == FrameChannel::Unpresented
+                || (item.level == NotificationLevel::Error && policy.error_modal)
+            {
+                if item.level != NotificationLevel::Info {
+                    modal.push((item.message.clone(), item.count, item.level));
+                }
+                return false;
+            }
+            true
+        };
+        if let Some(current) = self.current.as_mut()
+            && !update(current)
+        {
+            self.current = None;
+        }
+        self.pending.retain_mut(&mut update);
+        modal
+    }
+
     /// Lowest-severity index to drop on overflow, never an Error while a lower severity row exists.
     /// Severity rank primary, queue position secondary.
     fn victim_index(
@@ -317,7 +363,14 @@ impl TransientQueue {
         if !need {
             return false;
         }
-        if let Some(mut item) = self.pending.pop_front() {
+        // Errors outrank queued information even before the first row is shown.
+        let next = self
+            .pending
+            .iter()
+            .position(|item| item.level == NotificationLevel::Error)
+            .and_then(|index| self.pending.remove(index))
+            .or_else(|| self.pending.pop_front());
+        if let Some(mut item) = next {
             // Fresh full duration from the moment it shows.
             item.deadline = now + item.duration;
             self.current = Some(item);
@@ -487,6 +540,24 @@ mod tests {
         let rows = queue.rows();
         assert_eq!(rows.len(), 1);
         assert!(rows[0].text.contains("×2"));
+    }
+
+    #[test]
+    fn error_is_promoted_before_already_queued_info() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Info, "info", now));
+        queue.route_row(test_item(NotificationLevel::Error, "boom", now));
+        assert!(queue.poll(now));
+        assert_eq!(
+            queue.current.as_ref().unwrap().level,
+            NotificationLevel::Error
+        );
+        assert!(queue.poll(now + Duration::from_millis(2_001)));
+        assert_eq!(
+            queue.current.as_ref().unwrap().level,
+            NotificationLevel::Info
+        );
     }
 
     #[test]

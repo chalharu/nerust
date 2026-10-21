@@ -82,7 +82,7 @@ impl RenderSync {
                     size.width,
                     size.height
                 );
-                self.rebuild_renderer(window, session, gpu_factory, osd, shell);
+                self.rebuild_renderer(window, session, gpu_factory, osd, shell)?;
             }
             return Ok(());
         }
@@ -105,9 +105,8 @@ impl RenderSync {
             size.width,
             size.height
         );
-        self.rebuild_renderer(window.clone(), session, gpu_factory, osd, shell);
-        self.window = Some(window);
-        Ok(())
+        self.window = Some(window.clone());
+        self.rebuild_renderer(window, session, gpu_factory, osd, shell)
     }
 
     pub(super) fn rebuild_renderer(
@@ -117,7 +116,7 @@ impl RenderSync {
         gpu_factory: &Rc<dyn PipelineFactory>,
         osd: &mut AndroidOsd,
         shell: &mut NativeShellState,
-    ) {
+    ) -> Result<(), String> {
         let size = window.inner_size();
         log::info!(
             "rebuild_renderer: initializing renderer for {}x{}",
@@ -128,15 +127,15 @@ impl RenderSync {
         let vsync = session.settings_snapshot().local.video.presentation.vsync;
         let raw_window_handle = window
             .window_handle()
-            .expect("failed to get window handle")
+            .map_err(|error| format!("failed to get window handle: {error}"))?
             .as_raw();
         let raw_display_handle = window
             .display_handle()
-            .expect("failed to get display handle")
+            .map_err(|error| format!("failed to get display handle: {error}"))?
             .as_raw();
         let Some(render_profile) = session.render_profile().cloned() else {
             log::warn!("rebuild_renderer: no emulation core active");
-            return;
+            return Ok(());
         };
         let config = RendererConfig {
             render_profile,
@@ -161,9 +160,10 @@ impl RenderSync {
             }
             Err(e) => {
                 log::error!("failed to initialize Android renderer: {e}");
-                None
+                return Err(format!("failed to initialize Android renderer: {e}"));
             }
         };
+        Ok(())
     }
 
     pub(super) fn request_redraw(&mut self, shell: &mut NativeShellState) {

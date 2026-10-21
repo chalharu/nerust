@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use nerust_core_traits::factory::descriptor::{
+use nerust_gbc_settings::{GbcSettings, HardwareModel, RtcSyncMode};
+use nerust_system_traits::factory::descriptor::{
     SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
 };
 use strum::{Display, EnumIter, EnumString};
-
-use crate::{GbcSettings, HardwareModel, RtcSyncMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, Display, EnumIter)]
 pub enum GbcSettingField {
@@ -25,11 +24,19 @@ impl GbcSettingField {
     }
 
     pub fn options(&self) -> Arc<[SystemSettingsChoiceOption]> {
-        let list = match self {
-            Self::SystemHardwareModel => hardware_model_options(),
-            Self::SystemRtcSync => rtc_sync_options(),
+        use GbcSettingChoice::*;
+        let choices: &[GbcSettingChoice] = match self {
+            Self::SystemHardwareModel => &[Dmg0, Dmg, CgbC, CgbD, Agb],
+            Self::SystemRtcSync => &[Off, SaveDataOnly, SystemTime],
         };
-        Arc::from(list)
+        choices
+            .iter()
+            .map(|choice| SystemSettingsChoiceOption {
+                id: SystemSettingsChoiceId(std::borrow::Cow::Owned(choice.to_string())),
+                label_id: choice.label_id(),
+            })
+            .collect::<Vec<_>>()
+            .into()
     }
 
     pub fn label_id(&self) -> &'static str {
@@ -92,33 +99,13 @@ impl From<HardwareModel> for GbcSettingChoice {
 }
 
 impl From<RtcSyncMode> for GbcSettingChoice {
-    fn from(v: RtcSyncMode) -> Self {
-        match v {
+    fn from(value: RtcSyncMode) -> Self {
+        match value {
             RtcSyncMode::Off => Self::Off,
             RtcSyncMode::SaveDataOnly => Self::SaveDataOnly,
             RtcSyncMode::SystemTime => Self::SystemTime,
         }
     }
-}
-
-fn build_choice_options(choices: &[GbcSettingChoice]) -> Vec<SystemSettingsChoiceOption> {
-    choices
-        .iter()
-        .map(|c| SystemSettingsChoiceOption {
-            id: SystemSettingsChoiceId(std::borrow::Cow::Owned(c.to_string())),
-            label_id: c.label_id(),
-        })
-        .collect()
-}
-
-fn hardware_model_options() -> Vec<SystemSettingsChoiceOption> {
-    use GbcSettingChoice::*;
-    build_choice_options(&[Dmg0, Dmg, CgbC, CgbD, Agb])
-}
-
-fn rtc_sync_options() -> Vec<SystemSettingsChoiceOption> {
-    use GbcSettingChoice::*;
-    build_choice_options(&[Off, SaveDataOnly, SystemTime])
 }
 
 #[cfg(test)]
@@ -138,17 +125,11 @@ mod tests {
 
     #[test]
     fn choice_ids_are_unique() {
-        let all = [
-            GbcSettingChoice::Dmg0,
-            GbcSettingChoice::Dmg,
-            GbcSettingChoice::CgbC,
-            GbcSettingChoice::CgbD,
-            GbcSettingChoice::Agb,
-            GbcSettingChoice::Off,
-            GbcSettingChoice::SaveDataOnly,
-            GbcSettingChoice::SystemTime,
-        ];
-        let ids: Vec<String> = all.iter().map(|c| c.to_string()).collect();
+        use GbcSettingChoice::*;
+        let ids: Vec<_> = [Dmg0, Dmg, CgbC, CgbD, Agb, Off, SaveDataOnly, SystemTime]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
         let mut dedup = ids.clone();
         dedup.sort();
         dedup.dedup();
@@ -157,7 +138,7 @@ mod tests {
 
     #[test]
     fn field_label_ids_are_unique() {
-        let labels: Vec<&str> = GbcSettingField::iter().map(|f| f.label_id()).collect();
+        let labels: Vec<_> = GbcSettingField::iter().map(|f| f.label_id()).collect();
         let mut dedup = labels.clone();
         dedup.sort();
         dedup.dedup();
@@ -167,37 +148,37 @@ mod tests {
     #[test]
     fn options_returns_non_empty_for_each_field() {
         for field in GbcSettingField::iter() {
-            let opts = field.options();
-            assert!(!opts.is_empty(), "field {field} has no options");
+            assert!(!field.options().is_empty(), "field {field} has no options");
         }
     }
 
     #[test]
-    fn current_choice_matches_rtc_system_time() {
-        let mut s = GbcSettings::default();
-        s.set_rtc_sync(RtcSyncMode::SystemTime);
-        let c = GbcSettingField::SystemRtcSync.current_choice(&s);
-        assert_eq!(c.as_str(), "system_time");
-    }
-
-    #[test]
-    fn current_choice_matches_hardware_model() {
+    fn current_choice_matches_settings() {
         let mut settings = GbcSettings::default();
+        settings.set_rtc_sync(RtcSyncMode::SystemTime);
         settings.core.hardware_model = HardwareModel::Agb;
-        let choice = GbcSettingField::SystemHardwareModel.current_choice(&settings);
-        assert_eq!(choice.as_str(), "agb");
+        assert_eq!(
+            GbcSettingField::SystemRtcSync
+                .current_choice(&settings)
+                .as_str(),
+            "system_time"
+        );
+        assert_eq!(
+            GbcSettingField::SystemHardwareModel
+                .current_choice(&settings)
+                .as_str(),
+            "agb"
+        );
     }
 
     #[test]
     fn from_rtc_sync_mode_maps_all_variants() {
-        assert_eq!(GbcSettingChoice::from(RtcSyncMode::Off).to_string(), "off");
-        assert_eq!(
-            GbcSettingChoice::from(RtcSyncMode::SaveDataOnly).to_string(),
-            "save_data_only"
-        );
-        assert_eq!(
-            GbcSettingChoice::from(RtcSyncMode::SystemTime).to_string(),
-            "system_time"
-        );
+        for (value, text) in [
+            (RtcSyncMode::Off, "off"),
+            (RtcSyncMode::SaveDataOnly, "save_data_only"),
+            (RtcSyncMode::SystemTime, "system_time"),
+        ] {
+            assert_eq!(GbcSettingChoice::from(value).to_string(), text);
+        }
     }
 }
