@@ -147,13 +147,10 @@ impl WindowRuntime {
 
     fn apply_aux_outcome(&mut self, kind: AuxKind, outcome: crate::aux::registry::AuxOutcome) {
         if let Some(detail) = outcome.error {
-            self.host.session_mut().report_external_error(
-                nerust_gui_shell::session::notification::FailureOrigin::Host,
-                detail,
-            );
+            self.host.report_host_error(detail);
         }
         if outcome.cleared {
-            self.host.session_mut().clear_notification_history();
+            self.host.clear_history();
         }
         if !outcome.close {
             return;

@@ -109,7 +109,7 @@ mod tests {
         assert!(!host.chrome.title_same("nerust"));
         let tick = ctx.tick();
         host.refresh_window_title(&tick);
-        let title = host.session_mut().window_title_cached(&tick).to_owned();
+        let title = host.cached_title(&tick);
         assert!(host.chrome.title_same(&title));
     }
 }

@@ -83,13 +83,10 @@ impl HostState {
 
     /// Title-only gate over the cached session title: one format per change.
     pub(crate) fn refresh_window_title(&mut self, tick: &TickMetrics) {
-        if self
-            .chrome
-            .title_same(self.session.window_title_cached(tick))
-        {
+        let title = self.cached_title(tick);
+        if self.chrome.title_same(&title) {
             return;
         }
-        let title = self.session.window_title_cached(tick).to_owned();
         self.chrome.push_title(title.clone());
         self.push_title(&title);
     }
@@ -200,10 +197,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let ctx = host.frame_ctx();
-        let title = host
-            .session_mut()
-            .window_title_cached(&ctx.tick())
-            .to_owned();
+        let title = host.cached_title(&ctx.tick());
         assert!(!host.chrome.title_same(&title));
         host.refresh_window_title(&ctx.tick());
         assert!(host.chrome.title_same(&title));
@@ -218,10 +212,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_chrome(&ctx, true);
         assert_eq!(support.menu.updates().len(), 1);
-        let title = host
-            .session_mut()
-            .window_title_cached(&ctx.tick())
-            .to_owned();
+        let title = host.cached_title(&ctx.tick());
         assert!(host.chrome.title_same(&title));
     }
 
@@ -253,10 +244,7 @@ mod tests {
         // Fresh shell just stamped the title clock, so an immediate
         // refresh stays gated until the interval elapses.
         host.maybe_refresh_window_title(&ctx, now);
-        let title = host
-            .session_mut()
-            .window_title_cached(&ctx.tick())
-            .to_owned();
+        let title = host.cached_title(&ctx.tick());
         assert!(!host.chrome.title_same(&title));
     }
 }
