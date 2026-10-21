@@ -20,7 +20,6 @@ use nerust_core_traits::{
     identity::SystemIdentity,
 };
 use nerust_emu_thread::{ConsoleMetrics, EmuThread, OperationError};
-use nerust_input_traits::{AttachmentId, ControlId};
 use nerust_render_traits::{FrameBuffer, PixelFormat, VideoFrameFormat, VideoRenderProfile};
 use nerust_system_traits::factory::{CoreParts, load::MediaObject};
 
