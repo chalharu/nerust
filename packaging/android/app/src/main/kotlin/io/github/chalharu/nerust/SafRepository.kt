@@ -102,6 +102,24 @@ class SafRepository(private val context: Context) : AutoCloseable {
         writeSessions.close()
     }
 
+    /** Delete same-name markers older than a fresh commit, so listings stay O(files). */
+    private fun sweepSupersededMarkers(directory: DocumentFile, name: String, order: String) {
+        for (marker in directory.listFiles()) {
+            val markerName = marker.name
+            if (markerName == null || !markerName.startsWith(PREFIX) || !markerName.endsWith(".commit")) continue
+            if (markerName == "$PREFIX$order.commit") continue
+            try {
+                val raw = readCommitMarker(marker) ?: continue
+                val record = JSONObject(raw)
+                if (isSupersededMarker(record.optString("name"), record.optString("order"), name, order)) {
+                    marker.delete()
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "Ignoring unsweepable SAF marker", error)
+            }
+        }
+    }
+
     private fun parent(
         treeUri: String,
         relativePath: String,
@@ -196,6 +214,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
             val output = durableOutput(marker.uri)
                 ?: throw java.io.IOException("missing commit stream")
             output.use { it.write(record.toByteArray(Charsets.UTF_8)); it.flush() }
+            sweepSupersededMarkers(directory, name, order)
             true
         } catch (error: Exception) {
             runCatching { marker.delete() }
@@ -243,3 +262,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
     private val readSessions = SafReadSessions()
     private val writeSessions = SafWriteSessions()
 }
+
+/** Sweep predicate: same name with a strictly older order. Orders sort lexicographically. */
+internal fun isSupersededMarker(recordName: String, recordOrder: String, name: String, order: String): Boolean =
+    recordName == name && recordOrder < order
