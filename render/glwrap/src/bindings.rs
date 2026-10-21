@@ -1,8 +1,10 @@
 //! Context-local entry points. Constants/types come from `gl`; its global loader is never used.
 #![allow(non_snake_case)]
+use ::gl::types::{
+    GLbitfield, GLboolean, GLchar, GLenum, GLfloat, GLint, GLsizei, GLsizeiptr, GLubyte, GLuint,
+};
 pub use ::gl::*;
 use std::{cell::RefCell, ffi::c_void, rc::Rc};
-use types::*;
 
 thread_local! {
     static CURRENT: RefCell<Option<Rc<Table>>> = const { RefCell::new(None) };

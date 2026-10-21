@@ -131,40 +131,54 @@ class SafRepository(private val context: Context) : AutoCloseable {
     private fun generations(files: Array<DocumentFile>): Map<String, Generation> {
         val byName = files.associateBy { it.name }
         val result = mutableMapOf<String, Generation>()
-        for (marker in files.filter { it.name?.let { name -> name.startsWith(PREFIX) && name.endsWith(".commit") } == true }) {
+        for (marker in commitMarkers(files)) {
             try {
-                val raw = context.contentResolver.openInputStream(marker.uri)?.use {
-                    val bytes = ByteArray(4097)
-                    var used = 0
-                    while (used < bytes.size) {
-                        val count = it.read(bytes, used, bytes.size - used)
-                        if (count < 0) break
-                        if (count == 0) throw java.io.IOException("zero marker read")
-                        used += count
-                    }
-                    require(used <= 4096)
-                    String(bytes, 0, used, Charsets.UTF_8)
-                } ?: continue
-                val record = JSONObject(raw)
-                require(record.getInt("version") == 1 && record.getBoolean("complete"))
-                require(record.has("data") && record.getLong("size") >= 0)
-                val name = record.getString("name")
-                val order = record.getString("order")
-                val data = if (record.isNull("data")) null else {
-                    val file = byName[record.getString("data")] ?: continue
-                    // Null SIZE is unknown, not an empty file. Verify at EOF on read.
-                    val length = knownSize(file)
-                    if (length != null && length != record.getLong("size")) continue
-                    file
-                }
-                if (result[name]?.order?.let { it >= order } != true) {
-                    result[name] = Generation(order, data, record.getLong("size"))
+                val raw = readCommitMarker(marker) ?: continue
+                val (name, generation) = parseGeneration(raw, byName) ?: continue
+                if (result[name]?.order?.let { it >= generation.order } != true) {
+                    result[name] = generation
                 }
             } catch (error: Exception) {
                 Log.w(TAG, "Ignoring incomplete SAF commit", error)
             }
         }
         return result
+    }
+
+    private fun commitMarkers(files: Array<DocumentFile>): List<DocumentFile> =
+        files.filter { it.name?.let { name -> name.startsWith(PREFIX) && name.endsWith(".commit") } == true }
+
+    private fun readCommitMarker(marker: DocumentFile): String? {
+        val stream = context.contentResolver.openInputStream(marker.uri) ?: return null
+        return stream.use {
+            val bytes = ByteArray(4097)
+            var used = 0
+            while (used < bytes.size) {
+                val count = it.read(bytes, used, bytes.size - used)
+                if (count < 0) break
+                if (count == 0) throw java.io.IOException("zero marker read")
+                used += count
+            }
+            require(used <= 4096)
+            String(bytes, 0, used, Charsets.UTF_8)
+        }
+    }
+
+    private fun parseGeneration(raw: String, byName: Map<String?, DocumentFile>): Pair<String, Generation>? {
+        val record = JSONObject(raw)
+        require(record.getInt("version") == 1 && record.getBoolean("complete"))
+        require(record.has("data") && record.getLong("size") >= 0)
+        val name = record.getString("name")
+        val order = record.getString("order")
+        val size = record.getLong("size")
+        val data = if (record.isNull("data")) null else {
+            val file = byName[record.getString("data")] ?: return null
+            // Null SIZE is unknown, not an empty file. Verify at EOF on read.
+            val length = knownSize(file)
+            if (length != null && length != size) return null
+            file
+        }
+        return name to Generation(order, data, size)
     }
 
     private fun publish(directory: DocumentFile, name: String, data: String?, size: Long): Boolean {

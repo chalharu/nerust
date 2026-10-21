@@ -7,7 +7,8 @@ use x11_dl::xlib;
 
 static LOCK: Mutex<()> = Mutex::new(());
 pub(crate) fn lock() -> MutexGuard<'static, ()> {
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 pub(crate) struct TestWindow {

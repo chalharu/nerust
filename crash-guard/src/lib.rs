@@ -70,10 +70,12 @@ impl Drop for HookGuard {
         let _install = can_restore.then(|| {
             INSTALL_LOCK
                 .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
         });
         let previous = {
-            let mut hooks = HOOKS.lock().unwrap_or_else(|poison| poison.into_inner());
+            let mut hooks = HOOKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             hooks
                 .registrations
                 .retain(|entry| !Arc::ptr_eq(entry, &self.registration));
@@ -134,23 +136,27 @@ fn install_erased(
     });
     let _install = INSTALL_LOCK
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let needs_install = HOOKS
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .previous
         .is_none();
     if needs_install {
         let previous: Hook = Arc::from(panic::take_hook());
         {
-            let mut hooks = HOOKS.lock().unwrap_or_else(|poison| poison.into_inner());
+            let mut hooks = HOOKS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             hooks.previous = Some(Arc::clone(&previous));
             hooks.registrations.push(Arc::clone(&registration));
         }
         panic::set_hook(Box::new(move |info| {
             let thread = std::thread::current().id();
             let registrations = {
-                let hooks = HOOKS.lock().unwrap_or_else(|poison| poison.into_inner());
+                let hooks = HOOKS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 hooks
                     .registrations
                     .iter()
@@ -170,7 +176,7 @@ fn install_erased(
     } else {
         HOOKS
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .registrations
             .push(Arc::clone(&registration));
     }

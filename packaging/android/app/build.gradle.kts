@@ -88,6 +88,7 @@ kotlin {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     val documentFileVersion = "1.1.0"
+    val junitVersion = "4.13.2"
     val lifecycleVersion = "2.11.0"
 
     implementation(composeBom)
@@ -98,11 +99,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel:$lifecycleVersion")
     implementation("androidx.savedstate:savedstate:1.5.0")
 
-    testImplementation("junit:junit:4.13.2")
+    testImplementation("junit:junit:$junitVersion")
 
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:rules:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
-    androidTestImplementation("junit:junit:4.13.2")
+    androidTestImplementation("junit:junit:$junitVersion")
 }

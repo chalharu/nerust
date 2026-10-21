@@ -390,7 +390,8 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
             });
         }
     }
-    std::mem::forget(guard);
+    // Ownership moves to the caller as a raw id; the guard must not delete it.
+    let _retained = std::mem::ManuallyDrop::new(guard);
     Ok(shader)
 }
 
