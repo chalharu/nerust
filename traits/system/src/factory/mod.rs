@@ -34,6 +34,9 @@ pub enum FactoryError {
 }
 
 /// Session resources assembled outside the core execution contract.
+/// `gui_input`, `field_map`, and the core's receiver are built together in one
+/// typed split: map indices are valid for the paired buffer by construction.
+/// Never mix parts from different assemblies.
 pub struct CoreParts {
     pub core: Box<dyn nerust_core_traits::ConsoleCore>,
     pub audio: Box<dyn AudioBackend>,
