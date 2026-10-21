@@ -49,7 +49,7 @@ impl SaveStateHeader {
 /// Wraps core state bytes with a `SaveStateHeader`. Allocates a new `Vec`
 /// with the header prepended. This is a cold path (save/load, not per-frame).
 pub fn save_state_with_header(core_state: &[u8]) -> Vec<u8> {
-    let header = SaveStateHeader::new(&core_state);
+    let header = SaveStateHeader::new(core_state);
     let mut buf = Vec::with_capacity(SAVE_STATE_HEADER_SIZE + core_state.len());
     buf.extend_from_slice(&header.encode());
     buf.extend_from_slice(&core_state);
