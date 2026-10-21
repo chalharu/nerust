@@ -218,15 +218,17 @@ impl TransientQueue {
                 NotificationLevel::Error => 2,
             }
         }
-        let position = |index: usize| match edge {
-            VictimEdge::Oldest => index,
-            VictimEdge::Newest => usize::MAX - index,
-        };
+        // Lowest severity evicts first; ties break toward the chosen edge.
         pending
             .iter()
             .enumerate()
             .filter(|(_, item)| item.level != NotificationLevel::Error)
-            .min_by_key(|(index, item)| (rank(item.level), position(*index)))
+            .min_by(|(ai, a), (bi, b)| {
+                rank(a.level).cmp(&rank(b.level)).then(match edge {
+                    VictimEdge::Oldest => ai.cmp(bi),
+                    VictimEdge::Newest => bi.cmp(ai),
+                })
+            })
             .map(|(index, _)| index)
     }
 
