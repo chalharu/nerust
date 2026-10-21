@@ -29,18 +29,20 @@ pub(crate) enum MapperRestore {
 pub(crate) struct PersistenceBinder;
 
 impl PersistenceBinder {
-    /// Restore persistence on a parked candidate before it becomes the live runtime.
-    pub(crate) fn prepare(
+    /// Single wiring entry: optional exporter, path, and restore mode.
+    /// Load path passes the parked candidate with `Load`; settings passes `None`/live.
+    pub(crate) fn bind_with(
         session: &mut SessionHandle,
-        exporter: &dyn StateExporter,
+        exporter: Option<&dyn StateExporter>,
         rom_path: Option<&Path>,
+        mapper_restore: MapperRestore,
     ) {
         let setup = setup_persistence(
             &session.settings.manager,
             &mut session.media.persistence,
-            Some(exporter),
+            exporter,
             rom_path,
-            MapperRestore::Load,
+            mapper_restore,
         );
         session.note_persistence_setup(setup);
     }
@@ -50,7 +52,15 @@ impl PersistenceBinder {
         rom_path: Option<&Path>,
         mapper_restore: MapperRestore,
     ) {
-        let setup = session.setup_persistence(rom_path, mapper_restore);
+        let exporter = session.emu.exporter().ok();
+        // Reborrow after the exporter probe ends.
+        let setup = setup_persistence(
+            &session.settings.manager,
+            &mut session.media.persistence,
+            exporter,
+            rom_path,
+            mapper_restore,
+        );
         session.note_persistence_setup(setup);
     }
 }

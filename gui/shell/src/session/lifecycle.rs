@@ -8,7 +8,7 @@ use crate::{
     session::{
         SessionError, SessionHandle,
         osd::{OsdManager, PumpReport, PushInput},
-        persistence_setup::PersistenceBinder,
+        persistence_setup::{MapperRestore, PersistenceBinder},
     },
 };
 
@@ -92,7 +92,12 @@ impl SessionHandle {
             }
             return Err(error.into());
         }
-        PersistenceBinder::prepare(self, &candidate.emu_core, media.native_path());
+        PersistenceBinder::bind_with(
+            self,
+            Some(&candidate.emu_core),
+            media.native_path(),
+            MapperRestore::Load,
+        );
         self.publish_runtime(super::ActiveRuntime::from(candidate));
 
         self.remember_last_successful_rom_directory(media.native_path());
