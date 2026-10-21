@@ -87,55 +87,53 @@ pub struct StoredImages {
     pub fresh: bool,
 }
 
-/// Always-live surface: playback, frame, audio, and the paused image cache.
-/// Frontends hold `&dyn LiveCore`; debug traffic uses [`LiveDebugPort`].
-pub trait LiveCore: LiveDebugPort {
-    /// Playback leg.
+/// Narrow playback leg; fakes depend on this, never the full core.
+pub trait PlaybackPort {
     fn pause(&self) -> Result<(), OperationError>;
-    /// Playback leg.
     fn resume(&self) -> Result<(), OperationError>;
-    /// Playback leg.
     fn reset(&self) -> Result<(), OperationError>;
-    /// Playback leg.
     fn load(
         &self,
         media: &MediaObject,
         core_options: Option<Box<dyn CoreOptions>>,
     ) -> Result<(), OperationError>;
-    /// Playback leg.
     fn unload(&self) -> Result<(), OperationError>;
-    /// Playback leg.
     fn metrics(&self) -> ConsoleMetrics;
-    /// Playback leg.
     fn tick_snapshot(&self) -> TickSnapshot;
     /// Lock-free pause flag: per-frame image gates read this instead of locking `metrics()`.
     fn is_paused(&self) -> bool {
         self.tick_snapshot().paused
     }
-    /// Frame leg.
+}
+
+/// Narrow frame leg; fakes depend on this, never the full core.
+pub trait FramePort {
     fn render_profile(&self) -> &VideoRenderProfile;
-    /// Frame leg.
     fn swap_frame_buffer(&mut self);
-    /// Frame leg.
     fn frame_buffer(&self) -> &FrameBuffer;
-    /// Frame leg.
     fn clear_display(&mut self);
-    /// Frame leg.
     fn apply_presentation(
         &mut self,
         profile: VideoRenderProfile,
         palette: Box<[u32]>,
     ) -> Result<(), OperationError>;
-    /// Audio leg.
+}
+
+/// Narrow audio leg; fakes depend on this, never the full core.
+pub trait AudioPort {
     fn set_volume(&self, volume: f32) -> Result<(), OperationError>;
-    /// Audio leg.
     fn restart_audio(&self) -> Result<(), OperationError>;
-    /// Audio leg.
     fn swap_audio_backend(
         &self,
         backend: Box<dyn AudioBackend>,
         sample_rate: u32,
     ) -> Result<(), OperationError>;
+}
+
+/// Always-live surface: playback, frame, audio, and the paused image cache.
+/// Frontends hold `&dyn LiveCore`; debug traffic uses [`LiveDebugPort`].
+/// Fakes depend on [`PlaybackPort`]/[`FramePort`]/[`AudioPort`] directly.
+pub trait LiveCore: PlaybackPort + FramePort + AudioPort + LiveDebugPort {
     /// Paused PPU-viewer cache leg.
     fn mark_images_dirty(&self);
     /// Paused PPU-viewer cache leg.
@@ -1014,7 +1012,7 @@ impl EmuCore {
     }
 }
 
-impl LiveCore for EmuCore {
+impl PlaybackPort for EmuCore {
     fn pause(&self) -> Result<(), OperationError> {
         self.pause()
     }
@@ -1046,11 +1044,9 @@ impl LiveCore for EmuCore {
     fn tick_snapshot(&self) -> TickSnapshot {
         self.tick_snapshot()
     }
+}
 
-    fn is_paused(&self) -> bool {
-        self.is_paused()
-    }
-
+impl FramePort for EmuCore {
     fn render_profile(&self) -> &VideoRenderProfile {
         self.render_profile()
     }
@@ -1074,7 +1070,9 @@ impl LiveCore for EmuCore {
     ) -> Result<(), OperationError> {
         self.apply_presentation(profile, palette)
     }
+}
 
+impl AudioPort for EmuCore {
     fn set_volume(&self, volume: f32) -> Result<(), OperationError> {
         self.set_volume(volume)
     }
@@ -1090,7 +1088,9 @@ impl LiveCore for EmuCore {
     ) -> Result<(), OperationError> {
         self.swap_audio_backend(backend, sample_rate)
     }
+}
 
+impl LiveCore for EmuCore {
     fn mark_images_dirty(&self) {
         self.mark_images_dirty()
     }
@@ -1632,17 +1632,17 @@ mod port_tests {
     #[test]
     fn narrow_ports_delegate_to_core() {
         let core = loaded_core();
-        LiveCore::pause(&core).expect("pause");
-        LiveCore::resume(&core).expect("resume");
-        LiveCore::reset(&core).expect("reset");
-        let _ = LiveCore::metrics(&core);
-        let snapshot = LiveCore::tick_snapshot(&core);
+        PlaybackPort::pause(&core).expect("pause");
+        PlaybackPort::resume(&core).expect("resume");
+        PlaybackPort::reset(&core).expect("reset");
+        let _ = PlaybackPort::metrics(&core);
+        let snapshot = PlaybackPort::tick_snapshot(&core);
         assert!(snapshot.loaded);
         assert!(!snapshot.paused);
-        let _ = LiveCore::render_profile(&core);
-        let _ = LiveCore::frame_buffer(&core);
-        LiveCore::set_volume(&core, 0.5).expect("volume");
-        LiveCore::restart_audio(&core).expect("restart");
+        let _ = FramePort::render_profile(&core);
+        let _ = FramePort::frame_buffer(&core);
+        AudioPort::set_volume(&core, 0.5).expect("volume");
+        AudioPort::restart_audio(&core).expect("restart");
         assert!(LiveDebugPort::memory_spaces(&core).is_ok());
         assert!(LiveDebugPort::output_channels(&core).is_ok());
         assert!(StateExporter::export_state(&core).is_ok());
@@ -1655,8 +1655,8 @@ mod port_tests {
         // Old `Clone` vs new explicit handle: same sharing, named constructor.
         let handle = core.shallow_handle();
         assert_eq!(
-            LiveCore::tick_snapshot(&handle).frames,
-            LiveCore::tick_snapshot(&core).frames,
+            PlaybackPort::tick_snapshot(&handle).frames,
+            PlaybackPort::tick_snapshot(&core).frames,
             "drain handle shares the frame counter"
         );
         assert_eq!(
@@ -1666,16 +1666,16 @@ mod port_tests {
         );
         // Boxed drain handle behind the port shares too.
         let boxed = LiveCore::drain_handle(&core);
-        assert!(LiveCore::metrics(&*boxed).loaded);
+        assert!(PlaybackPort::metrics(&*boxed).loaded);
         assert!(boxed.as_exporter().export_identity().is_some());
     }
 
     #[test]
     fn is_paused_reads_atomic_without_metrics_lock() {
         let core = loaded_core();
-        assert!(!LiveCore::is_paused(&core));
-        LiveCore::pause(&core).expect("pause");
-        assert!(LiveCore::is_paused(&core));
+        assert!(!PlaybackPort::is_paused(&core));
+        PlaybackPort::pause(&core).expect("pause");
+        assert!(PlaybackPort::is_paused(&core));
         assert!(core.is_paused());
     }
 
