@@ -26,17 +26,7 @@ use nerust_system_traits::factory::{CoreParts, load::MediaObject};
 pub(crate) mod images;
 mod pause_stable;
 
-// Narrow live-core ports: playback, frame, audio, debug, persist. Single home for the persistence
-// port; session depends down. Shell-owned preview frame: width plus packed RGBA bytes. The core names only this type; the persistence envelope adapts at the boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreviewRgba {
-    /// Frame width in pixels.
-    pub width: u32,
-    /// Frame height in pixels.
-    pub height: u32,
-    /// Packed RGBA bytes, `width * height * 4` long.
-    pub rgba: Vec<u8>,
-}
+pub use crate::session::ports::PreviewRgba;
 
 /// Errors from core operations invoked by the persistence layer.
 #[derive(Debug, thiserror::Error)]
