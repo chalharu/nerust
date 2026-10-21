@@ -1,9 +1,85 @@
 //! Android field bindings: one source for descriptors, bounds and keyed decoding.
-use super::settings_model::*;
+use std::sync::Arc;
+
+use super::settings_model::AndroidSettings;
 use nerust_settings_core::model::{
-    local::{NotificationAreaMode, RumbleTarget, ScreenOrientation, TouchOverlayVisibility},
+    local::{
+        NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
+        TouchOverlayVisibility,
+    },
     shared::StoragePolicy,
 };
+
+const VOLUME_MIN: u8 = 0;
+const VOLUME_MAX: u8 = 100;
+const LATENCY_MIN: u16 = 10;
+const LATENCY_MAX: u16 = 200;
+const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
+const OVERLAY_SCALE_MIN: u8 = 50;
+const OVERLAY_SCALE_MAX: u8 = 150;
+const OVERLAY_OFFSET_MIN: i8 = -30;
+const OVERLAY_OFFSET_MAX: i8 = 30;
+
+/// Ranged-int encoding: Kotlin expands `min..=max` with `unit`.
+/// The 101-string tables are never built or shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RangeSpec {
+    pub min: i64,
+    pub max: i64,
+    pub unit: &'static str,
+}
+
+/// One settings-dialog row: key, label, choices, and current index travel together.
+/// All arrays and codecs derive from `setting_defs`; rows cannot drift from choices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingDef {
+    pub key: String,
+    pub label: String,
+    pub choices: Vec<String>,
+    pub current: usize,
+    /// `Some` for ranged ints: `choices` stays empty, Kotlin expands locally.
+    pub range: Option<RangeSpec>,
+    /// Same-edge rule resolved in Rust; Kotlin only filters on this flag.
+    pub visible: bool,
+}
+
+/// Canonical corner order shared by labels and indices.
+/// Every position picker follows this sequence; nothing else assumes the mapping.
+const CORNERS: [NotificationPosition; 4] = [
+    NotificationPosition::BottomLeft,
+    NotificationPosition::BottomRight,
+    NotificationPosition::TopLeft,
+    NotificationPosition::TopRight,
+];
+
+fn corner_index(position: NotificationPosition) -> usize {
+    CORNERS
+        .iter()
+        .position(|&corner| corner == position)
+        .unwrap_or(0)
+}
+
+// Descriptor construction and caching belong to the schema, not the snapshot model.
+impl AndroidSettings {
+    /// One settings row: key, label, choices, and current index in one struct.
+    pub(super) fn setting_defs(&self) -> Vec<SettingDef> {
+        defs(self)
+    }
+
+    pub(super) fn cached_setting_defs_locked(
+        entry: &mut Option<(AndroidSettings, Arc<Vec<SettingDef>>)>,
+        current: &AndroidSettings,
+    ) -> Arc<Vec<SettingDef>> {
+        if let Some((cached, defs)) = entry
+            && cached == current
+        {
+            return Arc::clone(defs);
+        }
+        let defs = Arc::new(current.setting_defs());
+        *entry = Some((current.clone(), Arc::clone(&defs)));
+        defs
+    }
+}
 
 struct Binding {
     key: &'static str,

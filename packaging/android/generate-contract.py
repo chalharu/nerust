@@ -6,8 +6,8 @@ are checked in so neither cargo nor Gradle needs Python during a normal build.
 """
 import argparse
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST = ROOT / "gui/frontends/android"

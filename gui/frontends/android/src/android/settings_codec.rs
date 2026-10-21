@@ -11,7 +11,8 @@ use nerust_settings_core::model::local::{
 use nerust_settings_core::model::shared::StoragePolicy;
 use nerust_system_traits::factory::CoreFactory;
 
-use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION, SettingDef};
+use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION};
+use super::settings_schema::SettingDef;
 
 impl AndroidSettings {
     pub(super) fn from_keyed_indices(
@@ -155,7 +156,7 @@ impl SettingsApplier {
 mod tests {
     use std::sync::Arc;
 
-    use super::super::settings_model::RangeSpec;
+    use super::super::settings_schema::RangeSpec;
     use crate::settings_sections::{SETTINGS_SECTION_IDS, section_label};
 
     use nerust_gba_factory::GbaFactory;

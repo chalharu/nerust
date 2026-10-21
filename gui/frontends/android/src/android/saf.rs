@@ -87,7 +87,7 @@ impl AndroidStorageBackend {
         uri: &JString<'_>,
         relative: &JString<'_>,
     ) -> jni::errors::Result<i64> {
-        Ok(bridge::call_bridge_method(
+        bridge::call_bridge_method(
             env,
             activity,
             &bridge::methods::OPEN_SAF_READ_SESSION,
@@ -96,7 +96,7 @@ impl AndroidStorageBackend {
                 JValue::Object(relative.as_ref()),
             ],
         )?
-        .j()?)
+        .j()
     }
 
     /// One sequential chunk from an open session; empty marks end of stream.

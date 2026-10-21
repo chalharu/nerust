@@ -9,6 +9,23 @@ const MAX_WISDOM_TREE_ROM_SIZE: usize = 64 * MENU_SIZE;
 const M161_HEADER_CRC32: u32 = 0xA61F_3EE1;
 const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
+/// Mapper identity shared by cartridge implementations and persistence validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MbcKind {
+    RomOnly,
+    Mbc1,
+    Mbc2,
+    Mbc3,
+    Mbc5,
+    Mbc6,
+    Mbc7,
+    M161,
+    Mmm01,
+    WisdomTree,
+    HuC1,
+    HuC3,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetectedMapper {
     Header(CartridgeType),

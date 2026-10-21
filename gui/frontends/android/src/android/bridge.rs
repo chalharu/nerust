@@ -10,7 +10,8 @@ use jni::objects::JIntArray;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
-use super::settings_model::{AndroidSettings, SettingDef};
+use super::settings_model::AndroidSettings;
+use super::settings_schema::SettingDef;
 use crate::bridge_events::FrontendEvent;
 
 /// Worker-thread completion produced by the single picker fetch worker.

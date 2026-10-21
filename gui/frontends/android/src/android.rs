@@ -590,18 +590,18 @@ impl AndroidFrontend {
                 if result.renderer_needs_rebuild {
                     // If Android has already dropped the surface, keep the renderer absent here;
                     // `ensure_window` will rebuild it on the next resume with the updated settings.
-                    if let Some(window) = self.flow.render_sync.cloned_window() {
-                        if let Err(error) = self.flow.render_sync.rebuild_renderer(
+                    if let Some(window) = self.flow.render_sync.cloned_window()
+                        && let Err(error) = self.flow.render_sync.rebuild_renderer(
                             window,
                             &self.core.session,
                             &self.core.gpu_factory,
                             &mut self.chrome.osd,
                             &mut self.core.shell,
-                        ) {
-                            log::warn!("settings renderer rebuild failed: {error}");
-                            self.flow.lifecycle.begin_foreground_resume();
-                            self.flow.lifecycle.schedule_retry(self.is_resumed);
-                        }
+                        )
+                    {
+                        log::warn!("settings renderer rebuild failed: {error}");
+                        self.flow.lifecycle.begin_foreground_resume();
+                        self.flow.lifecycle.schedule_retry(self.is_resumed);
                     }
                 }
                 // Push overlay and FPS-label settings to the live chrome.
@@ -1124,12 +1124,11 @@ impl ApplicationHandler for AndroidFrontend {
         }
         self.maybe_show_error_dialog(tick);
 
-        if self.flow.render_sync.has_window() {
-            if self.core.shell.wants_redraw(tick.frame_counter)
-                && let Some(window) = self.flow.render_sync.cloned_window()
-            {
-                window.request_redraw();
-            }
+        if self.flow.render_sync.has_window()
+            && self.core.shell.wants_redraw(tick.frame_counter)
+            && let Some(window) = self.flow.render_sync.cloned_window()
+        {
+            window.request_redraw();
         }
         let deadline = crate::wake_deadline::next_deadline(
             self.flow.lifecycle.retry_deadline(),

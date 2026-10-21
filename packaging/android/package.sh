@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 
 set -euo pipefail
 
@@ -204,7 +205,6 @@ else
         exit 1
     fi
     for main_so in "${so_files[@]}"; do
-        abi="$(basename "$(dirname "${main_so}")")"
         budget="$(native_budget_bytes)"
         verify_native_library "${readelf_bin}" "${main_so}" "${budget}"
     done

@@ -2,7 +2,7 @@
 use nerust_core_traits::debugger::{DebugImage, DebugPanel, DisasmLine, HexRow, ImageFormat};
 use nerust_settings_core::model::language::AppLanguage;
 
-pub use crate::debug_transaction::WriteTransaction;
+pub use crate::debug_transaction::{PendingWrite, WriteTransaction};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum StatusMessage {
@@ -62,19 +62,6 @@ impl StatusMessage {
             Self::ThreadFailed(detail) => ui_msg::thread_failed(language, detail),
             Self::Local(text) => text.clone(),
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct PendingWrite {
-    pub addr: u32,
-    pub old: Option<u8>,
-    pub value: u64,
-}
-
-impl PendingWrite {
-    pub fn render(&self, language: AppLanguage) -> String {
-        nerust_settings_core::i18n::pending_write(language, self.addr, self.old, self.value)
     }
 }
 

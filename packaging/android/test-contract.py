@@ -3,11 +3,12 @@
 import copy
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -311,13 +312,30 @@ class StructureTests(unittest.TestCase):
     def test_probe_labels_are_data_not_rust_format_strings(self):
         self.assertIn('false, "{}", "menu: v={}"', DECODER.harness(self.schema))
 
+    def test_runtime_probe_starts_from_workspace_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            DECODER.prepare_probe(root, self.schema)
+            self.assertEqual((root / "Cargo.lock").read_bytes(),
+                             (CONTRACT.ROOT / "Cargo.lock").read_bytes())
+            self.assertEqual((root / "Cargo.toml").read_text(), DECODER.manifest())
+            self.assertEqual((root / "src/lib.rs").read_text(), DECODER.harness(self.schema))
+
+    def test_runtime_probe_does_not_force_a_warm_cargo_cache(self):
+        with mock.patch.object(DECODER.subprocess, "run") as run:
+            DECODER.main()
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["cargo", "test"])
+        self.assertNotIn("--offline", command)
+        self.assertTrue(run.call_args.kwargs["check"])
+
 
 class PackagingTests(unittest.TestCase):
     def shell(self, script, *args, cwd=None):
         helpers = Path(__file__).with_name("package-helpers.sh").resolve()
         return subprocess.run(["bash", "-c", 'set -euo pipefail; source "$1"; shift; ' + script,
                                "test-package", str(helpers), *map(str, args)],
-                              cwd=cwd, text=True, capture_output=True)
+                              cwd=cwd, text=True, capture_output=True, check=False)
 
     def test_checksum_basename_for_relative_absolute_and_spaces_output(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -332,7 +350,7 @@ class PackagingTests(unittest.TestCase):
                     self.assertEqual(checksum.read_text().split()[1], "nerust-test.apk")
                     moved = root / "downloaded"
                     checksum.parent.rename(moved)
-                    check = subprocess.run(["sha256sum", "-c", checksum.name], cwd=moved, capture_output=True)
+                    check = subprocess.run(["sha256sum", "-c", checksum.name], cwd=moved, capture_output=True, check=False)
                     self.assertEqual(check.returncode, 0, check.stderr)
                     for item in moved.iterdir():
                         item.unlink()

@@ -171,7 +171,9 @@ pub fn android_main(app: AndroidApp) {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 /// Called by the JVM when the native library is loaded.
-/// # Safety: `vm` is a valid `JavaVM` pointer from the runtime.
+///
+/// # Safety
+/// `vm` must be a valid `JavaVM` pointer from the runtime.
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut c_void,
