@@ -156,8 +156,11 @@ downcast_rs::impl_downcast!(InputStateBuffer);
 
 /// Session-owned GUI input writer. Transport implementations live outside cores.
 pub trait GuiInputPort: Send {
+    /// Write one absolute field; stages dirty for the next publish.
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError>;
+    /// Publish staged state when dirty; clean frames skip the handoff.
     fn publish(&mut self);
+    /// Reset all fields to neutral; stages dirty for the next publish.
     fn clear(&mut self);
 }
 

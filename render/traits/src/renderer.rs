@@ -441,6 +441,7 @@ pub fn note_osd_upload(
     false
 }
 /// Per-use-site pipeline composition without the legacy composites.
+/// Synthetic marker: implement the five legs, never this trait directly.
 pub trait RenderPipeline:
     SurfaceLifecycle + FrameSink + OsdSink + StripSink + ProfileSwitch
 {

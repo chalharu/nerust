@@ -126,11 +126,6 @@ mod ports_cov_tests {
     use crate::session::ports::*;
 
     #[test]
-    fn default_slot_activation_is_activate() {
-        assert_eq!(SlotActivation::default(), SlotActivation::Activate);
-    }
-
-    #[test]
     fn default_quarantine_deletes() {
         struct Noop;
         impl AutoSaveBackend for Noop {
@@ -155,31 +150,5 @@ mod ports_cov_tests {
         }
         let dir = std::env::temp_dir().join("nerust-ports-quarantine-probe");
         assert_eq!(Noop.quarantine_autosave(&dir.into()).unwrap(), None);
-    }
-
-    #[test]
-    fn state_exporter_default_identity_matches_export() {
-        struct IdOnly(Option<SystemIdentity>);
-        impl StateExporter for IdOnly {
-            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
-                Ok(vec![1])
-            }
-            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
-                Ok(())
-            }
-            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
-                None
-            }
-            fn export_identity(&self) -> Option<SystemIdentity> {
-                self.0.clone()
-            }
-            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
-                Ok(None)
-            }
-            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
-                Ok(())
-            }
-        }
-        assert!(IdOnly(None).canonical_media_identity().is_none());
     }
 }

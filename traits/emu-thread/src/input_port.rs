@@ -65,8 +65,8 @@ impl InputSplit {
         Ok((gui, receiver, fields))
     }
 
-    /// Typed init-time constructor: the concrete buffer type is fixed at
-    /// compile time, so a factory/endpoint mismatch cannot be expressed.
+    /// Test-only constructor: production assembles through [`InputSplit::typed_resources`].
+    /// Stays `pub` for downstream test helpers; never use in production paths.
     pub fn spawn_typed<B>(make: impl Fn() -> B + Send + Sync + 'static) -> Self
     where
         B: InputStateBuffer + 'static,
@@ -84,8 +84,8 @@ impl InputSplit {
         }
     }
 
-    /// Single move-out from factory resources: the unified field map plus
-    /// the shared endpoints travel out together, never separately.
+    /// Test-only move-out: production assembles through [`InputSplit::typed_resources`].
+    #[cfg(test)]
     pub fn from_resources(resources: InputResources) -> (Self, UnifiedFieldMap) {
         let (field_map, factory) = resources.into_parts();
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new((factory)()));
@@ -146,15 +146,14 @@ impl GuiInput {
         }
     }
 
-    /// Write one absolute field of the staged GUI state.
+    /// Contract: [`GuiInputPort::set`](nerust_input_traits::GuiInputPort::set).
     pub fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         self.state.set(field, value)?;
         self.dirty = true;
         Ok(())
     }
 
-    /// Publish staged state when dirty; clean frames skip the copy, the lock, and the flag. A
-    /// concrete-type mismatch (impossible through [`InputSplit`], defensive otherwise) warns once and keeps the last published state instead of trapping the GUI thread.
+    /// Contract: [`GuiInputPort::publish`](nerust_input_traits::GuiInputPort::publish). Mismatch warns once, never traps.
     pub fn publish(&mut self) {
         if let Err(error) = self.try_publish()
             && !self.mismatch_warned

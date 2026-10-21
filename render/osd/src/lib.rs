@@ -520,16 +520,14 @@ impl OsdRaster {
     }
 
     /// Record a miss; past the cap evict the single oldest entry (proper LRU).
+    /// LRU mirrors the map keys, so the popped entry always drops its map entry.
     fn insert_lru(&mut self, key: Arc<str>, font_px: u32, span: Rc<ShapedSpan>) {
         self.shape_cache.insert((Arc::clone(&key), font_px), span);
         self.shape_lru.push_back((key, font_px));
         while self.shape_lru.len() > SHAPE_CACHE_CAP {
             if let Some(oldest) = self.shape_lru.pop_front() {
-                // Only the map entry minted by this insert is eviction-
-                // eligible, so older duplicates never drop live entries.
-                if self.shape_lru.iter().all(|live| *live != oldest) {
-                    self.shape_cache.remove(&oldest);
-                }
+                debug_assert!(self.shape_lru.iter().all(|live| *live != oldest));
+                self.shape_cache.remove(&oldest);
             } else {
                 break;
             }

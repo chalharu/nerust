@@ -1,6 +1,7 @@
 //! Outermost crash containment: hook diagnostics plus guarded entry. Hook records describe
 //! the panic site; caught reports describe only the caught payload, without claiming correlation.
 //! Dialogs and termination are the host's job. Configuration travels by parameter, never globals.
+//! Entry points are frozen: new install variants break the no-correlation principle.
 
 use std::{
     any::Any,
