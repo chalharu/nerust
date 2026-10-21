@@ -31,9 +31,10 @@ def require(condition, message):
 
 
 def uncomment(text):
-    # Preserve strings containing comment-like characters.
-    return re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
-                  lambda m: m[0] if m[0].startswith('"') else " ", text, flags=re.DOTALL)
+    # Preserve strings containing comment-like characters, including
+    # Kotlin raw strings and Rust raw strings.
+    return re.sub(r'"""[\s\S]*?"""|r(#+)"[\s\S]*?"\1|"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
+                  lambda m: m[0] if m[0][0] in '"r' else " ", text, flags=re.DOTALL)
 
 
 def sources():

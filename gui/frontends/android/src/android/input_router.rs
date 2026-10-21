@@ -58,7 +58,7 @@ impl InputRouter {
     }
 
     /// Forget transient presses on focus loss without touching the
-    /// emulator (the session already cleared its own input).
+    /// emulator (the session already cleared its own input; Kotlin releases converge to no-ops).
     pub(super) fn forget_physical_pressed(&mut self) {
         self.keys.forget();
     }
