@@ -1,17 +1,18 @@
 /// Window-title inputs as one struct. Positional bools at every call
 /// site never said which flag was which; the struct fields do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TitleInput<'a> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TitleInput {
     pub paused: bool,
     pub loaded: bool,
-    pub system_name: Option<&'a str>,
+    /// Factory-static display name: no per-frame allocation in the cache key.
+    pub system_name: Option<&'static str>,
     pub active_slot: Option<u64>,
     pub slot_count: usize,
 }
 
 /// Single title builder: structured input in, display text out.
 /// All title entry points delegate here.
-pub fn title(input: TitleInput<'_>) -> String {
+pub fn title(input: TitleInput) -> String {
     let label = input.system_name.unwrap_or("");
     let state = if input.paused {
         format!("{label} -- Paused")
@@ -35,21 +36,21 @@ pub fn title(input: TitleInput<'_>) -> String {
 }
 
 /// Cache key for [`TitleCache`]: everything the title text reads.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct TitleKey {
     paused: bool,
     loaded: bool,
-    system_name: Option<String>,
+    system_name: Option<&'static str>,
     active_slot: Option<u64>,
     slot_count: usize,
 }
 
-impl<'a> From<&TitleInput<'a>> for TitleKey {
-    fn from(input: &TitleInput<'a>) -> Self {
+impl From<&TitleInput> for TitleKey {
+    fn from(input: &TitleInput) -> Self {
         Self {
             paused: input.paused,
             loaded: input.loaded,
-            system_name: input.system_name.map(str::to_string),
+            system_name: input.system_name,
             active_slot: input.active_slot,
             slot_count: input.slot_count,
         }
@@ -69,8 +70,8 @@ impl TitleCache {
         Self::default()
     }
 
-    /// Borrowed title for `input`: formats only on key change.
-    pub fn title(&mut self, input: TitleInput<'_>) -> &str {
+    /// Borrowed title for `input`: formats only on key change, never allocating for the key.
+    pub fn title(&mut self, input: TitleInput) -> &str {
         let key = TitleKey::from(&input);
         if self.last_key.as_ref() != Some(&key) {
             self.last_title = title(input);
@@ -178,6 +179,6 @@ mod title_cov_tests {
             slot_count: 3,
         };
         let mut cache = TitleCache::new();
-        assert_eq!(cache.title(input.clone()), title(input));
+        assert_eq!(cache.title(input), title(input));
     }
 }
