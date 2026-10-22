@@ -65,7 +65,6 @@ pub(crate) fn pack_frame_rows(
             have: destination.len(),
         });
     }
-    destination[..needed].fill(0);
     for row in 0..height {
         let base = row * upload_bytes_per_row;
         destination[base..base + copy_bytes_per_row].copy_from_slice(
