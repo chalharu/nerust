@@ -10,9 +10,9 @@ fn main() {
             record.backtrace()
         );
     }
-    fn probe_backtrace() -> String {
+    fn probe_backtrace() -> std::sync::Arc<str> {
         // Deterministic source: the probe asserts shape, not real frames.
-        "probe backtrace".to_string()
+        std::sync::Arc::from("probe backtrace")
     }
     // The dialog runs in the Crashed arm, mirroring real frontends.
     // Exhaustive: a future outcome must not silently pass through.
