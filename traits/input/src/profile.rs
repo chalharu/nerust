@@ -198,18 +198,23 @@ impl InputAssignments {
         let index_of = |id: AttachmentId| slots.iter().position(|s| s.id == id);
         let mut seen = std::collections::HashSet::new();
         let mut plan = vec![None; slots.len()];
+        // One controller pass for the whole plan; per-slot iterator rebuilds waste Rc clones.
+        let controllers: Vec<std::rc::Rc<dyn ControllerProfile>> =
+            ports.controllers().collect();
         for (slot, profile) in &self.slots {
             if index_of(*slot).is_none() {
                 return Err(CreateSplitError::SlotNotFound { slot: *slot });
             }
             if !seen.insert(*slot) {
-                return Err(CreateSplitError::SlotConflict { a: *slot, b: *slot });
+                return Err(CreateSplitError::DuplicateSlot { slot: *slot });
             }
             let Some(profile) = profile else { continue };
             // Keep the caller's profile handle; canonical metadata only validates.
             let controller = profile.profile_id();
-            let canonical = ports
-                .resolve_controller(controller.as_str())
+            let canonical = controllers
+                .iter()
+                .find(|p| p.profile_id() == controller)
+                .cloned()
                 .ok_or(CreateSplitError::ControllerNotFound { controller })?;
             let set = canonical
                 .port_sets()
@@ -286,6 +291,8 @@ pub enum CreateSplitError {
     },
     #[error("slot conflict between {a} and {b}")]
     SlotConflict { a: AttachmentId, b: AttachmentId },
+    #[error("duplicate assignment for slot {slot}")]
+    DuplicateSlot { slot: AttachmentId },
     #[error("too many controllers: have {have}, at most {max}")]
     TooManyControllers { have: usize, max: usize },
     #[error("no controllers assigned")]

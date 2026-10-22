@@ -167,6 +167,7 @@ where
 enum Versioned<T> {
     Supported {
         #[serde(deserialize_with = "require_supported")]
+        #[allow(dead_code)]
         schema_version: u32,
         #[serde(flatten)]
         body: T,

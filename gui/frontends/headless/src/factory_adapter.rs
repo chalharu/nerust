@@ -195,6 +195,15 @@ fn assemble_test_system(
     })
 }
 
+/// Resolve a control without dropping its digital/analog kind.
+fn resolve_unified_field(
+    map: &nerust_input_traits::UnifiedFieldMap,
+    attachment: nerust_input_traits::AttachmentId,
+    control: impl Into<nerust_input_traits::ControlId>,
+) -> Option<usize> {
+    map.get(&(attachment, control.into())).copied()
+}
+
 /// Resolve digital controls through the canonical physical placement plan.
 /// Multi-port groups expand once; unconnected ports keep their pad index.
 fn resolve_pad_buttons(
@@ -220,7 +229,7 @@ fn resolve_pad_buttons(
             let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
-            let field = nerust_system_traits::factory::resolve_unified_field(
+            let field = resolve_unified_field(
                 field_map, slot.id, control_id,
             )
             .ok_or_else(|| {

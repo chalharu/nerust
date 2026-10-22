@@ -493,7 +493,7 @@ mod tests {
             (uri, "gbc/id/states/7.state")
         );
         assert!(
-            AndroidStorageBackend::document_key(&super::StorageLocation::from("native.sav"))
+            AndroidStorageBackend::document_key(&super::StorageLocation::Native("native.sav".into()))
                 .is_err()
         );
     }

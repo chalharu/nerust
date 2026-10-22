@@ -307,7 +307,7 @@ mod fs_cov_tests {
     #[test]
     fn failing_backend_errors_every_leg() {
         let back = FailingSlotBackend;
-        let dir = &StorageLocation::from("/nonexistent-probe-dir");
+        let dir = &StorageLocation::Native("/nonexistent-probe-dir".into());
         let id = identity();
         assert!(back.scan(dir, &id).is_err());
         assert!(back.allocate_next_id(dir).is_err());

@@ -14,11 +14,10 @@ pub trait Port: std::fmt::Debug + Send + Sync {
     fn port_id(&self) -> PortId {
         PortId::new(self.id())
     }
-    /// Typed attachment identifier, derived from [`Port::id`] by default.
-    /// Use this (not `AttachmentId::new`) so the aliasing stays in one place.
-    fn attachment_id(&self) -> AttachmentId {
-        AttachmentId::new(self.id())
-    }
+    /// Typed attachment identifier. No default: port and attachment namespaces
+    /// differ (the Famicom microphone shares player 2's port), so every port
+    /// states its attachment explicitly instead of aliasing silently.
+    fn attachment_id(&self) -> AttachmentId;
 }
 
 /// A simple port implementation with numeric index and string id.

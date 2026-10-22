@@ -108,12 +108,6 @@ impl From<&Path> for StorageLocation {
     }
 }
 
-impl From<&str> for StorageLocation {
-    fn from(path: &str) -> Self {
-        Self::Native(path.into())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarPaths {
     pub mapper_save_path: StorageLocation,
