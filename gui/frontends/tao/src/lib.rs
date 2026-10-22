@@ -35,15 +35,17 @@ use nerust_crash_guard::GuardOutcome;
 use nerust_gui_shell::context::FrontendContext;
 use nerust_run_options::RunOptions;
 
-pub fn run(ctx: FrontendContext, options: RunOptions) {
+/// Exit status for the binary wrapper: the library never terminates the process.
+pub fn run(ctx: FrontendContext, options: RunOptions) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
+    // Rust panic convention: a crash never exits 0.
     match nerust_crash_guard::run_guarded_with(
         || run_inner(ctx, options),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {
-        GuardOutcome::Completed(()) => {}
+        GuardOutcome::Completed(()) => 0,
         GuardOutcome::Crashed(report) => {
             // Always English: crash copy must not depend on the settings
             // stack that may have just died. Stderr stays the log home.
@@ -55,7 +57,7 @@ pub fn run(ctx: FrontendContext, options: RunOptions) {
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
-            std::process::exit(101); // Rust panic convention: a crash never exits 0.
+            101
         }
     }
 }

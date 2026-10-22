@@ -7,7 +7,7 @@ use std::sync::Arc;
 use nerust_core_traits::debugger::SpaceId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{debug::DebugAction, session::osd::HistoryLine};
-use nerust_gui_viewmodel::debugger::DisplayCache;
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::bridge::{DebugBridge, DrainSnapshot};
@@ -40,7 +40,7 @@ pub(crate) trait LiveImagesPort {
     fn apply_live(
         &mut self,
         _generation: u64,
-        _images: Vec<(String, u32, u32, Vec<u8>)>,
+        _images: Vec<DebugImageRgba>,
         _running: bool,
     ) -> bool;
 }
@@ -265,7 +265,7 @@ impl AuxRegistry {
     pub(crate) fn debug_apply_live(
         &mut self,
         generation: u64,
-        images: Vec<(String, u32, u32, Vec<u8>)>,
+        images: Vec<DebugImageRgba>,
         running: bool,
     ) -> bool {
         let rebuilt = self
@@ -351,6 +351,7 @@ pub(crate) mod test_double {
     use crate::aux::bridge::{DebugBridge, DrainSnapshot};
     use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender};
+    use nerust_gui_viewmodel::debugger::DebugImageRgba;
 
     use super::{
         AuxController, DebugDrainPort, HistorySyncPort, LiveImagesPort, SettingsClosePort,
@@ -440,7 +441,7 @@ pub(crate) mod test_double {
         fn apply_live(
             &mut self,
             _generation: u64,
-            _images: Vec<(String, u32, u32, Vec<u8>)>,
+            _images: Vec<DebugImageRgba>,
             _running: bool,
         ) -> bool {
             self.live_rebuild

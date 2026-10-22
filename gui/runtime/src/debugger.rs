@@ -1,5 +1,5 @@
 //! Shared debugger batches and outcomes; shell does not depend on viewmodel DTOs.
-use nerust_core_traits::debugger::{DebugImage, DebugPanel, DisasmLine, HexRow, ImageFormat};
+use nerust_core_traits::debugger::{DebugImage, DebugPanel, DisasmLine, HexRow};
 use nerust_settings_core::model::language::AppLanguage;
 
 pub use crate::debug_transaction::{PendingWrite, WriteTransaction};
@@ -65,6 +65,15 @@ impl StatusMessage {
     }
 }
 
+/// Decoded RGBA image for display caches: label plus dimensions, no tuple indexing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugImageRgba {
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DebugSnapshot {
     pub available: bool,
@@ -73,7 +82,7 @@ pub struct DebugSnapshot {
     pub disasm_lines: Vec<DisasmLine>,
     pub pc: Option<u32>,
     pub panels: Vec<DebugPanel>,
-    pub images: Vec<(String, u32, u32, Vec<u8>)>,
+    pub images: Vec<DebugImageRgba>,
     pub images_gen: u64,
     pub watch: Option<u8>,
     pub reg_names: Vec<&'static str>,
@@ -86,7 +95,7 @@ pub struct DisplayCache {
     pub diff: Vec<u32>,
     pub disasm_lines: Vec<DisasmLine>,
     pub panels: Vec<DebugPanel>,
-    pub images: Vec<(String, u32, u32, Vec<u8>)>,
+    pub images: Vec<DebugImageRgba>,
     pub images_gen: u64,
     pub watch_value: Option<u8>,
     pub paused: bool,
@@ -127,29 +136,30 @@ impl DisplayCache {
 }
 
 pub fn diff_rows(prev: &[HexRow], next: &[HexRow]) -> Vec<u32> {
+    // Index once: the per-row linear scan becomes one hash lookup each.
+    let prev_by_addr: std::collections::HashMap<u32, &HexRow> =
+        prev.iter().map(|row| (row.addr, row)).collect();
     next.iter()
         .filter(|row| {
-            prev.iter().any(|p| {
-                p.addr == row.addr
-                    && (p.valid != row.valid
-                        || p.bytes[..p.valid as usize] != row.bytes[..row.valid as usize])
+            prev_by_addr.get(&row.addr).is_some_and(|p| {
+                p.valid != row.valid
+                    || p.bytes[..p.valid as usize] != row.bytes[..row.valid as usize]
             })
         })
         .map(|row| row.addr)
         .collect()
 }
 
-pub fn rgba_image(image: &DebugImage) -> (String, u32, u32, Vec<u8>) {
+pub fn rgba_image(image: &DebugImage) -> DebugImageRgba {
     let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
     for &pixel in &image.pixels {
-        let rgb = match image.format {
-            ImageFormat::Indexed2bpp | ImageFormat::Indexed4bpp => image
-                .palette
-                .get(pixel as usize)
-                .copied()
-                .unwrap_or([0, 0, 0]),
-        };
+        let rgb = image.palette.get(pixel as usize).copied().unwrap_or([0, 0, 0]);
         rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
     }
-    (image.label_id.to_string(), image.width, image.height, rgba)
+    DebugImageRgba {
+        label: image.label_id.to_string(),
+        width: image.width,
+        height: image.height,
+        rgba,
+    }
 }

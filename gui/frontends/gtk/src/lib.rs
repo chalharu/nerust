@@ -50,7 +50,7 @@ pub(crate) struct State {
 }
 
 impl State {
-    pub(crate) fn new(ctx: FrontendContext) -> Self {
+    pub(crate) fn new(ctx: FrontendContext) -> Result<Self, SessionError> {
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
                 remembers_window_size: true,
@@ -64,17 +64,17 @@ impl State {
             ctx.registry.clone(),
             ctx.audio_registry.clone(),
         )
-        .unwrap_or_else(|e| {
+        .map_err(|e| {
             log::error!("failed to create core: {e}");
-            std::process::exit(1);
-        });
+            e
+        })?;
 
-        Self {
+        Ok(Self {
             session,
             ctx,
             renderer_reload_pending: false,
             pause_policy: Default::default(),
-        }
+        })
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
@@ -481,7 +481,8 @@ fn ensure_window(
     window
 }
 
-pub fn run(ctx: FrontendContext, _options: RunOptions) {
+/// Exit status for the binary wrapper: the library never terminates the process.
+pub fn run(ctx: FrontendContext, _options: RunOptions) -> i32 {
     // No dialog here: the event loop died with the panic, and stderr
     // (already logged by the guard) is the UX. Match exhaustively.
     match nerust_crash_guard::run_guarded_with(
@@ -489,10 +490,15 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {
-        nerust_crash_guard::GuardOutcome::Completed(()) => {}
+        // Rust panic convention: a crash never exits 0.
+        nerust_crash_guard::GuardOutcome::Completed(Ok(())) => 0,
+        nerust_crash_guard::GuardOutcome::Completed(Err(error)) => {
+            log::error!("{error}");
+            1
+        }
         nerust_crash_guard::GuardOutcome::Crashed(report) => {
             log::error!("{}", crash_note(report.message()));
-            std::process::exit(101); // Rust panic convention: a crash never exits 0.
+            101
         }
     }
 }
@@ -503,14 +509,14 @@ fn crash_note(message: &str) -> String {
     format!("gtk frontend crashed with no dialog available: {message}")
 }
 
-fn run_inner(ctx: FrontendContext) {
+fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
     );
 
     let current_window = Rc::new(RefCell::new(None));
-    let state = Rc::new(RefCell::new(State::new(ctx)));
+    let state = Rc::new(RefCell::new(State::new(ctx)?));
     {
         let state = Rc::clone(&state);
         let gpu_factory = state.borrow().ctx.gpu_factory.clone();
@@ -538,6 +544,7 @@ fn run_inner(ctx: FrontendContext) {
     }
 
     let _ = app.run();
+    Ok(())
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ pub(super) struct HistoryViewer {
 }
 
 /// Modal queue: error batches plus the in-flight dialog.
-pub(super) struct ModalQueue {
+pub(super) struct ModalFlightQueue {
     pub(super) manager: nerust_gui_shell::session::osd::OsdManager,
     pub(super) flight: Option<ModalFlight>,
 }
@@ -28,7 +28,7 @@ pub(super) struct ModalQueue {
 pub(super) struct OsdService {
     pub(super) layer: OsdLayerSync,
     pub(super) history: HistoryViewer,
-    pub(super) modal: ModalQueue,
+    pub(super) modal: ModalFlightQueue,
 }
 
 impl OsdService {
@@ -44,7 +44,7 @@ impl OsdService {
             history: HistoryViewer {
                 sync_key: Versioned::new(),
             },
-            modal: ModalQueue {
+            modal: ModalFlightQueue {
                 manager: nerust_gui_shell::session::osd::OsdManager::new(),
                 flight: None,
             },

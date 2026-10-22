@@ -8,7 +8,7 @@ use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId
 use nerust_gui_shell::debug::{
     DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
 };
-use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache, NavState, StatusMessage};
+use nerust_gui_viewmodel::debugger::{self as vm, DebugImageRgba, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 use nerust_settings_core::model::language::AppLanguage;
 
@@ -652,7 +652,12 @@ impl DebuggerWindowCore {
         let images = batch
             .images
             .into_iter()
-            .map(|image| (image.label, image.width, image.height, image.rgba))
+            .map(|image| DebugImageRgba {
+                label: image.label,
+                width: image.width,
+                height: image.height,
+                rgba: image.rgba,
+            })
             .collect();
         let generation = batch.generation;
         let (language, running) = {
@@ -1788,7 +1793,12 @@ mod tests {
                     cells: vec![CellValue::U64(0xAB)],
                 }],
             }],
-            images: vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])],
+            images: vec![DebugImageRgba {
+                label: "Tiles".to_string(),
+                width: 2,
+                height: 1,
+                rgba: vec![0xFF; 8],
+            }],
             images_gen: 3,
             watch_value: Some(0xAB),
             paused: true,

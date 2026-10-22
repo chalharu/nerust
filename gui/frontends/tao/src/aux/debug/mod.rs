@@ -16,7 +16,7 @@ use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
 use nerust_core_traits::debugger::SpaceId;
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::DisplayCache;
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
@@ -251,7 +251,7 @@ impl DebugWindowHandle {
     pub(crate) fn apply_live(
         &mut self,
         generation: u64,
-        images: Vec<(String, u32, u32, Vec<u8>)>,
+        images: Vec<DebugImageRgba>,
         running: bool,
     ) -> bool {
         self.bridge.apply_live_images(generation, images, running)
@@ -365,7 +365,7 @@ impl super::registry::LiveImagesPort for DebugWindowHandle {
     fn apply_live(
         &mut self,
         generation: u64,
-        images: Vec<(String, u32, u32, Vec<u8>)>,
+        images: Vec<DebugImageRgba>,
         running: bool,
     ) -> bool {
         self.apply_live(generation, images, running)
