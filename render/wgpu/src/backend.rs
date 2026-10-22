@@ -414,7 +414,7 @@ mod tests {
             assert_eq!(renderer.render_profile.logical_size.width, previous_width);
         }
         let mut invalid = profile.clone();
-        invalid.ntsc_packed_rgba8 = Some(vec![1, 2, 3].into_boxed_slice());
+        invalid.ntsc_packed_rgba8 = Some(vec![1, 2, 3].into());
         assert!(renderer.update_render_profile(&invalid).is_err());
         // Both index pipelines must accept original, not filtered dimensions.
         profile.frame_format = nerust_render_traits::VideoFrameFormat::Palette;

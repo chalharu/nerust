@@ -3,14 +3,14 @@
 
 use nerust_render_traits::ReservedStrip;
 
-/// One GL name that failed to delete on teardown.
-/// Variants name the namespace; the count, not the value, is the signal.
+/// One GL namespace that failed to delete on teardown.
+/// Unit variants: the ledger counts per namespace, never fake ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeakedName {
-    Texture(u32),
-    Program(u32),
-    Array(u32),
-    Buffer(u32),
+    Texture,
+    Program,
+    Array,
+    Buffer,
 }
 
 /// Teardown ledger: every live name that missed deletion.
@@ -35,19 +35,19 @@ impl CloseReport {
     }
 
     pub fn failed_textures(&self) -> u32 {
-        self.count(|name| matches!(name, LeakedName::Texture(_)))
+        self.count(|name| matches!(name, LeakedName::Texture))
     }
 
     pub fn failed_programs(&self) -> u32 {
-        self.count(|name| matches!(name, LeakedName::Program(_)))
+        self.count(|name| matches!(name, LeakedName::Program))
     }
 
     pub fn failed_arrays(&self) -> u32 {
-        self.count(|name| matches!(name, LeakedName::Array(_)))
+        self.count(|name| matches!(name, LeakedName::Array))
     }
 
     pub fn failed_buffers(&self) -> u32 {
-        self.count(|name| matches!(name, LeakedName::Buffer(_)))
+        self.count(|name| matches!(name, LeakedName::Buffer))
     }
 
     fn count(&self, mut pred: impl FnMut(LeakedName) -> bool) -> u32 {
@@ -104,11 +104,11 @@ mod tests {
         let mut report = CloseReport::default();
         assert!(report.is_ok());
         assert_eq!(report.failed_names(), 0);
-        report.leak(LeakedName::Texture(1));
-        report.leak(LeakedName::Program(2));
-        report.leak(LeakedName::Array(3));
-        report.leak(LeakedName::Buffer(4));
-        report.leak(LeakedName::Texture(5));
+        report.leak(LeakedName::Texture);
+        report.leak(LeakedName::Program);
+        report.leak(LeakedName::Array);
+        report.leak(LeakedName::Buffer);
+        report.leak(LeakedName::Texture);
         assert!(!report.is_ok());
         assert_eq!(report.failed_names(), 5);
         assert_eq!(report.failed_textures(), 2);

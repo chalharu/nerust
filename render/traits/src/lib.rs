@@ -253,7 +253,7 @@ pub struct VideoRenderProfile {
     pub logical_size: LogicalSize,
     pub physical_size: PhysicalSize,
     pub frame_format: VideoFrameFormat,
-    pub ntsc_packed_rgba8: Option<Box<[u8]>>,
+    pub ntsc_packed_rgba8: Option<std::sync::Arc<[u8]>>,
 }
 
 impl VideoRenderProfile {

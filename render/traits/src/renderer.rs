@@ -95,6 +95,9 @@ pub enum RendererErrorKind {
         backend: &'static str,
         stage: &'static str,
     },
+    /// Shader program fault in `program` (missing uniform/attribute, no program).
+    /// Attach stays for context/surface acquisition only.
+    Program { program: &'static str },
     /// OSD texture upload failure at `stage`.
     Upload {
         stage: &'static str,
@@ -113,6 +116,9 @@ impl std::fmt::Display for RendererErrorKind {
             Self::NoConfig => write!(f, "no GL config"),
             Self::Attach { backend, stage } => {
                 write!(f, "{backend} {stage} failed")
+            }
+            Self::Program { program } => {
+                write!(f, "{program} program fault")
             }
             Self::Upload { stage } => write!(f, "OSD upload failed at {stage}"),
             Self::InvalidSurface => write!(f, "invalid surface size"),

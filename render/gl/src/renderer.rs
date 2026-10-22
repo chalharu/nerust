@@ -1412,7 +1412,7 @@ mod tests {
             assert!(osd.close(current).is_empty());
             drop(frame);
             drop(osd);
-            let ntsc = vec![0xAA; 64 * 42 * 4].into_boxed_slice();
+            let ntsc = std::sync::Arc::<[u8]>::from(vec![0xAA; 64 * 42 * 4]);
             let pal = gl_test_profile_ntsc(ntsc);
             let mut pframe = FrameView::new();
             pframe.set_use_vao(true);
@@ -1493,7 +1493,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn gl_test_profile_ntsc(ntsc: Box<[u8]>) -> nerust_render_traits::VideoRenderProfile {
+    fn gl_test_profile_ntsc(ntsc: std::sync::Arc<[u8]>) -> nerust_render_traits::VideoRenderProfile {
         use nerust_render_traits::{logical::LogicalSize, physical::PhysicalSize};
         nerust_render_traits::VideoRenderProfile {
             frame_format: nerust_render_traits::VideoFrameFormat::Palette,

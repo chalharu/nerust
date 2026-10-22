@@ -674,13 +674,13 @@ impl OsdView {
         if self.osd_texture != 0 {
             if !has_context {
                 if policy.note(true) {
-                    leaked.push(LeakedName::Texture(0));
+                    leaked.push(LeakedName::Texture);
                 }
                 log::debug!("OsdView teardown skipped: no current context");
             } else if delete_textures(1, &[self.osd_texture]).is_err() {
                 log::debug!("OsdView teardown failed");
                 if policy.note(true) {
-                    leaked.push(LeakedName::Texture(0));
+                    leaked.push(LeakedName::Texture);
                 }
             }
         }
@@ -692,7 +692,7 @@ impl OsdView {
         if let Some(mut shader) = self.osd_shader.take()
             && shader.destroy_if_current(current)
         {
-            leaked.push(LeakedName::Program(0));
+            leaked.push(LeakedName::Program);
         }
         leaked
     }
