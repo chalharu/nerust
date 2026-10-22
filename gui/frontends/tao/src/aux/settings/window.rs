@@ -128,7 +128,7 @@ mod tests {
 
     use super::*;
     use crate::aux::native::adapt_event;
-    use crate::convert::feed_domain_event;
+    use crate::convert::{FeedContext, feed_domain_event};
 
     fn initial_cursor() -> mouse::Cursor {
         mouse::Cursor::Available(Point::new(0.0, 0.0))
@@ -140,7 +140,15 @@ mod tests {
         modifiers: &mut keyboard::Modifiers,
         should_close: &AtomicBool,
     ) -> Option<Event> {
-        feed_domain_event(adapt_event(&event), cursor, modifiers, 1.0, should_close)
+        feed_domain_event(
+            adapt_event(&event),
+            &mut FeedContext {
+                cursor,
+                modifiers,
+                scale_factor: 1.0,
+                should_close,
+            },
+        )
     }
 
     // Helper: Tao's MouseInput/CursorMoved/etc require a deprecated modifiers field.

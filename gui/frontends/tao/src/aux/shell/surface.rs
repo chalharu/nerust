@@ -218,10 +218,12 @@ impl AuxSurface {
     ) -> Option<iced::Event> {
         crate::convert::feed_domain_event(
             event,
-            &mut self.cursor,
-            &mut self.modifiers,
-            self.scale_factor,
-            &self.should_close,
+            &mut crate::convert::FeedContext {
+                cursor: &mut self.cursor,
+                modifiers: &mut self.modifiers,
+                scale_factor: self.scale_factor,
+                should_close: &self.should_close,
+            },
         )
     }
     /// Logical layout bounds for the current viewport and scale.
