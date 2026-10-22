@@ -25,3 +25,4 @@ roms/gba/screenshots/
 # Python bytecode caches
 __pycache__/
 *.py[cod]
+test-archive-rom/
