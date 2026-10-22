@@ -87,12 +87,11 @@ expect_process_termination() {
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
     if instrumentation_failed "${output}"; then
-        # The assertion already failed, but still distinguish a slow shutdown
-        # from a hung one: stacks are only captured while the process is alive.
+        # Dump first: teardown force-stops the package as soon as the test
+        # run ends, so a lingering process may already be gone below.
+        dump_shutdown_threads
         if wait_until_gone_with_timeout 30; then
-            echo "process exited after test failure (slow shutdown, see timestamps above)"
-        else
-            dump_shutdown_threads
+            echo "process gone after test failure (see force-stop note above)"
         fi
         return 1
     fi
