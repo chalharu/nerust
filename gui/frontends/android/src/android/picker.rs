@@ -169,13 +169,12 @@ pub(super) fn reset_transient() {
 }
 
 pub(super) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
-    if bridge::with_picker(|state| {
-        let busy = state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq));
-        state.in_flight = Some(FETCH_SEQ.next());
-        busy
-    }) {
+    // Rejecting a busy request must not consume a generation: the in-flight
+    // fetch keeps its claim until its own producer finishes or cancels it.
+    if bridge::with_picker(|state| state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq))) {
         return Ok(false);
     }
+    bridge::with_picker(|state| state.in_flight = Some(FETCH_SEQ.next()));
     bridge::post_to_activity(
         app,
         "launch Android ROM picker",
@@ -200,13 +199,10 @@ pub(super) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
 }
 
 pub(super) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, String> {
-    if bridge::with_picker(|state| {
-        let busy = state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq));
-        state.in_flight = Some(FETCH_SEQ.next());
-        busy
-    }) {
+    if bridge::with_picker(|state| state.in_flight.is_some_and(|seq| FETCH_SEQ.is_latest(seq))) {
         return Ok(false);
     }
+    bridge::with_picker(|state| state.in_flight = Some(FETCH_SEQ.next()));
     bridge::post_to_activity(
         app,
         "launch Android directory picker",
@@ -230,6 +226,9 @@ pub(super) fn request_open_document_tree(app: &AndroidApp) -> Result<bool, Strin
 /// Fetch the picked document on the single worker; the event thread
 /// only dispatches the completed buffer published here.
 pub(super) fn spawn_document_fetch(app: AndroidApp, uri: String, restore_hidden_state: bool) {
+    // A stuck previous fetch wedges the single worker: cancel its provider
+    // calls before queuing behind it.
+    cancel_in_flight(&app);
     let seq = begin_fetch();
     if fetch_worker()
         .send(FetchJob::Document {
@@ -291,18 +290,34 @@ fn fetch_document_bytes(
                     &[JValue::Object(uri_string.as_ref())],
                 )?
                 .l()?;
-            let display_name =
-                read_display_name_inner(env, &resolver, &uri_object).unwrap_or_else(|error| {
-                    // Display metadata is optional. Do not let its exception
-                    // prevent the independent ROM stream from opening.
-                    if env.exception_check() {
-                        env.exception_clear();
-                    }
-                    log::warn!("failed to read Android document display name for {uri}: {error:?}");
-                    None
-                });
-            let bytes = read_stream_bytes_inner(env, &resolver, &uri_object, seq)?;
-            Ok::<_, jni::errors::Error>((bytes, display_name))
+            // One signal per job for the cancellable query and open below.
+            // A missing signal degrades to the old uninterruptible calls.
+            let signal = env
+                .new_object("android/os/CancellationSignal", "()V", &[])
+                .ok();
+            if let Some(signal) = signal.as_ref() {
+                store_job_signal(env, seq, signal);
+            }
+            let result = (|| {
+                let display_name =
+                    read_display_name_inner(env, &resolver, &uri_object, signal.as_ref())
+                        .unwrap_or_else(|error| {
+                            // Display metadata is optional. Do not let its exception
+                            // prevent the independent ROM stream from opening.
+                            if env.exception_check() {
+                                env.exception_clear();
+                            }
+                            log::warn!(
+                                "failed to read Android document display name for {uri}: {error:?}"
+                            );
+                            None
+                        });
+                let bytes =
+                    read_stream_bytes_inner(env, &resolver, &uri_object, seq, signal.as_ref())?;
+                Ok::<_, jni::errors::Error>((bytes, display_name))
+            })();
+            release_job_handles(env, seq);
+            result
         })
     })
     .map_err(|error| format!("failed to read Android document URI {uri}: {error:?}"))
@@ -312,6 +327,7 @@ fn read_display_name_inner(
     env: &mut jni::Env<'_>,
     resolver: &JObject<'_>,
     uri_object: &JObject<'_>,
+    signal: Option<&JObject<'_>>,
 ) -> Result<Option<String>, jni::errors::Error> {
     let display_name_column = env
         .get_static_field(
@@ -324,12 +340,13 @@ fn read_display_name_inner(
     let projection = env.new_object_array(1, &string_class, JObject::null())?;
     projection.set_element(env, 0, &display_name_column)?;
     let null = JObject::null();
+    let signal_arg = signal.unwrap_or(&null);
     let cursor = env
         .call_method(
             resolver,
             jni_str!("query"),
             jni_sig!(
-                "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;"
+                "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;Landroid/os/CancellationSignal;)Landroid/database/Cursor;"
             ),
             &[
                 JValue::Object(uri_object),
@@ -337,6 +354,7 @@ fn read_display_name_inner(
                 JValue::Object(&null),
                 JValue::Object(&null),
                 JValue::Object(&null),
+                JValue::Object(signal_arg),
             ],
         )?
         .l()?;
@@ -394,18 +412,44 @@ fn read_stream_bytes_inner(
     resolver: &JObject<'_>,
     uri_object: &JObject<'_>,
     seq: u64,
+    signal: Option<&JObject<'_>>,
 ) -> Result<Vec<u8>, jni::errors::Error> {
-    let stream = env
+    let null = JObject::null();
+    let mode = env.new_string("r")?;
+    let descriptor = env
         .call_method(
             resolver,
-            jni_str!("openInputStream"),
-            jni_sig!("(Landroid/net/Uri;)Ljava/io/InputStream;"),
-            &[JValue::Object(uri_object)],
+            jni_str!("openAssetFileDescriptor"),
+            jni_sig!(
+                "(Landroid/net/Uri;Ljava/lang/String;Landroid/os/CancellationSignal;)Landroid/content/AssetFileDescriptor;"
+            ),
+            &[
+                JValue::Object(uri_object),
+                JValue::Object(mode.as_ref()),
+                JValue::Object(signal.unwrap_or(&null)),
+            ],
+        )?
+        .l()?;
+    if descriptor.is_null() {
+        return Err(jni::errors::Error::NullPtr(
+            "openAssetFileDescriptor returned null",
+        ));
+    }
+    let stream = env
+        .call_method(
+            &descriptor,
+            jni_str!("createInputStream"),
+            jni_sig!("()Ljava/io/FileInputStream;"),
+            &[],
         )?
         .l()?;
     if stream.is_null() {
-        return Err(jni::errors::Error::NullPtr("openInputStream returned null"));
+        return Err(jni::errors::Error::NullPtr(
+            "AssetFileDescriptor.createInputStream returned null",
+        ));
     }
+    // Registered for cross-thread close: a bumper closes a stuck read.
+    store_job_stream(env, seq, &stream);
     let mut bytes = Vec::new();
     // Reused JNI scratch: one 64KB i8 buffer serves the whole stream,
     // so chunk reads allocate nothing per round-trip.
@@ -454,9 +498,11 @@ fn read_stream_bytes_inner(
             .err()
             .unwrap_or(jni::errors::Error::JavaException));
     }
-    let close_result = env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[]);
+    let close_stream = env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[]);
+    let close_descriptor = env.call_method(&descriptor, jni_str!("close"), jni_sig!("()V"), &[]);
     read_result?;
-    close_result?;
+    close_stream?;
+    close_descriptor?;
     Ok(bytes)
 }
 
@@ -467,6 +513,84 @@ fn begin_fetch() -> u64 {
         state.in_flight = Some(seq);
         seq
     })
+}
+
+/// Cancel the previous generation's provider calls before a new fetch bumps
+/// the generation: the open/query signal is cancelled and an already-open
+/// stream is closed, so a stuck provider stops wedging the single fetch lane.
+/// Runs on the event thread, which owns an `AndroidApp` for the VM.
+fn cancel_in_flight(app: &AndroidApp) {
+    let (signal, stream) =
+        bridge::with_picker(|state| (state.in_flight_signal.take(), state.in_flight_stream.take()));
+    if signal.is_none() && stream.is_none() {
+        return;
+    }
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
+    let _ = bridge::with_java_env(&vm, |env| {
+        if let Some(signal) = signal {
+            let _ = env.call_method(signal.as_obj(), "cancel", "()V", &[]);
+            let _ = env.delete_global_ref(signal);
+        }
+        if let Some(stream) = stream {
+            let _ = env.call_method(stream.as_obj(), "close", "()V", &[]);
+            let _ = env.delete_global_ref(stream);
+        }
+        Ok::<(), jni::errors::Error>(())
+    });
+}
+
+/// Publish the job's signal for cross-thread cancellation. A bumper takes and
+/// cancels it; a job superseded before it started keeps only its local handle.
+fn store_job_signal(env: &mut jni::Env<'_>, seq: u64, signal: &JObject<'_>) {
+    let global = env.new_global_ref(signal).ok();
+    bridge::with_picker(|state| {
+        if state.in_flight != Some(seq) {
+            if let Some(global) = global {
+                let _ = env.delete_global_ref(global);
+            }
+            return;
+        }
+        let Some(global) = global else { return };
+        if let Some(previous) = state.in_flight_signal.replace(global) {
+            let _ = env.delete_global_ref(previous);
+        }
+    });
+}
+
+/// Publish the job's open stream for cross-thread close. Same ownership rule
+/// as the signal: the slot take decides which side deletes the global ref.
+fn store_job_stream(env: &mut jni::Env<'_>, seq: u64, stream: &JObject<'_>) {
+    let global = env.new_global_ref(stream).ok();
+    bridge::with_picker(|state| {
+        if state.in_flight != Some(seq) {
+            if let Some(global) = global {
+                let _ = env.delete_global_ref(global);
+            }
+            return;
+        }
+        let Some(global) = global else { return };
+        if let Some(previous) = state.in_flight_stream.replace(global) {
+            let _ = env.delete_global_ref(previous);
+        }
+    });
+}
+
+/// Delete this job's slot handles if no bumper took them first. Exactly one
+/// side deletes each global ref: the slot take decides the owner.
+fn release_job_handles(env: &mut jni::Env<'_>, seq: u64) {
+    let (signal, stream) = bridge::with_picker(|state| {
+        if state.in_flight == Some(seq) {
+            (state.in_flight_signal.take(), state.in_flight_stream.take())
+        } else {
+            (None, None)
+        }
+    });
+    if let Some(signal) = signal {
+        let _ = env.delete_global_ref(signal);
+    }
+    if let Some(stream) = stream {
+        let _ = env.delete_global_ref(stream);
+    }
 }
 
 fn publish_result(result: RomPickerResult) {

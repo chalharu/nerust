@@ -75,6 +75,12 @@ impl super::AndroidFrontend {
         }
         self.core.session.restart_audio();
         log::info!("try_resume_foreground: attempt {attempt} succeeded");
+        // A same-size resume skips Resized, yet suspend cleared the overlay.
+        self.chrome.input.rebuild_overlay(
+            &self.core.session,
+            &self.app,
+            self.flow.render_sync.window_size(),
+        );
         self.flow.render_sync.request_redraw(&mut self.core.shell);
     }
 

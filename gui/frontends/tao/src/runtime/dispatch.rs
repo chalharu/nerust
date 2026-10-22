@@ -19,8 +19,7 @@ impl WindowRuntime {
             // Destroyed arrives without CloseRequested on external
             // kills; both run the same idempotent teardown and exit.
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
-                self.host.prepare_close();
-                self.surface_xid = None;
+                self.begin_close();
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {

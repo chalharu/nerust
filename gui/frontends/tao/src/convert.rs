@@ -26,42 +26,50 @@ pub(crate) fn aux_modifiers_to_iced(m: AuxModifiers) -> keyboard::Modifiers {
 }
 
 /// Map a domain key plus produced text to an iced logical key.
+/// Control-carrying text never masks editing keys: tao reports Enter as
+/// `"\r"`, so `Named` wins whenever the key already has an identity.
 pub(crate) fn domain_key_to_iced(key: &nerust_keyboard::Key, text: Option<&str>) -> keyboard::Key {
     use iced::keyboard::key::Named;
     use nerust_keyboard::Key as K;
-    if let Some(text) = text {
-        return keyboard::Key::Character(iced_winit::core::SmolStr::new(text));
-    }
-    match key {
-        K::Backspace => keyboard::Key::Named(Named::Backspace),
-        K::Delete => keyboard::Key::Named(Named::Delete),
-        K::Enter => keyboard::Key::Named(Named::Enter),
-        K::Escape => keyboard::Key::Named(Named::Escape),
-        K::Tab => keyboard::Key::Named(Named::Tab),
+    let named = match key {
+        K::Backspace => Some(Named::Backspace),
+        K::Delete => Some(Named::Delete),
+        K::Enter | K::NumpadEnter => Some(Named::Enter),
+        K::Escape => Some(Named::Escape),
+        K::Tab => Some(Named::Tab),
         // Caret and paging keys: aux text fields need logical identity,
         // shortcuts keep reading the physical code.
-        K::ArrowUp => keyboard::Key::Named(Named::ArrowUp),
-        K::ArrowDown => keyboard::Key::Named(Named::ArrowDown),
-        K::ArrowLeft => keyboard::Key::Named(Named::ArrowLeft),
-        K::ArrowRight => keyboard::Key::Named(Named::ArrowRight),
-        K::Home => keyboard::Key::Named(Named::Home),
-        K::End => keyboard::Key::Named(Named::End),
-        K::PageUp => keyboard::Key::Named(Named::PageUp),
-        K::PageDown => keyboard::Key::Named(Named::PageDown),
-        K::Insert => keyboard::Key::Named(Named::Insert),
-        K::Space => keyboard::Key::Named(Named::Space),
-        K::F1 => keyboard::Key::Named(Named::F1),
-        K::F2 => keyboard::Key::Named(Named::F2),
-        K::F3 => keyboard::Key::Named(Named::F3),
-        K::F4 => keyboard::Key::Named(Named::F4),
-        K::F5 => keyboard::Key::Named(Named::F5),
-        K::F6 => keyboard::Key::Named(Named::F6),
-        K::F7 => keyboard::Key::Named(Named::F7),
-        K::F8 => keyboard::Key::Named(Named::F8),
-        K::F9 => keyboard::Key::Named(Named::F9),
-        K::F10 => keyboard::Key::Named(Named::F10),
-        K::F11 => keyboard::Key::Named(Named::F11),
-        K::F12 => keyboard::Key::Named(Named::F12),
+        K::ArrowUp => Some(Named::ArrowUp),
+        K::ArrowDown => Some(Named::ArrowDown),
+        K::ArrowLeft => Some(Named::ArrowLeft),
+        K::ArrowRight => Some(Named::ArrowRight),
+        K::Home => Some(Named::Home),
+        K::End => Some(Named::End),
+        K::PageUp => Some(Named::PageUp),
+        K::PageDown => Some(Named::PageDown),
+        K::Insert => Some(Named::Insert),
+        K::Space => Some(Named::Space),
+        K::F1 => Some(Named::F1),
+        K::F2 => Some(Named::F2),
+        K::F3 => Some(Named::F3),
+        K::F4 => Some(Named::F4),
+        K::F5 => Some(Named::F5),
+        K::F6 => Some(Named::F6),
+        K::F7 => Some(Named::F7),
+        K::F8 => Some(Named::F8),
+        K::F9 => Some(Named::F9),
+        K::F10 => Some(Named::F10),
+        K::F11 => Some(Named::F11),
+        K::F12 => Some(Named::F12),
+        _ => None,
+    };
+    if let Some(named) = named {
+        return keyboard::Key::Named(named);
+    }
+    match text {
+        Some(text) if !text.is_empty() && text.chars().all(|c| !c.is_control()) => {
+            keyboard::Key::Character(iced_winit::core::SmolStr::new(text))
+        }
         _ => keyboard::Key::Unidentified,
     }
 }
@@ -416,6 +424,26 @@ mod tests {
         assert_eq!(
             domain_key_to_iced(&Key::KeyA, Some("あ")),
             keyboard::Key::Character(iced_winit::core::SmolStr::new("あ"))
+        );
+    }
+
+    #[test]
+    fn control_text_does_not_mask_editing_keys() {
+        use iced::keyboard::key::Named;
+        for (key, text, named) in [
+            (Key::Enter, "\r", Named::Enter),
+            (Key::Backspace, "\u{8}", Named::Backspace),
+            (Key::Tab, "\t", Named::Tab),
+            (Key::NumpadEnter, "\r", Named::Enter),
+        ] {
+            assert_eq!(
+                domain_key_to_iced(&key, Some(text)),
+                keyboard::Key::Named(named)
+            );
+        }
+        assert_eq!(
+            domain_key_to_iced(&Key::NumpadEnter, None),
+            keyboard::Key::Named(Named::Enter)
         );
     }
 

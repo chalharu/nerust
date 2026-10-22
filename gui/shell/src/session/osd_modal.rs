@@ -87,6 +87,18 @@ impl ModalQueue {
     }
 
     pub(crate) fn push_message(&mut self, message: Message, count: u32, level: NotificationLevel) {
+        // Same-tick storm: fold into the tail instead of queueing a twin batch.
+        if let Some(ModalLine::Notification {
+            message: back,
+            count: back_count,
+            level: back_level,
+        }) = self.batch.last_mut()
+            && *back_level == level
+            && back.coalescing_key() == message.coalescing_key()
+        {
+            *back_count = back_count.saturating_add(count);
+            return;
+        }
         self.batch.push(ModalLine::Notification {
             message,
             count,
@@ -99,6 +111,26 @@ impl ModalQueue {
         let lines = std::mem::take(&mut self.batch);
         if lines.is_empty() {
             return ModalPump::Idle;
+        }
+        // Cross-tick storm: a batch identical to the queue tail folds into it
+        // instead of stacking another waiting dialog.
+        if let Some(back) = self.queue.back_mut()
+            && same_batch(back, &lines)
+        {
+            for (dst, src) in back.iter_mut().zip(&lines) {
+                if let (
+                    ModalLine::Notification {
+                        count: dst_count, ..
+                    },
+                    ModalLine::Notification {
+                        count: src_count, ..
+                    },
+                ) = (dst, src)
+                {
+                    *dst_count = dst_count.saturating_add(*src_count);
+                }
+            }
+            return ModalPump::Queued { dropped: false };
         }
         self.queue.push_back(lines);
         ModalPump::Queued {
@@ -232,6 +264,27 @@ impl ModalQueue {
     }
 }
 
+/// Same shape and identity line by line: level plus message key match, so a
+/// repeated failure folds into one waiting dialog without losing its count.
+fn same_batch(a: &[ModalLine], b: &[ModalLine]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|pair| match pair {
+            (
+                ModalLine::Notification {
+                    message: a_message,
+                    level: a_level,
+                    ..
+                },
+                ModalLine::Notification {
+                    message: b_message,
+                    level: b_level,
+                    ..
+                },
+            ) => a_level == b_level && a_message.coalescing_key() == b_message.coalescing_key(),
+            _ => false,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +358,41 @@ mod tests {
         modal.requeue_front(taken);
         assert_eq!(modal.dropped_total, 2);
         assert_eq!(modal.modal_pending(), 8);
+    }
+
+    #[test]
+    fn repeated_structured_failures_fold_into_one_waiting_dialog() {
+        use crate::session::notification::{Message, MessageKey, NotificationLevel};
+        let mut center = ModalQueue::default();
+        // Same tick: one tail entry, counts add.
+        center.push_message(
+            Message::unit(MessageKey::SlotFailed),
+            1,
+            NotificationLevel::Error,
+        );
+        center.push_message(
+            Message::unit(MessageKey::SlotFailed),
+            2,
+            NotificationLevel::Error,
+        );
+        assert_eq!(center.pump_pending(), ModalPump::Queued { dropped: false });
+        assert_eq!(center.pending(), 1);
+        // Next tick: an identical batch folds into the waiting tail.
+        center.push_message(
+            Message::unit(MessageKey::SlotFailed),
+            4,
+            NotificationLevel::Error,
+        );
+        assert_eq!(center.pump_pending(), ModalPump::Queued { dropped: false });
+        assert_eq!(center.pending(), 1);
+        // Different identity still queues separately.
+        center.push_message(
+            Message::unit(MessageKey::Resumed),
+            1,
+            NotificationLevel::Error,
+        );
+        assert_eq!(center.pump_pending(), ModalPump::Queued { dropped: false });
+        assert_eq!(center.pending(), 2);
     }
 }
 
