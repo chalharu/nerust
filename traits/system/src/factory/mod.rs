@@ -25,6 +25,8 @@ use self::{
 pub enum FactoryError {
     #[error("core creation failed: {0}")]
     Create(String),
+    #[error("input split failed: {0}")]
+    CreateSplit(#[from] nerust_input_traits::CreateSplitError),
     #[error("invalid settings choice: {0}")]
     InvalidChoice(String),
     #[error("load request resolution failed: {0}")]

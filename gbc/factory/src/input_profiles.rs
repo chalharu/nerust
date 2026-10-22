@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use nerust_input_traits::{
-    AttachmentId, ControllerProfile, InputAssignments, InputPorts, InputSystemFactory, ProfileId,
-    SimplePort, SlotInfo,
+    AttachmentId, ControllerProfile, CreateSplitError, InputAssignments, InputPorts,
+    InputSystemFactory, ProfileId, SimplePort, SlotInfo,
 };
 
 pub(crate) const GBC_ATTACHMENT: AttachmentId = AttachmentId::new("gbc.attachment.player1");
@@ -28,44 +28,45 @@ impl crate::GbcFactory {
         assignments: &InputAssignments,
     ) -> Result<
         nerust_input_traits::TypedInputResources<nerust_gbc_core::input_types::GbcInputBuffer>,
-        crate::FactoryError,
+        CreateSplitError,
     > {
-        use nerust_input_traits::CreateSplitError;
-        if assignments.slots().len() != 1 || assignments.slots()[0].0 != GBC_ATTACHMENT {
-            return Err(crate::FactoryError::Create(
-                "GBC requires exactly one player1 assignment".to_string(),
-            ));
+        use nerust_input_traits::Controller as _;
+        let mut plan = assignments.placement_plan(self)?;
+        let placement = plan
+            .drain(..)
+            .next()
+            .ok_or(CreateSplitError::EmptyAssignments)?;
+        let Some((profile, group)) = placement else {
+            return Err(CreateSplitError::EmptyAssignments);
+        };
+        let device = device_for_profile(&profile, group)?;
+        let mut map = nerust_input_traits::UnifiedFieldMap::new();
+        for entry in device.field_entries(&GBC_PORT) {
+            let _ = map.insert((entry.attachment, entry.control), entry.field);
         }
-        let (attachment, profile) = assignments.slots().first().ok_or_else(|| {
-            crate::FactoryError::Create("GBC controller is not assigned".to_string())
-        })?;
-        let _ = attachment;
-        let profile = profile.as_ref().ok_or_else(|| {
-            crate::FactoryError::Create("GBC controller is not assigned".to_string())
-        })?;
-        if profile.profile_id() != ProfileId::new("gbc.standard_pad") {
-            return Err(crate::FactoryError::Create(format!(
-                "unsupported GBC controller: {}",
-                profile.profile_id()
-            )));
-        }
-        let map = nerust_input_traits::collect_first_wins(
-            nerust_gbc_device::StandardPad::input_fields(&GBC_PORT)
-                .into_iter()
-                .map(|entry| ((entry.attachment, entry.control), entry.field)),
-        );
         if map.is_empty() {
-            return Err(crate::FactoryError::Create(
-                CreateSplitError::ControllerNotFound {
-                    controller: ProfileId::new("gbc.standard_pad"),
-                }
-                .to_string(),
-            ));
+            return Err(CreateSplitError::EmptyAssignments);
         }
         Ok(nerust_input_traits::TypedInputResources::new(
             map,
             nerust_gbc_core::input_types::GbcInputBuffer::default,
         ))
+    }
+}
+
+/// Single-profile device registry: the canonical placement profile selects the device.
+/// Unknown profiles cannot arrive through [`placement_plan`](InputAssignments::placement_plan);
+/// the fallback names the actual offender for forward compatibility.
+fn device_for_profile(
+    profile: &Rc<dyn ControllerProfile>,
+    _group: usize,
+) -> Result<nerust_gbc_device::StandardPad, CreateSplitError> {
+    if profile.profile_id() == ProfileId::new("gbc.standard_pad") {
+        Ok(nerust_gbc_device::StandardPad::new())
+    } else {
+        Err(CreateSplitError::ControllerNotFound {
+            controller: profile.profile_id(),
+        })
     }
 }
 
@@ -81,6 +82,25 @@ impl InputSystemFactory for crate::GbcFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_maps_eight_fields_and_rejects_bad_assignments() {
+        let resources = crate::GbcFactory
+            .create_split(&crate::GbcFactory.default_assignments())
+            .unwrap();
+        assert_eq!(resources.field_map().len(), 8);
+        let empty = InputAssignments::new(vec![(GBC_ATTACHMENT, None)]);
+        assert!(matches!(
+            crate::GbcFactory.create_split(&empty),
+            Err(CreateSplitError::EmptyAssignments)
+        ));
+        let unknown =
+            InputAssignments::new(vec![(AttachmentId::new("gbc.attachment.unknown"), None)]);
+        assert!(matches!(
+            crate::GbcFactory.create_split(&unknown),
+            Err(CreateSplitError::SlotNotFound { .. })
+        ));
+    }
 
     #[test]
     fn default_assignment_uses_standard_pad() {
