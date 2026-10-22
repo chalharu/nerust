@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use nerust_settings_core::model::local::NotificationSettings;
 
-use crate::session::notification::{NotificationLevel, ReplaceGroup, append_count};
+use crate::session::notification::{NotificationLevel, ReplaceGroup};
 
 #[derive(Debug, Clone)]
 pub struct OsdRow {
@@ -134,12 +134,14 @@ impl TransientPolicy {
     }
 }
 
-pub(crate) fn counted_row(base: &str, count: u32, rgb: (u8, u8, u8), tag: Arc<str>) -> OsdRow {
-    OsdRow {
-        text: append_count(base.to_string(), count).into(),
-        rgb,
-        tag,
-    }
+pub(crate) fn counted_row(base: &Arc<str>, count: u32, rgb: (u8, u8, u8), tag: Arc<str>) -> OsdRow {
+    // Single-copy suffix: the common count of one shares the base arc.
+    let text = if count > 1 {
+        Arc::from(format!("{base} ×{count}"))
+    } else {
+        Arc::clone(base)
+    };
+    OsdRow { text, rgb, tag }
 }
 
 impl TransientQueue {
@@ -430,7 +432,7 @@ mod tests {
             ),
         };
         OsdItem {
-            row: counted_row(key, 1, (200, 200, 200), Arc::from("[I]")),
+            row: counted_row(&Arc::from(key), 1, (200, 200, 200), Arc::from("[I]")),
             level,
             message,
             base: key.into(),
@@ -641,13 +643,13 @@ mod transient_cov_tests {
             let _ = policy.color(level);
         }
         assert_eq!(
-            counted_row("a", 1, (1, 2, 3), Arc::from("[INFO]"))
+            counted_row(&Arc::from("a"), 1, (1, 2, 3), Arc::from("[INFO]"))
                 .text
                 .as_ref(),
             "a"
         );
         assert_eq!(
-            counted_row("a", 2, (1, 2, 3), Arc::from("[INFO]"))
+            counted_row(&Arc::from("a"), 2, (1, 2, 3), Arc::from("[INFO]"))
                 .text
                 .as_ref(),
             "a ×2"

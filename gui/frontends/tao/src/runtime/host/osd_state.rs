@@ -1,7 +1,6 @@
 //! OSD service cluster: layer sync plus history plus modal queue.
 //! Owned by `HostState`; the drain router uses only the narrow ports below.
 
-
 use super::osd::ModalFlight;
 
 /// OSD layer sync: rasterizer, presenter, and live-layer state.

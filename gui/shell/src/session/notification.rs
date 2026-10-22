@@ -508,6 +508,11 @@ impl PendingQueue {
         self.pending.drain(..).collect()
     }
 
+    /// Drain into the caller's scratch buffer, reusing its allocation.
+    pub fn drain_into(&mut self, out: &mut Vec<UiNotification>) {
+        out.extend(self.pending.drain(..));
+    }
+
     /// Queued event count.
     pub fn len(&self) -> usize {
         self.pending.len()
@@ -580,6 +585,11 @@ impl NotificationCenter {
 
     pub fn drain(&mut self) -> Vec<UiNotification> {
         self.queue.drain()
+    }
+
+    /// Drain into the caller's scratch buffer, reusing its allocation.
+    pub fn drain_into(&mut self, out: &mut Vec<UiNotification>) {
+        self.queue.drain_into(out);
     }
 
     pub fn history(&self) -> impl Iterator<Item = &UiNotification> {

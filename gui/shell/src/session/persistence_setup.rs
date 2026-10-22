@@ -30,38 +30,29 @@ pub(crate) struct PersistenceBinder;
 
 impl PersistenceBinder {
     /// Single wiring entry: optional exporter, path, and restore mode.
-    /// Load path passes the parked candidate with `Load`; settings passes `None`/live.
-    pub(crate) fn bind_with(
+    /// `None` probes the live core inside, so callers never juggle its borrow.
+    /// Returns the setup; the caller pushes the notice via [`SessionHandle::note_persistence_setup`].
+    pub(crate) fn bind(
         session: &mut SessionHandle,
         exporter: Option<&dyn StateExporter>,
         rom_path: Option<&Path>,
         mapper_restore: MapperRestore,
-    ) {
-        let setup = setup_persistence(
+    ) -> PersistenceSetup {
+        let live;
+        let exporter = match exporter {
+            Some(exporter) => Some(exporter),
+            None => {
+                live = session.emu.exporter().ok();
+                live.as_deref()
+            }
+        };
+        setup_persistence(
             &session.settings.manager,
             &mut session.media.persistence,
             exporter,
             rom_path,
             mapper_restore,
-        );
-        session.note_persistence_setup(setup);
-    }
-
-    pub(crate) fn bind(
-        session: &mut SessionHandle,
-        rom_path: Option<&Path>,
-        mapper_restore: MapperRestore,
-    ) {
-        let exporter = session.emu.exporter().ok();
-        // Reborrow after the exporter probe ends.
-        let setup = setup_persistence(
-            &session.settings.manager,
-            &mut session.media.persistence,
-            exporter,
-            rom_path,
-            mapper_restore,
-        );
-        session.note_persistence_setup(setup);
+        )
     }
 }
 
@@ -123,10 +114,12 @@ mod persistence_setup_cov_tests {
         let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let mut session = SessionHandle::new_ephemeral(caps, registry, audio);
-        PersistenceBinder::bind(&mut session, None, MapperRestore::Skip);
+        let setup = PersistenceBinder::bind(&mut session, None, None, MapperRestore::Skip);
+        session.note_persistence_setup(setup);
         assert_eq!(session.drain_notifications().len(), 1);
         // Unavailable setup is noted once via the binder path below.
-        PersistenceBinder::bind(&mut session, None, MapperRestore::Load);
+        let setup = PersistenceBinder::bind(&mut session, None, None, MapperRestore::Load);
+        session.note_persistence_setup(setup);
         assert_eq!(session.drain_notifications().len(), 1);
         session.note_persistence_setup(PersistenceSetup::Ready);
         assert_eq!(session.drain_notifications().len(), 0);
@@ -137,7 +130,8 @@ mod persistence_setup_cov_tests {
     #[test]
     fn binder_without_rom_reports_unavailable() {
         let mut session = test_session();
-        PersistenceBinder::bind(&mut session, None, MapperRestore::Skip);
+        let setup = PersistenceBinder::bind(&mut session, None, None, MapperRestore::Skip);
+        session.note_persistence_setup(setup);
         assert_eq!(session.drain_notifications().len(), 1);
     }
 }

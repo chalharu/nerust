@@ -92,12 +92,13 @@ impl SessionHandle {
             }
             return Err(error.into());
         }
-        PersistenceBinder::bind_with(
+        let setup = PersistenceBinder::bind(
             self,
             Some(&candidate.emu_core),
             media.native_path(),
             MapperRestore::Load,
         );
+        self.note_persistence_setup(setup);
         self.publish_runtime(super::ActiveRuntime::from(candidate));
 
         self.remember_last_successful_rom_directory(media.native_path());
@@ -138,6 +139,7 @@ impl SessionHandle {
         // again here could overwrite committed app state with an older copy.
     }
 
+    #[cfg(test)]
     pub(crate) fn drain_notifications(&mut self) -> Vec<super::notification::UiNotification> {
         self.notifications.drain()
     }
@@ -151,7 +153,8 @@ impl SessionHandle {
         } = input;
         let before = osd.generation();
         let channel = tick.frame_channel();
-        let drained = self.drain_notifications();
+        self.notifications.drain_into(&mut self.drain_scratch);
+        let drained = self.drain_scratch.drain(..);
         osd.push_all_with_policy(drained, &policy, language, now, channel);
         osd.poll(now);
         let modal_queued = osd.pump_modal();

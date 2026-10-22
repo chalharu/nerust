@@ -870,12 +870,7 @@ impl AndroidFrontend {
             && let Some(window) = self.flow.render_sync.cloned_window()
         {
             let tick = self.core.session.tick_metrics();
-            window.set_title(
-                &self
-                    .core
-                    .session
-                    .window_title_cached(&tick),
-            );
+            window.set_title(&self.core.session.window_title_cached(&tick));
         }
     }
 

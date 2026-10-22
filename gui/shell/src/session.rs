@@ -274,12 +274,10 @@ impl EmuCluster {
     }
 
     /// Single typed access: exclusive live core behind the port.
-    /// Returns the box so the borrow stays concrete; callers deref to the port.
-    pub(crate) fn require_live_mut(&mut self) -> Result<&mut Box<dyn LiveCore>, SessionError> {
-        self.runtime
-            .as_mut()
-            .map(|runtime| &mut runtime.core)
-            .ok_or(SessionError::NoCore)
+    /// Returns the port directly; the box stays inside the cluster.
+    pub(crate) fn require_live_mut(&mut self) -> Result<&mut (dyn LiveCore + '_), SessionError> {
+        let runtime = self.runtime.as_mut().ok_or(SessionError::NoCore)?;
+        Ok(runtime.core.as_mut())
     }
 
     /// Shared live core, mapping absence once to the slot `Empty` fault.
@@ -347,6 +345,8 @@ pub struct SessionHandle {
     notifications: notification::NotificationCenter,
     title_cache: title::TitleCache,
     history_view: session_query::HistoryView,
+    /// Reused OSD drain buffer: one allocation serves every tick.
+    drain_scratch: Vec<notification::UiNotification>,
 }
 
 fn display_name_for(
@@ -547,6 +547,7 @@ impl SessionHandle {
             notifications: notification::NotificationCenter::new(),
             title_cache: title::TitleCache::new(),
             history_view: session_query::HistoryView::new(),
+            drain_scratch: Vec::new(),
         };
         result.emu.restore(runtime);
         result.rebuild_key_field_map();
@@ -1014,9 +1015,7 @@ mod session_cov_tests {
             mapper: Box::new(super::fs::FsMapper),
         });
         let tick = session.tick_metrics();
-        let _ = session
-            .window_title_cached(&tick)
-            .to_string();
+        let _ = session.window_title_cached(&tick).to_string();
         let _ = session
             .notification_history_lines_cached(Default::default())
             .len();

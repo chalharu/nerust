@@ -62,8 +62,10 @@ impl HostState {
         if !self.osd.history.sync_key.check(&key) {
             return;
         }
-        let lines: std::sync::Arc<[nerust_gui_shell::session::osd::HistoryLine]> =
-            self.session.notification_history_lines_cached(language).into();
+        let lines: std::sync::Arc<[nerust_gui_shell::session::osd::HistoryLine]> = self
+            .session
+            .notification_history_lines_cached(language)
+            .into();
         self.aux.history_sync(lines, language);
     }
 

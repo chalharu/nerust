@@ -7,7 +7,7 @@ use crate::emu_core::CorePersistenceError;
 use crate::session::commands::{SessionCommand, SessionCommandOutcome};
 use crate::session::error::SlotOpFailure;
 use crate::session::persistence::{FailingSlotBackend, PersistenceBackends, StateExporter};
-use crate::session::persistence_setup::{MapperRestore, PersistenceSetup};
+use crate::session::persistence_setup::MapperRestore;
 use crate::session::test_util::*;
 use crate::test_helpers::*;
 
@@ -398,9 +398,6 @@ impl StateExporter for FailingExportCore {
     fn export_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
         None
     }
-    fn canonical_media_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
-        None
-    }
     fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
         Err(SlotOpFailure::Unavailable)
     }
@@ -414,11 +411,12 @@ fn flush_mapper_save_propagates_export_failure() {
     use crate::session::persistence::PersistenceManager;
 
     let temp_dir = unique_temp_dir("flush-export-failure");
-    let mut manager = PersistenceManager::with_all_backends(
-        Box::new(FailingSlotBackend),
-        Box::new(FailingSlotBackend),
-        Box::new(FailingSlotBackend),
-    );
+    let mut manager = PersistenceManager::new();
+    manager.configure_backends(crate::session::persistence::PersistenceBackends {
+        slot: Box::new(FailingSlotBackend),
+        autosave: Box::new(FailingSlotBackend),
+        mapper: Box::new(FailingSlotBackend),
+    });
     manager.configure(temp_dir.clone().into(), temp_dir.join("test.sav").into());
     assert!(matches!(
         manager.flush_mapper_save(&FailingExportCore),
@@ -435,12 +433,13 @@ fn setup_failure_pushes_persistence_unavailable() {
 
     // Core active but no ROM loaded: no media identity, so setup fails.
     let mut session = test_session();
-    crate::session::persistence_setup::PersistenceBinder::bind(
+    let setup = crate::session::persistence_setup::PersistenceBinder::bind(
         &mut session,
+        None,
         None,
         MapperRestore::Skip,
     );
-    session.note_persistence_setup(PersistenceSetup::Unavailable);
+    session.note_persistence_setup(setup);
     let notes = session.drain_notifications();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].message, Message::persistence_unavailable());
@@ -537,19 +536,11 @@ fn every_wiring_funnels_through_configure_backends() {
     use crate::session::fs::{FsAutosave, FsMapper, FsSlots};
     use crate::session::persistence::PersistenceManager;
     let mut manager = PersistenceManager::new();
-    manager.with_autosave_backend(Box::new(FsAutosave));
-    manager.with_mapper_backend(Box::new(FsMapper));
     manager.configure_backends(PersistenceBackends {
         slot: Box::new(FsSlots),
         autosave: Box::new(FsAutosave),
         mapper: Box::new(FsMapper),
     });
-    let bundled = PersistenceManager::with_all_backends(
-        Box::new(FsSlots),
-        Box::new(FsAutosave),
-        Box::new(FsMapper),
-    );
-    assert!(bundled.slots().is_empty());
     assert!(manager.slots().is_empty());
 }
 
