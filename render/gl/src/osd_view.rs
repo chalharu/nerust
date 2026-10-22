@@ -70,11 +70,25 @@ impl ViewportGuard {
     }
 }
 
+impl ViewportGuard {
+    /// Explicit restore: reports failure instead of debug-logging it.
+    /// Consumed, so the backstop drop below never double-restores.
+    fn restore(self) -> Result<(), ViewError> {
+        let [x, y, w, h] = self.saved;
+        let result = ok_gl(viewport(x, y, w, h));
+        std::mem::forget(self);
+        result
+    }
+}
+
 impl Drop for ViewportGuard {
     fn drop(&mut self) {
-        let [x, y, w, h] = self.saved;
-        if viewport(x, y, w, h).is_err() {
-            log::debug!("GlView: viewport restore failed");
+        // Panic backstop only: every normal path restores explicitly.
+        if std::thread::panicking() {
+            let [x, y, w, h] = self.saved;
+            if viewport(x, y, w, h).is_err() {
+                log::debug!("GlView: viewport restore failed");
+            }
         }
     }
 }
@@ -114,17 +128,40 @@ impl BlendGuard {
     }
 }
 
+impl BlendGuard {
+    /// Explicit restore: factors first, then the enable flag, reporting failure.
+    fn restore(self) -> Result<(), ViewError> {
+        // Restore factors first, then the enable flag: pre-enabled BLEND
+        // survives, pre-disabled never leaks on.
+        let result = (|| {
+            ok_gl(blend_func_separate(
+                self.src_rgb,
+                self.dst_rgb,
+                self.src_alpha,
+                self.dst_alpha,
+            ))?;
+            if !self.was_enabled {
+                ok_gl(disable(gl::BLEND))?;
+            }
+            Ok(())
+        })();
+        std::mem::forget(self);
+        result
+    }
+}
+
 impl Drop for BlendGuard {
     fn drop(&mut self) {
-        // Restore factors first, then the enable flag: pre-enabled BLEND
-        // survives, pre-disabled never leaks on. Errors land in the debug log.
-        if let Err(e) =
-            blend_func_separate(self.src_rgb, self.dst_rgb, self.src_alpha, self.dst_alpha)
-        {
-            log::debug!("GlView: blend factor restore failed: {e}");
-        }
-        if !self.was_enabled && disable(gl::BLEND).is_err() {
-            log::debug!("GlView: blend disable restore failed");
+        // Panic backstop only: every normal path restores explicitly.
+        if std::thread::panicking() {
+            if blend_func_separate(self.src_rgb, self.dst_rgb, self.src_alpha, self.dst_alpha)
+                .is_err()
+            {
+                log::debug!("GlView: blend factor restore failed");
+            }
+            if !self.was_enabled && disable(gl::BLEND).is_err() {
+                log::debug!("GlView: blend disable restore failed");
+            }
         }
     }
 }
@@ -148,31 +185,49 @@ impl ProgramGuard {
     }
 }
 
+impl ProgramGuard {
+    /// Explicit restore: reports failure instead of debug-logging it.
+    fn restore(self) -> Result<(), ViewError> {
+        // No raw `gl::` calls: wrappers drain per call and report the
+        // GL error chain on failure.
+        let result = (|| {
+            ok_gl(active_texture(self.active_texture))?;
+            ok_gl(bind_buffer(gl::ARRAY_BUFFER, self.array_buffer))?;
+            ok_gl(bind_vertex_array(self.vao_binding))?;
+            ok_gl(use_program(self.program))?;
+            Ok(())
+        })();
+        std::mem::forget(self);
+        result
+    }
+}
+
 impl Drop for ProgramGuard {
     fn drop(&mut self) {
-        // No raw `gl::` calls: wrappers drain per call and report the
-        // GL error chain in the debug log on failure.
-        if active_texture(self.active_texture).is_err() {
-            log::debug!("GlView: active texture restore failed");
-        }
-        if bind_buffer(gl::ARRAY_BUFFER, self.array_buffer).is_err() {
-            log::debug!("GlView: array buffer restore failed");
-        }
-        if bind_vertex_array(self.vao_binding).is_err() {
-            log::debug!("GlView: VAO restore failed");
-        }
-        if use_program(self.program).is_err() {
-            log::debug!("GlView: program restore failed");
+        // Panic backstop only: every normal path restores explicitly.
+        if std::thread::panicking() {
+            if active_texture(self.active_texture).is_err() {
+                log::debug!("GlView: active texture restore failed");
+            }
+            if bind_buffer(gl::ARRAY_BUFFER, self.array_buffer).is_err() {
+                log::debug!("GlView: array buffer restore failed");
+            }
+            if bind_vertex_array(self.vao_binding).is_err() {
+                log::debug!("GlView: VAO restore failed");
+            }
+            if use_program(self.program).is_err() {
+                log::debug!("GlView: program restore failed");
+            }
         }
     }
 }
 
-/// RAII viewport + blend + program guard for the OSD composite.
-/// Drop restores all best-effort so a failed draw never leaks into the next frame.
+/// Viewport + blend + program save for the OSD composite.
+/// Explicit `restore` reports failure; drops are panic backstops only.
 struct CompositeGuard {
     viewport: ViewportGuard,
-    _blend: BlendGuard,
-    _program: ProgramGuard,
+    blend: BlendGuard,
+    program: ProgramGuard,
 }
 
 impl CompositeGuard {
@@ -189,9 +244,21 @@ impl CompositeGuard {
         };
         Ok(Self {
             viewport,
-            _blend: BlendGuard::enable_src_alpha()?,
-            _program: ProgramGuard::save()?,
+            blend: BlendGuard::enable_src_alpha()?,
+            program: ProgramGuard::save()?,
         })
+    }
+
+    /// Restore game state in reverse order, reporting the first failure.
+    fn restore(self) -> Result<(), ViewError> {
+        let Self {
+            viewport,
+            blend,
+            program,
+        } = self;
+        program.restore()?;
+        blend.restore()?;
+        viewport.restore()
     }
 
     fn saved_viewport(&self) -> [i32; 4] {
@@ -347,18 +414,18 @@ impl OsdView {
         }
         use_texture(0, self.osd_texture)?;
         frame.bind_geometry()?;
-        // Fullscreen composite under the guard: all state restores on drop.
+        // Fullscreen composite with explicit restore: failures propagate
+        // instead of debug-logging inside a drop.
         // The memoized viewport skips the per-frame `GetIntegerv`.
-        let _composite = CompositeGuard::fullscreen(surface_w, surface_h, game_viewport)?;
-        let applied_viewport = Some(_composite.saved_viewport());
+        let composite = CompositeGuard::fullscreen(surface_w, surface_h, game_viewport)?;
+        let applied_viewport = Some(composite.saved_viewport());
         // Guard restoration must not leave a successful program memo on error.
         frame.set_current_program(None);
         // Shared quad: four vertices with identical position/UV locations.
         ok_gl(unsafe { draw_arrays(gl::TRIANGLE_STRIP, 0, 4) })?;
-        // Guard drops here restoring game state; the program memo is unknown.
-        drop(_composite);
-        // Explicit restore: rebind the game texture so the next frame
-        // never samples the overlay.
+        // Explicit restore: game state returns before the game-texture rebind
+        // so the next frame never samples the overlay.
+        composite.restore()?;
         frame.restore_game_binding()?;
         ok_gl(check_frame())?;
         Ok((OsdOutcome::Presented, applied_viewport))

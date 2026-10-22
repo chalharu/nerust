@@ -86,9 +86,11 @@ pub struct OsdRaster {
     has_fonts: bool,
     ui_scale: f32,
     safe_insets: ViewInsets,
-    /// Flat shape cache keyed by (text, size); LRU order in `shape_lru`.
-    shape_cache: HashMap<ShapeKey, Arc<ShapedSpan>>,
-    shape_lru: std::collections::VecDeque<ShapeKey>,
+    /// Flat shape cache keyed by (text, size); the stored epoch orders eviction.
+    shape_cache: HashMap<ShapeKey, (Arc<ShapedSpan>, u64)>,
+    /// Monotonic hit clock; eviction drops the smallest epoch. Wraps safely:
+    /// only relative order matters and inserts are many orders below `u64::MAX`.
+    cache_clock: u64,
     gap_key: Arc<str>,
     empty_key: Arc<str>,
 }
@@ -119,7 +121,7 @@ impl OsdRaster {
             ui_scale: 1.0,
             safe_insets: ViewInsets::default(),
             shape_cache: HashMap::new(),
-            shape_lru: std::collections::VecDeque::new(),
+            cache_clock: 0,
             gap_key: Arc::from(GAP_STR),
             empty_key: Arc::from(EMPTY_STR),
         }
@@ -469,24 +471,34 @@ impl OsdRaster {
     /// Flat-key lookup hits without allocating; misses intern one `Arc<str>`.
     #[cfg(test)]
     fn shape_cached(&mut self, line: &str, font_px: u32) -> Arc<ShapedSpan> {
-        let key: Arc<str> = Arc::from(line);
-        if let Some(hit) = self.shape_cache.get(&(Arc::clone(&key), font_px)).cloned() {
-            self.touch_lru(&key, font_px);
-            return hit;
-        }
-        let span = Arc::new(self.shape_uncached(line, font_px));
-        self.insert_lru(key, font_px, Arc::clone(&span));
-        span
+        self.shape_cached_shared(&Arc::from(line), font_px)
     }
 
     /// Shared-key shape: the caller's `Arc` keys the cache, so hits never allocate.
+    /// One hash lookup per call; the stored epoch refreshes in place, so hits
+    /// never scan. Eviction scans only on overflow inserts.
     fn shape_cached_shared(&mut self, key: &Arc<str>, font_px: u32) -> Arc<ShapedSpan> {
-        if let Some(hit) = self.shape_cache.get(&(Arc::clone(key), font_px)).cloned() {
-            self.touch_lru(key, font_px);
-            return hit;
+        self.cache_clock = self.cache_clock.wrapping_add(1);
+        let now = self.cache_clock;
+        if let Some((span, epoch)) = self
+            .shape_cache
+            .get_mut(&(Arc::clone(key), font_px))
+        {
+            *epoch = now;
+            return Arc::clone(span);
         }
         let span = Arc::new(self.shape_uncached(key, font_px));
-        self.insert_lru(Arc::clone(key), font_px, Arc::clone(&span));
+        if self.shape_cache.len() >= SHAPE_CACHE_CAP
+            && let Some(oldest) = self
+                .shape_cache
+                .iter()
+                .min_by_key(|(_, (_, epoch))| *epoch)
+                .map(|(key, _)| key.clone())
+        {
+            self.shape_cache.remove(&oldest);
+        }
+        self.shape_cache
+            .insert((Arc::clone(key), font_px), (Arc::clone(&span), now));
         span
     }
 
@@ -506,38 +518,10 @@ impl OsdRaster {
         self.shape_cached(line, font_px)
     }
 
-    /// Mark a hit most-recently-used; linear move, cap is tiny.
-    /// Content compare: callers pass a freshly interned key each lookup.
-    fn touch_lru(&mut self, text: &Arc<str>, font_px: u32) {
-        if let Some(pos) = self
-            .shape_lru
-            .iter()
-            .position(|(cached, size)| cached == text && *size == font_px)
-        {
-            let key = self.shape_lru.remove(pos).expect("lru position");
-            self.shape_lru.push_back(key);
-        }
-    }
-
-    /// Record a miss; past the cap evict the single oldest entry (proper LRU).
-    /// LRU mirrors the map keys, so the popped entry always drops its map entry.
-    fn insert_lru(&mut self, key: Arc<str>, font_px: u32, span: Arc<ShapedSpan>) {
-        self.shape_cache.insert((Arc::clone(&key), font_px), span);
-        self.shape_lru.push_back((key, font_px));
-        while self.shape_lru.len() > SHAPE_CACHE_CAP {
-            if let Some(oldest) = self.shape_lru.pop_front() {
-                debug_assert!(self.shape_lru.iter().all(|live| *live != oldest));
-                self.shape_cache.remove(&oldest);
-            } else {
-                break;
-            }
-        }
-    }
-
     /// Live entry count across all sizes; eviction keeps this bounded.
     #[cfg(test)]
     fn shape_cache_len(&self) -> usize {
-        self.shape_lru.len()
+        self.shape_cache.len()
     }
 
     /// Uncached shaping behind [`OsdRaster::shape_cached`].
@@ -716,13 +700,30 @@ fn blend_over(dst: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
 /// Rounded-rect pill fill on the layer (top-left origin, cropped space).
 fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, radius: u32) {
     let radius = radius.min(w / 2).min(h / 2) as f32;
+    let straight_top = radius;
+    let straight_bottom = h as f32 - radius;
+    // Squared distance: no sqrt on the hot path. The vec moves into the
+    // layer without copying, so per-pixel work dominates the allocation.
+    let r2 = radius * radius;
     for row in 0..h {
+        let py = row as f32 + 0.5;
+        if py >= straight_top && py <= straight_bottom {
+            // Straight band: full-width fill, no per-pixel test.
+            for col in 0..w {
+                let offset = ((y + row) * stride_w + (x + col)) as usize * 4;
+                if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
+                    blend_over(pixel, PILL_BG.0, PILL_BG.1, PILL_BG.2, PILL_BG.3);
+                }
+            }
+            continue;
+        }
         for col in 0..w {
             let px = col as f32 + 0.5;
-            let py = row as f32 + 0.5;
             let nearest_x = px.clamp(radius, w as f32 - radius);
             let nearest_y = py.clamp(radius, h as f32 - radius);
-            if (px - nearest_x).hypot(py - nearest_y) <= radius {
+            let dx = px - nearest_x;
+            let dy = py - nearest_y;
+            if dx * dx + dy * dy <= r2 {
                 let offset = ((y + row) * stride_w + (x + col)) as usize * 4;
                 if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
                     blend_over(pixel, PILL_BG.0, PILL_BG.1, PILL_BG.2, PILL_BG.3);

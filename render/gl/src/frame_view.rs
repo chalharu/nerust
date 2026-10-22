@@ -409,61 +409,70 @@ impl FrameView {
             }
             ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, row_length))?;
         }
-        let _row_guard = ScopeGuard::new(move || {
-            if padded && pixel_storei(gl::UNPACK_ROW_LENGTH, 0).is_err() {
+        let row_guard = ScopeGuard::new(move || {
+            // Panic backstop only: every normal path resets explicitly below.
+            if padded && std::thread::panicking() && pixel_storei(gl::UNPACK_ROW_LENGTH, 0).is_err()
+            {
                 log::debug!("FrameView: UNPACK_ROW_LENGTH reset failed");
             }
         });
 
-        if self.is_palette_format {
-            use_texture(1, self.palette_texture)?;
-            use_texture(2, self.ntsc_texture)?;
-            use_texture(0, self.frame_texture)?;
-            ok_gl(unsafe {
-                tex_sub_image_2d(
-                    gl::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    self.logical_width,
-                    self.logical_height,
-                    gl::RED,
-                    gl::UNSIGNED_BYTE,
-                    screen_ptr,
-                )
-            })?;
-        }
+        let tail_result = (|| -> Result<(), ViewError> {
+            if self.is_palette_format {
+                use_texture(1, self.palette_texture)?;
+                use_texture(2, self.ntsc_texture)?;
+                use_texture(0, self.frame_texture)?;
+                ok_gl(unsafe {
+                    tex_sub_image_2d(
+                        gl::TEXTURE_2D,
+                        0,
+                        0,
+                        0,
+                        self.logical_width,
+                        self.logical_height,
+                        gl::RED,
+                        gl::UNSIGNED_BYTE,
+                        screen_ptr,
+                    )
+                })?;
+            }
 
-        if self.use_vao {
-            let Some(vba) = self.vba.as_ref() else {
-                return Err(ViewError::NoVertexArray { pipeline: "game" });
-            };
-            ok_gl(vba.bind_vao(|_vac| Ok(())))?;
-        } else {
-            let Some(vbo) = self.vbo.as_ref() else {
-                return Err(ViewError::NoVertexBuffer { pipeline: "game" });
-            };
-            ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
-        }
+            if self.use_vao {
+                let Some(vba) = self.vba.as_ref() else {
+                    return Err(ViewError::NoVertexArray { pipeline: "game" });
+                };
+                ok_gl(vba.bind_vao(|_vac| Ok(())))?;
+            } else {
+                let Some(vbo) = self.vbo.as_ref() else {
+                    return Err(ViewError::NoVertexBuffer { pipeline: "game" });
+                };
+                ok_gl(bind_buffer(gl::ARRAY_BUFFER, vbo.id))?;
+            }
 
-        ok_gl(clear(gl::COLOR_BUFFER_BIT))?;
+            ok_gl(clear(gl::COLOR_BUFFER_BIT))?;
 
-        if !self.is_palette_format {
-            ok_gl(unsafe {
-                tex_sub_image_2d(
-                    gl::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    self.logical_width,
-                    self.logical_height,
-                    gl::RGBA,
-                    gl::UNSIGNED_BYTE,
-                    screen_ptr,
-                )
-            })?;
+            if !self.is_palette_format {
+                ok_gl(unsafe {
+                    tex_sub_image_2d(
+                        gl::TEXTURE_2D,
+                        0,
+                        0,
+                        0,
+                        self.logical_width,
+                        self.logical_height,
+                        gl::RGBA,
+                        gl::UNSIGNED_BYTE,
+                        screen_ptr,
+                    )
+                })?;
+            }
+            Ok(())
+        })();
+        if padded {
+            ok_gl(pixel_storei(gl::UNPACK_ROW_LENGTH, 0))?;
         }
-        drop(_row_guard);
+        row_guard.dismiss();
+        tail_result?;
         // The quad VBO has four vertices and a validated fixed layout.
         ok_gl(unsafe { draw_arrays(gl::TRIANGLE_STRIP, 0, 4) })?;
         // Explicit restore: back to unit 0 so the OSD pass starts clean.

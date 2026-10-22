@@ -206,6 +206,11 @@ impl SoftbufferRenderer {
             .resize(self.size.width as usize * raster.height, 0);
     }
 
+    /// Two-pass separable resample: horizontal taps into `resize_buffer`
+    /// (one source-height row block), then vertical taps into `dst`.
+    /// Budget: ~2× the destination pixels in reads plus one intermediate
+    /// row-block write. No 1:1 shortcut: the two-tap filter smooths even at
+    /// unity scale, so bypassing it would change pixels, not just speed.
     #[expect(clippy::too_many_arguments)]
     fn rendering(
         dst: &mut [u32],
