@@ -17,7 +17,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from bridge_schema import require  # noqa: E402
+from bridge_schema import require
 
 
 def kotlin_test_methods(path):
