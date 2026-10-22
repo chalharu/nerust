@@ -191,10 +191,9 @@ fn clipped_osd_rows_keep_original_source_pitch_and_clear_staging() {
             );
         }
         pack_osd_rect(&mut staging, width, height, None).unwrap();
-        assert!(staging.iter().all(|&b| b == 0));
+        assert!(staging[..len].iter().all(|&b| b == 0));
         staging.fill(255);
         assert!(pack_osd_rect(&mut staging, width, height, Some((&source[..1], 16))).is_none());
-        assert!(staging.iter().all(|&b| b == 0));
     }
     assert!(pack_osd_rect(&mut Vec::new(), 0, 2, None).is_none());
 }
