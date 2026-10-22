@@ -32,7 +32,7 @@ pub(crate) enum FrontendEvent {
 use crate::bridge_contract::{
     ACTION_CONTROLLER, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
     ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-    ACTION_UNLOAD, validate_bridge_event,
+    ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
@@ -56,6 +56,8 @@ pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BridgeEventV1 {
     Menu {
+        #[allow(dead_code)]
+        v: u32,
         action: String,
         #[serde(default)]
         device_id: Option<i32>,
@@ -65,18 +67,26 @@ enum BridgeEventV1 {
         pressed: Option<bool>,
     },
     ErrorDialogDismissed {
+        #[allow(dead_code)]
+        v: u32,
         request_id: crate::error_dialog_controller::DialogRequestId,
     },
 }
 
 fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
     let mut value: serde_json::Value = serde_json::from_str(raw).ok()?;
-    // Single validation pass: version and shapes checked here, so the typed
-    // decode below never re-checks the version.
     validate_bridge_event(&mut value)?;
     let envelope: BridgeEventV1 = serde_json::from_value(value).ok()?;
+    let version = match &envelope {
+        BridgeEventV1::Menu { v, .. } => *v,
+        BridgeEventV1::ErrorDialogDismissed { v, .. } => *v,
+    };
+    if version != BRIDGE_EVENT_VERSION {
+        log::warn!("ignoring Android bridge event with unsupported version {version}");
+        return None;
+    }
     match envelope {
-        BridgeEventV1::ErrorDialogDismissed { request_id } => {
+        BridgeEventV1::ErrorDialogDismissed { request_id, .. } => {
             Some(FrontendEvent::ErrorDialogDismissed(request_id))
         }
         BridgeEventV1::Menu {
@@ -84,6 +94,7 @@ fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
             device_id,
             key,
             pressed,
+            ..
         } => decode_json_menu_action(&action, device_id, key.as_deref(), pressed),
     }
 }

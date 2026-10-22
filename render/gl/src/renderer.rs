@@ -398,17 +398,16 @@ impl GlRenderer {
             log::warn!("GlRenderer: resize failed: {e}");
             return RenderResult::Error;
         }
-        if let Some(palette) = frame_buffer.palette() {
-            if self.last_palette.as_deref() != Some(palette)
-                && let Some(next) = frame_buffer.palette_as_rgba8()
-            {
-                self.last_palette = None;
-                if let Err(e) = self.frame.update_palette_texture(&next) {
-                    log::warn!("GlRenderer: palette upload failed: {e}");
-                    return RenderResult::Error;
-                }
-                self.last_palette = Some(palette.into());
+        if let Some(palette) = frame_buffer.palette()
+            && self.last_palette.as_deref() != Some(palette)
+            && let Some(next) = frame_buffer.palette_as_rgba8()
+        {
+            self.last_palette = None;
+            if let Err(e) = self.frame.update_palette_texture(&next) {
+                log::warn!("GlRenderer: palette upload failed: {e}");
+                return RenderResult::Error;
             }
+            self.last_palette = Some(palette.into());
         }
         let data = frame_buffer.as_ref();
         if let Err(e) = upload_frame(&mut self.frame, &mut self.tight, &layout, data) {
