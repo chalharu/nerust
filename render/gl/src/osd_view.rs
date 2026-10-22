@@ -242,23 +242,48 @@ impl CompositeGuard {
             Some(memo) => ViewportGuard::assume(memo, surface_w, surface_h)?,
             None => ViewportGuard::fullscreen(surface_w, surface_h)?,
         };
+        // Staged build: a later failure rolls back the earlier guards, so a
+        // half-built composite never leaks viewport or blend state.
+        let blend = match BlendGuard::enable_src_alpha() {
+            Ok(blend) => blend,
+            Err(error) => {
+                if let Err(rollback) = viewport.restore() {
+                    log::debug!("GlView: OSD viewport rollback failed: {rollback:?}");
+                }
+                return Err(error);
+            }
+        };
+        let program = match ProgramGuard::save() {
+            Ok(program) => program,
+            Err(error) => {
+                if let Err(rollback) = blend.restore() {
+                    log::debug!("GlView: OSD blend rollback failed: {rollback:?}");
+                }
+                if let Err(rollback) = viewport.restore() {
+                    log::debug!("GlView: OSD viewport rollback failed: {rollback:?}");
+                }
+                return Err(error);
+            }
+        };
         Ok(Self {
             viewport,
-            blend: BlendGuard::enable_src_alpha()?,
-            program: ProgramGuard::save()?,
+            blend,
+            program,
         })
     }
 
-    /// Restore game state in reverse order, reporting the first failure.
+    /// Restore game state element-wise: every restore runs even when an
+    /// earlier one fails; the first failure is reported.
     fn restore(self) -> Result<(), ViewError> {
         let Self {
             viewport,
             blend,
             program,
         } = self;
-        program.restore()?;
-        blend.restore()?;
-        viewport.restore()
+        program
+            .restore()
+            .and(blend.restore())
+            .and(viewport.restore())
     }
 
     fn saved_viewport(&self) -> [i32; 4] {
@@ -422,10 +447,12 @@ impl OsdView {
         // Guard restoration must not leave a successful program memo on error.
         frame.set_current_program(None);
         // Shared quad: four vertices with identical position/UV locations.
-        ok_gl(unsafe { draw_arrays(gl::TRIANGLE_STRIP, 0, 4) })?;
-        // Explicit restore: game state returns before the game-texture rebind
-        // so the next frame never samples the overlay.
-        composite.restore()?;
+        let draw = ok_gl(unsafe { draw_arrays(gl::TRIANGLE_STRIP, 0, 4) });
+        // The composite restores even when the draw failed, so game GL state
+        // never leaks; the draw error still reports first.
+        let restored = composite.restore();
+        draw?;
+        restored?;
         frame.restore_game_binding()?;
         ok_gl(check_frame())?;
         Ok((OsdOutcome::Presented, applied_viewport))

@@ -595,53 +595,52 @@ pub(crate) fn set_osd_layer(
     let Some(texture) = pipeline.osd_texture.as_ref() else {
         return false;
     };
-    // Clear the previous rect so moved/shrunk layers leave no ghosts.
-    if let Some((x, y, w, h)) = pipeline.osd_prev
+    // Clip the next layer first: repainting the same clipped rect uploads
+    // pixels once, with no zeroing pass over the region it overwrites.
+    let next = layer.and_then(|layer| {
+        if layer.width == 0 || layer.height == 0 {
+            return None;
+        }
+        let source_pitch = (layer.width as usize).checked_mul(4)?;
+        nerust_render_traits::FrameLayout::checked(
+            LogicalSize {
+                width: layer.width as usize,
+                height: layer.height as usize,
+            },
+            4,
+            source_pitch,
+            layer.rgba().len(),
+        )
+        .ok()?;
+        let w = layer.width.min(surface.width.saturating_sub(layer.x));
+        let h = layer.height.min(surface.height.saturating_sub(layer.y));
+        (w != 0 && h != 0).then_some((layer, w, h, source_pitch))
+    });
+    // Clear the previous rect unless the next upload covers it exactly, so
+    // moved/shrunk layers leave no ghosts but repaints skip the zero pass.
+    if let Some(prev) = pipeline.osd_prev
+        && Some(prev) != next.map(|(layer, w, h, _)| (layer.x, layer.y, w, h))
         && !upload_rect(
             &pipeline.queue,
             &mut pipeline.osd_staging,
             texture,
             (
-                x,
-                y,
-                w.min(surface.width.saturating_sub(x)),
-                h.min(surface.height.saturating_sub(y)),
+                prev.0,
+                prev.1,
+                prev.2.min(surface.width.saturating_sub(prev.0)),
+                prev.3.min(surface.height.saturating_sub(prev.1)),
             ),
             None,
         )
     {
         return false;
     }
-    let Some(layer) = layer else {
+    let Some((layer, w, h, source_pitch)) = next else {
         pipeline.osd_visible = false;
         pipeline.osd_prev = None;
-        return true;
+        return layer.is_none();
     };
     pipeline.osd_prev = None;
-    if layer.width == 0 || layer.height == 0 {
-        return false;
-    }
-    let Some(source_pitch) = (layer.width as usize).checked_mul(4) else {
-        return false;
-    };
-    if nerust_render_traits::FrameLayout::checked(
-        LogicalSize {
-            width: layer.width as usize,
-            height: layer.height as usize,
-        },
-        4,
-        source_pitch,
-        layer.rgba().len(),
-    )
-    .is_err()
-    {
-        return false;
-    }
-    let w = layer.width.min(surface.width.saturating_sub(layer.x));
-    let h = layer.height.min(surface.height.saturating_sub(layer.y));
-    if w == 0 || h == 0 {
-        return false;
-    }
     if !upload_rect(
         &pipeline.queue,
         &mut pipeline.osd_staging,
