@@ -229,10 +229,7 @@ fn resolve_pad_buttons(
             let Some(control_id) = info.id.as_digital() else {
                 continue;
             };
-            let field = resolve_unified_field(
-                field_map, slot.id, control_id,
-            )
-            .ok_or_else(|| {
+            let field = resolve_unified_field(field_map, slot.id, control_id).ok_or_else(|| {
                 construction(
                     case_id,
                     format!("test input field missing: {}/{control_id}", slot.id),

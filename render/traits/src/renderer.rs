@@ -97,7 +97,9 @@ pub enum RendererErrorKind {
     },
     /// Shader program fault in `program` (missing uniform/attribute, no program).
     /// Attach stays for context/surface acquisition only.
-    Program { program: &'static str },
+    Program {
+        program: &'static str,
+    },
     /// OSD texture upload failure at `stage`.
     Upload {
         stage: &'static str,
@@ -201,9 +203,7 @@ impl OsdLayer {
 
     /// Construction-time pixel digest, computed once on first use.
     pub fn content_hash(&self) -> u64 {
-        *self
-            .payload_hash
-            .get_or_init(|| content_hash(&self.rgba))
+        *self.payload_hash.get_or_init(|| content_hash(&self.rgba))
     }
 
     /// Exact visual equality: shared pixels skip hashing and byte comparison;

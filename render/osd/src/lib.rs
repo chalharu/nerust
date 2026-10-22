@@ -480,10 +480,7 @@ impl OsdRaster {
     fn shape_cached_shared(&mut self, key: &Arc<str>, font_px: u32) -> Arc<ShapedSpan> {
         self.cache_clock = self.cache_clock.wrapping_add(1);
         let now = self.cache_clock;
-        if let Some((span, epoch)) = self
-            .shape_cache
-            .get_mut(&(Arc::clone(key), font_px))
-        {
+        if let Some((span, epoch)) = self.shape_cache.get_mut(&(Arc::clone(key), font_px)) {
             *epoch = now;
             return Arc::clone(span);
         }

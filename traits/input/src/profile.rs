@@ -199,8 +199,7 @@ impl InputAssignments {
         let mut seen = std::collections::HashSet::new();
         let mut plan = vec![None; slots.len()];
         // One controller pass for the whole plan; per-slot iterator rebuilds waste Rc clones.
-        let controllers: Vec<std::rc::Rc<dyn ControllerProfile>> =
-            ports.controllers().collect();
+        let controllers: Vec<std::rc::Rc<dyn ControllerProfile>> = ports.controllers().collect();
         for (slot, profile) in &self.slots {
             if index_of(*slot).is_none() {
                 return Err(CreateSplitError::SlotNotFound { slot: *slot });

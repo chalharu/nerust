@@ -54,12 +54,13 @@ impl From<ViewError> for nerust_render_traits::renderer::RendererError {
                 RendererErrorKind::Program { program },
                 Box::new(error),
             ),
-            ViewError::NoVertexArray { pipeline }
-            | ViewError::NoVertexBuffer { pipeline } => RendererError::with_kind(
-                "program",
-                RendererErrorKind::Program { program: pipeline },
-                Box::new(error),
-            ),
+            ViewError::NoVertexArray { pipeline } | ViewError::NoVertexBuffer { pipeline } => {
+                RendererError::with_kind(
+                    "program",
+                    RendererErrorKind::Program { program: pipeline },
+                    Box::new(error),
+                )
+            }
             ViewError::InvalidOsdClear { .. }
             | ViewError::InvalidOsdFlip { .. }
             | ViewError::InvalidSurface { .. } => RendererError::with_kind(

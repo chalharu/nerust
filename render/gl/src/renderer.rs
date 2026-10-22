@@ -697,9 +697,7 @@ mod tests {
     #[test]
     fn palette_gate_skips_identical_upload() {
         let words = |b: u32| vec![b; 64].into_boxed_slice();
-        let changed = |last: &Option<Box<[u32]>>, next: &[u32]| {
-            last.as_deref() != Some(next)
-        };
+        let changed = |last: &Option<Box<[u32]>>, next: &[u32]| last.as_deref() != Some(next);
         assert!(changed(&None, &words(0x12)));
         assert!(!changed(&Some(words(0x12)), &words(0x12)));
         assert!(changed(&Some(words(0x12)), &words(0x34)));
@@ -1190,7 +1188,10 @@ mod tests {
         );
         assert_eq!(renderer.frame.frame_texture, old_texture);
         assert_eq!(renderer.osd.osd_texture, old_osd);
-        assert_eq!(renderer.last_palette, Some(vec![0x12; 64].into_boxed_slice()));
+        assert_eq!(
+            renderer.last_palette,
+            Some(vec![0x12; 64].into_boxed_slice())
+        );
         assert_eq!(renderer.tight, vec![7; 12]);
         // Failed temporary construction changed bindings: the old view must rebind.
         renderer
@@ -1493,7 +1494,9 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn gl_test_profile_ntsc(ntsc: std::sync::Arc<[u8]>) -> nerust_render_traits::VideoRenderProfile {
+    fn gl_test_profile_ntsc(
+        ntsc: std::sync::Arc<[u8]>,
+    ) -> nerust_render_traits::VideoRenderProfile {
         use nerust_render_traits::{logical::LogicalSize, physical::PhysicalSize};
         nerust_render_traits::VideoRenderProfile {
             frame_format: nerust_render_traits::VideoFrameFormat::Palette,

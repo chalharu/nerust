@@ -69,8 +69,7 @@ pub(crate) fn pack_frame_rows(
     for row in 0..height {
         let base = row * upload_bytes_per_row;
         destination[base..base + copy_bytes_per_row].copy_from_slice(
-            &source
-                [row * source_bytes_per_row..row * source_bytes_per_row + copy_bytes_per_row],
+            &source[row * source_bytes_per_row..row * source_bytes_per_row + copy_bytes_per_row],
         );
         // Pad only: no full-buffer memset, reused rows never leak stale bytes.
         destination[base + copy_bytes_per_row..base + upload_bytes_per_row].fill(0);
