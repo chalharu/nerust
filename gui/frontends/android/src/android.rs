@@ -106,6 +106,12 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeSettingsAreaVisible"),
+                jni_str!("(II)Z"),
+                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeSettingsAreaVisible
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
                 jni_str!("onActivityDestroyed"),
                 jni_str!("()V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed
@@ -273,7 +279,6 @@ struct AndroidFrontend {
 
 impl AndroidFrontend {
     /// Fallible constructor: returns the error so `run()` can toast + finish the activity.
-    /// Corrupted settings files are quarantined and replaced with defaults.
     fn try_new(
         app: AndroidApp,
         storage: AndroidStorage,
@@ -295,10 +300,10 @@ impl AndroidFrontend {
         };
         let settings_paths =
             SettingsPaths::new(settings_root.join("config"), settings_root.join("data"));
-        let mut session = Self::create_session_with_recovery(
+        let mut session = SessionHandle::new_with_settings_paths(
             capabilities,
-            &system_registry,
-            &audio_registry,
+            system_registry.clone(),
+            audio_registry.clone(),
             settings_paths,
         )?;
         session.configure_persistence_backends(PersistenceBackends {
@@ -353,56 +358,6 @@ impl AndroidFrontend {
         frontend.refresh_dialog_caches();
         log::info!("AndroidFrontend::try_new: ready");
         Ok(frontend)
-    }
-
-    /// Session creation with corrupted-settings recovery: quarantine and retry once with defaults.
-    /// One bad write cannot wedge every future launch.
-    fn create_session_with_recovery(
-        capabilities: HostBackendCapabilities,
-        system_registry: &Arc<SystemRegistry>,
-        audio_registry: &Arc<AudioBackendRegistry>,
-        settings_paths: SettingsPaths,
-    ) -> Result<SessionHandle, String> {
-        match SessionHandle::new_with_settings_paths(
-            capabilities,
-            system_registry.clone(),
-            audio_registry.clone(),
-            settings_paths.clone(),
-        ) {
-            Ok(session) => Ok(session),
-            Err(error) => {
-                log::error!(
-                    "session creation failed, quarantining possibly-corrupted settings: {error}"
-                );
-                let stamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                let corrupted = settings_paths
-                    .settings_file
-                    .with_extension(format!("yaml.corrupted-{stamp}"));
-                match std::fs::rename(&settings_paths.settings_file, &corrupted) {
-                    Ok(()) => log::warn!("renamed corrupted settings to {}", corrupted.display()),
-                    Err(rename_error) if rename_error.kind() == std::io::ErrorKind::NotFound => {
-                        log::debug!("no settings file to quarantine");
-                    }
-                    Err(rename_error) => {
-                        log::warn!("failed to quarantine corrupted settings: {rename_error}");
-                    }
-                }
-                SessionHandle::new_with_settings_paths(
-                    capabilities,
-                    system_registry.clone(),
-                    audio_registry.clone(),
-                    settings_paths,
-                )
-                .map_err(|retry_error| {
-                    format!(
-                        "failed to create Android session (initial: {error}; retry with defaults: {retry_error})"
-                    )
-                })
-            }
-        }
     }
 
     /// Update settings for the asynchronous, event-loop-owned dialog request.
@@ -517,8 +472,15 @@ impl AndroidFrontend {
             .reset_touch_tracking(&mut self.core.session, &self.app);
         self.chrome.input.forget_physical_pressed();
         // Pure decision here; the frontend executes the marker and session I/O.
+        // A fetch killed by the suspend-time reset below still owns the marker:
+        // resume refetches instead of dropping the restore.
         let saved_hidden = self.core.session.save_hidden_lifecycle_state();
-        match self.flow.lifecycle.save_decision(saved_hidden) {
+        let fetch_outstanding = picker::has_pending_result();
+        match self
+            .flow
+            .lifecycle
+            .save_decision(saved_hidden, fetch_outstanding)
+        {
             crate::lifecycle_decision::SuspendFileAction::Touch => {
                 self.core.storage.touch_restore_pending();
                 log::info!("save_lifecycle_state: hidden lifecycle state saved");

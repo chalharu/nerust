@@ -286,6 +286,17 @@ fn build_bindings() -> Vec<Binding> {
     bindings
 }
 
+/// Draft projection for the dialog: recompute the same-edge rule from corner
+/// indices without persisting anything. Out-of-range indices fall back to the
+/// first corner, matching the dialog's clamped default selection.
+pub(super) fn project_status_area_visible(
+    notifications_position_index: usize,
+    status_position_index: usize,
+) -> bool {
+    let top = |index: usize| CORNERS.get(index).copied().unwrap_or(CORNERS[0]).is_top();
+    top(notifications_position_index) != top(status_position_index)
+}
+
 pub(super) fn defs(current: &AndroidSettings) -> Vec<SettingDef> {
     let mut defs: Vec<_> = bindings()
         .iter()

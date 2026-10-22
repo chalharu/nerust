@@ -16,7 +16,7 @@ use nerust_persistence::{
     sidecar::StorageLocation,
     slots::{
         MAX_SLOT_ARCHIVE_BYTES, build_state_slot_bytes, load_state_slot_bytes,
-        load_state_summary_bytes,
+        load_state_summary_bytes, load_state_summary_from_metadata_bytes,
     },
     thumbnail::ThumbnailSource,
 };
@@ -45,7 +45,9 @@ impl AndroidStorageBackend {
     /// Only the JNI boundary projects the typed document key to bridge strings.
     fn document_key(location: &StorageLocation) -> Result<(&str, &str), PersistenceError> {
         match location {
-            StorageLocation::DocumentTree { uri, relative } => Ok((uri, relative.as_str())),
+            StorageLocation::DocumentTree { uri, relative } => {
+                Ok((uri.as_str(), relative.as_str()))
+            }
             StorageLocation::Native(_) => Err(PersistenceError::Validation(
                 "native storage passed to SAF".into(),
             )),
@@ -290,6 +292,21 @@ impl AndroidStorageBackend {
     ) -> Result<StorageLocation, PersistenceError> {
         dir.child(&format!("{slot_id}.state"))
     }
+
+    /// Bounded sidecar lookup for one scanned archive: metadata bytes instead
+    /// of the whole zip. `None` means miss, mismatch, or corruption, and the
+    /// caller falls back to the archive read.
+    fn read_summary_sidecar(
+        &self,
+        dir: &StorageLocation,
+        state_name: &str,
+        identity: &SystemIdentity,
+    ) -> Option<StateSlotSummary> {
+        let base = state_name.strip_suffix(".state")?;
+        let path = dir.child(&format!("{base}.summary")).ok()?;
+        let bytes = self.read(&path).ok()??;
+        load_state_summary_from_metadata_bytes(path, &bytes, Some(identity)).ok()?
+    }
 }
 
 /// One entry of the `listSafFilesWithSizes` batch; unknown sizes are `None`.
@@ -336,6 +353,12 @@ impl SlotBackend for AndroidStorageBackend {
                     continue;
                 }
             };
+            // Sidecar first: one bounded metadata transfer instead of the
+            // whole archive. Any miss or mismatch falls back to the archive.
+            if let Some(summary) = Self::read_summary_sidecar(self, dir, &name, identity) {
+                result.push(summary);
+                continue;
+            }
             let bytes = self.read(&path)?;
             let Some(bytes) = bytes else {
                 continue;
@@ -374,9 +397,17 @@ impl SlotBackend for AndroidStorageBackend {
             return FsSlots.write_slot(dir, slot_id, data, identity, thumbnail);
         }
         let path = Self::state_path(dir, slot_id)?;
-        let (bytes, summary) =
+        let (bytes, metadata_bytes, summary) =
             build_state_slot_bytes(path.clone(), slot_id, data, identity, thumbnail)?;
         self.write(&path, &bytes)?;
+        // Best-effort scan sidecar: listings prefer it and fall back to the
+        // archive, so a sidecar failure never fails the save.
+        if let Err(error) = dir
+            .child(&format!("{slot_id}.summary"))
+            .and_then(|path| self.write(&path, &metadata_bytes))
+        {
+            log::warn!("SAF scan sidecar write failed: {error:?}");
+        }
         Ok(summary)
     }
 
@@ -399,7 +430,13 @@ impl SlotBackend for AndroidStorageBackend {
         if let StorageLocation::Native(_) = dir {
             return FsSlots.delete_slot(dir, slot_id);
         }
-        self.delete(&Self::state_path(dir, slot_id)?)
+        self.delete(&Self::state_path(dir, slot_id)?)?;
+        // An orphaned sidecar is never read without its archive, so its
+        // removal stays best-effort.
+        let _ = dir
+            .child(&format!("{slot_id}.summary"))
+            .and_then(|path| self.delete(&path));
+        Ok(())
     }
 }
 
@@ -414,7 +451,7 @@ impl AutoSaveBackend for AndroidStorageBackend {
             return FsAutosave.write_autosave(dir, data, identity);
         }
         let path = dir.child(".autosave_slot")?;
-        let (bytes, summary) = build_state_slot_bytes(path.clone(), 0, data, identity, None)?;
+        let (bytes, _, summary) = build_state_slot_bytes(path.clone(), 0, data, identity, None)?;
         self.write(&path, &bytes)?;
         Ok(summary)
     }
@@ -472,8 +509,10 @@ impl MapperSaveBackend for AndroidStorageBackend {
         let StorageLocation::DocumentTree { uri, relative } = path else {
             return FsMapper.write_recovery_mapper_save(path, data);
         };
-        let recovery =
-            StorageLocation::document_tree(uri, format!("{}.recovery", relative.as_str()))?;
+        let recovery = StorageLocation::document_tree(
+            uri.as_str(),
+            format!("{}.recovery", relative.as_str()),
+        )?;
         self.write(&recovery, data)?;
         Ok(recovery)
     }

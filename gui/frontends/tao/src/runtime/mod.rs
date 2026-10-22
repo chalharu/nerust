@@ -202,7 +202,10 @@ impl WindowRuntime {
                     match action {
                         HostAction::None => (),
                         HostAction::RomLoaded => self.recreate_renderer(),
-                        HostAction::Exit => *control_flow = ControlFlow::Exit,
+                        HostAction::Exit => {
+                            self.begin_close();
+                            *control_flow = ControlFlow::Exit
+                        }
                     }
                 }
             },
@@ -277,5 +280,15 @@ impl WindowRuntime {
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
         self.renderer = None;
+    }
+}
+
+impl WindowRuntime {
+    /// Ordered exit teardown: the surface dies before the native owner it
+    /// borrows, on every close path. Idempotent via `prepare_close`.
+    fn begin_close(&mut self) {
+        self.renderer = None;
+        self.host.prepare_close();
+        self.surface_xid = None;
     }
 }

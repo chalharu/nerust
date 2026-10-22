@@ -747,6 +747,18 @@ mod tests {
     }
 
     #[test]
+    fn draft_projection_matches_persisted_same_edge_rule() {
+        use super::super::settings_schema::project_status_area_visible;
+        // Corner order is BottomLeft, BottomRight, TopLeft, TopRight.
+        assert!(project_status_area_visible(2, 0));
+        assert!(project_status_area_visible(0, 3));
+        assert!(!project_status_area_visible(2, 3));
+        assert!(!project_status_area_visible(0, 1));
+        // Out-of-range indices fall back to the first corner (bottom).
+        assert!(!project_status_area_visible(9, 1));
+    }
+
+    #[test]
     fn keyed_indices_do_not_depend_on_map_order() {
         let registry = registry();
         let current = android_settings(&default_snapshot(), &registry);

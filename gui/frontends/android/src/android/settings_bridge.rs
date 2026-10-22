@@ -149,6 +149,20 @@ fn resolve_pending_as_dismissed_for(request_id: SettingsRequestId) {
 
 // JNI callback for the settings dialog result.
 // Every dismissal carries versioned JSON with its request ID.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSettingsAreaVisible(
+    _env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    notifications_position: jni::sys::jint,
+    status_position: jni::sys::jint,
+) -> jni::sys::jboolean {
+    // Pure indices in, one flag out: the same-edge rule stays in Rust, so the
+    // dialog draft projection can never drift from the persisted model.
+    super::settings_schema::project_status_area_visible(
+        notifications_position.max(0) as usize,
+        status_position.max(0) as usize,
+    ) as jni::sys::jboolean
+}
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(

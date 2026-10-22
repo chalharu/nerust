@@ -50,6 +50,12 @@ pub(super) struct PickerSlot {
     /// Outstanding request generation; `None` is idle. Stale generations
     /// never count as pending and never block a new request.
     pub(super) in_flight: Option<u64>,
+    /// Cancellation handle for the in-flight provider calls, if its worker
+    /// registered one. A newer generation's bumper cancels and deletes it.
+    pub(super) in_flight_signal: Option<jni::objects::GlobalRef>,
+    /// Open stream of the in-flight fetch, if registered. Closing it from the
+    /// bumper unblocks a stuck provider read; the worker deletes its own copy.
+    pub(super) in_flight_stream: Option<jni::objects::GlobalRef>,
 }
 
 impl PickerSlot {
@@ -57,6 +63,8 @@ impl PickerSlot {
         Self {
             result: None,
             in_flight: None,
+            in_flight_signal: None,
+            in_flight_stream: None,
         }
     }
 }

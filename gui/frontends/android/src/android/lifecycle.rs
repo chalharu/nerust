@@ -153,8 +153,15 @@ impl Lifecycle {
 
     /// Pure suspend decision: records the hidden-save outcome and returns
     /// the marker action. The frontend executes the storage and session I/O.
-    pub(super) fn save_decision(&mut self, saved_hidden: bool) -> SuspendFileAction {
-        self.restore_pending = saved_hidden;
-        lifecycle_decision::suspend_file_action(saved_hidden)
+    /// A fetch generation outstanding across suspend keeps the pending flag:
+    /// the fetch (or its resume-time refetch) owns the marker until it lands.
+    pub(super) fn save_decision(
+        &mut self,
+        saved_hidden: bool,
+        fetch_outstanding: bool,
+    ) -> SuspendFileAction {
+        let keep = saved_hidden || fetch_outstanding;
+        self.restore_pending = keep;
+        lifecycle_decision::suspend_file_action(keep)
     }
 }

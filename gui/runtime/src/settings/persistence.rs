@@ -299,7 +299,7 @@ mod tests {
         let StorageLocation::DocumentTree { uri, relative } = paths.mapper_save_path else {
             panic!("expected document-tree storage");
         };
-        assert_eq!(uri, "content://provider/tree/primary%3ASaves");
+        assert_eq!(uri.as_str(), "content://provider/tree/primary%3ASaves");
         assert!(
             relative
                 .as_str()
