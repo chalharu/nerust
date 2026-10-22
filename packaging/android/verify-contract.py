@@ -76,12 +76,22 @@ def _rust_arg_descriptor(arg):
 
 def _callback_signature(symbol, args_text, result_text):
     """One Rust extern callback to its JNI signature; env/receiver are fixed."""
-    require(not result_text.strip(), f"unsupported JNI callback return: {symbol}")
     args = [arg.strip() for arg in args_text.split(",") if arg.strip()]
     require(len(args) >= 2 and re.search(r":\s*jni::EnvUnowned<'_>$", args[0])
             and re.search(r":\s*(?:jni::objects::)?JObject<'_>$", args[1]),
             f"invalid JNI environment/receiver: {symbol}")
-    return "(" + "".join(_rust_arg_descriptor(arg) for arg in args[2:]) + ")V"
+    result = result_text.strip()
+    if not result:
+        descriptor = "V"
+    else:
+        # Callbacks stay one-way; only native queries return values.
+        require(symbol.startswith("Java_io_github_chalharu_nerust_MainActivity_native"),
+                f"only native queries may return values: {symbol}")
+        match = re.fullmatch(r"->\s*jni::sys::(\w+)", result)
+        require(match and match[1] in RUST_TYPES,
+                f"unsupported JNI query return: {symbol}: {result}")
+        descriptor = RUST_TYPES[match[1]]
+    return "(" + "".join(_rust_arg_descriptor(arg) for arg in args[2:]) + ")" + descriptor
 
 
 def _callback_symbols(callbacks):

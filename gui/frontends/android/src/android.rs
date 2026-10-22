@@ -305,7 +305,8 @@ impl AndroidFrontend {
             system_registry.clone(),
             audio_registry.clone(),
             settings_paths,
-        )?;
+        )
+        .map_err(|error| format!("failed to create Android session: {error:?}"))?;
         session.configure_persistence_backends(PersistenceBackends {
             slot: Box::new(saf::AndroidStorageBackend::new(app.clone())),
             autosave: Box::new(saf::AndroidStorageBackend::new(app.clone())),
