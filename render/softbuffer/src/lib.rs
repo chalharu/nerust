@@ -4,9 +4,8 @@ use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     renderer::{
-        FrameSink, OpaqueError, OsdSink, PipelineFactory, ProfileSwitch,
-        RenderPipeline, RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
-        UploadBudget,
+        FrameSink, OpaqueError, OsdSink, PipelineFactory, ProfileSwitch, RenderPipeline,
+        RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle, UploadBudget,
     },
     rgb::RgbaWord,
 };
@@ -1159,10 +1158,19 @@ mod tests {
         use super::palette_texel;
         let palette = [0x1234_56FFu32, 0xAABB_CCDD];
         let src = [0u8, 1, 9];
-        assert_eq!(palette_texel(&src, &palette, 0, 0), [0x12, 0x34, 0x56, 0xFF]);
-        assert_eq!(palette_texel(&src, &palette, 0, 1), [0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(
+            palette_texel(&src, &palette, 0, 0),
+            [0x12, 0x34, 0x56, 0xFF]
+        );
+        assert_eq!(
+            palette_texel(&src, &palette, 0, 1),
+            [0xAA, 0xBB, 0xCC, 0xDD]
+        );
         assert_eq!(palette_texel(&src, &palette, 0, 2), [0, 0, 0, 0]);
-        assert_eq!(palette_texel(&src, &palette, 0, 99), [0x12, 0x34, 0x56, 0xFF]);
+        assert_eq!(
+            palette_texel(&src, &palette, 0, 99),
+            [0x12, 0x34, 0x56, 0xFF]
+        );
     }
 
     #[test]

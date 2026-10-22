@@ -2,8 +2,8 @@ use nerust_render_traits::{
     FrameBuffer, FrameLayout, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation,
     VideoRenderProfile,
     renderer::{
-        FrameSink, OpaqueError, OsdLayer, OsdSink, ProfileSwitch, RenderResult,
-        RendererConfig, RendererError, StripSink, SurfaceLifecycle, UploadBudget,
+        FrameSink, OpaqueError, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererConfig,
+        RendererError, StripSink, SurfaceLifecycle, UploadBudget,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};

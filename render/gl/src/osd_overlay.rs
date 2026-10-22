@@ -102,8 +102,8 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
 #[cfg(test)]
 mod tests {
     use super::{OsdReject, checked_clear_need, checked_osd_rect, checked_osd_y};
-    use nerust_render_traits::renderer::UploadBudget;
     use nerust_render_traits::renderer::OsdLayer;
+    use nerust_render_traits::renderer::UploadBudget;
 
     #[test]
     fn decision_maps_shared_policy_outcome() {

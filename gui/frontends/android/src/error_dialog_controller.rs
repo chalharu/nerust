@@ -239,7 +239,10 @@ mod tests {
         let old = controller.current_id().unwrap();
         controller.on_suspended(manager.modal_queue());
         controller
-            .poll_show(manager.modal_queue(), Screen::Foreground { can_pause: false })
+            .poll_show(
+                manager.modal_queue(),
+                Screen::Foreground { can_pause: false },
+            )
             .unwrap();
         assert_eq!(
             controller.on_dismissed_for(old, manager.modal_queue(), screen),
@@ -351,8 +354,8 @@ mod tests {
         assert!(controller.auto_paused());
         assert_eq!(manager.modal_pending(), 1);
         // Settings close replays the same head in display order.
-        let replayed =
-            controller.on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true));
+        let replayed = controller
+            .on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true));
         assert_eq!(
             replayed,
             SettingsClosedTransition::Show { auto_pause: false }
@@ -372,8 +375,10 @@ mod tests {
         assert!(controller.auto_paused());
         assert_eq!(manager.modal_pending(), 2);
         // Late dismiss after the suspend requeue: no double requeue.
-        let transition =
-            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(false, false, false));
+        let transition = controller.on_dismissed(
+            manager.modal_queue(),
+            Screen::show_gate(false, false, false),
+        );
         assert_eq!(transition, DismissTransition::Idle);
         assert_eq!(manager.modal_pending(), 2);
         let replayed = controller
@@ -394,8 +399,10 @@ mod tests {
         controller
             .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
-        let transition =
-            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(false, false, false));
+        let transition = controller.on_dismissed(
+            manager.modal_queue(),
+            Screen::show_gate(false, false, false),
+        );
         assert_eq!(transition, DismissTransition::Idle);
         assert!(controller.auto_paused());
         // Requeue exactly once even if the native suspend follows the callback.
@@ -412,7 +419,8 @@ mod tests {
             .poll_show(manager.modal_queue(), Screen::show_gate(true, false, false))
             .expect("batch queued");
         controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
-        let again = controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
+        let again =
+            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
         assert_eq!(again, DismissTransition::Idle);
         assert_eq!(manager.modal_pending(), 0);
     }
@@ -429,7 +437,8 @@ mod tests {
         assert_eq!(manager.take_modal_batch(), Some("preempted".to_string()));
         manager.modal_closed();
         assert_eq!(
-            controller.on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true)),
+            controller
+                .on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true)),
             SettingsClosedTransition::Resume
         );
         assert!(!controller.auto_paused());

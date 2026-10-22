@@ -97,9 +97,7 @@ pub(crate) fn video_assets_for_filter(filter: FilterType) -> (VideoRenderProfile
     };
     let layout = filter.layout(source_logical_size);
     let assets = filter.palette_console_video_assets();
-    let ntsc_packed_rgba8 = assets
-        .packed_ntsc_rgba8()
-        .map(std::sync::Arc::from);
+    let ntsc_packed_rgba8 = assets.packed_ntsc_rgba8().map(std::sync::Arc::from);
     let render_profile = VideoRenderProfile {
         source_logical_size: layout.source_logical_size,
         logical_size: layout.logical_size,
