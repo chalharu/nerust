@@ -1,6 +1,7 @@
 //! Chrome sync: menu signature plus window title, each with its own gate.
 //! Owned by `HostState`; title-only moves never touch the menu path.
 
+use nerust_frontend_kernel::Versioned;
 use std::sync::Arc;
 
 /// Menu signature: scalars plus immutable source allocation identities.
@@ -28,14 +29,14 @@ pub(super) struct ChromeScalars {
 #[derive(Debug, Default)]
 pub(super) struct ChromeSync {
     last_menu_sig: Option<MenuSig>,
-    last_title: crate::util::Versioned<String>,
+    last_title: Versioned<String>,
 }
 
 impl ChromeSync {
     pub(super) fn new() -> Self {
         Self {
             last_menu_sig: None,
-            last_title: crate::util::Versioned::new(),
+            last_title: Versioned::new(),
         }
     }
 

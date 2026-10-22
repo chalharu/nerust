@@ -3,6 +3,7 @@
 
 use iced::Task;
 use iced_winit::program::{self, Program};
+use nerust_frontend_kernel::level_visible;
 
 use nerust_gui_shell::session::{notification::NotificationLevel, osd::HistoryLine};
 use nerust_settings_core::{
@@ -53,7 +54,7 @@ impl HistoryFilter {
             HistoryFilter::Warning => 1,
             HistoryFilter::Error => 2,
         };
-        crate::util::level_visible(minimum, level.severity())
+        level_visible(minimum, level.severity())
     }
 
     /// Localized dropdown label. Levels reuse the settings table;
@@ -340,15 +341,15 @@ impl super::registry::AuxController for HistoryWindowHandle {
     fn as_history(&mut self) -> Option<&mut dyn super::registry::HistorySyncPort> {
         Some(self)
     }
-
-    fn take_history_clear(&mut self) -> bool {
-        self.take_clear_request()
-    }
 }
 
 impl super::registry::HistorySyncPort for HistoryWindowHandle {
     fn sync_history(&mut self, lines: std::sync::Arc<[HistoryLine]>, language: AppLanguage) {
         self.sync(lines, language);
+    }
+
+    fn take_history_clear(&mut self) -> bool {
+        self.take_clear_request()
     }
 }
 

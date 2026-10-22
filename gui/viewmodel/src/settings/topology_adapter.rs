@@ -11,6 +11,7 @@ use nerust_input_traits::{
 
 struct TopologyContext {
     ports: Vec<PortDescriptor>,
+    seen_ports: std::collections::HashSet<PortId>,
     seen_devices: HashSet<DeviceKindId>,
     devices: Vec<DeviceDescriptor>,
 }
@@ -19,6 +20,7 @@ impl TopologyContext {
     fn new() -> Self {
         Self {
             ports: Vec::new(),
+            seen_ports: std::collections::HashSet::new(),
             seen_devices: HashSet::new(),
             devices: Vec::new(),
         }
@@ -43,17 +45,17 @@ impl TopologyContext {
             profile.label(),
             controls
                 .iter()
-                .map(|ci| {
+                .filter_map(|ci| {
                     if let Some(id) = ci.id.as_digital() {
-                        ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                        Some(ControlDescriptor::Digital(DigitalControlDescriptor::new(
                             id, ci.label, ci.label,
-                        ))
-                    } else if let Some(id) = ci.id.as_analog() {
-                        ControlDescriptor::Analog(AnalogControlDescriptor::new(
-                            id, ci.label, ci.label,
-                        ))
+                        )))
                     } else {
-                        unreachable!("ControlId is either digital or analog")
+                        ci.id.as_analog().map(|id| {
+                            ControlDescriptor::Analog(AnalogControlDescriptor::new(
+                                id, ci.label, ci.label,
+                            ))
+                        })
                     }
                 })
                 .collect(),
@@ -69,11 +71,7 @@ impl TopologyContext {
     ) {
         let dk = profile.device_kind_for_group(gi);
         let port_id = PortId::new(port.as_str());
-        if self
-            .ports
-            .iter()
-            .any(|p: &PortDescriptor| p.id() == port_id)
-        {
+        if !self.seen_ports.insert(port_id) {
             return;
         }
         let label = slot_label(port);
@@ -90,13 +88,11 @@ pub fn build_topology(
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
     slots: &[SlotInfo],
 ) -> InputTopologyDescriptor {
-    let slot_label = |att: AttachmentId| -> &'static str {
-        slots
-            .iter()
-            .find(|s| s.id == att)
-            .map(|s| s.label)
-            .unwrap_or("")
-    };
+    // Indexed once: label lookup and port dedup are O(1) per assignment.
+    let labels: std::collections::HashMap<AttachmentId, &'static str> =
+        slots.iter().map(|s| (s.id, s.label)).collect();
+    let slot_label =
+        |att: AttachmentId| -> &'static str { labels.get(&att).copied().unwrap_or("") };
     let mut ctx = TopologyContext::new();
 
     for (slot_att, ctrl_opt) in assignments {

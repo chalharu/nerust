@@ -22,7 +22,7 @@ use crate::ports::WindowOpener;
 /// All primary-window state lives here; `HostState` dispatches to it.
 pub(crate) struct WindowCluster {
     window: Option<Arc<tao::window::Window>>,
-    close: super::close::CloseGuard,
+    close: super::close::MainState,
     pending_fullscreen_sync: Option<bool>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     #[cfg(any(
@@ -39,7 +39,7 @@ impl WindowCluster {
     pub(super) fn new() -> Self {
         Self {
             window: None,
-            close: super::close::CloseGuard::new(),
+            close: super::close::MainState::new(),
             pending_fullscreen_sync: None,
             #[cfg(any(
                 target_os = "linux",

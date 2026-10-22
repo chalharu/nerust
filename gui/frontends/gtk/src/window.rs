@@ -608,7 +608,8 @@ impl WindowExtend for Window {
 
     fn sync_fullscreen_from_settings(&self) {
         let state = self.state();
-        let snapshot = state.borrow().settings_snapshot().clone();
+        let borrowed = state.borrow();
+        let snapshot = borrowed.settings_snapshot();
         let fullscreen = snapshot.local.video.window.fullscreen_default;
 
         // Restore remembered window size when not in fullscreen or scaling mode.

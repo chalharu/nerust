@@ -2,21 +2,20 @@
 //! Owned by `HostState`; the drain router uses only the narrow ports below.
 
 use super::osd::ModalFlight;
+use nerust_frontend_kernel::Versioned;
 
 /// OSD layer sync: rasterizer, presenter, and live-layer state.
 pub(super) struct OsdLayerSync {
     pub(super) raster: nerust_render_osd::OsdRaster,
     pub(super) presenter: nerust_gui_shell::session::osd::OsdPresenter,
     pub(super) layer_live: bool,
-    pub(super) last_strip: crate::util::Versioned<nerust_render_traits::ReservedStrip>,
-    pub(super) last_sync_geometry:
-        crate::util::Versioned<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
+    pub(super) last_strip: Versioned<nerust_render_traits::ReservedStrip>,
+    pub(super) last_sync_geometry: Versioned<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
 }
 
 /// History viewer sync: content key only. The window lives in the registry.
 pub(super) struct HistoryViewer {
-    pub(super) sync_key:
-        crate::util::Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    pub(super) sync_key: Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
 }
 
 /// Modal queue: error batches plus the in-flight dialog.
@@ -39,11 +38,11 @@ impl OsdService {
                 raster: nerust_render_osd::OsdRaster::new(),
                 presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
                 layer_live: false,
-                last_strip: crate::util::Versioned::new(),
-                last_sync_geometry: crate::util::Versioned::new(),
+                last_strip: Versioned::new(),
+                last_sync_geometry: Versioned::new(),
             },
             history: HistoryViewer {
-                sync_key: crate::util::Versioned::new(),
+                sync_key: Versioned::new(),
             },
             modal: ModalQueue {
                 manager: nerust_gui_shell::session::osd::OsdManager::new(),

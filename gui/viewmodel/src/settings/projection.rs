@@ -31,7 +31,11 @@ struct InnerProjection<T: Clone + PartialEq + 'static> {
 impl<T: Clone + PartialEq + 'static> PreparedProjection for InnerProjection<T> {
     #[allow(clippy::type_complexity)]
     fn apply(self: Box<Self>) -> Option<Box<dyn FnOnce()>> {
-        // prepare() already compared this value against the unchanged publication.
+        // Re-check: the publication may have moved between prepare and apply,
+        // and a double-apply must not notify twice.
+        if *self.inner.value.borrow() == self.value {
+            return None;
+        }
         *self.inner.value.borrow_mut() = self.value;
         let snapshot: Vec<Rc<dyn Fn(&T)>> = self
             .inner

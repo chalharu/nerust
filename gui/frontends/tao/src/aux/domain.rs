@@ -10,10 +10,13 @@ impl NativeWindowId {
         Self(raw)
     }
 
-    /// Test-only dummy id: distinctness across dummies is not guaranteed.
+    /// Test-only id from a reserved high range; every call mints a fresh
+    /// value so multi-window routing stays testable (no dummy collisions).
     #[cfg(test)]
     pub(crate) fn dummy() -> Self {
-        Self(u64::MAX)
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(u64::MAX - 1_000_000);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 

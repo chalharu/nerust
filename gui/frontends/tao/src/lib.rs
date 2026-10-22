@@ -17,7 +17,6 @@ mod ports;
 
 pub(crate) mod aux;
 pub(crate) mod runtime;
-pub(crate) mod util;
 
 #[cfg(test)]
 pub(crate) mod test_dialogs;

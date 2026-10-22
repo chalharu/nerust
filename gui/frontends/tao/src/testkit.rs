@@ -7,7 +7,9 @@ use nerust_gui_shell::debug::DebugAction;
 
 use crate::aux::domain::AuxNativeEvent;
 use crate::aux::focus::AuxKind;
-use crate::aux::registry::{AuxController, DebugDrainPort, LiveImagesPort, SettingsClosePort};
+use crate::aux::registry::{
+    AuxController, DebugDrainPort, HistorySyncPort, LiveImagesPort, SettingsClosePort,
+};
 
 pub(crate) use crate::aux::registry::test_double::StubAux;
 #[cfg(test)]
@@ -48,7 +50,12 @@ mod tests {
         assert!(stub.debug_snapshot_of(false).is_none());
         assert!(!LiveImagesPort::apply_live(&mut stub, 1, Vec::new(), false));
         assert!(SettingsClosePort::take_pending_settings(&mut stub).is_none());
-        assert!(!stub.take_history_clear());
+        assert!(
+            !stub
+                .as_history()
+                .expect("history port")
+                .take_history_clear()
+        );
         assert!(stub.shared_bridge().is_none());
         assert!(stub.debug_lock_audit().is_empty());
         // Kind-gated queries: a history stub never answers debug ports.
