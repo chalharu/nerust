@@ -322,6 +322,42 @@ impl ProfileTouchOverlay {
         )
     }
 
+    /// Mirror of the Kotlin overlay parser: decode one `LABEL:x,y,w,h` entry.
+    /// Returns the label plus rect; role resolution lives in the zone table.
+    /// `None` on any malformed entry, so drift fails loudly, never silently.
+    pub(super) fn decode_zone(entry: &str) -> Option<(String, [f32; 4])> {
+        let (label, rect) = entry.split_once(':')?;
+        if label.is_empty() {
+            return None;
+        }
+        let mut coords = [0.0f32; 4];
+        for (slot, part) in coords.iter_mut().zip(rect.split(',')) {
+            *slot = part.parse().ok()?;
+        }
+        if rect.split(',').count() != 4 {
+            return None;
+        }
+        Some((label.to_string(), coords))
+    }
+
+    /// Mirror of the Kotlin joystick parser: decode `cx,cy,baseR,knobR`.
+    pub(super) fn decode_joystick(encoded: &str) -> Option<RelativeJoystick> {
+        let mut coords = [0.0f32; 4];
+        for (slot, part) in coords.iter_mut().zip(encoded.split(',')) {
+            *slot = part.parse().ok()?;
+        }
+        if encoded.split(',').count() != 4 {
+            return None;
+        }
+        let [x, y, base_radius, knob_radius] = coords;
+        Some(RelativeJoystick {
+            x,
+            y,
+            base_radius,
+            knob_radius,
+        })
+    }
+
     pub(super) fn is_dpad_role(role: TouchControlRole) -> bool {
         matches!(
             role,
@@ -434,6 +470,34 @@ mod tests {
             let coords: Vec<f32> = rect.split(',').map(|c| c.parse().unwrap()).collect();
             assert_eq!(coords.len(), 4);
         }
+    }
+
+    #[test]
+    fn wire_codecs_round_trip_within_quantum() {
+        use super::ProfileTouchOverlay;
+        let overlay = portrait_overlay();
+        let zones = overlay.relative_zones(1080.0, 1920.0);
+        let encoded = ProfileTouchOverlay::encode_zones(&zones);
+        for (entry, zone) in encoded.split(';').zip(zones.iter()) {
+            let (label, rect) = ProfileTouchOverlay::decode_zone(entry).expect("wire entry decodes");
+            assert_eq!(label, super::zone_label(zone.role));
+            for (got, want) in rect.iter().zip([zone.x, zone.y, zone.width, zone.height]) {
+                assert!((got - want).abs() < 0.0001, "{got} vs {want}");
+            }
+        }
+        assert!(ProfileTouchOverlay::decode_zone("").is_none());
+        assert!(ProfileTouchOverlay::decode_zone("A:1,2,3").is_none());
+        assert!(ProfileTouchOverlay::decode_zone("A:1,2,3,x").is_none());
+        let joystick = overlay.relative_joystick(1080.0, 1920.0);
+        let back = ProfileTouchOverlay::decode_joystick(&ProfileTouchOverlay::encode_joystick(&joystick))
+            .expect("joystick decodes");
+        for (got, want) in [back.x, back.y, back.base_radius, back.knob_radius]
+            .iter()
+            .zip([joystick.x, joystick.y, joystick.base_radius, joystick.knob_radius])
+        {
+            assert!((got - want).abs() < 0.0001, "{got} vs {want}");
+        }
+        assert!(ProfileTouchOverlay::decode_joystick("1,2,3").is_none());
     }
 
     #[test]
