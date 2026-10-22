@@ -172,13 +172,47 @@ fn summary_bytes_match_full_load_without_materializing_state() {
     )
     .unwrap();
     let big_state = vec![7u8; 1024 * 1024];
-    let (bytes, written) =
+    let (bytes, _metadata_bytes, written) =
         build_state_slot_bytes(path.clone(), 7, &big_state, &identity, None).unwrap();
     let summary = load_state_summary_bytes(path.clone(), bytes, Some(&identity))
         .unwrap()
         .unwrap();
     assert_eq!(summary, written);
     assert!(load_state_summary_bytes(path, vec![0u8; 64], Some(&identity)).is_err());
+}
+
+#[test]
+fn sidecar_summary_matches_archive_without_transferring_state() {
+    use crate::{sidecar::StorageLocation, slots::load_state_summary_from_metadata_bytes};
+    let identity = test_identity();
+    let path = StorageLocation::document_tree(
+        "content://provider/tree/primary%3Atest",
+        "nes/id/states/7.state",
+    )
+    .unwrap();
+    // The sidecar carries metadata only: a 1MiB state stays on the provider.
+    let big_state = vec![7u8; 1024 * 1024];
+    let (_, metadata_bytes, written) =
+        crate::slots::build_state_slot_bytes(path.clone(), 7, &big_state, &identity, None).unwrap();
+    assert!(metadata_bytes.len() < 1024);
+    let summary =
+        load_state_summary_from_metadata_bytes(path.clone(), &metadata_bytes, Some(&identity))
+            .unwrap()
+            .unwrap();
+    assert_eq!(summary, written);
+    // Identity mismatch skips; corruption errors for the archive fallback.
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            path.clone(),
+            &metadata_bytes,
+            Some(&test_identity_with_bytes(vec![99])),
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        load_state_summary_from_metadata_bytes(path, b"not-metadata", Some(&identity)).is_err()
+    );
 }
 
 #[test]
@@ -196,7 +230,7 @@ fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
         )
         .unwrap(),
     ] {
-        let (bytes, written) =
+        let (bytes, _, written) =
             build_state_slot_bytes(path.clone(), 7, b"state", &identity, None).unwrap();
         let loaded = load_state_slot_bytes(path.clone(), bytes.clone(), Some(&identity))
             .unwrap()

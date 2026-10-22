@@ -130,6 +130,8 @@ struct Mbc6MachineState {
     flash_mode: FlashMode,
 }
 
+impl_mapper_identity!(Mbc6MachineState);
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Mbc6PersistentState {
     schema_version: u32,
@@ -142,6 +144,8 @@ struct Mbc6PersistentState {
     hidden: Vec<u8>,
     sector0_protected: bool,
 }
+
+impl_mapper_identity!(Mbc6PersistentState, kinded);
 
 impl Mbc6 {
     pub fn new(rom: Vec<u8>) -> Self {

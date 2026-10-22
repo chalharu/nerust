@@ -17,6 +17,8 @@ struct M161MachineState {
     locked: bool,
 }
 
+impl_mapper_identity!(M161MachineState);
+
 impl M161 {
     pub fn new(rom: Vec<u8>) -> Self {
         Self {

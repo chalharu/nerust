@@ -15,6 +15,8 @@ struct WisdomTreeMachineState {
     bank: u8,
 }
 
+impl_mapper_identity!(WisdomTreeMachineState);
+
 impl WisdomTree {
     pub fn new(rom: Vec<u8>) -> Self {
         Self { rom, bank: 0 }

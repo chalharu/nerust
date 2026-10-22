@@ -42,6 +42,8 @@ struct Mmm01MachineState {
     ram: Vec<u8>,
 }
 
+impl_mapper_identity!(Mmm01MachineState);
+
 impl Mmm01 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool) -> Self {
         Self {

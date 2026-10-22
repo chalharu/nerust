@@ -29,6 +29,8 @@ struct Mbc5MachineState {
     ram: Vec<u8>,
 }
 
+impl_mapper_identity!(Mbc5MachineState);
+
 impl Mbc5 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool, rumble: bool) -> Self {
         Self {

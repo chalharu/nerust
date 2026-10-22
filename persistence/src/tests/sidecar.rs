@@ -5,7 +5,7 @@ use std::{
 
 use super::prepare_test_dir;
 use crate::sidecar::{
-    DocumentRelativePath, StorageLocation, load_mapper_save, resolve_sidecars, write_mapper_save,
+    StorageLocation, load_mapper_save, resolve_sidecars, write_mapper_save,
     write_recovery_mapper_save,
 };
 
@@ -59,12 +59,11 @@ fn storage_locations_keep_native_and_document_keys_distinct() {
     let tree = StorageLocation::document_tree(uri, "nes/id/states").unwrap();
     assert!(tree.native_path().is_err());
     let child = tree.child("7.state").unwrap();
+    // The constructor is the only way to forge a URI: equality against a
+    // second validated build proves no literal bypass exists.
     assert_eq!(
         child,
-        StorageLocation::DocumentTree {
-            uri: uri.into(),
-            relative: DocumentRelativePath::new("nes/id/states/7.state").unwrap(),
-        }
+        StorageLocation::document_tree(uri, "nes/id/states/7.state").unwrap()
     );
 }
 

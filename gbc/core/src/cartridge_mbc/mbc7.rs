@@ -74,6 +74,8 @@ struct Mbc7MachineState {
     eeprom: Eeprom,
 }
 
+impl_mapper_identity!(Mbc7MachineState);
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Mbc7PersistentState {
     schema_version: u32,
@@ -81,6 +83,8 @@ struct Mbc7PersistentState {
     #[serde(with = "serde_bytes")]
     eeprom: Vec<u8>,
 }
+
+impl_mapper_identity!(Mbc7PersistentState, kinded);
 
 impl Eeprom {
     fn new() -> Self {

@@ -12,7 +12,7 @@ use crate::{
     archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
     error::PersistenceError,
     fs_ops::write_atomic,
-    metadata::encode_slot_metadata,
+    metadata::{decode_metadata_bytes, encode_metadata_bytes, encode_slot_metadata},
     model::{LoadedStateSlot, StateSlotSummary},
     sidecar::StorageLocation,
     thumbnail::{ThumbnailSource, encode_thumbnail_png},
@@ -137,14 +137,36 @@ pub fn build_state_slot_bytes(
     machine_state: &[u8],
     identity: &SystemIdentity,
     preview: Option<&ThumbnailSource>,
-) -> Result<(Vec<u8>, StateSlotSummary), PersistenceError> {
+) -> Result<(Vec<u8>, Vec<u8>, StateSlotSummary), PersistenceError> {
     let saved_at = system_time_from_millis(unix_millis(SystemTime::now())?);
     let has_thumbnail = preview.is_some();
     let metadata = encode_slot_metadata(slot_id, saved_at, identity, has_thumbnail)?;
     let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
     let bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
+    let metadata_bytes = encode_metadata_bytes(&metadata)?;
     let summary = summary_from_metadata(path, saved_at, &metadata, has_thumbnail);
-    Ok((bytes, summary))
+    Ok((bytes, metadata_bytes, summary))
+}
+
+/// Scan entry point for sidecar bytes: metadata only, never the archive.
+/// Thumbnail presence comes from the metadata flag; the archive path keeps
+/// its entry-presence check.
+pub fn load_state_summary_from_metadata_bytes(
+    path: StorageLocation,
+    bytes: &[u8],
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<StateSlotSummary>, PersistenceError> {
+    let metadata = decode_metadata_bytes(bytes)?;
+    if identity.is_some_and(|identity| !crate::metadata::slot_matches_identity(&metadata, identity))
+    {
+        return Ok(None);
+    }
+    Ok(Some(summary_from_metadata(
+        path,
+        system_time_from_millis(metadata.saved_at_unix_ms),
+        &metadata,
+        metadata.has_thumbnail,
+    )))
 }
 
 /// Scan entry point: summary only, never the machine state or thumbnail.
@@ -206,7 +228,7 @@ fn write_state_slot_to_path(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let (archive_bytes, summary) = build_state_slot_bytes(
+    let (archive_bytes, _, summary) = build_state_slot_bytes(
         path.clone().into(),
         slot_id,
         machine_state,

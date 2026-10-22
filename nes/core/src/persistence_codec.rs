@@ -29,44 +29,32 @@ pub(crate) fn validate_schema_version(version: u32) -> Result<(), PersistenceErr
     }
 }
 
-fn require_supported<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let version = <u32 as serde::Deserialize>::deserialize(deserializer)?;
-    if version == PERSISTENCE_SCHEMA_VERSION {
-        Ok(version)
-    } else {
-        Err(serde::de::Error::custom("unsupported schema version"))
-    }
+/// Version accessor so the envelope parses the body once: success validates
+/// the body's own version; only failures fall back to a minimal header parse
+/// to keep unsupported-version errors outranking corrupt bodies.
+pub(crate) trait HasSchemaVersion {
+    fn schema_version(&self) -> u32;
 }
 
-/// Single-parse envelope: supported versions land in `Supported` with the body;
-/// anything else lands in `Other` carrying only its version for the precedence error.
 #[derive(serde::Deserialize)]
-#[serde(untagged)]
-enum Versioned<T> {
-    Supported {
-        #[serde(deserialize_with = "require_supported")]
-        #[allow(dead_code)]
-        schema_version: u32,
-        #[serde(flatten)]
-        body: T,
-    },
-    Other {
-        schema_version: u32,
-    },
+struct VersionHeader {
+    schema_version: u32,
 }
 
-pub(crate) fn decode_versioned_payload<T: serde::de::DeserializeOwned>(
-    bytes: &[u8],
-) -> Result<T, PersistenceError> {
-    match decode_payload::<Versioned<T>>(bytes)? {
-        Versioned::Supported { body, .. } => Ok(body),
-        Versioned::Other { schema_version } => {
-            validate_schema_version(schema_version)?;
-            // Supported version but undecodable body: report the body fault.
-            Ok(decode_payload::<T>(bytes)?)
+pub(crate) fn decode_versioned_payload<T>(bytes: &[u8]) -> Result<T, PersistenceError>
+where
+    T: serde::de::DeserializeOwned + HasSchemaVersion,
+{
+    match decode_payload::<T>(bytes) {
+        Ok(body) => {
+            validate_schema_version(body.schema_version())?;
+            Ok(body)
+        }
+        Err(body_error) => {
+            if let Ok(header) = decode_payload::<VersionHeader>(bytes) {
+                validate_schema_version(header.schema_version)?;
+            }
+            Err(body_error)
         }
     }
 }

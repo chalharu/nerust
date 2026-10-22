@@ -47,6 +47,8 @@ struct HuC3MachineState {
     ram: Vec<u8>,
 }
 
+impl_mapper_identity!(HuC3MachineState);
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct HuC3PersistentState {
     schema_version: u32,
@@ -58,6 +60,8 @@ struct HuC3PersistentState {
     subminute_clocks: u32,
     saved_at_unix_seconds: u64,
 }
+
+impl_mapper_identity!(HuC3PersistentState, kinded);
 
 impl HuC3 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>) -> Self {
