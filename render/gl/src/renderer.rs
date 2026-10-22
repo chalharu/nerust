@@ -486,10 +486,13 @@ impl FrameSink for GlRenderer {
 }
 
 impl OsdSink for GlRenderer {
-    /// Stage an OSD layer; the staged header gate skips the clone on equality.
-    /// Keeps the stored copy needed for profile rebuilds.
+    /// Stage an OSD layer; identical content already live in the view skips
+    /// the clone. The staged copy must still refresh on drops: a dropped
+    /// view with a matching staged copy re-pushes below instead of returning.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        if OsdLayer::same_option(self.osd_staged.as_ref(), layer.as_ref()) {
+        if OsdLayer::same_option(self.osd_staged.as_ref(), layer.as_ref())
+            && OsdLayer::same_option(self.osd.osd_layer.as_ref(), layer.as_ref())
+        {
             return;
         }
         self.osd.set_osd_layer(layer.clone());
