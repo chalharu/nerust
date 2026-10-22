@@ -19,7 +19,7 @@ mod mapper_state;
 pub(crate) mod mirror;
 pub(crate) mod pattern_tables;
 mod persistence_codec;
-pub mod persistence_error;
+mod persistence_error;
 mod ppu;
 mod ppu_memory_access;
 pub(crate) mod rom_format;

@@ -145,8 +145,10 @@ impl ConsoleCore for NesConsoleCore {
 
     // `region` フィールドは NES PAL 対応時に使用する。
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
-        let cartridge_data =
-            crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
+        let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse {
+            kind: nerust_core_traits::CoreFault::Corrupt,
+            source: Box::new(e),
+        })?;
         let options = if let Some(core_options) = &config.core_options {
             *core_options
                 .clone()

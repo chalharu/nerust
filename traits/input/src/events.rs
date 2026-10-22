@@ -199,7 +199,6 @@ impl<State> InputReceiver<State> {
         (self.refresh)(&mut self.state);
         &self.state
     }
-
 }
 
 impl<State> From<State> for InputReceiver<State> {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreFault, VideoSignalKind,
     audio::StereoSample,
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
@@ -52,11 +52,16 @@ impl GbaConsoleCore {
     }
 
     fn create_loaded(rom: &[u8], options: GbaCoreOptions) -> Result<LoadedGba, CoreError> {
-        let identity = GbaRomIdentity::from_rom(rom)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbaLoadError::InvalidRom)))?;
+        let identity = GbaRomIdentity::from_rom(rom).ok_or_else(|| CoreError::RomParse {
+            kind: CoreFault::Corrupt,
+            source: Box::new(GbaLoadError::InvalidRom),
+        })?;
         let mut system = GbaSystem::from_test_rom(rom.to_vec())
             .or_else(|| GbaSystem::from_rom(rom.to_vec()))
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbaLoadError::InvalidRom)))?;
+            .ok_or_else(|| CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(GbaLoadError::InvalidRom),
+            })?;
         if let Some(cart) = system.bus.cartridge_mut() {
             cart.gpio.set_solar_level(options.solar_light_level);
         }
