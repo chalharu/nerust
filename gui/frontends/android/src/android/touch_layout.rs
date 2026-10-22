@@ -380,7 +380,7 @@ mod tests {
             attachment_id: AttachmentId::new("test"),
             control_id: DigitalControlId::new(id),
             role,
-            label: zone_label(role).to_string(),
+            label: std::sync::Arc::from(zone_label(role)),
         }
     }
 

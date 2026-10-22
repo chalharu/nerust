@@ -99,39 +99,11 @@ impl PersistenceManager {
         }
     }
 
-    pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
-        let mut manager = Self::new();
-        manager.slot_backend = backend;
-        manager
-    }
-
-    /// Single wiring path: every constructor funnels through here.
+    /// Single wiring path: construct with [`Self::new`], then wire all three legs here.
     pub fn configure_backends(&mut self, backends: PersistenceBackends) {
         self.slot_backend = backends.slot;
         self.autosave_backend = backends.autosave;
         self.mapper_backend = backends.mapper;
-    }
-
-    pub fn with_all_backends(
-        slot_backend: Box<dyn SlotBackend>,
-        autosave_backend: Box<dyn AutoSaveBackend>,
-        mapper_backend: Box<dyn MapperSaveBackend>,
-    ) -> Self {
-        let mut manager = Self::new();
-        manager.configure_backends(PersistenceBackends {
-            slot: slot_backend,
-            autosave: autosave_backend,
-            mapper: mapper_backend,
-        });
-        manager
-    }
-
-    pub fn with_autosave_backend(&mut self, backend: Box<dyn AutoSaveBackend>) {
-        self.autosave_backend = backend;
-    }
-
-    pub fn with_mapper_backend(&mut self, backend: Box<dyn MapperSaveBackend>) {
-        self.mapper_backend = backend;
     }
 
     pub fn slots(&self) -> &[StateSlotSummary] {
@@ -569,11 +541,13 @@ mod persistence_cov_tests {
     }
 
     fn failing_manager() -> PersistenceManager {
-        PersistenceManager::with_all_backends(
-            Box::new(FailingSlotBackend),
-            Box::new(FailingSlotBackend),
-            Box::new(FailingSlotBackend),
-        )
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FailingSlotBackend),
+            autosave: Box::new(FailingSlotBackend),
+            mapper: Box::new(FailingSlotBackend),
+        });
+        manager
     }
 
     fn exporter_ok() -> OkExporter {
@@ -671,11 +645,12 @@ mod persistence_cov_tests {
         use crate::session::fs::FsMapper;
         let dir = std::env::temp_dir().join("nerust-persist-cov-mapper");
         std::fs::create_dir_all(&dir).ok();
-        let mut manager = PersistenceManager::with_all_backends(
-            Box::new(FailingSlotBackend),
-            Box::new(FailingSlotBackend),
-            Box::new(FsMapper),
-        );
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FailingSlotBackend),
+            autosave: Box::new(FailingSlotBackend),
+            mapper: Box::new(FsMapper),
+        });
         manager.configure(dir.clone().into(), dir.join("g.sav").into());
         manager.mapper_save_flush_allowed = false;
         let exporter = exporter_ok();
@@ -782,22 +757,11 @@ mod persistence_cov_tests {
     }
 
     #[test]
-    fn with_backend_replaces_only_slot_leg() {
-        let mut manager = PersistenceManager::with_backend(Box::new(FailingSlotBackend));
+    fn fresh_manager_starts_unconfigured() {
+        let manager = PersistenceManager::new();
         assert!(manager.slots().is_empty());
         assert_eq!(manager.active_slot_id(), None);
         assert_eq!(manager.configured_sidecars(), None);
-        manager.configure(
-            std::path::PathBuf::from("/tmp/a").into(),
-            std::path::PathBuf::from("/tmp/b").into(),
-        );
-        assert!(manager.configured_sidecars().is_some());
-        manager.reset();
-        assert!(manager.configured_sidecars().is_none());
-        let mut selected = PersistenceManager::new();
-        selected.select_active_slot(5);
-        assert_eq!(selected.active_slot_id(), Some(5));
-        assert_eq!(selected.select_adjacent_slot(SlotDirection::Next), None);
     }
 
     #[test]

@@ -89,7 +89,7 @@ fn build_touch_overlay(
                     attachment_id: port,
                     control_id,
                     role,
-                    label: info.label.to_string(),
+                    label: std::sync::Arc::from(info.label),
                 });
             }
         }
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(overlay.controls[0].attachment_id, slot);
         assert_eq!(overlay.controls[0].control_id.as_str(), "test.topology.a");
         assert_eq!(overlay.controls[0].role, TouchControlRole::FaceButton1);
-        assert_eq!(overlay.controls[0].label, "A");
+        assert_eq!(overlay.controls[0].label.as_ref(), "A");
 
         // Empty assignments serve the empty overlay without a session.
         let empty = super::build_touch_overlay(7, &InputAssignments::new(vec![]));

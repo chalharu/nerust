@@ -179,10 +179,8 @@ fn install_erased(
             };
             // Capture at the panic site once, using the newest live source.
             if let Some(newest) = registrations.last() {
-                let record = PanicRecord::capture_with(
-                    Arc::from(info.to_string()),
-                    (newest.source)(),
-                );
+                let record =
+                    PanicRecord::capture_with(Arc::from(info.to_string()), (newest.source)());
                 for registration in registrations.iter().rev() {
                     (registration.sink)(&record);
                 }
@@ -351,7 +349,10 @@ mod tests {
         let boxed_sync: Box<dyn std::error::Error + Send + Sync> =
             Box::new(std::io::Error::other("io sync boom"));
         assert_eq!(payload_message(&boxed_sync).as_ref(), "io sync boom");
-        assert_eq!(payload_message(&42_u32).as_ref(), "non-string panic payload");
+        assert_eq!(
+            payload_message(&42_u32).as_ref(),
+            "non-string panic payload"
+        );
     }
 
     #[test]

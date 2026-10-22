@@ -303,11 +303,12 @@ impl SessionHandle {
             input.clear();
         }
         self.rebuild_key_field_map();
-        for key in &self.input.pressed_keys {
-            if let Some(&field) = self.input.key_field_map.get(key)
-                && let Some(input) = self.emu.input_mut()
-            {
-                let _ = input.set(field, nerust_input_traits::InputValue::Digital(true));
+        // One borrow of the live port for the whole re-assert loop.
+        if let Some(input) = self.emu.input_mut() {
+            for key in &self.input.pressed_keys {
+                if let Some(&field) = self.input.key_field_map.get(key) {
+                    let _ = input.set(field, nerust_input_traits::InputValue::Digital(true));
+                }
             }
         }
         self.input.invalidate_topology();
@@ -365,7 +366,8 @@ impl SessionHandle {
             .loaded
             .as_ref()
             .and_then(|loaded| loaded.media.native_path().map(Path::to_path_buf));
-        PersistenceBinder::bind(self, rom_path.as_deref(), restore);
+        let setup = PersistenceBinder::bind(self, None, rom_path.as_deref(), restore);
+        self.note_persistence_setup(setup);
     }
 
     pub(crate) fn remember_last_successful_rom_directory(&mut self, path: Option<&Path>) {

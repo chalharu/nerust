@@ -33,10 +33,6 @@ pub trait StateExporter {
     fn export_preview(&self) -> Option<PreviewRgba>;
     /// Identity the slot is filed under.
     fn export_identity(&self) -> Option<SystemIdentity>;
-    /// Canonical media identity for slot filing; defaults to [`export_identity`](Self::export_identity).
-    fn canonical_media_identity(&self) -> Option<SystemIdentity> {
-        self.export_identity()
-    }
     /// Export the battery-backed mapper save, if the core holds one.
     fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure>;
     /// Import a battery-backed mapper save from disk.

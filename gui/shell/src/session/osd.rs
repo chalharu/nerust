@@ -203,7 +203,6 @@ impl OsdManager {
     pub fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
         self.transient.wakeup_deadline(now)
     }
-
 }
 
 impl crate::session::osd_presenter::OsdState for OsdManager {
