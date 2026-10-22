@@ -67,6 +67,7 @@ internal object SettingsSectionFallback {
             "system.gba" -> "Game Boy Advance"
             else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
         }
+}
 
 
 /** Settings dialog UI: cards, section builders, visibility filtering, and selection state. */
