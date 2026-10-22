@@ -174,7 +174,7 @@ mod tests {
                 height: 4.0,
             },
             frame_format: VideoFrameFormat::Palette,
-            ntsc_packed_rgba8: Some(vec![0x7Fu8; 34_000].into_boxed_slice()),
+            ntsc_packed_rgba8: Some(vec![0x7Fu8; 34_000].into()),
         };
         let src = vec![3u8; 4 * 4];
         let mut out = vec![0u32; 16];
