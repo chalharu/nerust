@@ -1,14 +1,11 @@
 use nerust_core_traits::audio::AudioBackend;
 use nerust_gba_core::console_core::GbaConsoleCore;
-use nerust_gba_core::input_types::GbaInputBuffer;
 use nerust_gba_settings::GbaSettings;
 use nerust_input_traits::InputAssignments;
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
 use nerust_system_traits::factory::{CoreParts, FactoryError, settings::FactorySettingsView};
-
-use crate::input_profiles::GBA_ATTACHMENT;
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,

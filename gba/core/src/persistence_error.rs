@@ -56,6 +56,4 @@ impl From<GbaPersistenceError> for nerust_core_traits::CoreError {
 pub enum GbaLoadError {
     #[error("invalid or unsupported GBA ROM")]
     InvalidRom,
-    #[error("save state ROM mismatch")]
-    RomMismatch,
 }

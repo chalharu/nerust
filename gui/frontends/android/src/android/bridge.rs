@@ -205,15 +205,19 @@ static SETTINGS: Mutex<SettingsSlot> = Mutex::new(SettingsSlot::empty());
 /// Monotonic insets generation: readers skip the lock when unchanged.
 static INSETS_VERSION: AtomicU64 = AtomicU64::new(0);
 
-/// Accelerometer leaf lock: sensor pushes never contend with the vault.
-/// Never take the vault while holding it.
-static ACCEL_HANDLE: Mutex<Option<AccelerometerInputHandle>> = Mutex::new(None);
+/// Accelerometer leaf lock: read-mostly, so sensor pushes take a read lock
+/// and never contend with the vault. Never take the vault while holding it.
+static ACCEL_HANDLE: std::sync::RwLock<Option<AccelerometerInputHandle>> =
+    std::sync::RwLock::new(None);
 
-fn lock_accel() -> std::sync::MutexGuard<'static, Option<AccelerometerInputHandle>> {
-    ACCEL_HANDLE.lock().unwrap_or_else(|poison| {
-        log::error!("accelerometer handle mutex poisoned; recovering state");
-        poison.into_inner()
-    })
+fn read_accel() -> Option<AccelerometerInputHandle> {
+    ACCEL_HANDLE
+        .read()
+        .unwrap_or_else(|poison| {
+            log::error!("accelerometer handle lock poisoned; recovering state");
+            poison.into_inner()
+        })
+        .clone()
 }
 
 pub(super) fn with_queue<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
@@ -251,11 +255,14 @@ pub(super) fn clear_queues() {
 
 pub(super) fn reset_transient() {
     clear_queues();
-    *lock_accel() = None;
+    bind_accelerometer(None);
 }
 
 pub(super) fn bind_accelerometer(handle: Option<AccelerometerInputHandle>) {
-    *lock_accel() = handle;
+    *ACCEL_HANDLE.write().unwrap_or_else(|poison| {
+        log::error!("accelerometer handle lock poisoned; recovering state");
+        poison.into_inner()
+    }) = handle;
 }
 
 pub(super) fn request_exit() {
@@ -413,8 +420,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onCartridgeAc
     x_g: jni::sys::jfloat,
     y_g: jni::sys::jfloat,
 ) {
-    let handle = lock_accel().clone();
-    if let Some(handle) = handle {
+    if let Some(handle) = read_accel() {
         handle.publish(AccelerationSample::new(x_g, y_g));
     }
 }
