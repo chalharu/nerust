@@ -19,6 +19,10 @@ export ANDROID_ABI_FILTERS="${ANDROID_ABI_FILTERS:-${TARGET_ABI}}"
 echo "Running Android e2e tests"
 echo "  abi: ${TARGET_ABI}"
 
+# Fail fast when an instrumentation test is never selected: an unlisted
+# test would otherwise pass CI by not running.
+python3 "${SCRIPT_DIR}/check-test-inventory.py" e2e
+
 dump_logcat_on_failure() {
     local status=$?
     if [[ "${status}" -ne 0 ]] && command -v adb >/dev/null 2>&1; then
