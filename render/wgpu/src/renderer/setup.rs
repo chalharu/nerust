@@ -691,15 +691,15 @@ fn upload_rect(
     true
 }
 
-/// Pack clipped rows using the original source pitch. Clear reused bytes even
-/// on rejection so malformed layers can never expose a previous upload.
+/// Pack clipped rows using the original source pitch. Only the uploaded
+/// prefix is ever cleared: rejection uploads nothing, and `None` layers
+/// upload a zeroed prefix, so stale tail bytes stay invisible.
 pub(super) fn pack_osd_rect(
     staging: &mut Vec<u8>,
     w: u32,
     h: u32,
     rgba: Option<(&[u8], usize)>,
 ) -> Option<(u32, usize)> {
-    staging.fill(0);
     if w == 0 || h == 0 {
         return None;
     }
@@ -724,7 +724,11 @@ pub(super) fn pack_osd_rect(
         for row in 0..h as usize {
             staging[row * pitch..row * pitch + row_bytes]
                 .copy_from_slice(&bytes[row * source_pitch..row * source_pitch + row_bytes]);
+            // Pad only: growth is already zeroed by the resize above.
+            staging[row * pitch + row_bytes..(row + 1) * pitch].fill(0);
         }
+    } else {
+        staging[..needed].fill(0);
     }
     Some((pitch_u32, needed))
 }

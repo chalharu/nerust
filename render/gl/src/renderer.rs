@@ -57,8 +57,9 @@ pub struct GlRenderer {
     osd_drop_warned: bool,
     /// Warn-once for view-teardown failures (see `close_live_view`).
     close_warned: bool,
-    /// Last uploaded palette bytes; equal palettes skip the texture upload.
-    last_palette: Option<[u8; 256]>,
+    /// Last uploaded palette words; equal words skip convert and texture upload.
+    /// Cloned only when the palette changes, never per frame.
+    last_palette: Option<Box<[u32]>>,
     /// Fixed-size staging for the pre-GLES3 pack path (see `render`).
     tight: Vec<u8>,
 }
@@ -69,11 +70,6 @@ impl std::fmt::Debug for GlRenderer {
             .field("attached", &self.gl_surface.is_some())
             .finish_non_exhaustive()
     }
-}
-
-/// Equal palettes skip the texture upload; the memo lives on the renderer.
-fn palette_needs_upload(last: Option<[u8; 256]>, next: [u8; 256]) -> bool {
-    last != Some(next)
 }
 
 impl GlRenderer {
@@ -402,15 +398,17 @@ impl GlRenderer {
             log::warn!("GlRenderer: resize failed: {e}");
             return RenderResult::Error;
         }
-        if let Some(next) = frame_buffer.palette_as_rgba8() {
-            if palette_needs_upload(self.last_palette, next) {
+        if let Some(palette) = frame_buffer.palette() {
+            if self.last_palette.as_deref() != Some(palette)
+                && let Some(next) = frame_buffer.palette_as_rgba8()
+            {
                 self.last_palette = None;
                 if let Err(e) = self.frame.update_palette_texture(&next) {
                     log::warn!("GlRenderer: palette upload failed: {e}");
                     return RenderResult::Error;
                 }
+                self.last_palette = Some(palette.into());
             }
-            self.last_palette = Some(next);
         }
         let data = frame_buffer.as_ref();
         if let Err(e) = upload_frame(&mut self.frame, &mut self.tight, &layout, data) {
@@ -689,16 +687,19 @@ fn pack_rows_stripped(
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameView, pack_rows_stripped, palette_needs_upload};
+    use super::{FrameView, pack_rows_stripped};
     use crate::{osd_view::OsdView, surface_view::SurfaceView};
     use nerust_glwrap::bindings as gl;
 
     #[test]
     fn palette_gate_skips_identical_upload() {
-        let first = [0x12u8; 256];
-        assert!(palette_needs_upload(None, first));
-        assert!(!palette_needs_upload(Some(first), first));
-        assert!(palette_needs_upload(Some(first), [0x34u8; 256]));
+        let words = |b: u32| vec![b; 64].into_boxed_slice();
+        let changed = |last: &Option<Box<[u32]>>, next: &[u32]| {
+            last.as_deref() != Some(next)
+        };
+        assert!(changed(&None, &words(0x12)));
+        assert!(!changed(&Some(words(0x12)), &words(0x12)));
+        assert!(changed(&Some(words(0x12)), &words(0x34)));
     }
 
     #[test]
@@ -1176,7 +1177,7 @@ mod tests {
         renderer.context = Some(current.context);
         let old_texture = renderer.frame.frame_texture;
         let old_osd = renderer.osd.osd_texture;
-        renderer.last_palette = Some([0x12; 256]);
+        renderer.last_palette = Some(vec![0x12; 64].into_boxed_slice());
         renderer.tight = vec![7; 12];
         let tight_capacity = renderer.tight.capacity();
         assert!(renderer.update_render_profile(&rejected).is_err());
@@ -1186,7 +1187,7 @@ mod tests {
         );
         assert_eq!(renderer.frame.frame_texture, old_texture);
         assert_eq!(renderer.osd.osd_texture, old_osd);
-        assert_eq!(renderer.last_palette, Some([0x12; 256]));
+        assert_eq!(renderer.last_palette, Some(vec![0x12; 64].into_boxed_slice()));
         assert_eq!(renderer.tight, vec![7; 12]);
         // Failed temporary construction changed bindings: the old view must rebind.
         renderer
@@ -1205,7 +1206,7 @@ mod tests {
         assert!(renderer.tight.is_empty());
         assert_eq!(renderer.tight.capacity(), tight_capacity);
         // Attach/load and teardown share the palette invalidation path.
-        renderer.last_palette = Some([0x12; 256]);
+        renderer.last_palette = Some(vec![0x12; 64].into_boxed_slice());
         renderer.on_load(&profile).unwrap();
         assert_eq!(renderer.last_palette, None);
         renderer.resize(SurfaceSize::new(64, 64));

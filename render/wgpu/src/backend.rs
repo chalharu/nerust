@@ -24,7 +24,8 @@ pub struct WgpuRenderer {
     surface: Option<wgpu::Surface<'static>>,
     size: SurfaceSize,
     last_render_error: Option<String>,
-    last_palette: Option<[u8; 256]>,
+    /// Last uploaded palette words; equal words skip convert and texture upload.
+    last_palette: Option<Box<[u32]>>,
     osd: Option<OsdLayer>,
     osd_dirty: bool,
     /// Shared OSD upload budget: repeated rejections drop the layer.
@@ -176,11 +177,12 @@ impl FrameSink for WgpuRenderer {
             return RenderResult::Skipped;
         }
 
-        if let Some(palette) = frame.palette_as_rgba8()
-            && self.last_palette != Some(palette)
+        if let Some(palette) = frame.palette()
+            && self.last_palette.as_deref() != Some(palette)
+            && let Some(rgba8) = frame.palette_as_rgba8()
         {
-            pipeline.update_palette_texture(&palette);
-            self.last_palette = Some(palette);
+            pipeline.update_palette_texture(&rgba8);
+            self.last_palette = Some(palette.into());
         }
         if self.osd_dirty {
             let accepted = crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
@@ -593,7 +595,7 @@ mod tests {
     fn palette_memo_resets_with_gpu_objects() {
         use nerust_render_traits::renderer::SurfaceLifecycle;
         let mut renderer = detached_renderer();
-        renderer.last_palette = Some([0x12; 256]);
+        renderer.last_palette = Some(vec![0x12; 64].into_boxed_slice());
         renderer.detach();
         assert_eq!(renderer.last_palette, None);
     }
