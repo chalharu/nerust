@@ -168,7 +168,7 @@ impl SessionHandle {
 mod tests {
     use std::{collections::HashMap, rc::Rc};
 
-    use nerust_gui_viewmodel::settings::{build_topology, device_kind};
+    use nerust_gui_viewmodel::settings::build_topology;
     use nerust_input_traits::{
         AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, ControllerProfile,
         DeviceKindId, DigitalControlId, InputAssignments, PortSet, ProfileId, SlotInfo,
@@ -552,12 +552,6 @@ mod tests {
         assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
     }
 
-    #[test]
-    fn device_kind_delegates_to_profile_method() {
-        let profile = MockSinglePort;
-        let kind = device_kind(&profile, 0);
-        assert_eq!(kind.as_str(), "test.standard");
-    }
 }
 
 #[cfg(test)]

@@ -80,15 +80,11 @@ pub trait Controller: StrobeTarget {
     fn read(&mut self, port: &dyn Port) -> OpenBusReadResult;
     fn write(&mut self, port: &dyn Port, value: u8);
     fn sync_input(&mut self, _state: &[u8]) {}
-    /// Append field entries for this controller at the given port.
-    /// Default appends nothing; implementations must only push to `out`.
-    fn field_map(&self, _port: &dyn Port, _out: &mut Vec<FieldEntry>) {}
-    /// Owned field entries without an out-param.
-    /// Default forwards to [`Controller::field_map`]; override for direct builds.
-    fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
-        let mut out = Vec::new();
-        self.field_map(port, &mut out);
-        out
+    /// Owned field entries for this controller at the given port.
+    /// Single data source: implementors override this, never a second spelling.
+    /// Default is empty; controllers without buttons keep it.
+    fn field_entries(&self, _port: &dyn Port) -> Vec<FieldEntry> {
+        Vec::new()
     }
 }
 
@@ -191,12 +187,12 @@ mod tests {
         fn sync_input(&mut self, state: &[u8]) {
             self.synced = state.to_vec();
         }
-        fn field_map(&self, port: &dyn Port, out: &mut Vec<FieldEntry>) {
-            out.push(FieldEntry::new(
+        fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
+            vec![FieldEntry::new(
                 port.attachment_id(),
                 ControlId::digital(DigitalControlId::new("test.a")),
                 port.index(),
-            ));
+            )]
         }
     }
 

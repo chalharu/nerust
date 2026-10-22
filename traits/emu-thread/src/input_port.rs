@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 use nerust_input_traits::InputResources;
 use nerust_input_traits::{
     BufferError, InputReceiver, InputStateBuffer, InputValue, TypedInputResources, UnifiedFieldMap,
@@ -14,7 +14,7 @@ use nerust_input_traits::{
 
 /// Shared-state factory behind the split endpoints.
 /// Test-only: production assembles through [`InputSplit::typed_split`].
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub trait InputPort: std::fmt::Debug + Send + Sync {
     /// Build the GUI producer from shared state.
     fn gui_endpoint(&self) -> GuiInput;
@@ -28,7 +28,7 @@ pub struct InputSplit {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
     /// Test-only endpoint minting; production splits typed resources without storing the factory.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     new_buffer: Box<dyn Fn() -> Box<dyn InputStateBuffer> + Send + Sync>,
 }
 
@@ -96,7 +96,7 @@ impl InputSplit {
     }
 
     /// Test-only constructor; never use in production paths.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn spawn_typed<B>(make: impl Fn() -> B + Send + Sync + 'static) -> Self
     where
         B: InputStateBuffer + 'static,
@@ -115,7 +115,7 @@ impl InputSplit {
     }
 
     /// Test-only move-out: production assembles through [`InputSplit::typed_split`].
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn from_resources(resources: InputResources) -> (Self, UnifiedFieldMap) {
         let (field_map, factory) = resources.into_parts();
         let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> = Arc::new(Mutex::new((factory)()));
@@ -139,7 +139,7 @@ impl std::fmt::Debug for InputSplit {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl InputPort for InputSplit {
     fn gui_endpoint(&self) -> GuiInput {
         GuiInput::from_split(self)
@@ -154,7 +154,7 @@ impl InputPort for InputSplit {
 /// Test-only erased endpoint; production uses the typed split.
 /// `Send` but `!Sync`: keep each `GuiInput` on its owning GUI thread.
 #[derive(Debug)]
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub struct GuiInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
@@ -167,7 +167,7 @@ pub struct GuiInput {
     mismatch_warned: bool,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl GuiInput {
     fn from_split(split: &InputSplit) -> Self {
         Self {
@@ -221,7 +221,7 @@ impl GuiInput {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl nerust_input_traits::InputStaging for GuiInput {
     fn set(&mut self, field: usize, value: InputValue) -> Result<(), BufferError> {
         GuiInput::set(self, field, value)
@@ -232,28 +232,28 @@ impl nerust_input_traits::InputStaging for GuiInput {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl nerust_input_traits::InputPublish for GuiInput {
     fn publish(&mut self) {
         GuiInput::publish(self);
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl nerust_input_traits::GuiInputPort for GuiInput {}
 
 /// Emu thread input consumer.
 /// `Send` but `!Sync`: keep each `EmuInput` on its owning emu thread.
 /// Test-only erased endpoint; production receives through [`InputReceiver`].
 #[derive(Debug)]
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub struct EmuInput {
     shared: Arc<Mutex<Box<dyn InputStateBuffer>>>,
     flag: Arc<AtomicBool>,
     read_buf: Box<dyn InputStateBuffer>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl EmuInput {
     fn from_split(split: &InputSplit) -> Self {
         Self {
@@ -265,7 +265,7 @@ impl EmuInput {
 
     /// Test-only peek at the latest emu-side snapshot; production cores
     /// receive through the typed [`InputReceiver`] instead.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn read_buffer(&self) -> &dyn InputStateBuffer {
         &*self.read_buf
     }

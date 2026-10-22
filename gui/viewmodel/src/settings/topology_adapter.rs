@@ -1,4 +1,4 @@
-//! Topology adapter: build the input descriptor from slot assignments. Moved from `settings-core`:
+//! Topology adapter: project the input descriptor from slot assignments. Moved from `settings-core`:
 //! settings stores persisted string pairs only; profile-to-descriptor projection lives here, next to the view models.
 
 use std::{collections::HashSet, rc::Rc};
@@ -8,11 +8,6 @@ use nerust_input_traits::{
     ControllerProfile, DeviceDescriptor, DeviceKindId, DigitalControlDescriptor,
     InputTopologyDescriptor, PortDescriptor, PortId, SlotInfo,
 };
-
-/// Map a controller profile + port group index to its device kind.
-pub fn device_kind(profile: &dyn ControllerProfile, group_index: usize) -> DeviceKindId {
-    profile.device_kind_for_group(group_index)
-}
 
 struct TopologyContext {
     ports: Vec<PortDescriptor>,
@@ -38,7 +33,7 @@ impl TopologyContext {
     }
 
     fn register_device(&mut self, profile: &dyn ControllerProfile, gi: usize) {
-        let dk = device_kind(profile, gi);
+        let dk = profile.device_kind_for_group(gi);
         if !self.seen_devices.insert(dk) {
             return;
         }
@@ -72,7 +67,7 @@ impl TopologyContext {
         gi: usize,
         slot_label: &impl Fn(AttachmentId) -> &'static str,
     ) {
-        let dk = device_kind(profile, gi);
+        let dk = profile.device_kind_for_group(gi);
         let port_id = PortId::new(port.as_str());
         if self
             .ports
@@ -128,7 +123,7 @@ mod tests {
 
     use nerust_input_traits::{AttachmentId, ControllerProfile, PortSet, ProfileId};
 
-    use super::{build_topology, device_kind};
+    use super::build_topology;
 
     #[derive(Debug)]
     struct SinglePortProfile;
@@ -151,11 +146,6 @@ mod tests {
     }
 
     const P1: AttachmentId = AttachmentId::new("p1");
-
-    #[test]
-    fn device_kind_delegates_to_profile_method() {
-        assert_eq!(device_kind(&SinglePortProfile, 0).as_str(), "test.single");
-    }
 
     #[test]
     fn build_topology_empty_assignments() {

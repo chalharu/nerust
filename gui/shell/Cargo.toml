@@ -25,6 +25,7 @@ time.workspace = true
 
 [dev-dependencies]
 clap.workspace = true
+nerust_emu_thread = { path = "../../traits/emu-thread", features = ["test-utils"] }
 nerust_core_traits.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_nes_settings.workspace = true
