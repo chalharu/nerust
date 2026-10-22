@@ -1,7 +1,8 @@
 //! Outermost crash containment: hook diagnostics plus guarded entry. Hook records describe
 //! the panic site; caught reports describe only the caught payload, without claiming correlation.
-//! Dialogs and termination are the host's job. Configuration travels by parameter, never globals.
-//! Entry points are frozen: new install variants break the no-correlation principle.
+//! Dialogs and termination are the host's job. Sinks and sources travel by parameter.
+//! The std hook itself is process-global, so one documented process-default
+//! adapter remains; hosts own a [`HookRegistry`] value for everything else.
 
 use std::{
     any::Any,
@@ -21,11 +22,12 @@ pub fn default_sink(record: &PanicRecord) {
 }
 
 /// Backtrace source: hosts and tests inject; capturing sources move in by value.
-pub type BacktraceSource = std::sync::Arc<dyn Fn() -> String + Send + Sync + 'static>;
+/// Returns shared text so one capture fans out to every sink without copying.
+pub type BacktraceSource = std::sync::Arc<dyn Fn() -> Arc<str> + Send + Sync + 'static>;
 
 /// Real backtrace capture for production installs.
-pub fn capture_backtrace() -> String {
-    std::backtrace::Backtrace::capture().to_string()
+pub fn capture_backtrace() -> Arc<str> {
+    Arc::from(std::backtrace::Backtrace::capture().to_string())
 }
 
 type Hook = Arc<dyn Fn(&PanicHookInfo<'_>) + Sync + Send + 'static>;
@@ -36,16 +38,34 @@ struct Registration {
     thread: Option<std::thread::ThreadId>,
 }
 
-struct Hooks {
+/// Explicit hook state owned by the host. The std hook is process-global, so wiring
+/// it still needs one process-default adapter ([`install`]/[`install_default`]);
+/// everything else (which sinks/sources exist) lives in this value.
+pub struct HookRegistry {
     previous: Option<Hook>,
     registrations: Vec<Arc<Registration>>,
 }
 
-// Never hold HOOKS across a std hook write: std invokes hooks under its own
-// read lock, and the dispatcher needs HOOKS to take its snapshot.
-// INSTALL_LOCK serializes our take_hook/set_hook transactions only.
-static INSTALL_LOCK: Mutex<()> = Mutex::new(());
-static HOOKS: Mutex<Hooks> = Mutex::new(Hooks {
+impl HookRegistry {
+    /// Empty registry with no chained hook.
+    pub fn new() -> Self {
+        Self {
+            previous: None,
+            registrations: Vec::new(),
+        }
+    }
+}
+
+impl Default for HookRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// The std hook is process-global: this single adapter is the only global.
+// Never hold it across a std hook write: std invokes hooks under its own
+// read lock, and the dispatcher snapshots under this lock, then releases it.
+static PROCESS_DEFAULT: Mutex<HookRegistry> = Mutex::new(HookRegistry {
     previous: None,
     registrations: Vec::new(),
 });
@@ -68,13 +88,8 @@ impl Drop for HookGuard {
         // In particular, a guard dropped by a sink must not wait for another
         // install that is itself waiting for this panic hook to return.
         let can_restore = !std::thread::panicking();
-        let _install = can_restore.then(|| {
-            INSTALL_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        });
         let previous = {
-            let mut hooks = HOOKS
+            let mut hooks = PROCESS_DEFAULT
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             hooks
@@ -89,31 +104,25 @@ impl Drop for HookGuard {
         let replaced = if let Some(previous) = previous {
             // set_hook drops the replaced closure. Its captures may install a
             // new guard in Drop, so first take ownership without destroying it.
-            // Neither std hook writes nor closure destruction may hold HOOKS.
+            // Neither std hook writes nor closure destruction may hold the registry.
             let replaced = panic::take_hook();
             panic::set_hook(Box::new(move |info| previous(info)));
             Some(replaced)
         } else {
             None
         };
-        drop(_install);
         // In particular, a wrapping external hook can own a reentrant or
         // panicking destructor. The registry is already restored and unlocked.
         drop(replaced);
     }
 }
 
-/// Install the hook with an explicit sink, chaining the previous hook.
+/// Install the hook with an explicit sink and backtrace source, chaining the
+/// previous hook. Single entry point; the default pair is [`install_default`].
 /// Returns a guard; the last non-panicking drop restores the previous hook.
-pub fn install_with(sink: impl Fn(&PanicRecord) + Send + Sync + 'static) -> HookGuard {
-    install_with_source(sink, capture_backtrace)
-}
-
-/// Install the hook with an explicit sink and backtrace source.
-/// Returns a guard; the last non-panicking drop restores the previous hook.
-pub fn install_with_source(
+pub fn install(
     sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
-    source: impl Fn() -> String + Send + Sync + 'static,
+    source: impl Fn() -> Arc<str> + Send + Sync + 'static,
 ) -> HookGuard {
     install_erased(std::sync::Arc::new(sink), std::sync::Arc::new(source), None)
 }
@@ -135,27 +144,30 @@ fn install_erased(
         source,
         thread,
     });
-    let _install = INSTALL_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let needs_install = HOOKS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .previous
-        .is_none();
-    if needs_install {
-        let previous: Hook = Arc::from(panic::take_hook());
-        {
-            let mut hooks = HOOKS
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // One transaction under one lock: check, take, push, and set stay atomic
+    // so two racing installs can never chain two dispatchers (double source
+    // calls). take/set_hook call no user code, so holding the lock is safe;
+    // the dispatcher only snapshots under it and never calls out while held.
+    // Installing while panicking is rejected above: set_hook would panic.
+    let previous = {
+        let mut hooks = PROCESS_DEFAULT
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if hooks.previous.is_some() {
+            hooks.registrations.push(Arc::clone(&registration));
+            None
+        } else {
+            let previous: Hook = Arc::from(panic::take_hook());
             hooks.previous = Some(Arc::clone(&previous));
             hooks.registrations.push(Arc::clone(&registration));
+            Some(previous)
         }
+    };
+    if let Some(previous) = previous {
         panic::set_hook(Box::new(move |info| {
             let thread = std::thread::current().id();
             let registrations = {
-                let hooks = HOOKS
+                let hooks = PROCESS_DEFAULT
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 hooks
@@ -167,19 +179,16 @@ fn install_erased(
             };
             // Capture at the panic site once, using the newest live source.
             if let Some(newest) = registrations.last() {
-                let record = PanicRecord::capture_with(info.to_string(), (newest.source)());
+                let record = PanicRecord::capture_with(
+                    Arc::from(info.to_string()),
+                    (newest.source)(),
+                );
                 for registration in registrations.iter().rev() {
                     (registration.sink)(&record);
                 }
             }
             previous(info);
         }));
-    } else {
-        HOOKS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .registrations
-            .push(Arc::clone(&registration));
     }
     HookGuard { registration }
 }
@@ -187,7 +196,7 @@ fn install_erased(
 /// Install the default hook for the process lifetime. The host owns the guard;
 /// dropping it restores the previous hook, so hosts keep it in a `static`.
 pub fn install_default() -> HookGuard {
-    install_with(default_sink)
+    install(default_sink, capture_backtrace)
 }
 
 /// Guard result: normal completion or an unwound crash. `#[must_use]`
@@ -204,8 +213,8 @@ pub enum GuardOutcome<R> {
 /// identity with an arbitrary caught payload, especially after `resume_unwind`.
 #[derive(Debug, Clone)]
 pub struct CrashReport {
-    thread: String,
-    message: String,
+    thread: Arc<str>,
+    message: Arc<str>,
 }
 
 const UNAVAILABLE_BACKTRACE: &str =
@@ -221,8 +230,7 @@ impl CrashReport {
         Self {
             thread: std::thread::current()
                 .name()
-                .unwrap_or("unnamed")
-                .to_owned(),
+                .map_or(Arc::from("unnamed"), Arc::from),
             message: payload_message(payload),
         }
     }
@@ -243,9 +251,9 @@ impl std::fmt::Display for CrashReport {
 /// `Debug` exposes the same fields as the getters.
 #[derive(Debug, Clone)]
 pub struct PanicRecord {
-    thread: String,
-    detail: String,
-    backtrace: String,
+    thread: Arc<str>,
+    detail: Arc<str>,
+    backtrace: Arc<str>,
 }
 
 impl PanicRecord {
@@ -268,27 +276,27 @@ impl PanicRecord {
 impl PanicRecord {
     /// Capture with an explicit backtrace (hook path and tests inject it).
     /// `Backtrace::capture` respects `RUST_BACKTRACE`: unset/`0` yields a placeholder.
-    fn capture_with(detail: String, backtrace: String) -> Self {
+    fn capture_with(detail: Arc<str>, backtrace: Arc<str>) -> Self {
         let thread = std::thread::current();
         Self {
-            thread: thread.name().unwrap_or("unnamed").to_owned(),
+            thread: thread.name().map_or(Arc::from("unnamed"), Arc::from),
             detail,
             backtrace,
         }
     }
 }
 
-fn payload_message(payload: &(dyn Any + Send)) -> String {
+fn payload_message(payload: &(dyn Any + Send)) -> Arc<str> {
     if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_owned()
+        Arc::from(*message)
     } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
+        Arc::from(message.as_str())
     } else if let Some(error) = payload.downcast_ref::<Box<dyn std::error::Error + Send>>() {
-        error.to_string()
+        Arc::from(error.to_string())
     } else if let Some(error) = payload.downcast_ref::<Box<dyn std::error::Error + Send + Sync>>() {
-        error.to_string()
+        Arc::from(error.to_string())
     } else {
-        "non-string panic payload".to_owned()
+        Arc::from("non-string panic payload")
     }
 }
 
@@ -303,7 +311,7 @@ fn payload_message(payload: &(dyn Any + Send)) -> String {
 pub fn run_guarded_with<R>(
     main: impl FnOnce() -> R,
     sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
-    source: impl Fn() -> String + Send + Sync + 'static,
+    source: impl Fn() -> Arc<str> + Send + Sync + 'static,
 ) -> GuardOutcome<R> {
     let thread = std::thread::current().id();
     let _guard = install_erased(Arc::new(sink), Arc::new(source), Some(thread));
@@ -324,8 +332,8 @@ mod tests {
     /// Serializes hook-mutating tests: the panic hook is process-global.
     static HOOK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    fn stub_source() -> String {
-        "stub backtrace".to_string()
+    fn stub_source() -> Arc<str> {
+        Arc::from("stub backtrace")
     }
 
     static SINK_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -336,14 +344,14 @@ mod tests {
 
     #[test]
     fn payload_message_covers_string_forms() {
-        assert_eq!(payload_message(&"static"), "static");
-        assert_eq!(payload_message(&"owned".to_owned()), "owned");
+        assert_eq!(payload_message(&"static").as_ref(), "static");
+        assert_eq!(payload_message(&"owned".to_owned()).as_ref(), "owned");
         let boxed: Box<dyn std::error::Error + Send> = Box::new(std::io::Error::other("io boom"));
-        assert_eq!(payload_message(&boxed), "io boom");
+        assert_eq!(payload_message(&boxed).as_ref(), "io boom");
         let boxed_sync: Box<dyn std::error::Error + Send + Sync> =
             Box::new(std::io::Error::other("io sync boom"));
-        assert_eq!(payload_message(&boxed_sync), "io sync boom");
-        assert_eq!(payload_message(&42_u32), "non-string panic payload");
+        assert_eq!(payload_message(&boxed_sync).as_ref(), "io sync boom");
+        assert_eq!(payload_message(&42_u32).as_ref(), "non-string panic payload");
     }
 
     #[test]
@@ -388,7 +396,7 @@ mod tests {
             move |record: &PanicRecord| {
                 probe.lock().unwrap().push(record.detail.clone());
             },
-            || "stub backtrace".to_string(),
+            || Arc::from("stub backtrace"),
         );
         assert!(matches!(outcome, GuardOutcome::Crashed(_)));
         // Hook-path detail is the full hook info, not just the payload.
@@ -405,13 +413,13 @@ mod tests {
         let inner_seen = Arc::new(Mutex::new(0usize));
         let outer_probe = Arc::clone(&outer_seen);
         let inner_probe = Arc::clone(&inner_seen);
-        let outer = install_with_source(
+        let outer = install(
             move |_| {
                 *outer_probe.lock().unwrap() += 1;
             },
             stub_source,
         );
-        let inner = install_with_source(
+        let inner = install(
             move |_| {
                 *inner_probe.lock().unwrap() += 1;
             },
@@ -436,20 +444,20 @@ mod tests {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let probe = Arc::clone(&calls);
-        let outer = install_with_source(
+        let outer = install(
             move |_| {
                 probe.fetch_add(1, Ordering::SeqCst);
             },
             stub_source,
         );
-        let inner = install_with_source(|_| {}, stub_source);
+        let inner = install(|_| {}, stub_source);
         drop(inner);
         let _ = panic::catch_unwind(|| panic!("outer only"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         drop(outer);
         let _ = panic::catch_unwind(|| panic!("original only"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(HOOKS.lock().unwrap().previous.is_none());
+        assert!(PROCESS_DEFAULT.lock().unwrap().previous.is_none());
     }
 
     #[test]
@@ -463,7 +471,7 @@ mod tests {
                 let (calls, ready, done) =
                     (Arc::clone(&calls), Arc::clone(&ready), Arc::clone(&done));
                 scope.spawn(move || {
-                    let _guard = install_with_source(
+                    let _guard = install(
                         move |_| {
                             calls.fetch_add(1, Ordering::SeqCst);
                         },
@@ -480,7 +488,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 8);
         let _ = panic::catch_unwind(|| panic!("all dropped"));
         assert_eq!(calls.load(Ordering::SeqCst), 8);
-        assert!(HOOKS.lock().unwrap().previous.is_none());
+        assert!(PROCESS_DEFAULT.lock().unwrap().previous.is_none());
     }
 
     #[test]
@@ -497,7 +505,7 @@ mod tests {
             },
             move || {
                 probe.fetch_add(1, Ordering::SeqCst);
-                "panic-site trace".to_owned()
+                Arc::from("panic-site trace")
             },
         );
         let GuardOutcome::Crashed(report) = outcome else {
@@ -527,7 +535,7 @@ mod tests {
         let outer_sink = Arc::clone(&outer_seen);
         let inner_seen = Arc::new(Mutex::new(Vec::new()));
         let inner_sink = Arc::clone(&inner_seen);
-        let _process = install_with_source(|_| {}, || panic!("newest source must win"));
+        let _process = install(|_| {}, || panic!("newest source must win"));
         let outer: GuardOutcome<()> = run_guarded_with(
             || {
                 let inner: GuardOutcome<()> = run_guarded_with(
@@ -535,7 +543,7 @@ mod tests {
                     move |record| inner_sink.lock().unwrap().push(record.clone()),
                     move || {
                         probe.fetch_add(1, Ordering::SeqCst);
-                        "inner trace".to_owned()
+                        Arc::from("inner trace")
                     },
                 );
                 let GuardOutcome::Crashed(report) = inner else {
@@ -550,7 +558,7 @@ mod tests {
             move |record| outer_sink.lock().unwrap().push(record.clone()),
             move || {
                 outer_source.fetch_add(1, Ordering::SeqCst);
-                "outer trace".to_owned()
+                Arc::from("outer trace")
             },
         );
         let GuardOutcome::Crashed(report) = outer else {
@@ -589,7 +597,7 @@ mod tests {
                                 panic!("thread {index}");
                             },
                             |_| {},
-                            move || format!("trace {index}"),
+                            move || Arc::from(format!("trace {index}").as_str()),
                         );
                         let GuardOutcome::Crashed(report) = outcome else {
                             panic!("expected crash")
@@ -611,12 +619,12 @@ mod tests {
     fn drop_during_unwind_is_safe_and_next_scope_restores_original() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
         let _ = panic::catch_unwind(|| {
-            let _guard = install_with_source(|_| {}, stub_source);
+            let _guard = install(|_| {}, stub_source);
             panic!("unwind a guard");
         });
-        let guard = install_with_source(|_| {}, stub_source);
+        let guard = install(|_| {}, stub_source);
         drop(guard);
-        assert!(HOOKS.lock().unwrap().previous.is_none());
+        assert!(PROCESS_DEFAULT.lock().unwrap().previous.is_none());
     }
 
     #[test]
@@ -658,7 +666,7 @@ mod tests {
             move |record| sink.lock().unwrap().push(record.clone()),
             move || {
                 source.fetch_add(1, Ordering::SeqCst);
-                "old payload trace".to_owned()
+                Arc::from("old payload trace")
             },
         );
         let GuardOutcome::Crashed(report) = outcome else {
@@ -681,7 +689,7 @@ mod tests {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
         let before = SINK_CALLS.load(Ordering::SeqCst);
         {
-            let _guard = install_with_source(counting_sink, stub_source);
+            let _guard = install(counting_sink, stub_source);
             let result = panic::catch_unwind(|| panic!("scoped probe"));
             assert!(result.is_err());
         }
@@ -698,10 +706,10 @@ mod tests {
 
     #[test]
     fn hook_record_shares_capture_shape() {
-        let record = PanicRecord::capture_with("explicit panic".to_owned(), stub_source());
+        let record = PanicRecord::capture_with(Arc::from("explicit panic"), stub_source());
         assert!(!record.thread.is_empty());
-        assert_eq!(record.detail, "explicit panic");
-        assert_eq!(record.backtrace, "stub backtrace");
+        assert_eq!(record.detail.as_ref(), "explicit panic");
+        assert_eq!(record.backtrace.as_ref(), "stub backtrace");
     }
 
     #[test]
@@ -727,7 +735,7 @@ mod tests {
 
     #[test]
     fn record_getters_expose_thread_and_backtrace() {
-        let record = PanicRecord::capture_with("boom".to_owned(), stub_source());
+        let record = PanicRecord::capture_with(Arc::from("boom"), stub_source());
         assert_eq!(
             record.thread(),
             std::thread::current().name().unwrap_or("unnamed")

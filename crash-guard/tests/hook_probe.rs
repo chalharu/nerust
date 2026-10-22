@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use nerust_crash_guard::{GuardOutcome, install_with_source, run_guarded_with};
+use nerust_crash_guard::{GuardOutcome, install, run_guarded_with};
 
 /// A deadlock in process-global hook handling must fail, not hang the suite.
 fn output_with_timeout(command: &mut Command) -> Output {
@@ -108,7 +108,7 @@ struct ReinstallOnDrop {
 
 impl Drop for ReinstallOnDrop {
     fn drop(&mut self) {
-        let _guard = install_with_source(|_| {}, || "reentrant trace".to_owned());
+        let _guard = install(|_| {}, || Arc::from("reentrant trace"));
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.unwind {
             panic!("external hook destructor");
@@ -118,7 +118,7 @@ impl Drop for ReinstallOnDrop {
 
 fn replaced_hook_probe(unwind: bool) {
     let calls = Arc::new(AtomicUsize::new(0));
-    let guard = install_with_source(|_| {}, || "original trace".to_owned());
+    let guard = install(|_| {}, || Arc::from("original trace"));
     let previous = panic::take_hook();
     let capture = ReinstallOnDrop {
         calls: Arc::clone(&calls),
@@ -134,11 +134,11 @@ fn replaced_hook_probe(unwind: bool) {
     // An unwind leaves a forwarding dispatcher; a later normal drop repairs it.
     let seen = Arc::new(AtomicUsize::new(0));
     let sink = Arc::clone(&seen);
-    let guard = install_with_source(
+    let guard = install(
         move |_| {
             sink.fetch_add(1, Ordering::SeqCst);
         },
-        || "recovery trace".to_owned(),
+        || Arc::from("recovery trace"),
     );
     let _ = panic::catch_unwind(|| panic!("live recovery guard"));
     drop(guard);
@@ -171,7 +171,7 @@ fn assert_unrelated_payload<A: Send + 'static, B: Send + 'static>(
         |_| {},
         move || {
             source.fetch_add(1, Ordering::SeqCst);
-            "unrelated A trace".to_owned()
+            Arc::from("unrelated A trace")
         },
     );
     let GuardOutcome::Crashed(report) = outcome else {
@@ -244,7 +244,7 @@ fn lock_order_probe() {
     std::thread::scope(|scope| {
         scope.spawn(|| {
             for _ in 0..200 {
-                let guard = install_with_source(|_| std::thread::yield_now(), String::new);
+                let guard = install(|_| std::thread::yield_now(), || Arc::from(""));
                 std::thread::yield_now();
                 drop(guard);
             }
