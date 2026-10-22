@@ -264,8 +264,10 @@ class MainActivityE2eTest {
         runOnActivityThread(activity) {
             activity.onBackPressed()
         }
-        SystemClock.sleep(STARTUP_TIMEOUT_MS)
-        fail("Back should terminate the application process")
+        // Termination itself is verified by e2e.sh (process gone): the test
+        // shares the app process, so a clean exit ends the test run here.
+        // Only a lingering process reaches the return below.
+        SystemClock.sleep(TERMINATION_GRACE_MS)
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -275,8 +277,8 @@ class MainActivityE2eTest {
         runOnActivityThread(activity) {
             activity.dispatchMenuActionForTest(MenuAction.EXIT)
         }
-        SystemClock.sleep(STARTUP_TIMEOUT_MS)
-        fail("Exit should terminate the application process")
+        // Same contract as backTerminatesApplicationProcess above.
+        SystemClock.sleep(TERMINATION_GRACE_MS)
     }
 
     /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
@@ -488,6 +490,12 @@ class MainActivityE2eTest {
         const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
         const val SHUTDOWN_WATCHDOG_MS = 30_000L
         const val TAG = "MainActivityE2eTest"
+        const val STARTUP_STABILITY_DELAY_MS = 2_000L
+        const val STARTUP_TIMEOUT_MS = 60_000L
+        // Grace for a clean exit on a loaded runner before e2e.sh verifies
+        // the process is gone. Hangs past this plus the harness wait fail
+        // with thread stacks (see expect_process_termination).
+        const val TERMINATION_GRACE_MS = 30_000L
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
         const val TEST_TIMEOUT_MS = 180_000L
