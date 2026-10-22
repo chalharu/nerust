@@ -326,11 +326,6 @@ impl AuxSurface {
     pub(super) fn draw_parts(&mut self) -> (&mut Renderer, mouse::Cursor, &mut Clipboard) {
         (&mut self.backend, self.cursor, &mut self.clipboard)
     }
-
-    /// Renderer for message-run passes (no cursor/clipboard use).
-    pub(super) fn backend_mut(&mut self) -> &mut Renderer {
-        &mut self.backend
-    }
 }
 
 /// Logical layout bounds for a physical viewport and scale factor.

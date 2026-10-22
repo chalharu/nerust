@@ -154,29 +154,27 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         outcome
     }
 
-    /// Runs incoming messages directly, rebuilding once. Reports whether a rebuild happened.
+    /// Runs incoming messages directly, marking the retained cache dirty.
+    /// The rebuild lands on the next pump: drawing always happens on a later
+    /// pump, so deferring never shows a stale frame. Reports whether a
+    /// rebuild (and redraw) is pending.
     pub(crate) fn process_messages(
         &mut self,
         messages: impl IntoIterator<Item = P::Message>,
-        renderer: &mut Renderer,
         invalidated: &AtomicBool,
     ) -> bool {
         let mut messages = messages.into_iter().peekable();
         if messages.peek().is_none() && !invalidated.load(Ordering::Acquire) {
             return false;
         }
-        // Run the messages against the instance, then rebuild once.
+        // Run the messages against the instance, then drop the warm cache
+        // instead of rebuilding now: the next pump builds once from the
+        // updated instance. A synchronous rebuild here would double the
+        // per-input build count for zero visual gain.
         for msg in messages {
             let _task = self.tree.instance.update(msg);
         }
-        let ui = Self::build_transient(
-            &self.tree.instance,
-            self.tree.window_id,
-            self.tree.bounds,
-            &mut self.tree.cache,
-            renderer,
-        );
-        Self::retire_transient(&mut self.tree.cache, ui);
+        self.tree.cache = Cache::default();
         invalidated.store(false, Ordering::Release);
         true
     }
@@ -339,7 +337,8 @@ mod tests {
                 assert_eq!(shell.deadline, Some(deadline));
             }
             assert!(matches!(messages.as_slice(), [StubMessage::Ping(9)]));
-            assert!(shell.process_messages(messages, &mut renderer, &AtomicBool::new(rebuild)));
+            // Messages apply to the instance now; the view rebuilds on the next pump.
+            assert!(shell.process_messages(messages, &AtomicBool::new(rebuild)));
             assert_eq!(*updates.lock().unwrap(), [9]);
             if !rebuild {
                 assert_eq!(
@@ -433,33 +432,56 @@ mod tests {
     }
 
     #[test]
-    fn process_messages_runs_iterator_in_order_and_rebuilds_once() {
-        let (mut shell, mut backend, _, calls, updates) = stub_shell();
+    fn process_messages_runs_iterator_in_order_and_defers_rebuild() {
+        let (mut shell, mut backend, mut clipboard, calls, updates) = stub_shell();
         let invalidated = AtomicBool::new(false);
-        assert!(shell.process_messages((0..3).map(StubMessage::Ping), &mut backend, &invalidated));
+        assert!(shell.process_messages((0..3).map(StubMessage::Ping), &invalidated));
         assert_eq!(*updates.lock().unwrap(), [0, 1, 2]);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(!shell.process_messages(std::iter::empty(), &mut backend, &invalidated));
+        // No synchronous rebuild: the view builds once on the next pump.
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(!shell.process_messages(std::iter::empty(), &invalidated));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+            &mut Vec::new(),
+            None,
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn process_messages_skips_quiet_batches() {
-        let (mut shell, mut backend, _, calls, updates) = stub_shell();
-        // Transient UI: construction builds nothing; each rebuild
-        // invokes the view exactly once.
+        let (mut shell, mut backend, mut clipboard, calls, updates) = stub_shell();
+        // Transient UI: construction builds nothing; the next pump after
+        // a dirty batch invokes the view exactly once.
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        // Empty batch without invalidation: no rebuild.
+        // Empty batch without invalidation: no dirt.
         let still = AtomicBool::new(false);
-        assert!(!shell.process_messages(Vec::new(), &mut backend, &still));
+        assert!(!shell.process_messages(Vec::new(), &still));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        // Either a message or the flag rebuilds exactly once.
-        assert!(shell.process_messages([StubMessage::Ping(7)], &mut backend, &still));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // Either a message or the flag dirties exactly once.
+        assert!(shell.process_messages([StubMessage::Ping(7)], &still));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(*updates.lock().unwrap(), [7]);
         let flagged = AtomicBool::new(true);
-        assert!(shell.process_messages(Vec::new(), &mut backend, &flagged));
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(shell.process_messages(Vec::new(), &flagged));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(!flagged.load(Ordering::Acquire));
+        shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+            &mut Vec::new(),
+            None,
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
