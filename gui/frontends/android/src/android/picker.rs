@@ -425,7 +425,7 @@ fn read_stream_bytes_inner(
             resolver,
             jni_str!("openAssetFileDescriptor"),
             jni_sig!(
-                "(Landroid/net/Uri;Ljava/lang/String;Landroid/os/CancellationSignal;)Landroid/content/AssetFileDescriptor;"
+                "(Landroid/net/Uri;Ljava/lang/String;Landroid/os/CancellationSignal;)Landroid/content/res/AssetFileDescriptor;"
             ),
             &[
                 JValue::Object(uri_object),
