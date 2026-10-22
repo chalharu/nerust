@@ -109,6 +109,10 @@ jobs:
         run: |
           chmod +x packaging/android/package.sh packaging/android/gradlew
           packaging/android/package.sh
+      - name: Run Android JVM unit tests
+        run: |
+          cd packaging/android
+          ./gradlew --no-daemon :app:testDebugUnitTest
       - name: Save Cargo registry and build cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

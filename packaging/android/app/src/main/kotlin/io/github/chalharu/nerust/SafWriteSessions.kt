@@ -3,10 +3,9 @@ package io.github.chalharu.nerust
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 
 /** Registry locks protect ownership only. Provider I/O is serialized per session off the UI thread. */
-internal class SafWriteSessions(private val cleanup: Executor = cleanupExecutor) : AutoCloseable {
+internal class SafWriteSessions(private val cleanup: Executor = SafCleanup.executor) : AutoCloseable {
     interface Transaction {
         val stream: OutputStream
         fun commit(): Boolean
@@ -48,10 +47,11 @@ internal class SafWriteSessions(private val cleanup: Executor = cleanupExecutor)
             var committed = false
             try {
                 if (commit && !session.failed) transaction.stream.flush()
-                // Close carries the durable sync before any marker publishes.
-                closeOnce(session)
+                // Close carries the durable sync: its failure aborts the marker publish.
+                if (!closeOnce(session)) session.failed = true
                 if (commit && !session.failed) committed = transaction.commit()
             } catch (_: Exception) {
+                session.failed = true
                 closeOnce(session)
             } finally {
                 if (!committed) runCatching { transaction.abort() }
@@ -60,12 +60,13 @@ internal class SafWriteSessions(private val cleanup: Executor = cleanupExecutor)
         }
     }
 
-    /** Idempotent stream close: the exception path retries without double-closing. */
-    private fun closeOnce(session: Session) {
+    /** Idempotent stream close: reports success; the exception path reuses it without double-closing. */
+    private fun closeOnce(session: Session): Boolean {
         if (!session.closed) {
             session.closed = true
-            runCatching { session.transaction.stream.close() }
+            if (runCatching { session.transaction.stream.close() }.isFailure) return false
         }
+        return !session.failed
     }
 
     override fun close() {
@@ -81,11 +82,5 @@ internal class SafWriteSessions(private val cleanup: Executor = cleanupExecutor)
     private fun discard(transaction: Transaction) {
         runCatching { transaction.stream.close() }
         runCatching { transaction.abort() }
-    }
-
-    companion object {
-        private val cleanupExecutor = Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "nerust-saf-abort").apply { isDaemon = true }
-        }
     }
 }

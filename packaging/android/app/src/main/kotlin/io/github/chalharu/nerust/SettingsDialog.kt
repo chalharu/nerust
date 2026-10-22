@@ -33,6 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -213,8 +214,13 @@ internal fun NerustSettingsDialogCard(
     initialSelections: List<Int>,
     onDismissRequest: () -> Unit,
     onSave: (List<Int>) -> Unit,
+    onPositionDraftChanged: (Int, Int) -> Boolean = { _, _ -> true },
 ) {
     val selections = rememberSettingsSelections(settings, initialSelections)
+    // Draft visibility for the Rust-owned same-edge rule: overrides only, so
+    // cancel never leaks an unsaved projection into the persisted model.
+    val visibleOverrides = remember { mutableStateMapOf<Int, Boolean>() }
+    fun indexOfKey(key: String) = settings.indexOfFirst { it.key == key }
     val sections = remember(settings) { buildSettingsSections(settings) }
     var activeSectionId by remember { mutableStateOf<String?>(null) }
     var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
@@ -262,6 +268,21 @@ internal fun NerustSettingsDialogCard(
                         selectedIndex = selections[settingIndex],
                         onSelect = { choiceIndex ->
                             selections[settingIndex] = choiceIndex
+                            // Position drafts re-project Status Area visibility
+                            // through Rust; the override dies with the dialog.
+                            val changedKey = settings[settingIndex].key
+                            if (changedKey == NOTIFICATIONS_POSITION_KEY || changedKey == STATUS_POSITION_KEY) {
+                                val notifIndex = indexOfKey(NOTIFICATIONS_POSITION_KEY)
+                                val statusIndex = indexOfKey(STATUS_POSITION_KEY)
+                                val areaIndex = indexOfKey(STATUS_AREA_MODE_KEY)
+                                if (notifIndex >= 0 && statusIndex >= 0 && areaIndex >= 0) {
+                                    visibleOverrides[areaIndex] =
+                                        onPositionDraftChanged(
+                                            selections[notifIndex],
+                                            selections[statusIndex],
+                                        )
+                                }
+                            }
                             if (settings[settingIndex].kind != "range") {
                                 activeSettingIndex = null
                             }
@@ -273,7 +294,7 @@ internal fun NerustSettingsDialogCard(
                     val visibleSection =
                         activeSection.copy(
                             settingIndices =
-                                visibleSettingIndices(settings, activeSection),
+                                visibleSettingIndices(settings, activeSection, visibleOverrides),
                         )
                     SettingsSectionList(
                         section = visibleSection,
@@ -462,10 +483,17 @@ private fun SettingsSliderRow(
 }
 
 // Visibility is resolved in Rust per field; Kotlin only filters on the flag.
+// Draft position changes overlay per-dialog overrides; cancel drops them.
 internal fun visibleSettingIndices(
     settings: List<AndroidSetting>,
     section: AndroidSettingsSection,
-): List<Int> = section.settingIndices.filter { settings[it].visible }
+    overrides: Map<Int, Boolean> = emptyMap(),
+): List<Int> = section.settingIndices.filter { overrides[it] ?: settings[it].visible }
+
+// Payload key literals shared with the Rust schema; the same-edge rule itself stays in Rust.
+private const val NOTIFICATIONS_POSITION_KEY = "notifications.position"
+private const val STATUS_POSITION_KEY = "status.position"
+private const val STATUS_AREA_MODE_KEY = "status.area_mode"
 
 @Composable
 internal fun rememberSettingsSelections(
