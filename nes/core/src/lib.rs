@@ -198,6 +198,18 @@ struct MachineStatePayload {
     cartridge: CartridgeRuntimeState,
 }
 
+impl persistence_codec::HasSchemaVersion for MapperSavePayload {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl persistence_codec::HasSchemaVersion for MachineStatePayload {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
 impl Core {
     const INSTRUCTION_SCHEDULER_MAX_BATCH_CYCLES: u64 = 24;
     const INSTRUCTION_SCHEDULER_DISABLE_MISSES: u64 = 2048;

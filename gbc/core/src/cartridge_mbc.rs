@@ -6,6 +6,38 @@ use crate::{
     cartridge_header::CartridgeHeader,
 };
 
+/// Identity accessor so mapper state parses once: version and kind are read
+/// from the decoded body instead of a throwaway header pass.
+pub(crate) trait MapperIdentity {
+    fn schema_version(&self) -> u32;
+    fn kind(&self) -> Option<MbcKind>;
+}
+
+/// Boilerplate-free [`MapperIdentity`]: machine states carry no kind,
+/// `kinded` persistent states report their own.
+macro_rules! impl_mapper_identity {
+    ($type:ty) => {
+        impl crate::cartridge_mbc::MapperIdentity for $type {
+            fn schema_version(&self) -> u32 {
+                self.schema_version
+            }
+            fn kind(&self) -> Option<crate::cartridge_mbc::MbcKind> {
+                None
+            }
+        }
+    };
+    ($type:ty, kinded) => {
+        impl crate::cartridge_mbc::MapperIdentity for $type {
+            fn schema_version(&self) -> u32 {
+                self.schema_version
+            }
+            fn kind(&self) -> Option<crate::cartridge_mbc::MbcKind> {
+                Some(self.kind)
+            }
+        }
+    };
+}
+
 mod huc1;
 mod huc3;
 mod huc3_rtc;
@@ -67,25 +99,62 @@ fn decode_persistent_state(
     )
 }
 
-fn decode_mapper_state<T: serde::de::DeserializeOwned>(
+impl_mapper_identity!(MbcPersistentState, kinded);
+impl_mapper_identity!(Mbc1MachineState);
+impl_mapper_identity!(Mbc2MachineState);
+
+fn decode_mapper_state<T>(
     data: &[u8],
     version: u32,
     component: &'static str,
     kind: Option<MbcKind>,
-) -> Result<T, GbcPersistenceError> {
-    #[derive(serde::Deserialize)]
-    struct Header {
-        schema_version: u32,
-        kind: Option<MbcKind>,
+) -> Result<T, GbcPersistenceError>
+where
+    T: serde::de::DeserializeOwned + MapperIdentity,
+{
+    match rmp_serde::from_slice::<T>(data) {
+        Ok(state) => {
+            check_mapper_identity(
+                state.schema_version(),
+                state.kind(),
+                version,
+                component,
+                kind,
+            )?;
+            Ok(state)
+        }
+        Err(body_error) => {
+            // Precedence survives undecodable bodies: a readable header still
+            // reports version/kind faults instead of generic corruption.
+            if let Ok(header) = rmp_serde::from_slice::<MapperHeader>(data) {
+                check_mapper_identity(
+                    header.schema_version,
+                    header.kind,
+                    version,
+                    component,
+                    kind,
+                )?;
+            }
+            Err(body_error.into())
+        }
     }
-    let header: Header = rmp_serde::from_slice(data)?;
-    if header.schema_version != version {
+}
+
+/// Shared version/kind precedence for decoded bodies and fallback headers.
+fn check_mapper_identity(
+    schema_version: u32,
+    actual_kind: Option<MbcKind>,
+    version: u32,
+    component: &'static str,
+    kind: Option<MbcKind>,
+) -> Result<(), GbcPersistenceError> {
+    if schema_version != version {
         return Err(GbcPersistenceError::UnsupportedMapperVersion {
             component,
-            version: header.schema_version,
+            version: schema_version,
         });
     }
-    if let (Some(expected), Some(actual)) = (kind, header.kind)
+    if let (Some(expected), Some(actual)) = (kind, actual_kind)
         && expected != actual
     {
         return Err(GbcPersistenceError::MapperKindMismatch {
@@ -94,7 +163,13 @@ fn decode_mapper_state<T: serde::de::DeserializeOwned>(
             actual,
         });
     }
-    Ok(rmp_serde::from_slice(data)?)
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct MapperHeader {
+    schema_version: u32,
+    kind: Option<MbcKind>,
 }
 
 /// Memory Bank Controller trait.

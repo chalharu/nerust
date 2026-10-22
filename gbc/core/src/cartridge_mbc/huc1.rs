@@ -24,6 +24,8 @@ struct HuC1MachineState {
     ram: Vec<u8>,
 }
 
+impl_mapper_identity!(HuC1MachineState);
+
 impl HuC1 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>) -> Self {
         Self {

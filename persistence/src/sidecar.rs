@@ -11,12 +11,23 @@ use crate::{
 
 const MAX_MAPPER_SAVE_BYTES: usize = 64 * 1024 * 1024;
 
+/// A validated `content://` document-tree URI. Construction funnels through
+/// [`StorageLocation::document_tree`], so no literal can smuggle in a bad URI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentTreeUri(String);
+
+impl DocumentTreeUri {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A resolved storage key. Document URIs never masquerade as filesystem paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageLocation {
     Native(PathBuf),
     DocumentTree {
-        uri: String,
+        uri: DocumentTreeUri,
         relative: DocumentRelativePath,
     },
 }
@@ -64,7 +75,7 @@ impl StorageLocation {
             ));
         }
         Ok(Self::DocumentTree {
-            uri: uri.to_owned(),
+            uri: DocumentTreeUri(uri.to_owned()),
             relative: DocumentRelativePath::new(relative)?,
         })
     }
@@ -90,7 +101,7 @@ impl StorageLocation {
         match self {
             Self::Native(path) => Ok(Self::Native(path.join(name))),
             Self::DocumentTree { uri, relative } => {
-                Self::document_tree(uri, format!("{}/{name}", relative.as_str()))
+                Self::document_tree(uri.as_str(), format!("{}/{name}", relative.as_str()))
             }
         }
     }

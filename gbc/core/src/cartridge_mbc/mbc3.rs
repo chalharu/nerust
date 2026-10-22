@@ -28,6 +28,8 @@ struct Mbc3MachineState {
     rtc: Option<Mbc3Rtc>,
 }
 
+impl_mapper_identity!(Mbc3MachineState);
+
 impl Mbc3 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool, has_rtc: bool) -> Self {
         Self {
