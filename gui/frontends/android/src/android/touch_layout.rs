@@ -325,6 +325,8 @@ impl ProfileTouchOverlay {
     /// Mirror of the Kotlin overlay parser: decode one `LABEL:x,y,w,h` entry.
     /// Returns the label plus rect; role resolution lives in the zone table.
     /// `None` on any malformed entry, so drift fails loudly, never silently.
+    /// e2e-only: the instrumented parse tests pin the wire contract here.
+    #[allow(dead_code)]
     pub(super) fn decode_zone(entry: &str) -> Option<(String, [f32; 4])> {
         let (label, rect) = entry.split_once(':')?;
         if label.is_empty() {
@@ -341,6 +343,8 @@ impl ProfileTouchOverlay {
     }
 
     /// Mirror of the Kotlin joystick parser: decode `cx,cy,baseR,knobR`.
+    /// e2e-only contract mirror; see [`Self::decode_zone`].
+    #[allow(dead_code)]
     pub(super) fn decode_joystick(encoded: &str) -> Option<RelativeJoystick> {
         let mut coords = [0.0f32; 4];
         for (slot, part) in coords.iter_mut().zip(encoded.split(',')) {

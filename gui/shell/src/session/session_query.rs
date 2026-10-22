@@ -55,12 +55,44 @@ impl SessionHandle {
                 loaded: false,
                 frames: 0,
             });
+        Self::tick_from_snapshot(snapshot)
+    }
+
+    fn tick_from_snapshot(snapshot: crate::emu_core::TickSnapshot) -> TickMetrics {
         TickMetrics {
             fps: snapshot.fps,
             paused: snapshot.paused,
             loaded: snapshot.loaded,
             frame_counter: snapshot.frames,
         }
+    }
+
+    /// One live-core traversal per pass: tick, profile, and frame together.
+    /// `build_frame_input` shares it so per-frame reads never re-walk the core.
+    pub fn live_frame_parts(
+        &self,
+    ) -> (
+        TickMetrics,
+        Option<&nerust_render_traits::VideoRenderProfile>,
+        Option<&nerust_render_traits::FrameBuffer>,
+    ) {
+        let Some(core) = self.emu.require_live().ok() else {
+            return (
+                Self::tick_from_snapshot(crate::emu_core::TickSnapshot {
+                    fps: 0.0,
+                    paused: false,
+                    loaded: false,
+                    frames: 0,
+                }),
+                None,
+                None,
+            );
+        };
+        (
+            Self::tick_from_snapshot(core.tick_snapshot()),
+            Some(core.render_profile()),
+            Some(core.frame_buffer()),
+        )
     }
 
     pub fn window_size(&self) -> WindowSize {

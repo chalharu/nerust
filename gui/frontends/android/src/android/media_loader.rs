@@ -220,11 +220,6 @@ impl super::AndroidFrontend {
             ) {
                 Ok(()) => {
                     log::info!("finish_rom_load: ensured window/renderer after ROM load");
-                    self.chrome.input.rebuild_overlay(
-                        &self.core.session,
-                        &self.app,
-                        self.flow.render_sync.window_size(),
-                    );
                 }
                 Err(error) => {
                     log::warn!(
@@ -249,12 +244,13 @@ impl super::AndroidFrontend {
                 self.flow.lifecycle.begin_foreground_resume();
                 self.flow.lifecycle.schedule_retry(self.is_resumed);
             }
-            self.chrome.input.rebuild_overlay(
-                &self.core.session,
-                &self.app,
-                self.flow.render_sync.window_size(),
-            );
         }
+        // Single overlay refresh for both window paths.
+        self.chrome.input.rebuild_overlay(
+            &self.core.session,
+            &self.app,
+            self.flow.render_sync.window_size(),
+        );
 
         self.refresh_dialog_caches();
         self.flow.render_sync.request_redraw(&mut self.core.shell);

@@ -10,8 +10,8 @@ use super::bridge;
 pub(super) fn configure_overlay(
     app: &AndroidApp,
     settings: &nerust_settings_core::model::local::TouchOverlaySettings,
-    zones: String,
-    joystick: String,
+    zones: std::sync::Arc<str>,
+    joystick: std::sync::Arc<str>,
 ) {
     let visibility = match settings.visibility {
         nerust_settings_core::model::local::TouchOverlayVisibility::Always => "always",

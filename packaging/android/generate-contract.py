@@ -213,7 +213,9 @@ def outputs(schema):
     for name, kind, value in [("BRIDGE_EVENT_VERSION", "u32", version),
                               ("SETTINGS_SCHEMA_VERSION", "u32", settings),
                               ("SAF_CHUNK_BYTES", "usize", chunk)]:
-        rs.append(f"pub(crate) const {name}: {kind} = {value};")
+        # Cross-language pin: Rust reads the wire version through validation,
+        # so an unused pin here must not trip deny-warnings builds.
+        rs.append(f"#[allow(dead_code)]\npub(crate) const {name}: {kind} = {value};")
     for action in actions:
         rs.append(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";')
     rs += rust_validator(definitions)
