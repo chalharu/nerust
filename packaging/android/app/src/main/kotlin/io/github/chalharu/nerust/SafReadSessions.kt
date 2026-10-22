@@ -3,12 +3,11 @@ package io.github.chalharu.nerust
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 
 /** Reads/explicit close serialize per session. Activity destruction only detaches ownership.
  * No Android dependencies: the actual transport semantics are JVM-testable. */
 internal class SafReadSessions(
-    private val closeExecutor: Executor = cleanupExecutor,
+    private val closeExecutor: Executor = SafCleanup.executor,
 ) : AutoCloseable {
     private class Session(val stream: InputStream)
     // Lock-free reads: per-session monitors never nest inside the registry monitor.
@@ -64,13 +63,6 @@ internal class SafReadSessions(
             closeExecutor.execute {
                 synchronized(session) { runCatching { session.stream.close() } }
             }
-        }
-    }
-
-    companion object {
-        // Provider reads/close may block indefinitely: never join from Activity.onDestroy.
-        private val cleanupExecutor = Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "nerust-saf-close").apply { isDaemon = true }
         }
     }
 }

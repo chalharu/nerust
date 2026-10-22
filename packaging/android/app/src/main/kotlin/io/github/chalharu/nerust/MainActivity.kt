@@ -694,6 +694,9 @@ class MainActivity :
                 settings = rows,
                 initialSelections = initialSelections,
                 onDismissRequest = dismiss,
+                onPositionDraftChanged = { notificationsPosition, statusPosition ->
+                    nativeSettingsAreaVisible(notificationsPosition, statusPosition)
+                },
                 onSave = { selections ->
                     resultSent = true
                     if (requestId != null) {
@@ -765,6 +768,11 @@ class MainActivity :
     private external fun onDirectoryPickerResult(uri: String?)
 
     private external fun onSettingsDialogResult(result: String?)
+
+    private external fun nativeSettingsAreaVisible(
+        notificationsPosition: Int,
+        statusPosition: Int,
+    ): Boolean
 
     private external fun onActivityDestroyed()
 

@@ -69,6 +69,10 @@ class SafRepository(private val context: Context) : AutoCloseable {
             val size = committed[name]?.size ?: knownSize(file) ?: -1L
             array.put(org.json.JSONObject().put("name", name).put("size", size))
         }
+        // Amortized recovery scan: staged data without a commit marker is a
+        // process-death orphan once past the grace window. In-flight stages
+        // have fresh or unknown mtimes and are never touched.
+        reclaimOrphanedStages(directory, files, committed.values.mapNotNull { it.data?.name }.toSet())
         return array.toString()
     }
 
@@ -120,6 +124,25 @@ class SafRepository(private val context: Context) : AutoCloseable {
             } catch (error: Exception) {
                 Log.w(TAG, "Ignoring unsweepable SAF marker", error)
             }
+        }
+    }
+
+    /**
+     * Amortized orphan recovery: delete unreferenced staged data past the
+     * grace window, capped per listing. A delete failure stays for the next
+     * listing; an in-flight stage is never a candidate.
+     */
+    private fun reclaimOrphanedStages(
+        directory: DocumentFile,
+        files: Array<DocumentFile>,
+        referenced: Set<String>,
+    ) {
+        val now = System.currentTimeMillis()
+        for (name in selectOrphanedStages(files.mapNotNull { file ->
+            val fileName = file.name
+            if (fileName != null && isStagedData(fileName)) fileName to file.lastModified() else null
+        }.toMap(), referenced, now)) {
+            runCatching { directory.findFile(name)?.delete() }
         }
     }
 
@@ -275,6 +298,8 @@ class SafRepository(private val context: Context) : AutoCloseable {
         private const val TAG = "Nerust"
         private const val PREFIX = ".nerust-generation-"
         private const val COMMIT_SUFFIX = ".commit"
+        private const val MAX_RECLAIM_PER_LISTING = 4
+        private const val ORPHAN_GRACE_MS = 3_600_000L
         private val generationClock = AtomicLong()
 
         /** Commit-marker file name for one publish order. */
@@ -283,6 +308,27 @@ class SafRepository(private val context: Context) : AutoCloseable {
         /** True for files this repository manages as commit markers. */
         internal fun isCommitMarker(name: String?) =
             name != null && name.startsWith(PREFIX) && name.endsWith(COMMIT_SUFFIX)
+
+        /** True for staged data files awaiting (or orphaned by) a commit marker. */
+        internal fun isStagedData(name: String) =
+            name.startsWith(PREFIX) && name.endsWith(".data")
+
+        /**
+         * Orphaned staged data: unreferenced by any live marker and older than
+         * the grace window. Unknown mtimes (0) count as fresh, never stale.
+         * Stable name order keeps successive capped sweeps deterministic.
+         */
+        internal fun selectOrphanedStages(
+            dataFiles: Map<String, Long>,
+            referenced: Set<String>,
+            nowMs: Long,
+        ): List<String> =
+            dataFiles
+                .filter { (name, _) -> name !in referenced }
+                .filter { (_, modified) -> modified > 0 && nowMs - modified > ORPHAN_GRACE_MS }
+                .keys
+                .sorted()
+                .take(MAX_RECLAIM_PER_LISTING)
 
         /** Sweep predicate: same name with a strictly older order. Orders sort lexicographically. */
         internal fun isSupersededMarker(

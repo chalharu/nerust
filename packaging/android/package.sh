@@ -211,18 +211,30 @@ else
         verify_native_library "${readelf_bin}" "${main_so}" "${budget}"
     done
 fi
-# Gate passed: publish the staged libs via rename swap.
-# Renames are atomic, so there is never a half-populated jniLibs tree;
-# the previous tree is removed only after the new one is live.
+# Gate passed: publish the staged libs via rename swap. Each rename is
+# atomic, but the pair is not: a failure between them is repaired below so the
+# live tree is always either the old or the new complete tree, never absent.
 stage_publish_tmp="${JNI_LIBS_DIR}.new"
 stage_publish_old="${JNI_LIBS_DIR}.old"
+# A previous run may have died between the two renames, leaving only `.old`.
+if [[ ! -e "${JNI_LIBS_DIR}" && -d "${stage_publish_old}" ]]; then
+    echo "restoring jniLibs from leftover ${stage_publish_old}" >&2
+    mv "${stage_publish_old}" "${JNI_LIBS_DIR}"
+fi
 rm -rf "${stage_publish_tmp}" "${stage_publish_old}"
 mkdir -p "${stage_publish_tmp}"
 cp -r "${STAGE_JNI_LIBS}/." "${stage_publish_tmp}/"
 if [[ -d "${JNI_LIBS_DIR}" ]]; then
     mv "${JNI_LIBS_DIR}" "${stage_publish_old}"
 fi
-mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"
+if ! mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"; then
+    # Publish failed: restore the previous tree instead of shipping nothing.
+    if [[ -d "${stage_publish_old}" ]]; then
+        mv "${stage_publish_old}" "${JNI_LIBS_DIR}"
+    fi
+    echo "failed to publish staged jniLibs; previous tree restored" >&2
+    exit 1
+fi
 rm -rf "${stage_publish_old}"
 
 (
