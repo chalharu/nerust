@@ -899,8 +899,13 @@ impl ApplicationHandler for AndroidFrontend {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if bridge::take_exit_request() {
+            // Staged shutdown log: a linger after destroy triangulates to the
+            // step whose completion line is missing (see NER-102).
+            log::info!("shutdown: exit requested, flushing before exit");
             self.core.session.flush_before_exit();
+            log::info!("shutdown: flush done, releasing window resources");
             self.release_window_resources();
+            log::info!("shutdown: resources released, exiting event loop");
             event_loop.exit();
             return;
         }

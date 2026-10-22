@@ -62,7 +62,12 @@ instrumentation_crashed_without_failure() {
 
 # Poll for process exit with a deadline instead of a single snapshot.
 wait_until_gone() {
-    local deadline=$((SECONDS + 10))
+    wait_until_gone_with_timeout 10
+}
+
+# Bounded variant with an explicit grace period in seconds.
+wait_until_gone_with_timeout() {
+    local deadline=$((SECONDS + $1))
     while ((SECONDS < deadline)); do
         if ! adb shell pidof "${APP_PACKAGE}" >/dev/null 2>&1; then
             return 0
@@ -78,7 +83,13 @@ expect_process_termination() {
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
     if instrumentation_failed "${output}"; then
-        dump_shutdown_threads
+        # The assertion already failed, but still distinguish a slow shutdown
+        # from a hung one: stacks are only captured while the process is alive.
+        if wait_until_gone_with_timeout 30; then
+            echo "process exited after test failure (slow shutdown, see timestamps above)"
+        else
+            dump_shutdown_threads
+        fi
         return 1
     fi
     if wait_until_gone; then
