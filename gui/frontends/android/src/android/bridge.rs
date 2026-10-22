@@ -6,7 +6,8 @@ use std::{
     },
 };
 
-use jni::objects::JIntArray;
+use jni::objects::{JIntArray, JObject};
+use jni::refs::Global;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
@@ -51,11 +52,11 @@ pub(super) struct PickerSlot {
     /// never count as pending and never block a new request.
     pub(super) in_flight: Option<u64>,
     /// Cancellation handle for the in-flight provider calls, if its worker
-    /// registered one. A newer generation's bumper cancels and deletes it.
-    pub(super) in_flight_signal: Option<jni::objects::GlobalRef>,
+    /// registered one. A newer generation's bumper cancels and drops it.
+    pub(super) in_flight_signal: Option<Global<JObject<'static>>>,
     /// Open stream of the in-flight fetch, if registered. Closing it from the
-    /// bumper unblocks a stuck provider read; the worker deletes its own copy.
-    pub(super) in_flight_stream: Option<jni::objects::GlobalRef>,
+    /// bumper unblocks a stuck provider read; the worker drops its own copy.
+    pub(super) in_flight_stream: Option<Global<JObject<'static>>>,
 }
 
 impl PickerSlot {

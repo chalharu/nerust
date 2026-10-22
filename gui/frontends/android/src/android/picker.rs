@@ -293,7 +293,11 @@ fn fetch_document_bytes(
             // One signal per job for the cancellable query and open below.
             // A missing signal degrades to the old uninterruptible calls.
             let signal = env
-                .new_object("android/os/CancellationSignal", "()V", &[])
+                .new_object(
+                    jni_str!("android/os/CancellationSignal"),
+                    jni_sig!("()V"),
+                    &[],
+                )
                 .ok();
             if let Some(signal) = signal.as_ref() {
                 store_job_signal(env, seq, signal);
@@ -316,7 +320,7 @@ fn fetch_document_bytes(
                     read_stream_bytes_inner(env, &resolver, &uri_object, seq, signal.as_ref())?;
                 Ok::<_, jni::errors::Error>((bytes, display_name))
             })();
-            release_job_handles(env, seq);
+            release_job_handles(seq);
             result
         })
     })
@@ -527,13 +531,15 @@ fn cancel_in_flight(app: &AndroidApp) {
     }
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     let _ = bridge::with_java_env(&vm, |env| {
+        // `Global` deletes its reference on drop; the bumper thread is
+        // attached here, so no cross-thread delete call is needed.
         if let Some(signal) = signal {
-            let _ = env.call_method(signal.as_obj(), "cancel", "()V", &[]);
-            let _ = env.delete_global_ref(signal);
+            let _ = env.call_method(signal.as_obj(), jni_str!("cancel"), jni_sig!("()V"), &[]);
+            drop(signal);
         }
         if let Some(stream) = stream {
-            let _ = env.call_method(stream.as_obj(), "close", "()V", &[]);
-            let _ = env.delete_global_ref(stream);
+            let _ = env.call_method(stream.as_obj(), jni_str!("close"), jni_sig!("()V"), &[]);
+            drop(stream);
         }
         Ok::<(), jni::errors::Error>(())
     });
@@ -545,14 +551,12 @@ fn store_job_signal(env: &mut jni::Env<'_>, seq: u64, signal: &JObject<'_>) {
     let global = env.new_global_ref(signal).ok();
     bridge::with_picker(|state| {
         if state.in_flight != Some(seq) {
-            if let Some(global) = global {
-                let _ = env.delete_global_ref(global);
-            }
+            drop(global);
             return;
         }
         let Some(global) = global else { return };
         if let Some(previous) = state.in_flight_signal.replace(global) {
-            let _ = env.delete_global_ref(previous);
+            drop(previous);
         }
     });
 }
@@ -563,21 +567,19 @@ fn store_job_stream(env: &mut jni::Env<'_>, seq: u64, stream: &JObject<'_>) {
     let global = env.new_global_ref(stream).ok();
     bridge::with_picker(|state| {
         if state.in_flight != Some(seq) {
-            if let Some(global) = global {
-                let _ = env.delete_global_ref(global);
-            }
+            drop(global);
             return;
         }
         let Some(global) = global else { return };
         if let Some(previous) = state.in_flight_stream.replace(global) {
-            let _ = env.delete_global_ref(previous);
+            drop(previous);
         }
     });
 }
 
-/// Delete this job's slot handles if no bumper took them first. Exactly one
-/// side deletes each global ref: the slot take decides the owner.
-fn release_job_handles(env: &mut jni::Env<'_>, seq: u64) {
+/// Drop this job's slot handles if no bumper took them first. Exactly one
+/// side owns each global ref: the slot take decides the owner.
+fn release_job_handles(seq: u64) {
     let (signal, stream) = bridge::with_picker(|state| {
         if state.in_flight == Some(seq) {
             (state.in_flight_signal.take(), state.in_flight_stream.take())
@@ -585,12 +587,8 @@ fn release_job_handles(env: &mut jni::Env<'_>, seq: u64) {
             (None, None)
         }
     });
-    if let Some(signal) = signal {
-        let _ = env.delete_global_ref(signal);
-    }
-    if let Some(stream) = stream {
-        let _ = env.delete_global_ref(stream);
-    }
+    drop(signal);
+    drop(stream);
 }
 
 fn publish_result(result: RomPickerResult) {
