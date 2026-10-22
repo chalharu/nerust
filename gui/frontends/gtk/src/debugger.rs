@@ -8,7 +8,9 @@ use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId
 use nerust_gui_shell::debug::{
     DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
 };
-use nerust_gui_viewmodel::debugger::{self as vm, DebugImageRgba, DisplayCache, NavState, StatusMessage};
+use nerust_gui_viewmodel::debugger::{
+    self as vm, DebugImageRgba, DisplayCache, NavState, StatusMessage,
+};
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 use nerust_settings_core::model::language::AppLanguage;
 
@@ -1738,7 +1740,9 @@ mod tests {
             rom_loader: Box::new(MockRomLoader),
             audio_registry: audio,
         };
-        let state = Rc::new(RefCell::new(crate::State::new(ctx).expect("test state builds")));
+        let state = Rc::new(RefCell::new(
+            crate::State::new(ctx).expect("test state builds"),
+        ));
         Some((app, main, state))
     }
 

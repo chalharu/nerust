@@ -362,12 +362,7 @@ impl super::registry::DebugDrainPort for DebugWindowHandle {
 }
 
 impl super::registry::LiveImagesPort for DebugWindowHandle {
-    fn apply_live(
-        &mut self,
-        generation: u64,
-        images: Vec<DebugImageRgba>,
-        running: bool,
-    ) -> bool {
+    fn apply_live(&mut self, generation: u64, images: Vec<DebugImageRgba>, running: bool) -> bool {
         self.apply_live(generation, images, running)
     }
 }
