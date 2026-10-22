@@ -59,7 +59,7 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        let candidate = self.stage_candidate(&media, &resolved.options)?;
+        let candidate = self.stage_candidate(&media, resolved.options.as_ref())?;
         let was_running = self.freeze_previous()?;
         if let Err(error) = self.flush_previous_mapper() {
             return self.rollback_freeze(was_running, error);
@@ -72,7 +72,7 @@ impl SessionHandle {
     fn stage_candidate(
         &mut self,
         media: &MediaObject,
-        options: &Box<dyn CoreOptions>,
+        options: &dyn CoreOptions,
     ) -> Result<super::CoreRuntime, SessionError> {
         let factory = self.active_factory_cloned().ok_or(SessionError::NoCore)?;
         let candidate = super::settings_apply::build_core_for_settings(
@@ -83,7 +83,7 @@ impl SessionHandle {
         )?;
         candidate
             .emu_core
-            .load_paused(media, Some(options.clone()))?;
+            .load_paused(media, Some(dyn_clone::clone_box(options)))?;
         Ok(candidate)
     }
 
@@ -117,11 +117,11 @@ impl SessionHandle {
             && let Err(rollback) = self.emu.require_live()?.resume()
         {
             return Err(SessionError::Rollback {
-                apply: Box::new(error.into()),
+                apply: Box::new(error),
                 rollback: Box::new(rollback.into()),
             });
         }
-        Err(error.into())
+        Err(error)
     }
     /// Publish the staged core: persistence, media, and execution switch over together.
     fn commit_candidate(

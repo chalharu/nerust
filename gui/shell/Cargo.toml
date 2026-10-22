@@ -8,6 +8,7 @@ version.workspace = true
 
 [dependencies]
 log.workspace = true
+dyn-clone.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
 nerust_emu_thread.workspace = true

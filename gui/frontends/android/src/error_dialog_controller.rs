@@ -196,7 +196,7 @@ mod tests {
 
     fn queued(detail: &str) -> OsdManager {
         let mut manager = OsdManager::new();
-        manager.queue_modal(detail.to_string());
+        manager.modal_queue().queue_modal(detail.to_string());
         manager
     }
 
@@ -204,28 +204,28 @@ mod tests {
     fn old_ack_cannot_close_next_dialog_or_release_pause() {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("first");
-        manager.queue_modal("second".into());
+        manager.modal_queue().queue_modal("second".into());
         let screen = Screen::Foreground { can_pause: true };
-        controller.poll_show(&mut manager, screen).unwrap();
+        controller.poll_show(manager.modal_queue(), screen).unwrap();
         let old = controller.current_id().unwrap();
         assert_eq!(
-            controller.on_dismissed_for(old, &mut manager, screen),
+            controller.on_dismissed_for(old, manager.modal_queue(), screen),
             DismissTransition::Reshow
         );
         assert_eq!(
-            controller.poll_show(&mut manager, screen),
+            controller.poll_show(manager.modal_queue(), screen),
             Some(ShowTransition::Present { auto_pause: false })
         );
         let live = controller.current_id().unwrap();
         assert_ne!(old, live);
         assert_eq!(
-            controller.on_dismissed_for(old, &mut manager, screen),
+            controller.on_dismissed_for(old, manager.modal_queue(), screen),
             DismissTransition::Idle
         );
         assert_eq!(controller.current_detail(), Some("second"));
         assert!(controller.auto_paused());
         assert_eq!(
-            controller.on_dismissed_for(live, &mut manager, screen),
+            controller.on_dismissed_for(live, manager.modal_queue(), screen),
             DismissTransition::ResumeAndReshow
         );
     }
@@ -235,21 +235,21 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("unacknowledged");
         let screen = Screen::Foreground { can_pause: true };
-        controller.poll_show(&mut manager, screen).unwrap();
+        controller.poll_show(manager.modal_queue(), screen).unwrap();
         let old = controller.current_id().unwrap();
-        controller.on_suspended(&mut manager);
+        controller.on_suspended(manager.modal_queue());
         controller
-            .poll_show(&mut manager, Screen::Foreground { can_pause: false })
+            .poll_show(manager.modal_queue(), Screen::Foreground { can_pause: false })
             .unwrap();
         assert_eq!(
-            controller.on_dismissed_for(old, &mut manager, screen),
+            controller.on_dismissed_for(old, manager.modal_queue(), screen),
             DismissTransition::Idle
         );
         assert_eq!(controller.current_detail(), Some("unacknowledged"));
         assert!(controller.auto_paused());
         let live = controller.current_id().unwrap();
         assert_eq!(
-            controller.on_dismissed_for(live, &mut manager, screen),
+            controller.on_dismissed_for(live, manager.modal_queue(), screen),
             DismissTransition::ResumeAndReshow
         );
     }
@@ -259,28 +259,28 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("boom");
         assert_eq!(
-            controller.poll_show(&mut manager, Screen::show_gate(false, false, true)),
+            controller.poll_show(manager.modal_queue(), Screen::show_gate(false, false, true)),
             None
         );
         assert_eq!(
-            controller.poll_show(&mut manager, Screen::show_gate(true, true, true)),
+            controller.poll_show(manager.modal_queue(), Screen::show_gate(true, true, true)),
             None
         );
         assert_eq!(
-            controller.poll_show(&mut manager, Screen::show_gate(true, false, true)),
+            controller.poll_show(manager.modal_queue(), Screen::show_gate(true, false, true)),
             Some(ShowTransition::Present { auto_pause: true })
         );
         assert_eq!(controller.current_detail(), Some("boom"));
         // Gate is open: a second poll (or a dismiss race) shows nothing.
         assert_eq!(
-            controller.poll_show(&mut manager, Screen::show_gate(true, false, true)),
+            controller.poll_show(manager.modal_queue(), Screen::show_gate(true, false, true)),
             None
         );
 
         let mut empty = OsdManager::new();
         let mut fresh = ErrorDialogController::new();
         assert_eq!(
-            fresh.poll_show(&mut empty, Screen::show_gate(true, false, true)),
+            fresh.poll_show(empty.modal_queue(), Screen::show_gate(true, false, true)),
             None
         );
         assert_eq!(fresh.current_detail(), None);
@@ -291,7 +291,7 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("moved");
         let transition = controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, false))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, false))
             .expect("batch queued");
         assert!(matches!(
             transition,
@@ -307,17 +307,17 @@ mod tests {
     fn dismiss_resumes_only_own_auto_pause_then_reshows() {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("first");
-        manager.queue_modal("second".to_string());
+        manager.modal_queue().queue_modal("second".to_string());
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, true))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
         let transition =
-            controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
+            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
         assert_eq!(transition, DismissTransition::Reshow);
         assert!(controller.auto_paused());
         // Next batch is still queued behind the released gate.
         let next = controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, true))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("second batch queued");
         assert!(matches!(
             next,
@@ -331,10 +331,10 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("only");
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, false))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, false))
             .expect("batch queued");
         let transition =
-            controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
+            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
         assert_eq!(transition, DismissTransition::Reshow);
     }
 
@@ -343,16 +343,16 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("preempted");
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, true))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
         let transition =
-            controller.on_dismissed(&mut manager, Screen::show_gate(true, true, false));
+            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, true, false));
         assert_eq!(transition, DismissTransition::Idle);
         assert!(controller.auto_paused());
         assert_eq!(manager.modal_pending(), 1);
         // Settings close replays the same head in display order.
         let replayed =
-            controller.on_settings_closed(&mut manager, Screen::show_gate(true, false, true));
+            controller.on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true));
         assert_eq!(
             replayed,
             SettingsClosedTransition::Show { auto_pause: false }
@@ -364,20 +364,20 @@ mod tests {
     fn suspend_requeues_head_and_late_dismiss_is_noop() {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("head");
-        manager.queue_modal("tail".to_string());
+        manager.modal_queue().queue_modal("tail".to_string());
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, true))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
-        controller.on_suspended(&mut manager);
+        controller.on_suspended(manager.modal_queue());
         assert!(controller.auto_paused());
         assert_eq!(manager.modal_pending(), 2);
         // Late dismiss after the suspend requeue: no double requeue.
         let transition =
-            controller.on_dismissed(&mut manager, Screen::show_gate(false, false, false));
+            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(false, false, false));
         assert_eq!(transition, DismissTransition::Idle);
         assert_eq!(manager.modal_pending(), 2);
         let replayed = controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, false))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, false))
             .expect("head requeued");
         assert!(matches!(
             replayed,
@@ -392,14 +392,14 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("racing");
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, true))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
         let transition =
-            controller.on_dismissed(&mut manager, Screen::show_gate(false, false, false));
+            controller.on_dismissed(manager.modal_queue(), Screen::show_gate(false, false, false));
         assert_eq!(transition, DismissTransition::Idle);
         assert!(controller.auto_paused());
         // Requeue exactly once even if the native suspend follows the callback.
-        controller.on_suspended(&mut manager);
+        controller.on_suspended(manager.modal_queue());
         assert_eq!(manager.modal_pending(), 1);
         assert!(controller.auto_paused());
     }
@@ -409,10 +409,10 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("once");
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, false))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, false))
             .expect("batch queued");
-        controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
-        let again = controller.on_dismissed(&mut manager, Screen::show_gate(true, false, false));
+        controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
+        let again = controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, false, false));
         assert_eq!(again, DismissTransition::Idle);
         assert_eq!(manager.modal_pending(), 0);
     }
@@ -423,13 +423,13 @@ mod tests {
         let mut controller = ErrorDialogController::new();
         let mut manager = queued("preempted");
         controller
-            .poll_show(&mut manager, Screen::show_gate(true, false, true))
+            .poll_show(manager.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
-        controller.on_dismissed(&mut manager, Screen::show_gate(true, true, false));
+        controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, true, false));
         assert_eq!(manager.take_modal_batch(), Some("preempted".to_string()));
         manager.modal_closed();
         assert_eq!(
-            controller.on_settings_closed(&mut manager, Screen::show_gate(true, false, true)),
+            controller.on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true)),
             SettingsClosedTransition::Resume
         );
         assert!(!controller.auto_paused());
@@ -438,10 +438,10 @@ mod tests {
         let mut showing = ErrorDialogController::new();
         let mut busy = queued("up");
         showing
-            .poll_show(&mut busy, Screen::show_gate(true, false, true))
+            .poll_show(busy.modal_queue(), Screen::show_gate(true, false, true))
             .expect("batch queued");
         assert_eq!(
-            showing.on_settings_closed(&mut busy, Screen::show_gate(true, false, true)),
+            showing.on_settings_closed(busy.modal_queue(), Screen::show_gate(true, false, true)),
             SettingsClosedTransition::Idle
         );
         assert!(showing.auto_paused());

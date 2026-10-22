@@ -43,7 +43,7 @@ impl PersistenceBinder {
             Some(exporter) => Some(exporter),
             None => {
                 live = session.emu.exporter().ok();
-                live.as_deref()
+                live
             }
         };
         setup_persistence(
