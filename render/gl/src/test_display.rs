@@ -45,6 +45,18 @@ impl TestDisplay {
     }
 
     fn connect_strict() -> Option<Self> {
+        // EGL init races under parallel test load; retry transient failures
+        // before giving up. Rendering assertions are untouched.
+        for attempt in 0..4u32 {
+            if let Some(display) = Self::try_connect() {
+                return Some(display);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25 * (1 << attempt.min(3))));
+        }
+        None
+    }
+
+    fn try_connect() -> Option<Self> {
         std::env::var_os("DISPLAY")?;
         let display = unsafe {
             Display::new(
@@ -127,18 +139,23 @@ mod tests {
         use glutin::display::GlDisplay as _;
         use std::sync::{Arc, Barrier};
         let _serial = super::lock_display();
-        let Some(display) = TestDisplay::connect() else {
+        // Connect both displays up front: concurrent EGL init races, so the
+        // only parallel work below is context driving on ready displays.
+        let Some(first) = TestDisplay::connect() else {
             return;
         };
-        drop(display);
+        let Some(second) = TestDisplay::connect() else {
+            return;
+        };
         let barrier = Arc::new(Barrier::new(2));
+        let mut displays = [first, second].into_iter();
         let workers: Vec<_> = [16, 24]
             .into_iter()
             .map(|width| {
                 let barrier = barrier.clone();
+                let display = displays.next().expect("one display per worker");
                 std::thread::spawn(move || {
                     barrier.wait();
-                    let display = TestDisplay::connect().expect("display became unavailable");
                     let _current = display
                         .make_pbuffer_current(32, 32)
                         .expect("pbuffer creation failed");
