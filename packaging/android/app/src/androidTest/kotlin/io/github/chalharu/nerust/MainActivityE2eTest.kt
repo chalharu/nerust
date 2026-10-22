@@ -282,15 +282,16 @@ class MainActivityE2eTest {
     }
 
     /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
-     * Destroy is expected within seconds; a dump here names the blocker. */
+     * Destroy is expected within seconds. A linger without destroy — or a
+     * destroy that never completes — names the blocker, so always dump:
+     * the shared process means these stacks cover the app UI thread too. */
     private fun watchStuckShutdown(tag: String, activity: MainActivity) {
         thread(isDaemon = true, name = "shutdown-watchdog-$tag") {
             SystemClock.sleep(SHUTDOWN_WATCHDOG_MS)
-            if (!activity.isDestroyed) {
-                Log.w(TAG, "$tag: activity not destroyed after ${SHUTDOWN_WATCHDOG_MS}ms; dumping threads")
-                for ((stuck, stack) in Thread.getAllStackTraces()) {
-                    Log.w(TAG, "$tag: thread=${stuck.name} state=${stuck.state}\n\t${stack.joinToString("\n\t")}")
-                }
+            val destroyed = activity.isDestroyed
+            Log.w(TAG, "$tag: shutdown watchdog fired (destroyed=$destroyed); dumping threads")
+            for ((stuck, stack) in Thread.getAllStackTraces()) {
+                Log.w(TAG, "$tag: thread=${stuck.name} state=${stuck.state}\n\t${stack.joinToString("\n\t")}")
             }
         }
     }
