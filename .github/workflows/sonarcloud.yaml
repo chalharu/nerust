@@ -355,6 +355,8 @@ jobs:
           cache-all-crates: "true"
           workspaces: |
             . -> target
+      - name: Install OpenGL software rendering
+        run: apt-get update -qq && apt-get install -y --no-install-recommends libgl1-mesa-dri && rm -rf /var/lib/apt/lists/*
       - name: Check root with OpenGL backend
         run: cargo check --locked --no-default-features --features opengl,tao
   sonarcloud:
@@ -364,6 +366,7 @@ jobs:
       - coverage-gtk
       - coverage-bins
       - rom-tests
+      - check-opengl
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

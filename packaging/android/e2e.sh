@@ -35,12 +35,41 @@ run_instrumentation() {
     local output
     output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
-    if grep -Eq '^OK \([0-9]+ tests?\)$' <<< "${output}"; then
+    if instrumentation_ok <<< "${output}"; then
         return 0
     fi
+    instrumentation_crashed_without_failure "${output}"
+}
+
+# An `OK (N tests)` summary line: the only passing shape.
+instrumentation_ok() {
+    grep -Eq '^OK \([0-9]+ tests?\)$'
+}
+
+# A hard failure: assertion text or an instrumentation error status.
+instrumentation_failed() {
+    local output="$1"
+    grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"
+}
+
+# A process crash with no recorded failure: infra flake, not a test failure.
+instrumentation_crashed_without_failure() {
+    local output="$1"
     grep -q 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.' <<< "${output}" &&
         grep -q 'INSTRUMENTATION_STATUS_CODE: 0' <<< "${output}" &&
-        ! grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"
+        ! instrumentation_failed "${output}"
+}
+
+# Poll for process exit with a deadline instead of a single snapshot.
+wait_until_gone() {
+    local deadline=$((SECONDS + 10))
+    while ((SECONDS < deadline)); do
+        if ! adb shell pidof "${APP_PACKAGE}" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
 }
 
 expect_process_termination() {
@@ -48,14 +77,15 @@ expect_process_termination() {
     local output
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
-    if grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"; then
+    if instrumentation_failed "${output}"; then
         dump_shutdown_threads
         return 1
     fi
-    if adb shell pidof "${APP_PACKAGE}" >/dev/null; then
-        dump_shutdown_threads
-        return 1
+    if wait_until_gone; then
+        return 0
     fi
+    dump_shutdown_threads
+    return 1
 }
 
 # A lingering process means shutdown hung: capture thread stacks while alive.
@@ -66,7 +96,14 @@ dump_shutdown_threads() {
     if [[ -n "${pid}" ]]; then
         echo "App process ${pid} survived termination; dumping threads:"
         adb shell kill -QUIT "${pid}" || true
-        sleep 2
+        # Wait for the stacks to flush instead of a magic sleep.
+        local deadline=$((SECONDS + 10))
+        while ((SECONDS < deadline)); do
+            if adb logcat -d 2>/dev/null | grep -q "Cmd line: ${APP_PACKAGE}"; then
+                break
+            fi
+            sleep 0.5
+        done
     fi
 }
 

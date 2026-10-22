@@ -7,7 +7,11 @@ are checked in so neither cargo nor Gradle needs Python during a normal build.
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bridge_schema import ContractError, require
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST = ROOT / "gui/frontends/android"
@@ -125,12 +129,6 @@ def field_type(prop):
         return prop["type"]
     require(type(prop.get("const")) in {int, str, bool})
     return {int: "integer", str: "string", bool: "boolean"}[type(prop["const"])]
-
-
-def require(condition):
-    # Unlike Python assert, contract checks must survive python -O.
-    if not condition:
-        raise AssertionError("unsupported or inconsistent bridge schema")
 
 
 def format_rust(content):

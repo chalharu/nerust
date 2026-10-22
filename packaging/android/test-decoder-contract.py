@@ -4,7 +4,6 @@
 The isolated crate avoids building unrelated GUI/GPU backends. Only the input
 key enum and request-id wrapper are fixtures; codec and validator are real files.
 """
-import importlib.util
 import json
 import os
 import subprocess
@@ -13,10 +12,10 @@ import tempfile
 import tomllib
 from pathlib import Path
 
-sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location("generator", Path(__file__).with_name("generate-contract.py"))
-GEN = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(GEN)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bridge_schema import load_sibling
+
+GEN = load_sibling("generator", "generate-contract.py")
 
 
 def sample(prop):
@@ -136,23 +135,16 @@ def prepare_probe(root, schema):
     (root / "Cargo.toml").write_text(manifest())
     (root / "src/lib.rs").write_text(harness(schema))
     # Keep transitive versions aligned with the workspace instead of resolving
-    # a second, newer dependency graph in this temporary project.
+    # a second, newer dependency graph in this temporary project. Direct
+    # versions are exact-pinned in the manifest; the lock pins transitives.
     (root / "Cargo.lock").write_bytes((GEN.ROOT / "Cargo.lock").read_bytes())
 
 
-def _shared_cache_dir(env):
-    """Owner-private shared cargo cache; `None` means use the run temp dir."""
+def _probe_target_dir(env, root):
+    """Probe build cache: caller-provided target dir, else the per-run temp dir.
+    No shared world-writable cache: per-run isolation avoids TOCTOU on ownership."""
     if "CARGO_TARGET_DIR" in env:
         return Path(env["CARGO_TARGET_DIR"])
-    # The temp root is world-writable: only reuse a cache the current user owns.
-    root = Path(tempfile.gettempdir()) / "nerust-android-contract-target"
-    try:
-        root.mkdir(parents=True, exist_ok=True)
-        os.chmod(root, 0o700)
-    except OSError:
-        return None
-    if root.stat().st_uid != os.getuid():
-        return None
     return root
 
 
@@ -163,8 +155,8 @@ def main():
         prepare_probe(root, schema)
         env = dict(os.environ, RUSTC_WRAPPER="")
         env.setdefault("CARGO_BUILD_JOBS", "2")
-        # Share the build cache without hardcoding a public directory.
-        cache = _shared_cache_dir(env) or root
+        # Build cache without hardcoding a public directory.
+        cache = _probe_target_dir(env, root)
         env["CARGO_TARGET_DIR"] = str(cache.resolve() / "decoder-probes")
         # A cold CI cache must be allowed to fetch locked dependencies. Explicit
         # caller policy (e.g. CARGO_NET_OFFLINE) is still inherited via env.

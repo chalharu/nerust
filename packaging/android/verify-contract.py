@@ -5,31 +5,19 @@ This deliberately supports only the source syntax used by the bridge. New
 syntax must teach this checker its meaning instead of silently skipping it.
 No Android SDK, JVM, or third-party Python package is needed.
 """
-import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
 
-sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location("generator", Path(__file__).with_name("generate-contract.py"))
-GEN = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(GEN)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bridge_schema import ContractError, load_sibling, require, uncomment
 
-SCHEMA_SPEC = importlib.util.spec_from_file_location(
-    "bridge_schema", Path(__file__).with_name("bridge_schema.py"))
-SCHEMA = importlib.util.module_from_spec(SCHEMA_SPEC)
-SCHEMA_SPEC.loader.exec_module(SCHEMA)
-
-ContractError = SCHEMA.ContractError
+GEN = load_sibling("generator", "generate-contract.py")
 
 
 #: Shared rejection for a decoder without the typed event enum.
 MISSING_DECODER = "missing typed event decoder"
-
-
-require = SCHEMA.require
-uncomment = SCHEMA.uncomment
 
 
 def sources():

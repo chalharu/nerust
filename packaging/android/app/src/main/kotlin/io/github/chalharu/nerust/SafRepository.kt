@@ -129,9 +129,9 @@ class SafRepository(private val context: Context) : AutoCloseable {
         create: Boolean,
     ): Pair<DocumentFile, String>? {
         val segments = relativePath.split('/')
-        require(segments.none { it.isBlank() || it == "." || it == ".." || it.contains('\\') })
+        if (segments.any { it.isBlank() || it == "." || it == ".." || it.contains('\\') }) return null
         val fileName = segments.lastOrNull() ?: return null
-        require(!fileName.startsWith(PREFIX))
+        if (fileName.startsWith(PREFIX)) return null
         val directory =
             resolveSafDirectory(treeUri, segments.dropLast(1).joinToString("/"), create)
                 ?: return null
@@ -180,15 +180,15 @@ class SafRepository(private val context: Context) : AutoCloseable {
                 if (count == 0) throw java.io.IOException("zero marker read")
                 used += count
             }
-            require(used <= 4096)
+            if (used > 4096) return null
             String(bytes, 0, used, Charsets.UTF_8)
         }
     }
 
     private fun parseGeneration(raw: String, byName: Map<String?, DocumentFile>): Pair<String, Generation>? {
         val record = JSONObject(raw)
-        require(record.getInt("version") == 1 && record.getBoolean("complete"))
-        require(record.has("data") && record.getLong("size") >= 0)
+        if (record.optInt("version", -1) != 1 || !record.optBoolean("complete", false)) return null
+        if (!record.has("data") || record.optLong("size", -1) < 0) return null
         val name = record.getString("name")
         val order = record.getString("order")
         val size = record.getLong("size")
@@ -283,12 +283,17 @@ class SafRepository(private val context: Context) : AutoCloseable {
         /** True for files this repository manages as commit markers. */
         internal fun isCommitMarker(name: String?) =
             name != null && name.startsWith(PREFIX) && name.endsWith(COMMIT_SUFFIX)
+
+        /** Sweep predicate: same name with a strictly older order. Orders sort lexicographically. */
+        internal fun isSupersededMarker(
+            recordName: String,
+            recordOrder: String,
+            name: String,
+            order: String,
+        ): Boolean = recordName == name && recordOrder < order
     }
 
     private val readSessions = SafReadSessions()
     private val writeSessions = SafWriteSessions()
 }
 
-/** Sweep predicate: same name with a strictly older order. Orders sort lexicographically. */
-internal fun isSupersededMarker(recordName: String, recordOrder: String, name: String, order: String): Boolean =
-    recordName == name && recordOrder < order

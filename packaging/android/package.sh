@@ -135,9 +135,11 @@ prepare_signing_keystore
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
     sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
     if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
-        latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -V 2>/dev/null | tail -n 1)"
+        # One tree scan; version sort with a plain-sort fallback.
+        ndk_names="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null)"
+        latest_ndk="$(printf '%s\n' "${ndk_names}" | sort -V 2>/dev/null | tail -n 1)"
         if [[ -z "${latest_ndk}" ]]; then
-            latest_ndk="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort | tail -n 1)"
+            latest_ndk="$(printf '%s\n' "${ndk_names}" | sort | tail -n 1)"
         fi
         if [[ -n "${latest_ndk}" ]]; then
             export ANDROID_NDK_HOME="${sdk_root}/ndk/${latest_ndk}"
@@ -163,10 +165,10 @@ native_budget_bytes() {
     local requested="${BUDGET_BYTES:-${NATIVE_BUDGET_DEFAULT_BYTES}}"
     if (( requested < NATIVE_BUDGET_DEFAULT_BYTES )); then
         printf '%s' "${requested}"
+    elif [[ -n "${BUDGET_BYTES:-}" ]]; then
+        echo "BUDGET_BYTES=${BUDGET_BYTES} exceeds the lower-only default ${NATIVE_BUDGET_DEFAULT_BYTES}: refusing" >&2
+        exit 1
     else
-        if [[ -n "${BUDGET_BYTES:-}" ]]; then
-            echo "warning: BUDGET_BYTES=${BUDGET_BYTES} exceeds the default; keeping ${NATIVE_BUDGET_DEFAULT_BYTES}" >&2
-        fi
         printf '%s' "${NATIVE_BUDGET_DEFAULT_BYTES}"
     fi
 }
@@ -209,14 +211,19 @@ else
         verify_native_library "${readelf_bin}" "${main_so}" "${budget}"
     done
 fi
-# Gate passed: publish the staged libs via a temp-dir swap.
-# An interrupted copy never leaves a half-populated jniLibs tree.
+# Gate passed: publish the staged libs via rename swap.
+# Renames are atomic, so there is never a half-populated jniLibs tree;
+# the previous tree is removed only after the new one is live.
 stage_publish_tmp="${JNI_LIBS_DIR}.new"
-rm -rf "${stage_publish_tmp}"
+stage_publish_old="${JNI_LIBS_DIR}.old"
+rm -rf "${stage_publish_tmp}" "${stage_publish_old}"
 mkdir -p "${stage_publish_tmp}"
 cp -r "${STAGE_JNI_LIBS}/." "${stage_publish_tmp}/"
-rm -rf "${JNI_LIBS_DIR}"
+if [[ -d "${JNI_LIBS_DIR}" ]]; then
+    mv "${JNI_LIBS_DIR}" "${stage_publish_old}"
+fi
 mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"
+rm -rf "${stage_publish_old}"
 
 (
     cd "${SCRIPT_DIR}"

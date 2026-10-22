@@ -7,30 +7,11 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
-import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.max
 import kotlin.math.min
 
-/** One touch zone pushed from Rust, in relative (0.0..1.0) surface coordinates. */
-internal data class PushedOverlayZone(
-    val x: Float,
-    val y: Float,
-    val width: Float,
-    val height: Float,
-    val label: String,
-)
-
-/** Joystick home pushed from Rust: center over surface, radii over minor axis. */
-internal data class PushedJoystick(
-    val x: Float,
-    val y: Float,
-    val baseRadius: Float,
-    val knobRadius: Float,
-)
-
-@SuppressLint("ViewConstructor")
 internal class ControlsOverlayView(
     context: Context,
     opacityPercent: Int,
@@ -157,6 +138,9 @@ internal class ControlsOverlayView(
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean = false
 
+    // Reused scratch: drawZone runs per zone per frame, never allocates.
+    private val scratchRect = RectF()
+
     private fun drawZone(
         canvas: Canvas,
         x: Float,
@@ -165,7 +149,7 @@ internal class ControlsOverlayView(
         height: Float,
         label: String,
     ) {
-        val rect = RectF(x, y, x + width, y + height)
+        val rect = scratchRect.apply { set(x, y, x + width, y + height) }
         val radius = min(width, height) * 0.20f
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
         canvas.drawRoundRect(rect, radius, radius, strokePaint)
@@ -175,52 +159,3 @@ internal class ControlsOverlayView(
         canvas.drawText(label, rect.centerX(), centerY, textPaint)
     }
 }
-
-/** Parse the Rust-pushed zone payload (`LABEL:x,y,w,h;...`, relative coordinates).
- * Malformed entries are dropped with a warning log. */
-internal fun parsePushedZones(payload: String): List<PushedOverlayZone> {
-    if (payload.isBlank()) return emptyList()
-    val zones = mutableListOf<PushedOverlayZone>()
-    payload.split(';').forEachIndexed { index, entry ->
-        if (entry.isBlank()) return@forEachIndexed
-        val parts = entry.split(':')
-        if (parts.size != 2 || parts[0].isBlank()) {
-            Log.w(TAG, "parsePushedZones: dropping malformed entry #$index: '$entry'")
-            return@forEachIndexed
-        }
-        val coords = parts[1].split(',').mapNotNull { it.toFloatOrNull() }
-        if (coords.size != 4) {
-            Log.w(TAG, "parsePushedZones: dropping entry #$index with bad coords: '$entry'")
-            return@forEachIndexed
-        }
-        zones +=
-            PushedOverlayZone(
-                x = coords[0],
-                y = coords[1],
-                width = coords[2],
-                height = coords[3],
-                label = parts[0],
-            )
-    }
-    if (zones.isEmpty()) {
-        Log.w(TAG, "parsePushedZones: payload yielded no zones: '$payload'")
-    }
-    return zones
-}
-
-/** Parse the Rust-pushed joystick payload (`cx,cy,baseR,knobR`); null when malformed. */
-internal fun parsePushedJoystick(payload: String): PushedJoystick? {
-    val coords = payload.split(',').mapNotNull { it.toFloatOrNull() }
-    if (coords.size != 4) {
-        Log.w(TAG, "parsePushedJoystick: dropping malformed payload: '$payload'")
-        return null
-    }
-    return PushedJoystick(
-        x = coords[0],
-        y = coords[1],
-        baseRadius = coords[2],
-        knobRadius = coords[3],
-    )
-}
-
-private const val TAG = "Nerust"
