@@ -133,7 +133,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         repainted || rebuilt || matches!(outcome, PumpOutcome::At(_))
     }
 
-    /// Run pending messages against the retained cache, redrawing only on a real rebuild.
+    /// Run pending messages against the retained cache, redrawing only on real dirt.
     /// Quiet batches (no messages, no flag) skip the frame.
     pub(crate) fn process(
         &mut self,
@@ -142,13 +142,11 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     ) -> bool {
         let bounds = self.surface.logical_bounds();
         self.ui_state.relayout(bounds);
-        let rebuilt =
-            self.ui_state
-                .process_messages(messages, self.surface.backend_mut(), invalidated);
-        if rebuilt {
+        let dirty = self.ui_state.process_messages(messages, invalidated);
+        if dirty {
             self.surface.request_redraw();
         }
-        rebuilt
+        dirty
     }
 }
 

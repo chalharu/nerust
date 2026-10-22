@@ -550,12 +550,11 @@ mod tests {
         };
         // Regression: `sync` passed `should_close` as the refresh
         // invalidation flag, so a pending close was consumed by a sync.
-        let (instance, _task) = iced_winit::program::Instance::new(HistoryProgram {
+        let instance = iced_winit::program::Instance::new(HistoryProgram {
             language: en(),
             clear_requested: Arc::new(AtomicBool::new(false)),
-        });
-        let mut backend =
-            iced_tiny_skia::Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        })
+        .0;
         let mut ui = crate::aux::shell::UiShell::new(
             instance,
             iced::window::Id::unique(),
@@ -570,7 +569,6 @@ mod tests {
                 lines: std::sync::Arc::from([]),
                 language: en(),
             }],
-            &mut backend,
             &invalidated,
         );
         assert!(!invalidated.load(Ordering::Acquire));

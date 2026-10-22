@@ -432,7 +432,6 @@ fn uishell_headless_build_pump_relayout_draw() {
     let invalidated = AtomicBool::new(true);
     shell.process_messages(
         [DebugMessage::RefreshPressed, DebugMessage::FollowPcToggle],
-        &mut backend,
         &invalidated,
     );
     assert!(!invalidated.load(Ordering::Acquire));
