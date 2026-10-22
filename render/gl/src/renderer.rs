@@ -487,12 +487,10 @@ impl FrameSink for GlRenderer {
 }
 
 impl OsdSink for GlRenderer {
-    /// Stage an OSD layer; header gate skips the clone on equality.
+    /// Stage an OSD layer; the staged header gate skips the clone on equality.
     /// Keeps the stored copy needed for profile rebuilds.
     fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-        if OsdLayer::same_option(self.osd_staged.as_ref(), layer.as_ref())
-            && OsdLayer::same_option(self.osd.osd_layer.as_ref(), layer.as_ref())
-        {
+        if OsdLayer::same_option(self.osd_staged.as_ref(), layer.as_ref()) {
             return;
         }
         self.osd.set_osd_layer(layer.clone());
@@ -565,6 +563,11 @@ fn upload_frame(
             .height
             .checked_mul(layout.row_bytes)
             .ok_or(FrameError::DimensionsOverflow { have: data.len() })?;
+        // High-water hysteresis: a transient small frame must not pin a large
+        // staging allocation, but steady frames never reallocate.
+        if tight.capacity() > packed_need.saturating_mul(4) {
+            tight.shrink_to(packed_need);
+        }
         tight.resize(packed_need, 0);
         pack_rows_stripped(data, layout.stride, layout.height, tight, layout.row_bytes);
         frame.on_update(tight, width_i32)
