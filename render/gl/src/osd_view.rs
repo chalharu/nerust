@@ -11,7 +11,7 @@ use nerust_glwrap::{
         is_enabled, tex_sub_image_2d, uniform_1i, uniform_matrix_4fv, use_program, viewport,
     },
 };
-use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy, UploadBudget};
+use nerust_render_traits::renderer::{OsdLayer, UploadBudget};
 
 use crate::upload::StagingBuf;
 
@@ -437,12 +437,9 @@ impl OsdView {
         if self.osd_layer.is_none() {
             return false;
         }
-        let dropped = nerust_render_traits::renderer::note_osd_upload(
-            false,
-            &mut self.osd_layer,
-            &mut self.osd_retry,
-        );
+        let dropped = self.osd_retry.charge(false);
         if dropped {
+            self.osd_layer.take();
             self.osd_dirty = false;
         }
         dropped

@@ -103,18 +103,18 @@ pub(crate) fn checked_clear_need(w: i32, h: i32) -> Result<usize, OsdReject> {
 mod tests {
     use super::{OsdReject, checked_clear_need, checked_osd_rect, checked_osd_y};
     use nerust_render_traits::renderer::UploadBudget;
-    use nerust_render_traits::renderer::{OsdLayer, OsdUploadPolicy};
+    use nerust_render_traits::renderer::OsdLayer;
 
     #[test]
     fn decision_maps_shared_policy_outcome() {
         // End to end through the single budget: two retries, then drop.
         let mut budget = UploadBudget::new(3);
-        assert!(!budget.record_failure());
-        assert!(!budget.record_failure());
-        assert!(budget.record_failure());
-        assert!(budget.record_failure());
+        assert!(!budget.charge(false));
+        assert!(!budget.charge(false));
+        assert!(budget.charge(false));
+        assert!(budget.charge(false));
         budget.reset();
-        assert!(!budget.record_failure());
+        assert!(!budget.charge(false));
     }
 
     #[test]

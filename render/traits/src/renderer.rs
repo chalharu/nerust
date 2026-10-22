@@ -159,7 +159,7 @@ pub struct OsdLayer {
     /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
     rgba: Arc<[u8]>,
     /// Pixel digest, computed on first mismatch check: shared arcs never hash.
-    payload_hash: std::cell::OnceCell<u64>,
+    payload_hash: std::sync::OnceLock<u64>,
 }
 
 impl PartialEq for OsdLayer {
@@ -184,7 +184,7 @@ impl OsdLayer {
             width,
             height,
             rgba: Arc::from(rgba),
-            payload_hash: std::cell::OnceCell::new(),
+            payload_hash: std::sync::OnceLock::new(),
         }
     }
 
@@ -400,17 +400,9 @@ pub trait StripSink: std::fmt::Debug {
     fn set_reserved_strip(&mut self, _strip: ReservedStrip) {}
 }
 
-/// Single OSD upload policy for every backend.
-/// Bounded retries: transient blips survive, dead drivers drop the layer.
-pub trait OsdUploadPolicy: std::fmt::Debug {
-    /// Record one failed upload. Returns true when the layer must drop.
-    fn record_failure(&mut self) -> bool;
-    /// A successful upload re-arms the budget.
-    fn reset(&mut self);
-}
-
 /// Bounded OSD upload budget shared by every backend.
 /// Floor of one attempt: zero never drops live layers at once.
+/// Single value type: backends charge attempts directly, no policy trait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UploadBudget {
     max: u8,
@@ -425,36 +417,24 @@ impl UploadBudget {
             fails: 0,
         }
     }
-}
 
-impl OsdUploadPolicy for UploadBudget {
-    fn record_failure(&mut self) -> bool {
+    /// Charge one upload attempt. Success re-arms; `true` means the caller
+    /// must drop the layer so the next identical push re-stages.
+    pub fn charge(&mut self, accepted: bool) -> bool {
+        if accepted {
+            self.fails = 0;
+            return false;
+        }
         self.fails = self.fails.saturating_add(1);
         self.fails >= self.max
     }
 
-    fn reset(&mut self) {
+    /// A successful upload re-arms the budget.
+    pub fn reset(&mut self) {
         self.fails = 0;
     }
 }
 
-/// Fold one OSD upload attempt into the slot and budget.
-/// Drops a repeatedly rejected layer so identical pushes re-stage.
-pub fn note_osd_upload(
-    accepted: bool,
-    slot: &mut Option<OsdLayer>,
-    budget: &mut UploadBudget,
-) -> bool {
-    if accepted {
-        budget.reset();
-        return false;
-    }
-    if budget.record_failure() {
-        slot.take();
-        return true;
-    }
-    false
-}
 /// Per-use-site pipeline composition without the legacy composites.
 /// Synthetic marker: implement the five legs, never this trait directly.
 pub trait RenderPipeline:
@@ -559,7 +539,7 @@ mod tests {
         let first = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
         let mut collision = OsdLayer::new(0, 0, 2, 1, vec![8; 8]);
         // Private test seam simulates a digest collision without exposing mutation.
-        collision.payload_hash = first.content_hash();
+        let _ = collision.payload_hash.set(first.content_hash());
         assert!(!first.same_content(Some(&collision)));
         assert!(!OsdLayer::same_option(Some(&first), Some(&collision)));
     }
@@ -653,31 +633,32 @@ mod tests {
     #[test]
     fn shared_budget_counts_then_drops_and_rearms() {
         let mut budget = UploadBudget::new(2);
-        assert!(!budget.record_failure());
-        assert!(budget.record_failure());
+        assert!(!budget.charge(false));
+        assert!(budget.charge(false));
         // Saturating counter never wraps on a dead driver.
-        assert!(budget.record_failure());
+        assert!(budget.charge(false));
         budget.reset();
-        assert!(!budget.record_failure());
+        assert!(!budget.charge(false));
         // Zero config never drops live layers at once.
         let mut floored = UploadBudget::new(0);
-        assert!(floored.record_failure());
+        assert!(floored.charge(false));
     }
 
     #[test]
     fn upload_fold_drops_rejected_layers_and_rearms_on_success() {
-        let layer = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
-        let mut slot = Some(layer);
         let mut budget = UploadBudget::new(2);
-        assert!(!note_osd_upload(false, &mut slot, &mut budget));
+        let mut slot = Some(OsdLayer::new(0, 0, 2, 1, vec![9; 8]));
+        assert!(!budget.charge(false));
         assert!(slot.is_some());
-        assert!(note_osd_upload(false, &mut slot, &mut budget));
+        if budget.charge(false) {
+            slot.take();
+        }
         assert!(slot.is_none());
         // Success re-arms: a fresh push survives one blip again.
         slot = Some(OsdLayer::new(0, 0, 2, 1, vec![9; 8]));
-        assert!(!note_osd_upload(true, &mut slot, &mut budget));
+        assert!(!budget.charge(true));
         assert!(slot.is_some());
-        assert!(!note_osd_upload(false, &mut slot, &mut budget));
+        assert!(!budget.charge(false));
         assert!(slot.is_some());
     }
 

@@ -27,19 +27,15 @@ use self::{
     },
 };
 
-/// Per-call drain in debug builds; release no-op to avoid a pipeline stall.
-/// Release builds rely on [`check_frame`] at transaction boundaries.
-#[cfg(debug_assertions)]
+/// Debug builds drain per call; release builds skip the synchronous drain
+/// and rely on [`check_frame`] at transaction boundaries. Single body with
+/// an explicit branch so both policies stay visible in one place.
 fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
     let result = func();
-    gl_get_error()?;
+    if std::cfg!(debug_assertions) {
+        gl_get_error()?;
+    }
     Ok(result)
-}
-
-/// Release fast path: run the call, skip the synchronous drain.
-#[cfg(not(debug_assertions))]
-fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
-    Ok(func())
 }
 
 fn gl_get_error() -> Result<(), Error> {

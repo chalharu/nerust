@@ -46,17 +46,17 @@ impl StagingBuf {
 #[cfg(test)]
 mod tests {
     use super::StagingBuf;
-    use nerust_render_traits::renderer::{OsdUploadPolicy as _, UploadBudget};
+    use nerust_render_traits::renderer::UploadBudget;
 
     #[test]
     fn budget_saturates_instead_of_wrapping() {
         let mut policy = UploadBudget::new(3);
         for _ in 0..300 {
-            policy.record_failure();
+            policy.charge(false);
         }
-        assert!(policy.record_failure());
+        assert!(policy.charge(false));
         policy.reset();
-        assert!(!policy.record_failure());
+        assert!(!policy.charge(false));
     }
 
     #[test]

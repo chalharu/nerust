@@ -2,8 +2,8 @@ use nerust_render_traits::{
     FrameBuffer, FrameLayout, ReservedStrip, SurfaceSize, VideoFrameSpec, VideoPresentation,
     VideoRenderProfile,
     renderer::{
-        FrameSink, OpaqueError, OsdLayer, OsdSink, OsdUploadPolicy, ProfileSwitch, RenderResult,
-        RendererConfig, RendererError, StripSink, SurfaceLifecycle, UploadBudget, note_osd_upload,
+        FrameSink, OpaqueError, OsdLayer, OsdSink, ProfileSwitch, RenderResult,
+        RendererConfig, RendererError, StripSink, SurfaceLifecycle, UploadBudget,
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -186,7 +186,8 @@ impl FrameSink for WgpuRenderer {
         }
         if self.osd_dirty {
             let accepted = crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
-            if note_osd_upload(accepted, &mut self.osd, &mut self.osd_policy) {
+            if self.osd_policy.charge(accepted) {
+                self.osd.take();
                 log::warn!("wgpu: dropping OSD layer after repeated upload failures");
             }
             // Retry only a rejected layer; success clears until the next stage.
@@ -602,31 +603,31 @@ mod tests {
 
     #[test]
     fn factory_mints_shared_budget_with_floor() {
-        use nerust_render_traits::renderer::{OsdUploadPolicy, RendererConfig};
+        use nerust_render_traits::renderer::RendererConfig;
         let mut config = RendererConfig {
             render_profile: test_profile(),
             vsync: false,
             max_osd_upload_retries: 0,
         };
         let mut floored = super::WgpuFactory::build(&config).unwrap();
-        assert!(floored.osd_policy.record_failure());
+        assert!(floored.osd_policy.charge(false));
         config.max_osd_upload_retries = 3;
         let mut renderer = super::WgpuFactory::build(&config).unwrap();
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(renderer.osd_policy.charge(false));
     }
 
     #[test]
     fn new_layer_rearms_exhausted_budget() {
-        use nerust_render_traits::renderer::{OsdLayer, OsdSink, OsdUploadPolicy};
+        use nerust_render_traits::renderer::{OsdLayer, OsdSink};
         let mut renderer = detached_renderer();
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(renderer.osd_policy.charge(false));
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
         assert!(renderer.osd_dirty);
-        assert!(!renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.charge(false));
     }
 
     #[test]

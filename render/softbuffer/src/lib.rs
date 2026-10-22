@@ -4,9 +4,9 @@ use log::warn;
 use nerust_render_traits::{
     FrameBuffer, PixelFormat, SurfaceSize, VideoRenderProfile,
     renderer::{
-        FrameSink, OpaqueError, OsdSink, OsdUploadPolicy, PipelineFactory, ProfileSwitch,
+        FrameSink, OpaqueError, OsdSink, PipelineFactory, ProfileSwitch,
         RenderPipeline, RenderResult, RendererConfig, RendererError, StripSink, SurfaceLifecycle,
-        UploadBudget, note_osd_upload,
+        UploadBudget,
     },
     rgb::RgbaWord,
 };
@@ -676,7 +676,8 @@ impl FrameSink for SoftbufferRenderer {
 
         if let Some(layer) = self.osd.as_ref() {
             let accepted = Self::blend_osd(buffer.as_mut(), dst_w, dst_h, layer);
-            if note_osd_upload(accepted, &mut self.osd, &mut self.osd_policy) {
+            if self.osd_policy.charge(accepted) {
+                self.osd.take();
                 warn!("softbuffer: dropping OSD layer after repeated upload failures");
             }
         }
@@ -1110,26 +1111,25 @@ mod tests {
 
     #[test]
     fn factory_mints_shared_budget_with_floor() {
-        use nerust_render_traits::renderer::OsdUploadPolicy;
         let mut starved = SoftbufferRenderer::new(&test_profile(), 0);
-        assert!(starved.osd_policy.record_failure());
+        assert!(starved.osd_policy.charge(false));
         let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(renderer.osd_policy.charge(false));
     }
 
     #[test]
     fn new_layer_rearms_exhausted_budget() {
-        use nerust_render_traits::renderer::{OsdLayer, OsdSink, OsdUploadPolicy};
+        use nerust_render_traits::renderer::{OsdLayer, OsdSink};
         let mut renderer = SoftbufferRenderer::new(&test_profile(), 2);
-        assert!(!renderer.osd_policy.record_failure());
-        assert!(renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.charge(false));
+        assert!(renderer.osd_policy.charge(false));
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
-        assert!(!renderer.osd_policy.record_failure());
+        assert!(!renderer.osd_policy.charge(false));
         // Identical pushes keep the gate, so the budget stays spent.
         renderer.set_osd_layer(Some(OsdLayer::new(0, 0, 2, 1, vec![255; 8])));
-        assert!(renderer.osd_policy.record_failure());
+        assert!(renderer.osd_policy.charge(false));
     }
 
     #[test]
