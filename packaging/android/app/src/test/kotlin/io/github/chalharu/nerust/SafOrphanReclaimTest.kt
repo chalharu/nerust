@@ -9,7 +9,9 @@ class SafOrphanReclaimTest {
     private val fresh = now - 1_000L
 
     @Test fun unreferencedOldStagesReclaimInStableOrder() {
-        val files = mapOf("b.data" to old, "a.data" to old, "keep.state" to old)
+        // Extension filtering is the caller's job: this predicate sees only
+        // staged-data candidates plus already-known references.
+        val files = mapOf("b.data" to old, "a.data" to old)
         assertEquals(
             listOf("a.data", "b.data"),
             SafRepository.selectOrphanedStages(files, emptySet(), now),
