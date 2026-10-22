@@ -1738,7 +1738,7 @@ mod tests {
             rom_loader: Box::new(MockRomLoader),
             audio_registry: audio,
         };
-        let state = Rc::new(RefCell::new(crate::State::new(ctx)));
+        let state = Rc::new(RefCell::new(crate::State::new(ctx).expect("test state builds")));
         Some((app, main, state))
     }
 
