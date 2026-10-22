@@ -33,6 +33,7 @@ class SafCleanupTest {
         assertNotEquals(Thread.currentThread(), spilledThread.get())
         assertTrue(spilledThread.get().name.contains("overflow"))
         workerRelease.countDown()
+        assertTrue(workerRelease.await(10, TimeUnit.SECONDS))
         queued.forEach { assertTrue(it.await(10, TimeUnit.SECONDS)) }
     }
 }
