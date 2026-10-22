@@ -72,7 +72,10 @@ mod tests {
             language: Language::SystemDefault,
             system_config: Some(Box::new(GbaSettings::default())),
         };
-        let assignments = nerust_input_traits::InputAssignments::new(vec![(GBA_ATTACHMENT, None)]);
+        let assignments = nerust_input_traits::InputAssignments::new(vec![(
+            crate::input_profiles::GBA_ATTACHMENT,
+            None,
+        )]);
         assert!(create_core_and_adapter(&view, Box::new(NullAudio), &assignments).is_err());
     }
 

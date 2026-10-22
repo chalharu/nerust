@@ -40,7 +40,9 @@ pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 use super::focus::{AuxRender as _, AuxShellRef};
 
 use super::registry::AuxController;
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, scale2x_nearest};
+#[cfg(test)]
+use nerust_gui_viewmodel::debugger::DebugImageRgba;
+use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.

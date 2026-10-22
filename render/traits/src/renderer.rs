@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn matching_digest_does_not_prove_byte_equality() {
         let first = OsdLayer::new(0, 0, 2, 1, vec![9; 8]);
-        let mut collision = OsdLayer::new(0, 0, 2, 1, vec![8; 8]);
+        let collision = OsdLayer::new(0, 0, 2, 1, vec![8; 8]);
         // Private test seam simulates a digest collision without exposing mutation.
         let _ = collision.payload_hash.set(first.content_hash());
         assert!(!first.same_content(Some(&collision)));
