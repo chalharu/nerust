@@ -95,7 +95,14 @@ struct Binding {
     required: bool,
 }
 
-fn bindings() -> Vec<Binding> {
+/// Static descriptors: literals plus fn pointers, built once.
+/// Per-call work stays limited to reading `current` indices.
+fn bindings() -> &'static [Binding] {
+    static DESCRIPTORS: std::sync::OnceLock<Vec<Binding>> = std::sync::OnceLock::new();
+    DESCRIPTORS.get_or_init(build_bindings)
+}
+
+fn build_bindings() -> Vec<Binding> {
     macro_rules! choice {
         ($field:ident, $key:literal, $label:literal, [$($value:expr => $text:literal),+ $(,)?]) => {
             Binding {
@@ -281,12 +288,12 @@ fn bindings() -> Vec<Binding> {
 
 pub(super) fn defs(current: &AndroidSettings) -> Vec<SettingDef> {
     let mut defs: Vec<_> = bindings()
-        .into_iter()
+        .iter()
         .map(|binding| SettingDef {
             key: binding.key.into(),
             label: binding.label.into(),
             current: (binding.read)(current),
-            choices: binding.choices,
+            choices: binding.choices.clone(),
             range: binding.range,
             visible: binding.key != STATUS_AREA_MODE_KEY
                 || current.notifications_position.is_top() != current.status_position.is_top(),

@@ -26,7 +26,8 @@ pub(super) struct TouchTracker {
 impl TouchTracker {
     pub(super) fn new() -> Self {
         Self {
-            active_touches: HashMap::new(),
+            // Finger-count scale; reset shrinks back here after floods.
+            active_touches: HashMap::with_capacity(16),
             floating_dpad: None,
             last_dpad_visual: None,
         }
@@ -42,6 +43,8 @@ impl TouchTracker {
             ));
         }
         self.active_touches.clear();
+        // Touch floods must not pin a large table: fingers fit in the inline capacity.
+        self.active_touches.shrink_to_fit();
         if let Some(state) = self.floating_dpad.take() {
             for (attachment, control) in state.targets.iter().flatten() {
                 session.apply_input_event(nerust_input_traits::DigitalInputEvent::released(

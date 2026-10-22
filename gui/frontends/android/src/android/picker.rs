@@ -407,6 +407,9 @@ fn read_stream_bytes_inner(
         return Err(jni::errors::Error::NullPtr("openInputStream returned null"));
     }
     let mut bytes = Vec::new();
+    // Reused JNI scratch: one 64KB i8 buffer serves the whole stream,
+    // so chunk reads allocate nothing per round-trip.
+    let mut chunk: Vec<i8> = Vec::new();
     let mut read_result = (|| {
         // Allocation can fail too: keep it inside the close-protected scope.
         let buffer = env.new_byte_array(ROM_PICKER_BUFFER_CAPACITY)?;
@@ -437,7 +440,9 @@ fn read_stream_bytes_inner(
                 continue;
             }
             // Copy only the bytes read, not the whole 64KB scratch.
-            let mut chunk = vec![0i8; read as usize];
+            // i8 scratch reused across chunks; the u8 reinterpretation
+            // below is a per-byte no-op the compiler vectorizes.
+            chunk.resize(read as usize, 0);
             buffer.get_region(env, 0, &mut chunk)?;
             bytes.extend(chunk.iter().map(|byte| *byte as u8));
         }

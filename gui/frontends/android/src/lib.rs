@@ -162,9 +162,11 @@ pub fn android_main(app: AndroidApp) {
             // This log is the record for post-loop failures.
             log::error!("android_main: frontend failed: {error:#}");
         }
-        // Crash path: logged by the guard; return to the JVM instead
-        // of exiting, as before.
-        GuardOutcome::Crashed(_) => {}
+        // Crash path: the hook logged the panic site; the report names
+        // the caught payload for the post-loop record before returning to the JVM.
+        GuardOutcome::Crashed(report) => {
+            log::error!("android_main: crashed: {}", report.message());
+        }
     }
 }
 
