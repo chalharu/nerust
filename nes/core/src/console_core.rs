@@ -475,11 +475,15 @@ mod tests {
     fn receiver_is_polled_once_per_frame_not_per_instruction() {
         let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
         let source = std::sync::Arc::clone(&pending);
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(NesInputBuffer::default()));
+        let probe = std::sync::Arc::clone(&seen);
         let receiver = InputReceiver::new(NesInputBuffer::default(), move |state| {
             if let Some(next) = source.lock().unwrap().take() {
                 *state = next;
             }
+            *probe.lock().unwrap() = *state;
         });
+        let peek = || seen.lock().unwrap().0;
         let mut core = NesConsoleCore::new(
             nrom_test_data(),
             ControllerCollection::new(vec![]),
@@ -495,12 +499,12 @@ mod tests {
         );
         let mut audio = Vec::new();
         core.render_frame(&mut frame, &mut audio).unwrap();
-        assert_eq!(core.emu_input.snapshot().0, [0; 3]);
+        assert_eq!(peek(), [0; 3]);
         *pending.lock().unwrap() = Some(NesInputBuffer([1, 0, 0]));
         core.step_instruction_cycles(&mut frame).unwrap();
-        assert_eq!(core.emu_input.snapshot().0, [0; 3]);
+        assert_eq!(peek(), [0; 3]);
         core.render_frame(&mut frame, &mut audio).unwrap();
-        assert_eq!(core.emu_input.snapshot().0, [1, 0, 0]);
+        assert_eq!(peek(), [1, 0, 0]);
     }
 
     #[derive(Debug)]

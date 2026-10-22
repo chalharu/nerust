@@ -63,14 +63,6 @@ impl ControlId {
         Self::Analog(id)
     }
 
-    /// Raw discriminant plus static id string for maps and logs.
-    pub const fn as_parts(self) -> (u8, &'static str) {
-        match self {
-            Self::Digital(id) => (0, id.as_str()),
-            Self::Analog(id) => (1, id.as_str()),
-        }
-    }
-
     /// Static id string.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -155,7 +147,6 @@ mod tests {
         let from_digital = ControlId::digital(digital);
         assert_eq!(from_digital.as_digital(), Some(digital));
         assert_eq!(from_digital.as_analog(), None);
-        assert_eq!(from_digital.as_parts(), (0, "test.a"));
         assert_eq!(from_digital.as_str(), "test.a");
         let from_analog = ControlId::analog(analog);
         assert_eq!(from_analog.as_analog(), Some(analog));

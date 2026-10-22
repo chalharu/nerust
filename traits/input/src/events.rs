@@ -194,14 +194,12 @@ impl<State> InputReceiver<State> {
     }
 
     /// Poll exactly once at frame start. A clean poll retains the snapshot.
+    /// The only production read path: cores never observe state without polling first.
     pub fn receive(&mut self) -> &State {
         (self.refresh)(&mut self.state);
         &self.state
     }
 
-    pub fn snapshot(&self) -> &State {
-        &self.state
-    }
 }
 
 impl<State> From<State> for InputReceiver<State> {

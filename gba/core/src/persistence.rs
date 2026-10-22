@@ -148,12 +148,43 @@ pub(crate) fn import_mapper_save(
     Ok(())
 }
 
-fn decode_payload<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, GbaPersistenceError> {
-    #[derive(serde::Deserialize)]
-    struct Header {
-        schema_version: u32,
+fn require_supported<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let version = <u32 as serde::Deserialize>::deserialize(deserializer)?;
+    if (MIN_SUPPORTED_SCHEMA_VERSION..=PERSISTENCE_SCHEMA_VERSION).contains(&version) {
+        Ok(version)
+    } else {
+        Err(serde::de::Error::custom("unsupported schema version"))
     }
-    let header: Header = rmp_serde::from_slice(data)?;
-    validate_version(header.schema_version)?;
-    Ok(rmp_serde::from_slice(data)?)
+}
+
+/// Single-parse envelope: supported versions land in `Supported` with the body;
+/// anything else lands in `Other` carrying only its version for the precedence error.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum Versioned<T> {
+    Supported {
+        #[serde(deserialize_with = "require_supported")]
+        schema_version: u32,
+        #[serde(flatten)]
+        body: T,
+    },
+    Other {
+        schema_version: u32,
+    },
+}
+
+fn decode_payload<T: serde::de::DeserializeOwned>(
+    data: &[u8],
+) -> Result<T, GbaPersistenceError> {
+    match rmp_serde::from_slice::<Versioned<T>>(data)? {
+        Versioned::Supported { body, .. } => Ok(body),
+        Versioned::Other { schema_version } => {
+            validate_version(schema_version)?;
+            // Supported version but undecodable body: report the body fault.
+            Ok(rmp_serde::from_slice::<T>(data)?)
+        }
+    }
 }
