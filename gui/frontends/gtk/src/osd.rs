@@ -58,11 +58,10 @@ impl GtkOsd {
         let snapshot = state.settings_arc();
         let language = snapshot.shared.general.language;
         let tick = state.session.tick_metrics();
-        let settings = snapshot.local.notifications.clone();
         let report = state.session.pump_osd(
             &mut self.manager,
             PushInput {
-                policy: TransientPolicy::from(&settings),
+                policy: TransientPolicy::from(&snapshot.local.notifications),
                 language,
                 now,
                 tick,
@@ -80,8 +79,15 @@ impl GtkOsd {
         if let Some(detail) = self.manager.take_modal_batch() {
             Self::present_modal(surface, window, detail);
         }
-        self.apply_strip(&settings, renderer, window);
-        self.sync_layer(&settings, language, tick.paused, tick.fps, renderer, window);
+        self.apply_strip(&snapshot.local.notifications, renderer, window);
+        self.sync_layer(
+            &snapshot.local.notifications,
+            language,
+            tick.paused,
+            tick.fps,
+            renderer,
+            window,
+        );
     }
 
     /// Reserve edge strips from settings. Game viewport fits into

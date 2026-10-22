@@ -483,7 +483,8 @@ mod tests {
         let zones = overlay.relative_zones(1080.0, 1920.0);
         let encoded = ProfileTouchOverlay::encode_zones(&zones);
         for (entry, zone) in encoded.split(';').zip(zones.iter()) {
-            let (label, rect) = ProfileTouchOverlay::decode_zone(entry).expect("wire entry decodes");
+            let (label, rect) =
+                ProfileTouchOverlay::decode_zone(entry).expect("wire entry decodes");
             assert_eq!(label, super::zone_label(zone.role));
             for (got, want) in rect.iter().zip([zone.x, zone.y, zone.width, zone.height]) {
                 assert!((got - want).abs() < 0.0001, "{got} vs {want}");
@@ -493,11 +494,17 @@ mod tests {
         assert!(ProfileTouchOverlay::decode_zone("A:1,2,3").is_none());
         assert!(ProfileTouchOverlay::decode_zone("A:1,2,3,x").is_none());
         let joystick = overlay.relative_joystick(1080.0, 1920.0);
-        let back = ProfileTouchOverlay::decode_joystick(&ProfileTouchOverlay::encode_joystick(&joystick))
-            .expect("joystick decodes");
+        let back =
+            ProfileTouchOverlay::decode_joystick(&ProfileTouchOverlay::encode_joystick(&joystick))
+                .expect("joystick decodes");
         for (got, want) in [back.x, back.y, back.base_radius, back.knob_radius]
             .iter()
-            .zip([joystick.x, joystick.y, joystick.base_radius, joystick.knob_radius])
+            .zip([
+                joystick.x,
+                joystick.y,
+                joystick.base_radius,
+                joystick.knob_radius,
+            ])
         {
             assert!((got - want).abs() < 0.0001, "{got} vs {want}");
         }

@@ -56,6 +56,8 @@ pub(crate) trait SettingsClosePort {
 pub(crate) trait HistorySyncPort {
     /// Push fresh history content (history only).
     fn sync_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage);
+    /// Take a history clear request; the default pump routes here.
+    fn take_history_clear(&mut self) -> bool;
 }
 
 /// Uniform aux controller: identity plus render plus capability queries.
@@ -63,9 +65,13 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
     /// Pump one domain event: prelude, dispatch, outcome.
     fn on_event(&mut self, event: AuxNativeEvent) -> AuxOutcome {
         pump_aux(self, event);
+        let cleared = self
+            .as_history()
+            .map(HistorySyncPort::take_history_clear)
+            .unwrap_or(false);
         AuxOutcome {
             close: self.close_requested(),
-            cleared: self.take_history_clear(),
+            cleared,
             error: None,
         }
     }
@@ -73,9 +79,13 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
     /// Full render through the shared pump.
     fn on_redraw(&mut self) -> AuxOutcome {
         let error = super::focus::AuxRender::render(self);
+        let cleared = self
+            .as_history()
+            .map(HistorySyncPort::take_history_clear)
+            .unwrap_or(false);
         AuxOutcome {
             close: self.close_requested(),
-            cleared: self.take_history_clear(),
+            cleared,
             error,
         }
     }
@@ -106,12 +116,6 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
     /// History-sync capability (history only).
     fn as_history(&mut self) -> Option<&mut dyn HistorySyncPort> {
         None
-    }
-
-    /// Take a history clear request (history only; routed here so the
-    /// default pump needs no port bound).
-    fn take_history_clear(&mut self) -> bool {
-        false
     }
 
     /// Share the debugger bridge for viewer creation (debug only).
@@ -354,6 +358,7 @@ pub(crate) mod test_double {
     /// Configurable stub aux: answers only the capability its kind owns.
     pub(crate) struct StubAux {
         pub kind: AuxKind,
+        pub nid: NativeWindowId,
         pub close: bool,
         pub clear_history: bool,
         pub live_rebuild: bool,
@@ -369,6 +374,7 @@ pub(crate) mod test_double {
         pub(crate) fn new(kind: AuxKind) -> Self {
             Self {
                 kind,
+                nid: NativeWindowId::dummy(),
                 close: false,
                 clear_history: false,
                 live_rebuild: false,
@@ -388,7 +394,7 @@ pub(crate) mod test_double {
         }
 
         fn native_id(&self) -> NativeWindowId {
-            NativeWindowId::dummy()
+            self.nid
         }
 
         fn close_requested(&self) -> bool {
@@ -456,6 +462,10 @@ pub(crate) mod test_double {
             _language: nerust_settings_core::model::language::AppLanguage,
         ) {
         }
+
+        fn take_history_clear(&mut self) -> bool {
+            self.clear_history
+        }
     }
 
     impl AuxController for StubAux {
@@ -486,10 +496,6 @@ pub(crate) mod test_double {
 
         fn as_history(&mut self) -> Option<&mut dyn HistorySyncPort> {
             (self.kind == AuxKind::History).then_some(self as &mut dyn HistorySyncPort)
-        }
-
-        fn take_history_clear(&mut self) -> bool {
-            self.clear_history
         }
 
         fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
@@ -531,13 +537,14 @@ mod tests {
     #[test]
     fn registry_tracks_native_ids_and_clears_all() {
         let mut registry = AuxRegistry::new();
-        assert_eq!(registry.kind_of(NativeWindowId::dummy()), None);
-        registry.insert(Box::new(StubAux::new(AuxKind::History)));
-        // Dummy ids route back to the seated kind.
-        assert_eq!(
-            registry.kind_of(NativeWindowId::dummy()),
-            Some(AuxKind::History)
-        );
+        let absent = NativeWindowId::dummy();
+        let history = StubAux::new(AuxKind::History);
+        let seated = history.nid;
+        assert_eq!(registry.kind_of(absent), None);
+        registry.insert(Box::new(history));
+        // The seated stub routes back by its own minted id.
+        assert_eq!(registry.kind_of(seated), Some(AuxKind::History));
+        assert_ne!(seated, absent);
         assert!(registry.remove_kind(AuxKind::Debug).is_none());
         registry.render_kind(AuxKind::Debug);
         registry.focus_kind(AuxKind::Debug);

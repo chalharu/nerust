@@ -1,95 +1,57 @@
-//! Main-window liveness plus close idempotence in one owned guard.
+//! Main-window liveness plus close idempotence in one owned state.
 
 use std::sync::Arc;
 
-/// Single liveness truth. Only `Live` is handle-touchable.
 #[derive(Debug, Clone)]
-pub(crate) enum MainLiveness {
+enum State {
     Live,
     Closed,
     Failed(Arc<str>),
 }
 
-impl MainLiveness {
-    /// Creation-failure detail, if terminally failed.
-    pub(crate) fn failure(&self) -> Option<&str> {
-        match self {
-            Self::Failed(detail) => Some(detail),
-            _ => None,
-        }
-    }
-
-    /// Native handle still usable for redraws and surfaces.
-    pub(crate) fn is_usable(&self) -> bool {
-        matches!(self, Self::Live)
-    }
+/// Single close bit: liveness plus the exactly-once begin flag.
+/// Query liveness only through [`MainState::is_usable`].
+#[derive(Debug, Clone)]
+pub(crate) struct MainState {
+    state: State,
+    begun: bool,
 }
 
-/// One-shot close token: `arm` succeeds exactly once per process.
-#[derive(Debug, Default)]
-pub(crate) struct CloseOnce {
-    fired: bool,
-}
-
-impl CloseOnce {
-    pub(crate) fn new() -> Self {
-        Self { fired: false }
-    }
-
-    /// Returns true exactly once; later calls are no-ops.
-    pub(crate) fn arm(&mut self) -> bool {
-        if self.fired {
-            return false;
-        }
-        self.fired = true;
-        true
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fired(&self) -> bool {
-        self.fired
-    }
-}
-
-/// Fatal creation failure, close idempotence, and native liveness.
-/// Query liveness only through [`CloseGuard::is_usable`].
-#[derive(Debug)]
-pub(crate) struct CloseGuard {
-    state: MainLiveness,
-    once: CloseOnce,
-}
-
-impl CloseGuard {
+impl MainState {
     pub(crate) fn new() -> Self {
         Self {
-            state: MainLiveness::Live,
-            once: CloseOnce::new(),
+            state: State::Live,
+            begun: false,
         }
     }
 
     /// Record a window-creation failure and retire liveness.
     /// `Failed` is terminal: the state stays `Failed`, never `Closed`.
     pub(crate) fn fail(&mut self, detail: String) {
-        self.state = MainLiveness::Failed(Arc::from(detail));
+        self.state = State::Failed(Arc::from(detail));
     }
 
     /// Creation failure, if any.
     pub(crate) fn fatal_message(&self) -> Option<&str> {
-        self.state.failure()
+        match &self.state {
+            State::Failed(detail) => Some(detail),
+            _ => None,
+        }
     }
 
     /// Native window still usable for redraws and surfaces.
     pub(crate) fn is_usable(&self) -> bool {
-        self.state.is_usable()
+        matches!(self.state, State::Live)
     }
 
     /// Idempotent close entry: true exactly once, retiring `Live` to `Closed`.
     pub(crate) fn begin_close(&mut self) -> bool {
-        if !self.once.arm() {
+        if self.begun {
             return false;
         }
-        if matches!(self.state, MainLiveness::Live) {
-            self.state = MainLiveness::Closed;
+        self.begun = true;
+        if matches!(self.state, State::Live) {
+            self.state = State::Closed;
         }
         true
     }
@@ -97,7 +59,7 @@ impl CloseGuard {
     /// Close teardown already ran (test read of the guard).
     #[cfg(test)]
     pub(crate) fn exited(&self) -> bool {
-        self.once.fired()
+        self.begun
     }
 }
 
@@ -107,21 +69,21 @@ mod tests {
 
     #[test]
     fn liveness_truth_is_single() {
-        assert!(MainLiveness::Live.is_usable());
-        assert!(!MainLiveness::Closed.is_usable());
-        let failed = MainLiveness::Failed(Arc::from("no display"));
+        assert!(MainState::new().is_usable());
+        let mut closed = MainState::new();
+        assert!(closed.begin_close());
+        assert!(!closed.is_usable());
+        let mut failed = MainState::new();
+        failed.fail("no display".to_string());
         assert!(!failed.is_usable());
-        assert_eq!(failed.failure(), Some("no display"));
-        assert_eq!(MainLiveness::Live.failure(), None);
-        assert_eq!(MainLiveness::Closed.failure(), None);
+        assert_eq!(failed.fatal_message(), Some("no display"));
     }
 
     #[test]
     fn close_is_idempotent_and_retires_liveness() {
-        let mut guard = CloseGuard::new();
+        let mut guard = MainState::new();
         assert!(guard.is_usable());
         assert!(guard.begin_close());
-        assert!(matches!(guard.state, MainLiveness::Closed));
         assert!(!guard.is_usable());
         assert!(!guard.begin_close());
         assert!(guard.exited());
@@ -129,29 +91,19 @@ mod tests {
 
     #[test]
     fn fail_retires_liveness_but_keeps_detail() {
-        let mut guard = CloseGuard::new();
+        let mut guard = MainState::new();
         guard.fail("no display".to_string());
         assert_eq!(guard.fatal_message(), Some("no display"));
-        assert!(matches!(guard.state, MainLiveness::Failed(_)));
         assert!(!guard.is_usable());
         // A later close still runs exactly once; Failed stays Failed.
         assert!(guard.begin_close());
-        assert!(matches!(guard.state, MainLiveness::Failed(_)));
         assert!(!guard.is_usable());
         assert_eq!(guard.fatal_message(), Some("no display"));
-    }
-
-    #[test]
-    fn close_once_arms_exactly_once() {
-        let mut once = CloseOnce::new();
-        assert!(once.arm());
-        assert!(!once.arm());
-        assert!(once.fired());
     }
 
     #[test]
     fn fail_after_close_keeps_terminal_failed() {
-        let mut guard = CloseGuard::new();
+        let mut guard = MainState::new();
         assert!(guard.begin_close());
         guard.fail("late display loss".to_string());
         assert_eq!(guard.fatal_message(), Some("late display loss"));
@@ -162,16 +114,10 @@ mod tests {
 
     #[test]
     fn second_fail_overwrites_detail() {
-        let mut guard = CloseGuard::new();
+        let mut guard = MainState::new();
         guard.fail("first".to_string());
         guard.fail("second".to_string());
         assert_eq!(guard.fatal_message(), Some("second"));
         assert!(!guard.is_usable());
-    }
-
-    #[test]
-    fn default_once_starts_unfired() {
-        let once = CloseOnce::default();
-        assert!(!once.fired());
     }
 }

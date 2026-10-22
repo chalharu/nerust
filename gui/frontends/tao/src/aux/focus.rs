@@ -383,6 +383,7 @@ mod tests {
 
     /// Headless shell double: records redraw/focus, feeds canned events.
     struct FakeShell {
+        nid: NativeWindowId,
         close: bool,
         mapped: Option<iced::Event>,
         redraws: Rc<Cell<u32>>,
@@ -394,7 +395,7 @@ mod tests {
 
     impl crate::aux::shell::AuxShellOps for FakeShell {
         fn native_id(&self) -> NativeWindowId {
-            NativeWindowId::dummy()
+            self.nid
         }
         fn close_requested(&self) -> bool {
             self.close
@@ -446,6 +447,7 @@ mod tests {
         FakeWin {
             kind,
             shell: FakeShell {
+                nid: NativeWindowId::dummy(),
                 close: false,
                 mapped,
                 redraws: Rc::new(Cell::new(0)),
@@ -486,7 +488,7 @@ mod tests {
     fn blanket_impls_delegate_identity_and_render() {
         let mut win = fake_win(AuxKind::Ppu, Some(redraw_event()), true);
         assert_eq!(AuxIdentity::kind(&win), AuxKind::Ppu);
-        assert_eq!(AuxIdentity::native_id(&win), NativeWindowId::dummy());
+        assert_eq!(AuxIdentity::native_id(&win), win.shell.nid);
         assert!(!AuxIdentity::close_requested(&win));
         AuxIdentity::focus_window(&win);
         assert!(win.shell.focused.get());

@@ -1,8 +1,8 @@
 //! SettingsApply: dialog result gate, plan, and execution owned by one module.
 //! The frontend orchestrates; this module owns the settings-apply flow.
 
-use nerust_gui_shell::session::{notification::FailureOrigin, osd::TickMetrics};
 use nerust_gui_shell::session::access::{PauseControl as _, SessionControl as _};
+use nerust_gui_shell::session::{notification::FailureOrigin, osd::TickMetrics};
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 
@@ -50,7 +50,11 @@ impl super::AndroidFrontend {
         true
     }
 
-    pub(super) fn handle_settings_result(&mut self, result: SettingsDialogResult, tick: TickMetrics) {
+    pub(super) fn handle_settings_result(
+        &mut self,
+        result: SettingsDialogResult,
+        tick: TickMetrics,
+    ) {
         // Settings closed: flush the error queue and resume an orphaned pause.
         // The gate reads the injected screen source; no cached flag exists to go stale.
         let is_applied = matches!(result, SettingsDialogResult::Applied(_));

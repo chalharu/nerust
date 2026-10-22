@@ -255,7 +255,7 @@ mod tests {
         let slot = StateSlotSummary {
             schema_version: 1,
             slot_id: 1,
-            path: "state.slot".into(),
+            path: nerust_persistence::sidecar::StorageLocation::Native("state.slot".into()),
             saved_at: std::time::UNIX_EPOCH + std::time::Duration::from_millis(100),
             has_thumbnail: false,
             emulator_version: "test".into(),

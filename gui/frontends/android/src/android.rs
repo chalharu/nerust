@@ -971,18 +971,16 @@ impl ApplicationHandler for AndroidFrontend {
             .sync(&self.app, &mut self.core.session, is_resumed);
         self.maybe_refresh_title(now);
         // One snapshot borrow per pass: poll and the dialog gate share it.
-        let (settings, language) = {
-            let snapshot = self.core.session.settings_snapshot();
-            (
-                snapshot.local.notifications.clone(),
-                snapshot.shared.general.language,
-            )
-        };
-        if self
-            .chrome
-            .osd
-            .poll(&mut self.core.session, &settings, language, now, tick)
-        {
+        // The `Arc` outlives the session borrow, so no field clone is needed.
+        let snapshot = self.core.session.settings_arc();
+        let language = snapshot.shared.general.language;
+        if self.chrome.osd.poll(
+            &mut self.core.session,
+            &snapshot.local.notifications,
+            language,
+            now,
+            tick,
+        ) {
             self.flow.render_sync.request_redraw(&mut self.core.shell);
         }
         self.maybe_show_error_dialog(tick);
