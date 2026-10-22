@@ -95,15 +95,6 @@ impl SessionHandle {
         self.notifications.history()
     }
 
-    /// Owned rows for change-gated dialogs; the per-frame OSD path
-    /// uses `notification_history_lines_cached` instead.
-    pub fn notification_history_lines(
-        &self,
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) -> Vec<super::osd::HistoryLine> {
-        super::osd::history_lines(self.notifications.history(), language)
-    }
-
     pub fn notification_history_seq(&self) -> u64 {
         self.notifications.history_seq()
     }
@@ -190,7 +181,7 @@ mod query_cov_tests {
         let caps = crate::session::test_util::test_session().capabilities;
         let registry = Arc::new(crate::registry::SystemRegistry::new(vec![]));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
-        let session = super::super::SessionHandle::new_ephemeral(caps, registry, audio);
+        let mut session = super::super::SessionHandle::new_ephemeral(caps, registry, audio);
         let tick = session.tick_metrics();
         assert!(!tick.loaded);
         let size = session.window_size();
@@ -202,20 +193,20 @@ mod query_cov_tests {
         assert_eq!(session.notification_history().count(), 0);
         assert!(
             session
-                .notification_history_lines(Default::default())
+                .notification_history_lines_cached(Default::default())
                 .is_empty()
         );
     }
 
     #[test]
     fn loaded_queries_report_core_values() {
-        let session = crate::session::test_util::test_session();
+        let mut session = crate::session::test_util::test_session();
         let tick = session.tick_metrics();
         let size = session.window_size();
         assert!(size.width > 0.0 && size.height > 0.0);
         let _ = session.window_title(&tick);
         let _ = session.notification_history_seq();
-        let _ = session.notification_history_lines(Default::default());
+        let _ = session.notification_history_lines_cached(Default::default());
     }
 
     #[test]

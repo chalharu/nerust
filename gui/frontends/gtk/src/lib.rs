@@ -118,11 +118,11 @@ impl State {
         self.session.flush_before_exit();
     }
 
-    pub(crate) fn notification_history_lines(
-        &self,
+    pub(crate) fn history_lines_cached(
+        &mut self,
         language: nerust_settings_core::model::language::AppLanguage,
-    ) -> Vec<nerust_gui_shell::session::osd::HistoryLine> {
-        self.session.notification_history_lines(language)
+    ) -> &[nerust_gui_shell::session::osd::HistoryLine] {
+        self.session.notification_history_lines_cached(language)
     }
 
     /// History generation for the refresh gate: unchanged content
