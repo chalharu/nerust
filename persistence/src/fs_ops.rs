@@ -8,10 +8,10 @@ use std::{
 
 use crate::error::PersistenceError;
 
-/// Replace a file atomically. `Ok` means the replacement committed and is
-/// visible; parent-directory durability stays best-effort by design: reporting
-/// failure there would let callers roll memory back while the new file is
-/// already visible on disk, which is worse than a logged warning.
+/// Replace a file atomically. `Ok` means the replacement committed, is visible,
+/// and the parent directory sync succeeded. A parent-sync failure is returned:
+/// callers treat it as "save failed" and retry, which converges; silently
+/// reporting `Ok` would let callers believe the replacement is durable.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
@@ -30,9 +30,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
         let _ = fs::remove_file(&temp_path);
         return Err(error);
     }
-    if let Err(error) = sync_parent_dir(path) {
-        log::warn!("atomic replacement committed but parent directory sync failed: {error}");
-    }
+    sync_parent_dir(path)?;
     Ok(())
 }
 

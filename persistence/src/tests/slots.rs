@@ -189,7 +189,7 @@ fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
     };
     let identity = test_identity();
     for path in [
-        StorageLocation::from("/tmp/states/7.state"),
+        StorageLocation::Native("/tmp/states/7.state".into()),
         StorageLocation::document_tree(
             "content://provider/tree/primary%3A日本語",
             "nes/id/states/7.state",

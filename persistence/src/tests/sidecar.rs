@@ -89,7 +89,7 @@ fn document_relative_paths_and_child_names_reject_traversal() {
     }
     assert!(StorageLocation::document_tree("", "save").is_err());
     for dir in [
-        StorageLocation::from("/tmp/saves"),
+        StorageLocation::Native("/tmp/saves".into()),
         StorageLocation::document_tree("content://provider/tree/saves", "states").unwrap(),
     ] {
         for invalid in [
@@ -110,14 +110,14 @@ fn document_relative_paths_and_child_names_reject_traversal() {
 #[test]
 fn infallible_conversions_only_build_native_paths() {
     use std::path::{Path, PathBuf};
-    // DocumentTree has no From impl: untrusted input must pass
-    // document_tree()/child() validation; these never bypass it.
+    // Only path types convert infallibly, and only to Native: URI strings
+    // must pass document_tree()/child() validation; nothing bypasses it.
     for location in [
         StorageLocation::from(PathBuf::from("/tmp/saves")),
         StorageLocation::from(Path::new("/tmp/saves")),
-        StorageLocation::from("/tmp/saves"),
-        StorageLocation::from("content://provider/tree/saves"),
+        StorageLocation::Native("/tmp/saves".into()),
     ] {
         assert!(matches!(location, StorageLocation::Native(_)));
     }
+    assert!(StorageLocation::document_tree("content://provider/tree/saves", "id/states").is_ok());
 }

@@ -196,7 +196,7 @@ mod tests {
         let build = |slots| controllers_for_assignments(&InputAssignments::new(slots), factory);
         assert!(matches!(
             build(vec![(P1, None), (P1, Some(pad()))]),
-            Err(CreateSplitError::SlotConflict { .. })
+            Err(CreateSplitError::DuplicateSlot { .. })
         ));
         assert!(matches!(
             build(vec![(AttachmentId::new("unknown"), None)]),

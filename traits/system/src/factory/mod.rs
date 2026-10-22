@@ -6,15 +6,6 @@ use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_input_traits::{GuiInputPort, InputAssignments, InputSystemFactory, UnifiedFieldMap};
 use thiserror::Error;
 
-/// Resolve a control without dropping its digital/analog kind.
-pub fn resolve_unified_field(
-    map: &UnifiedFieldMap,
-    attachment: nerust_input_traits::AttachmentId,
-    control: impl Into<nerust_input_traits::ControlId>,
-) -> Option<usize> {
-    map.get(&(attachment, control.into())).copied()
-}
-
 use self::{
     descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
     load::{DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest},

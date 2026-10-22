@@ -52,6 +52,13 @@ impl<'a> BindingIndex<'a> {
             .copied()
     }
 
+    /// Probe an analog keyboard descriptor in O(1). Digital IDs never shadow it.
+    pub fn key_for_analog(&self, attachment: &str, control: &str) -> Option<Key> {
+        self.map
+            .get(&(attachment, BindingControl::Analog(control)))
+            .copied()
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -428,6 +435,11 @@ mod tests {
             super::BindingIndex::for_profile(&analog_only).key_for("test.att", "test.ctrl.a"),
             None
         );
+        assert_eq!(
+            index.key_for_analog("test.att", "test.ctrl.a"),
+            Some(Key::KeyX)
+        );
+        assert_eq!(index.key_for_analog("test.att", "missing"), None);
     }
 
     #[test]
