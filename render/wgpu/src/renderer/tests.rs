@@ -100,6 +100,12 @@ fn surface_size_within_limit_is_unchanged() {
 }
 
 #[test]
+fn ntsc_texture_rejects_unaligned_bytes() {
+    assert!(encode_ntsc_texture(Some(&[0u8; 5])).is_err());
+    assert!(encode_ntsc_texture(None).is_ok());
+}
+
+#[test]
 fn ntsc_texture_is_prepacked_for_r32uint_upload() {
     let assets = FilterType::NtscRGB.palette_console_video_assets();
     let assets = assets
@@ -108,7 +114,7 @@ fn ntsc_texture_is_prepacked_for_r32uint_upload() {
     let source = assets
         .packed_ntsc_rgba8()
         .expect("NTSC filter should provide a packed texture");
-    let (packed, size) = encode_ntsc_texture(Some(source));
+    let (packed, size) = encode_ntsc_texture(Some(source)).expect("valid packed texture encodes");
 
     assert_eq!(size.width, NTSC_TEXTURE_WIDTH);
     assert_eq!(size.height, NTSC_TEXTURE_HEIGHT);

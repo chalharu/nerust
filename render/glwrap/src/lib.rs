@@ -106,8 +106,8 @@ impl std::error::Error for ShaderError {}
 #[derive(Debug)]
 pub struct Shader {
     program: GLuint,
-    attributes: HashMap<String, GLuint>,
-    uniforms: HashMap<String, GLint>,
+    attributes: HashMap<Box<str>, GLuint>,
+    uniforms: HashMap<Box<str>, GLint>,
     deleted: bool,
     _thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
@@ -222,7 +222,7 @@ impl Drop for Shader {
     }
 }
 
-fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderError> {
+fn get_attributes(program_id: GLuint) -> Result<HashMap<Box<str>, GLuint>, ShaderError> {
     let mut count: GLint = 0;
     get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).map_err(|e| {
         ShaderError::Query {
@@ -279,12 +279,12 @@ fn get_attributes(program_id: GLuint) -> Result<HashMap<String, GLuint>, ShaderE
             stage: QueryStage::AttribLocation,
             detail: format!("attribute {name} has no location: {e}"),
         })?;
-        let _ = result.insert(name, location);
+        let _ = result.insert(name.into_boxed_str(), location);
     }
     Ok(result)
 }
 
-fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderError> {
+fn get_uniforms(program_id: GLuint) -> Result<HashMap<Box<str>, GLint>, ShaderError> {
     let mut count: GLint = 0;
     get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).map_err(|e| ShaderError::Query {
         stage: QueryStage::ActiveUniforms,
@@ -334,7 +334,7 @@ fn get_uniforms(program_id: GLuint) -> Result<HashMap<String, GLint>, ShaderErro
                     stage: QueryStage::UniformLocation,
                     detail: e.to_string(),
                 })?;
-        let _ = result.insert(name, location);
+        let _ = result.insert(name.into_boxed_str(), location);
     }
 
     Ok(result)

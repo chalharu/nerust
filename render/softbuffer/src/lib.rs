@@ -94,9 +94,6 @@ impl TapKey {}
 pub(crate) enum PixelIndexer<'a> {
     /// Tight RGBA bytes; short rows fall back to opaque black.
     Rgba { src: &'a [u8] },
-    /// Test-only direct palette path; production uses the converted table.
-    #[cfg(test)]
-    Palette { src: &'a [u8], palette: &'a [u32] },
     /// Palette indices with the per-frame converted table (no per-texel convert).
     PaletteTable {
         src: &'a [u8],
@@ -148,7 +145,6 @@ impl PixelIndexer<'_> {
     pub(crate) fn pixel(&self, i: usize) -> [u8; 4] {
         match *self {
             Self::Rgba { src } => rgba_texel(src, 0, i),
-            Self::Palette { src, palette } => palette_texel(src, palette, 0, i),
             Self::PaletteTable { src, table } => palette_table_texel(src, table, 0, i),
             Self::Ntsc { buf } => ntsc_texel(buf, 0, i),
         }
@@ -247,12 +243,6 @@ impl SoftbufferRenderer {
                     let row_base = src_y_index.saturating_mul(4);
                     Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
                         rgba_texel(src, row_base, i)
-                    });
-                }
-                #[cfg(test)]
-                PixelIndexer::Palette { src, palette } => {
-                    Self::horizontal_row(dst_y_index, dst_w, lut, px, resize_buffer, |i| {
-                        palette_texel(src, palette, src_y_index, i)
                     });
                 }
                 PixelIndexer::PaletteTable { src, table } => {
@@ -430,8 +420,11 @@ impl SoftbufferRenderer {
         ntsc_writes <= ntsc_len
     }
 
-    /// Cached [`Self::taps_cover`]: a struct-key match skips the per-frame scan.
+    /// Cached [`Self::taps_cover`]: a struct-key match skips the scan, so the
+    /// full LUT walk runs only when shape, buffers, or the LUT revision change.
     /// The `lut_rev` epoch invalidates on every rebuild; no hash, no rescan timer.
+    /// The gate stays in release: hot-loop reads fall back to black, but a
+    /// short LUT would silently black out rows instead of refusing the frame.
     fn taps_covered(
         &mut self,
         dst_w: usize,
@@ -1163,16 +1156,13 @@ mod tests {
 
     #[test]
     fn palette_indexer_decodes_words_and_oob_is_black() {
+        use super::palette_texel;
         let palette = [0x1234_56FFu32, 0xAABB_CCDD];
         let src = [0u8, 1, 9];
-        let indexer = PixelIndexer::Palette {
-            src: &src,
-            palette: &palette,
-        };
-        assert_eq!(indexer.pixel(0), [0x12, 0x34, 0x56, 0xFF]);
-        assert_eq!(indexer.pixel(1), [0xAA, 0xBB, 0xCC, 0xDD]);
-        assert_eq!(indexer.pixel(2), [0, 0, 0, 0]);
-        assert_eq!(indexer.pixel(99), indexer.pixel(0));
+        assert_eq!(palette_texel(&src, &palette, 0, 0), [0x12, 0x34, 0x56, 0xFF]);
+        assert_eq!(palette_texel(&src, &palette, 0, 1), [0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(palette_texel(&src, &palette, 0, 2), [0, 0, 0, 0]);
+        assert_eq!(palette_texel(&src, &palette, 0, 99), [0x12, 0x34, 0x56, 0xFF]);
     }
 
     #[test]

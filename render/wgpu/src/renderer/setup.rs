@@ -155,7 +155,7 @@ impl RenderPipeline {
             palette_size,
             &palette_data,
         );
-        let (ntsc_data, ntsc_size) = encode_ntsc_texture(ntsc_data);
+        let (ntsc_data, ntsc_size) = encode_ntsc_texture(ntsc_data)?;
         let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
@@ -764,37 +764,41 @@ fn fragment_entry_point(kind: FramePipelineKind, surface_is_srgb: bool) -> &'sta
     }
 }
 
-pub(super) fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d) {
+pub(super) fn encode_ntsc_texture(
+    packed_ntsc_rgba8: Option<&[u8]>,
+) -> Result<(Box<[u8]>, Extent3d), String> {
     let Some(texture) = packed_ntsc_rgba8 else {
-        return (
+        return Ok((
             vec![0; 4].into_boxed_slice(),
             Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
-        );
+        ));
     };
 
     // texture 高さは実データ長から計算する (固定定数ではなく entry_stride 変更に追従)
     let width = NTSC_TEXTURE_WIDTH;
     let height = texture.len() / (width as usize * 4);
     let mut packed = Vec::with_capacity(texture.len());
-    let chunks = texture.as_chunks::<4>();
-    assert!(
-        chunks.1.is_empty(),
-        "packed NTSC texture must be a multiple of 4 bytes"
-    );
-    for chunk in chunks.0.iter() {
+    let (chunks, remainder) = texture.as_chunks::<4>();
+    if !remainder.is_empty() {
+        return Err(format!(
+            "packed NTSC texture length {} is not a multiple of 4 bytes",
+            texture.len()
+        ));
+    }
+    for chunk in chunks.iter() {
         packed.extend_from_slice(&u32::from_be_bytes(*chunk).to_le_bytes());
     }
 
-    (
+    Ok((
         packed.into_boxed_slice(),
         Extent3d {
             width,
             height: height as u32,
             depth_or_array_layers: 1,
         },
-    )
+    ))
 }

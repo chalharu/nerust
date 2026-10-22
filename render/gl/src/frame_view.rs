@@ -613,7 +613,7 @@ impl FrameView {
         }
         for id in ids {
             if policy.note(!has_context || delete_textures(1, &[id]).is_err()) {
-                leaked.push(LeakedName::Texture(id));
+                leaked.push(LeakedName::Texture);
             }
         }
         self.frame_texture = 0;
@@ -624,18 +624,18 @@ impl FrameView {
         if let Some(mut shader) = self.shader.take()
             && shader.destroy_if_current(current)
         {
-            leaked.push(LeakedName::Program(0));
+            leaked.push(LeakedName::Program);
         }
         if let Some(mut vba) = self.vba.take() {
             let (arrays, buffers) = vba.destroy_report(current);
-            leaked.extend(std::iter::repeat_n(LeakedName::Array(0), arrays));
-            leaked.extend(std::iter::repeat_n(LeakedName::Buffer(0), buffers));
+            leaked.extend(std::iter::repeat_n(LeakedName::Array, arrays));
+            leaked.extend(std::iter::repeat_n(LeakedName::Buffer, buffers));
         }
         if let Some(vbo) = self.vbo.take()
             && Rc::strong_count(&vbo) == 1
             && vbo.destroy_if_current(current)
         {
-            leaked.push(LeakedName::Buffer(0));
+            leaked.push(LeakedName::Buffer);
         }
         leaked
     }

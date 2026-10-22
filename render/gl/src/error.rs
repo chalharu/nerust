@@ -47,16 +47,17 @@ impl From<ViewError> for nerust_render_traits::renderer::RendererError {
     fn from(error: ViewError) -> Self {
         use nerust_render_traits::renderer::{RendererError, RendererErrorKind};
         match error {
-            ViewError::MissingUniform { .. }
-            | ViewError::MissingAttribute { .. }
-            | ViewError::NoProgram { .. }
-            | ViewError::NoVertexArray { .. }
-            | ViewError::NoVertexBuffer { .. } => RendererError::with_kind(
+            ViewError::MissingUniform { program, .. }
+            | ViewError::MissingAttribute { program, .. }
+            | ViewError::NoProgram { program } => RendererError::with_kind(
                 "program",
-                RendererErrorKind::Attach {
-                    backend: "gl",
-                    stage: "program",
-                },
+                RendererErrorKind::Program { program },
+                Box::new(error),
+            ),
+            ViewError::NoVertexArray { pipeline }
+            | ViewError::NoVertexBuffer { pipeline } => RendererError::with_kind(
+                "program",
+                RendererErrorKind::Program { program: pipeline },
                 Box::new(error),
             ),
             ViewError::InvalidOsdClear { .. }
@@ -91,41 +92,26 @@ mod tests {
                     name: "u",
                     program: "p",
                 },
-                RendererErrorKind::Attach {
-                    backend: "gl",
-                    stage: "program",
-                },
+                RendererErrorKind::Program { program: "p" },
             ),
             (
                 ViewError::MissingAttribute {
                     name: "a",
                     program: "p",
                 },
-                RendererErrorKind::Attach {
-                    backend: "gl",
-                    stage: "program",
-                },
+                RendererErrorKind::Program { program: "p" },
             ),
             (
                 ViewError::NoProgram { program: "p" },
-                RendererErrorKind::Attach {
-                    backend: "gl",
-                    stage: "program",
-                },
+                RendererErrorKind::Program { program: "p" },
             ),
             (
                 ViewError::NoVertexArray { pipeline: "p" },
-                RendererErrorKind::Attach {
-                    backend: "gl",
-                    stage: "program",
-                },
+                RendererErrorKind::Program { program: "p" },
             ),
             (
                 ViewError::NoVertexBuffer { pipeline: "p" },
-                RendererErrorKind::Attach {
-                    backend: "gl",
-                    stage: "program",
-                },
+                RendererErrorKind::Program { program: "p" },
             ),
             (
                 ViewError::InvalidOsdClear { w: 1, h: 2 },
