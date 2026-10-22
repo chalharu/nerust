@@ -463,8 +463,18 @@ impl OsdView {
                     h: surface_h,
                 });
             }
-            // Null store: defer the fullscreen clear to the first staged
-            // composite. Resizes with no OSD layer never pay the memset.
+            // Defined store, undefined contents: null-alloc sizes the store
+            // without a host memset or pixel transfer. The first staged
+            // composite clears once; resizes with no OSD layer pay nothing more.
+            crate::frame_textures::allocate_texture_store(
+                0,
+                self.osd_texture,
+                surface_w as usize,
+                surface_h as usize,
+                gl::RGBA as i32,
+                gl::RGBA,
+            )?;
+            ok_gl(check_frame())?;
             self.osd_size = (surface_w, surface_h);
             self.osd_prev = None;
             self.osd_surface_clean = false;
