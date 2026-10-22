@@ -199,7 +199,9 @@ class ChromeManager(private val activity: MainActivity) {
         (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
 
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
-        Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
+        }
         fpsValue = fps
         fpsVisible = visible
         if (!visible) {

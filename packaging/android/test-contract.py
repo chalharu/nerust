@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Regression tests for single-source contract generation (stdlib only)."""
 import copy
-import importlib.util
 import json
 import subprocess
 import sys
@@ -10,17 +9,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bridge_schema import load_sibling
 
-SPEC = importlib.util.spec_from_file_location("contract", Path(__file__).with_name("generate-contract.py"))
-CONTRACT = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(CONTRACT)
-VERIFY_SPEC = importlib.util.spec_from_file_location("verify_contract", Path(__file__).with_name("verify-contract.py"))
-VERIFY = importlib.util.module_from_spec(VERIFY_SPEC)
-VERIFY_SPEC.loader.exec_module(VERIFY)
-DECODER_SPEC = importlib.util.spec_from_file_location("decoder_contract", Path(__file__).with_name("test-decoder-contract.py"))
-DECODER = importlib.util.module_from_spec(DECODER_SPEC)
-DECODER_SPEC.loader.exec_module(DECODER)
+CONTRACT = load_sibling("contract", "generate-contract.py")
+VERIFY = load_sibling("verify_contract", "verify-contract.py")
+DECODER = load_sibling("decoder_contract", "test-decoder-contract.py")
 
 
 class ContractTests(unittest.TestCase):
@@ -41,17 +35,17 @@ class ContractTests(unittest.TestCase):
 
     def test_mismatched_event_versions_are_rejected(self):
         self.schema["definitions"]["menuEvent"]["properties"]["v"]["const"] += 1
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(CONTRACT.ContractError):
             CONTRACT.outputs(self.schema)
 
     def test_invalid_chunks_and_duplicate_actions_are_rejected(self):
         changed = copy.deepcopy(self.schema)
         changed["x-saf-chunk-bytes"] = 0
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(CONTRACT.ContractError):
             CONTRACT.outputs(changed)
         actions = self.schema["definitions"]["menuEvent"]["properties"]["action"]["enum"]
         actions.append(actions[0])
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(CONTRACT.ContractError):
             CONTRACT.outputs(self.schema)
 
     def test_unsupported_schema_rules_are_not_ignored(self):
@@ -60,17 +54,17 @@ class ContractTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 changed = copy.deepcopy(original)
                 changed["definitions"]["menuEvent"]["properties"]["key"][rule] = value
-                with self.assertRaises(AssertionError):
+                with self.assertRaises(CONTRACT.ContractError):
                     CONTRACT.outputs(changed)
         changed = copy.deepcopy(original)
         changed["not"] = {"type": "object"}
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(CONTRACT.ContractError):
             CONTRACT.outputs(changed)
 
     def test_unsupported_version_even_when_all_events_agree_is_rejected(self):
         for definition in self.schema["definitions"].values():
             definition["properties"]["v"]["const"] = 2
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(CONTRACT.ContractError):
             CONTRACT.outputs(self.schema)
 
     def test_rust_generated_formatting_is_stable_with_repository_config(self):

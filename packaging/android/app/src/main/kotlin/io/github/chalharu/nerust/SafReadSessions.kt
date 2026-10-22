@@ -1,6 +1,7 @@
 package io.github.chalharu.nerust
 
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
@@ -10,7 +11,9 @@ internal class SafReadSessions(
     private val closeExecutor: Executor = cleanupExecutor,
 ) : AutoCloseable {
     private class Session(val stream: InputStream)
-    private val streams = mutableMapOf<Long, Session>()
+    // Lock-free reads: per-session monitors never nest inside the registry monitor.
+    // Registry monitor guards only id minting and teardown; lookups use the map directly.
+    private val streams = ConcurrentHashMap<Long, Session>()
     private var nextId = 1L
     private var closed = false
 
@@ -25,9 +28,9 @@ internal class SafReadSessions(
     /** null is an error, never EOF. Short reads remain data. */
     fun read(id: Long, maxBytes: Int): ByteArray? {
         if (maxBytes !in 1..SAF_CHUNK_BYTES) return null
-        val session = synchronized(this) { streams[id] } ?: return null
+        val session = streams[id] ?: return null
         return synchronized(session) {
-            if (synchronized(this) { streams[id] !== session }) return null
+            if (streams[id] !== session) return null
             val stream = session.stream
             try {
                 val buffer = ByteArray(maxBytes)
@@ -48,7 +51,7 @@ internal class SafReadSessions(
     }
 
     fun close(id: Long) {
-        val session = synchronized(this) { streams.remove(id) } ?: return
+        val session = streams.remove(id) ?: return
         synchronized(session) { runCatching { session.stream.close() } }
     }
 
@@ -66,7 +69,7 @@ internal class SafReadSessions(
 
     companion object {
         // Provider reads/close may block indefinitely: never join from Activity.onDestroy.
-        private val cleanupExecutor = Executors.newCachedThreadPool { runnable ->
+        private val cleanupExecutor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "nerust-saf-close").apply { isDaemon = true }
         }
     }

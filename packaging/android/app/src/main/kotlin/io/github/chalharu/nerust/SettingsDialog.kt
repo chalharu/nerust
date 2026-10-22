@@ -44,6 +44,31 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+/** Settings section fallback labels: Rust pushes the label per section.
+ * Used only for test-constructed content without a pushed label. */
+internal object SettingsSectionFallback {
+    const val AUDIO = "Audio"
+    const val VIDEO = "Video"
+    const val CONTROLS = "Controls"
+    const val STORAGE = "Storage"
+    const val NOTIFICATIONS = "Notifications"
+    const val GENERAL = "General"
+
+    fun labelFor(id: String): String =
+        when (id) {
+            "audio" -> AUDIO
+            "video" -> VIDEO
+            "controls" -> CONTROLS
+            "storage" -> STORAGE
+            "notifications" -> NOTIFICATIONS
+            "general" -> GENERAL
+            "system.nes" -> "Nintendo Entertainment System"
+            "system.gbc" -> "Game Boy Color"
+            "system.gba" -> "Game Boy Advance"
+            else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
+        }
+
+
 /** Settings dialog UI: cards, section builders, visibility filtering, and selection state. */
 internal data class AndroidSetting(
     val key: String,

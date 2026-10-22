@@ -4,19 +4,29 @@ Imported by generate/verify/test scripts so the schema helpers live once.
 Unlike Python assert, checks survive python -O.
 """
 import re
-import sys
 from pathlib import Path
-
-sys.dont_write_bytecode = True
 
 
 class ContractError(ValueError):
     pass
 
 
-def require(condition, message):
+def require(condition, message="unsupported or inconsistent bridge schema"):
     if not condition:
         raise ContractError(message)
+
+
+def load_sibling(module_name, file_name):
+    """Import a sibling script as a module (single importlib recipe)."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        module_name, Path(__file__).with_name(file_name)
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 _STRINGS = re.compile(r'"""(.*?)"""|r(#+)"(.*?)"\1|"(?:\\.|[^"\\])*"', re.DOTALL)

@@ -86,12 +86,15 @@ kotlin {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val composeBomVersion = "2026.09.00"
+    val composeBom = platform("androidx.compose:compose-bom:$composeBomVersion")
     val documentFileVersion = "1.1.0"
     val junitVersion = "4.13.2"
     val lifecycleVersion = "2.11.0"
     val savedStateVersion = "1.5.0"
-    val androidxTestVersion = "1.7.0"
+    val androidxTestCoreVersion = "1.7.0"
+    val androidxTestRunnerVersion = androidxTestCoreVersion
+    val androidxTestRulesVersion = androidxTestCoreVersion
     val androidxTestExtVersion = "1.3.0"
 
     implementation(composeBom)
@@ -104,9 +107,9 @@ dependencies {
 
     testImplementation("junit:junit:$junitVersion")
 
-    androidTestImplementation("androidx.test:core:$androidxTestVersion")
-    androidTestImplementation("androidx.test:runner:$androidxTestVersion")
-    androidTestImplementation("androidx.test:rules:$androidxTestVersion")
+    androidTestImplementation("androidx.test:core:$androidxTestCoreVersion")
+    androidTestImplementation("androidx.test:runner:$androidxTestRunnerVersion")
+    androidTestImplementation("androidx.test:rules:$androidxTestRulesVersion")
     androidTestImplementation("androidx.test.ext:junit:$androidxTestExtVersion")
     androidTestImplementation("junit:junit:$junitVersion")
 }

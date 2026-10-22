@@ -43,6 +43,9 @@ class SafWriteSessionsTest {
             assertFalse(failure, sessions.finish(id, true))
             assertEquals("abort", tx.calls.last())
             if (failure != "commit") assertFalse(tx.calls.contains("commit"))
+            if (failure == "close") {
+                assertEquals(1, tx.calls.count { it == "close" })
+            }
         }
     }
 

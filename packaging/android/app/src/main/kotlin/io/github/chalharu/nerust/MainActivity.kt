@@ -27,6 +27,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import org.json.JSONException
 import org.json.JSONObject
 import kotlin.math.max
 
@@ -73,7 +74,12 @@ class MainActivity :
     private val chromeManager = ChromeManager(this)
     private val dialogManager = DialogManager(this)
     private val safRepository = SafRepository(this)
+    // Test-only dialog probe: release builds skip the write so the
+    // production show path pays one branch and keeps no test state.
     internal var lastDialogStateForTest = "not requested"
+        set(value) {
+            if (BuildConfig.DEBUG) field = value
+        }
 
     // Root-window safe insets in physical pixels, order [top, right, bottom, left].
     // Observed only: the listener refreshes and pushes this cache, so the render thread reads only.
@@ -557,9 +563,20 @@ class MainActivity :
     /** Show a modal Android settings dialog. Presents the versioned settings JSON from Rust.
      * Save and dismiss return request-scoped JSON keyed by stable setting IDs. */
     fun showSettingsDialog(payload: String) {
-        val document = JSONObject(payload)
-        require(document.getInt("schemaVersion") == SETTINGS_SCHEMA_VERSION) {
-            "Unsupported settings schema"
+        val document =
+            try {
+                JSONObject(payload)
+            } catch (e: JSONException) {
+                Log.e(TAG, "showSettingsDialog: malformed payload", e)
+                return
+            }
+        if (document.optInt("schemaVersion", -1) != SETTINGS_SCHEMA_VERSION) {
+            Log.e(TAG, "showSettingsDialog: unsupported schemaVersion")
+            val requestId = document.optLong("requestId", -1L)
+            if (requestId >= 0) {
+                showErrorDialog(requestId, "Unsupported settings schema")
+            }
+            return
         }
         val requestId = document.getLong("requestId")
         val sectionDocuments = document.getJSONArray("sections")
