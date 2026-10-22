@@ -1432,7 +1432,7 @@ fn pump_osd_empty_queue_reports_clean() {
 fn pump_osd_routes_no_core_error_to_modal() {
     use std::time::Instant;
 
-    use crate::session::osd::{ModalSource as _, OsdManager, PushInput, TransientPolicy};
+    use crate::session::osd::{OsdManager, PushInput, TransientPolicy};
 
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());

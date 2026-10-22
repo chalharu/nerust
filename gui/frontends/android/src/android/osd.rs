@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use nerust_gui_shell::session::{
     SessionHandle,
-    osd::{OsdManager, OsdPresenter, OsdSync, OsdSyncInput},
+    osd::{ModalQueue, OsdManager, OsdPresenter, OsdSync, OsdSyncInput},
 };
 use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
@@ -131,8 +131,8 @@ impl AndroidOsd {
 
     /// Borrow the notification queue for the frontend-owned dialog coordinator.
     /// The borrow ends when the closure returns.
-    pub(super) fn with_modal<R>(&mut self, operation: impl FnOnce(&mut OsdManager) -> R) -> R {
-        operation(&mut self.state.manager)
+    pub(super) fn with_modal<R>(&mut self, operation: impl FnOnce(&mut ModalQueue) -> R) -> R {
+        operation(self.state.manager.modal_queue())
     }
 
     /// Forget sync state after a renderer rebuild.

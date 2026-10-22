@@ -1,6 +1,6 @@
 //! OSD service cluster: layer sync plus history plus modal queue.
 //! Owned by `HostState`; the drain router uses only the narrow ports below.
-use nerust_gui_shell::session::osd::ModalSource as _;
+
 
 use super::osd::ModalFlight;
 
