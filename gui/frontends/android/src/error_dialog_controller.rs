@@ -1,6 +1,6 @@
 //! Single-owner error-dialog state machine (host-testable).
-//! The shell `ModalBox` stays the only queue gate.
-use nerust_gui_shell::session::osd::{ModalSink, ModalSource};
+//! The shell `ModalQueue` stays the only queue gate.
+use nerust_gui_shell::session::osd::ModalQueue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
@@ -82,7 +82,7 @@ impl ErrorDialogController {
     pub(crate) fn on_dismissed_for(
         &mut self,
         id: DialogRequestId,
-        queue: &mut (impl ModalSink + ModalSource),
+        queue: &mut ModalQueue,
         screen: Screen,
     ) -> DismissTransition {
         if self.current_id != Some(id) {
@@ -101,7 +101,7 @@ impl ErrorDialogController {
     /// or settings owns the screen. Moves the batch into the controller.
     pub(crate) fn poll_show(
         &mut self,
-        queue: &mut impl ModalSource,
+        queue: &mut ModalQueue,
         screen: Screen,
     ) -> Option<ShowTransition> {
         let Screen::Foreground { can_pause } = screen else {
@@ -125,7 +125,7 @@ impl ErrorDialogController {
     /// Stale duplicates are no-ops.
     pub(crate) fn on_dismissed(
         &mut self,
-        queue: &mut (impl ModalSink + ModalSource),
+        queue: &mut ModalQueue,
         screen: Screen,
     ) -> DismissTransition {
         const IDLE: DismissTransition = DismissTransition::Idle;
@@ -152,7 +152,7 @@ impl ErrorDialogController {
 
     /// Activity suspend kills transient UI: release the gate and requeue
     /// the unacked head; the pause flag survives for the resume path.
-    pub(crate) fn on_suspended(&mut self, queue: &mut (impl ModalSink + ModalSource)) {
+    pub(crate) fn on_suspended(&mut self, queue: &mut ModalQueue) {
         self.current_id = None;
         queue.modal_closed();
         if let Some(detail) = self.current.take() {
@@ -164,7 +164,7 @@ impl ErrorDialogController {
     /// only when no dialog came up to own it.
     pub(crate) fn on_settings_closed(
         &mut self,
-        queue: &mut (impl ModalSink + ModalSource),
+        queue: &mut ModalQueue,
         screen: Screen,
     ) -> SettingsClosedTransition {
         // Settings just closed: show unless suspended. A stale

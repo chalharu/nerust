@@ -4,7 +4,7 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gtk::{glib, prelude::*};
-use nerust_gui_shell::session::osd::{ModalSource, OsdManager};
+use nerust_gui_shell::session::osd::OsdManager;
 use nerust_settings_core::model::local::NotificationSettings;
 
 use super::{State, renderer::GtkRenderer};

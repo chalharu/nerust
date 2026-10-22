@@ -12,7 +12,7 @@ pub use super::osd_history::{
     level_label, level_name, level_tag,
 };
 
-pub use crate::session::osd_modal::{ModalSink, ModalSource};
+pub use crate::session::osd_modal::ModalQueue;
 pub use crate::session::osd_presenter::{
     OsdChrome, OsdPlan, OsdPresenter, OsdState, OsdSync, OsdSyncInput, STATUS_FPS_MIN_INTERVAL,
     StatusGate, TickMetrics, ViewInsets, format_status_value,
@@ -20,7 +20,7 @@ pub use crate::session::osd_presenter::{
 pub use crate::session::osd_render::{OSD_STATUS_RGB, osd_anchor};
 pub use crate::session::osd_transient::{FrameChannel, OsdRow, TransientPolicy};
 
-use crate::session::osd_modal::{ModalCenter, ModalPump};
+use crate::session::osd_modal::ModalPump;
 use crate::session::osd_presenter::{ModalRoute, ModalRouter, status_key, status_text};
 use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counted_row};
 
@@ -28,7 +28,7 @@ use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counte
 #[derive(Debug, Default)]
 pub struct OsdManager {
     transient: TransientQueue,
-    modal: ModalCenter,
+    modal: ModalQueue,
     /// Monotonic display-generation. Presenters remember the last
     /// generation they synced; inequality means re-render.
     generation: u64,
@@ -165,34 +165,35 @@ impl OsdManager {
     }
 }
 
-impl ModalSink for OsdManager {
-    fn queue_modal(&mut self, detail: String) {
-        self.modal.queue_direct(detail);
-    }
-
-    fn requeue_front(&mut self, detail: String) {
-        self.modal.requeue_direct(detail);
-    }
-}
-
-impl ModalSource for OsdManager {
-    fn take_modal_batch(&mut self) -> Option<String> {
-        self.modal.take_batch()
-    }
-
-    fn modal_closed(&mut self) {
-        self.modal.closed()
-    }
-
-    fn modal_pending(&self) -> usize {
-        self.modal.pending()
-    }
-}
-
 impl OsdManager {
+    /// Mutable queue gate for dialog hosts; the shell pump owns the rest.
+    pub fn modal_queue(&mut self) -> &mut ModalQueue {
+        &mut self.modal
+    }
+
     /// Queued error batches awaiting a dialog, for the wake policy.
     pub fn modal_pending(&self) -> usize {
         self.modal.pending()
+    }
+
+    /// Write entries for tests; production writes go through
+    /// [`Self::modal_queue`] (frontends) or the pump (shell).
+    #[cfg(test)]
+    pub(crate) fn queue_modal(&mut self, detail: String) {
+        self.modal.queue_modal(detail);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn requeue_front(&mut self, detail: String) {
+        self.modal.requeue_front(detail);
+    }
+
+    pub fn take_modal_batch(&mut self) -> Option<String> {
+        self.modal.take_batch()
+    }
+
+    pub fn modal_closed(&mut self) {
+        self.modal.closed()
     }
 
     pub fn has_visible(&self) -> bool {

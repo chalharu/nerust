@@ -1,7 +1,7 @@
 //! DialogCoordinator: frontend-owned dialog flow, no OSD pass-through.
 //! Screen gates come from the injected [`ScreenSource`]; no cached bool.
 
-use nerust_gui_shell::session::osd::{ModalSink, ModalSource, TickMetrics};
+use nerust_gui_shell::session::osd::{ModalQueue, TickMetrics};
 
 use crate::error_dialog_controller::{
     DismissTransition, Screen, SettingsClosedTransition, ShowTransition,
@@ -57,7 +57,7 @@ impl<S: ScreenSource> DialogCoordinator<S> {
     /// or settings owns the screen. Takes the pass tick.
     pub(super) fn poll_error_dialog(
         &mut self,
-        queue: &mut (impl ModalSink + ModalSource),
+        queue: &mut ModalQueue,
         is_resumed: bool,
         tick: TickMetrics,
     ) -> Option<ShowTransition> {
@@ -70,7 +70,7 @@ impl<S: ScreenSource> DialogCoordinator<S> {
     pub(super) fn on_dismissed(
         &mut self,
         id: crate::error_dialog_controller::DialogRequestId,
-        queue: &mut (impl ModalSink + ModalSource),
+        queue: &mut ModalQueue,
         is_resumed: bool,
         tick: TickMetrics,
     ) -> DismissTransition {
@@ -80,7 +80,7 @@ impl<S: ScreenSource> DialogCoordinator<S> {
 
     /// Activity suspend kills transient UI: release the gate and requeue
     /// the unacked head; the pause flag survives for the resume path.
-    pub(super) fn on_suspended(&mut self, queue: &mut (impl ModalSink + ModalSource)) {
+    pub(super) fn on_suspended(&mut self, queue: &mut ModalQueue) {
         self.controller.on_suspended(queue);
     }
 
@@ -88,7 +88,7 @@ impl<S: ScreenSource> DialogCoordinator<S> {
     /// only when no dialog came up to own it.
     pub(super) fn on_settings_closed(
         &mut self,
-        queue: &mut (impl ModalSink + ModalSource),
+        queue: &mut ModalQueue,
         is_resumed: bool,
         tick: TickMetrics,
     ) -> SettingsClosedTransition {
