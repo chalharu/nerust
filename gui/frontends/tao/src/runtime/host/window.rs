@@ -281,7 +281,7 @@ impl HostState {
         let tick = self.session.tick_metrics();
         let title = self
             .session
-            .window_title_cached(tick.paused, tick.loaded)
+            .window_title_cached(&tick)
             .to_owned();
         let window = match opener.create_main(create_window_builder(
             self.startup_window_size(),

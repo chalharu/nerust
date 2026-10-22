@@ -1535,9 +1535,9 @@ fn cached_frame_data_rebuilds_only_on_key_change() {
     let tick = session.tick_metrics();
     // Title cache: same tick serves the stored string.
     let first = session
-        .window_title_cached(tick.paused, tick.loaded)
+        .window_title_cached(&tick)
         .to_string();
-    assert_eq!(session.window_title_cached(tick.paused, tick.loaded), first);
+    assert_eq!(session.window_title_cached(&tick), first);
     assert_eq!(first, session.window_title(&tick));
     // History cache: same seq and language reuses the stored rows.
     session.notifications.push(Message::paused());

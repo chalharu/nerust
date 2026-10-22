@@ -874,7 +874,7 @@ impl AndroidFrontend {
                 &self
                     .core
                     .session
-                    .window_title_cached(tick.paused, tick.loaded),
+                    .window_title_cached(&tick),
             );
         }
     }

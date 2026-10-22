@@ -110,7 +110,7 @@ impl State {
     pub(crate) fn title_cached(&mut self) -> String {
         let tick = self.session.tick_metrics();
         self.session
-            .window_title_cached(tick.paused, tick.loaded)
+            .window_title_cached(&tick)
             .to_owned()
     }
 
