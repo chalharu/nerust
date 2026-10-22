@@ -250,7 +250,8 @@ impl GtkOsd {
                     return;
                 }
                 *last_sync.borrow_mut() = Some(key);
-                let lines = state.borrow().notification_history_lines(language);
+                let mut borrowed = state.borrow_mut();
+                let lines = borrowed.history_lines_cached(language);
                 while let Some(child) = grid.first_child() {
                     grid.remove(&child);
                 }

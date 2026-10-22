@@ -21,7 +21,7 @@ pub use crate::session::osd_render::{OSD_STATUS_RGB, osd_anchor};
 pub use crate::session::osd_transient::{FrameChannel, OsdRow, TransientPolicy};
 
 use crate::session::osd_modal::ModalPump;
-use crate::session::osd_presenter::{ModalRoute, ModalRouter, status_key, status_text};
+use crate::session::osd_presenter::{ModalRoute, ModalRouter};
 use crate::session::osd_transient::{OsdItem, RouteEffect, TransientQueue, counted_row};
 
 /// Notification display state: transient in-frame rows plus modal batches.
@@ -204,14 +204,6 @@ impl OsdManager {
         self.transient.wakeup_deadline(now)
     }
 
-    /// Status readout split into label and value for the fixed-width pill.
-    /// Digits never shift when the label appears, disappears, or changes language.
-    pub fn status_parts(fps: f32, paused: bool, language: AppLanguage) -> (String, String) {
-        (
-            status_text(status_key(paused), language).to_string(),
-            super::osd_presenter::format_status_value(fps),
-        )
-    }
 }
 
 impl crate::session::osd_presenter::OsdState for OsdManager {
@@ -1107,20 +1099,27 @@ mod tests {
 
     #[test]
     fn status_text_names_pause_state() {
+        use super::super::osd_presenter::{format_status_value, status_key, status_text};
+        let gated = |fps: f32, paused: bool, language: AppLanguage| {
+            (
+                status_text(status_key(paused), language).to_string(),
+                format_status_value(fps),
+            )
+        };
         assert_eq!(
-            OsdManager::status_parts(60.0, true, AppLanguage::English),
+            gated(60.0, true, AppLanguage::English),
             ("Paused".to_string(), "60.0 fps".to_string())
         );
         assert_eq!(
-            OsdManager::status_parts(60.0, true, AppLanguage::Japanese),
+            gated(60.0, true, AppLanguage::Japanese),
             ("一時停止中".to_string(), "60.0 fps".to_string())
         );
         assert_eq!(
-            OsdManager::status_parts(59.9, false, AppLanguage::English),
+            gated(59.9, false, AppLanguage::English),
             (String::new(), "59.9 fps".to_string())
         );
         assert_eq!(
-            OsdManager::status_parts(0.0, false, AppLanguage::Japanese),
+            gated(0.0, false, AppLanguage::Japanese),
             (String::new(), "0.0 fps".to_string())
         );
     }
