@@ -3659,6 +3659,7 @@ name = "nerust_gui_shell"
 version = "0.1.0-dev"
 dependencies = [
  "clap",
+ "dyn-clone",
  "log",
  "nerust_core_traits",
  "nerust_emu_thread",
