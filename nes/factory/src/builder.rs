@@ -18,11 +18,8 @@ pub(crate) fn create_core_and_adapter_with_assignments(
     assignments: &InputAssignments,
     input_factory: &crate::NesFactory,
 ) -> Result<CoreParts, FactoryError> {
-    let controller_collection = controllers_for_assignments(assignments, input_factory)
-        .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let resources = input_factory
-        .create_split(&controller_collection)
-        .map_err(|e| FactoryError::Create(e.to_string()))?;
+    let controller_collection = controllers_for_assignments(assignments, input_factory)?;
+    let resources = input_factory.create_split(&controller_collection)?;
     // Unified map travels end to end; no lossy projection.
     let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     create_core_and_adapter(

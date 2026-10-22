@@ -45,9 +45,9 @@ impl crate::NesFactory {
         use nerust_nes_core::controller::NES_PORTS;
 
         if controllers.len() > NES_PORTS.len() {
-            return Err(CreateSplitError::IncompatibleController {
-                controller: ProfileId::new("nes.standard_pad"),
-                slot: AttachmentId::new("nes.attachment.player2"),
+            return Err(CreateSplitError::TooManyControllers {
+                have: controllers.len(),
+                max: NES_PORTS.len(),
             });
         }
         let mut field_map = nerust_input_traits::UnifiedFieldMap::new();
@@ -60,9 +60,7 @@ impl crate::NesFactory {
             }
         }
         if field_map.is_empty() {
-            return Err(CreateSplitError::ControllerNotFound {
-                controller: ProfileId::new("nes.standard_pad"),
-            });
+            return Err(CreateSplitError::EmptyAssignments);
         }
 
         Ok(nerust_input_traits::TypedInputResources::new(
@@ -121,7 +119,7 @@ mod tests {
         ]);
         assert!(matches!(
             crate::NesFactory.create_split(&extra),
-            Err(CreateSplitError::IncompatibleController { .. })
+            Err(CreateSplitError::TooManyControllers { .. })
         ));
     }
 }

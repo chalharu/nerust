@@ -19,30 +19,7 @@ pub(crate) fn create_core_and_adapter(
         .as_deref()
         .and_then(|v| v.downcast_ref::<GbaSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    if assignments.slots().len() != 1 || assignments.slots()[0].0 != GBA_ATTACHMENT {
-        return Err(FactoryError::Create(
-            "GBA requires exactly one player1 assignment".to_string(),
-        ));
-    }
-    let profile = assignments.slots()[0]
-        .1
-        .as_ref()
-        .ok_or_else(|| FactoryError::Create("GBA controller is not assigned".to_string()))?;
-    if profile.profile_id() != nerust_input_traits::ProfileId::new("gba.standard_pad") {
-        return Err(FactoryError::Create(format!(
-            "unsupported GBA controller: {}",
-            profile.profile_id()
-        )));
-    }
-
-    let resources = nerust_input_traits::TypedInputResources::new(
-        nerust_input_traits::collect_first_wins(
-            nerust_gba_device::StandardPad::input_fields(&crate::input_profiles::GBA_PORT)
-                .into_iter()
-                .map(|entry| ((entry.attachment, entry.control), entry.field)),
-        ),
-        GbaInputBuffer::default,
-    );
+    let resources = crate::GbaFactory.create_split(assignments)?;
     // Unified map travels end to end; no lossy projection.
     let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     let logical_size = LogicalSize {

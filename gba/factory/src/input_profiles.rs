@@ -22,6 +22,54 @@ impl InputPorts for crate::GbaFactory {
     }
 }
 
+impl crate::GbaFactory {
+    pub(crate) fn create_split(
+        &self,
+        assignments: &InputAssignments,
+    ) -> Result<
+        nerust_input_traits::TypedInputResources<nerust_gba_core::input_types::GbaInputBuffer>,
+        nerust_input_traits::CreateSplitError,
+    > {
+        use nerust_input_traits::{Controller as _, CreateSplitError};
+        let mut plan = assignments.placement_plan(self)?;
+        let placement = plan
+            .drain(..)
+            .next()
+            .ok_or(CreateSplitError::EmptyAssignments)?;
+        let Some((profile, group)) = placement else {
+            return Err(CreateSplitError::EmptyAssignments);
+        };
+        let device = device_for_profile(&profile, group)?;
+        let mut map = nerust_input_traits::UnifiedFieldMap::new();
+        for entry in device.field_entries(&GBA_PORT) {
+            let _ = map.insert((entry.attachment, entry.control), entry.field);
+        }
+        if map.is_empty() {
+            return Err(CreateSplitError::EmptyAssignments);
+        }
+        Ok(nerust_input_traits::TypedInputResources::new(
+            map,
+            nerust_gba_core::input_types::GbaInputBuffer::default,
+        ))
+    }
+}
+
+/// Single-profile device registry: the canonical placement profile selects the device.
+/// Unknown profiles cannot arrive through [`placement_plan`](InputAssignments::placement_plan);
+/// the fallback names the actual offender for forward compatibility.
+fn device_for_profile(
+    profile: &Rc<dyn ControllerProfile>,
+    _group: usize,
+) -> Result<nerust_gba_device::StandardPad, nerust_input_traits::CreateSplitError> {
+    use nerust_input_traits::CreateSplitError;
+    if profile.profile_id() == ProfileId::new("gba.standard_pad") {
+        Ok(nerust_gba_device::StandardPad::new())
+    } else {
+        Err(CreateSplitError::ControllerNotFound {
+            controller: profile.profile_id(),
+        })
+    }
+}
 impl InputSystemFactory for crate::GbaFactory {
     fn default_assignments(&self) -> InputAssignments {
         let standard = self
@@ -34,6 +82,29 @@ impl InputSystemFactory for crate::GbaFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_input_traits::CreateSplitError;
+
+    #[test]
+    fn split_maps_ten_fields_and_rejects_bad_assignments() {
+        let resources = crate::GbaFactory
+            .create_split(&crate::GbaFactory.default_assignments())
+            .unwrap();
+        assert_eq!(resources.field_map().len(), 10);
+        let empty =
+            InputAssignments::new(vec![(GBA_ATTACHMENT, None)]);
+        assert!(matches!(
+            crate::GbaFactory.create_split(&empty),
+            Err(CreateSplitError::EmptyAssignments)
+        ));
+        let unknown = InputAssignments::new(vec![(
+            AttachmentId::new("gba.attachment.unknown"),
+            None,
+        )]);
+        assert!(matches!(
+            crate::GbaFactory.create_split(&unknown),
+            Err(CreateSplitError::SlotNotFound { .. })
+        ));
+    }
 
     #[test]
     fn default_assignment_uses_standard_pad() {

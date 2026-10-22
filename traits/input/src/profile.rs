@@ -9,7 +9,7 @@ use super::{
 
 /// Unified session field map: (attachment, control) → absolute field.
 /// End-to-end lookup key shared by factories and shells. Built only through
-/// `insert`, which reports displaced fields so factories keep first-wins explicit.
+/// `insert`, which keeps the first field per key and reports the survivor.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnifiedFieldMap(HashMap<(AttachmentId, ControlId), usize>);
 
@@ -19,12 +19,17 @@ impl UnifiedFieldMap {
         Self(HashMap::new())
     }
 
-    /// Insert one field; returns the displaced field, if any.
-    /// Callers keep first-wins: a `Some` return means the map already
-    /// held the key and the newcomer was dropped by the caller.
+    /// Insert one field; returns the stored field when the key already exists.
+    /// First wins: the stored field survives and the newcomer is dropped.
     #[must_use]
     pub fn insert(&mut self, key: (AttachmentId, ControlId), field: usize) -> Option<usize> {
-        self.0.insert(key, field)
+        match self.0.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => Some(*entry.into_mut()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(field);
+                None
+            }
+        }
     }
 
     /// Look up one absolute field.
@@ -281,6 +286,10 @@ pub enum CreateSplitError {
     },
     #[error("slot conflict between {a} and {b}")]
     SlotConflict { a: AttachmentId, b: AttachmentId },
+    #[error("too many controllers: have {have}, at most {max}")]
+    TooManyControllers { have: usize, max: usize },
+    #[error("no controllers assigned")]
+    EmptyAssignments,
 }
 
 /// System input metadata and defaults. Runtime assembly belongs to each system
@@ -604,11 +613,14 @@ mod tests {
         );
         assert_eq!(map.insert(key, 3), None);
         assert_eq!(map.insert(key, 5), Some(3));
-        assert_eq!(map.get(&key), Some(&5));
+        assert_eq!(map.get(&key), Some(&3));
         assert_eq!(map.len(), 1);
         let collected = super::collect_first_wins([(key, 7)]);
         assert_eq!(collected.get(&key), Some(&7));
         assert!(collected.contains_key(&key));
+        let dupes = super::collect_first_wins([(key, 7), (key, 9)]);
+        assert_eq!(dupes.get(&key), Some(&7));
+        assert_eq!(dupes.len(), 1);
     }
 
     #[derive(Debug)]

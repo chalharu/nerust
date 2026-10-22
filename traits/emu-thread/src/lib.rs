@@ -1,6 +1,8 @@
 pub mod input_port;
 
-pub use input_port::{EmuInput, GuiInput, InputPort, InputSplit};
+pub use input_port::InputSplit;
+#[cfg(test)]
+pub use input_port::{EmuInput, GuiInput, InputPort};
 
 use std::{
     collections::HashMap,
