@@ -66,17 +66,25 @@ pub(crate) fn domain_key_to_iced(key: &nerust_keyboard::Key, text: Option<&str>)
     }
 }
 
+/// Owned feed state: cursor, modifiers, scale, and close in one borrow.
+/// Callers pass their live fields once instead of threading four params.
+pub(crate) struct FeedContext<'a> {
+    pub cursor: &'a mut iced::mouse::Cursor,
+    pub modifiers: &'a mut keyboard::Modifiers,
+    pub scale_factor: f32,
+    pub should_close: &'a std::sync::atomic::AtomicBool,
+}
+
 /// Feed one domain event, tracking cursor, modifiers, and close.
-/// Pure over caller-owned state: the shell passes its live fields.
-#[allow(clippy::too_many_arguments)]
+/// Pure over caller-owned state: the shell passes its live [`FeedContext`].
 pub(crate) fn feed_domain_event(
     event: crate::aux::domain::AuxNativeEvent,
-    cursor: &mut iced::mouse::Cursor,
-    modifiers: &mut keyboard::Modifiers,
-    scale_factor: f32,
-    should_close: &std::sync::atomic::AtomicBool,
+    ctx: &mut FeedContext<'_>,
 ) -> Option<iced::Event> {
     use crate::aux::domain::AuxNativeEvent as E;
+    let scale_factor = ctx.scale_factor;
+    let should_close = ctx.should_close;
+    let (cursor, modifiers) = (&mut *ctx.cursor, &mut *ctx.modifiers);
     match event {
         E::CursorMoved(x, y) => {
             let point = iced::Point::new(x as f32 / scale_factor, y as f32 / scale_factor);
@@ -385,10 +393,12 @@ mod tests {
         // Physical pixels divide by the live scale, like the shell feed.
         let moved = feed_domain_event(
             crate::aux::domain::AuxNativeEvent::CursorMoved(200.0, 100.0),
-            &mut cursor,
-            &mut modifiers,
-            2.0,
-            &should_close,
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 2.0,
+                should_close: &should_close,
+            },
         );
         assert!(matches!(
             moved,
@@ -563,10 +573,12 @@ mod tests {
                 text: Some("a".to_string()),
                 repeat: true,
             },
-            &mut cursor,
-            &mut modifiers,
-            1.0,
-            &should_close,
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
         );
         assert!(matches!(
             pressed,
@@ -582,10 +594,12 @@ mod tests {
                 text: None,
                 repeat: false,
             },
-            &mut cursor,
-            &mut modifiers,
-            1.0,
-            &should_close,
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
         );
         assert!(matches!(
             no_text,
@@ -595,10 +609,12 @@ mod tests {
         ));
         let released = feed_domain_event(
             E::KeyReleased { key: Key::Enter },
-            &mut cursor,
-            &mut modifiers,
-            1.0,
-            &should_close,
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
         );
         assert!(matches!(
             released,
@@ -614,7 +630,7 @@ mod tests {
         use crate::aux::domain::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         assert!(
-            feed_domain_event(E::Other, &mut cursor, &mut modifiers, 1.0, &should_close,).is_none()
+            feed_domain_event(E::Other, &mut FeedContext { cursor: &mut cursor, modifiers: &mut modifiers, scale_factor: 1.0, should_close: &should_close }).is_none()
         );
     }
 
@@ -629,11 +645,13 @@ mod tests {
         ] {
             let pressed = feed_domain_event(
                 E::MousePressed(domain),
-                &mut cursor,
-                &mut modifiers,
-                1.0,
-                &should_close,
-            );
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        );
             assert!(matches!(
                 pressed,
                 Some(iced::Event::Mouse(iced::mouse::Event::ButtonPressed(b)))
@@ -641,11 +659,13 @@ mod tests {
             ));
             let released = feed_domain_event(
                 E::MouseReleased(domain),
-                &mut cursor,
-                &mut modifiers,
-                1.0,
-                &should_close,
-            );
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        );
             assert!(matches!(
                 released,
                 Some(iced::Event::Mouse(iced::mouse::Event::ButtonReleased(b)))
@@ -660,10 +680,12 @@ mod tests {
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         let lines = feed_domain_event(
             E::WheelLines(0.0, 3.0),
-            &mut cursor,
-            &mut modifiers,
-            2.0,
-            &should_close,
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 2.0,
+                should_close: &should_close,
+            },
         );
         assert!(matches!(
             lines,
@@ -674,10 +696,12 @@ mod tests {
         // Pixel deltas divide by the live scale like cursor moves.
         let pixels = feed_domain_event(
             E::WheelPixels(0.0, 24.0),
-            &mut cursor,
-            &mut modifiers,
-            2.0,
-            &should_close,
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 2.0,
+                should_close: &should_close,
+            },
         );
         assert!(matches!(
             pixels,
@@ -694,22 +718,26 @@ mod tests {
         assert!(
             feed_domain_event(
                 E::ModifiersChanged(AuxModifiers::empty()),
-                &mut cursor,
-                &mut modifiers,
-                1.0,
-                &should_close,
-            )
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        )
             .is_none()
         );
         assert_eq!(modifiers, keyboard::Modifiers::empty());
         assert!(
             feed_domain_event(
                 E::CloseRequested,
-                &mut cursor,
-                &mut modifiers,
-                1.0,
-                &should_close,
-            )
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        )
             .is_none()
         );
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
@@ -729,18 +757,20 @@ mod tests {
             E::Other,
         ] {
             assert!(
-                feed_domain_event(event, &mut cursor, &mut modifiers, 1.0, &should_close).is_none()
+                feed_domain_event(event, &mut FeedContext { cursor: &mut cursor, modifiers: &mut modifiers, scale_factor: 1.0, should_close: &should_close }).is_none()
             );
         }
         // Cursor-left drops the pointer without an event.
         assert!(
             feed_domain_event(
                 E::CursorLeft,
-                &mut cursor,
-                &mut modifiers,
-                1.0,
-                &should_close
-            )
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        )
             .is_none()
         );
         assert!(matches!(cursor, iced::mouse::Cursor::Unavailable));
@@ -759,7 +789,7 @@ mod tests {
         macro_rules! feed {
             ($event:expr) => {{
                 let domain = adapt_event(&$event);
-                feed_domain_event(domain, &mut cursor, &mut modifiers, 1.0, &should_close)
+                feed_domain_event(domain, &mut FeedContext { cursor: &mut cursor, modifiers: &mut modifiers, scale_factor: 1.0, should_close: &should_close })
             }};
         }
         // SAFETY: test-only `DeviceId::dummy()`; no transmute in production.

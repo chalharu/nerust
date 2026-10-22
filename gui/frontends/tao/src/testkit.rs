@@ -8,7 +8,7 @@ use nerust_gui_shell::debug::DebugAction;
 use crate::aux::domain::AuxNativeEvent;
 use crate::aux::focus::AuxKind;
 use crate::aux::registry::{
-    AuxController, DebugDrainPort, HistorySyncPort, LiveImagesPort, SettingsClosePort,
+    AuxController, DebugDrainPort, LiveImagesPort, SettingsClosePort,
 };
 
 pub(crate) use crate::aux::registry::test_double::StubAux;
