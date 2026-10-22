@@ -129,7 +129,19 @@ fn replaced_hook_probe(unwind: bool) {
         previous(info);
     }));
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(guard)));
-    assert_eq!(result.is_err(), unwind);
+    assert!(result.is_ok(), "restore itself runs no user destructors");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "retired dispatcher waits for a flush"
+    );
+    // Flushing runs the deferred destructor outside all locks, so a
+    // reinstalling destructor cannot deadlock the adapter or std hooks.
+    let flush = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let tmp = install(|_| {}, || Arc::from("flush"));
+        drop(tmp);
+    }));
+    assert_eq!(flush.is_err(), unwind);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // An unwind leaves a forwarding dispatcher; a later normal drop repairs it.
     let seen = Arc::new(AtomicUsize::new(0));

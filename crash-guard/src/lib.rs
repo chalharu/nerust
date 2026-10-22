@@ -1,8 +1,8 @@
 //! Outermost crash containment: hook diagnostics plus guarded entry. Hook records describe
 //! the panic site; caught reports describe only the caught payload, without claiming correlation.
 //! Dialogs and termination are the host's job. Sinks and sources travel by parameter.
-//! The std hook itself is process-global, so one documented process-default
-//! adapter remains; hosts own a [`HookRegistry`] value for everything else.
+//! The std hook is process-global, so one process-default adapter remains;
+//! hosts only choose sinks and sources, hook chaining stays here.
 
 use std::{
     any::Any,
@@ -38,37 +38,40 @@ struct Registration {
     thread: Option<std::thread::ThreadId>,
 }
 
-/// Explicit hook state owned by the host. The std hook is process-global, so wiring
-/// it still needs one process-default adapter ([`install`]/[`install_default`]);
-/// everything else (which sinks/sources exist) lives in this value.
-pub struct HookRegistry {
+/// Lifecycle of the single process-wide hook adapter: the chained previous
+/// hook plus whether our dispatcher is installed. Install and drop mutate it
+/// under its own lock; the dispatcher never takes it, so std hook writes here
+/// cannot deadlock against panic delivery.
+struct Lifecycle {
     previous: Option<Hook>,
-    registrations: Vec<Arc<Registration>>,
+    installed: bool,
+    epoch: u64,
+    retired: Vec<Hook>,
 }
 
-impl HookRegistry {
-    /// Empty registry with no chained hook.
-    pub fn new() -> Self {
-        Self {
-            previous: None,
-            registrations: Vec::new(),
-        }
-    }
-}
-
-impl Default for HookRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// The std hook is process-global: this single adapter is the only global.
-// Never hold it across a std hook write: std invokes hooks under its own
-// read lock, and the dispatcher snapshots under this lock, then releases it.
-static PROCESS_DEFAULT: Mutex<HookRegistry> = Mutex::new(HookRegistry {
+static LIFECYCLE: Mutex<Lifecycle> = Mutex::new(Lifecycle {
     previous: None,
-    registrations: Vec::new(),
+    installed: false,
+    epoch: 0,
+    retired: Vec::new(),
 });
+
+/// Live registrations snapshotted by the dispatcher. The dispatcher clones
+/// under this lock and releases it before capturing or calling any sink, so
+/// this lock never nests inside user code or std hook operations.
+static REGISTRATIONS: Mutex<Vec<Arc<Registration>>> = Mutex::new(Vec::new());
+
+/// Drop retired dispatchers outside every lock: their captures may install
+/// guards reentrantly, and the registry is already consistent without them.
+fn drain_retired() {
+    let retired = std::mem::take(
+        &mut LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retired,
+    );
+    drop(retired);
+}
 
 /// Owns one process-wide registration, not a snapshot of another guard's hook.
 /// Drops may occur in any order or thread; only live registrations are called,
@@ -83,37 +86,47 @@ pub struct HookGuard {
 
 impl Drop for HookGuard {
     fn drop(&mut self) {
-        // std forbids set_hook while unwinding. Leave an empty forwarding
-        // dispatcher in that case; the next non-panicking guard drop restores it.
+        // std forbids set_hook while unwinding. Retain the registration but
+        // leave the dispatcher: the next non-panicking guard drop restores it.
         // In particular, a guard dropped by a sink must not wait for another
         // install that is itself waiting for this panic hook to return.
         let can_restore = !std::thread::panicking();
-        let previous = {
-            let mut hooks = PROCESS_DEFAULT
+        drain_retired();
+        let epoch = LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .epoch;
+        {
+            let mut registrations = REGISTRATIONS
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            hooks
-                .registrations
-                .retain(|entry| !Arc::ptr_eq(entry, &self.registration));
-            if hooks.registrations.is_empty() && can_restore {
-                hooks.previous.take()
-            } else {
-                None
+            registrations.retain(|entry| !Arc::ptr_eq(entry, &self.registration));
+        }
+        if !can_restore {
+            return;
+        }
+        {
+            let mut lifecycle = LIFECYCLE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Re-check under the lifecycle lock: an install that pushed after
+            // our retain bumped the epoch first, so restoring now cannot orphan it.
+            let empty = REGISTRATIONS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty();
+            if lifecycle.installed && lifecycle.epoch == epoch && empty {
+                lifecycle.installed = false;
+                if let Some(previous) = lifecycle.previous.take() {
+                    // take_hook drops the replaced closure into retirement:
+                    // its destructor may install a new guard, so destruction
+                    // waits for the next install/drop entry outside all locks.
+                    let replaced = panic::take_hook();
+                    panic::set_hook(Box::new(move |info| previous(info)));
+                    lifecycle.retired.push(Arc::from(replaced));
+                }
             }
-        };
-        let replaced = if let Some(previous) = previous {
-            // set_hook drops the replaced closure. Its captures may install a
-            // new guard in Drop, so first take ownership without destroying it.
-            // Neither std hook writes nor closure destruction may hold the registry.
-            let replaced = panic::take_hook();
-            panic::set_hook(Box::new(move |info| previous(info)));
-            Some(replaced)
-        } else {
-            None
-        };
-        // In particular, a wrapping external hook can own a reentrant or
-        // panicking destructor. The registry is already restored and unlocked.
-        drop(replaced);
+        }
     }
 }
 
@@ -144,49 +157,49 @@ fn install_erased(
         source,
         thread,
     });
-    // One transaction under one lock: check, take, push, and set stay atomic
-    // so two racing installs can never chain two dispatchers (double source
-    // calls). take/set_hook call no user code, so holding the lock is safe;
-    // the dispatcher only snapshots under it and never calls out while held.
-    // Installing while panicking is rejected above: set_hook would panic.
-    let previous = {
-        let mut hooks = PROCESS_DEFAULT
+    drain_retired();
+    // The lifecycle lock never nests inside the snapshot lock or user code:
+    // hook swaps run under it, but the dispatcher only takes the snapshot lock.
+    {
+        let mut lifecycle = LIFECYCLE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if hooks.previous.is_some() {
-            hooks.registrations.push(Arc::clone(&registration));
-            None
-        } else {
+        // Every install bumps the epoch before pushing: a concurrent final
+        // drop that already retained sees the bump and skips its restore.
+        lifecycle.epoch += 1;
+        if !lifecycle.installed {
             let previous: Hook = Arc::from(panic::take_hook());
-            hooks.previous = Some(Arc::clone(&previous));
-            hooks.registrations.push(Arc::clone(&registration));
-            Some(previous)
-        }
-    };
-    if let Some(previous) = previous {
-        panic::set_hook(Box::new(move |info| {
-            let thread = std::thread::current().id();
-            let registrations = {
-                let hooks = PROCESS_DEFAULT
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                hooks
-                    .registrations
-                    .iter()
-                    .filter(|entry| entry.thread.is_none_or(|owner| owner == thread))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            // Capture at the panic site once, using the newest live source.
-            if let Some(newest) = registrations.last() {
-                let record =
-                    PanicRecord::capture_with(Arc::from(info.to_string()), (newest.source)());
-                for registration in registrations.iter().rev() {
-                    (registration.sink)(&record);
+            lifecycle.previous = Some(Arc::clone(&previous));
+            panic::set_hook(Box::new(move |info| {
+                let thread = std::thread::current().id();
+                let registrations = {
+                    let registrations = REGISTRATIONS
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    registrations
+                        .iter()
+                        .filter(|entry| entry.thread.is_none_or(|owner| owner == thread))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                // Capture at the panic site once, using the newest live source.
+                if let Some(newest) = registrations.last() {
+                    let record =
+                        PanicRecord::capture_with(Arc::from(info.to_string()), (newest.source)());
+                    for registration in registrations.iter().rev() {
+                        (registration.sink)(&record);
+                    }
                 }
-            }
-            previous(info);
-        }));
+                previous(info);
+            }));
+            lifecycle.installed = true;
+        }
+    }
+    {
+        let mut registrations = REGISTRATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        registrations.push(Arc::clone(&registration));
     }
     HookGuard { registration }
 }
@@ -336,6 +349,15 @@ mod tests {
 
     static SINK_CALLS: AtomicUsize = AtomicUsize::new(0);
 
+    /// Process hook fully restored and no chain retained.
+    fn adapter_is_idle() -> bool {
+        drain_retired();
+        let lifecycle = LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !lifecycle.installed && lifecycle.previous.is_none() && lifecycle.retired.is_empty()
+    }
+
     fn counting_sink(_record: &PanicRecord) {
         SINK_CALLS.fetch_add(1, Ordering::SeqCst);
     }
@@ -458,7 +480,7 @@ mod tests {
         drop(outer);
         let _ = panic::catch_unwind(|| panic!("original only"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(PROCESS_DEFAULT.lock().unwrap().previous.is_none());
+        assert!(adapter_is_idle());
     }
 
     #[test]
@@ -489,7 +511,75 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 8);
         let _ = panic::catch_unwind(|| panic!("all dropped"));
         assert_eq!(calls.load(Ordering::SeqCst), 8);
-        assert!(PROCESS_DEFAULT.lock().unwrap().previous.is_none());
+        assert!(adapter_is_idle());
+    }
+
+    #[test]
+    fn reinstall_race_never_orphans_or_doubles_live_deliveries() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let fixed = Arc::new(AtomicUsize::new(0));
+        let probe = Arc::clone(&fixed);
+        let keep_a = install(
+            move |_| {
+                probe.fetch_add(1, Ordering::SeqCst);
+            },
+            stub_source,
+        );
+        let fixed_b = Arc::new(AtomicUsize::new(0));
+        let probe_b = Arc::clone(&fixed_b);
+        let keep_b = install(
+            move |_| {
+                probe_b.fetch_add(1, Ordering::SeqCst);
+            },
+            stub_source,
+        );
+        // Churn final drops and reinstalls while the keeps stay live: the
+        // adapter is never empty, so every panic reaches each keep exactly once.
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        let guard = install(|_| {}, stub_source);
+                        drop(guard);
+                    }
+                });
+            }
+            for _ in 0..50 {
+                let extra = install(|_| {}, stub_source);
+                let _ = panic::catch_unwind(|| panic!("race probe"));
+                drop(extra);
+            }
+        });
+        assert_eq!(fixed.load(Ordering::SeqCst), 50);
+        assert_eq!(fixed_b.load(Ordering::SeqCst), 50);
+        drop(keep_a);
+        drop(keep_b);
+        // Unanchored churn passes through empty restores: a panic in the swap
+        // window may miss, but a live guard is never called twice per panic.
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        let guard = install(|_| {}, stub_source);
+                        drop(guard);
+                    }
+                });
+            }
+            for _ in 0..100 {
+                let fired = Arc::new(AtomicUsize::new(0));
+                let probe = Arc::clone(&fired);
+                let guard = install(
+                    move |_| {
+                        probe.fetch_add(1, Ordering::SeqCst);
+                    },
+                    stub_source,
+                );
+                let _ = panic::catch_unwind(|| panic!("gap probe"));
+                assert!(fired.load(Ordering::SeqCst) <= 1, "double delivery");
+                drop(guard);
+            }
+        });
+        assert!(adapter_is_idle());
     }
 
     #[test]
@@ -625,7 +715,7 @@ mod tests {
         });
         let guard = install(|_| {}, stub_source);
         drop(guard);
-        assert!(PROCESS_DEFAULT.lock().unwrap().previous.is_none());
+        assert!(adapter_is_idle());
     }
 
     #[test]
