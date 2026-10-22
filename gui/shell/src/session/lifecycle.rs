@@ -1,6 +1,7 @@
 //! Session lifecycle orchestration: load/unload/flush plus the per-tick pump.
 //! Domain work lives in sibling modules; this file only sequences the flow.
 
+use nerust_core_traits::CoreOptions;
 use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
 use crate::{
@@ -58,8 +59,21 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        let tick = self.tick_metrics();
-        let options = resolved.options;
+        let candidate = self.stage_candidate(&media, &resolved.options)?;
+        let was_running = self.freeze_previous()?;
+        if let Err(error) = self.flush_previous_mapper() {
+            return self.rollback_freeze(was_running, error);
+        }
+        self.commit_candidate(candidate, media, resolved.options)
+    }
+
+    /// Prepare the replacement core without touching live state.
+    /// Failure here leaves the previous core, persistence, and media untouched.
+    fn stage_candidate(
+        &mut self,
+        media: &MediaObject,
+        options: &Box<dyn CoreOptions>,
+    ) -> Result<super::CoreRuntime, SessionError> {
         let factory = self.active_factory_cloned().ok_or(SessionError::NoCore)?;
         let candidate = super::settings_apply::build_core_for_settings(
             self.speaker_factory(),
@@ -69,29 +83,53 @@ impl SessionHandle {
         )?;
         candidate
             .emu_core
-            .load_paused(&media, Some(options.clone()))?;
-        // Freeze the previous core before its final export. Failure vetoes replacement
-        // and restores its execution state; no persistence configuration changed yet.
+            .load_paused(media, Some(options.clone()))?;
+        Ok(candidate)
+    }
+
+    /// Freeze the previous core before its final export; reports whether it ran.
+    /// A pause failure vetoes replacement before anything else changes.
+    fn freeze_previous(&mut self) -> Result<bool, SessionError> {
+        let tick = self.tick_metrics();
         let was_running = tick.loaded && !tick.paused;
         if was_running {
             self.emu.require_live()?.pause()?;
         }
-        let flush = self
-            .media
-            .persistence
-            .flush_mapper_save(self.emu.exporter()?);
-        if let Err(error) = flush {
-            if was_running
-                && !self.execution_held
-                && let Err(rollback) = self.emu.require_live()?.resume()
-            {
-                return Err(SessionError::Rollback {
-                    apply: Box::new(error.into()),
-                    rollback: Box::new(rollback.into()),
-                });
-            }
-            return Err(error.into());
+        Ok(was_running)
+    }
+
+    /// Final export of the previous core; no persistence configuration changed yet.
+    fn flush_previous_mapper(&mut self) -> Result<(), SessionError> {
+        let exporter = self.emu.exporter()?;
+        self.media.persistence.flush_mapper_save(exporter)?;
+        Ok(())
+    }
+
+    /// Resume the previous core after a vetoed replacement.
+    /// A failed resume pairs the flush fault with the rollback fault.
+    fn rollback_freeze(
+        &mut self,
+        was_running: bool,
+        error: SessionError,
+    ) -> Result<(), SessionError> {
+        if was_running
+            && !self.execution_held
+            && let Err(rollback) = self.emu.require_live()?.resume()
+        {
+            return Err(SessionError::Rollback {
+                apply: Box::new(error.into()),
+                rollback: Box::new(rollback.into()),
+            });
         }
+        Err(error.into())
+    }
+    /// Publish the staged core: persistence, media, and execution switch over together.
+    fn commit_candidate(
+        &mut self,
+        candidate: super::CoreRuntime,
+        media: MediaObject,
+        options: Box<dyn CoreOptions>,
+    ) -> Result<(), SessionError> {
         let setup = PersistenceBinder::bind(
             self,
             Some(&candidate.emu_core),
