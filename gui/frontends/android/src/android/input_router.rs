@@ -13,11 +13,11 @@ use super::{
 /// Last pushed chrome state: rebuilds skip the JNI push when unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct PushedOverlay {
-    visibility: String,
+    visibility: std::sync::Arc<str>,
     opacity: u8,
     haptics: bool,
-    zones: String,
-    joystick: String,
+    zones: std::sync::Arc<str>,
+    joystick: std::sync::Arc<str>,
 }
 
 /// Transient input state behind the overlay. All behavior that used to
@@ -125,12 +125,13 @@ impl InputRouter {
             })
             .unwrap_or_default();
         // Coalesce: an unchanged overlay never re-crosses JNI.
+        // `Arc` shares the payload between the memo and the JNI closure.
         let pushed = PushedOverlay {
-            visibility: format!("{:?}", overlay_settings.visibility),
+            visibility: std::sync::Arc::from(format!("{:?}", overlay_settings.visibility)),
             opacity: overlay_settings.opacity_percent,
             haptics: overlay_settings.haptics,
-            zones,
-            joystick,
+            zones: std::sync::Arc::from(zones),
+            joystick: std::sync::Arc::from(joystick),
         };
         if self.pushed.as_ref() == Some(&pushed) {
             return;
@@ -138,8 +139,8 @@ impl InputRouter {
         chrome_port::configure_overlay(
             app,
             overlay_settings,
-            pushed.zones.clone(),
-            pushed.joystick.clone(),
+            std::sync::Arc::clone(&pushed.zones),
+            std::sync::Arc::clone(&pushed.joystick),
         );
         self.pushed = Some(pushed);
     }

@@ -200,12 +200,11 @@ impl RenderSync {
     /// Call after [`prepare_frame`](Self::prepare_frame); the exclusive
     /// borrow is already released when render runs.
     pub(super) fn build_frame_input(session: &SessionHandle) -> FrameInput<'_> {
-        let tick = session.tick_metrics();
-        let profile = session.render_profile().map(|p| p.physical_size);
+        let (tick, profile, fb) = session.live_frame_parts();
+        let profile = profile.map(|p| p.physical_size);
         let snapshot = session.settings_snapshot();
         let notifications = &snapshot.local.notifications;
         let language = snapshot.shared.general.language;
-        let fb = session.frame_buffer();
         FrameInput {
             tick,
             notifications,
@@ -239,7 +238,7 @@ impl RenderSync {
         // UI-thread push cache: render never blocks on JNI.
         // First frames use the default until Kotlin pushes.
         let system = osd.system_insets(window_size, scale_factor);
-        let insets = AndroidOsd::safe_insets(scale_factor, content, window_size, system);
+        let insets = osd.safe_insets_memoized(scale_factor, content, window_size, system);
         let settings = input.notifications;
         let language = input.language;
         let Some(fb) = input.fb.as_ref() else {

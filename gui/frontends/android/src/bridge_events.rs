@@ -32,11 +32,12 @@ pub(crate) enum FrontendEvent {
 use crate::bridge_contract::{
     ACTION_CONTROLLER, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
     ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-    ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
+    ACTION_UNLOAD, validate_bridge_event,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
 /// Kotlin names are generated from that schema; new keys must also map here.
+#[cfg(test)]
 pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
     ("button1", AbstractKey::Button1),
     ("button2", AbstractKey::Button2),
@@ -55,8 +56,6 @@ pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BridgeEventV1 {
     Menu {
-        #[allow(dead_code)]
-        v: u32,
         action: String,
         #[serde(default)]
         device_id: Option<i32>,
@@ -66,26 +65,18 @@ enum BridgeEventV1 {
         pressed: Option<bool>,
     },
     ErrorDialogDismissed {
-        #[allow(dead_code)]
-        v: u32,
         request_id: crate::error_dialog_controller::DialogRequestId,
     },
 }
 
 fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
     let mut value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    // Single validation pass: version and shapes checked here, so the typed
+    // decode below never re-checks the version.
     validate_bridge_event(&mut value)?;
     let envelope: BridgeEventV1 = serde_json::from_value(value).ok()?;
-    let version = match &envelope {
-        BridgeEventV1::Menu { v, .. } => *v,
-        BridgeEventV1::ErrorDialogDismissed { v, .. } => *v,
-    };
-    if version != BRIDGE_EVENT_VERSION {
-        log::warn!("ignoring Android bridge event with unsupported version {version}");
-        return None;
-    }
     match envelope {
-        BridgeEventV1::ErrorDialogDismissed { request_id, .. } => {
+        BridgeEventV1::ErrorDialogDismissed { request_id } => {
             Some(FrontendEvent::ErrorDialogDismissed(request_id))
         }
         BridgeEventV1::Menu {
@@ -93,7 +84,6 @@ fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
             device_id,
             key,
             pressed,
-            ..
         } => decode_json_menu_action(&action, device_id, key.as_deref(), pressed),
     }
 }
@@ -132,11 +122,7 @@ fn decode_json_menu_action(
 }
 
 fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<MenuAction> {
-    let Some(key) = CONTROLLER_KEY_TABLE
-        .iter()
-        .find(|(name, _)| *name == key)
-        .map(|(_, key)| *key)
-    else {
+    let Some(key) = controller_key(key) else {
         log::warn!("ignoring unknown Android controller key: {key}");
         return None;
     };
@@ -144,6 +130,23 @@ fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<M
         device_id,
         key,
         pressed,
+    })
+}
+
+/// Jump-table key lookup; the schema test below keeps it in sync with the table.
+fn controller_key(key: &str) -> Option<AbstractKey> {
+    Some(match key {
+        "button1" => AbstractKey::Button1,
+        "button2" => AbstractKey::Button2,
+        "button5" => AbstractKey::Button5,
+        "button6" => AbstractKey::Button6,
+        "start" => AbstractKey::Start,
+        "select" => AbstractKey::Select,
+        "up" => AbstractKey::DpadUp,
+        "down" => AbstractKey::DpadDown,
+        "left" => AbstractKey::DpadLeft,
+        "right" => AbstractKey::DpadRight,
+        _ => return None,
     })
 }
 
@@ -161,8 +164,9 @@ mod tests {
     use super::{
         ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
         ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-        ACTION_UNLOAD, BRIDGE_EVENT_VERSION, FrontendEvent, MenuAction, decode_frontend_event,
+        ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
     };
+    use crate::bridge_contract::BRIDGE_EVENT_VERSION;
 
     #[test]
     fn decodes_every_menu_action_from_kotlin_envelope() {

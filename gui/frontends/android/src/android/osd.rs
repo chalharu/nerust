@@ -107,6 +107,17 @@ impl InsetsCache {
 pub(super) struct AndroidOsd {
     state: OsdState,
     insets: InsetsCache,
+    /// Memoized [`Self::safe_insets`]: arithmetic runs only when size,
+    /// density, content aspect, or the system insets change.
+    safe_memo: Option<(SafeInsetsKey, ViewInsets)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SafeInsetsKey {
+    size: SurfaceSize,
+    scale_key: u32,
+    content: Option<(u32, u32)>,
+    system: ViewInsets,
 }
 
 /// Per-frame sync context for the rasterizer handoff.
@@ -126,6 +137,7 @@ impl AndroidOsd {
         Self {
             state: OsdState::new(),
             insets: InsetsCache::new(),
+            safe_memo: None,
         }
     }
 
@@ -140,6 +152,32 @@ impl AndroidOsd {
     pub(super) fn invalidate(&mut self) {
         self.state.invalidate();
         self.insets.invalidate();
+        self.safe_memo = None;
+    }
+
+    /// Memoized [`Self::safe_insets`]: arithmetic runs only when size,
+    /// density, content aspect, or the system insets change.
+    pub(super) fn safe_insets_memoized(
+        &mut self,
+        scale_factor: f32,
+        content: Option<PhysicalSize>,
+        size: SurfaceSize,
+        system: ViewInsets,
+    ) -> ViewInsets {
+        let key = SafeInsetsKey {
+            size,
+            scale_key: crate::density::density_key(scale_factor),
+            content: content.map(|c| (c.width.to_bits(), c.height.to_bits())),
+            system,
+        };
+        if let Some((cached_key, value)) = &self.safe_memo
+            && *cached_key == key
+        {
+            return *value;
+        }
+        let value = Self::safe_insets(scale_factor, content, size, system);
+        self.safe_memo = Some((key, value));
+        value
     }
 
     // Frontend-owned modal flow lives in `DialogCoordinator`; `with_modal`
