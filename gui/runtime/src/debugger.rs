@@ -153,7 +153,11 @@ pub fn diff_rows(prev: &[HexRow], next: &[HexRow]) -> Vec<u32> {
 pub fn rgba_image(image: &DebugImage) -> DebugImageRgba {
     let mut rgba = Vec::with_capacity(image.pixels.len() * 4);
     for &pixel in &image.pixels {
-        let rgb = image.palette.get(pixel as usize).copied().unwrap_or([0, 0, 0]);
+        let rgb = image
+            .palette
+            .get(pixel as usize)
+            .copied()
+            .unwrap_or([0, 0, 0]);
         rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 0xFF]);
     }
     DebugImageRgba {
