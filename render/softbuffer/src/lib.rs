@@ -58,6 +58,8 @@ pub struct SoftbufferRenderer {
     osd_policy: UploadBudget,
     /// Per-frame converted palette; the hot loop only indexes into it.
     palette_table: [[u8; 4]; 256],
+    /// Source words of the converted table; equal words skip the rebuild.
+    last_palette: Option<Box<[u32]>>,
     /// Last tap-coverage verdict keyed by the full struct; a key match
     /// skips the scan, and the `lut_rev` epoch invalidates on rebuild.
     taps_cache: Option<(TapKey, bool)>,
@@ -167,6 +169,7 @@ impl SoftbufferRenderer {
             osd: None,
             osd_policy: UploadBudget::new(max_upload_retries),
             palette_table: [[0, 0, 0, 255]; 256],
+            last_palette: None,
             lut: LutEntry::new(),
             resize_buffer: Vec::new(),
             ntsc_buffer: Vec::new(),
@@ -643,8 +646,11 @@ impl FrameSink for SoftbufferRenderer {
                 } else {
                     // Out-of-range indices render black instead of
                     // panicking the UI thread (see mismatch guard).
-                    // Convert once per frame; the hot loop only indexes.
-                    self.palette_table = palette_table(palette);
+                    // Rebuild only on change; the hot loop only indexes.
+                    if self.last_palette.as_deref() != Some(palette) {
+                        self.palette_table = palette_table(palette);
+                        self.last_palette = Some(palette.clone());
+                    }
                     let indexer = PixelIndexer::PaletteTable {
                         src,
                         table: &self.palette_table,

@@ -149,7 +149,7 @@ impl std::error::Error for RendererError {
 /// let mut layer = OsdLayer::new(0, 0, 1, 1, vec![0; 4]);
 /// layer.rgba()[0] = 255;
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct OsdLayer {
     /// Top-left corner in physical surface pixels.
     pub x: u32,
@@ -158,20 +158,33 @@ pub struct OsdLayer {
     pub height: u32,
     /// Row-major straight-alpha RGBA, `width * height * 4` bytes.
     rgba: Arc<[u8]>,
-    payload_hash: u64,
+    /// Pixel digest, computed on first mismatch check: shared arcs never hash.
+    payload_hash: std::cell::OnceCell<u64>,
 }
 
+impl PartialEq for OsdLayer {
+    /// Visual equality: geometry plus pixel bytes, never the hash cache state.
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x
+            && self.y == other.y
+            && self.width == other.width
+            && self.height == other.height
+            && self.rgba == other.rgba
+    }
+}
+
+impl Eq for OsdLayer {}
+
 impl OsdLayer {
-    /// Freeze the pixels and compute their digest once.
+    /// Freeze the pixels; the digest waits for the first mismatch check.
     pub fn new(x: u32, y: u32, width: u32, height: u32, rgba: Vec<u8>) -> Self {
-        let payload_hash = content_hash(&rgba);
         Self {
             x,
             y,
             width,
             height,
             rgba: Arc::from(rgba),
-            payload_hash,
+            payload_hash: std::cell::OnceCell::new(),
         }
     }
 
@@ -180,9 +193,11 @@ impl OsdLayer {
         &self.rgba
     }
 
-    /// Construction-time pixel digest, independent of mutable geometry.
+    /// Construction-time pixel digest, computed once on first use.
     pub fn content_hash(&self) -> u64 {
-        self.payload_hash
+        *self
+            .payload_hash
+            .get_or_init(|| content_hash(&self.rgba))
     }
 
     /// Exact visual equality: shared pixels skip hashing and byte comparison;
@@ -196,7 +211,7 @@ impl OsdLayer {
             && self.width == other.width
             && self.height == other.height
             && (Arc::ptr_eq(&self.rgba, &other.rgba)
-                || (self.payload_hash == other.payload_hash && self.rgba == other.rgba))
+                || (self.content_hash() == other.content_hash() && self.rgba == other.rgba))
     }
 
     /// Option-level equality for layer caches on both sides.

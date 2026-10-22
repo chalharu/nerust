@@ -213,6 +213,10 @@ pub(crate) struct OsdView {
     pub(crate) osd_layer: Option<OsdLayer>,
     /// Grow-only zeros reused for OSD clears (no steady allocs).
     pub(crate) osd_clear_scratch: StagingBuf,
+    /// Null-allocated surface store is undefined until the first full clear.
+    /// Set on resize; the next staged composite clears once, then sets it.
+    /// Resizes with no staged layer never pay the fullscreen memset.
+    osd_surface_clean: bool,
     pub(crate) osd_matrix: Option<GLint>,
     pub(crate) last_osd_matrix: Option<[f32; 16]>,
     /// Sampler uniform resolved once in `init_osd` (not per frame).
@@ -235,6 +239,7 @@ impl Default for OsdView {
             osd_shader: None,
             osd_layer: None,
             osd_clear_scratch: StagingBuf::new(),
+            osd_surface_clean: true,
             osd_matrix: None,
             last_osd_matrix: None,
             osd_texture_loc: None,
@@ -383,11 +388,9 @@ impl OsdView {
             return Ok(());
         }
         if self.osd_size != (surface_w, surface_h) {
-            let need = checked_clear_need(surface_w, surface_h).map_err(|_| {
-                ViewError::InvalidSurface {
-                    w: surface_w,
-                    h: surface_h,
-                }
+            checked_clear_need(surface_w, surface_h).map_err(|_| ViewError::InvalidSurface {
+                w: surface_w,
+                h: surface_h,
             })?;
             let limit = ok_gl(nerust_glwrap::raw::get_integer(gl::MAX_TEXTURE_SIZE))?;
             if surface_w > limit || surface_h > limit {
@@ -396,28 +399,11 @@ impl OsdView {
                     h: surface_h,
                 });
             }
-            // A null TexImage allocation has undefined contents. Initialize the
-            // entire new store before compositing any subrectangle.
-            self.osd_clear_scratch
-                .try_staging(need)
-                .map_err(|_| {
-                    ViewError::Gl(nerust_glwrap::GlError::new(vec![
-                        nerust_glwrap::GlErrorKind::OutOfMemory,
-                    ]))
-                })?
-                .fill(0);
-            crate::frame_textures::upload_texture_bytes(
-                0,
-                self.osd_texture,
-                surface_w as usize,
-                surface_h as usize,
-                gl::RGBA as i32,
-                gl::RGBA,
-                self.osd_clear_scratch.staging(need),
-            )?;
-            ok_gl(check_frame())?;
+            // Null store: defer the fullscreen clear to the first staged
+            // composite. Resizes with no OSD layer never pay the memset.
             self.osd_size = (surface_w, surface_h);
             self.osd_prev = None;
+            self.osd_surface_clean = false;
         }
         if self.osd_layer.is_none() {
             if let Some((px, py, pw, ph)) = self.osd_prev {
@@ -448,6 +434,13 @@ impl OsdView {
             ..
         } = staged;
         let rect = (lx, ly, lw, lh);
+        if !self.osd_surface_clean {
+            // First staged composite after a resize: the null store becomes
+            // transparent once, before any subrect blit.
+            let texture = self.osd_texture;
+            self.clear_rect(texture, surface_h, 0, 0, surface_w, surface_h)?;
+            self.osd_surface_clean = true;
+        }
         if self.osd_prev != Some(rect)
             && let Some((px, py, pw, ph)) = self.osd_prev
         {
