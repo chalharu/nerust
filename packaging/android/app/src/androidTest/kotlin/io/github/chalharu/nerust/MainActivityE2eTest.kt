@@ -496,8 +496,6 @@ class MainActivityE2eTest {
         // the process is gone. Hangs past this plus the harness wait fail
         // with thread stacks (see expect_process_termination).
         const val TERMINATION_GRACE_MS = 30_000L
-        const val STARTUP_STABILITY_DELAY_MS = 2_000L
-        const val STARTUP_TIMEOUT_MS = 60_000L
         const val TEST_TIMEOUT_MS = 180_000L
         const val UI_THREAD_TIMEOUT_MS = 10_000L
 
