@@ -25,6 +25,17 @@ impl From<(String, u32, u32, Vec<u8>)> for LiveImage {
     }
 }
 
+impl From<nerust_gui_runtime::debugger::DebugImageRgba> for LiveImage {
+    fn from(image: nerust_gui_runtime::debugger::DebugImageRgba) -> Self {
+        Self {
+            label: image.label,
+            width: image.width,
+            height: image.height,
+            rgba: image.rgba,
+        }
+    }
+}
+
 /// Live PPU image batch: generation plus one [`LiveImage`] per image.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveImageBatch {

@@ -7,7 +7,7 @@ use std::sync::{
 
 use nerust_core_traits::debugger::{HexRow, SpaceId};
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::{DisplayCache, NavState, StatusMessage};
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, NavState, StatusMessage};
 use nerust_settings_core::model::language::AppLanguage;
 
 /// Poison-safe mutex lock: recovers the inner value after a panic.
@@ -211,7 +211,7 @@ impl DebugBridge {
     pub(crate) fn apply_live_images(
         &self,
         generation: u64,
-        images: Vec<(String, u32, u32, Vec<u8>)>,
+        images: Vec<DebugImageRgba>,
         running: bool,
     ) -> bool {
         let mut display = write_display(&self.display);
@@ -780,7 +780,12 @@ mod tests {
         // Same generation: images untouched, no rebuild.
         assert!(!bridge.apply_live_images(0, Vec::new(), true));
         // Newer while running: images land, chrome flips to Running.
-        let images = vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])];
+        let images = vec![DebugImageRgba {
+            label: "Tiles".to_string(),
+            width: 2,
+            height: 1,
+            rgba: vec![0xFF; 8],
+        }];
         assert!(bridge.apply_live_images(3, images, true));
         assert_eq!(bridge.display_snapshot().images_gen, 3);
         assert!(matches!(

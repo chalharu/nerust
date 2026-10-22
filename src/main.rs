@@ -1,3 +1,3 @@
 fn main() {
-    nerust::run();
+    std::process::exit(nerust::run());
 }

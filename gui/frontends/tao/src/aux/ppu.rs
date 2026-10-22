@@ -40,7 +40,7 @@ pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 use super::focus::{AuxRender as _, AuxShellRef};
 
 use super::registry::AuxController;
-use nerust_gui_viewmodel::debugger::scale2x_nearest;
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, scale2x_nearest};
 
 /// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
 /// tile start (+16 per tile). Generic geometry, no per-system branch.
@@ -167,13 +167,17 @@ impl Program for PpuProgram {
                 // generation change, hover preserved as-is.
                 let scaled: ScaledPictures = if current.source_gen != generation {
                     let mut scaled = Vec::with_capacity(display.images.len());
-                    for (label, width, height, rgba) in &display.images {
-                        let bytes = scale2x_nearest(rgba, *width, *height);
+                    for image in &display.images {
+                        let bytes = scale2x_nearest(&image.rgba, image.width, image.height);
                         scaled.push((
-                            label.clone(),
-                            width * 2,
-                            height * 2,
-                            iced::widget::image::Handle::from_rgba(width * 2, height * 2, bytes),
+                            image.label.clone(),
+                            image.width * 2,
+                            image.height * 2,
+                            iced::widget::image::Handle::from_rgba(
+                                image.width * 2,
+                                image.height * 2,
+                                bytes,
+                            ),
                         ));
                     }
                     Arc::from(scaled)
@@ -369,7 +373,12 @@ mod tests {
         use nerust_gui_viewmodel::debugger::DisplayCache;
         use nerust_settings_core::model::language::AppLanguage;
         let display = DisplayCache {
-            images: vec![("Tiles".to_string(), 2, 1, vec![0xFF; 8])],
+            images: vec![DebugImageRgba {
+                label: "Tiles".to_string(),
+                width: 2,
+                height: 1,
+                rgba: vec![0xFF; 8],
+            }],
             images_gen: 5,
             ..DisplayCache::default()
         };
@@ -503,7 +512,12 @@ mod tests {
         let _ = program.update(&mut state, PpuMessage::Hovered("Tiles hover".to_string()));
         // New images plus new generation: scaled re-derived, hover kept.
         bridge.update_display(|display| {
-            display.images = vec![("Map".to_string(), 1, 1, vec![0x00; 4])];
+            display.images = vec![DebugImageRgba {
+                label: "Map".to_string(),
+                width: 1,
+                height: 1,
+                rgba: vec![0x00; 4],
+            }];
             display.images_gen = 6;
         });
         let _ = program.update(&mut state, PpuMessage::Sync);

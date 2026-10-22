@@ -85,7 +85,14 @@ impl HostState {
         let images = batch
             .images
             .into_iter()
-            .map(|image| (image.label, image.width, image.height, image.rgba))
+            .map(
+                |image| nerust_gui_viewmodel::debugger::DebugImageRgba {
+                    label: image.label,
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.rgba,
+                },
+            )
             .collect();
         if self.aux.debug_apply_live(batch.generation, images, running) {
             self.aux.ppu_sync();

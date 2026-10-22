@@ -789,7 +789,7 @@ mod tests {
             StateSlotSummary {
                 schema_version: 1,
                 slot_id: 1,
-                path: "slot1".into(),
+                path: nerust_persistence::sidecar::StorageLocation::Native("slot1".into()),
                 saved_at: std::time::SystemTime::UNIX_EPOCH,
                 has_thumbnail: false,
                 emulator_version: "test".to_string(),
@@ -797,7 +797,7 @@ mod tests {
             StateSlotSummary {
                 schema_version: 1,
                 slot_id: 2,
-                path: "slot2".into(),
+                path: nerust_persistence::sidecar::StorageLocation::Native("slot2".into()),
                 saved_at: std::time::SystemTime::UNIX_EPOCH,
                 has_thumbnail: false,
                 emulator_version: "test".to_string(),

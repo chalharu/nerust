@@ -1,7 +1,7 @@
 //! System image blit and scaling. Pure; frontends share these
 //! so the PPU viewer shows identical pixels everywhere.
 
-pub use nerust_gui_runtime::debugger::rgba_image;
+pub use nerust_gui_runtime::debugger::{DebugImageRgba, rgba_image};
 
 /// PPU viewer empty-hover hint. Canonical wording for every
 /// frontend; PPU image titles render the raw kernel label.

@@ -100,7 +100,7 @@ fn validate_unique_cli_arguments(
     Ok(())
 }
 
-pub fn run() {
+pub fn run() -> i32 {
     SimpleLogger::new()
         .with_level(LevelFilter::Warn)
         .env()
@@ -133,15 +133,16 @@ pub fn run() {
     };
 
     #[cfg(all(feature = "gtk", not(clippy)))]
-    nerust_gtk::run(ctx, options);
+    return nerust_gtk::run(ctx, options);
     #[cfg(all(feature = "tao", not(clippy)))]
-    nerust_tao::run(ctx, options);
+    return nerust_tao::run(ctx, options);
     #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
     compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
     #[cfg(clippy)]
     {
         let _ = ctx;
         let _ = options;
+        0
     }
 }
 

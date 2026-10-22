@@ -15,6 +15,12 @@ pub(crate) enum AuxKind {
 }
 
 impl AuxKind {
+    /// Windows whose arrival resumes a system-paused session.
+    /// Arrival anywhere else only cancels a pending auto-pause.
+    pub(crate) fn resume_on_arrival(self) -> bool {
+        matches!(self, AuxKind::Debug | AuxKind::Ppu)
+    }
+
     /// Central log tag for every aux window. Single home so renames
     /// never drift across handle `LOG_TAG`s and scaffold strings.
     pub(crate) fn log_tag(self) -> &'static str {
@@ -169,38 +175,22 @@ impl FocusCoordinator {
     }
 }
 
-/// Shared aux-focus step: same-app arrival cancels a pending pause
-/// (reporting resume); leaving anywhere arms it. Single source below.
-fn aux_focus_step(focus: &mut FocusState, focused: bool) -> bool {
+/// Shared aux-focus step with the resume protocol chosen by window
+/// kind. Returns whether a system-paused session should resume.
+/// Arrival resumes for debug/PPU; settings/history only cancel a pending pause.
+pub(crate) fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool) -> bool {
     if focused {
-        focus.arrive_aux()
+        if kind.resume_on_arrival() {
+            focus.arrive_aux()
+        } else {
+            // Cancel only: unlike `arrive_aux`, the auto-pause flag is
+            // preserved so a later main-window arrival still resumes.
+            focus.cancel_pending();
+            false
+        }
     } else {
         focus.leave_aux();
         false
-    }
-}
-
-/// Quiet aux-focus step for windows that must never resume: arrival only cancels.
-/// Settings uses this; debug/PPU/history use [`aux_focus_step`].
-fn aux_focus_step_quiet(focus: &mut FocusState, focused: bool) {
-    if focused {
-        // Cancel only: unlike `arrive_aux`, the auto-pause flag is
-        // preserved so a later main-window arrival still resumes.
-        focus.cancel_pending();
-    } else {
-        focus.leave_aux();
-    }
-}
-
-/// Shared aux-focus step with the resume protocol chosen by window
-/// kind. Returns whether a system-paused session should resume.
-pub(crate) fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool) -> bool {
-    match kind {
-        AuxKind::Debug | AuxKind::Ppu => aux_focus_step(focus, focused),
-        AuxKind::Settings | AuxKind::History => {
-            aux_focus_step_quiet(focus, focused);
-            false
-        }
     }
 }
 
