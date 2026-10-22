@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::SystemTime};
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreFault, VideoSignalKind,
     audio::StereoSample,
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
@@ -84,16 +84,28 @@ impl GbcConsoleCore {
         options: GbcCoreOptions,
         sample_rate: u32,
     ) -> Result<LoadedGbc, CoreError> {
-        let descriptor = detect_cartridge(rom)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
-        let identity = GbcRomIdentity::from_descriptor(rom, &descriptor)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+        let descriptor = detect_cartridge(rom).ok_or_else(|| CoreError::RomParse {
+            kind: CoreFault::Corrupt,
+            source: Box::new(GbcCoreError::InvalidRom),
+        })?;
+        let identity = GbcRomIdentity::from_descriptor(rom, &descriptor).ok_or_else(|| {
+            CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(GbcCoreError::InvalidRom),
+            }
+        })?;
         if identity.rom_len < identity.declared_rom_len {
-            return Err(CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)));
+            return Err(CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(GbcCoreError::InvalidRom),
+            });
         }
         let mut system =
             GbcSystem::from_descriptor(options.hardware_model, rom.to_vec(), &descriptor)
-                .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+                .ok_or_else(|| CoreError::RomParse {
+                    kind: CoreFault::Corrupt,
+                    source: Box::new(GbcCoreError::InvalidRom),
+                })?;
         system.bus.set_audio_sample_rate(sample_rate);
         Ok(LoadedGbc {
             system,
@@ -639,7 +651,7 @@ mod tests {
         let mut core = GbcConsoleCore::new_empty(input());
         assert!(matches!(
             core.load(&[], &config()),
-            Err(CoreError::RomParse(_))
+            Err(CoreError::RomParse { .. })
         ));
         assert!(matches!(
             core.load(&rom(), &config_with_options(OtherOptions)),

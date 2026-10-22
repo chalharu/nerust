@@ -551,7 +551,6 @@ mod tests {
         );
         assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
     }
-
 }
 
 #[cfg(test)]

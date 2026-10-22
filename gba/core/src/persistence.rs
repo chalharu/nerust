@@ -176,9 +176,7 @@ enum Versioned<T> {
     },
 }
 
-fn decode_payload<T: serde::de::DeserializeOwned>(
-    data: &[u8],
-) -> Result<T, GbaPersistenceError> {
+fn decode_payload<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, GbaPersistenceError> {
     match rmp_serde::from_slice::<Versioned<T>>(data)? {
         Versioned::Supported { body, .. } => Ok(body),
         Versioned::Other { schema_version } => {

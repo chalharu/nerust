@@ -90,16 +90,13 @@ mod tests {
             .create_split(&crate::GbaFactory.default_assignments())
             .unwrap();
         assert_eq!(resources.field_map().len(), 10);
-        let empty =
-            InputAssignments::new(vec![(GBA_ATTACHMENT, None)]);
+        let empty = InputAssignments::new(vec![(GBA_ATTACHMENT, None)]);
         assert!(matches!(
             crate::GbaFactory.create_split(&empty),
             Err(CreateSplitError::EmptyAssignments)
         ));
-        let unknown = InputAssignments::new(vec![(
-            AttachmentId::new("gba.attachment.unknown"),
-            None,
-        )]);
+        let unknown =
+            InputAssignments::new(vec![(AttachmentId::new("gba.attachment.unknown"), None)]);
         assert!(matches!(
             crate::GbaFactory.create_split(&unknown),
             Err(CreateSplitError::SlotNotFound { .. })

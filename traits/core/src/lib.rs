@@ -22,8 +22,14 @@ use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
-    #[error("{0}")]
-    RomParse(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// Unparseable ROM bytes. `kind` is `Corrupt` unless the core proves
+    /// the bytes are well-formed but unsupported (`Incompatible`).
+    #[error("{source}")]
+    RomParse {
+        kind: CoreFault,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("{0}")]
     Core(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("no ROM loaded")]
@@ -55,7 +61,7 @@ impl CoreError {
             Self::Persistence { kind, .. } => *kind,
             Self::NoRomLoaded => CoreFault::Unavailable,
             Self::InvalidCoreOptions => CoreFault::Incompatible,
-            Self::RomParse(_) => CoreFault::Corrupt,
+            Self::RomParse { kind, .. } => *kind,
             Self::Core(error) => match error.downcast_ref::<std::io::Error>() {
                 Some(error) if error.kind() == std::io::ErrorKind::NotFound => CoreFault::Missing,
                 Some(_) => CoreFault::Storage,
