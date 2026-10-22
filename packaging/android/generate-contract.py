@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import ContractError, require
+from bridge_schema import require
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST = ROOT / "gui/frontends/android"

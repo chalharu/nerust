@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import load_sibling
+from bridge_schema import ContractError, load_sibling
 
 CONTRACT = load_sibling("contract", "generate-contract.py")
 VERIFY = load_sibling("verify_contract", "verify-contract.py")
@@ -35,17 +35,17 @@ class ContractTests(unittest.TestCase):
 
     def test_mismatched_event_versions_are_rejected(self):
         self.schema["definitions"]["menuEvent"]["properties"]["v"]["const"] += 1
-        with self.assertRaises(CONTRACT.ContractError):
+        with self.assertRaises(ContractError):
             CONTRACT.outputs(self.schema)
 
     def test_invalid_chunks_and_duplicate_actions_are_rejected(self):
         changed = copy.deepcopy(self.schema)
         changed["x-saf-chunk-bytes"] = 0
-        with self.assertRaises(CONTRACT.ContractError):
+        with self.assertRaises(ContractError):
             CONTRACT.outputs(changed)
         actions = self.schema["definitions"]["menuEvent"]["properties"]["action"]["enum"]
         actions.append(actions[0])
-        with self.assertRaises(CONTRACT.ContractError):
+        with self.assertRaises(ContractError):
             CONTRACT.outputs(self.schema)
 
     def test_unsupported_schema_rules_are_not_ignored(self):
@@ -54,17 +54,17 @@ class ContractTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 changed = copy.deepcopy(original)
                 changed["definitions"]["menuEvent"]["properties"]["key"][rule] = value
-                with self.assertRaises(CONTRACT.ContractError):
+                with self.assertRaises(ContractError):
                     CONTRACT.outputs(changed)
         changed = copy.deepcopy(original)
         changed["not"] = {"type": "object"}
-        with self.assertRaises(CONTRACT.ContractError):
+        with self.assertRaises(ContractError):
             CONTRACT.outputs(changed)
 
     def test_unsupported_version_even_when_all_events_agree_is_rejected(self):
         for definition in self.schema["definitions"].values():
             definition["properties"]["v"]["const"] = 2
-        with self.assertRaises(CONTRACT.ContractError):
+        with self.assertRaises(ContractError):
             CONTRACT.outputs(self.schema)
 
     def test_rust_generated_formatting_is_stable_with_repository_config(self):
