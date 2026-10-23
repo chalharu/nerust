@@ -43,10 +43,49 @@ run_instrumentation() {
         echo "no instrumentation output: runner never started or adb offline (am exit ${rc})" >&2
         return 1
     fi
-    # Only OK passes here: a crash-only output means the app died mid-run
-    # and proves nothing about the requested tests (NER-327). The
-    # termination gate below is the only place that accepts a crash shape.
+    if instrumentation_ok <<< "${output}"; then
+        return 0
+    fi
+    # A hard failure fails immediately: a crash report never excuses an
+    # assertion or runner error (NER-327).
+    if instrumentation_failed "${output}"; then
+        return 1
+    fi
+    # Crash after proven progress means the test body finished but the
+    # summary lost the race with process exit (activity destroy exits
+    # the process by design): retry once. A crash before any finished
+    # test fails without a retry. The second result is final.
+    if ! crashed_after_progress "${tests}"; then
+        return 1
+    fi
+    echo "result delivery raced process exit; retrying once" >&2
+    output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1)" || rc=$?
+    printf '%s\n' "${output}"
+    if ! has_instrumentation_output "${output}"; then
+        echo "no instrumentation output on retry: runner never started or adb offline (am exit ${rc})" >&2
+        return 1
+    fi
     instrumentation_ok <<< "${output}"
+}
+
+# True when logcat proves at least one requested test body finished:
+# the summary loss, not the test, is what the retry recovers.
+crashed_after_progress() {
+    local tests="$1"
+    local log
+    log="$(adb logcat -d -t 2000 2>/dev/null || true)"
+    [[ -n "${log}" ]] || return 1
+    local rest="${tests}" entry method
+    while [[ -n "${rest}" ]]; do
+        entry="${rest%%,*}"
+        method="${entry##*#}"
+        if grep -Fq "TestRunner: finished: ${method}(" <<< "${log}"; then
+            return 0
+        fi
+        [[ "${rest}" == "${entry}" ]] && break
+        rest="${rest#*,}"
+    done
+    return 1
 }
 
 # An `OK (N tests)` summary line: the only passing shape.
