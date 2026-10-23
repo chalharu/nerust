@@ -16,7 +16,7 @@ use nerust_persistence::{
     sidecar::StorageLocation,
     slots::{
         MAX_SLOT_ARCHIVE_BYTES, build_state_slot_bytes, load_state_slot_bytes,
-        load_state_summary_bytes, load_state_summary_from_metadata_bytes,
+        load_state_summary_bytes, load_state_summary_from_metadata_bytes, publish_state_with_sidecar,
     },
     thumbnail::ThumbnailSource,
 };
@@ -399,15 +399,23 @@ impl SlotBackend for AndroidStorageBackend {
         let path = Self::state_path(dir, slot_id)?;
         let (bytes, metadata_bytes, summary) =
             build_state_slot_bytes(path.clone(), slot_id, data, identity, thumbnail)?;
-        self.write(&path, &bytes)?;
-        // Best-effort scan sidecar: listings prefer it and fall back to the
-        // archive, so a sidecar failure never fails the save.
-        if let Err(error) = dir
-            .child(&format!("{slot_id}.summary"))
-            .and_then(|path| self.write(&path, &metadata_bytes))
-        {
-            log::warn!("SAF scan sidecar write failed: {error:?}");
-        }
+        // Same-generation publish: the scan must never adopt a stale
+        // summary for the just-written archive (NER-309).
+        let sidecar = dir.child(&format!("{slot_id}.summary")).ok();
+        publish_state_with_sidecar(
+            || {
+                if let Some(sidecar) = sidecar.as_ref() {
+                    let _ = self.delete(sidecar);
+                }
+            },
+            || self.write(&path, &bytes),
+            || {
+                sidecar
+                    .as_ref()
+                    .map(|sidecar| self.write(sidecar, &metadata_bytes))
+                    .unwrap_or(Ok(()))
+            },
+        )?;
         Ok(summary)
     }
 

@@ -115,6 +115,23 @@ pub fn autosave_state_slot_path(states_dir: &Path) -> PathBuf {
     states_dir.join(AUTOSAVE_SLOT_ENTRY)
 }
 
+/// Publish a state archive with its scan sidecar. The sidecar is dropped
+/// before the state write so a crash after publishing cannot serve a stale
+/// summary, and dropped again when its own write fails so scans fall back
+/// to the archive. State errors propagate; sidecar steps are best-effort.
+pub fn publish_state_with_sidecar(
+    delete_sidecar: impl Fn(),
+    write_state: impl FnOnce() -> Result<(), PersistenceError>,
+    write_sidecar: impl FnOnce() -> Result<(), PersistenceError>,
+) -> Result<(), PersistenceError> {
+    delete_sidecar();
+    write_state()?;
+    if write_sidecar().is_err() {
+        delete_sidecar();
+    }
+    Ok(())
+}
+
 pub fn write_state_slot(
     states_dir: &Path,
     slot_id: u64,
