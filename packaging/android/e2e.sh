@@ -72,14 +72,25 @@ run_instrumentation() {
 # the summary loss, not the test, is what the retry recovers.
 crashed_after_progress() {
     local tests="$1"
-    local log
-    log="$(adb logcat -d -t 2000 2>/dev/null || true)"
+    local log=""
+    # adbd can hiccup right after a process death; a single empty read
+    # must not decide. Bounded refetch keeps the gate deterministic.
+    local attempt
+    for attempt in 1 2 3; do
+        log="$(adb logcat -d -t 2000 2>/dev/null || true)"
+        if [[ -n "${log}" ]]; then
+            break
+        fi
+        sleep 1
+    done
+    echo "logcat lines for progress check: $(printf '%s' "${log}" | wc -l)" >&2
     [[ -n "${log}" ]] || return 1
     local rest="${tests}" entry method
     while [[ -n "${rest}" ]]; do
         entry="${rest%%,*}"
         method="${entry##*#}"
         if grep -Fq "TestRunner: finished: ${method}(" <<< "${log}"; then
+            echo "progress proven by ${method}; summary was lost" >&2
             return 0
         fi
         [[ "${rest}" == "${entry}" ]] && break
