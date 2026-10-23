@@ -10,6 +10,10 @@ source "${SCRIPT_DIR}/package-helpers.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 PASS=0
+# The release APK must carry the Rust cdylib (crate lib name "main",
+# loaded via System.loadLibrary("main")); the gate below fails the
+# build instead of shipping an APK without it (NER-314).
+EXPECTED_LIB="libmain.so"
 pass() {
     PASS=$((PASS + 1))
     echo "ok: $1"
@@ -20,13 +24,13 @@ fail() {
 }
 
 # Valid APK carrying the expected library passes.
-python3 - "${TMP}/good.apk" <<'EOF'
+python3 - "${TMP}/good.apk" "${EXPECTED_LIB}" <<'EOF'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as apk:
-    apk.writestr("lib/arm64-v8a/libmain.so", b"\x7fELF fake")
+    apk.writestr("lib/arm64-v8a/" + sys.argv[2], b"\x7fELF fake")
     apk.writestr("classes.dex", b"dex")
 EOF
-verify_apk_contents "${TMP}/good.apk" "libmain.so" >/dev/null \
+verify_apk_contents "${TMP}/good.apk" "${EXPECTED_LIB}" >/dev/null \
     || fail "valid APK with the native lib was rejected"
 pass "valid APK with the native lib passes"
 
@@ -36,24 +40,24 @@ import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as apk:
     apk.writestr("classes.dex", b"dex")
 EOF
-if verify_apk_contents "${TMP}/nolib.apk" "libmain.so" >/dev/null 2>&1; then
+if verify_apk_contents "${TMP}/nolib.apk" "${EXPECTED_LIB}" >/dev/null 2>&1; then
     fail "APK without the native lib passed"
 fi
 pass "APK without the native lib fails"
 
 # Corrupt bytes fail instead of passing the checksum-shaped gate.
 printf 'not a zip at all' >"${TMP}/corrupt.apk"
-if verify_apk_contents "${TMP}/corrupt.apk" "libmain.so" >/dev/null 2>&1; then
+if verify_apk_contents "${TMP}/corrupt.apk" "${EXPECTED_LIB}" >/dev/null 2>&1; then
     fail "corrupt APK passed"
 fi
 pass "corrupt APK fails"
 
 # Missing or empty APK fails.
-if verify_apk_contents "${TMP}/absent.apk" "libmain.so" >/dev/null 2>&1; then
+if verify_apk_contents "${TMP}/absent.apk" "${EXPECTED_LIB}" >/dev/null 2>&1; then
     fail "missing APK passed"
 fi
 : >"${TMP}/empty.apk"
-if verify_apk_contents "${TMP}/empty.apk" "libmain.so" >/dev/null 2>&1; then
+if verify_apk_contents "${TMP}/empty.apk" "${EXPECTED_LIB}" >/dev/null 2>&1; then
     fail "empty APK passed"
 fi
 pass "missing and empty APKs fail"

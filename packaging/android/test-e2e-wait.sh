@@ -12,6 +12,9 @@ trap - EXIT
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 PASS=0
+# Shared stub matcher: every adb stub below matches the same
+# instrumentation call shape (Sonar S1192: no repeated literal).
+INSTRUMENT_CMD="am instrument"
 fail() {
     echo "FAIL: $1" >&2
     exit 1
@@ -48,7 +51,7 @@ fi
 adb() {
     # shellcheck disable=SC2124
     case "$*" in
-        *"am instrument"*) echo "error: device '(null)' not found" >&2; return 1 ;;
+        *"${INSTRUMENT_CMD}"*) echo "error: device '(null)' not found" >&2; return 1 ;;
         *pidof*) echo "1234" ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
@@ -66,7 +69,7 @@ unset -f adb
 echo 0 >"${TMP}/genuine-pidof-calls"
 adb() {
     case "$*" in
-        *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
+        *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
         *pidof*)
             n=$(($(cat "${TMP}/genuine-pidof-calls") + 1))
             echo "${n}" >"${TMP}/genuine-pidof-calls"
@@ -101,7 +104,7 @@ unset -f adb
 # --- run path: crash-only output is not a pass ---
 adb() {
     case "$*" in
-        *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
+        *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -117,7 +120,7 @@ unset -f adb
 # --- run path: OK summary still passes ---
 adb() {
     case "$*" in
-        *"am instrument"*) printf 'INSTRUMENTATION_CODE: 1\nOK (2 tests)\n' ;;
+        *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_CODE: 1\nOK (2 tests)\n' ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -133,7 +136,7 @@ unset -f adb
 # --- run path: empty output fails, never converts to a pass ---
 adb() {
     case "$*" in
-        *"am instrument"*) return 1 ;;
+        *"${INSTRUMENT_CMD}"*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
 }
@@ -165,7 +168,7 @@ unset -f adb
 export E2E_ENSURE_PROCESS_TIMEOUT=2
 adb() {
     case "$*" in
-        *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
+        *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
         *pidof*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
@@ -186,7 +189,7 @@ unset E2E_ENSURE_PROCESS_TIMEOUT
 echo 0 >"${TMP}/relaunch-pidof-calls"
 adb() {
     case "$*" in
-        *"am instrument"*) printf 'INSTRUMENTATION_CODE: -1\nOK (1 test)\n' ;;
+        *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_CODE: -1\nOK (1 test)\n' ;;
         *monkey*) return 0 ;;
         *pidof*)
             n=$(($(cat "${TMP}/relaunch-pidof-calls") + 1))
