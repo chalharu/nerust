@@ -85,4 +85,72 @@ class SafCleanupTest {
         assertEquals(0, SafCleanup.parkedCount())
         queued.forEach { assertTrue(it.await(10, TimeUnit.SECONDS)) }
     }
+
+    @Test fun parkedTaskOnIdleLaneRunsWithoutWaitingForACompletion() {
+        // NER-308 lost-wakeup: a park that lands on an idle lane must run
+        // without a later completion to chain off. White-box probe of the
+        // private kick path through the internal entry point.
+        val done = CountDownLatch(1)
+        val ranOn = AtomicReference<Thread>()
+        SafCleanup.park(Runnable {
+            ranOn.set(Thread.currentThread())
+            done.countDown()
+        })
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertNotEquals(Thread.currentThread(), ranOn.get())
+        assertEquals(0, SafCleanup.parkedCount())
+    }
+
+    @Test fun parkedDockIsCappedAndSpillsWithoutLossOrSubmitterWork() {
+        // Wedge everything: blocked worker, full queue, blocked overflows.
+        val workerBlock = CountDownLatch(1)
+        val workerRelease = CountDownLatch(1)
+        SafCleanup.executor.execute {
+            workerBlock.countDown()
+            assertTrue(workerRelease.await(10, TimeUnit.SECONDS))
+        }
+        assertTrue(workerBlock.await(10, TimeUnit.SECONDS))
+        val queued = (0 until SafCleanup.MAX_PENDING).map {
+            CountDownLatch(1).also { done ->
+                SafCleanup.executor.execute { done.countDown() }
+            }
+        }
+        val overflowBlock = CountDownLatch(4)
+        val overflowRelease = CountDownLatch(1)
+        repeat(4) {
+            SafCleanup.executor.execute {
+                overflowBlock.countDown()
+                assertTrue(overflowRelease.await(10, TimeUnit.SECONDS))
+            }
+        }
+        assertTrue(overflowBlock.await(10, TimeUnit.SECONDS))
+        // 70 more submits: 64 park, the rest spill to fresh threads because
+        // the dock is bounded. Nothing runs on the submitting test thread.
+        val ran = java.util.concurrent.atomic.AtomicInteger(0)
+        val allDone = CountDownLatch(70)
+        val submitter = Thread.currentThread()
+        val ranOn = java.util.Collections.synchronizedList(mutableListOf<String>())
+        repeat(70) {
+            SafCleanup.executor.execute {
+                ranOn.add(Thread.currentThread().name)
+                ran.incrementAndGet()
+                allDone.countDown()
+            }
+        }
+        // Nothing can complete while wedged: the dock holds exactly the cap
+        // and only the spillover has run, off the submitter.
+        assertEquals(64, SafCleanup.parkedCount())
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (ran.get() < 6 && System.nanoTime() < deadline) Thread.sleep(10)
+        assertEquals(6, ran.get())
+        assertTrue(ranOn.none { it == submitter.name })
+        assertTrue(ranOn.any { it.contains("spill") })
+        // Release everything: every task runs exactly once, dock drains.
+        overflowRelease.countDown()
+        workerRelease.countDown()
+        assertTrue(allDone.await(10, TimeUnit.SECONDS))
+        assertEquals(70, ran.get())
+        assertEquals(0, SafCleanup.parkedCount())
+        queued.forEach { assertTrue(it.await(10, TimeUnit.SECONDS)) }
+    }
 }

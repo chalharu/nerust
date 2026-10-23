@@ -92,4 +92,15 @@ class SafWriteSessionsTest {
         val long = SafVerifiedInputStream(java.io.ByteArrayInputStream(byteArrayOf(1, 2)), 1)
         assertThrows(IOException::class.java) { long.read(ByteArray(2)) }
     }
+
+    @Test fun openBeyondCapRefusesAndDiscardsWithoutLeaking() {
+        // NER-308 AC-2: admission is capped; the refused open discards the
+        // passed transaction through the cleanup lane instead of leaking it.
+        val sessions = SafWriteSessions(java.util.concurrent.Executor { it.run() })
+        val ids = (0 until 64).map { sessions.open(Transaction()) }
+        assertTrue(ids.all { it > 0 })
+        val extra = Transaction()
+        assertEquals(0L, sessions.open(extra))
+        assertEquals(listOf("close", "abort"), extra.calls)
+    }
 }

@@ -13,20 +13,21 @@ import java.util.concurrent.atomic.AtomicInteger
  * Single bounded cleanup lane shared by SAF read and write sessions.
  * Queue memory and worker threads stay capped when a provider stalls; a
  * saturated lane spills to a bounded number of overflow threads, and a
- * fully saturated lane parks tasks in a dock that every completion drains.
- * Submitters (including Activity.onDestroy) never run provider I/O and
- * ownership is never dropped. No Android dependencies: JVM-testable.
+ * fully saturated lane parks in a bounded dock that every completion and
+ * every park drains. Submitters (including Activity.onDestroy) never run
+ * provider I/O and ownership is never dropped. No Android dependencies:
+ * JVM-testable.
  *
- * The dock itself is unbounded by design: it holds only already-owned
- * resources (no new threads, FDs, or transfers), each entry is tiny, and
- * every entry is consumed by the completion chain, so growth requires a
- * permanently wedged provider plus unbounded user submissions. Bounding it
- * would force dropping cleanups (FD leaks) or stalling the submitter,
- * both worse than the theoretical queue growth. [parkedCount] exposes it.
+ * Bounds (NER-308): lane queue [MAX_PENDING], overflow threads
+ * [MAX_OVERFLOW_THREADS], dock [MAX_PARKED]. A dock overflow cannot drop
+ * (FD leak) or stall the submitter (ANR risk), so the excess task runs on
+ * a short-lived daemon thread as a documented last resort; the submitter
+ * still never runs provider I/O, and [parkedCount] exposes the pressure.
  */
 internal object SafCleanup {
     const val MAX_PENDING = 64
     private const val MAX_OVERFLOW_THREADS = 4
+    private const val MAX_PARKED = MAX_PENDING
     private val overflowThreads = AtomicInteger(0)
     private val parkedGuard = Any()
     private val parked = ArrayDeque<Runnable>()
@@ -67,16 +68,52 @@ internal object SafCleanup {
         }
     }
 
-    private fun park(task: Runnable) {
+    internal fun park(task: Runnable) {
         synchronized(parkedGuard) { parked.addLast(task) }
+        if (synchronized(parkedGuard) { parked.size } > MAX_PARKED) {
+            // Bounded dock overflow: drop the just-added entry back out and
+            // run it on a short-lived daemon thread. A concurrent pump may
+            // have taken it first; then there is nothing to withdraw and the
+            // lane copy runs instead, exactly once either way.
+            val ours = synchronized(parkedGuard) {
+                if (parked.peekLast() === task) {
+                    parked.removeLast()
+                    true
+                } else {
+                    false
+                }
+            }
+            if (ours) {
+                Thread({
+                    task.run()
+                    pumpParked()
+                }, "nerust-saf-cleanup-spill").apply { isDaemon = true }.start()
+            }
+            return
+        }
+        // Lost-wakeup guard: completions only chain while work is in
+        // flight. A park that lands on an idle lane would otherwise wait for
+        // a completion that never comes, so resubmit one entry now (NER-308).
+        pumpParked()
     }
 
-    private fun pumpParked() {
-        val next = synchronized(parkedGuard) {
-            if (parked.isEmpty()) null else parked.removeFirst()
-        } ?: return
-        // Still saturated: the handler parks it again. No loss, no inline run.
-        executor.execute(next)
+    internal fun pumpParked() {
+        val pool = executor as ThreadPoolExecutor
+        while (true) {
+            val next = synchronized(parkedGuard) {
+                if (parked.isEmpty()) return
+                parked.removeFirst()
+            }
+            // Offer without the reject handler: a full queue means the worker
+            // is busy, so its completion chain will drain the dock. Removing
+            // from the dock before offering keeps every entry submitted at
+            // most once across concurrent pumps.
+            if (!pool.queue.offer(next)) {
+                synchronized(parkedGuard) { parked.addFirst(next) }
+                return
+            }
+            pool.prestartCoreThread()
+        }
     }
 
     /** Cleanups parked beyond the lane, visible for tests and metrics. */
