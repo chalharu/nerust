@@ -313,20 +313,47 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     assert_eq!(*events.borrow(), ["invalidate", "state"]);
 }
 
-/// NER-312: the metadata cap is enforced by the decoder itself, so a huge
-/// sidecar is rejected even when handed over directly.
+/// NER-312: the cap rejects decodable metadata, not just garbage. A huge
+/// but otherwise valid encoding fails only through the bound; the same
+/// layout at a small size decodes, and empty input still fails to parse.
 #[test]
-fn metadata_decode_rejects_oversized_sidecar_bytes() {
+fn metadata_cap_rejects_valid_but_oversized_encoding() {
+    use crate::metadata::{encode_metadata_bytes, encode_slot_metadata};
     use crate::slots::{MAX_METADATA_BYTES, load_state_summary_from_metadata_bytes};
-    use nerust_core_traits::identity::SystemIdentity;
-    let dir: std::path::PathBuf = "unused".into();
-    let identity: Option<SystemIdentity> = None;
-    let oversized = vec![0u8; MAX_METADATA_BYTES + 1];
+    let big = test_identity_with_bytes(vec![7u8; MAX_METADATA_BYTES]);
+    let big_bytes = encode_metadata_bytes(
+        &encode_slot_metadata(7, std::time::UNIX_EPOCH, &big, false).unwrap(),
+    )
+    .unwrap();
+    assert!(big_bytes.len() > MAX_METADATA_BYTES);
     assert!(
-        load_state_summary_from_metadata_bytes(dir.clone().into(), &oversized, identity.as_ref())
-            .is_err()
+        load_state_summary_from_metadata_bytes(
+            std::path::PathBuf::from("unused").into(),
+            &big_bytes,
+            None
+        )
+        .is_err()
     );
-    assert!(load_state_summary_from_metadata_bytes(dir.into(), &[], identity.as_ref()).is_err());
+    let small_bytes = encode_metadata_bytes(
+        &encode_slot_metadata(7, std::time::UNIX_EPOCH, &test_identity(), false).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            std::path::PathBuf::from("unused").into(),
+            &small_bytes,
+            None
+        )
+        .is_ok()
+    );
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            std::path::PathBuf::from("unused").into(),
+            &[],
+            None
+        )
+        .is_err()
+    );
 }
 
 /// NER-319: copy-then-delete keeps the original on every failure path.
