@@ -1,22 +1,5 @@
 pub use crate::session::error::SlotOpFailure;
 
-use crate::session::{SessionHandle, osd::TickMetrics};
-
-/// Handler behind one registration-table entry: the command plus the pass tick in.
-pub type CommandHandler = fn(
-    &mut SessionHandle,
-    SessionCommand,
-    &TickMetrics,
-) -> Result<SessionCommandOutcome, super::SessionError>;
-
-/// Registration-table dispatch: the sole mapping from command to handler.
-/// Implemented once in `command_exec`; all dispatch goes through it.
-pub trait SessionCommandHandler {
-    /// Handler for this command from the registration table.
-    /// `TogglePause` callers resolve through [`TogglePauseDecorator`] first.
-    fn handler(self) -> CommandHandler;
-}
-
 /// Data-driven command vocabulary: every per-command answer lives on this trait.
 /// The executor matches once; [`SessionCommand`] is the sole implementor.
 pub trait SessionCmd {
@@ -137,7 +120,8 @@ pub fn outcome_notification(
 }
 
 /// Decorator resolving `TogglePause` to the steady arm entered from the pass tick.
-/// Both dispatch and notification resolve through here, never inline.
+/// The `run_command` entry resolves once for execution and notification alike;
+/// dispatch itself never sees `TogglePause`.
 pub struct TogglePauseDecorator;
 
 impl TogglePauseDecorator {

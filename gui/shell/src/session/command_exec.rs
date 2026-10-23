@@ -4,8 +4,8 @@
 use crate::session::{
     SessionError, SessionHandle,
     commands::{
-        CommandHandler, SessionCmd, SessionCommand, SessionCommandHandler, SessionCommandOutcome,
-        TogglePauseDecorator, outcome_notification,
+        SessionCmd, SessionCommand, SessionCommandOutcome, TogglePauseDecorator,
+        outcome_notification,
     },
     error::SlotOpFailure,
     osd::TickMetrics,
@@ -30,6 +30,14 @@ enum LoadOp {
     LoadSlot(u64),
 }
 
+/// Slot half behind a slot command: the single classification site.
+/// A new op picks a side here, so dispatch and classification cannot drift apart.
+#[derive(Debug, Clone, Copy)]
+enum SlotOp {
+    Save(SaveOp),
+    Load(LoadOp),
+}
+
 /// Stable command names live on [`SessionCmd::cmd_name`]; dispatch matches exhaustively.
 fn run_pause(
     session: &mut SessionHandle,
@@ -45,17 +53,6 @@ fn run_resume(
     tick: &TickMetrics,
 ) -> Result<SessionCommandOutcome, SessionError> {
     session.cmd_resume(tick)
-}
-
-/// Defensive fallback: dispatch resolves once in `run_command`; this re-resolves identically.
-fn run_toggle(
-    session: &mut SessionHandle,
-    command: SessionCommand,
-    tick: &TickMetrics,
-) -> Result<SessionCommandOutcome, SessionError> {
-    let resolved = TogglePauseDecorator::resolve(command, tick);
-    debug_assert!(!matches!(resolved, SessionCommand::TogglePause));
-    resolved.handler()(session, resolved, tick)
 }
 
 fn run_reset(
@@ -98,13 +95,11 @@ fn run_slot_command(
     command: SessionCommand,
     tick: &TickMetrics,
 ) -> Result<SessionCommandOutcome, SessionError> {
-    if let Some(op) = command.as_save_op() {
-        return Ok(session.run_save_op(op));
+    match command.as_slot_op() {
+        Some(SlotOp::Save(op)) => Ok(session.run_save_op(op)),
+        Some(SlotOp::Load(op)) => Ok(session.run_load_op(op, tick)),
+        None => Ok(unreachable_outcome()),
     }
-    if let Some(op) = command.as_load_op() {
-        return Ok(session.run_load_op(op, tick));
-    }
-    Ok(unreachable_outcome())
 }
 
 /// Fallback for slot commands missing their half: total in release, loud in debug.
@@ -117,45 +112,24 @@ fn unreachable_outcome() -> SessionCommandOutcome {
     }
 }
 
-impl SessionCommandHandler for SessionCommand {
-    /// Exhaustive dispatch: every command maps to exactly one handler.
-    fn handler(self) -> CommandHandler {
-        match self {
-            SessionCommand::Pause => run_pause,
-            SessionCommand::Resume => run_resume,
-            SessionCommand::TogglePause => run_toggle,
-            SessionCommand::Reset => run_reset,
-            SessionCommand::CreateSlot
-            | SessionCommand::SaveActiveSlotOrNew
-            | SessionCommand::LoadActiveSlot
-            | SessionCommand::SaveSlot(_)
-            | SessionCommand::LoadSlot(_)
-            | SessionCommand::DeleteSlot(_) => run_slot_command,
-            SessionCommand::SelectActiveSlot(_) => run_select_active,
-            SessionCommand::SelectNextSlot => run_adjacent_next,
-            SessionCommand::SelectPreviousSlot => run_adjacent_previous,
-        }
-    }
-}
-
 impl SessionCommand {
-    /// Save half of this command, if it saves.
-    fn as_save_op(self) -> Option<SaveOp> {
+    /// Slot half behind this command: the single classification site. Explicit
+    /// arms (no wildcard) so a new command fails to compile until classified.
+    fn as_slot_op(self) -> Option<SlotOp> {
         match self {
-            SessionCommand::CreateSlot => Some(SaveOp::CreateSlot),
-            SessionCommand::SaveActiveSlotOrNew => Some(SaveOp::SaveActiveSlotOrNew),
-            SessionCommand::SaveSlot(id) => Some(SaveOp::SaveSlot(id)),
-            SessionCommand::DeleteSlot(id) => Some(SaveOp::DeleteSlot(id)),
-            _ => None,
-        }
-    }
-
-    /// Load half of this command, if it loads.
-    fn as_load_op(self) -> Option<LoadOp> {
-        match self {
-            SessionCommand::LoadActiveSlot => Some(LoadOp::LoadActiveSlot),
-            SessionCommand::LoadSlot(id) => Some(LoadOp::LoadSlot(id)),
-            _ => None,
+            SessionCommand::CreateSlot => Some(SlotOp::Save(SaveOp::CreateSlot)),
+            SessionCommand::SaveActiveSlotOrNew => Some(SlotOp::Save(SaveOp::SaveActiveSlotOrNew)),
+            SessionCommand::SaveSlot(id) => Some(SlotOp::Save(SaveOp::SaveSlot(id))),
+            SessionCommand::DeleteSlot(id) => Some(SlotOp::Save(SaveOp::DeleteSlot(id))),
+            SessionCommand::LoadActiveSlot => Some(SlotOp::Load(LoadOp::LoadActiveSlot)),
+            SessionCommand::LoadSlot(id) => Some(SlotOp::Load(LoadOp::LoadSlot(id))),
+            SessionCommand::Pause
+            | SessionCommand::Resume
+            | SessionCommand::TogglePause
+            | SessionCommand::Reset
+            | SessionCommand::SelectActiveSlot(_)
+            | SessionCommand::SelectNextSlot
+            | SessionCommand::SelectPreviousSlot => None,
         }
     }
 }
@@ -195,7 +169,27 @@ impl SessionHandle {
         command: SessionCommand,
         tick: &TickMetrics,
     ) -> Result<SessionCommandOutcome, SessionError> {
-        command.handler()(self, command, tick)
+        // Exhaustive dispatch: a new command fails to compile until routed
+        // here and classified in `as_slot_op`. TogglePause never arrives:
+        // the entry resolves it once for execution and notification alike.
+        match command {
+            SessionCommand::Pause => run_pause(self, command, tick),
+            SessionCommand::Resume => run_resume(self, command, tick),
+            SessionCommand::Reset => run_reset(self, command, tick),
+            SessionCommand::CreateSlot
+            | SessionCommand::SaveActiveSlotOrNew
+            | SessionCommand::LoadActiveSlot
+            | SessionCommand::SaveSlot(_)
+            | SessionCommand::LoadSlot(_)
+            | SessionCommand::DeleteSlot(_) => run_slot_command(self, command, tick),
+            SessionCommand::SelectActiveSlot(_) => run_select_active(self, command, tick),
+            SessionCommand::SelectNextSlot => run_adjacent_next(self, command, tick),
+            SessionCommand::SelectPreviousSlot => run_adjacent_previous(self, command, tick),
+            SessionCommand::TogglePause => {
+                debug_assert!(false, "TogglePause must resolve before dispatch");
+                Ok(unreachable_outcome())
+            }
+        }
     }
 
     fn cmd_pause(&mut self, tick: &TickMetrics) -> Result<SessionCommandOutcome, SessionError> {
@@ -331,8 +325,12 @@ mod tests {
     use crate::session::commands::{SessionCmd, TogglePauseDecorator};
 
     #[test]
-    fn dispatch_covers_every_command_exhaustively() {
+    fn dispatch_routes_every_command_through_the_entry() {
         use crate::session::commands::SessionCommand as C;
+        use crate::session::test_util::test_session;
+        // End to end through `run_command`: resolution, dispatch,
+        // and notification stay wired for every command.
+        let mut session = test_session();
         for command in [
             C::Pause,
             C::Resume,
@@ -348,7 +346,7 @@ mod tests {
             C::SelectNextSlot,
             C::SelectPreviousSlot,
         ] {
-            let _ = command.handler();
+            assert!(session.run_command(command).is_ok(), "{command:?}");
             assert!(!command.cmd_name().is_empty());
         }
     }
@@ -438,9 +436,15 @@ mod exec_cov_tests {
         assert!(!next.executed);
         let prev = run_adjacent_previous(&mut session, C::SelectPreviousSlot, &tick).unwrap();
         assert!(!prev.executed);
-        let toggle = run_toggle(&mut session, C::TogglePause, &tick).unwrap();
+        // TogglePause resolves once at the entry: toggling twice restores
+        // the live pause state, whichever arm it starts on.
+        let before = session.tick_metrics().paused;
+        let toggle = session.run_command(C::TogglePause).unwrap();
         assert!(toggle.executed);
-        assert!(session.tick_metrics().paused);
+        assert_eq!(session.tick_metrics().paused, !before);
+        let back = session.run_command(C::TogglePause).unwrap();
+        assert!(back.executed);
+        assert_eq!(session.tick_metrics().paused, before);
         let reset = run_reset(&mut session, C::Reset, &tick).unwrap();
         assert!(reset.executed);
     }
