@@ -11,6 +11,7 @@ publish_lock_cleanup() {
         rm -rf "${PUBLISH_LOCK_DIR}"
     fi
     PUBLISH_LOCK_OWNED=""
+    return 0
 }
 
 # Acquire the publish lock dir, recording this process as owner.
@@ -54,4 +55,5 @@ release_publish_lock() {
     fi
     PUBLISH_LOCK_DIR=""
     PUBLISH_LOCK_OWNED=""
+    return 0
 }
