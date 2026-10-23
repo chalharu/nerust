@@ -5,6 +5,7 @@ use std::path::Path;
 
 use crate::session::{
     SessionHandle,
+    error::SlotOpFailure,
     persistence::{PersistenceManager, StateExporter},
 };
 
@@ -46,13 +47,23 @@ impl PersistenceBinder {
                 live
             }
         };
-        setup_persistence(
+        let (setup, scan_fault) = setup_persistence(
             &session.settings.manager,
             &mut session.media.persistence,
             exporter,
             rom_path,
             mapper_restore,
-        )
+        );
+        // A scan failure keeps the previous list but is not silent: the
+        // notice distinguishes a backend failure from an empty list (NER-322).
+        if let Some(fault) = scan_fault {
+            session
+                .notifications
+                .push(crate::session::notification::Message::slot_failed(
+                    None, fault,
+                ));
+        }
+        setup
     }
 }
 
@@ -71,7 +82,7 @@ fn setup_persistence(
     exporter: Option<&dyn StateExporter>,
     rom_path: Option<&Path>,
     mapper_restore: MapperRestore,
-) -> PersistenceSetup {
+) -> (PersistenceSetup, Option<SlotOpFailure>) {
     let sidecars = exporter
         .and_then(|exporter| exporter.export_identity())
         .and_then(|identity| {
@@ -87,19 +98,24 @@ fn setup_persistence(
     let Some(sidecars) = sidecars else {
         // A new ROM must never inherit the previous ROM's save targets.
         persistence.reset();
-        return PersistenceSetup::Unavailable;
+        return (PersistenceSetup::Unavailable, None);
     };
     persistence.configure(sidecars.states_dir, sidecars.mapper_save_path);
+    let mut scan_fault = None;
     if let Some(exporter) = exporter {
-        persistence.refresh_slots(exporter);
+        // A failed scan keeps the previous list but is reported: the setup
+        // stays Ready while the notice distinguishes failure from empty (NER-322).
+        if let Err(error) = persistence.refresh_slots(exporter) {
+            scan_fault = Some(SlotOpFailure::from(&error));
+        }
         if mapper_restore == MapperRestore::Load
             && let Err(e) = persistence.load_mapper_save_if_needed(exporter)
         {
             log::warn!("load_mapper_save_if_needed failed: {e}");
-            return PersistenceSetup::Unavailable;
+            return (PersistenceSetup::Unavailable, None);
         }
     }
-    PersistenceSetup::Ready
+    (PersistenceSetup::Ready, scan_fault)
 }
 
 #[cfg(test)]
@@ -125,6 +141,63 @@ mod persistence_setup_cov_tests {
         assert_eq!(session.drain_notifications().len(), 0);
         session.note_persistence_setup(PersistenceSetup::Unavailable);
         assert_eq!(session.drain_notifications().len(), 1);
+    }
+
+    /// NER-322 AC-2: a failed slot scan keeps the previous list but is not
+    /// silent. Setup stays Ready while a storage-failure notice tells an
+    /// empty-looking list apart from a backend failure.
+    #[test]
+    fn failed_scan_stays_ready_but_notifies() {
+        use crate::session::{
+            error::SlotOpFailure,
+            persistence::{PersistenceBackends, StateExporter},
+        };
+        struct IdentityExporter;
+        impl StateExporter for IdentityExporter {
+            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+                Ok(vec![])
+            }
+            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
+                None
+            }
+            fn export_identity(&self) -> Option<nerust_core_traits::identity::SystemIdentity> {
+                Some(nerust_core_traits::identity::SystemIdentity::new(
+                    Box::new(crate::test_helpers::DummySystemId),
+                    vec![7],
+                ))
+            }
+            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+                Ok(None)
+            }
+            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+        }
+        let mut session = test_session();
+        session
+            .media
+            .persistence
+            .configure_backends(PersistenceBackends {
+                slot: Box::new(crate::session::persistence::FailingSlotBackend),
+                autosave: Box::new(crate::session::persistence::FsAutosave),
+                mapper: Box::new(crate::session::persistence::FsMapper),
+            });
+        let dir = crate::test_helpers::unique_temp_dir("scan-notice");
+        let exporter = IdentityExporter;
+        let setup = PersistenceBinder::bind(
+            &mut session,
+            Some(&exporter),
+            Some(&dir.join("game.nes")),
+            MapperRestore::Skip,
+        );
+        session.note_persistence_setup(setup);
+        assert_eq!(setup, PersistenceSetup::Ready);
+        let notices = session.drain_notifications();
+        assert_eq!(notices.len(), 1, "scan failure is notified, not silent");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

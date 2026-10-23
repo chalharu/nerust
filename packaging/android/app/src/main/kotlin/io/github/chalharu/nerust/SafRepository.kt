@@ -54,6 +54,11 @@ class SafRepository(private val context: Context) : AutoCloseable {
 
     /** Batched name+size listing so Rust `scan` needs no per-entry probe. Unknown sizes encode as -1. */
     fun listSafFilesWithSizes(treeUri: String, relativePath: String): String {
+        // A bad tree is a configuration failure, not an empty listing: throwing
+        // surfaces it as a scan error instead of a silent empty (NER-322).
+        // A missing child directory is genuinely empty and stays "[]".
+        DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
+            ?: throw IllegalArgumentException("unresolvable SAF tree: $treeUri")
         val directory =
             resolveSafDirectory(treeUri, relativePath, create = false)
                 ?: return "[]"

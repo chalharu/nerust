@@ -120,7 +120,7 @@ fn hidden_lifecycle_state_is_deleted_after_import_failure() {
 }
 
 #[test]
-fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
+fn hidden_lifecycle_state_is_preserved_after_identity_mismatch() {
     let temp_dir = unique_temp_dir("hidden-lifecycle-identity");
     let rom_path = temp_dir.join("test.nes");
 
@@ -165,8 +165,11 @@ fn hidden_lifecycle_state_is_deleted_after_identity_mismatch() {
             resolved,
         )
         .unwrap();
+    // A foreign autosave is unusable but not destroyed: deleting on a
+    // failed load would turn an uncertain read into data loss (NER-321).
+    // The next save overwrites it; explicit clear remains available.
     assert!(!session2.load_hidden_lifecycle_state());
-    assert!(!autosave_path.exists());
+    assert!(autosave_path.is_file());
     let _ = fs::remove_dir_all(temp_dir);
 }
 
