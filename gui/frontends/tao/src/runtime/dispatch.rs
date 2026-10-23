@@ -335,10 +335,22 @@ mod tests {
         assert!(log.lock().unwrap().is_empty());
         // The runtime owns the ordered teardown: the pipeline drops
         // before host close runs, exactly once across repeated delivery.
+        // Post-state pins the contract: renderer gone, no aux window
+        // or error dialog left, settings closed, surface cleared.
         runtime.begin_close();
         assert!(runtime.renderer.is_none());
         assert!(runtime.host.close_exited());
         assert_eq!(*log.lock().unwrap(), ["renderer"]);
+        for kind in [
+            AuxKind::Debug,
+            AuxKind::Ppu,
+            AuxKind::History,
+            AuxKind::Settings,
+        ] {
+            assert!(!runtime.host.aux_open(kind), "{kind:?} closed");
+        }
+        assert!(!runtime.host.settings_open());
+        assert!(runtime.surface_xid.is_none());
         runtime.begin_close();
         assert_eq!(log.lock().unwrap().len(), 1);
     }
