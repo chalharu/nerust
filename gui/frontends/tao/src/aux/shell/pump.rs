@@ -491,17 +491,23 @@ mod tests {
     /// message batch between keystrokes. The widget emits the new value,
     /// the batch applies it to the model without rebuilding, and the next
     /// keystroke lands in the still-focused input with the cursor intact.
+    /// Mid-cursor edits, unrelated sync updates, and scroll events in the
+    /// same batch must not strand the input either.
     #[test]
     fn text_input_keeps_focus_across_message_batches() {
-        use iced::keyboard::{self, key::Code as KeyCode, key::Physical};
+        use iced::keyboard::{self, key::Code as KeyCode, key::Named, key::Physical};
 
         #[derive(Default)]
         struct InputState {
             value: String,
+            // Unrelated model field, like a debug drain sync landing in the
+            // same batch: it must not disturb the focused input.
+            sync_generation: u32,
         }
         #[derive(Debug, Clone)]
         enum InputMessage {
             Typed(String),
+            SyncTick(u32),
         }
         #[derive(Default)]
         struct InputProgram;
@@ -533,8 +539,10 @@ mod tests {
                 state: &mut Self::State,
                 message: Self::Message,
             ) -> iced::Task<Self::Message> {
-                let InputMessage::Typed(value) = message;
-                state.value = value;
+                match message {
+                    InputMessage::Typed(value) => state.value = value,
+                    InputMessage::SyncTick(generation) => state.sync_generation = generation,
+                }
                 iced::Task::none()
             }
 
@@ -563,6 +571,22 @@ mod tests {
                 modifiers: keyboard::Modifiers::empty(),
                 text: Some(ch.into()),
                 repeat: false,
+            })
+        }
+        fn press_left() -> iced::Event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(Named::ArrowLeft),
+                modified_key: keyboard::Key::Named(Named::ArrowLeft),
+                physical_key: Physical::Code(KeyCode::ArrowLeft),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            })
+        }
+        fn scroll() -> iced::Event {
+            iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
             })
         }
 
@@ -606,7 +630,9 @@ mod tests {
             matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "a"),
             "first keystroke reaches the focused input: {out:?}"
         );
-        // Apply to the model without rebuilding: focus and cursor survive.
+        // Apply to the model without rebuilding, alongside an unrelated
+        // sync update in the same batch: focus and cursor survive both.
+        out.push(InputMessage::SyncTick(1));
         assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
         // Second keystroke lands in the same input, after the kept cursor.
         shell.pump(
@@ -620,6 +646,39 @@ mod tests {
         assert!(
             matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "ab"),
             "second keystroke continues without refocus: {out:?}"
+        );
+        assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
+        // Mid-cursor edit: Left moves the kept cursor, so the next keystroke
+        // inserts instead of appending. A rebuilt widget would yield "abX".
+        shell.pump(
+            press_left(),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(out.is_empty(), "cursor move emits no message: {out:?}");
+        // A scroll event in between must not disturb the retained input.
+        shell.pump(
+            scroll(),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            press("X"),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(
+            matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "aXb"),
+            "insert lands at the kept cursor: {out:?}"
         );
     }
 }
