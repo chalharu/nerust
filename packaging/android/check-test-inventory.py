@@ -12,6 +12,7 @@ Inventory gaps this guards:
 
 Only inventory is checked here; results are asserted by the runners.
 """
+
 import datetime
 import re
 import sys
@@ -42,36 +43,47 @@ CALL_LINE_RE = re.compile(r"^\s*(run_instrumentation|expect_process_termination)
 HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?(\w+)['\"]?")
 
 
-def selected_e2e_tests(text):
-    """TEST_CLASS selections on live shell lines. Full-line comments never
-    run, and trailing comments are cut outside double quotes, so commented
-    selections cannot pass the inventory gate. Only the two real call shapes
-    count: assignments, printf/echo strings, and heredoc bodies are ignored
-    even when they mention a test (NER-315)."""
+def _strip_trailing_comment(line):
+    """Code before an unquoted `#`; quoted hashes are content."""
+    kept = []
+    in_quotes = False
+    for char in line:
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == "#" and not in_quotes:
+            break
+        kept.append(char)
+    return "".join(kept)
+
+
+def _live_call_lines(text):
+    """Shell lines that really execute, minus comments and heredoc bodies."""
     live = []
     skip_delimiter = None
     for line in text.splitlines():
         stripped = line.lstrip()
         if not stripped or stripped.startswith("#"):
             continue
-        kept = []
-        in_quotes = False
-        for char in stripped:
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char == "#" and not in_quotes:
-                break
-            kept.append(char)
-        live_line = "".join(kept)
+        live_line = _strip_trailing_comment(stripped)
         if skip_delimiter is not None:
             if live_line.strip() == skip_delimiter:
                 skip_delimiter = None
             continue
         heredoc = HEREDOC_RE.search(live_line)
-        if heredoc:
+        if heredoc is not None:
             skip_delimiter = heredoc.group(1)
         if CALL_LINE_RE.match(live_line):
             live.append(live_line)
+    return live
+
+
+def selected_e2e_tests(text):
+    """TEST_CLASS selections on live shell lines. Full-line comments never
+    run, and trailing comments are cut outside double quotes, so commented
+    selections cannot pass the inventory gate. Only the two real call shapes
+    count: assignments, printf/echo strings, and heredoc bodies are ignored
+    even when they mention a test (NER-315)."""
+    live = _live_call_lines(text)
     invoked = set()
     for chunk in re.findall(r"\$\{TEST_CLASS\}#([A-Za-z0-9_,]+)", "\n".join(live)):
         invoked.update(name for name in chunk.split(",") if name)
@@ -88,7 +100,10 @@ def check_e2e():
     e2e = (HERE / "e2e.sh").read_text()
     invoked = selected_e2e_tests(e2e)
     require(invoked, "no instrumented tests selected in e2e.sh")
-    test_file = HERE / "app/src/androidTest/kotlin/io/github/chalharu/nerust/MainActivityE2eTest.kt"
+    test_file = (
+        HERE
+        / "app/src/androidTest/kotlin/io/github/chalharu/nerust/MainActivityE2eTest.kt"
+    )
     defined = set(kotlin_test_methods(test_file))
     require(defined, "no @Test methods in MainActivityE2eTest")
     missing, extra = diff_names(defined, invoked)
@@ -126,7 +141,7 @@ def jvm_executed_tests(results):
 
 
 def _validated_allowance_pairs(allowances):
-    """"Class.method" pairs; malformed keys fail the gate loudly."""
+    """ "Class.method" pairs; malformed keys fail the gate loudly."""
     allowed_pairs = set()
     for key in allowances:
         pair = tuple(key.split(".", 1))
@@ -181,7 +196,9 @@ def main(argv):
     elif len(argv) == 2 and argv[0] == "jvm":
         check_jvm(argv[1])
     else:
-        print("usage: check-test-inventory.py e2e | check-test-inventory.py jvm <results-dir>")
+        print(
+            "usage: check-test-inventory.py e2e | check-test-inventory.py jvm <results-dir>"
+        )
         return 2
     return 0
 
