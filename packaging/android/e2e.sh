@@ -36,13 +36,17 @@ trap dump_logcat_on_failure EXIT
 
 run_instrumentation() {
     local tests="$1"
-    local output
-    output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1 || true)"
+    local output rc=0
+    output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1)" || rc=$?
     printf '%s\n' "${output}"
-    if instrumentation_ok <<< "${output}"; then
-        return 0
+    if ! has_instrumentation_output "${output}"; then
+        echo "no instrumentation output: runner never started or adb offline (am exit ${rc})" >&2
+        return 1
     fi
-    instrumentation_crashed_without_failure "${output}"
+    # Only OK passes here: a crash-only output means the app died mid-run
+    # and proves nothing about the requested tests (NER-327). The
+    # termination gate below is the only place that accepts a crash shape.
+    instrumentation_ok <<< "${output}"
 }
 
 # An `OK (N tests)` summary line: the only passing shape.
@@ -56,14 +60,6 @@ instrumentation_failed() {
     grep -Eq 'FAILURES!!!|AssertionError|INSTRUMENTATION_STATUS_CODE: -2' <<< "${output}"
 }
 
-# A process crash with no recorded failure: infra flake, not a test failure.
-instrumentation_crashed_without_failure() {
-    local output="$1"
-    grep -q 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.' <<< "${output}" &&
-        grep -q 'INSTRUMENTATION_STATUS_CODE: 0' <<< "${output}" &&
-        ! instrumentation_failed "${output}"
-}
-
 # Poll for process exit with a deadline instead of a single snapshot.
 wait_until_gone() {
     wait_until_gone_with_timeout 10
@@ -75,14 +71,15 @@ wait_until_gone_with_timeout() {
     while ((SECONDS < deadline)); do
         local out
         if ! out=$(adb shell pidof "${APP_PACKAGE}" 2>&1); then
-            # pidof exits nonzero both when adb fails and when the process
-            # is gone: only an adb-level error may fail the wait, never
-            # assume a failed query means the process exited (NER-327).
-            if grep -Eiq 'error:|not found|offline|no device|unauthorized' <<< "${out}"; then
-                echo "adb pidof failed while waiting for exit: ${out}" >&2
-                return 1
+            # pidof exits nonzero both when the process is gone (empty
+            # output) and when adb itself fails. Only a confirmed absence
+            # passes: any adb-level failure text must fail, never convert
+            # to "gone", and no finite error list decides that (NER-327).
+            if [[ -z "${out//[[:space:]]/}" ]]; then
+                return 0
             fi
-            return 0
+            echo "adb pidof failed while waiting for exit: ${out}" >&2
+            return 1
         fi
         sleep 0.5
     done
@@ -99,11 +96,23 @@ has_instrumentation_output() {
 
 expect_process_termination() {
     local test="$1"
-    local output
-    output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
+    local output rc=0
+    # Pre-request evidence: the process must be alive before the request.
+    # Otherwise a pre-existing crash plus absence would pass without the
+    # test terminating anything (NER-327).
+    local before
+    if ! before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)"; then
+        echo "cannot confirm the process runs before the termination test: ${before}" >&2
+        return 1
+    fi
+    if [[ -z "${before//[[:space:]]/}" ]]; then
+        echo "process not running before the termination test" >&2
+        return 1
+    fi
+    output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1)" || rc=$?
     printf '%s\n' "${output}"
     if ! has_instrumentation_output "${output}"; then
-        echo "no instrumentation output: runner never started or adb offline" >&2
+        echo "no instrumentation output: runner never started or adb offline (am exit ${rc})" >&2
         return 1
     fi
     if instrumentation_failed "${output}"; then

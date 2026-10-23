@@ -9,6 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/e2e.sh"
 trap - EXIT
 
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
 PASS=0
 fail() {
     echo "FAIL: $1" >&2
@@ -47,7 +49,7 @@ adb() {
     # shellcheck disable=SC2124
     case "$*" in
         *"am instrument"*) echo "error: device '(null)' not found" >&2; return 1 ;;
-        *pidof*) return 1 ;;
+        *pidof*) echo "1234" ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
 }
@@ -60,10 +62,15 @@ fi
 unset -f adb
 
 # --- termination gate with stubbed adb: genuine pass still passes ---
+# First pidof (pre-request evidence) reports alive, later ones report gone.
+echo 0 >"${TMP}/genuine-pidof-calls"
 adb() {
     case "$*" in
         *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
-        *pidof*) return 1 ;;
+        *pidof*)
+            n=$(($(cat "${TMP}/genuine-pidof-calls") + 1))
+            echo "${n}" >"${TMP}/genuine-pidof-calls"
+            if ((n == 1)); then echo "1234"; else return 1; fi ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -91,4 +98,83 @@ else
 fi
 unset -f adb
 
-echo "e2e wait probes: OK (${PASS} scenarios)"
+# --- run path: crash-only output is not a pass ---
+adb() {
+    case "$*" in
+        *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+    return 0
+}
+export -f adb
+if run_instrumentation "io.github.Fake#CrashOnly" >/dev/null 2>&1; then
+    fail "crash-only run_instrumentation passed"
+else
+    pass "crash-only run_instrumentation fails"
+fi
+unset -f adb
+
+# --- run path: OK summary still passes ---
+adb() {
+    case "$*" in
+        *"am instrument"*) printf 'INSTRUMENTATION_CODE: 1\nOK (2 tests)\n' ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+    return 0
+}
+export -f adb
+if run_instrumentation "io.github.Fake#Ok" >/dev/null 2>&1; then
+    pass "OK run_instrumentation still passes"
+else
+    fail "OK run_instrumentation no longer passes"
+fi
+unset -f adb
+
+# --- run path: empty output fails, never converts to a pass ---
+adb() {
+    case "$*" in
+        *"am instrument"*) return 1 ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+}
+export -f adb
+if run_instrumentation "io.github.Fake#Empty" >/dev/null 2>&1; then
+    fail "empty run_instrumentation passed"
+else
+    pass "empty run_instrumentation fails"
+fi
+unset -f adb
+
+# --- unknown adb failure text never converts to gone ---
+adb() {
+    case "$*" in
+        *pidof*) echo "error: closed" >&2; return 1 ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+}
+export -f adb
+if wait_until_gone_with_timeout 1 >/dev/null 2>&1; then
+    fail "unknown adb failure passed as gone"
+else
+    pass "unknown adb failure text fails the wait"
+fi
+unset -f adb
+
+# --- pre-dead process: a pre-existing crash plus absence proves nothing ---
+adb() {
+    case "$*" in
+        *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
+        *pidof*) return 1 ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+    return 0
+}
+export -f adb
+if expect_process_termination "io.github.Fake#PreDead" >/dev/null 2>&1; then
+    fail "pre-dead termination passed without causing the exit"
+else
+    pass "pre-dead process fails the termination gate"
+fi
+unset -f adb
+
+echo "e2e wait probes: OK (${PASS} scenarios)" 
