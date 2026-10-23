@@ -381,7 +381,14 @@ impl PersistenceManager {
         };
         match self.mapper_backend.read_mapper_save(path) {
             Ok(Some(bytes)) => match emu.import_mapper(bytes) {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    // The new runtime now mirrors the on-disk save: lift the
+                    // write protection a previous failed import had raised.
+                    // A mere rebind without this success keeps it (NER-302).
+                    self.mapper_save_flush_allowed = true;
+                    self.mapper_save_recovery_written = false;
+                    Ok(())
+                }
                 Err(fault) => {
                     self.mapper_save_flush_allowed = false;
                     Err(PersistenceError::Validation(format!(
@@ -389,7 +396,12 @@ impl PersistenceManager {
                     )))
                 }
             },
-            Ok(None) => Ok(()),
+            Ok(None) => {
+                // Nothing on disk to diverge from: a fresh runtime is safe to flush.
+                self.mapper_save_flush_allowed = true;
+                self.mapper_save_recovery_written = false;
+                Ok(())
+            }
             Err(error) => {
                 self.mapper_save_flush_allowed = false;
                 Err(error)
@@ -820,6 +832,80 @@ mod persistence_cov_tests {
         manager.configure(dir.clone().into(), path.into());
         manager.flush_mapper_save(&RejectImport).unwrap();
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn successful_reload_rearms_mapper_flush_after_rejection() {
+        use std::cell::Cell;
+        struct ToggleImport {
+            reject: Cell<bool>,
+        }
+        impl StateExporter for ToggleImport {
+            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+                Ok(vec![])
+            }
+            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
+                None
+            }
+            fn export_identity(&self) -> Option<SystemIdentity> {
+                None
+            }
+            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+                Ok(Some(b"progress".to_vec()))
+            }
+            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                if self.reject.get() {
+                    Err(SlotOpFailure::Incompatible)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let dir = crate::test_helpers::unique_temp_dir("rearm-mapper");
+        let path = dir.join("game.sav");
+        std::fs::write(&path, b"original").unwrap();
+        let mut manager = PersistenceManager::new();
+        let exporter = ToggleImport {
+            reject: Cell::new(true),
+        };
+        // Failed import degrades the flush and preserves the original.
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_err());
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        // A mere rebind without a successful import keeps the protection.
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        // A successful import on the new runtime re-arms the normal flush.
+        exporter.reject.set(false);
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::Flushed
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"progress");
+        // A missing save re-arms a blocked manager: nothing to diverge from.
+        std::fs::remove_file(&path).unwrap();
+        manager.mapper_save_flush_allowed = false;
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::Flushed
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"progress");
         let _ = std::fs::remove_dir_all(dir);
     }
 }
