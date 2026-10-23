@@ -228,27 +228,41 @@ fn copy_storage_contents(
         .states_dir
         .native_path()
         .map_err(storage_error)?;
-    if source_mapper.is_file() {
-        if let Some(parent) = destination_mapper.parent() {
-            fs::create_dir_all(parent)?;
+    // Roll back a partial migration so the next load retries from a clean
+    // state instead of freezing on a half-migrated target (NER-325).
+    let mut copied: Vec<std::path::PathBuf> = Vec::new();
+    let result = (|| -> Result<(), SettingsError> {
+        if source_mapper.is_file() {
+            if let Some(parent) = destination_mapper.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(source_mapper, destination_mapper)?;
+            copied.push(destination_mapper.to_path_buf());
         }
-        let _ = fs::copy(source_mapper, destination_mapper)?;
-    }
-    match fs::read_dir(source_states) {
-        Ok(entries) => {
-            fs::create_dir_all(destination_states)?;
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    let _ = fs::copy(&path, destination_states.join(entry.file_name()))?;
+        match fs::read_dir(source_states) {
+            Ok(entries) => {
+                fs::create_dir_all(destination_states)?;
+                for entry in entries {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file() {
+                        let target = destination_states.join(entry.file_name());
+                        fs::copy(&path, &target)?;
+                        copied.push(target);
+                    }
                 }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+        Ok(())
+    })();
+    if result.is_err() {
+        for path in copied {
+            let _ = fs::remove_file(path);
+        }
     }
-    Ok(())
+    result
 }
 
 #[cfg(test)]
@@ -513,5 +527,47 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_and_retries_cleanly() {
+        use super::{copy_storage_contents, resolve_central_storage_paths};
+        use crate::settings::test_root;
+
+        let identity = crate::settings::test_system_identity();
+        let source =
+            resolve_central_storage_paths(&test_root("migrate-src"), &DummySystemId, &identity);
+        let destination =
+            resolve_central_storage_paths(&test_root("migrate-dst"), &DummySystemId, &identity);
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        let source_state = source.states_dir.native_path().unwrap().join("7.state");
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(source_state.parent().unwrap()).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        fs::write(&source_state, b"state").unwrap();
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        let destination_states = destination.states_dir.native_path().unwrap().to_path_buf();
+        // Block the states copy: the mapper copy must roll back.
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        fs::write(&destination_states, b"blocker").unwrap();
+        assert!(copy_storage_contents(&source, &destination).is_err());
+        assert!(
+            !destination_mapper.exists(),
+            "partial migration must roll back"
+        );
+        // Unblocked retry migrates everything.
+        fs::remove_file(&destination_states).unwrap();
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        assert_eq!(
+            fs::read(destination_states.join("7.state")).unwrap(),
+            b"state"
+        );
+        let _ = fs::remove_dir_all(test_root("migrate-src"));
+        let _ = fs::remove_dir_all(test_root("migrate-dst"));
     }
 }
