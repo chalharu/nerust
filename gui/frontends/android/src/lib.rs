@@ -14,6 +14,9 @@ mod error_dialog_controller;
 mod fetch_seq;
 
 #[cfg(any(target_os = "android", test))]
+mod picker_lane;
+
+#[cfg(any(target_os = "android", test))]
 mod import_metadata;
 
 #[cfg(any(target_os = "android", test))]
