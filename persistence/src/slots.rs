@@ -138,14 +138,20 @@ pub fn autosave_state_slot_path(states_dir: &Path) -> PathBuf {
 /// summary, and dropped again when its own write fails so scans fall back
 /// to the archive. State errors propagate; sidecar steps are best-effort.
 pub fn publish_state_with_sidecar(
-    delete_sidecar: impl Fn(),
+    delete_sidecar: impl Fn() -> Result<(), PersistenceError>,
     write_state: impl FnOnce() -> Result<(), PersistenceError>,
     write_sidecar: impl FnOnce() -> Result<(), PersistenceError>,
 ) -> Result<(), PersistenceError> {
-    delete_sidecar();
+    // A stale sidecar must not survive the publish: remove it first, and
+    // refuse to publish over an unremovable stale entry, or the scan would
+    // adopt old metadata for the fresh archive (NER-309).
+    delete_sidecar()?;
     write_state()?;
+    // A failed sidecar write is retried by dropping the entry again; the
+    // scan then falls back to the archive. Only a failed cleanup fails the
+    // op, since a stale sidecar would otherwise shadow the fresh archive.
     if write_sidecar().is_err() {
-        delete_sidecar();
+        delete_sidecar()?;
     }
     Ok(())
 }

@@ -310,9 +310,12 @@ impl AndroidStorageBackend {
         identity: &SystemIdentity,
     ) -> Option<StateSlotSummary> {
         let base = state_name.strip_suffix(".state")?;
+        let slot_id = base.parse::<u64>().ok()?;
         let path = dir.child(&format!("{base}.summary")).ok()?;
         let bytes = self.read_capped(&path, SAF_SUMMARY_BYTES).ok()??;
-        load_state_summary_from_metadata_bytes(path, &bytes, Some(identity)).ok()?
+        load_state_summary_from_metadata_bytes(path, &bytes, Some(identity))
+            .ok()
+            .filter(|summary| summary.slot_id == slot_id)?
     }
 }
 
@@ -368,6 +371,10 @@ impl SlotBackend for AndroidStorageBackend {
             // Batched sidecar first: one generations pass serves the whole
             // listing instead of re-resolving per slot. Any miss or mismatch
             // falls back to the single sidecar read, then the archive.
+            let entry_id = entry
+                .name
+                .strip_suffix(".state")
+                .and_then(|base| base.parse::<u64>().ok());
             let batched: Option<StateSlotSummary> = entry
                 .summary
                 .as_deref()
@@ -382,7 +389,11 @@ impl SlotBackend for AndroidStorageBackend {
                     load_state_summary_from_metadata_bytes(path.clone(), &bytes, Some(identity))
                         .ok()
                 })
-                .flatten();
+                .flatten()
+                // A sidecar names its slot: a mismatched id means a stale or
+                // misplaced entry, so fall through to the single sidecar
+                // read and then the archive instead of adopting it (NER-309).
+                .filter(|summary| Some(summary.slot_id) == entry_id);
             if let Some(summary) = batched {
                 result.push(summary);
                 continue;
@@ -449,9 +460,10 @@ impl SlotBackend for AndroidStorageBackend {
         let sidecar = dir.child(&format!("{slot_id}.summary")).ok();
         publish_state_with_sidecar(
             || {
-                if let Some(sidecar) = sidecar.as_ref() {
-                    let _ = self.delete(sidecar);
-                }
+                sidecar
+                    .as_ref()
+                    .map(|sidecar| self.delete(sidecar))
+                    .unwrap_or(Ok(()))
             },
             || self.write(&path, &bytes),
             || {
