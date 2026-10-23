@@ -1875,3 +1875,72 @@ fn cached_frame_data_rebuilds_only_on_key_change() {
     let changed = session.touch_overlay_model_cached(8);
     assert_eq!(changed.revision, 8);
 }
+
+/// NER-318: the tao/gtk `String` take path redelivers structured batches
+/// under new settings. A taken batch requeued via `requeue_showing`
+/// re-renders in the new language, and a level disabled afterwards
+/// suppresses it — the same guarantee the android controller path has.
+#[test]
+fn taken_string_batch_requeued_applies_new_language_and_level_filter() {
+    use crate::session::notification::Message;
+    use crate::session::osd::{OsdManager, PushInput, TransientPolicy};
+    use std::time::Instant;
+
+    let mut session = test_session();
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
+    assert!(
+        !tick.loaded,
+        "test session loads no ROM: unpresented channel"
+    );
+    let now = Instant::now();
+    // Warning over the unpresented channel routes to modal as a structured batch.
+    session
+        .notifications
+        .push(Message::persistence_unavailable());
+    let report = session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: TransientPolicy::from(&snapshot.local.notifications),
+            language: AppLanguage::English,
+            now,
+            tick,
+        },
+    );
+    assert!(report.modal_queued);
+    let first = manager
+        .take_modal_batch()
+        .expect("structured batch as String");
+    assert!(first.contains("Saves unavailable"), "{first}");
+    // Interrupt before ack: the structured batch goes back, not text.
+    assert!(manager.modal_queue().requeue_showing());
+    // New settings: Japanese, warnings still on. Redelivery translates.
+    session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: TransientPolicy::from(&snapshot.local.notifications),
+            language: AppLanguage::Japanese,
+            now,
+            tick,
+        },
+    );
+    let second = manager.take_modal_batch().expect("redelivery");
+    assert!(second.contains("保存機能が利用できません"), "{second}");
+    // New settings: Japanese, warnings off. Redelivery is suppressed.
+    manager.modal_queue().requeue_showing();
+    let off = TransientPolicy {
+        warning_enabled: false,
+        ..TransientPolicy::from(&snapshot.local.notifications)
+    };
+    session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: off,
+            language: AppLanguage::Japanese,
+            now,
+            tick,
+        },
+    );
+    assert_eq!(manager.take_modal_batch(), None);
+}
