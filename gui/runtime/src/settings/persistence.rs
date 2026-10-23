@@ -215,6 +215,17 @@ fn copy_storage_contents(
     source: &SidecarPaths,
     destination: &SidecarPaths,
 ) -> Result<(), SettingsError> {
+    copy_storage_contents_with(source, destination, |src, dst| fs::copy(src, dst))
+}
+
+/// Migration copy with an injectable transfer: production passes
+/// `fs::copy`; tests inject a mid-stream failure to prove the mapper+states
+/// rollback (NER-325 AC-1/AC-2) without touching permissions.
+fn copy_storage_contents_with(
+    source: &SidecarPaths,
+    destination: &SidecarPaths,
+    copy: impl Fn(&Path, &Path) -> std::io::Result<u64> + Copy,
+) -> Result<(), SettingsError> {
     let source_mapper = source
         .mapper_save_path
         .native_path()
@@ -236,12 +247,7 @@ fn copy_storage_contents(
             if let Some(parent) = destination_mapper.parent() {
                 fs::create_dir_all(parent)?;
             }
-            copy_one_tracked(
-                &mut copied,
-                source_mapper,
-                destination_mapper,
-                |src, dst| fs::copy(src, dst),
-            )?;
+            copy_one_tracked(&mut copied, source_mapper, destination_mapper, copy)?;
         }
         match fs::read_dir(source_states) {
             Ok(entries) => {
@@ -251,9 +257,7 @@ fn copy_storage_contents(
                     let path = entry.path();
                     if path.is_file() {
                         let target = destination_states.join(entry.file_name());
-                        copy_one_tracked(&mut copied, &path, &target, |src, dst| {
-                            fs::copy(src, dst)
-                        })?;
+                        copy_one_tracked(&mut copied, &path, &target, copy)?;
                     }
                 }
             }
@@ -366,6 +370,156 @@ mod tests {
         assert_eq!(copied, vec![target.clone()]);
         assert!(!target.exists(), "partial target must not block retry");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// NER-325 AC-1/AC-2: the full mapper+states re-try. The mapper copies
+    /// fine, then a states copy fails (injected, matched by file name so
+    /// directory order cannot matter): the rollback must remove the partial
+    /// target AND keep the source, pre-existing complete target files this
+    /// run never touched must survive (the sweep only removes tracked
+    /// paths), and the re-run with a healthy transfer completes with every
+    /// slot visible.
+    #[test]
+    fn mapper_ok_then_state_copy_fails_rolls_back_and_retry_completes() {
+        use super::{copy_storage_contents, copy_storage_contents_with};
+
+        let root = super::super::test_root("migrate-retry");
+        let _ = fs::remove_dir_all(&root);
+        let identity = crate::settings::test_system_identity();
+        let source =
+            super::resolve_central_storage_paths(&root.join("src"), &DummySystemId, &identity);
+        let destination =
+            super::resolve_central_storage_paths(&root.join("dst"), &DummySystemId, &identity);
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        let source_states = source.states_dir.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(&source_states).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        fs::write(source_states.join("1.state"), b"one").unwrap();
+        fs::write(source_states.join("2.state"), b"two").unwrap();
+
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        let destination_states = destination.states_dir.native_path().unwrap().to_path_buf();
+        // Pre-existing complete target files: a sentinel plus a complete
+        // slot from a prior run that shares no name with this migration.
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(&destination_states).unwrap();
+        fs::write(destination_states.join("sentinel"), b"keep").unwrap();
+        fs::write(destination_states.join("0.state"), b"prior-complete").unwrap();
+
+        let outcome = copy_storage_contents_with(&source, &destination, |src, dst| {
+            if src.file_name().and_then(|name| name.to_str()) == Some("2.state") {
+                // Simulate a mid-stream failure that leaves a partial target.
+                fs::write(dst, b"partial")?;
+                Err(std::io::Error::other("injected states failure"))
+            } else {
+                fs::copy(src, dst)
+            }
+        });
+        assert!(outcome.is_err(), "injected states failure must fail");
+        assert!(
+            !destination_mapper.exists(),
+            "the copied mapper must roll back"
+        );
+        assert!(
+            !destination_states.join("1.state").exists()
+                && !destination_states.join("2.state").exists(),
+            "partial targets of this run must not block the retry"
+        );
+        // No-clobber: the sweep only removes paths this run tracked.
+        assert_eq!(
+            fs::read(destination_states.join("sentinel")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            fs::read(destination_states.join("0.state")).unwrap(),
+            b"prior-complete"
+        );
+        // Source untouched by the failed migration.
+        assert_eq!(fs::read(&source_mapper).unwrap(), b"mapper");
+        assert_eq!(fs::read(source_states.join("1.state")).unwrap(), b"one");
+        assert_eq!(fs::read(source_states.join("2.state")).unwrap(), b"two");
+
+        // Retry with a healthy transfer: everything lands, all slots visible.
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        let mut visible: Vec<_> = fs::read_dir(&destination_states)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        visible.sort();
+        assert_eq!(visible, vec!["0.state", "1.state", "2.state", "sentinel"]);
+        assert_eq!(
+            fs::read(destination_states.join("1.state")).unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            fs::read(destination_states.join("2.state")).unwrap(),
+            b"two"
+        );
+        assert_eq!(
+            fs::read(destination_states.join("0.state")).unwrap(),
+            b"prior-complete",
+            "the retry must not overwrite pre-existing complete files"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// NER-325 AC-3 for privileged CI: a regular file blocking the states
+    /// directory fails the migration for ANY user. Root ignores permission
+    /// bits (see the readonly test's probe-and-skip), but no user creates a
+    /// directory through a file, so this asserts the mapper-then-states
+    /// rollback where the readonly test cannot run. The readonly test stays
+    /// as the unprivileged EACCES proof; the ENOSPC test stays as the
+    /// kernel-capacity proof.
+    #[test]
+    fn file_blocking_states_dir_fails_migration_for_any_user() {
+        use super::copy_storage_contents;
+
+        let root = super::super::test_root("migrate-blocked-states");
+        let _ = fs::remove_dir_all(&root);
+        let identity = crate::settings::test_system_identity();
+        let source =
+            super::resolve_central_storage_paths(&root.join("src"), &DummySystemId, &identity);
+        let destination =
+            super::resolve_central_storage_paths(&root.join("dst"), &DummySystemId, &identity);
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        let source_states = source.states_dir.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(&source_states).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        fs::write(source_states.join("1.state"), b"one").unwrap();
+
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        let destination_states = destination.states_dir.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        // A file where the states directory must go: create_dir_all fails
+        // for every user, even root.
+        fs::write(&destination_states, b"blocker").unwrap();
+        assert!(copy_storage_contents(&source, &destination).is_err());
+        assert!(
+            !destination_mapper.exists(),
+            "the copied mapper must roll back"
+        );
+        assert_eq!(fs::read(&source_mapper).unwrap(), b"mapper");
+        assert_eq!(fs::read(source_states.join("1.state")).unwrap(), b"one");
+        // Unblocked, the retry migrates everything.
+        fs::remove_file(&destination_states).unwrap();
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        assert_eq!(
+            fs::read(destination_states.join("1.state")).unwrap(),
+            b"one"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -677,6 +831,11 @@ mod tests {
 
     /// NER-325 AC-3: a readonly destination fails the migration and the
     /// partial mapper copy rolls back instead of blocking the retry.
+    /// Root ignores permission bits, so this test probes effective access
+    /// first and skips where it runs privileged (CI as root): there the
+    /// ENOSPC test above covers rollback, and
+    /// `file_blocking_states_dir_fails_migration_for_any_user` covers the
+    /// mapper-then-states rollback without needing permissions at all.
     #[test]
     fn readonly_destination_fails_migration_and_rolls_back() {
         use super::copy_storage_contents;

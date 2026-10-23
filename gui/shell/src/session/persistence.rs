@@ -990,6 +990,27 @@ mod persistence_cov_tests {
         }
     }
 
+    /// NER-302: cross-runtime old-recovery carryover is out of scope by
+    /// design. The degraded latch follows the mapper path, not the
+    /// runtime: rebinding a *different* path resets it (no stale
+    /// recovery leaks across), while the same path preserves it.
+    /// Documents current `configure` behavior; no behavior change.
+    #[test]
+    fn degraded_latch_follows_mapper_path_not_runtime() {
+        let dir = crate::test_helpers::unique_temp_dir("latch-path");
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("a.sav").into());
+        manager.mapper_save_flush_allowed = false;
+        manager.mapper_save_recovery_written = true;
+        manager.configure(dir.clone().into(), dir.join("b.sav").into());
+        assert!(manager.mapper_save_flush_allowed);
+        assert!(!manager.mapper_save_recovery_written);
+        manager.mapper_save_flush_allowed = false;
+        manager.configure(dir.clone().into(), dir.join("b.sav").into());
+        assert!(!manager.mapper_save_flush_allowed);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// NER-321: a transient autosave read failure must not delete, and the
     /// retry after recovery loads the same bytes. Corrupt bytes quarantine
     /// instead of deleting.
@@ -1329,6 +1350,174 @@ mod persistence_cov_tests {
         manager.refresh_slots(&exporter).unwrap();
         assert!(manager.slots().is_empty(), "empty scan clears the list");
         assert_eq!(manager.active_slot_id(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// NER-321: a transient slot-read failure is an error the caller can
+    /// retry, never `Missing` (which would let delete/tombstone paths treat
+    /// live data as gone). Only a complete successful survey proves absence.
+    #[test]
+    fn transient_slot_read_is_error_not_missing() {
+        use crate::session::ports::SlotBackend;
+        use nerust_persistence::model::LoadedStateSlot;
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+
+        struct TransientThenMissing {
+            reads: RefCell<VecDeque<Result<Option<LoadedStateSlot>, PersistenceError>>>,
+        }
+        impl SlotBackend for TransientThenMissing {
+            fn scan(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+            ) -> Result<Vec<nerust_persistence::model::StateSlotSummary>, PersistenceError>
+            {
+                Ok(Vec::new())
+            }
+            fn allocate_next_id(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+            ) -> Result<u64, PersistenceError> {
+                Ok(1)
+            }
+            #[allow(unused_variables)]
+            fn write_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+                _data: &[u8],
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+                _thumbnail: Option<&nerust_persistence::thumbnail::ThumbnailSource>,
+            ) -> Result<nerust_persistence::model::StateSlotSummary, PersistenceError> {
+                panic!("unused");
+            }
+            fn read_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+                self.reads.borrow_mut().pop_front().expect("scripted read")
+            }
+            fn delete_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<(), PersistenceError> {
+                Ok(())
+            }
+        }
+        fn transient() -> PersistenceError {
+            PersistenceError::Io(std::io::Error::other("provider unavailable"))
+        }
+        let dir = crate::test_helpers::unique_temp_dir("transient-read");
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(TransientThenMissing {
+                reads: RefCell::new(VecDeque::from([Err(transient()), Ok(None)])),
+            }),
+            autosave: Box::new(crate::session::fs::FsAutosave),
+            mapper: Box::new(crate::session::fs::FsMapper),
+        });
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        let failure = manager.load_slot(99, &exporter).unwrap_err();
+        assert_ne!(
+            failure,
+            SlotOpFailure::Missing,
+            "transient read must surface as an error, never as missing"
+        );
+        assert_eq!(
+            manager.load_slot(99, &exporter).unwrap_err(),
+            SlotOpFailure::Missing,
+            "a complete survey proving absence reports Missing"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// NER-319 (a): quarantine is copy-then-delete: the stepped-down copy is
+    /// stored first, so a delete failure after the copy keeps the original
+    /// bytes recoverable and the copy in place. The error still surfaces so
+    /// the caller knows the original was not retired.
+    #[test]
+    fn quarantine_by_copy_survives_delete_failure_after_copy() {
+        use nerust_persistence::slots::quarantine_by_copy;
+
+        let dir = crate::test_helpers::unique_temp_dir("quarantine-survivor");
+        let original = dir.join("slot");
+        let quarantined = dir.join("slot.quarantined");
+        std::fs::write(&original, b"bytes").unwrap();
+        let outcome = quarantine_by_copy(
+            || {
+                std::fs::read(&original)
+                    .map(Some)
+                    .map_err(PersistenceError::from)
+            },
+            |bytes| std::fs::write(&quarantined, bytes).map_err(PersistenceError::from),
+            || {
+                Err::<(), PersistenceError>(PersistenceError::Io(std::io::Error::other(
+                    "delete failed",
+                )))
+            },
+            quarantined.clone().into(),
+        );
+        assert!(outcome.is_err(), "delete failure must surface");
+        assert_eq!(
+            std::fs::read(&quarantined).unwrap(),
+            b"bytes",
+            "the copy was stored before the delete was attempted"
+        );
+        assert_eq!(
+            std::fs::read(&original).unwrap(),
+            b"bytes",
+            "the original is kept when the delete fails"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// NER-319 manager level: corrupt autosave bytes quarantine aside
+    /// instead of deleting, so the next save overwrites rather than the
+    /// failed load destroying evidence.
+    #[test]
+    fn corrupt_autosave_quarantines_instead_of_deleting() {
+        let dir = crate::test_helpers::unique_temp_dir("quarantine-corrupt");
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        // Garbage with no save-state envelope: unreadable, not missing.
+        std::fs::write(dir.join(".autosave_slot"), b"corrupt-bytes").unwrap();
+        let exporter = exporter_ok();
+        assert!(!manager.load_hidden(&exporter));
+        assert!(
+            dir.join(".autosave_slot.quarantined").is_file(),
+            "corrupt autosave must quarantine aside, never delete"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// NER-322 (b): one corrupt slot skips while healthy slots list. A
+    /// failed whole-directory scan is a different signal (it keeps the
+    /// previous list); here the directory reads fine and only the bad
+    /// entry drops out.
+    #[test]
+    fn corrupt_slot_skipped_while_healthy_slots_list() {
+        let dir = crate::test_helpers::unique_temp_dir("scan-corrupt-skip");
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        manager
+            .save_slot(3, &exporter, SlotActivation::Activate)
+            .expect("healthy save works");
+        std::fs::write(dir.join("99.state"), b"corrupt-bytes").unwrap();
+        manager.refresh_slots(&exporter).expect("scan succeeds");
+        assert_eq!(
+            manager
+                .slots()
+                .iter()
+                .map(|slot| slot.slot_id)
+                .collect::<Vec<_>>(),
+            vec![3],
+            "healthy slots list while the corrupt entry skips"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }
