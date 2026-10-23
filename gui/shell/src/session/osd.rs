@@ -141,7 +141,9 @@ impl OsdManager {
 
     /// Drain the aggregated modal batch into the sequential queue.
     /// Bullet formatting happens here; overflow warns once per episode until the queue drains.
-    pub(crate) fn pump_modal(&mut self) -> bool {
+    /// Public for hosts that poll [`ModalQueue`] directly instead of
+    /// going through [`SessionHandle::pump_osd`].
+    pub fn pump_modal(&mut self) -> bool {
         match self.modal.pump_pending() {
             ModalPump::Idle => false,
             ModalPump::Queued { dropped } => {
