@@ -216,10 +216,11 @@ fi
 # Gate passed: publish the staged libs via rename swap. Each rename is
 # atomic, but the pair is not: a failure between them is repaired below so the
 # live tree is always either the old or the new complete tree, never absent.
-# Concurrent publishers are refused: mkdir is atomic, the lock names its
-# owner PID, and only the owner releases. A missing pid waits briefly for
-# the owner's record instead of proving death, so the mkdir-to-record
-# window admits no second entrant.
+# Concurrent publishers are refused: mkdir is atomic, the pid record is
+# written atomically, and only the owner releases. A missing pid waits out
+# a grace instead of proving death; a dead or never-recorded owner is taken
+# over through a single-winner move with a post-record identity check, so
+# at most one process ever observes itself as owner (NER-313).
 PUBLISH_LOCK_DIR="${JNI_LIBS_DIR}.lock"
 if ! acquire_publish_lock "${PUBLISH_LOCK_DIR}"; then
     exit 1
@@ -256,6 +257,9 @@ rm -rf "${stage_publish_old}"
     ./gradlew --no-daemon assembleRelease
 )
 
+# Verify the artifact itself before trusting the signature: a corrupt or
+# wrong APK must fail here even when apksigner is absent.
+verify_apk_contents "${APK_SRC}" "libnerust_android.so" || exit 1
 # Verify the release signature when tooling and a signature exist.
 # A missing apksigner or unsigned artifact only warns; an invalid signature fails.
 if command -v apksigner >/dev/null 2>&1; then
@@ -269,6 +273,7 @@ fi
 
 
 publish_apk "${APK_SRC}" "${OUT_DIR}" "${APK_NAME}"
-# Explicit release on the success path; the EXIT trap covers failures.
+# Explicit release on the success path; the EXIT trap covers normal
+# failures, never SIGKILL or power loss (stale recovery covers those).
 release_publish_lock
 echo "effective native budget: $(native_budget_bytes) bytes (BUDGET_BYTES=${BUDGET_BYTES:-default})"
