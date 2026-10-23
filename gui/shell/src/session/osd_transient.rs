@@ -162,8 +162,14 @@ impl TransientQueue {
     )> {
         let renderer = crate::session::notification::NotificationRenderer { language };
         let mut modal = Vec::new();
-        let mut update = |item: &mut OsdItem| {
+        let mut update = |item: &mut OsdItem, showing: bool| {
             if !policy.enabled(item.level) {
+                return false;
+            }
+            if showing && item.deadline <= now {
+                // Expired while showing: never resurrect as modal (NER-317).
+                // Pending rows keep provisional deadlines (TTL starts at
+                // promotion), so only the showing row is expiry-checked here.
                 return false;
             }
             item.base = renderer.render_message(&item.message).into();
@@ -186,11 +192,11 @@ impl TransientQueue {
             true
         };
         if let Some(current) = self.current.as_mut()
-            && !update(current)
+            && !update(current, true)
         {
             self.current = None;
         }
-        self.pending.retain_mut(&mut update);
+        self.pending.retain_mut(|item| update(item, false));
         modal
     }
 
@@ -401,8 +407,23 @@ impl TransientQueue {
 mod tests {
     use super::*;
     use crate::session::notification::{NotificationLevel, ReplaceGroup};
+    use nerust_settings_core::model::language::AppLanguage;
     use nerust_settings_core::model::local::NotificationSettings;
     use std::time::{Duration, Instant};
+
+    fn policy_all() -> TransientPolicy {
+        TransientPolicy {
+            info_enabled: true,
+            warning_enabled: true,
+            error_enabled: true,
+            info_duration_ms: 2_000,
+            warning_duration_ms: 2_000,
+            info_rgb: (0, 0, 0),
+            warning_rgb: (0, 0, 0),
+            error_rgb: (200, 0, 0),
+            error_modal: false,
+        }
+    }
 
     fn settings() -> NotificationSettings {
         NotificationSettings::default()
@@ -621,6 +642,89 @@ mod tests {
             queue.wakeup_deadline(now),
             Some(now + Duration::from_millis(2_000))
         );
+    }
+
+    /// NER-317 AC-1: an expired showing row never resurrects as modal when
+    /// the channel drops after its TTL.
+    #[test]
+    fn expired_showing_row_never_resurrects_as_modal() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Warning, "w", now));
+        assert!(queue.poll(now));
+        let modal = queue.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(2_001),
+            FrameChannel::Unpresented,
+        );
+        assert!(modal.is_empty(), "expired warning must not modalize");
+        assert!(!queue.has_visible());
+    }
+
+    /// Control: a live showing row still reroutes when the channel drops.
+    #[test]
+    fn live_showing_row_reroutes_on_channel_loss() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Warning, "w", now));
+        assert!(queue.poll(now));
+        let modal = queue.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(1_000),
+            FrameChannel::Unpresented,
+        );
+        assert_eq!(modal.len(), 1);
+        assert_eq!(modal[0].2, NotificationLevel::Warning);
+    }
+
+    /// NER-317 AC-2/AC-3: pending rows keep provisional deadlines (their TTL
+    /// starts at promotion), and error_modal applies to live errors only.
+    #[test]
+    fn pending_rows_ignore_stamps_and_error_modal_needs_live_error() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Warning, "w", now));
+        assert!(queue.poll(now));
+        // The error preempts: showing error, pending warning.
+        queue.route_row(test_item(NotificationLevel::Error, "boom", now));
+        // Both stamps lapse while queued: the expired showing error drops
+        // silently while the stale-stamped pending warning still reroutes.
+        let modal = queue.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(2_001),
+            FrameChannel::Unpresented,
+        );
+        assert_eq!(modal.len(), 1);
+        assert_eq!(modal[0].2, NotificationLevel::Warning);
+        assert!(!queue.has_visible());
+        // error_modal on a live error reroutes; on an expired one it drops.
+        let mut live = TransientQueue::default();
+        live.route_row(test_item(NotificationLevel::Error, "boom", now));
+        assert!(live.poll(now));
+        let modal_policy = TransientPolicy {
+            error_modal: true,
+            ..policy_all()
+        };
+        let modal = live.refresh(
+            &modal_policy,
+            AppLanguage::English,
+            now + Duration::from_millis(1_000),
+            FrameChannel::Composited,
+        );
+        assert_eq!(modal.len(), 1);
+        let mut stale = TransientQueue::default();
+        stale.route_row(test_item(NotificationLevel::Error, "boom", now));
+        assert!(stale.poll(now));
+        let modal = stale.refresh(
+            &modal_policy,
+            AppLanguage::English,
+            now + Duration::from_millis(2_001),
+            FrameChannel::Composited,
+        );
+        assert!(modal.is_empty(), "expired error must not modalize");
     }
 }
 
