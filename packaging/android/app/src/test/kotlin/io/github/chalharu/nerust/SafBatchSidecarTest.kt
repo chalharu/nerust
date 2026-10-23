@@ -5,33 +5,19 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
-/** Minimal stand-in: the resolution rule under test only moves map entries
- * around and never touches the provider, so every method stays unimplemented. */
-private class FakeDoc(private val fakeName: String) : DocumentFile(null) {
-    override fun createFile(mimeType: String, displayName: String): DocumentFile? =
-        throw UnsupportedOperationException()
-    override fun createDirectory(displayName: String): DocumentFile? =
-        throw UnsupportedOperationException()
-    override fun getName(): String = fakeName
-    override fun getType(): String? = throw UnsupportedOperationException()
-    override fun isDirectory(): Boolean = throw UnsupportedOperationException()
-    override fun isFile(): Boolean = throw UnsupportedOperationException()
-    override fun isVirtual(): Boolean = throw UnsupportedOperationException()
-    override fun lastModified(): Long = throw UnsupportedOperationException()
-    override fun length(): Long = throw UnsupportedOperationException()
-    override fun listFiles(): Array<DocumentFile> = throw UnsupportedOperationException()
-    override fun getParentFile(): DocumentFile? = throw UnsupportedOperationException()
-    override fun renameTo(displayName: String): Boolean = throw UnsupportedOperationException()
-    override fun getUri(): android.net.Uri = throw UnsupportedOperationException()
-    override fun canRead(): Boolean = throw UnsupportedOperationException()
-    override fun canWrite(): Boolean = throw UnsupportedOperationException()
-    override fun delete(): Boolean = throw UnsupportedOperationException()
-    override fun exists(): Boolean = throw UnsupportedOperationException()
+/** Real file-backed documents: `fromFile` is public and JVM-safe, so the
+ * resolution rule under test runs against genuine `getName` values without
+ * touching an Android provider. */
+private fun fileDoc(dir: java.io.File, name: String): DocumentFile {
+    java.io.File(dir, name).createNewFile()
+    return DocumentFile.fromFile(java.io.File(dir, name))
 }
 
 class SafBatchSidecarTest {
-    private val committed = FakeDoc("committed-sidecar")
-    private val legacy = FakeDoc("legacy-sidecar")
+    private val dir =
+        java.nio.file.Files.createTempDirectory("batch-sidecar").toFile().also { it.deleteOnExit() }
+    private val committed = fileDoc(dir, "committed-sidecar")
+    private val legacy = fileDoc(dir, "legacy-sidecar")
 
     @Test fun committedGenerationWinsOverPhysicalName() {
         // NER-310: a generation-tracked sidecar has no stable physical name,
