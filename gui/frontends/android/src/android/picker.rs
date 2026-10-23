@@ -300,7 +300,14 @@ fn fetch_document_bytes(
                 )
                 .ok();
             if let Some(signal) = signal.as_ref() {
-                store_job_signal(env, seq, signal);
+                // Refused registration means this job lost the fetch before
+                // publishing a cancel handle: starting provider I/O now would
+                // be uncancellable and wedge the single worker (NER-306).
+                if !store_job_signal(env, seq, signal) {
+                    return Err(jni::errors::Error::NullPtr(
+                        "ROM fetch superseded before provider query",
+                    ));
+                }
             }
             let result = (|| {
                 let display_name =
@@ -453,7 +460,15 @@ fn read_stream_bytes_inner(
         ));
     }
     // Registered for cross-thread close: a bumper closes a stuck read.
-    store_job_stream(env, seq, &stream);
+    // A refused registration leaves no handle for a bumper: close the
+    // just-opened stream here and abort instead of reading uncancellable.
+    if !store_job_stream(env, seq, &stream) {
+        let _ = env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[]);
+        let _ = env.call_method(&descriptor, jni_str!("close"), jni_sig!("()V"), &[]);
+        return Err(jni::errors::Error::NullPtr(
+            "ROM fetch superseded before provider read",
+        ));
+    }
     let mut bytes = Vec::new();
     // Reused JNI scratch: one 64KB i8 buffer serves the whole stream,
     // so chunk reads allocate nothing per round-trip.
@@ -545,36 +560,44 @@ fn cancel_in_flight(app: &AndroidApp) {
     });
 }
 
-/// Publish the job's signal for cross-thread cancellation. A bumper takes and
-/// cancels it; a job superseded before it started keeps only its local handle.
-fn store_job_signal(env: &mut jni::Env<'_>, seq: u64, signal: &JObject<'_>) {
+/// Publish the job's signal for cross-thread cancellation. Returns whether
+/// the job may proceed: a superseded job must not start provider I/O with
+/// an unregistered handle, while a current job without a handle degrades to
+/// the old local-only calls. A bumper takes and cancels a published handle;
+/// a job superseded before it started keeps only its local handle (NER-306).
+fn store_job_signal(env: &mut jni::Env<'_>, seq: u64, signal: &JObject<'_>) -> bool {
     let global = env.new_global_ref(signal).ok();
-    bridge::with_picker(|state| {
-        if state.in_flight != Some(seq) {
-            drop(global);
-            return;
-        }
-        let Some(global) = global else { return };
-        if let Some(previous) = state.in_flight_signal.replace(global) {
-            drop(previous);
-        }
-    });
+    bridge::with_picker(|state| publish_handle(state, seq, global, true))
 }
 
 /// Publish the job's open stream for cross-thread close. Same ownership rule
 /// as the signal: the slot take decides which side deletes the global ref.
-fn store_job_stream(env: &mut jni::Env<'_>, seq: u64, stream: &JObject<'_>) {
+fn store_job_stream(env: &mut jni::Env<'_>, seq: u64, stream: &JObject<'_>) -> bool {
     let global = env.new_global_ref(stream).ok();
-    bridge::with_picker(|state| {
-        if state.in_flight != Some(seq) {
-            drop(global);
-            return;
-        }
-        let Some(global) = global else { return };
-        if let Some(previous) = state.in_flight_stream.replace(global) {
-            drop(previous);
-        }
-    });
+    bridge::with_picker(|state| publish_handle(state, seq, global, false))
+}
+
+/// Slot decision shared by signal/stream registration: only the owning
+/// generation may publish; a refused job must not start provider I/O.
+fn publish_handle(
+    state: &mut bridge::PickerSlot,
+    seq: u64,
+    global: Option<Global<JObject<'static>>>,
+    signal: bool,
+) -> bool {
+    if state.in_flight != Some(seq) {
+        return false;
+    }
+    let Some(global) = global else { return true };
+    let slot = if signal {
+        &mut state.in_flight_signal
+    } else {
+        &mut state.in_flight_stream
+    };
+    if let Some(previous) = slot.replace(global) {
+        drop(previous);
+    }
+    true
 }
 
 /// Drop this job's slot handles if no bumper took them first. Exactly one
@@ -673,5 +696,55 @@ mod tests {
         assert!(!has_pending_result());
         reset_transient();
         assert!(!has_pending_result());
+    }
+
+    /// NER-306: only the owning generation may publish a cancel handle.
+    /// A job refused at registration must not start provider I/O.
+    #[test]
+    fn handle_publish_blocks_superseded_provider_io() {
+        use bridge::PickerSlot;
+        // Superseded before registering: refused, handle untouched.
+        let mut slot = PickerSlot::empty();
+        slot.in_flight = Some(7);
+        assert!(!publish_handle(&mut slot, 6, None, true));
+        assert!(slot.in_flight_signal.is_none());
+        assert!(!publish_handle(&mut slot, 6, None, false));
+        assert!(slot.in_flight_stream.is_none());
+        // Idle slot refuses everything: no owner, no I/O.
+        let mut idle = PickerSlot::empty();
+        assert!(!publish_handle(&mut idle, 1, None, true));
+        // Owner without a handle degrades to local-only calls.
+        assert!(publish_handle(&mut slot, 7, None, true));
+        assert!(slot.in_flight_signal.is_none());
+        assert!(publish_handle(&mut slot, 7, None, false));
+        assert!(slot.in_flight_stream.is_none());
+    }
+
+    /// NER-306: the reset/new-request/completion order matrix at state level.
+    #[test]
+    fn reset_and_request_orders_keep_one_owner() {
+        reset_transient();
+        // Normal order: request owns the slot, completion publishes.
+        let seq = begin_fetch();
+        assert!(bridge::with_picker(|state| state.in_flight == Some(seq)));
+        publish_if_latest(seq, RomPickerResult::Failed("ok".into()));
+        assert!(take_result().is_some());
+        // Reset between the generation check and registration: the stale
+        // job loses the slot and a fresh request owns it again.
+        let stale = begin_fetch();
+        reset_transient();
+        assert!(!bridge::with_picker(|state| {
+            publish_handle(state, stale, None, true)
+        }));
+        let next = begin_fetch();
+        assert!(bridge::with_picker(|state| {
+            publish_handle(state, next, None, true)
+        }));
+        // Stale completion after reset never publishes.
+        publish_if_latest(stale, RomPickerResult::Failed("stale".into()));
+        assert!(take_result().is_none());
+        publish_if_latest(next, RomPickerResult::Failed("fresh".into()));
+        assert!(take_result().is_some());
+        reset_transient();
     }
 }
