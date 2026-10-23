@@ -7,5 +7,10 @@
             android:authorities="io.github.chalharu.nerust.testrom"
             android:exported="true"
             android:grantUriPermissions="true" />
+        <provider
+            android:name="io.github.chalharu.nerust.FaultDocumentsProvider"
+            android:authorities="io.github.chalharu.nerust.faultdocs"
+            android:exported="true"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

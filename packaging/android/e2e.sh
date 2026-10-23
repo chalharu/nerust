@@ -10,6 +10,10 @@ APP_PACKAGE="io.github.chalharu.nerust"
 TEST_PACKAGE="${APP_PACKAGE}.test"
 TEST_RUNNER="${TEST_PACKAGE}/androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS="io.github.chalharu.nerust.MainActivityE2eTest"
+# Abnormal SAF paths against a fault-injecting stub DocumentsProvider: a
+# real DocumentsContract interface on the emulator, no physical device
+# needed (NER-321/322/312).
+FAULT_CLASS="io.github.chalharu.nerust.SafAbnormalProviderTest"
 # Must match HARNESS_TEARDOWN_MARKER in gui/frontends/android/src/lib.rs:
 # presence keeps the process alive across instrumentation teardown so the
 # result summary is delivered before any exit (NER-327).
@@ -282,3 +286,6 @@ run_instrumentation "${TEST_CLASS}#directoryPickerIntentUsesPersistableReadWrite
 run_instrumentation "${TEST_CLASS}#pushedZonesParseToDrawableRects"
 run_instrumentation "${TEST_CLASS}#pushedJoystickParsesHomeGeometry"
 run_instrumentation "${TEST_CLASS}#delayedDismissCannotAcknowledgeReplacementDialog"
+run_instrumentation "${FAULT_CLASS}#transientOutageIsScanErrorNeverMissing"
+run_instrumentation "${FAULT_CLASS}#corruptDocumentReadsBackExactlyForQuarantine"
+run_instrumentation "${FAULT_CLASS}#oversizedSidecarSummaryIsCappedOutOfListing"

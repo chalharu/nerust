@@ -27,6 +27,20 @@ class SelectedE2eTests(unittest.TestCase):
         )
         self.assertEqual(selected_e2e_tests(text), {"alpha", "beta", "gamma", "delta"})
 
+    def test_fault_class_selections_count(self):
+        text = (
+            'run_instrumentation "${FAULT_CLASS}#outage"\n'
+            'run_instrumentation "${FAULT_CLASS}#corrupt,${FAULT_CLASS}#capped"\n'
+        )
+        self.assertEqual(selected_e2e_tests(text), {"outage", "corrupt", "capped"})
+
+    def test_mixed_classes_merge(self):
+        text = (
+            'run_instrumentation "${TEST_CLASS}#alpha"\n'
+            'run_instrumentation "${FAULT_CLASS}#beta"\n'
+        )
+        self.assertEqual(selected_e2e_tests(text), {"alpha", "beta"})
+
     def test_full_line_comment_is_not_selected(self):
         text = (
             'run_instrumentation "${TEST_CLASS}#alpha"\n'

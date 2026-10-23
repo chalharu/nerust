@@ -85,7 +85,9 @@ def selected_e2e_tests(text):
     even when they mention a test (NER-315)."""
     live = _live_call_lines(text)
     invoked = set()
-    for chunk in re.findall(r"\$\{TEST_CLASS\}#([A-Za-z0-9_,]+)", "\n".join(live)):
+    for chunk in re.findall(
+        r"\$\{(?:TEST_CLASS|FAULT_CLASS)\}#([A-Za-z0-9_,]+)", "\n".join(live)
+    ):
         invoked.update(name for name in chunk.split(",") if name)
     return invoked
 
@@ -96,16 +98,25 @@ def diff_names(defined, invoked):
 
 
 def check_e2e():
-    """Every instrumentation test is selected in e2e.sh, and vice versa."""
+    """Every instrumentation test is selected in e2e.sh, and vice versa.
+    Both instrumented classes count: the activity e2e class and the
+    fault-provider abnormal-path class (emulator, no device needed)."""
     e2e = (HERE / "e2e.sh").read_text()
     invoked = selected_e2e_tests(e2e)
     require(invoked, "no instrumented tests selected in e2e.sh")
-    test_file = (
-        HERE
-        / "app/src/androidTest/kotlin/io/github/chalharu/nerust/MainActivityE2eTest.kt"
-    )
-    defined = set(kotlin_test_methods(test_file))
-    require(defined, "no @Test methods in MainActivityE2eTest")
+    test_files = [
+        "app/src/androidTest/kotlin/io/github/chalharu/nerust/MainActivityE2eTest.kt",
+        "app/src/androidTest/kotlin/io/github/chalharu/nerust/SafAbnormalProviderTest.kt",
+    ]
+    defined = set()
+    for name in test_files:
+        methods = set(kotlin_test_methods(HERE / name))
+        require(methods, f"no @Test methods in {name}")
+        require(
+            defined.isdisjoint(methods),
+            f"duplicate test names across classes: {defined & methods}",
+        )
+        defined |= methods
     missing, extra = diff_names(defined, invoked)
     require(not missing, f"instrumentation tests never selected: {missing}")
     require(not extra, f"selected tests not defined: {extra}")
