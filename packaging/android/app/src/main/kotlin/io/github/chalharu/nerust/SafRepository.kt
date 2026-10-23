@@ -118,16 +118,31 @@ class SafRepository(private val context: Context) : AutoCloseable {
         return array.toString()
     }
 
-    /** -1 = missing document, 0 = open error, positive = session ID. */
+    /** -1 = missing document, 0 = open error, positive = session ID.
+     * NER-321: a name with no generation and no physical file is missing
+     * only after a COMPLETE survey. An incomplete survey (an unreadable
+     * commit marker) returns an error instead: collapsing it to missing
+     * would let the Rust side treat live data as gone and run the
+     * delete/tombstone/GC path over it. */
     fun openSafReadSession(treeUri: String, relativePath: String): Long {
         return try {
             val (directory, name) = parent(treeUri, relativePath, false) ?: return -1L
             val files = directory.listFiles()
-            val generation = generations(files)[name]
-            val file = if (generation != null) generation.data else files.find { it.name == name }
-            if (file == null) return -1L
-            val stream = context.contentResolver.openInputStream(file.uri) ?: return 0L
-            readSessions.open(if (generation == null) stream else SafVerifiedInputStream(stream, generation.size))
+            val survey = surveyGenerations(files)
+            val generation = survey.committed[name]
+            if (generation != null) {
+                // A parsed generation speaks for this name even when other
+                // markers failed: a tombstone is confirmed-absent, otherwise
+                // the staged data serves under its committed size.
+                val file = generation.data ?: return -1L
+                val stream = context.contentResolver.openInputStream(file.uri) ?: return 0L
+                readSessions.open(SafVerifiedInputStream(stream, generation.size))
+            } else {
+                val file = files.find { it.name == name }
+                    ?: return if (confirmedAbsent(survey.complete, false)) -1L else 0L
+                val stream = context.contentResolver.openInputStream(file.uri) ?: return 0L
+                readSessions.open(stream)
+            }
         } catch (error: Exception) {
             Log.w(TAG, "openSafReadSession: open failed", error)
             0L
@@ -206,21 +221,8 @@ class SafRepository(private val context: Context) : AutoCloseable {
 
     private data class Generation(val order: String, val data: DocumentFile?, val size: Long)
 
-    /** Scan transfer guard: sidecar bytes above this are skipped, so a huge
-     * summary never crosses on the batch path either (NER-312). */
-    private fun readCapped(stream: java.io.InputStream, limit: Int): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        val chunk = ByteArray(8192)
-        var remaining = limit
-        while (remaining > 0) {
-            val count = stream.read(chunk, 0, minOf(chunk.size, remaining))
-            if (count < 0) break
-            if (count == 0) throw java.io.IOException("zero sidecar read")
-            out.write(chunk, 0, count)
-            remaining -= count
-        }
-        return out.toByteArray()
-    }
+    private fun readCapped(stream: java.io.InputStream, limit: Int): ByteArray =
+        readCappedBytes(stream, limit)
 
     private fun knownSize(file: DocumentFile): Long? =
         runCatching {
@@ -230,9 +232,6 @@ class SafRepository(private val context: Context) : AutoCloseable {
                 else it.getLong(column).takeIf { size -> size >= 0 }
             }
         }.getOrNull()
-
-    private fun generations(files: Array<DocumentFile>): Map<String, Generation> =
-        surveyGenerations(files).committed
 
     /**
      * Generations survey: the display map plus whether every marker resolved.
@@ -441,6 +440,34 @@ class SafRepository(private val context: Context) : AutoCloseable {
             name: String,
             order: String,
         ): Boolean = recordName == name && recordOrder < order
+
+        /**
+         * NER-321 read-outcome gate: a logical document is confirmed-absent
+         * only after a COMPLETE generation survey. An incomplete survey (an
+         * unreadable commit marker) must surface as an open error, never as
+         * missing, so the Rust side keeps its previous state and never runs
+         * the delete/tombstone/GC path over live data.
+         * Pure decision logic: JVM tests pin the truth table without a device.
+         */
+        internal fun confirmedAbsent(surveyComplete: Boolean, fileFound: Boolean): Boolean =
+            surveyComplete && !fileFound
+
+        /** Scan transfer guard: sidecar bytes above this are skipped, so a huge
+         * summary never crosses on the batch path either (NER-312). Pure
+         * `java.io`: JVM tests pin the bound without a provider. */
+        internal fun readCappedBytes(stream: java.io.InputStream, limit: Int): ByteArray {
+            val out = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(8192)
+            var remaining = limit
+            while (remaining > 0) {
+                val count = stream.read(chunk, 0, minOf(chunk.size, remaining))
+                if (count < 0) break
+                if (count == 0) throw java.io.IOException("zero sidecar read")
+                out.write(chunk, 0, count)
+                remaining -= count
+            }
+            return out.toByteArray()
+        }
     }
 
     private val readSessions = SafReadSessions()
