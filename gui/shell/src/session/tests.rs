@@ -911,6 +911,14 @@ fn failed_load_after_switch_restores_previous_runtime() {
 
     session.set_active_system(second_id.as_ref()).unwrap();
     assert!(!session.tick_metrics().loaded);
+    // The outgoing running core is frozen across the switch: no battery RAM
+    // update can slip past the pre-switch flush (NER-320).
+    assert!(
+        session
+            .pre_switch
+            .as_ref()
+            .is_some_and(|stashed| stashed.was_running)
+    );
 
     // An unloadable ROM fails the staged load: the old system comes back.
     let retry = session
