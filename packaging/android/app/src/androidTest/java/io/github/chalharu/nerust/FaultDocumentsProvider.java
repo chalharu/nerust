@@ -30,17 +30,31 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
     /** Remaining provider-wide transient failures; each query/open burns one. */
     public static final AtomicInteger outageFailures = new AtomicInteger(0);
 
-    public static final byte[] GOOD_BYTES = "FAULT-PROVIDER-GOOD-BYTES".getBytes();
-    public static final byte[] CORRUPT_BYTES = new byte[] {
+    private static final String DOC_GOOD = DOC_GOOD;
+    private static final String DOC_CORRUPT = DOC_CORRUPT;
+    private static final String DOC_SLOT1_STATE = DOC_SLOT1_STATE;
+    private static final String DOC_SUMMARY1 = DOC_SUMMARY1;
+    private static final String DOC_SLOT2_STATE = DOC_SLOT2_STATE;
+    private static final String DOC_SUMMARY2 = DOC_SUMMARY2;
+
+    private static final byte[] GOOD_BYTES = "FAULT-PROVIDER-GOOD-BYTES".getBytes();
+    private static final byte[] CORRUPT_BYTES = {
         (byte) 0xFF, (byte) 0xFE, 0x00, 0x01, 0x02, (byte) 0xFD, 0x03, 0x04,
     };
-    public static final byte[] SMALL_SUMMARY = "{\"v\":1}".getBytes();
+    private static final byte[] SMALL_SUMMARY = "{\"v\":1}".getBytes();
     /** 200 KiB: over the 64 KiB SAF_SUMMARY_BYTES cap. */
     public static final int HUGE_SUMMARY_SIZE = 200 * 1024;
 
+    public static byte[] getGoodBytes() {
+        return GOOD_BYTES.clone();
+    }
+
+    public static byte[] getCorruptBytes() {
+        return CORRUPT_BYTES.clone();
+    }
+
     private static final String[] CHILD_IDS = {
-        "good.state", "corrupt.state", "slot1.state", "slot1.summary",
-        "slot2.state", "slot2.summary",
+        DOC_GOOD, DOC_CORRUPT, DOC_SLOT1_STATE, DOC_SUMMARY1, DOC_SLOT2_STATE, DOC_SUMMARY2,
     };
 
     private static final String[] ROOT_PROJECTION = {
@@ -64,14 +78,14 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
         return true;
     }
 
-    private void burnOutage() throws FileNotFoundException {
+    private void burnOutage() {
         if (outageFailures.getAndDecrement() > 0) {
             throw new IllegalStateException("transient provider fault (injected)");
         }
     }
 
     @Override
-    public Cursor queryRoots(String[] projection) throws FileNotFoundException {
+    public Cursor queryRoots(String[] projection) {
         burnOutage();
         MatrixCursor cursor = new MatrixCursor(
                 projection != null ? projection : ROOT_PROJECTION);
@@ -180,32 +194,32 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
     }
 
     private int sizeOf(String documentId) {
-        if ("good.state".equals(documentId)) {
+        if (DOC_GOOD.equals(documentId)) {
             return GOOD_BYTES.length;
         }
-        if ("corrupt.state".equals(documentId)) {
+        if (DOC_CORRUPT.equals(documentId)) {
             return CORRUPT_BYTES.length;
         }
-        if ("slot1.summary".equals(documentId)) {
+        if (DOC_SUMMARY1.equals(documentId)) {
             return SMALL_SUMMARY.length;
         }
-        if ("slot2.summary".equals(documentId)) {
+        if (DOC_SUMMARY2.equals(documentId)) {
             return HUGE_SUMMARY_SIZE;
         }
         return 8;
     }
 
     private byte[] bytesOf(String documentId) {
-        if ("good.state".equals(documentId)) {
+        if (DOC_GOOD.equals(documentId)) {
             return GOOD_BYTES;
         }
-        if ("corrupt.state".equals(documentId)) {
+        if (DOC_CORRUPT.equals(documentId)) {
             return CORRUPT_BYTES;
         }
-        if ("slot1.summary".equals(documentId)) {
+        if (DOC_SUMMARY1.equals(documentId)) {
             return SMALL_SUMMARY;
         }
-        if ("slot2.summary".equals(documentId)) {
+        if (DOC_SUMMARY2.equals(documentId)) {
             byte[] huge = new byte[HUGE_SUMMARY_SIZE];
             for (int i = 0; i < huge.length; i++) {
                 huge[i] = (byte) (i & 0x7F);

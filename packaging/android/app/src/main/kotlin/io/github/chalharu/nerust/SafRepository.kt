@@ -65,9 +65,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
         // visible slots over. Probe the tree root first: an unreadable root
         // is a scan error (the Rust side keeps the previous list), never an
         // empty one (NER-321/322).
-        if (!verifiedTreeRoot(treeUri)) {
-            throw IllegalStateException("unreadable SAF listing: $treeUri")
-        }
+        check(verifiedTreeRoot(treeUri)) { "unreadable SAF listing: $treeUri" }
         val directory =
             resolveSafDirectory(treeUri, relativePath, create = false)
                 ?: return "[]"
@@ -361,13 +359,13 @@ class SafRepository(private val context: Context) : AutoCloseable {
 
     /** Probe-first listing health: DocumentFile list/find calls swallow
      * provider failures (empty array / null), so a vacuous result cannot
-     * prove absence. Query the tree root document directly — it throws on a
-     * provider-wide outage — and only trust empty as empty when the root
-     * itself answers. Residual: a selective single-child failure under a
-     * healthy root still collapses inside DocumentFile (AndroidX
-     * limitation); provider-wide outages, the NER-321 case, are covered. */
+     * prove absence. Query the tree root document directly: it throws on a
+     * provider-wide outage. Non-tree URIs (single-document and legacy
+     * providers) keep the historical behavior since the probe is a
+     * DocumentsContract concept that must not fail them (NER-321). */
     private fun verifiedTreeRoot(treeUri: String): Boolean {
         val parsed = Uri.parse(treeUri)
+        if (parsed.pathSegments.firstOrNull() != "tree") return true
         val rootId = try {
             DocumentsContract.getTreeDocumentId(parsed)
         } catch (error: Exception) {

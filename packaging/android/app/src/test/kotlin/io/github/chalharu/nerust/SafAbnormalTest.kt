@@ -102,19 +102,11 @@ class SafAbnormalTest {
         // healthy ones list.
         val short = SafVerifiedInputStream(ByteArrayInputStream(byteArrayOf(1, 2)), 10L)
         assertEquals(2, short.read(ByteArray(8), 0, 8))
-        try {
-            short.read()
-            fail("short generation must throw at EOF")
-        } catch (_: IOException) {
-        }
+        assertThrows(IOException::class.java) { short.read() }
     }
 
     @Test fun oversizedGenerationDetectedInsteadOfServingExtra() {
         val long = SafVerifiedInputStream(ByteArrayInputStream(byteArrayOf(1, 2, 3)), 1L)
-        try {
-            long.read(ByteArray(8), 0, 8)
-            fail("oversized generation must throw")
-        } catch (_: IOException) {
-        }
+        assertThrows(IOException::class.java) { long.read(ByteArray(8), 0, 8) }
     }
 }

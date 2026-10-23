@@ -1,7 +1,11 @@
 package io.github.chalharu.nerust
 
+import android.content.ContentResolver
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.rule.provider.ProviderTestRule
 import java.io.ByteArrayOutputStream
 import org.json.JSONArray
 import org.junit.After
@@ -11,6 +15,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -25,6 +30,19 @@ import org.junit.runner.RunWith
 class SafAbnormalProviderTest {
     private val treeUri = FaultDocumentsProvider.TREE_URI.toString()
 
+    /**
+     * In-process isolated provider: no manifest entry, so the platform
+     * never installs it as a system DocumentsProvider (which would demand
+     * MANAGE_DOCUMENTS protection) and no cross-APK grant is needed. The
+     * repository under test talks to the real DocumentsContract interface
+     * through the rule's resolver.
+     */
+    @get:Rule
+    val providerRule: ProviderTestRule = ProviderTestRule.Builder(
+        FaultDocumentsProvider::class.java,
+        FaultDocumentsProvider.AUTHORITY,
+    ).build()
+
     @Before
     fun clearFaults() {
         FaultDocumentsProvider.outageFailures.set(0)
@@ -35,8 +53,13 @@ class SafAbnormalProviderTest {
         FaultDocumentsProvider.outageFailures.set(0)
     }
 
-    private fun repository(): SafRepository =
-        SafRepository(ApplicationProvider.getApplicationContext())
+    private fun repository(): SafRepository {
+        val appContext = ApplicationProvider.getApplicationContext<Context>()
+        val isolated = object : ContextWrapper(appContext) {
+            override fun getContentResolver(): ContentResolver = providerRule.resolver
+        }
+        return SafRepository(isolated)
+    }
 
     private fun readFully(repository: SafRepository, sessionId: Long): ByteArray {
         val sink = ByteArrayOutputStream()
@@ -70,7 +93,7 @@ class SafAbnormalProviderTest {
             val session = repository.openSafReadSession(treeUri, "good.state")
             assertTrue("recovered session must be valid, got $session", session > 0)
             try {
-                assertArrayEquals(FaultDocumentsProvider.GOOD_BYTES, readFully(repository, session))
+                assertArrayEquals(FaultDocumentsProvider.getGoodBytes(), readFully(repository, session))
             } finally {
                 repository.closeSafReadSession(session)
             }
@@ -86,7 +109,7 @@ class SafAbnormalProviderTest {
                 // Byte fidelity: the Rust side quarantines exactly these bytes
                 // instead of deleting them (NER-319/321).
                 assertArrayEquals(
-                    FaultDocumentsProvider.CORRUPT_BYTES,
+                    FaultDocumentsProvider.getCorruptBytes(),
                     readFully(repository, session),
                 )
             } finally {
