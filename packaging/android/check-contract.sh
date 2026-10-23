@@ -24,6 +24,8 @@ phase "verify"
 python3 "${SCRIPT_DIR}/verify-contract.py"
 phase "contract tests"
 python3 "${SCRIPT_DIR}/test-contract.py"
+phase "inventory gate self-tests"
+python3 "${SCRIPT_DIR}/test-inventory.py"
 if [[ "${1:-}" == "--fast-only" ]]; then
     echo "Android bridge contract (fast): OK"
     exit 0

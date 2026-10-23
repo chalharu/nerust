@@ -26,18 +26,44 @@ def kotlin_test_methods(path):
     return re.findall(r"@Test(?:\([^)]*\))?\s+fun\s+(\w+)", text)
 
 
+def selected_e2e_tests(text):
+    """TEST_CLASS selections on live shell lines. Full-line comments never
+    run, and trailing comments are cut outside double quotes, so commented
+    selections cannot pass the inventory gate (NER-315)."""
+    live = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        kept = []
+        in_quotes = False
+        for char in stripped:
+            if char == '"':
+                in_quotes = not in_quotes
+            elif char == "#" and not in_quotes:
+                break
+            kept.append(char)
+        live.append("".join(kept))
+    invoked = set()
+    for chunk in re.findall(r"\$\{TEST_CLASS\}#([A-Za-z0-9_,]+)", "\n".join(live)):
+        invoked.update(name for name in chunk.split(",") if name)
+    return invoked
+
+
+def diff_names(defined, invoked):
+    """Sorted (missing, extra) lists for the inventory gate."""
+    return sorted(defined - invoked), sorted(invoked - defined)
+
+
 def check_e2e():
     """Every instrumentation test is selected in e2e.sh, and vice versa."""
     e2e = (HERE / "e2e.sh").read_text()
-    invoked = set()
-    for chunk in re.findall(r"\$\{TEST_CLASS\}#([A-Za-z0-9_,]+)", e2e):
-        invoked.update(name for name in chunk.split(",") if name)
+    invoked = selected_e2e_tests(e2e)
     require(invoked, "no instrumented tests selected in e2e.sh")
     test_file = HERE / "app/src/androidTest/kotlin/io/github/chalharu/nerust/MainActivityE2eTest.kt"
     defined = set(kotlin_test_methods(test_file))
     require(defined, "no @Test methods in MainActivityE2eTest")
-    missing = sorted(defined - invoked)
-    extra = sorted(invoked - defined)
+    missing, extra = diff_names(defined, invoked)
     require(not missing, f"instrumentation tests never selected: {missing}")
     require(not extra, f"selected tests not defined: {extra}")
     print(f"e2e test inventory: OK ({len(defined)} tests selected)")
