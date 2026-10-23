@@ -952,6 +952,29 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// NER-302 AC-3: a missing save re-arms a degraded manager on its own,
+    /// with or without a previously written recovery file. Each case starts
+    /// from explicit latch states, independent of any prior import.
+    #[test]
+    fn missing_save_rearms_degraded_manager_with_or_without_recovery() {
+        for recovery_written in [false, true] {
+            let dir = crate::test_helpers::unique_temp_dir("rearm-missing");
+            let path = dir.join("game.sav");
+            let mut manager = PersistenceManager::new();
+            let exporter = exporter_ok();
+            manager.configure(dir.clone().into(), path.clone().into());
+            manager.mapper_save_flush_allowed = false;
+            manager.mapper_save_recovery_written = recovery_written;
+            assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+            assert_eq!(
+                manager.flush_mapper_save(&exporter).unwrap(),
+                MapperFlush::Flushed
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), vec![4]);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     /// NER-321: a transient autosave read failure must not delete, and the
     /// retry after recovery loads the same bytes. Corrupt bytes quarantine
     /// instead of deleting.
