@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
@@ -59,6 +60,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
         // A missing child directory is genuinely empty and stays "[]".
         DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
             ?: throw IllegalArgumentException("unresolvable SAF tree: $treeUri")
+        // DocumentFile.listFiles() swallows provider failures to an empty
+        // array, which a vacuous survey would certify complete and clear the
+        // visible slots over. Probe the tree root first: an unreadable root
+        // is a scan error (the Rust side keeps the previous list), never an
+        // empty one (NER-321/322).
+        if (!verifiedTreeRoot(treeUri)) {
+            throw IllegalStateException("unreadable SAF listing: $treeUri")
+        }
         val directory =
             resolveSafDirectory(treeUri, relativePath, create = false)
                 ?: return "[]"
@@ -126,6 +135,10 @@ class SafRepository(private val context: Context) : AutoCloseable {
      * delete/tombstone/GC path over it. */
     fun openSafReadSession(treeUri: String, relativePath: String): Long {
         return try {
+            // Same probe-first discipline as the listing: a provider-wide
+            // outage must surface as 0 (error, never delete), not -1
+            // (missing, which runs the delete/tombstone/GC path) (NER-321).
+            if (!verifiedTreeRoot(treeUri)) return 0L
             val (directory, name) = parent(treeUri, relativePath, false) ?: return -1L
             val files = directory.listFiles()
             val survey = surveyGenerations(files)
@@ -344,6 +357,33 @@ class SafRepository(private val context: Context) : AutoCloseable {
         data?.takeIf { it.startsWith(PREFIX) }?.let { staged ->
             runCatching { directory.findFile(staged)?.delete() }
         }
+    }
+
+    /** Probe-first listing health: DocumentFile list/find calls swallow
+     * provider failures (empty array / null), so a vacuous result cannot
+     * prove absence. Query the tree root document directly — it throws on a
+     * provider-wide outage — and only trust empty as empty when the root
+     * itself answers. Residual: a selective single-child failure under a
+     * healthy root still collapses inside DocumentFile (AndroidX
+     * limitation); provider-wide outages, the NER-321 case, are covered. */
+    private fun verifiedTreeRoot(treeUri: String): Boolean {
+        val parsed = Uri.parse(treeUri)
+        val rootId = try {
+            DocumentsContract.getTreeDocumentId(parsed)
+        } catch (error: Exception) {
+            Log.w(TAG, "unreadable SAF tree id", error)
+            return false
+        }
+        val probeUri = DocumentsContract.buildDocumentUriUsingTree(parsed, rootId)
+        return runCatching {
+            context.contentResolver.query(
+                probeUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                null,
+                null,
+                null,
+            )?.use { it.moveToFirst() } == true
+        }.getOrDefault(false)
     }
 
     private fun resolveSafDirectory(
