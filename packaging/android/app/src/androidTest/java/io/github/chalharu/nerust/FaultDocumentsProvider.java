@@ -30,12 +30,12 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
     /** Remaining provider-wide transient failures; each query/open burns one. */
     public static final AtomicInteger outageFailures = new AtomicInteger(0);
 
-    private static final String DOC_GOOD = DOC_GOOD;
-    private static final String DOC_CORRUPT = DOC_CORRUPT;
-    private static final String DOC_SLOT1_STATE = DOC_SLOT1_STATE;
-    private static final String DOC_SUMMARY1 = DOC_SUMMARY1;
-    private static final String DOC_SLOT2_STATE = DOC_SLOT2_STATE;
-    private static final String DOC_SUMMARY2 = DOC_SUMMARY2;
+    private static final String DOC_GOOD = "good.state";
+    private static final String DOC_CORRUPT = "corrupt.state";
+    private static final String DOC_SLOT1_STATE = "slot1.state";
+    private static final String DOC_SUMMARY1 = "slot1.summary";
+    private static final String DOC_SLOT2_STATE = "slot2.state";
+    private static final String DOC_SUMMARY2 = "slot2.summary";
 
     private static final byte[] GOOD_BYTES = "FAULT-PROVIDER-GOOD-BYTES".getBytes();
     private static final byte[] CORRUPT_BYTES = {
