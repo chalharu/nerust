@@ -50,7 +50,6 @@ adb() {
         *pidof*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
-    return 1
 }
 export -f adb
 if expect_process_termination "io.github.Fake#missing" >/dev/null 2>&1; then
@@ -83,7 +82,6 @@ adb() {
         *pidof*) echo "error: device offline" >&2; return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
-    return 1
 }
 export -f adb
 if wait_until_gone_with_timeout 1 >/dev/null 2>&1; then

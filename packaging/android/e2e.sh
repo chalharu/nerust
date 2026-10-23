@@ -143,7 +143,7 @@ dump_shutdown_threads() {
 
 # Unit-probe hook: sourcing this file defines helpers without running the suite.
 if [[ "${BASH_SOURCE[0]:-}" != "${0}" ]]; then
-    return 0 2>/dev/null || exit 0
+    return 0
 fi
 
 rm -rf "${JNI_LIBS_DIR}"
