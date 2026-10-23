@@ -294,22 +294,9 @@ impl PersistenceManager {
         Some(next_slot_id)
     }
 
-    pub fn refresh_slots(&mut self, emu: &dyn StateExporter) {
+    pub fn refresh_slots(&mut self, emu: &dyn StateExporter) -> Result<(), PersistenceError> {
         let identity = emu.export_identity();
-        self.refresh_slots_inner(identity.as_ref());
-    }
-
-    fn refresh_slots_inner(&mut self, identity: Option<&SystemIdentity>) {
-        // A failed scan keeps the previous list: a transient backend
-        // failure must not wipe the slots (NER-322).
-        if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
-            match self.slot_backend.scan(dir, identity) {
-                Ok(slots) => self.slots = slots.into(),
-                Err(error) => log::warn!("slot scan failed, keeping previous list: {error:?}"),
-            }
-        } else {
-            self.slots = Vec::new().into();
-        }
+        let outcome = self.refresh_slots_inner(identity.as_ref());
         if self
             .active_slot_id
             .is_some_and(|slot_id| !self.slots.iter().any(|slot| slot.slot_id == slot_id))
@@ -318,6 +305,33 @@ impl PersistenceManager {
         }
         if self.active_slot_id.is_none() {
             self.active_slot_id = latest_saved_slot_id(&self.slots);
+        }
+        outcome
+    }
+
+    /// Scan outcome for the setup notice: a failed scan keeps the previous
+    /// list but reports, so an empty-looking list is distinguishable from a
+    /// backend failure (NER-322).
+    fn refresh_slots_inner(
+        &mut self,
+        identity: Option<&SystemIdentity>,
+    ) -> Result<(), PersistenceError> {
+        // A failed scan keeps the previous list: a transient backend
+        // failure must not wipe the slots.
+        if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
+            match self.slot_backend.scan(dir, identity) {
+                Ok(slots) => {
+                    self.slots = slots.into();
+                    Ok(())
+                }
+                Err(error) => {
+                    log::warn!("slot scan failed, keeping previous list: {error:?}");
+                    Err(error)
+                }
+            }
+        } else {
+            self.slots = Vec::new().into();
+            Ok(())
         }
     }
 
@@ -824,10 +838,10 @@ mod persistence_cov_tests {
     fn refresh_and_select_prune_missing_active() {
         let mut manager = PersistenceManager::new();
         let exporter = exporter_ok();
-        manager.refresh_slots(&exporter);
+        manager.refresh_slots(&exporter).unwrap();
         assert!(manager.slots().is_empty());
         manager.select_active_slot(9);
-        manager.refresh_slots(&exporter);
+        manager.refresh_slots(&exporter).unwrap();
         assert_eq!(manager.active_slot_id(), None);
     }
 
@@ -1204,10 +1218,10 @@ mod persistence_cov_tests {
         let dir = crate::test_helpers::unique_temp_dir("scan-keep");
         manager.configure(dir.clone().into(), dir.join("game.sav").into());
         let exporter = exporter_ok();
-        manager.refresh_slots(&exporter);
+        manager.refresh_slots(&exporter).unwrap();
         assert_eq!(manager.slots().len(), 1);
         fail.store(true, Ordering::SeqCst);
-        manager.refresh_slots(&exporter);
+        assert!(manager.refresh_slots(&exporter).is_err());
         assert_eq!(manager.slots().len(), 1, "failed scan keeps previous slots");
         assert_eq!(manager.active_slot_id(), Some(7));
         let _ = std::fs::remove_dir_all(dir);
