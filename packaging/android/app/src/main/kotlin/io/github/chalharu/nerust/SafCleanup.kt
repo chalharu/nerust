@@ -69,50 +69,53 @@ internal object SafCleanup {
     }
 
     internal fun park(task: Runnable) {
-        synchronized(parkedGuard) { parked.addLast(task) }
-        if (synchronized(parkedGuard) { parked.size } > MAX_PARKED) {
-            // Bounded dock overflow: drop the just-added entry back out and
-            // run it on a short-lived daemon thread. A concurrent pump may
-            // have taken it first; then there is nothing to withdraw and the
-            // lane copy runs instead, exactly once either way.
-            val ours = synchronized(parkedGuard) {
+        // One critical section per operation. Separate acquisitions let a
+        // pump interleave between the add and the size check (or let a
+        // reader observe between a pump's remove and re-add), transiently
+        // skewing the count; under preemption that flakes exact-count
+        // assertions. Holding the guard across remove+offer+re-add keeps
+        // every observable state quiescent; offer never blocks so there is
+        // no deadlock, and the monitor is reentrant so the pump below
+        // simply re-acquires it.
+        synchronized(parkedGuard) {
+            parked.addLast(task)
+            if (parked.size > MAX_PARKED) {
+                // Bounded dock overflow: drop the just-added entry back out and
+                // run it on a short-lived daemon thread. A concurrent pump may
+                // have taken it first; then there is nothing to withdraw and the
+                // lane copy runs instead, exactly once either way.
                 if (parked.peekLast() === task) {
                     parked.removeLast()
-                    true
-                } else {
-                    false
+                    Thread({
+                        task.run()
+                        pumpParked()
+                    }, "nerust-saf-cleanup-spill").apply { isDaemon = true }.start()
                 }
+                return
             }
-            if (ours) {
-                Thread({
-                    task.run()
-                    pumpParked()
-                }, "nerust-saf-cleanup-spill").apply { isDaemon = true }.start()
-            }
-            return
+            // Lost-wakeup guard: completions only chain while work is in
+            // flight. A park that lands on an idle lane would otherwise wait for
+            // a completion that never comes, so resubmit one entry now (NER-308).
+            pumpParked()
         }
-        // Lost-wakeup guard: completions only chain while work is in
-        // flight. A park that lands on an idle lane would otherwise wait for
-        // a completion that never comes, so resubmit one entry now (NER-308).
-        pumpParked()
     }
 
     internal fun pumpParked() {
         val pool = executor as ThreadPoolExecutor
-        while (true) {
-            val next = synchronized(parkedGuard) {
+        synchronized(parkedGuard) {
+            while (true) {
                 if (parked.isEmpty()) return
-                parked.removeFirst()
+                val next = parked.removeFirst()
+                // Offer without the reject handler: a full queue means the worker
+                // is busy, so its completion chain will drain the dock. Removing
+                // from the dock before offering keeps every entry submitted at
+                // most once across concurrent pumps.
+                if (!pool.queue.offer(next)) {
+                    parked.addFirst(next)
+                    return
+                }
+                pool.prestartCoreThread()
             }
-            // Offer without the reject handler: a full queue means the worker
-            // is busy, so its completion chain will drain the dock. Removing
-            // from the dock before offering keeps every entry submitted at
-            // most once across concurrent pumps.
-            if (!pool.queue.offer(next)) {
-                synchronized(parkedGuard) { parked.addFirst(next) }
-                return
-            }
-            pool.prestartCoreThread()
         }
     }
 
