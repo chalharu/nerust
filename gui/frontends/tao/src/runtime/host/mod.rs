@@ -413,6 +413,13 @@ impl HostState {
     pub(crate) fn close_exited(&self) -> bool {
         self.windows.close_exited()
     }
+
+    /// Aux window of this kind still registered. Test-only read: the
+    /// ordered teardown must leave no aux window behind.
+    #[cfg(test)]
+    pub(crate) fn aux_open(&self, kind: AuxKind) -> bool {
+        self.aux.contains(kind)
+    }
 }
 
 /// `HostState` orchestration over the [`DebugOrchestrator`].
