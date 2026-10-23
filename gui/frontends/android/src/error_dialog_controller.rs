@@ -133,16 +133,17 @@ impl ErrorDialogController {
             return IDLE;
         }
         self.current_id = None;
-        queue.modal_closed();
         if matches!(screen, Screen::SettingsOpen | Screen::Suspended) {
-            // Preempted, never acked: requeue the head so the ack
-            // guarantee survives the replacement in display order.
-            if let Some(detail) = self.current.take() {
-                queue.requeue_front(detail);
-            }
+            // Preempted, never acked: hand the structured batch back so a
+            // later take re-renders under current settings (NER-318).
+            // requeue_showing also releases the gate; modal_closed would
+            // drop the unacked lines first.
+            let _ = self.current.take();
+            queue.requeue_showing();
             return IDLE;
         }
         self.current = None;
+        queue.modal_closed();
         if self.auto_paused && queue.modal_pending() == 0 {
             self.auto_paused = false;
             return DismissTransition::ResumeAndReshow;
@@ -150,14 +151,12 @@ impl ErrorDialogController {
         DismissTransition::Reshow
     }
 
-    /// Activity suspend kills transient UI: release the gate and requeue
-    /// the unacked head; the pause flag survives for the resume path.
+    /// Activity suspend kills transient UI: release the gate and hand the
+    /// unacked head back structured; the pause flag survives for the resume path.
     pub(crate) fn on_suspended(&mut self, queue: &mut ModalQueue) {
         self.current_id = None;
-        queue.modal_closed();
-        if let Some(detail) = self.current.take() {
-            queue.requeue_front(detail);
-        }
+        let _ = self.current.take();
+        queue.requeue_showing();
     }
 
     /// Settings close flushes the queue; an orphaned auto-pause resumes
@@ -454,5 +453,109 @@ mod tests {
             SettingsClosedTransition::Idle
         );
         assert!(showing.auto_paused());
+    }
+
+    /// NER-318: an interrupted batch redelivers under the settings at
+    /// redelivery time, never the pre-rendered text from before.
+    #[test]
+    fn interrupted_batch_applies_new_language_and_level_on_redelivery() {
+        use nerust_gui_shell::session::notification::{Message, NotificationLevel, UiNotification};
+        use nerust_gui_shell::session::osd::{FrameChannel, OsdManager, TransientPolicy};
+        use nerust_settings_core::model::language::AppLanguage;
+        use std::time::Instant;
+
+        fn policy(warning_enabled: bool) -> TransientPolicy {
+            TransientPolicy {
+                info_enabled: true,
+                warning_enabled,
+                error_enabled: true,
+                info_duration_ms: 2_000,
+                warning_duration_ms: 2_000,
+                info_rgb: (0, 0, 0),
+                warning_rgb: (0, 0, 0),
+                error_rgb: (200, 0, 0),
+                error_modal: false,
+            }
+        }
+        fn notify() -> UiNotification {
+            UiNotification {
+                level: NotificationLevel::Warning,
+                message: Message::persistence_unavailable(),
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            }
+        }
+
+        // English warning shown, then preempted by settings.
+        let now = Instant::now();
+        let mut controller = ErrorDialogController::new();
+        let mut manager = OsdManager::new();
+        manager.push_all_with_policy(
+            vec![notify()],
+            &policy(true),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert!(manager.pump_modal());
+        let screen = Screen::Foreground { can_pause: true };
+        controller
+            .poll_show(manager.modal_queue(), screen)
+            .expect("batch queued");
+        assert_eq!(controller.current_detail(), Some("• Saves unavailable"));
+        controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, true, false));
+        // Japanese, warnings still on: redelivery translates.
+        manager.push_all_with_policy(
+            Vec::new(),
+            &policy(true),
+            AppLanguage::Japanese,
+            now,
+            FrameChannel::Composited,
+        );
+        let replayed = controller
+            .on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, false));
+        assert_eq!(
+            replayed,
+            SettingsClosedTransition::Show { auto_pause: false }
+        );
+        assert!(
+            controller
+                .current_detail()
+                .is_some_and(|detail| detail.contains("保存機能が利用できません")),
+            "{:?}",
+            controller.current_detail()
+        );
+
+        // Japanese, warnings off: the stale warning never reshows, and the
+        // orphaned auto-pause releases (no dialog owns it anymore).
+        let mut controller = ErrorDialogController::new();
+        let mut manager = OsdManager::new();
+        manager.push_all_with_policy(
+            vec![notify()],
+            &policy(true),
+            AppLanguage::English,
+            now,
+            FrameChannel::Unpresented,
+        );
+        assert!(manager.pump_modal());
+        controller
+            .poll_show(manager.modal_queue(), screen)
+            .expect("batch queued");
+        controller.on_dismissed(manager.modal_queue(), Screen::show_gate(true, true, false));
+        manager.push_all_with_policy(
+            Vec::new(),
+            &policy(false),
+            AppLanguage::Japanese,
+            now,
+            FrameChannel::Composited,
+        );
+        assert_eq!(
+            controller
+                .on_settings_closed(manager.modal_queue(), Screen::show_gate(true, false, true)),
+            SettingsClosedTransition::Resume
+        );
+        assert!(!controller.auto_paused());
+        assert_eq!(controller.current_detail(), None);
     }
 }

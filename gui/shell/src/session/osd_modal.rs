@@ -59,6 +59,8 @@ pub struct ModalQueue {
     queue: std::collections::VecDeque<Vec<ModalLine>>,
     presentation: Option<(TransientPolicy, AppLanguage)>,
     open: bool,
+    /// Batch handed out but not acked: interrupts hand it back structured.
+    showing: Option<Vec<ModalLine>>,
     /// Total overflow losses. Pure fact, no I/O: the pump adapter
     /// decides logging from the delta (see `pump_modal`).
     pub(crate) dropped_total: u64,
@@ -249,6 +251,9 @@ impl ModalQueue {
                 .collect();
             if !rendered.is_empty() {
                 self.open = true;
+                // Keep structured ownership until ack: an interrupt hands
+                // the lines back instead of a pre-rendered string (NER-318).
+                self.showing = Some(lines);
                 return Some(rendered.join("\n"));
             }
         }
@@ -257,6 +262,19 @@ impl ModalQueue {
 
     pub fn modal_closed(&mut self) {
         self.open = false;
+        self.showing = None;
+    }
+
+    /// Hand the unacked showing batch back to the front, preserving its
+    /// structure so redelivery re-renders under current settings. No-op
+    /// when nothing was taken.
+    pub fn requeue_showing(&mut self) -> bool {
+        let Some(lines) = self.showing.take() else {
+            return false;
+        };
+        self.open = false;
+        self.queue.push_front(lines);
+        true
     }
 
     pub fn modal_pending(&self) -> usize {
@@ -288,6 +306,49 @@ fn same_batch(a: &[ModalLine], b: &[ModalLine]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::notification::Message;
+    use nerust_settings_core::model::language::AppLanguage;
+
+    fn test_policy(warning_enabled: bool) -> TransientPolicy {
+        TransientPolicy {
+            info_enabled: true,
+            warning_enabled,
+            error_enabled: true,
+            info_duration_ms: 2_000,
+            warning_duration_ms: 2_000,
+            info_rgb: (0, 0, 0),
+            warning_rgb: (0, 0, 0),
+            error_rgb: (200, 0, 0),
+            error_modal: false,
+        }
+    }
+
+    /// NER-318: an interrupted batch hands structured lines back, so the
+    /// next take re-renders under current settings instead of replaying
+    /// the pre-rendered text.
+    #[test]
+    fn interrupted_batch_rerenders_under_new_settings() {
+        let mut modal = ModalQueue::default();
+        modal.set_presentation(test_policy(true), AppLanguage::English);
+        modal.push_message(
+            Message::persistence_unavailable(),
+            1,
+            NotificationLevel::Warning,
+        );
+        assert!(matches!(modal.pump_pending(), ModalPump::Queued { .. }));
+        let first = modal.take_modal_batch().expect("batch");
+        assert!(first.contains("Saves unavailable"), "{first}");
+        // Interrupt before ack: the structured batch goes back, not text.
+        assert!(modal.requeue_showing());
+        // New settings: Japanese, warnings still on. Redelivery translates.
+        modal.set_presentation(test_policy(true), AppLanguage::Japanese);
+        let second = modal.take_modal_batch().expect("redelivery");
+        assert!(second.contains("保存機能が利用できません"), "{second}");
+        // New settings: Japanese, warnings off. Redelivery is suppressed.
+        modal.requeue_showing();
+        modal.set_presentation(test_policy(false), AppLanguage::Japanese);
+        assert_eq!(modal.take_modal_batch(), None);
+    }
 
     #[test]
     fn take_modal_text_drains_raw_lines() {
