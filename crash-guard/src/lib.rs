@@ -38,11 +38,13 @@ struct Registration {
     thread: Option<std::thread::ThreadId>,
 }
 
-/// Lifecycle of the single process-wide hook adapter: the original process
+/// Lifecycle of the single process-wide hook adapter: the current external
 /// hook plus whether our dispatcher is installed. Install and drop mutate it
 /// under its own lock; the dispatcher never takes it, so std hook writes here
-/// cannot deadlock against panic delivery. `previous` survives idle restores
-/// so reinstalls reuse the original hook instead of rewrapping it (NER-301).
+/// cannot deadlock against panic delivery. `previous` tracks the live
+/// external hook: a reinstall adopts what `take_hook` returns and retires
+/// the stale stored one, so an external `set_hook` while idle is preserved
+/// and reinstalls never grow a forwarding chain (NER-301).
 struct Lifecycle {
     previous: Option<Hook>,
     installed: bool,
@@ -168,23 +170,12 @@ fn install_erased(
         thread,
     });
     drain_retired();
-    // Fast path: dispatcher already live. Publishing under `LIFECYCLE`
-    // serializes against a concurrent final drop's check, so the check
-    // either sees this registration or runs before it (NER-300).
-    {
-        let lifecycle = LIFECYCLE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if lifecycle.installed {
-            REGISTRATIONS
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(Arc::clone(&registration));
-            return HookGuard { registration };
-        }
-    }
-    // Slow path: idle adapter. Holding `HOOK_SWAP` across reserve, swap, and
-    // publish keeps a racing last-drop restore from interleaving (NER-300).
+    // Fast path: dispatcher already live. Publishing under `HOOK_SWAP`
+    // serializes against a concurrent final drop's retain-and-decide, so the
+    // drop either sees this registration (no restore) or restores first (this
+    // install then takes the slow path and reinstalls). Either way a live
+    // guard is never orphaned (NER-300). Order stays HOOK_SWAP → LIFECYCLE →
+    // REGISTRATIONS, matching the drop path.
     let _swap = HOOK_SWAP
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -200,27 +191,25 @@ fn install_erased(
             return HookGuard { registration };
         }
     }
-    // No locks held: swap the process hook. This waits for std's write lock
-    // while dispatch may hold its read lock, so no adapter lock is owned here.
+    // Slow path: idle adapter. `HOOK_SWAP` stays held across reserve, swap,
+    // and publish, so a racing last-drop restore cannot interleave (NER-300).
+    // No adapter lock is held across the std swap below: std dispatches under
+    // its read lock, so waiting for its write lock while owning `LIFECYCLE`
+    // would deadlock against panic delivery.
+    // No adapter locks held: swap the process hook.
     let taken = panic::take_hook();
     let previous = {
         let mut lifecycle = LIFECYCLE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Clone first to avoid holding the borrow across the retire push.
-        match lifecycle.previous.as_ref().map(Arc::clone) {
-            Some(stored) => {
-                // Reuse the original hook and retire the idle wrapper just
-                // taken: reinstall cycles keep one forwarding layer (NER-301).
-                lifecycle.retired.push(Arc::from(taken));
-                stored
-            }
-            None => {
-                let stored: Hook = Arc::from(taken);
-                lifecycle.previous = Some(Arc::clone(&stored));
-                stored
-            }
+        // Adopt the live hook: an external `set_hook` while idle supersedes
+        // the stored one, which is retired instead of the live hook (NER-301).
+        // Either way the new dispatcher calls registrations then one hook.
+        let live: Hook = Arc::from(taken);
+        if let Some(stale) = lifecycle.previous.replace(Arc::clone(&live)) {
+            lifecycle.retired.push(stale);
         }
+        live
     };
     panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current().id();
@@ -705,33 +694,54 @@ mod tests {
         assert!(adapter_is_idle());
     }
 
-    /// NER-301 AC-1/AC-2: reinstall cycles reuse the original process hook
-    /// instead of rewrapping it, so the forwarding depth stays constant.
+    /// NER-301: reinstall cycles never grow the forwarding depth. Each live
+    /// install observes exactly one delivery per panic: a rewrapped
+    /// dispatcher would call the shared registry twice.
     #[test]
     fn reinstall_cycles_keep_single_forwarding_layer() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
-        let snapshot = || {
-            LIFECYCLE
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .previous
-                .as_ref()
-                .map(Arc::clone)
-        };
         for _ in 0..3 {
-            let guard = install(|_| {}, stub_source);
+            let fired = Arc::new(AtomicUsize::new(0));
+            let probe = Arc::clone(&fired);
+            let guard = install(
+                move |_| {
+                    probe.fetch_add(1, Ordering::SeqCst);
+                },
+                stub_source,
+            );
+            let _ = panic::catch_unwind(|| panic!("single layer probe"));
+            assert_eq!(fired.load(Ordering::SeqCst), 1, "one delivery per panic");
             drop(guard);
+            let _ = panic::catch_unwind(|| panic!("restored probe"));
+            assert_eq!(fired.load(Ordering::SeqCst), 1, "dropped guard stays gone");
         }
-        let first = snapshot();
-        for _ in 0..3 {
-            let guard = install(|_| {}, stub_source);
-            drop(guard);
-        }
-        let second = snapshot();
-        let (Some(first), Some(second)) = (first, second) else {
-            panic!("original hook must survive idle restores");
-        };
-        assert!(Arc::ptr_eq(&first, &second), "no rewrapping per cycle");
+        assert!(adapter_is_idle());
+    }
+
+    /// NER-301 AC-3: an external `set_hook` while idle survives the next
+    /// install, and the final drop restores it (not the older stored hook).
+    /// Fully serial: H0 -> install/drop -> external H1 -> reinstall.
+    #[test]
+    fn reinstall_adopts_external_hook_set_while_idle() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let keep = install(|_| {}, stub_source);
+        drop(keep);
+        assert!(adapter_is_idle());
+        // External set while idle: H1 supersedes the restored hook.
+        let h1_calls = Arc::new(AtomicUsize::new(0));
+        let probe = Arc::clone(&h1_calls);
+        let idle_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |_| {
+            probe.fetch_add(1, Ordering::SeqCst);
+        }));
+        let reinstall = install(|_| {}, stub_source);
+        let _ = panic::catch_unwind(|| panic!("external must fire"));
+        assert_eq!(h1_calls.load(Ordering::SeqCst), 1, "H1 survives reinstall");
+        drop(reinstall);
+        let _ = panic::catch_unwind(|| panic!("restored must fire"));
+        assert_eq!(h1_calls.load(Ordering::SeqCst), 2, "final drop restores H1");
+        // Hand the pre-test hook back; the adapter re-adopts it on next use.
+        panic::set_hook(idle_hook);
         assert!(adapter_is_idle());
     }
 
