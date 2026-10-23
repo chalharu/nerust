@@ -314,8 +314,8 @@ impl AndroidStorageBackend {
         let path = dir.child(&format!("{base}.summary")).ok()?;
         let bytes = self.read_capped(&path, SAF_SUMMARY_BYTES).ok()??;
         load_state_summary_from_metadata_bytes(path, &bytes, Some(identity))
-            .ok()
-            .filter(|summary| summary.slot_id == slot_id)?
+            .ok()?
+            .filter(|summary| summary.slot_id == slot_id)
     }
 }
 
