@@ -90,4 +90,17 @@ mod capped_tests {
             Ok(vec![1, 2, 3])
         );
     }
+
+    /// NER-312: unknown-size providers stay bounded too: a stream of short
+    /// chunks is data until EOF, but the cumulative total still hits the cap.
+    #[test]
+    fn capped_collect_rejects_cumulative_short_chunks_past_limit() {
+        let mut chunks = std::iter::repeat_with(|| Ok(vec![1u8; 1024]))
+            .take(70)
+            .chain(std::iter::once(Ok(vec![])));
+        assert_eq!(
+            collect_stream_capped::<()>(|| chunks.next().unwrap(), 64 * 1024),
+            Err(CollectError::OverLimit { limit: 64 * 1024 })
+        );
+    }
 }
