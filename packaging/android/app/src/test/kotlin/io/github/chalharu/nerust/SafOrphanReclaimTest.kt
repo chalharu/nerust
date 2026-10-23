@@ -35,6 +35,17 @@ class SafOrphanReclaimTest {
         assertEquals(4, SafRepository.selectOrphanedStages(files, emptySet(), now).size)
     }
 
+    @Test fun supersededButReferencedDataSurvives() {
+        // NER-311: the reclaim reference set covers every parsed
+        // generation, not just the latest per name, so data an older
+        // unswept marker still points at is never treated as orphan.
+        val files = mapOf("old.data" to old, "new.data" to old, "orphan.data" to old)
+        assertEquals(
+            listOf("orphan.data"),
+            SafRepository.selectOrphanedStages(files, setOf("old.data", "new.data"), now),
+        )
+    }
+
     @Test fun incompleteSurveyReclaimsNothing() {
         // A single unreadable marker makes the reference set suspect:
         // live data must survive until the next complete survey (NER-311).
