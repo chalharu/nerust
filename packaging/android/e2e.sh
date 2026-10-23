@@ -73,7 +73,15 @@ wait_until_gone() {
 wait_until_gone_with_timeout() {
     local deadline=$((SECONDS + $1))
     while ((SECONDS < deadline)); do
-        if ! adb shell pidof "${APP_PACKAGE}" >/dev/null 2>&1; then
+        local out
+        if ! out=$(adb shell pidof "${APP_PACKAGE}" 2>&1); then
+            # pidof exits nonzero both when adb fails and when the process
+            # is gone: only an adb-level error may fail the wait, never
+            # assume a failed query means the process exited (NER-327).
+            if grep -Eiq 'error:|not found|offline|no device|unauthorized' <<< "${out}"; then
+                echo "adb pidof failed while waiting for exit: ${out}" >&2
+                return 1
+            fi
             return 0
         fi
         sleep 0.5
@@ -81,11 +89,22 @@ wait_until_gone_with_timeout() {
     return 1
 }
 
+# Evidence that the instrumentation produced output for this test: without
+# any instrumentation block the runner never started (or adb is offline),
+# and a missing process proves nothing (NER-327).
+has_instrumentation_output() {
+    grep -Eq 'INSTRUMENTATION_(RESULT|STATUS_CODE|CODE)' <<< "$1"
+}
+
 expect_process_termination() {
     local test="$1"
     local output
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1 || true)"
     printf '%s\n' "${output}"
+    if ! has_instrumentation_output "${output}"; then
+        echo "no instrumentation output: runner never started or adb offline" >&2
+        return 1
+    fi
     if instrumentation_failed "${output}"; then
         # Dump first: teardown force-stops the package as soon as the test
         # run ends, so a lingering process may already be gone below.
@@ -120,6 +139,11 @@ dump_shutdown_threads() {
         done
     fi
 }
+
+# Unit-probe hook: sourcing this file defines helpers without running the suite.
+if [[ "${BASH_SOURCE[0]:-}" != "${0}" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 rm -rf "${JNI_LIBS_DIR}"
 mkdir -p "${JNI_LIBS_DIR}"
