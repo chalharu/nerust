@@ -38,11 +38,13 @@ struct SchemaVersion {
 // Current read/write
 // ---------------------------------------------------------------------------
 
+/// Scan transfer guard: sidecar and metadata entry bytes above this are
+/// rejected before parsing, so a huge summary never parses or caches.
+pub const MAX_METADATA_BYTES: usize = 64 * 1024;
+
 pub(crate) fn read_metadata<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<StateArchiveMetadata, PersistenceError> {
-    const MAX_METADATA_BYTES: usize = 64 * 1024;
-
     let mut metadata_file = archive.by_name(METADATA_ENTRY)?;
     let metadata_bytes =
         crate::fs_ops::read_limited(&mut metadata_file, MAX_METADATA_BYTES, "metadata")?;
@@ -54,6 +56,11 @@ pub(crate) fn read_metadata<R: Read + Seek>(
 pub(crate) fn decode_metadata_bytes(
     bytes: &[u8],
 ) -> Result<StateArchiveMetadata, PersistenceError> {
+    if bytes.len() > MAX_METADATA_BYTES {
+        return Err(PersistenceError::Validation(
+            "state metadata exceeds scan bound".into(),
+        ));
+    }
     let version = rmp_serde::from_slice::<SchemaVersion>(bytes).map_err(|_| {
         PersistenceError::Validation("unrecognized state archive metadata format".into())
     })?;

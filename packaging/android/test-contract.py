@@ -27,7 +27,7 @@ class ContractTests(unittest.TestCase):
 
     def test_schema_changes_update_both_languages(self):
         baseline = CONTRACT.outputs(self.schema)
-        for key in ("x-settings-schema-version", "x-saf-chunk-bytes"):
+        for key in ("x-settings-schema-version", "x-saf-chunk-bytes", "x-saf-summary-bytes"):
             changed = copy.deepcopy(self.schema)
             changed[key] += 1
             for path, content in CONTRACT.outputs(changed).items():
@@ -41,6 +41,9 @@ class ContractTests(unittest.TestCase):
     def test_invalid_chunks_and_duplicate_actions_are_rejected(self):
         changed = copy.deepcopy(self.schema)
         changed["x-saf-chunk-bytes"] = 0
+        with self.assertRaises(ContractError):
+            CONTRACT.outputs(changed)
+        changed["x-saf-summary-bytes"] = 0
         with self.assertRaises(ContractError):
             CONTRACT.outputs(changed)
         actions = self.schema["definitions"]["menuEvent"]["properties"]["action"]["enum"]
