@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/package-helpers.sh"
+source "${SCRIPT_DIR}/publish-lock.sh"
 if ! command -v python3 >/dev/null 2>&1; then
     echo "python3 is required (cargo metadata target_directory parsing)" >&2
     exit 1
@@ -47,9 +48,7 @@ cleanup_staging() {
     if [[ -n "${STAGE_JNI_LIBS:-}" && -d "${STAGE_JNI_LIBS}" ]]; then
         rm -rf "${STAGE_JNI_LIBS}"
     fi
-    if [[ -n "${PUBLISH_LOCK_DIR:-}" && -d "${PUBLISH_LOCK_DIR}" ]]; then
-        rm -rf "${PUBLISH_LOCK_DIR}"
-    fi
+    publish_lock_cleanup
     cleanup
 }
 trap cleanup_staging EXIT
@@ -217,23 +216,14 @@ fi
 # Gate passed: publish the staged libs via rename swap. Each rename is
 # atomic, but the pair is not: a failure between them is repaired below so the
 # live tree is always either the old or the new complete tree, never absent.
-# Concurrent publishers are refused: mkdir is atomic, and the lock names its
-# owner PID so a dead publisher's stale lock is diagnosable, never waited on.
+# Concurrent publishers are refused: mkdir is atomic, the lock names its
+# owner PID, and only the owner releases. A missing pid waits briefly for
+# the owner's record instead of proving death, so the mkdir-to-record
+# window admits no second entrant.
 PUBLISH_LOCK_DIR="${JNI_LIBS_DIR}.lock"
-if ! mkdir "${PUBLISH_LOCK_DIR}" 2>/dev/null; then
-    owner="$(cat "${PUBLISH_LOCK_DIR}/pid" 2>/dev/null || echo unknown)"
-    if [[ "${owner}" != "unknown" ]] && kill -0 "${owner}" 2>/dev/null; then
-        echo "another package.sh publish is running (pid ${owner}); refusing concurrent publish" >&2
-        exit 1
-    fi
-    echo "removing stale publish lock from dead pid ${owner}" >&2
-    rm -rf "${PUBLISH_LOCK_DIR}"
-    mkdir "${PUBLISH_LOCK_DIR}" || {
-        echo "cannot acquire publish lock" >&2
-        exit 1
-    }
+if ! acquire_publish_lock "${PUBLISH_LOCK_DIR}"; then
+    exit 1
 fi
-echo "$$" >"${PUBLISH_LOCK_DIR}/pid"
 stage_publish_tmp="${JNI_LIBS_DIR}.new"
 stage_publish_old="${JNI_LIBS_DIR}.old"
 # A previous run may have died between the two renames, leaving only `.old`.
@@ -257,8 +247,7 @@ if ! mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"; then
 fi
 rm -rf "${stage_publish_old}"
 # Explicit release on the success path; the EXIT trap covers failures.
-rm -rf "${PUBLISH_LOCK_DIR}"
-PUBLISH_LOCK_DIR=""
+release_publish_lock
 
 (
     cd "${SCRIPT_DIR}"
