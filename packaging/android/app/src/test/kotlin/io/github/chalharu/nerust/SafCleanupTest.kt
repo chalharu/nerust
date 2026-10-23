@@ -42,4 +42,47 @@ class SafCleanupTest {
         assertTrue(workerReleased.get())
         queued.forEach { assertTrue(it.await(10, TimeUnit.SECONDS)) }
     }
+
+    @Test fun fullySaturatedLaneParksWithoutRunningOnSubmitter() {
+        val workerBlock = CountDownLatch(1)
+        val workerRelease = CountDownLatch(1)
+        SafCleanup.executor.execute {
+            workerBlock.countDown()
+            workerRelease.await(10, TimeUnit.SECONDS)
+        }
+        assertTrue(workerBlock.await(10, TimeUnit.SECONDS))
+        // Fill the queue so the next four tasks spill to overflow threads.
+        val queued = (0 until SafCleanup.MAX_PENDING).map {
+            CountDownLatch(1).also { done ->
+                SafCleanup.executor.execute { done.countDown() }
+            }
+        }
+        // Stall all four overflow threads.
+        val overflowBlock = CountDownLatch(4)
+        val overflowRelease = CountDownLatch(1)
+        repeat(4) {
+            SafCleanup.executor.execute {
+                overflowBlock.countDown()
+                overflowRelease.await(10, TimeUnit.SECONDS)
+            }
+        }
+        assertTrue(overflowBlock.await(10, TimeUnit.SECONDS))
+        // Fully saturated: this submit must park, never run on the submitter.
+        val parkedThread = AtomicReference<Thread>()
+        val parkedDone = CountDownLatch(1)
+        SafCleanup.executor.execute {
+            parkedThread.set(Thread.currentThread())
+            parkedDone.countDown()
+        }
+        Thread.sleep(500)
+        assertNull(parkedThread.get())
+        assertEquals(1, SafCleanup.parkedCount())
+        // Release everything: the parked task runs exactly once, off-submitter.
+        overflowRelease.countDown()
+        workerRelease.countDown()
+        assertTrue(parkedDone.await(10, TimeUnit.SECONDS))
+        assertNotEquals(Thread.currentThread(), parkedThread.get())
+        assertEquals(0, SafCleanup.parkedCount())
+        queued.forEach { assertTrue(it.await(10, TimeUnit.SECONDS)) }
+    }
 }
