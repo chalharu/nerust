@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * (NER-321/322/312). No physical device needed: the test drives outage,
  * corrupt, and oversized modes through static volatiles, and the provider
  * speaks the real DocumentsContract interface the production SafRepository
- * consumes. Authority is test-only and declared in the androidTest manifest.
+ * consumes. Debug source set only: same APK/UID as the consumer, never
+ * shipped in release builds.
  */
 public final class FaultDocumentsProvider extends DocumentsProvider {
     public static final String AUTHORITY = "io.github.chalharu.nerust.faultdocs";
@@ -56,6 +57,20 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
     private static final String[] CHILD_IDS = {
         DOC_GOOD, DOC_CORRUPT, DOC_SLOT1_STATE, DOC_SUMMARY1, DOC_SLOT2_STATE, DOC_SUMMARY2,
     };
+
+    /** Tree-descendant document id: the platform rejects ids outside the tree. */
+    private static String docId(String leaf) {
+        return ROOT_ID + "/" + leaf;
+    }
+
+    /** Leaf display name for a tree-descendant document id. */
+    private static String leafOf(String documentId) {
+        String prefix = ROOT_ID + "/";
+        if (documentId != null && documentId.startsWith(prefix)) {
+            return documentId.substring(prefix.length());
+        }
+        return documentId;
+    }
 
     private static final String[] ROOT_PROJECTION = {
         DocumentsContract.Root.COLUMN_ROOT_ID,
@@ -124,7 +139,7 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
         MatrixCursor cursor = new MatrixCursor(
                 projection != null ? projection : DOCUMENT_PROJECTION);
         for (String childId : CHILD_IDS) {
-            addRow(cursor, childId, projection);
+            addRow(cursor, docId(childId), projection);
         }
         return cursor;
     }
@@ -141,10 +156,10 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
             return cursor;
         }
         for (String childId : CHILD_IDS) {
-            if (childId.equals(documentId)) {
+            if (docId(childId).equals(documentId)) {
                 MatrixCursor cursor = new MatrixCursor(
                         projection != null ? projection : DOCUMENT_PROJECTION);
-                addRow(cursor, childId, projection);
+                addRow(cursor, documentId, projection);
                 return cursor;
             }
         }
@@ -176,13 +191,13 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
             return documentId;
         }
         if (DocumentsContract.Document.COLUMN_DISPLAY_NAME.equals(column)) {
-            return documentId;
+            return leafOf(documentId);
         }
         if (DocumentsContract.Document.COLUMN_MIME_TYPE.equals(column)) {
             return "application/octet-stream";
         }
         if (DocumentsContract.Document.COLUMN_SIZE.equals(column)) {
-            return (long) sizeOf(documentId);
+            return (long) sizeOf(leafOf(documentId));
         }
         if (DocumentsContract.Document.COLUMN_LAST_MODIFIED.equals(column)) {
             return 1_700_000_000_000L;
@@ -234,19 +249,19 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
             String documentId, String mode, CancellationSignal signal)
             throws FileNotFoundException {
         burnOutage();
-        boolean known = ROOT_ID.equals(documentId);
+        boolean known = false;
         for (String childId : CHILD_IDS) {
-            known |= childId.equals(documentId);
+            known |= docId(childId).equals(documentId);
         }
-        if (!known || ROOT_ID.equals(documentId)) {
+        if (!known) {
             throw new FileNotFoundException("cannot open: " + documentId);
         }
         if (getContext() == null) {
             throw new FileNotFoundException("provider is not attached");
         }
-        File file = new File(getContext().getCacheDir(), "fault-" + documentId);
+        File file = new File(getContext().getCacheDir(), "fault-" + leafOf(documentId));
         try (FileOutputStream output = new FileOutputStream(file)) {
-            output.write(bytesOf(documentId));
+            output.write(bytesOf(leafOf(documentId)));
         } catch (IOException error) {
             FileNotFoundException failure =
                     new FileNotFoundException("could not stage fault document");
