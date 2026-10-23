@@ -26,28 +26,38 @@ impl super::AndroidFrontend {
             // Applied racing a live re-request: the values are real user input, so apply them.
             // Error flush stays shielded below; the user re-saves if needed.
             log::warn!("handle_settings_result: applying settings while a newer dialog is open");
-        } else {
-            match self.chrome.osd.with_modal(|queue| {
-                self.flow
-                    .dialogs
-                    .on_settings_closed(queue, self.is_resumed, tick)
-            }) {
-                SettingsClosedTransition::Show { auto_pause } => {
-                    if auto_pause {
-                        self.pause();
-                    }
-                    if let (Some(id), Some(detail)) = (
-                        self.flow.dialogs.current_id(),
-                        self.flow.dialogs.current_detail(),
-                    ) {
-                        error_dialog::request_show_error_dialog(&self.app, id, detail);
-                    }
-                }
-                SettingsClosedTransition::Resume => self.resume(),
-                SettingsClosedTransition::Idle => {}
-            }
+        } else if !is_applied {
+            // Dismissed without changes: flush under the current presentation.
+            // The Applied path flushes after the session apply below, so the
+            // take renders under the new settings instead of the old ones (NER-318).
+            self.flush_closed_settings_dialogs(tick);
         }
         true
+    }
+
+    /// Settings-close dialog flush: take the next queued batch and show or
+    /// resume. Runs after the session apply for Applied results, standalone
+    /// for dismissals.
+    fn flush_closed_settings_dialogs(&mut self, tick: TickMetrics) {
+        match self.chrome.osd.with_modal(|queue| {
+            self.flow
+                .dialogs
+                .on_settings_closed(queue, self.is_resumed, tick)
+        }) {
+            SettingsClosedTransition::Show { auto_pause } => {
+                if auto_pause {
+                    self.pause();
+                }
+                if let (Some(id), Some(detail)) = (
+                    self.flow.dialogs.current_id(),
+                    self.flow.dialogs.current_detail(),
+                ) {
+                    error_dialog::request_show_error_dialog(&self.app, id, detail);
+                }
+            }
+            SettingsClosedTransition::Resume => self.resume(),
+            SettingsClosedTransition::Idle => {}
+        }
     }
 
     pub(super) fn handle_settings_result(
@@ -110,6 +120,12 @@ impl super::AndroidFrontend {
                 }
             }
             SettingsPlan::Apply { next } => self.execute_settings_apply(next),
+        }
+        // Applied settings are in: flush the dialog queue under the new
+        // presentation instead of the pre-apply one (NER-318). Racing-applied
+        // while a newer dialog is open stays shielded, as before.
+        if !self.flow.dialogs.is_settings_open() {
+            self.flush_closed_settings_dialogs(tick);
         }
     }
 

@@ -86,6 +86,15 @@ impl ModalQueue {
             lines.retain(enabled);
         }
         self.queue.retain(|lines| !lines.is_empty());
+        // The taken-but-unacked batch redelivers through the same filter:
+        // an interrupt after a settings change must not resurrect lines the
+        // new policy disables (NER-318). The open gate stays until ack.
+        if let Some(lines) = self.showing.as_mut() {
+            lines.retain(enabled);
+            if lines.is_empty() {
+                self.showing = None;
+            }
+        }
     }
 
     pub(crate) fn push_message(&mut self, message: Message, count: u32, level: NotificationLevel) {
@@ -267,13 +276,18 @@ impl ModalQueue {
 
     /// Hand the unacked showing batch back to the front, preserving its
     /// structure so redelivery re-renders under current settings. No-op
-    /// when nothing was taken.
+    /// when nothing was taken. Same drop-oldest cap as the other requeue
+    /// leg: an interrupt storm must not grow the queue without bound.
     pub fn requeue_showing(&mut self) -> bool {
         let Some(lines) = self.showing.take() else {
             return false;
         };
         self.open = false;
         self.queue.push_front(lines);
+        while self.queue.len() > Self::MAX_QUEUED {
+            self.queue.remove(1);
+            self.dropped_total += 1;
+        }
         true
     }
 
@@ -348,6 +362,45 @@ mod tests {
         modal.requeue_showing();
         modal.set_presentation(test_policy(false), AppLanguage::Japanese);
         assert_eq!(modal.take_modal_batch(), None);
+    }
+
+    /// NER-318: a settings change while a batch is taken refilters the
+    /// showing batch too. An interrupt afterwards redelivers nothing the
+    /// new policy disables, instead of the stale pre-change lines.
+    #[test]
+    fn set_presentation_refilters_taken_showing_batch() {
+        let mut modal = ModalQueue::default();
+        modal.set_presentation(test_policy(true), AppLanguage::English);
+        modal.push_message(
+            Message::persistence_unavailable(),
+            1,
+            NotificationLevel::Warning,
+        );
+        assert!(matches!(modal.pump_pending(), ModalPump::Queued { .. }));
+        let first = modal.take_modal_batch().expect("batch");
+        assert!(first.contains("Saves unavailable"), "{first}");
+        // Settings change lands while the dialog is still up: Japanese,
+        // warnings off. The taken batch loses its only line, so a later
+        // interrupt has nothing to hand back and redelivery stays silent.
+        modal.set_presentation(test_policy(false), AppLanguage::Japanese);
+        assert!(!modal.requeue_showing());
+        assert_eq!(modal.take_modal_batch(), None);
+    }
+
+    /// NER-318: requeueing the showing batch past a full queue drops the
+    /// oldest waiting batch, like the other requeue leg.
+    #[test]
+    fn requeue_showing_enforces_queue_cap() {
+        let mut modal = ModalQueue::default();
+        for i in 0..8 {
+            modal.queue_modal(format!("batch {i}"));
+        }
+        modal.take_modal_batch().expect("head batch");
+        modal.queue_modal("refill".to_string());
+        assert_eq!(modal.modal_pending(), 8);
+        assert!(modal.requeue_showing());
+        assert_eq!(modal.modal_pending(), 8);
+        assert_eq!(modal.dropped_total, 1);
     }
 
     #[test]
