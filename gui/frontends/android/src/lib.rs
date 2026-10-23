@@ -97,11 +97,10 @@ static LIB_VM: std::sync::OnceLock<JavaVM> = std::sync::OnceLock::new();
 /// always ends the process, on any runner. Fail-closed: any JNI
 /// failure keeps today's unconditional exit.
 #[cfg(target_os = "android")]
-fn should_exit_process() -> bool {
-    if !is_running_in_test_harness() {
-        return true;
-    }
-    crate::android::take_user_exit_request()
+fn should_exit_process() -> (bool, bool, bool) {
+    let harness = is_running_in_test_harness();
+    let user = crate::android::take_user_exit_request();
+    (harness, user, !harness || user)
 }
 
 /// `ActivityManager.isRunningInTestHarness()`: true only under
@@ -196,7 +195,11 @@ pub fn android_main(app: AndroidApp) {
     ) {
         GuardOutcome::Completed(Ok(())) => {
             log::info!("android_main: exited cleanly");
-            if should_exit_process() {
+            let (harness, user_exit, exit_now) = should_exit_process();
+            log::info!(
+                "android_main: exit decision: harness={harness} user_exit={user_exit} exit={exit_now}"
+            );
+            if exit_now {
                 std::process::exit(0);
             }
             log::info!("android_main: process exit suppressed (test harness owns teardown)");
