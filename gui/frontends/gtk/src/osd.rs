@@ -40,6 +40,10 @@ pub(crate) struct HistoryDialog {
     /// Interactive handles, exercised by widget tests (reopen/filter/clear).
     #[cfg(test)]
     pub clear: gtk::Button,
+    /// Row container, exercised by widget tests: row growth proves the
+    /// open dialog re-renders on new notifications (NER-326 AC-1).
+    #[cfg(test)]
+    pub grid: gtk::Grid,
 }
 
 /// Fixed history-dialog captions for one language. Plain owned strings:
@@ -500,6 +504,8 @@ impl GtkOsd {
             filter,
             #[cfg(test)]
             clear,
+            #[cfg(test)]
+            grid,
         }
     }
 }
@@ -599,7 +605,7 @@ mod history_dialog_tests {
             audio_registry: audio,
         };
         let state = Rc::new(std::cell::RefCell::new(
-            crate::State::new(ctx).expect("test state builds"),
+            crate::State::new_for_tests(ctx).expect("test state builds"),
         ));
         Some((app, window, state))
     }
@@ -657,6 +663,64 @@ mod history_dialog_tests {
         let rebuilt = GtkOsd::build_history(&window, &state);
         (rebuilt.refresh)();
         rebuilt.dialog.destroy();
+    }
+
+    /// NER-326 AC-1/AC-2: rows entered while open appear on refresh, and a
+    /// language switch rebuilds captions and rows under the same gate.
+    #[test]
+    fn history_dialog_shows_new_rows_and_follows_language_change() {
+        use nerust_gui_shell::session::notification::FailureOrigin;
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+
+        fn child_count(grid: &gtk::Grid) -> usize {
+            let mut count = 0;
+            let mut next = grid.first_child();
+            while let Some(child) = next {
+                count += 1;
+                next = child.next_sibling();
+            }
+            count
+        }
+
+        let Some((_app, window, state)) = harness() else {
+            return;
+        };
+        let built = GtkOsd::build_history(&window, &state);
+        let en_title = ui_text(AppLanguage::English, UiText::NotificationHistory);
+        assert_eq!(built.dialog.title().as_deref(), Some(en_title));
+        assert_eq!(
+            child_count(&built.grid),
+            6,
+            "empty state: headers + separator + empty row"
+        );
+        // AC-1: a notification arriving while open appears after refresh.
+        state
+            .borrow_mut()
+            .session
+            .report_external_error(FailureOrigin::Host, "boom".into());
+        (built.refresh)();
+        assert_eq!(
+            child_count(&built.grid),
+            9,
+            "one error row renders without reopen"
+        );
+        // AC-2: the language switch rebuilds title and rows under the gate.
+        let mut snapshot = state.borrow().session.settings_snapshot().clone();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        state
+            .borrow_mut()
+            .session
+            .apply_settings(snapshot)
+            .expect("language switch applies");
+        (built.refresh)();
+        let ja_title = ui_text(AppLanguage::Japanese, UiText::NotificationHistory);
+        assert_eq!(built.dialog.title().as_deref(), Some(ja_title));
+        assert_eq!(
+            child_count(&built.grid),
+            9,
+            "rows survive the language rebuild"
+        );
+        built.dialog.destroy();
     }
 }
 

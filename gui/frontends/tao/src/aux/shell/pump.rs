@@ -681,4 +681,365 @@ mod tests {
             "insert lands at the kept cursor: {out:?}"
         );
     }
+
+    /// NER-304 AC-2: text selections survive message batches too.
+    /// A `Shift+Left` range and a select-all are both kept across the
+    /// deferred batch, so the next keystroke overwrites the selected
+    /// text instead of inserting beside it.
+    #[test]
+    fn text_input_selection_survives_message_batches() {
+        use iced::keyboard::{self, key::Code as KeyCode, key::Named, key::Physical};
+
+        #[derive(Default)]
+        struct InputState {
+            value: String,
+            sync_generation: u32,
+        }
+        #[derive(Debug, Clone)]
+        enum InputMessage {
+            Typed(String),
+            SyncTick(u32),
+        }
+        #[derive(Default)]
+        struct InputProgram;
+        impl Program for InputProgram {
+            type State = InputState;
+            type Message = InputMessage;
+            type Theme = iced::Theme;
+            type Renderer = Renderer;
+            type Executor = iced_winit::futures::backend::default::Executor;
+
+            fn name() -> &'static str {
+                "input-stub"
+            }
+
+            fn settings(&self) -> iced::Settings {
+                iced::Settings::default()
+            }
+
+            fn window(&self) -> Option<iced::window::Settings> {
+                None
+            }
+
+            fn boot(&self) -> (Self::State, iced::Task<Self::Message>) {
+                (InputState::default(), iced::Task::none())
+            }
+
+            fn update(
+                &self,
+                state: &mut Self::State,
+                message: Self::Message,
+            ) -> iced::Task<Self::Message> {
+                match message {
+                    InputMessage::Typed(value) => state.value = value,
+                    InputMessage::SyncTick(generation) => state.sync_generation = generation,
+                }
+                iced::Task::none()
+            }
+
+            fn view<'a>(
+                &self,
+                state: &'a Self::State,
+                _window: iced::window::Id,
+            ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+                iced::widget::text_input("addr", &state.value)
+                    .on_input(InputMessage::Typed)
+                    .into()
+            }
+        }
+
+        fn redraw() -> iced::Event {
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            ))
+        }
+        fn press(ch: &str) -> iced::Event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Character(ch.into()),
+                modified_key: keyboard::Key::Character(ch.into()),
+                physical_key: Physical::Code(KeyCode::KeyA),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: Some(ch.into()),
+                repeat: false,
+            })
+        }
+        fn shift_left() -> iced::Event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(Named::ArrowLeft),
+                modified_key: keyboard::Key::Named(Named::ArrowLeft),
+                physical_key: Physical::Code(KeyCode::ArrowLeft),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            })
+        }
+        fn modifiers_changed(modifiers: keyboard::Modifiers) -> iced::Event {
+            iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers))
+        }
+        fn select_all() -> iced::Event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Character("a".into()),
+                modified_key: keyboard::Key::Character("a".into()),
+                physical_key: Physical::Code(KeyCode::KeyA),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::COMMAND,
+                text: Some("a".into()),
+                repeat: false,
+            })
+        }
+
+        let (instance, _) = program::Instance::new(InputProgram);
+        let mut shell = UiShell::new(
+            instance,
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+        );
+        let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        let mut clipboard = Clipboard::unconnected();
+        let mut out = Vec::new();
+        let over_input = mouse::Cursor::Available(iced::Point::new(400.0, 10.0));
+        shell.pump(
+            redraw(),
+            mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        for ch in ["a", "b"] {
+            shell.pump(
+                press(ch),
+                over_input,
+                &mut clipboard,
+                &mut backend,
+                &mut out,
+                None,
+            );
+            assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
+        }
+        // Range-select the trailing "b" across a batch: the next
+        // keystroke overwrites it instead of inserting beside it.
+        // Modifier state arrives via ModifiersChanged, like the real backend.
+        shell.pump(
+            modifiers_changed(keyboard::Modifiers::SHIFT),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            shift_left(),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            modifiers_changed(keyboard::Modifiers::empty()),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(out.is_empty(), "range select emits no message: {out:?}");
+        shell.pump(
+            press("X"),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(
+            matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "aX"),
+            "keystroke overwrites the kept selection: {out:?}"
+        );
+        // Unrelated sync rides the same batch without disturbing the input.
+        out.push(InputMessage::SyncTick(1));
+        assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
+        // Select-all across a batch: the next keystroke replaces all.
+        shell.pump(
+            modifiers_changed(keyboard::Modifiers::COMMAND),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            select_all(),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            modifiers_changed(keyboard::Modifiers::empty()),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(out.is_empty(), "select-all emits no message: {out:?}");
+        shell.pump(
+            press("Y"),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(
+            matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "Y"),
+            "keystroke replaces the select-all range: {out:?}"
+        );
+    }
+
+    /// NER-304 AC-2: a scrollable keeps its offset across message
+    /// batches. The viewport reported after the batch builds on the
+    /// retained offset; a rebuilt tree would restart from zero.
+    #[test]
+    fn scrollable_offset_survives_message_batches() {
+        #[derive(Default)]
+        struct ScrollState {
+            ticks: u32,
+        }
+        #[derive(Debug, Clone)]
+        enum ScrollMessage {
+            Scrolled(f32),
+            SyncTick(u32),
+        }
+        #[derive(Default)]
+        struct ScrollProgram;
+        impl Program for ScrollProgram {
+            type State = ScrollState;
+            type Message = ScrollMessage;
+            type Theme = iced::Theme;
+            type Renderer = Renderer;
+            type Executor = iced_winit::futures::backend::default::Executor;
+
+            fn name() -> &'static str {
+                "scroll-stub"
+            }
+
+            fn settings(&self) -> iced::Settings {
+                iced::Settings::default()
+            }
+
+            fn window(&self) -> Option<iced::window::Settings> {
+                None
+            }
+
+            fn boot(&self) -> (Self::State, iced::Task<Self::Message>) {
+                (ScrollState::default(), iced::Task::none())
+            }
+
+            fn update(
+                &self,
+                state: &mut Self::State,
+                message: Self::Message,
+            ) -> iced::Task<Self::Message> {
+                if let ScrollMessage::SyncTick(ticks) = message {
+                    state.ticks = ticks;
+                }
+                iced::Task::none()
+            }
+
+            fn view<'a>(
+                &self,
+                _state: &'a Self::State,
+                _window: iced::window::Id,
+            ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+                let content = (0..50).fold(iced::widget::Column::new(), |column, i| {
+                    column.push(iced::widget::text(format!("row {i}")))
+                });
+                iced::widget::column![
+                    iced::widget::scrollable(content)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fixed(120.0))
+                        .on_scroll(|viewport| ScrollMessage::Scrolled(
+                            viewport.absolute_offset().y
+                        )),
+                    iced::widget::text("probe"),
+                ]
+                .into()
+            }
+        }
+
+        fn redraw() -> iced::Event {
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            ))
+        }
+        fn wheel() -> iced::Event {
+            iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+            })
+        }
+
+        let (instance, _) = program::Instance::new(ScrollProgram);
+        let mut shell = UiShell::new(
+            instance,
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+        );
+        let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        let mut clipboard = Clipboard::unconnected();
+        let mut out = Vec::new();
+        let over_list = mouse::Cursor::Available(iced::Point::new(400.0, 10.0));
+        shell.pump(
+            redraw(),
+            mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            wheel(),
+            over_list,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        let first = match out.as_slice() {
+            [ScrollMessage::Scrolled(y)] => *y,
+            other => panic!("first scroll reports its offset: {other:?}"),
+        };
+        // Unrelated sync in the same batch must not reset the offset.
+        out.push(ScrollMessage::SyncTick(1));
+        assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
+        shell.pump(
+            wheel(),
+            over_list,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        let second = match out.as_slice() {
+            [ScrollMessage::Scrolled(y)] => *y,
+            other => panic!("second scroll reports its offset: {other:?}"),
+        };
+        assert!(
+            second > first,
+            "offset accumulates on the retained tree ({first} -> {second})"
+        );
+    }
 }

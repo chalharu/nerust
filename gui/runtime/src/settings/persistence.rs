@@ -638,4 +638,91 @@ mod tests {
         let _ = fs::remove_dir_all(test_root("migrate-src"));
         let _ = fs::remove_dir_all(test_root("migrate-dst"));
     }
+
+    /// NER-325 AC-3: ENOSPC mid-migration rolls back the partial target
+    /// and keeps the source; readonly destinations fail the same way.
+    /// The kernel ENOSPC kind (`/dev/full`) maps to the injected kind,
+    /// so the rollback below covers the real no-space path, not just a
+    /// synthetic error.
+    #[test]
+    fn no_space_mid_migration_rolls_back_and_keeps_source() {
+        use super::copy_one_tracked;
+        use std::io::ErrorKind;
+
+        // Real kernel proof: writing past capacity surfaces StorageFull.
+        let full = fs::write("/dev/full", b"no space");
+        assert_eq!(full.unwrap_err().kind(), ErrorKind::StorageFull);
+
+        // Same kind through the tracked copy: partial target removed.
+        let dir = super::super::test_root("migrate-enospc");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("7.state");
+        let mut copied = Vec::new();
+        let outcome = copy_one_tracked(
+            &mut copied,
+            std::path::Path::new("/nonexistent-src"),
+            &target,
+            |_, _| Err(std::io::Error::new(ErrorKind::StorageFull, "no space left")),
+        );
+        assert!(outcome.is_err(), "ENOSPC must fail the migration");
+        assert!(!target.exists(), "ENOSPC partial target must be removed");
+
+        // Source bytes are untouched by a failed tracked copy.
+        let source = dir.join("mapper.sav");
+        fs::write(&source, b"mapper").unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"mapper");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// NER-325 AC-3: a readonly destination fails the migration and the
+    /// partial mapper copy rolls back instead of blocking the retry.
+    #[test]
+    fn readonly_destination_fails_migration_and_rolls_back() {
+        use super::copy_storage_contents;
+        use crate::settings::test_root;
+        use std::os::unix::fs::PermissionsExt;
+
+        let identity = crate::settings::test_system_identity();
+        let source = super::resolve_central_storage_paths(
+            &test_root("migrate-ro-src"),
+            &DummySystemId,
+            &identity,
+        );
+        let destination = super::resolve_central_storage_paths(
+            &test_root("migrate-ro-dst"),
+            &DummySystemId,
+            &identity,
+        );
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        // Readonly destination tree: the mapper copy cannot land.
+        fs::set_permissions(
+            destination_mapper.parent().unwrap(),
+            fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
+        assert!(copy_storage_contents(&source, &destination).is_err());
+        assert!(
+            !destination_mapper.exists(),
+            "readonly failure must not leave a partial target"
+        );
+        // Source intact; restoring write access lets the retry succeed.
+        fs::set_permissions(
+            destination_mapper.parent().unwrap(),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        let _ = fs::remove_dir_all(test_root("migrate-ro-src"));
+        let _ = fs::remove_dir_all(test_root("migrate-ro-dst"));
+    }
 }

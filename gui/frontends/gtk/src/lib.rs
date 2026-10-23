@@ -59,11 +59,57 @@ impl State {
             },
             presentation: None,
         };
-        let session = SessionHandle::new(
+        Self::new_inner(ctx, capabilities, None)
+    }
+
+    /// Test-only construction: settings persist under a unique temp dir,
+    /// never the real user file. Widget tests must not leak writes
+    /// (e.g. language switches) into `~/.config` (NER-326).
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(ctx: FrontendContext) -> Result<Self, SessionError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static TEST_SETTINGS_SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-gtk-test-{}-{}",
+            std::process::id(),
+            TEST_SETTINGS_SEQ.fetch_add(1, Ordering::SeqCst)
+        ));
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        Self::new_inner(
+            ctx,
             capabilities,
-            ctx.registry.clone(),
-            ctx.audio_registry.clone(),
+            Some(nerust_gui_runtime::settings::SettingsPaths {
+                settings_file: dir.join("settings.toml"),
+                central_storage_root: dir.join("storage"),
+            }),
         )
+    }
+
+    fn new_inner(
+        ctx: FrontendContext,
+        capabilities: HostBackendCapabilities,
+        settings_paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
+    ) -> Result<Self, SessionError> {
+        let session = match settings_paths {
+            Some(paths) => SessionHandle::new_with_settings_paths(
+                capabilities,
+                ctx.registry.clone(),
+                ctx.audio_registry.clone(),
+                paths,
+            ),
+            None => SessionHandle::new(
+                capabilities,
+                ctx.registry.clone(),
+                ctx.audio_registry.clone(),
+            ),
+        }
         .map_err(|e| {
             log::error!("failed to create core: {e}");
             e
