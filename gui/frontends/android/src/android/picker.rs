@@ -544,20 +544,69 @@ fn cancel_in_flight(app: &AndroidApp) {
     if signal.is_none() && stream.is_none() {
         return;
     }
+    // Never touch the provider here: enqueue for the bumper so a stuck
+    // cancel listener or close cannot stall the event thread (NER-307).
+    if cancel_bumper()
+        .send(BumperTask {
+            app: app.clone(),
+            signal,
+            stream,
+        })
+        .is_err()
+    {
+        log::error!("picker cancel bumper is gone; handles dropped uncancelled");
+    }
+}
+
+/// One cancel/close unit for the bumper: handles taken from the slot plus
+/// the app owning the VM. The bumper drops every global while attached.
+struct BumperTask {
+    app: AndroidApp,
+    signal: Option<Global<JObject<'static>>>,
+    stream: Option<Global<JObject<'static>>>,
+}
+
+/// Bounded cancel adapter: one thread runs every provider cancel/close in
+/// submission order. No thread-per-cancel escape, no provider call ever runs
+/// on the event thread (NER-307).
+static CANCEL_BUMPER: OnceLock<Sender<BumperTask>> = OnceLock::new();
+
+fn cancel_bumper() -> &'static Sender<BumperTask> {
+    CANCEL_BUMPER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<BumperTask>();
+        if let Err(error) = std::thread::Builder::new()
+            .name("nerust-picker-bumper".to_string())
+            .spawn(move || {
+                for task in rx {
+                    cancel_bumper_task(task);
+                }
+            })
+        {
+            log::error!("failed to spawn Android picker cancel bumper: {error}");
+        }
+        tx
+    })
+}
+
+fn cancel_bumper_task(task: BumperTask) {
+    let BumperTask {
+        app,
+        signal,
+        stream,
+    } = task;
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
     let _ = bridge::with_java_env(&vm, |env| {
-        // `Global` deletes its reference on drop; the bumper thread is
-        // attached here, so no cross-thread delete call is needed.
+        // `Global` deletes its reference on drop; the bumper is attached
+        // here, so no cross-thread delete call is needed.
         if let Some(signal) = signal {
             let _ = env.call_method(signal.as_obj(), jni_str!("cancel"), jni_sig!("()V"), &[]);
-            drop(signal);
         }
         if let Some(stream) = stream {
             let _ = env.call_method(stream.as_obj(), jni_str!("close"), jni_sig!("()V"), &[]);
-            drop(stream);
         }
         Ok::<(), jni::errors::Error>(())
     });
+    drop(app);
 }
 
 /// Publish the job's signal for cross-thread cancellation. Returns whether
