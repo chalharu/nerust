@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Fail when an Android test exists but is not executed.
 
-Two inventory gaps this guards:
+Inventory gaps this guards:
 - e2e: MainActivityE2eTest methods must each be selected in e2e.sh.
   A new test that is never selected passes CI silently.
-- jvm: @Test methods in src/test must each appear in the JUnit XML
+- jvm: @Test methods in src/test must each appear executed in the JUnit XML
   produced by :app:testDebugUnitTest. A class the build does not
   compile into the test task passes CI silently.
+- skipped JVM cases count as unexecuted: only reasoned, dated method-level
+  allowances pass the gate, and expired allowances fail it.
 
 Only inventory is checked here; results are asserted by the runners.
 """
+import datetime
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -18,6 +21,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from bridge_schema import require
+
+#: Intentionally skipped JVM tests: "Class.method" to (reason, review-by date).
+#: An expired entry fails the gate; remove it or re-justify.
+ALLOWED_JVM_SKIPS = {
+    # Example: "SafCleanupTest.flakyOnEmulator": ("needs device", "2026-12-31"),
+}
 
 
 def kotlin_test_methods(path):
@@ -82,36 +91,59 @@ def jvm_source_tests():
 
 
 def jvm_executed_tests(results):
-    """{(class, method)} from this run's JUnit XML."""
+    """(executed, skipped) from this run's JUnit XML. A case with a <skipped/>
+    child ran nothing: failures and errors count as executed, skips do not."""
     xmls = sorted(results.glob("TEST-*.xml"))
     require(xmls, f"no JUnit XML in {results}")
-    found = {}
+    executed, skipped = {}, {}
     for xml in xmls:
         for case in ET.parse(xml).getroot().iter("testcase"):
             name = case.get("name")
             classname = (case.get("classname") or "").split(".")[-1]
             require(name and classname, f"unnamed case in {xml.name}")
-            found.setdefault(classname, set()).add(name)
-    return found
+            target = skipped if case.find("skipped") is not None else executed
+            target.setdefault(classname, set()).add(name)
+    return executed, skipped
+
+
+def unexecuted_jvm_tests(source, executed, skipped, allowances, today):
+    """(missing, unallowed) for the gate. Allowances map "Class.method" to
+    (reason, review-by date); expired entries and entries without a matching
+    test fail the gate instead of passing silently."""
+    expired = sorted(key for key, (_, date) in allowances.items() if date < today)
+    require(not expired, f"expired skip allowances (re-justify or remove): {expired}")
+    source_pairs = {(cls, method) for cls, methods in source.items() for method in methods}
+    allowed_pairs = set()
+    for key in allowances:
+        pair = tuple(key.split(".", 1))
+        require(len(pair) == 2, f"skip allowance without Class.method shape: {key}")
+        allowed_pairs.add(pair)
+    unknown = sorted(f"{cls}.{method}" for cls, method in allowed_pairs - source_pairs)
+    require(not unknown, f"skip allowances without a matching test: {unknown}")
+    executed_pairs = {(cls, method) for cls, methods in executed.items() for method in methods}
+    skipped_pairs = {(cls, method) for cls, methods in skipped.items() for method in methods}
+    missing = sorted(source_pairs - executed_pairs - allowed_pairs)
+    unallowed = sorted(skipped_pairs - allowed_pairs)
+    return missing, unallowed
 
 
 def check_jvm(results_dir):
-    """Every src/test method ran in this JUnit result set, and vice versa."""
+    """Every src/test method ran in this JUnit result set, and vice versa.
+    Skipped cases are unexecuted unless a live allowance names them."""
     source = jvm_source_tests()
-    executed = jvm_executed_tests(Path(results_dir))
-    missing = {
-        cls: sorted(methods - executed.get(cls, set()))
-        for cls, methods in source.items()
-        if methods - executed.get(cls, set())
-    }
+    executed, skipped = jvm_executed_tests(Path(results_dir))
+    missing, unallowed = unexecuted_jvm_tests(
+        source, executed, skipped, ALLOWED_JVM_SKIPS, datetime.date.today().isoformat()
+    )
+    require(not missing, f"src/test methods missing from JUnit results: {missing}")
+    require(not unallowed, f"skipped JVM tests without allowance: {unallowed}")
     extra = {
         cls: sorted(methods - source.get(cls, set()))
         for cls, methods in executed.items()
         if cls not in source or methods - source.get(cls, set())
     }
-    require(not missing, f"src/test methods missing from JUnit results: {missing}")
     require(not extra, f"JUnit results without src/test methods (stale dir?): {extra}")
-    total = sum(len(methods) for methods in source.values())
+    total = sum(len(methods) for methods in executed.values())
     print(f"JVM test inventory: OK ({total} tests executed)")
 
 
