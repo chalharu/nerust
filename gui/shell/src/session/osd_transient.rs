@@ -738,6 +738,81 @@ mod tests {
         assert_eq!(modal[0].2, NotificationLevel::Warning);
     }
 
+    /// NER-317: `poll` drops at the exact deadline too (`deadline <= now`
+    /// fires when `now == deadline`), not only past it. The showing label
+    /// clears and the promotion underneath arms its own full duration.
+    #[test]
+    fn poll_drops_showing_at_exact_deadline() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Info, "a", now));
+        assert!(queue.poll(now));
+        assert!(queue.has_visible());
+        // Exactly at the deadline the showing row expires, like the
+        // `refresh` boundary above.
+        assert!(queue.poll(now + Duration::from_millis(2_000)));
+        assert!(!queue.has_visible());
+        // Steady afterwards: no spurious change without new rows.
+        assert!(!queue.poll(now + Duration::from_millis(2_000)));
+    }
+
+    /// NER-317 unload path: when the frame channel drops (ROM unloaded),
+    /// a live showing warning reroutes to modal while an info row drops
+    /// silently (info is never modal-worthy). Both leave nothing visible.
+    #[test]
+    fn unload_channel_reroutes_warning_but_drops_info() {
+        let now = Instant::now();
+        let mut warnings = TransientQueue::default();
+        warnings.route_row(test_item(NotificationLevel::Warning, "w", now));
+        assert!(warnings.poll(now));
+        let modal = warnings.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(1_000),
+            FrameChannel::Unpresented,
+        );
+        assert_eq!(modal.len(), 1);
+        assert_eq!(modal[0].2, NotificationLevel::Warning);
+        assert!(!warnings.has_visible());
+        let mut infos = TransientQueue::default();
+        infos.route_row(test_item(NotificationLevel::Info, "a", now));
+        assert!(infos.poll(now));
+        let modal = infos.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(1_000),
+            FrameChannel::Unpresented,
+        );
+        assert!(modal.is_empty(), "info never modalizes on unload");
+        assert!(!infos.has_visible());
+    }
+
+    /// NER-317 disabled-level path, pending side: disabling a level also
+    /// purges queued rows of that level instead of only the showing one,
+    /// and still modalizes nothing.
+    #[test]
+    fn disabled_levels_drop_pending_rows_without_modal() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Info, "a", now));
+        assert!(queue.poll(now));
+        queue.route_row(test_item(NotificationLevel::Warning, "w", now));
+        queue.route_row(test_item(NotificationLevel::Error, "boom", now));
+        assert_eq!(queue.pending.len(), 2);
+        let mut policy = policy_all();
+        policy.warning_enabled = false;
+        policy.error_enabled = false;
+        policy.error_modal = true;
+        let modal = queue.refresh(
+            &policy,
+            AppLanguage::English,
+            now + Duration::from_millis(1_000),
+            FrameChannel::Unpresented,
+        );
+        assert!(modal.is_empty(), "disabled levels must not modalize");
+        assert!(queue.pending.is_empty());
+    }
+
     /// NER-317 AC-2/AC-3: pending rows keep provisional deadlines (their TTL
     /// starts at promotion), and error_modal applies to live errors only.
     #[test]

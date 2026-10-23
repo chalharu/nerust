@@ -587,8 +587,6 @@ mod history_dialog_tests {
         gtk::ApplicationWindow,
         std::rc::Rc<std::cell::RefCell<crate::State>>,
     )> {
-        use std::rc::Rc;
-        use std::sync::Arc;
         if !crate::test_support::ui_test_available() {
             return None;
         }
@@ -596,18 +594,24 @@ mod history_dialog_tests {
             .application_id("org.nerust.history-test")
             .build();
         let window = gtk::ApplicationWindow::builder().application(&app).build();
+        Some((app, window, model_state()))
+    }
+
+    /// Headless-capable state for the model gate: session plus settings
+    /// only, no application, no window, no display.
+    fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+        use std::sync::Arc;
         let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let ctx = nerust_gui_shell::context::FrontendContext {
-            gpu_factory: Rc::new(MockPipelineFactory),
+            gpu_factory: std::rc::Rc::new(MockPipelineFactory),
             registry,
             rom_loader: Box::new(MockRomLoader),
             audio_registry: audio,
         };
-        let state = Rc::new(std::cell::RefCell::new(
+        std::rc::Rc::new(std::cell::RefCell::new(
             crate::State::new_for_tests(ctx).expect("test state builds"),
-        ));
-        Some((app, window, state))
+        ))
     }
 
     #[derive(Debug)]
@@ -646,9 +650,11 @@ mod history_dialog_tests {
 
     /// NER-326 AC-1/AC-3: the dialog builds, refreshes, filters, clears,
     /// and destroys; a fresh build after destroy reopens cleanly.
+    /// Widget-only: needs a display, run under Xvfb (skips headless).
     #[test]
     fn history_dialog_lifecycle_runs_without_display_errors() {
         let Some((_app, window, state)) = harness() else {
+            eprintln!("SKIP: history widget test needs a display (run under Xvfb)");
             return;
         };
         let built = GtkOsd::build_history(&window, &state);
@@ -667,6 +673,9 @@ mod history_dialog_tests {
 
     /// NER-326 AC-1/AC-2: rows entered while open appear on refresh, and a
     /// language switch rebuilds captions and rows under the same gate.
+    /// Widget-only: needs a display, run under Xvfb (skips headless).
+    /// The revision gate itself is pinned headless by
+    /// `history_model_refresh_is_revision_gated` below.
     #[test]
     fn history_dialog_shows_new_rows_and_follows_language_change() {
         use nerust_gui_shell::session::notification::FailureOrigin;
@@ -683,6 +692,7 @@ mod history_dialog_tests {
         }
 
         let Some((_app, window, state)) = harness() else {
+            eprintln!("SKIP: history widget test needs a display (run under Xvfb)");
             return;
         };
         let built = GtkOsd::build_history(&window, &state);
@@ -721,6 +731,116 @@ mod history_dialog_tests {
             "rows survive the language rebuild"
         );
         built.dialog.destroy();
+    }
+
+    /// NER-326 model gate (always runs, no widgets, no display): the
+    /// revision-gated refresh path — new rows appear on seq bump, a
+    /// language change rebuilds captions and rows, an unchanged seq
+    /// rebuilds nothing (same backing store, i.e. zero reformat builds),
+    /// and the filter thresholds match the grid gate above.
+    /// Fail-closed: headless CI asserts this instead of silently returning.
+    #[test]
+    fn history_model_refresh_is_revision_gated() {
+        use nerust_gui_shell::session::notification::{
+            FailureOrigin, Message, NotificationLevel, UiNotification,
+        };
+        use nerust_settings_core::model::language::AppLanguage;
+
+        let state = model_state();
+        assert!(
+            state
+                .borrow_mut()
+                .session
+                .notification_history_lines_cached(AppLanguage::English)
+                .is_empty()
+        );
+        // AC-1: a notification bumps the revision and the row appears.
+        let before = state.borrow().session.notification_history_seq();
+        state
+            .borrow_mut()
+            .session
+            .report_external_error(FailureOrigin::Host, "boom".into());
+        let bumped = state.borrow().session.notification_history_seq();
+        assert!(bumped > before, "push advances the revision");
+        let texts: Vec<String> = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::English)
+            .iter()
+            .map(|line| line.text.clone())
+            .collect();
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].contains("boom"), "row renders: {}", texts[0]);
+        // Unchanged seq rebuilds nothing: the same backing store serves
+        // both calls, so zero reformat builds ran.
+        let first = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::English)
+            .as_ptr();
+        let second = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::English)
+            .as_ptr();
+        assert_eq!(first, second, "seq-unchanged refresh must not rebuild");
+        // AC-2: the language switch rebuilds captions and rows alike.
+        let en_captions = GtkOsd::history_dialog_captions(AppLanguage::English);
+        let ja_captions = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
+        assert_ne!(en_captions.title, ja_captions.title);
+        assert_ne!(en_captions.clear, ja_captions.clear);
+        let mut snapshot = state.borrow().session.settings_snapshot().clone();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        state
+            .borrow_mut()
+            .session
+            .apply_settings(snapshot)
+            .expect("language switch applies");
+        let texts: Vec<String> = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::Japanese)
+            .iter()
+            .map(|line| line.text.clone())
+            .collect();
+        assert_eq!(texts.len(), 1, "row survives the language rebuild");
+        assert!(texts[0].contains("boom"), "detail survives: {}", texts[0]);
+        // Filter thresholds without widgets: this level and above, like
+        // the grid gate (info shows all, warning hides info, error is top).
+        let events = [
+            UiNotification {
+                level: NotificationLevel::Info,
+                message: Message::paused(),
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            },
+            UiNotification {
+                level: NotificationLevel::Error,
+                message: Message::command_failure(FailureOrigin::Host, "", "boom".into()),
+                count: 1,
+                seq: 1,
+                at: std::time::UNIX_EPOCH,
+            },
+        ];
+        let lines =
+            nerust_gui_shell::session::osd::history_lines(events.iter(), AppLanguage::English);
+        let visible = |active: Option<&str>| {
+            let minimum = match active {
+                None | Some("all") | Some("info") => 0,
+                Some("warning") => 1,
+                _ => 2,
+            };
+            lines
+                .iter()
+                .filter(|line| {
+                    nerust_frontend_kernel::level_visible(minimum, line.level.severity())
+                })
+                .count()
+        };
+        assert_eq!(visible(Some("all")), 2);
+        assert_eq!(visible(Some("warning")), 1);
+        assert_eq!(visible(Some("error")), 1);
     }
 }
 
