@@ -17,6 +17,7 @@ fail() {
 pass() {
     PASS=$((PASS + 1))
     echo "ok: $1"
+    return 0
 }
 
 # --- has_instrumentation_output ---
