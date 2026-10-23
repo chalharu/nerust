@@ -35,11 +35,21 @@ def kotlin_test_methods(path):
     return re.findall(r"@Test(?:\([^)]*\))?\s+fun\s+(\w+)", text)
 
 
+#: Lines calling a test are the only inventory source: assignments,
+#: printf/echo strings, and heredoc bodies that merely mention a test never
+#: execute it (NER-315).
+CALL_LINE_RE = re.compile(r"^\s*(run_instrumentation|expect_process_termination)\b")
+HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z0-9_]+)['\"]?")
+
+
 def selected_e2e_tests(text):
     """TEST_CLASS selections on live shell lines. Full-line comments never
     run, and trailing comments are cut outside double quotes, so commented
-    selections cannot pass the inventory gate (NER-315)."""
+    selections cannot pass the inventory gate. Only the two real call shapes
+    count: assignments, printf/echo strings, and heredoc bodies are ignored
+    even when they mention a test (NER-315)."""
     live = []
+    skip_delimiter = None
     for line in text.splitlines():
         stripped = line.lstrip()
         if not stripped or stripped.startswith("#"):
@@ -52,7 +62,16 @@ def selected_e2e_tests(text):
             elif char == "#" and not in_quotes:
                 break
             kept.append(char)
-        live.append("".join(kept))
+        live_line = "".join(kept)
+        if skip_delimiter is not None:
+            if live_line.strip() == skip_delimiter:
+                skip_delimiter = None
+            continue
+        heredoc = HEREDOC_RE.search(live_line)
+        if heredoc:
+            skip_delimiter = heredoc.group(1)
+        if CALL_LINE_RE.match(live_line):
+            live.append(live_line)
     invoked = set()
     for chunk in re.findall(r"\$\{TEST_CLASS\}#([A-Za-z0-9_,]+)", "\n".join(live)):
         invoked.update(name for name in chunk.split(",") if name)
