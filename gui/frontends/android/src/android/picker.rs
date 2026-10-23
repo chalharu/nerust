@@ -161,11 +161,24 @@ pub(super) fn has_pending_result() -> bool {
 }
 
 pub(super) fn reset_transient() {
-    bridge::with_picker(|state| {
+    // Take the slot handles here so a reset job can never start provider
+    // I/O the resetter cannot cancel (NER-306). The bumper lanes are
+    // already initialized whenever handles can exist: every handle-publishing
+    // path runs after a spawn, and every spawn cancels first.
+    let (signal, stream) = bridge::with_picker(|state| {
         FETCH_SEQ.next();
         state.result = None;
         state.in_flight = None;
+        (state.in_flight_signal.take(), state.in_flight_stream.take())
     });
+    match BUMPER_LANES.get() {
+        Some(lanes) => send_to_bumper(lanes, signal, stream),
+        None => {
+            drop(signal);
+            drop(stream);
+            log::warn!("picker reset before any bumper init; handles dropped uncancelled");
+        }
+    }
 }
 
 pub(super) fn request_open_document(app: &AndroidApp) -> Result<bool, String> {
@@ -248,7 +261,10 @@ pub(super) fn spawn_document_fetch(app: AndroidApp, uri: String, restore_hidden_
 
 /// Fetch a library ROM on the single worker; same dispatch shape as documents.
 /// Reads through an owned path so the worker never borrows session storage.
-pub(super) fn spawn_library_fetch(path: std::path::PathBuf, id: String) {
+pub(super) fn spawn_library_fetch(app: AndroidApp, path: std::path::PathBuf, id: String) {
+    // A stuck previous fetch wedges the single worker the same way as for
+    // documents: cancel its provider calls before queuing behind it.
+    cancel_in_flight(&app);
     let seq = begin_fetch();
     if fetch_worker()
         .send(FetchJob::Library { seq, path, id })
@@ -541,72 +557,98 @@ fn begin_fetch() -> u64 {
 fn cancel_in_flight(app: &AndroidApp) {
     let (signal, stream) =
         bridge::with_picker(|state| (state.in_flight_signal.take(), state.in_flight_stream.take()));
+    send_to_bumper(bumper_lanes(app), signal, stream);
+}
+
+/// Route taken handles to the bumper lanes, or drop them with a log when the
+/// lanes are gone. The lanes only go away with the process, so a drop means
+/// teardown is already underway.
+fn send_to_bumper(
+    lanes: &BumperLanes,
+    signal: Option<Global<JObject<'static>>>,
+    stream: Option<Global<JObject<'static>>>,
+) {
     if signal.is_none() && stream.is_none() {
         return;
     }
     // Never touch the provider here: enqueue for the bumper so a stuck
     // cancel listener or close cannot stall the event thread (NER-307).
-    if cancel_bumper()
-        .send(BumperTask {
-            app: app.clone(),
-            signal,
-            stream,
-        })
-        .is_err()
-    {
-        log::error!("picker cancel bumper is gone; handles dropped uncancelled");
+    if let Some(signal) = signal {
+        if lanes.cancel.send(signal).is_err() {
+            log::error!("picker cancel lane is gone; signal dropped uncancelled");
+        }
+    }
+    if let Some(stream) = stream {
+        if lanes.close.send(stream).is_err() {
+            log::error!("picker close lane is gone; stream dropped unclosed");
+        }
     }
 }
 
-/// One cancel/close unit for the bumper: handles taken from the slot plus
-/// the app owning the VM. The bumper drops every global while attached.
-struct BumperTask {
-    app: AndroidApp,
-    signal: Option<Global<JObject<'static>>>,
-    stream: Option<Global<JObject<'static>>>,
+/// Cancel/close lanes plus the process VM they run against. The VM is
+/// captured once from the first cancelling call (single VM per process), so
+/// resets and new generations route without an app handle and no per-task
+/// activity reference piles up behind a stuck provider (NER-306).
+/// Signal cancels and stream closes travel on separate single threads: a
+/// stalled cancel listener cannot delay a stream close behind it (NER-307).
+/// No thread-per-cancel escape, and no provider call ever runs on the event
+/// thread.
+struct BumperLanes {
+    cancel: Sender<Global<JObject<'static>>>,
+    close: Sender<Global<JObject<'static>>>,
 }
 
-/// Bounded cancel adapter: one thread runs every provider cancel/close in
-/// submission order. No thread-per-cancel escape, no provider call ever runs
-/// on the event thread (NER-307).
-static CANCEL_BUMPER: OnceLock<Sender<BumperTask>> = OnceLock::new();
+static BUMPER_LANES: OnceLock<BumperLanes> = OnceLock::new();
 
-fn cancel_bumper() -> &'static Sender<BumperTask> {
-    CANCEL_BUMPER.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<BumperTask>();
+fn bumper_lanes(app: &AndroidApp) -> &'static BumperLanes {
+    BUMPER_LANES.get_or_init(|| {
+        // JavaVM is process-global: every later call resolves to the same VM.
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
+        let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<Global<JObject<'static>>>();
+        let (close_tx, close_rx) = std::sync::mpsc::channel::<Global<JObject<'static>>>();
+        let cancel_vm = vm.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("nerust-picker-bumper".to_string())
+            .name("nerust-picker-cancel".to_string())
             .spawn(move || {
-                for task in rx {
-                    cancel_bumper_task(task);
+                for signal in cancel_rx {
+                    cancel_bumper_signal(&cancel_vm, signal);
                 }
             })
         {
-            log::error!("failed to spawn Android picker cancel bumper: {error}");
+            log::error!("failed to spawn Android picker cancel lane: {error}");
         }
-        tx
+        let close_vm = vm.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("nerust-picker-close".to_string())
+            .spawn(move || {
+                for stream in close_rx {
+                    cancel_bumper_stream(&close_vm, stream);
+                }
+            })
+        {
+            log::error!("failed to spawn Android picker close lane: {error}");
+        }
+        BumperLanes {
+            cancel: cancel_tx,
+            close: close_tx,
+        }
     })
 }
 
-fn cancel_bumper_task(task: BumperTask) {
-    let BumperTask {
-        app,
-        signal,
-        stream,
-    } = task;
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
-    let _ = bridge::with_java_env(&vm, |env| {
-        // `Global` deletes its reference on drop; the bumper is attached
+fn cancel_bumper_signal(vm: &JavaVM, signal: Global<JObject<'static>>) {
+    let _ = bridge::with_java_env(vm, |env| {
+        // `Global` deletes its reference on drop; the lane is attached
         // here, so no cross-thread delete call is needed.
-        if let Some(signal) = signal {
-            let _ = env.call_method(signal.as_obj(), jni_str!("cancel"), jni_sig!("()V"), &[]);
-        }
-        if let Some(stream) = stream {
-            let _ = env.call_method(stream.as_obj(), jni_str!("close"), jni_sig!("()V"), &[]);
-        }
+        let _ = env.call_method(signal.as_obj(), jni_str!("cancel"), jni_sig!("()V"), &[]);
         Ok::<(), jni::errors::Error>(())
     });
-    drop(app);
+}
+
+fn cancel_bumper_stream(vm: &JavaVM, stream: Global<JObject<'static>>) {
+    let _ = bridge::with_java_env(vm, |env| {
+        let _ = env.call_method(stream.as_obj(), jni_str!("close"), jni_sig!("()V"), &[]);
+        Ok::<(), jni::errors::Error>(())
+    });
 }
 
 /// Publish the job's signal for cross-thread cancellation. Returns whether
@@ -650,7 +692,11 @@ fn publish_handle(
 }
 
 /// Drop this job's slot handles if no bumper took them first. Exactly one
-/// side owns each global ref: the slot take decides the owner.
+/// side owns each global ref: the slot take decides the owner. The gate
+/// stays generation-scoped on purpose: a stale completion must not take the
+/// current job's freshly published handles. Leftovers from a reset generation
+/// are already collected at the reset/begin boundary, so there is nothing
+/// stale left for the gated release to reclaim.
 fn release_job_handles(seq: u64) {
     let (signal, stream) = bridge::with_picker(|state| {
         if state.in_flight == Some(seq) {
@@ -794,6 +840,17 @@ mod tests {
         assert!(take_result().is_none());
         publish_if_latest(next, RomPickerResult::Failed("fresh".into()));
         assert!(take_result().is_some());
+        reset_transient();
+        // Reset then release: the gated release finds nothing stale to
+        // take, and the next generation owns the slot cleanly. Boundary
+        // takes in reset/begin already collected any published handles.
+        let generation = begin_fetch();
+        reset_transient();
+        release_job_handles(generation);
+        let after = begin_fetch();
+        assert!(bridge::with_picker(|state| {
+            publish_handle(state, after, None, true)
+        }));
         reset_transient();
     }
 }
