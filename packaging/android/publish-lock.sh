@@ -9,6 +9,9 @@
 # leftover lock is recovered through the stale path below, never by timeout.
 # shellcheck disable=SC2148
 PUBLISH_LOCK_OWNED=""
+# Shared unknown-owner sentinel for the scan and takeover paths below
+# (Sonar S1192: no repeated literal).
+UNKNOWN_OWNER="unknown"
 
 # EXIT-trap safe: removes the lock only when this process acquired it.
 publish_lock_cleanup() {
@@ -22,7 +25,9 @@ publish_lock_cleanup() {
 # Directory identity for the claim check: device plus inode. Falls back to
 # sampling-proof refusal when stat is unavailable on the host.
 publish_lock_dir_id() {
-    stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1" 2>/dev/null || echo "nostat"
+    local dir="$1"
+    stat -c '%d:%i' "${dir}" 2>/dev/null || stat -f '%d:%i' "${dir}" 2>/dev/null || echo "nostat"
+    return 0
 }
 
 # Acquire the publish lock dir, recording this process as owner.
@@ -56,17 +61,17 @@ acquire_publish_lock() {
         fi
         # The dir exists: read a well-formed owner record, if any. Anything
         # else (missing, empty, or non-numeric) is unknown, never proof.
-        local owner="unknown"
+        local owner="${UNKNOWN_OWNER}"
         local recorded
         recorded="$(cat "${PUBLISH_LOCK_DIR}/pid" 2>/dev/null || true)"
         if [[ "${recorded}" =~ ^[0-9]+$ ]]; then
             owner="${recorded}"
         fi
-        if [[ "${owner}" != "unknown" ]] && kill -0 "${owner}" 2>/dev/null; then
+        if [[ "${owner}" != "${UNKNOWN_OWNER}" ]] && kill -0 "${owner}" 2>/dev/null; then
             echo "another publish is running (pid ${owner}); refusing concurrent publish" >&2
             return 1
         fi
-        if [[ "${owner}" != "unknown" ]]; then
+        if [[ "${owner}" != "${UNKNOWN_OWNER}" ]]; then
             echo "removing stale publish lock from dead pid ${owner}" >&2
         else
             # A live owner may sit between mkdir and its pid record: wait out
@@ -91,13 +96,13 @@ acquire_publish_lock() {
             sleep 0.1
             continue
         fi
-        local stolen="unknown"
+        local stolen="${UNKNOWN_OWNER}"
         local stolen_recorded
         stolen_recorded="$(cat "${stale}/pid" 2>/dev/null || true)"
         if [[ "${stolen_recorded}" =~ ^[0-9]+$ ]]; then
             stolen="${stolen_recorded}"
         fi
-        if [[ "${stolen}" != "unknown" ]] && kill -0 "${stolen}" 2>/dev/null; then
+        if [[ "${stolen}" != "${UNKNOWN_OWNER}" ]] && kill -0 "${stolen}" 2>/dev/null; then
             # A live owner completed its record between our read and the
             # move: yield the directory back and refuse instead of
             # orphaning a process that already believes it owns the lock.

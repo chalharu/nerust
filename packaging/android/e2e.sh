@@ -123,7 +123,8 @@ wait_until_gone() {
 
 # Bounded variant with an explicit grace period in seconds.
 wait_until_gone_with_timeout() {
-    local deadline=$((SECONDS + $1))
+    local grace_secs="$1"
+    local deadline=$((SECONDS + grace_secs))
     while ((SECONDS < deadline)); do
         local out
         if ! out=$(adb shell pidof "${APP_PACKAGE}" 2>&1); then
