@@ -1006,10 +1006,11 @@ impl EmuCore {
         });
         if cache.generation != sent_generation {
             // A newer invalidation arrived after this fetch started: keep
-            // it. Report the served generation so viewers drop the stale reply.
+            // it, and hand back the held decode so a panel-only redraw
+            // never rebuilds from an empty image (NER-324).
             return StoredImages {
                 generation: cache.served_generation,
-                images: std::sync::Arc::new(Vec::new()),
+                images: std::sync::Arc::clone(&cache.images),
                 fresh: false,
             };
         }
@@ -1603,6 +1604,31 @@ mod tests {
         let changed = core.images_store(picture(vec![0, 2]), sent_generation(&core));
         assert!(changed.fresh);
         assert!(changed.generation > served);
+    }
+
+    /// NER-324: identical-content redelivery keeps the served pixels so a
+    /// panel-only redraw never rebuilds from an empty image.
+    #[test]
+    fn unchanged_store_keeps_served_images_for_redelivery() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        let picture = || {
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels: vec![0, 1],
+            }]
+        };
+        let first = core.images_store(picture(), sent_generation(&core));
+        assert!(first.fresh);
+        let repeat = core.images_store(picture(), sent_generation(&core));
+        assert!(!repeat.fresh);
+        assert_eq!(repeat.images.len(), first.images.len());
+        assert!(!repeat.images.is_empty());
     }
 
     /// NER-323: a reply older than a newer invalidation never clears it.
