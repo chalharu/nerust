@@ -10,6 +10,10 @@ APP_PACKAGE="io.github.chalharu.nerust"
 TEST_PACKAGE="${APP_PACKAGE}.test"
 TEST_RUNNER="${TEST_PACKAGE}/androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS="io.github.chalharu.nerust.MainActivityE2eTest"
+# Must match HARNESS_TEARDOWN_MARKER in gui/frontends/android/src/lib.rs:
+# presence keeps the process alive across instrumentation teardown so the
+# result summary is delivered before any exit (NER-327).
+HARNESS_TEARDOWN_MARKER="/data/local/tmp/nerust-harness-teardown"
 APP_APK="${SCRIPT_DIR}/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="${SCRIPT_DIR}/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 
@@ -250,6 +254,15 @@ adb uninstall "${TEST_PACKAGE}" >/dev/null 2>&1 || true
 adb uninstall "${APP_PACKAGE}" >/dev/null 2>&1 || true
 adb install "${APP_APK}"
 adb install "${TEST_APK}"
+
+# Harness owns teardown: leave the marker the native exit gate reads so
+# non-user destroys keep the process alive until the result is delivered.
+# Missing marker fails fast here instead of flaking every test below.
+adb shell "touch ${HARNESS_TEARDOWN_MARKER:?}" >/dev/null 2>&1
+if ! adb shell "test -f ${HARNESS_TEARDOWN_MARKER}" >/dev/null 2>&1; then
+    echo "cannot place the harness teardown marker; refusing flaky run" >&2
+    exit 1
+fi
 
 run_instrumentation "${TEST_CLASS}#appLoadsGbcAndSupportsDrawerDialogsAndMenuActions"
 adb shell am force-stop "${APP_PACKAGE}"

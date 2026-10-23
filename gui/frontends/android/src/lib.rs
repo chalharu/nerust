@@ -61,7 +61,7 @@ use std::{ffi::c_void, rc::Rc};
 
 #[cfg(target_os = "android")]
 use jni::{
-    JavaVM, jni_sig, jni_str,
+    JavaVM,
     sys::{JNI_VERSION_1_6, jint},
 };
 #[cfg(target_os = "android")]
@@ -86,41 +86,24 @@ use winit::platform::android::activity::AndroidApp;
 #[cfg(target_os = "android")]
 const ANDROID_LOG_TAG: &str = "Nerust";
 
-/// Process VM captured at library load: the post-loop exit decision
-/// needs it after `AndroidApp` has moved into `run()`.
+/// Marker left by e2e.sh (`adb shell touch`): present only when an
+/// instrumentation harness drives teardown and owns result delivery.
+/// `ActivityManager.isRunningInTestHarness()` is NOT usable here: it
+/// reflects the read-only `ro.test_harness` property, which
+/// `am instrument` never sets (NER-327).
 #[cfg(target_os = "android")]
-static LIB_VM: std::sync::OnceLock<JavaVM> = std::sync::OnceLock::new();
+const HARNESS_TEARDOWN_MARKER: &str = "/data/local/tmp/nerust-harness-teardown";
 
 /// Exit unless the destroy came from instrumentation teardown: under
 /// `am instrument` the result delivery must precede process death, and
 /// the system force-stop owns teardown instead. User-initiated exit
-/// always ends the process, on any runner. Fail-closed: any JNI
-/// failure keeps today's unconditional exit.
+/// always ends the process, on any runner. Fail-closed: without the
+/// marker the unconditional exit of today applies.
 #[cfg(target_os = "android")]
 fn should_exit_process() -> (bool, bool, bool) {
-    let harness = is_running_in_test_harness();
+    let harness = std::path::Path::new(HARNESS_TEARDOWN_MARKER).exists();
     let user = crate::android::take_user_exit_request();
     (harness, user, !harness || user)
-}
-
-/// `ActivityManager.isRunningInTestHarness()`: true only under
-/// `am instrument`. False (or any JNI failure) means production.
-#[cfg(target_os = "android")]
-fn is_running_in_test_harness() -> bool {
-    let Some(vm) = LIB_VM.get() else {
-        return false;
-    };
-    let harness = vm.attach_current_thread(|env| {
-        let manager = env.find_class(jni_str!("android/app/ActivityManager"))?;
-        let flag = env.call_static_method(
-            &manager,
-            jni_str!("isRunningInTestHarness"),
-            jni_sig!("()Z"),
-            &[],
-        )?;
-        flag.z()
-    });
-    matches!(harness, Ok(true))
 }
 
 #[cfg(target_os = "android")]
@@ -230,8 +213,6 @@ pub unsafe extern "system" fn JNI_OnLoad(
     init_android_logging();
     log::info!("JNI_OnLoad: registering MainActivity natives");
     let vm = unsafe { JavaVM::from_raw(vm) };
-    // Cache for the post-loop exit decision after AndroidApp moved away.
-    LIB_VM.get_or_init(|| vm.clone());
     // Register native method bindings; succeeds when loaded via `System.loadLibrary("main")`.
     // The app classloader must be on the call stack at that point.
     if let Err(error) = vm.attach_current_thread(android::register_main_activity_natives) {
