@@ -165,9 +165,7 @@ impl HostState {
     pub(crate) fn load_test_rom(&mut self) {
         use nerust_system_traits::factory::settings::FactorySettingsView;
         let factory = nerust_nes_factory::NesFactory::boxed();
-        self.session
-            .set_active_system(factory.system_id().as_ref())
-            .expect("NES system activates");
+        // Resolve before switching so a bad request never touches live state.
         let view = FactorySettingsView {
             language: Default::default(),
             system_config: factory
@@ -178,6 +176,9 @@ impl HostState {
         let resolved = factory
             .resolve_load_request(&view, factory.default_load_options())
             .unwrap();
+        self.session
+            .set_active_system(factory.system_id().as_ref())
+            .expect("NES system activates");
         let mut rom = vec![0; 16 + 16384 + 8192];
         rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
         rom[16..19].copy_from_slice(&[0x4c, 0x00, 0x80]);

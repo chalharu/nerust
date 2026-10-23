@@ -82,16 +82,10 @@ impl super::AndroidFrontend {
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
         self.chrome.input.forget_physical_pressed();
-        self.core
-            .session
-            .set_active_system(system_id.as_ref())
-            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
-
-        let options = self
-            .core
-            .session
-            .default_load_options()
-            .ok_or_else(|| "no active system".to_string())?;
+        // Resolve before switching: a resolve failure must leave the live
+        // session untouched. Options come from the detected factory, so a
+        // fresh session without an active system still resolves (NER-320).
+        let options = factory.default_load_options();
         let view = nerust_settings_core::factory::settings_view(
             self.core.session.settings_snapshot(),
             system_id.as_ref(),
@@ -99,6 +93,10 @@ impl super::AndroidFrontend {
         let resolved = factory
             .resolve_load_request(&view, options)
             .map_err(|e| format!("failed to resolve ROM load request: {e}"))?;
+        self.core
+            .session
+            .set_active_system(system_id.as_ref())
+            .map_err(|e| format!("failed to activate system {system_id}: {e}"))?;
 
         if let Err(error) = self.core.session.load_resolved(media, resolved) {
             return Err(format!("failed to start ROM: {error}"));

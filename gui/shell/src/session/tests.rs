@@ -780,6 +780,309 @@ fn switching_system_discards_previous_loaded_runtime_state() {
     assert!(session.slots().is_empty());
 }
 
+/// NER-320: a factory whose load always fails after a good detect, so the
+/// registry reaches resolve and the session must keep its live state.
+struct FailResolveFactory;
+
+impl CoreFactory for FailResolveFactory {
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(DummyOtherSystemId)
+    }
+    fn display_name(&self) -> &'static str {
+        "Failing (test)"
+    }
+    fn create_core_and_adapter_with_assignments(
+        &self,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
+    ) -> Result<CoreParts, FactoryError> {
+        MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
+    }
+    fn probe_media(&self, _media: &MediaObject) -> bool {
+        true
+    }
+    fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+        MockFactory.settings_page(view)
+    }
+    fn apply_settings_choice(
+        &self,
+        view: &mut FactorySettingsView,
+        field: &SystemSettingsFieldId,
+        choice: &SystemSettingsChoiceId,
+    ) -> Result<(), FactoryError> {
+        MockFactory.apply_settings_choice(view, field, choice)
+    }
+    fn resolve_load_request(
+        &self,
+        _view: &FactorySettingsView,
+        _options: Box<dyn DynSystemLoadOptions>,
+    ) -> Result<ResolvedLoadRequest, FactoryError> {
+        Err(FactoryError::Resolve("simulated resolve failure".into()))
+    }
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        MockFactory.default_load_options()
+    }
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        MockFactory.input_system_factory()
+    }
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
+        MockFactory.load_options_schema()
+    }
+}
+
+/// NER-320 AC-1: a resolve failure after detect keeps the live system,
+/// core state, media, save targets, and slots.
+#[test]
+fn failed_resolve_after_detect_keeps_previous_runtime() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone()]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-keep");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    session.run_command(SessionCommand::SaveSlot(7)).unwrap();
+    assert!(session.tick_metrics().loaded);
+    assert_eq!(session.slots().len(), 1);
+    let first_id = first.system_id();
+
+    // A different system detects but never resolves: nothing may change.
+    let failing: Arc<dyn CoreFactory> = Arc::new(FailResolveFactory);
+    let loader_registry = Arc::new(SystemRegistry::new(vec![failing]));
+    let mut loader = loader_registry
+        .create_loader(std::collections::HashMap::new())
+        .unwrap();
+    let bad_path = rom_dir.join("unloadable.nes");
+    std::fs::write(&bad_path, test_rom()).unwrap();
+    let error = loader.load_rom(&bad_path, &mut session).unwrap_err();
+    assert!(matches!(error, crate::load::RomLoaderError::Resolve(_)));
+    assert_eq!(session.active_system_id(), Some(first_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(session.has_loaded_media());
+    assert_eq!(session.slots().len(), 1);
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
+/// NER-320 AC-1: a load failure after a cross-system switch restores the
+/// previous runtime instead of stranding the new empty core.
+#[test]
+fn failed_load_after_switch_restores_previous_runtime() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let second: Arc<dyn CoreFactory> = Arc::new(AlternateMockFactory);
+    let second_id = second.system_id();
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone(), second]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-restore");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    session.run_command(SessionCommand::SaveSlot(7)).unwrap();
+    assert!(session.tick_metrics().loaded);
+    let first_id = first.system_id();
+
+    session.set_active_system(second_id.as_ref()).unwrap();
+    assert!(!session.tick_metrics().loaded);
+
+    // An unloadable ROM fails the staged load: the old system comes back.
+    let retry = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    let error = session
+        .load_resolved(MediaObject::new(None, vec![]), retry)
+        .unwrap_err();
+    assert!(
+        matches!(error, SessionError::Operation(_)),
+        "empty ROM fails the staged load: {error:?}"
+    );
+    assert_eq!(session.active_system_id(), Some(first_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(!session.tick_metrics().paused);
+    assert!(session.has_loaded_media());
+    assert_eq!(session.slots().len(), 1);
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
+/// NER-320 AC-2/AC-3: a successful switch consumes the rollback. A later
+/// load failure keeps the new system instead of resurrecting the old one.
+#[test]
+fn successful_switch_consumes_rollback() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let second: Arc<dyn CoreFactory> = Arc::new(AlternateMockFactory);
+    let second_id = second.system_id();
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone(), second]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-consume");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+
+    session.set_active_system(second_id.as_ref()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+
+    // No snapshot left: this failure keeps the new system live.
+    let retry = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    let error = session
+        .load_resolved(MediaObject::new(None, vec![]), retry)
+        .unwrap_err();
+    assert!(
+        matches!(error, SessionError::Operation(_)),
+        "empty ROM fails the staged load: {error:?}"
+    );
+    assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(session.has_loaded_media());
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
+/// NER-320 AC-1: a create failure during activation keeps the live runtime.
+#[test]
+fn failed_activation_keeps_live_runtime() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone()]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-activate");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    assert!(session.tick_metrics().loaded);
+    let first_id = first.system_id();
+
+    struct AlwaysFail;
+    impl CoreFactory for AlwaysFail {
+        fn system_id(&self) -> Box<dyn SystemId> {
+            Box::new(DummyOtherSystemId)
+        }
+        fn display_name(&self) -> &'static str {
+            "Always failing (test)"
+        }
+        fn create_core_and_adapter_with_assignments(
+            &self,
+            _view: &FactorySettingsView,
+            _speaker: Box<dyn AudioBackend>,
+            _assignments: &InputAssignments,
+        ) -> Result<CoreParts, FactoryError> {
+            Err(FactoryError::Create("simulated failure".into()))
+        }
+        fn probe_media(&self, _media: &MediaObject) -> bool {
+            true
+        }
+        fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+            MockFactory.settings_page(view)
+        }
+        fn apply_settings_choice(
+            &self,
+            view: &mut FactorySettingsView,
+            field: &SystemSettingsFieldId,
+            choice: &SystemSettingsChoiceId,
+        ) -> Result<(), FactoryError> {
+            MockFactory.apply_settings_choice(view, field, choice)
+        }
+        fn resolve_load_request(
+            &self,
+            _view: &FactorySettingsView,
+            _options: Box<dyn DynSystemLoadOptions>,
+        ) -> Result<ResolvedLoadRequest, FactoryError> {
+            unreachable!("activation fails before resolve")
+        }
+        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+            MockFactory.default_load_options()
+        }
+        fn input_system_factory(&self) -> &dyn InputSystemFactory {
+            MockFactory.input_system_factory()
+        }
+        fn load_options_schema(
+            &self,
+        ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
+            MockFactory.load_options_schema()
+        }
+    }
+    let always_fail: Arc<dyn CoreFactory> = Arc::new(AlwaysFail);
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone(), always_fail]));
+    session.registry = registry;
+    let error = session.set_active_system(&DummyOtherSystemId).unwrap_err();
+    assert!(matches!(
+        error,
+        crate::load::SystemActivationError::ActivationFailed { .. }
+    ));
+    assert_eq!(session.active_system_id(), Some(first_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(session.has_loaded_media());
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
 fn test_capabilities() -> HostBackendCapabilities {
     HostBackendCapabilities {
         window: nerust_gui_runtime::settings::HostWindowCapabilities {

@@ -1847,11 +1847,7 @@ mod tests {
         state.borrow_mut().session = session;
         let load = || {
             let factory = nerust_nes_factory::NesFactory::boxed();
-            state
-                .borrow_mut()
-                .session
-                .set_active_system(factory.system_id().as_ref())
-                .expect("NES system activates");
+            // Resolve before switching so a bad request never touches live state.
             let view = FactorySettingsView {
                 language: Default::default(),
                 system_config: factory
@@ -1862,6 +1858,11 @@ mod tests {
             let request = factory
                 .resolve_load_request(&view, factory.default_load_options())
                 .unwrap();
+            state
+                .borrow_mut()
+                .session
+                .set_active_system(factory.system_id().as_ref())
+                .expect("NES system activates");
             let mut rom = vec![0; 16 + 16384 + 8192];
             rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
             rom[16..19].copy_from_slice(&[0x4c, 0, 0x80]);

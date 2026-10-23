@@ -1,5 +1,5 @@
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreFault,
     audio::StereoSample,
     debugger::{
         DebugControl, DebugImage, Debugger, DebuggerError, DisasmLine, ImageFormat, SpaceAccess,
@@ -173,6 +173,17 @@ impl ConsoleCore for MockConsoleCore {
         Ok(())
     }
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
+        if rom.is_empty() {
+            // An empty ROM never parses: deterministic load failure for
+            // rollback tests, matching real cores (NER-320).
+            return Err(CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "empty ROM",
+                )),
+            });
+        }
         if let Some(options) = config
             .core_options
             .as_deref()
