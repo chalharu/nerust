@@ -1,7 +1,7 @@
 package io.github.chalharu.nerust
 
-import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
 import org.json.JSONArray
 import org.junit.After
@@ -32,8 +32,14 @@ class SafAbnormalProviderTest {
      * real DocumentsContract interface through the test context's
      * resolver; provider and consumer share the test UID.
      */
-    private fun repository(): SafRepository =
-        SafRepository(ApplicationProvider.getApplicationContext())
+    private fun repository(): SafRepository {
+        // Test-package context: provider and consumer share the test UID,
+        // so the MANAGE_DOCUMENTS-protected stub is reachable in-process.
+        // The target-app context would cross into another UID and be
+        // denied, masking the injected faults behind permission errors.
+        val testContext = InstrumentationRegistry.getInstrumentation().context
+        return SafRepository(testContext)
+    }
 
     @Before
     fun clearFaults() {

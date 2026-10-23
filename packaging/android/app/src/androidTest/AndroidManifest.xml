@@ -12,6 +12,7 @@
             android:authorities="io.github.chalharu.nerust.faultdocs"
             android:exported="true"
             android:grantUriPermissions="true"
-            android:permission="android.permission.MANAGE_DOCUMENTS" />
+            android:readPermission="android.permission.MANAGE_DOCUMENTS"
+            android:writePermission="android.permission.MANAGE_DOCUMENTS" />
     </application>
 </manifest>
