@@ -78,7 +78,13 @@ class SafRepository(private val context: Context) : AutoCloseable {
             val size = committed[name]?.size ?: knownSize(file) ?: -1L
             val entry = org.json.JSONObject().put("name", name).put("size", size)
             if (name.endsWith(".state")) {
-                val sidecar = byName[name.removeSuffix(".state") + ".summary"]
+                // Logical resolution first: generation-tracked sidecars have
+                // no stable physical name, so the committed map (not the raw
+                // listing) tells which staged file holds the current bytes.
+                // A tombstoned sidecar resolves to nothing and falls through
+                // to the archive, like a missing one (NER-310).
+                val base = name.removeSuffix(".state")
+                val sidecar = batchSidecarFile(base, { committed[it]?.data }, byName)
                 val bytes = try {
                     sidecar?.uri?.let { uri ->
                         context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -105,7 +111,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
             reclaimOrphanedStages(
                 directory,
                 files,
-                committed.values.mapNotNull { it.data?.name }.toSet(),
+                survey.allReferenced,
                 survey.complete,
             )
         }
@@ -232,10 +238,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
      * Generations survey: the display map plus whether every marker resolved.
      * A single unreadable marker makes the survey incomplete; destructive
      * reclamation must not run on an incomplete survey (NER-311).
+     * [allReferenced] covers every successfully parsed generation, not just
+     * the latest per name: GC must not orphan data an older unswept marker
+     * still points at, even when a newer generation already serves.
      */
     private fun surveyGenerations(files: Array<DocumentFile>): GenerationSurvey {
         val byName = files.associateBy { it.name }
         val result = mutableMapOf<String, Generation>()
+        val referenced = mutableSetOf<String>()
         var complete = true
         for (marker in commitMarkers(files)) {
             try {
@@ -244,6 +254,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
                     complete = false
                     continue
                 }
+                generation.data?.name?.let { referenced += it }
                 if (result[name]?.order?.let { it >= generation.order } != true) {
                     result[name] = generation
                 }
@@ -252,10 +263,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
                 complete = false
             }
         }
-        return GenerationSurvey(result, complete)
+        return GenerationSurvey(result, complete, referenced)
     }
 
-    private data class GenerationSurvey(val committed: Map<String, Generation>, val complete: Boolean)
+    private data class GenerationSurvey(
+        val committed: Map<String, Generation>,
+        val complete: Boolean,
+        val allReferenced: Set<String> = emptySet(),
+    )
 
     private fun commitMarkers(files: Array<DocumentFile>): List<DocumentFile> =
         files.filter { isCommitMarker(it.name) }
@@ -380,6 +395,20 @@ class SafRepository(private val context: Context) : AutoCloseable {
         /** True for staged data files awaiting (or orphaned by) a commit marker. */
         internal fun isStagedData(name: String) =
             name.startsWith(PREFIX) && name.endsWith(".data")
+
+        /**
+         * Batch sidecar resolution for one slot: the committed generation
+         * wins over the physical listing, and a tombstoned or absent sidecar
+         * resolves to nothing so the scan falls back to the archive.
+         * Generation-tracked sidecars have no stable physical name, so the
+         * raw listing alone would always miss them (NER-310).
+         */
+        internal fun batchSidecarFile(
+            base: String,
+            committedData: (String) -> DocumentFile?,
+            physical: Map<String?, DocumentFile?>,
+        ): DocumentFile? =
+            committedData("$base.summary") ?: physical["$base.summary"]
 
         /**
          * Orphaned staged data: unreferenced by any live marker and older than
