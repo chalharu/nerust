@@ -662,6 +662,65 @@ mod tests {
         assert!(!queue.has_visible());
     }
 
+    /// NER-317: the expiry boundary is exact. At `deadline` the showing
+    /// row is already expired and drops; one millisecond earlier it is live
+    /// and reroutes.
+    #[test]
+    fn expiry_boundary_drops_at_deadline_only() {
+        let mut queue = TransientQueue::default();
+        let now = Instant::now();
+        queue.route_row(test_item(NotificationLevel::Warning, "w", now));
+        assert!(queue.poll(now));
+        // Deadline is now + 2_000ms: one millisecond early still reroutes.
+        let modal = queue.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(1_999),
+            FrameChannel::Unpresented,
+        );
+        assert_eq!(modal.len(), 1);
+        let mut queue = TransientQueue::default();
+        queue.route_row(test_item(NotificationLevel::Warning, "w", now));
+        assert!(queue.poll(now));
+        // Exactly at the deadline the row is expired: no modal, no visible.
+        let modal = queue.refresh(
+            &policy_all(),
+            AppLanguage::English,
+            now + Duration::from_millis(2_000),
+            FrameChannel::Unpresented,
+        );
+        assert!(modal.is_empty(), "expired at deadline must not modalize");
+        assert!(!queue.has_visible());
+    }
+
+    /// NER-317: disabled levels vanish silently. A showing Warning/Error row
+    /// under a policy with that level disabled drops without modalizing,
+    /// even with error_modal armed.
+    #[test]
+    fn disabled_levels_drop_showing_rows_without_modal() {
+        for (level, key) in [
+            (NotificationLevel::Warning, "w"),
+            (NotificationLevel::Error, "boom"),
+        ] {
+            let mut queue = TransientQueue::default();
+            let now = Instant::now();
+            queue.route_row(test_item(level, key, now));
+            assert!(queue.poll(now));
+            let mut policy = policy_all();
+            policy.warning_enabled = false;
+            policy.error_enabled = false;
+            policy.error_modal = true;
+            let modal = queue.refresh(
+                &policy,
+                AppLanguage::English,
+                now + Duration::from_millis(1_000),
+                FrameChannel::Unpresented,
+            );
+            assert!(modal.is_empty(), "{level:?} disabled must not modalize");
+            assert!(!queue.has_visible());
+        }
+    }
+
     /// Control: a live showing row still reroutes when the channel drops.
     #[test]
     fn live_showing_row_reroutes_on_channel_loss() {
