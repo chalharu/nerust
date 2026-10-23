@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Regression probes for publish-lock.sh (NER-313). Manual run:
+# Regression probes for publish-lock.sh (NER-313/314). Manual run:
 #   bash packaging/android/test-publish-lock.sh
-# Not wired into CI (no shell runner); results are recorded on the ticket.
+# Wired into CI: check-contract.sh "shell probes" phase + the lint job's
+# explicit shell-probes step in .github/workflows/ci.yml.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=publish-lock.sh
