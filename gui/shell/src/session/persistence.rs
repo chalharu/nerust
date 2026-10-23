@@ -62,6 +62,18 @@ pub struct PersistenceManager {
     active_slot_id: Option<u64>,
 }
 
+/// In-memory persistence setup for load-failure rollback: backends are
+/// untouched by a system switch, so only the setup snapshot travels.
+#[derive(Debug, Clone)]
+pub(crate) struct PersistSnapshot {
+    states_dir: Option<StorageLocation>,
+    mapper_save_path: Option<StorageLocation>,
+    flush_allowed: bool,
+    recovery_written: bool,
+    slots: Arc<[StateSlotSummary]>,
+    active_slot_id: Option<u64>,
+}
+
 impl Default for PersistenceManager {
     fn default() -> Self {
         Self::new()
@@ -325,6 +337,28 @@ impl PersistenceManager {
         self.mapper_save_recovery_written = false;
         self.slots = Arc::from([]);
         self.active_slot_id = None;
+    }
+
+    /// Snapshot the in-memory setup for load-failure rollback (NER-320).
+    pub(crate) fn snapshot_state(&self) -> PersistSnapshot {
+        PersistSnapshot {
+            states_dir: self.states_dir.clone(),
+            mapper_save_path: self.mapper_save_path.clone(),
+            flush_allowed: self.mapper_save_flush_allowed,
+            recovery_written: self.mapper_save_recovery_written,
+            slots: Arc::clone(&self.slots),
+            active_slot_id: self.active_slot_id,
+        }
+    }
+
+    /// Restore a snapshot verbatim, bypassing configure's path-change resets.
+    pub(crate) fn restore_state(&mut self, snapshot: PersistSnapshot) {
+        self.states_dir = snapshot.states_dir;
+        self.mapper_save_path = snapshot.mapper_save_path;
+        self.mapper_save_flush_allowed = snapshot.flush_allowed;
+        self.mapper_save_recovery_written = snapshot.recovery_written;
+        self.slots = snapshot.slots;
+        self.active_slot_id = snapshot.active_slot_id;
     }
 
     pub fn flush_mapper_save(

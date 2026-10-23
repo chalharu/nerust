@@ -347,6 +347,22 @@ pub struct SessionHandle {
     history_view: session_query::HistoryView,
     /// Reused OSD drain buffer: one allocation serves every tick.
     drain_scratch: Vec<notification::UiNotification>,
+    /// Pre-switch live state for load-failure rollback: a system switch
+    /// publishes immediately, and a later load failure in the same
+    /// set-then-load pair restores this instead of stranding an empty
+    /// core (NER-320). Single-use; every load consumes it.
+    pre_switch: Option<PreSwitchState>,
+}
+
+/// Pre-switch live state. Moves, never clones: rollback swaps ownership back.
+struct PreSwitchState {
+    runtime: Option<ActiveRuntime>,
+    loaded: Option<LoadedMedia>,
+    system_id: Option<Box<dyn SystemId>>,
+    display_name: Option<&'static str>,
+    assignments: InputAssignments,
+    pressed: std::collections::HashSet<nerust_keyboard::Key>,
+    persistence: persistence::PersistSnapshot,
 }
 
 fn display_name_for(
@@ -548,6 +564,7 @@ impl SessionHandle {
             title_cache: title::TitleCache::new(),
             history_view: session_query::HistoryView::new(),
             drain_scratch: Vec::new(),
+            pre_switch: None,
         };
         result.emu.restore(runtime);
         result.rebuild_key_field_map();
@@ -810,6 +827,8 @@ impl SessionHandle {
         system_id: &dyn SystemId,
     ) -> Result<(), SystemActivationError> {
         if self.active_system_id.as_ref().map(|x| x.as_ref()) == Some(system_id) {
+            // Re-affirming the live system abandons any pending switch.
+            self.pre_switch = None;
             return Ok(());
         }
         let factory = self
@@ -834,19 +853,55 @@ impl SessionHandle {
                 .map_err(|e| SystemActivationError::from_session(e.into()))?;
         }
 
-        self.active_system_id = Some(system_id.clone_box());
-        self.cached_display_name = self
-            .registry
-            .find_by_id(system_id)
-            .map(|factory| factory.display_name());
-        self.input.current_assignments = created.applied_assignments;
-        self.emu.replace(ActiveRuntime::from(created.runtime));
-        self.media.clear_runtime();
-        self.input.pressed_keys.clear();
+        // Snapshot the live state before publishing: a later load failure in
+        // this set-then-load pair rolls back instead of stranding the new
+        // system's empty core (NER-320).
+        let pre_switch = PreSwitchState {
+            runtime: self.emu.replace(ActiveRuntime::from(created.runtime)),
+            loaded: self.media.loaded.take(),
+            system_id: self.active_system_id.replace(system_id.clone_box()),
+            display_name: std::mem::replace(
+                &mut self.cached_display_name,
+                self.registry
+                    .find_by_id(system_id)
+                    .map(|factory| factory.display_name()),
+            ),
+            assignments: std::mem::replace(
+                &mut self.input.current_assignments,
+                created.applied_assignments,
+            ),
+            pressed: std::mem::take(&mut self.input.pressed_keys),
+            persistence: self.media.persistence.snapshot_state(),
+        };
+        self.pre_switch = Some(pre_switch);
+        self.media.persistence.reset();
         self.input.invalidate_topology();
         self.debug_clear_write();
         self.rebuild_key_field_map();
         Ok(())
+    }
+
+    /// Drop a pending switch without touching live state.
+    pub(crate) fn discard_pre_switch(&mut self) {
+        self.pre_switch = None;
+    }
+
+    /// Restore the pre-switch live state after a failed load. No-op without
+    /// a pending switch, so same-system loads keep their existing behavior.
+    pub(crate) fn rollback_pre_switch(&mut self) {
+        let Some(stashed) = self.pre_switch.take() else {
+            return;
+        };
+        self.emu.restore(stashed.runtime);
+        self.media.loaded = stashed.loaded;
+        self.active_system_id = stashed.system_id;
+        self.cached_display_name = stashed.display_name;
+        self.input.current_assignments = stashed.assignments;
+        self.input.pressed_keys = stashed.pressed;
+        self.media.persistence.restore_state(stashed.persistence);
+        self.input.invalidate_topology();
+        self.debug_clear_write();
+        self.rebuild_key_field_map();
     }
 }
 

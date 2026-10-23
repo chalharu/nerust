@@ -117,26 +117,24 @@ impl RomLoader for RegistryRomLoader {
 
         let system_id = factory.system_id();
 
-        // Notify the target BEFORE loading so it can rebuild the
-        // EmuCore with the correct factory if the system changed.
-        target
-            .set_active_system(system_id.as_ref())
-            .map_err(|e| RomLoaderError::Detect(e.to_string()))?;
-
+        // Resolve before switching: a resolve failure must leave the live
+        // session untouched. The switch below publishes immediately, and a
+        // later load failure rolls back to the snapshot it takes (NER-320).
         let view = settings_view(target.settings_snapshot(), system_id.as_ref());
         let options = self
             .pending_options
             .get_mut(&system_id)
             .and_then(|opt| opt.take())
-            .unwrap_or_else(|| {
-                target
-                    .default_load_options()
-                    .unwrap_or_else(|| factory.default_load_options())
-            });
+            .unwrap_or_else(|| factory.default_load_options());
 
         let resolved = factory
             .resolve_load_request(&view, options)
             .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
+
+        target
+            .set_active_system(system_id.as_ref())
+            .map_err(|e| RomLoaderError::Detect(e.to_string()))?;
+
         target.load_resolved(media, resolved)?;
 
         target.resume();

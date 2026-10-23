@@ -59,12 +59,32 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        let candidate = self.stage_candidate(&media, resolved.options.as_ref())?;
+        // A switch published earlier dies here with the load: restore the
+        // pre-switch live state instead of stranding the empty core.
+        // Without a pending switch this is a no-op (NER-320).
+        let candidate = match self.stage_candidate(&media, resolved.options.as_ref()) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                self.rollback_pre_switch();
+                return Err(error);
+            }
+        };
         let was_running = self.freeze_previous()?;
         if let Err(error) = self.flush_previous_mapper() {
-            return self.rollback_freeze(was_running, error);
+            let frozen = self.rollback_freeze(was_running, error);
+            self.rollback_pre_switch();
+            return frozen;
         }
-        self.commit_candidate(candidate, media, resolved.options)
+        match self.commit_candidate(candidate, media, resolved.options) {
+            Ok(()) => {
+                self.discard_pre_switch();
+                Ok(())
+            }
+            Err(error) => {
+                self.rollback_pre_switch();
+                Err(error)
+            }
+        }
     }
 
     /// Prepare the replacement core without touching live state.
@@ -155,6 +175,9 @@ impl SessionHandle {
     }
 
     pub fn unload(&mut self) -> Result<(), SessionError> {
+        // Explicit teardown: no later failed load may resurrect the
+        // pre-switch state stashed by an abandoned switch.
+        self.discard_pre_switch();
         if let Ok(exporter) = self.emu.exporter() {
             self.media.persistence.flush_mapper_save(exporter)?;
         }
