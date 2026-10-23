@@ -65,9 +65,27 @@ class SafRepository(private val context: Context) : AutoCloseable {
         for ((name, generation) in committed) {
             if (generation.data == null) visible.remove(name) else visible[name] = generation.data
         }
+        // Sidecar bytes ride the same listing so one generations pass serves
+        // the whole Rust scan instead of re-resolving per slot (NER-310).
+        val byName = files.associateBy { it.name }
         for ((name, file) in visible) {
             val size = committed[name]?.size ?: knownSize(file) ?: -1L
-            array.put(org.json.JSONObject().put("name", name).put("size", size))
+            val entry = org.json.JSONObject().put("name", name).put("size", size)
+            if (name.endsWith(".state")) {
+                val sidecar = byName[name.removeSuffix(".state") + ".summary"]
+                val bytes = try {
+                    sidecar?.uri?.let { uri ->
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    }
+                } catch (error: Exception) {
+                    Log.w(TAG, "listSafFilesWithSizes: sidecar read failed", error)
+                    null
+                }
+                if (bytes != null) {
+                    entry.put("summary", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+                }
+            }
+            array.put(entry)
         }
         // Amortized recovery scan: staged data without a commit marker is a
         // process-death orphan once past the grace window. In-flight stages
