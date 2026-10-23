@@ -12,13 +12,21 @@ internal class SafReadSessions(
     private class Session(val stream: InputStream)
     // Lock-free reads: per-session monitors never nest inside the registry monitor.
     // Registry monitor guards only id minting and teardown; lookups use the map directly.
+    // Admission is capped (NER-308): one close occupies at most one lane
+    // slot, so open sessions match the lane depth and a full teardown storm
+    // still fits the lane plus dock budget. A refused open closes the passed
+    // stream through the cleanup lane, so ownership is never lost or leaked.
+    private companion object {
+        const val MAX_OPEN_SESSIONS = 64
+    }
     private val streams = ConcurrentHashMap<Long, Session>()
     private var nextId = 1L
     private var closed = false
 
     fun open(stream: InputStream): Long {
         val id = synchronized(this) {
-            if (closed || nextId <= 0) 0L else nextId++.also { streams[it] = Session(stream) }
+            if (closed || nextId <= 0 || streams.size >= MAX_OPEN_SESSIONS) 0L
+            else nextId++.also { streams[it] = Session(stream) }
         }
         if (id == 0L) closeExecutor.execute { runCatching { stream.close() } }
         return id
