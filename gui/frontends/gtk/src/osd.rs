@@ -168,7 +168,7 @@ impl GtkOsd {
     pub(crate) fn build_history(
         window: &gtk::ApplicationWindow,
         state: &Rc<RefCell<State>>,
-    ) -> gtk::Dialog {
+    ) -> (gtk::Dialog, Rc<dyn Fn()>) {
         use nerust_gui_shell::session::notification::NotificationLevel;
         let language = state.borrow().settings_snapshot().shared.general.language;
         let dialog = gtk::Dialog::with_buttons(
@@ -387,7 +387,7 @@ impl GtkOsd {
             close.set_margin_bottom(16);
         }
         dialog.connect_response(|dialog, _| dialog.destroy());
-        dialog
+        (dialog, refresh)
     }
 }
 impl GtkOsd {

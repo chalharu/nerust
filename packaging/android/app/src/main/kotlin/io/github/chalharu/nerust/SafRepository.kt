@@ -94,12 +94,16 @@ class SafRepository(private val context: Context) : AutoCloseable {
         // process-death orphan once past the grace window. In-flight stages
         // have fresh or unknown mtimes and are never touched. An incomplete
         // survey skips reclamation: a missed marker must not orphan live data.
-        reclaimOrphanedStages(
-            directory,
-            files,
-            committed.values.mapNotNull { it.data?.name }.toSet(),
-            survey.complete,
-        )
+        if (!survey.complete) {
+            Log.w(TAG, "skipping orphan reclaim: incomplete generation survey")
+        } else {
+            reclaimOrphanedStages(
+                directory,
+                files,
+                committed.values.mapNotNull { it.data?.name }.toSet(),
+                survey.complete,
+            )
+        }
         return array.toString()
     }
 

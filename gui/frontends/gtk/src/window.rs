@@ -33,7 +33,7 @@ pub(crate) struct WindowCore {
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
     debugger_window: Option<crate::debugger::DebuggerWindow>,
-    history_dialog: Option<gtk::Dialog>,
+    history_dialog: Option<(gtk::Dialog, std::rc::Rc<dyn Fn()>)>,
     actions: WindowActions,
     select_active_slot_menu: gio::Menu,
     save_slot_menu: gio::Menu,
@@ -399,18 +399,19 @@ impl WindowExtend for Window {
     fn open_history(&self) {
         // Parity with the debugger: an existing dialog presents
         // instead of duplicating; destroy clears the slot.
-        if let Some(existing) = self.borrow().history_dialog.clone() {
+        if let Some((existing, refresh)) = self.borrow().history_dialog.clone() {
             existing.present();
+            refresh();
             return;
         }
-        let dialog = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
+        let (dialog, refresh) = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
         {
             let result = self.clone();
             dialog.connect_destroy(move |_| {
                 result.borrow_mut().history_dialog = None;
             });
         }
-        self.borrow_mut().history_dialog = Some(dialog.clone());
+        self.borrow_mut().history_dialog = Some((dialog.clone(), refresh));
         dialog.present();
     }
 

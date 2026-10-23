@@ -16,6 +16,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * fully saturated lane parks tasks in a dock that every completion drains.
  * Submitters (including Activity.onDestroy) never run provider I/O and
  * ownership is never dropped. No Android dependencies: JVM-testable.
+ *
+ * The dock itself is unbounded by design: it holds only already-owned
+ * resources (no new threads, FDs, or transfers), each entry is tiny, and
+ * every entry is consumed by the completion chain, so growth requires a
+ * permanently wedged provider plus unbounded user submissions. Bounding it
+ * would force dropping cleanups (FD leaks) or stalling the submitter,
+ * both worse than the theoretical queue growth. [parkedCount] exposes it.
  */
 internal object SafCleanup {
     const val MAX_PENDING = 64
