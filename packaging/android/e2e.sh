@@ -81,7 +81,7 @@ crashed_after_progress() {
         if [[ -n "${log}" ]]; then
             break
         fi
-        sleep 1
+        sleep "${attempt}"
     done
     echo "logcat lines for progress check: $(printf '%s' "${log}" | wc -l)" >&2
     [[ -n "${log}" ]] || return 1
