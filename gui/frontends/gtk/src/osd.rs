@@ -9,6 +9,52 @@ use nerust_settings_core::model::local::NotificationSettings;
 
 use super::{State, renderer::GtkRenderer};
 
+/// Reentrancy guard for caption rebuilds: set while the filter items are
+/// rebuilt so the `changed` handler skips the recursive refresh.
+struct CaptionSyncGuard<'a> {
+    flag: &'a std::cell::Cell<bool>,
+}
+
+impl<'a> CaptionSyncGuard<'a> {
+    fn new(flag: &'a std::cell::Cell<bool>) -> Self {
+        flag.set(true);
+        Self { flag }
+    }
+}
+
+impl Drop for CaptionSyncGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.set(false);
+    }
+}
+
+/// Built history dialog plus its live controls. Frontends present
+/// `dialog` and re-run `refresh` on reopen; tests drive `filter` and
+/// `clear` through it instead of spelunking the widget tree.
+pub(crate) struct HistoryDialog {
+    pub dialog: gtk::Dialog,
+    pub refresh: Rc<dyn Fn()>,
+    /// Interactive handles, exercised by widget tests (reopen/filter/clear).
+    #[cfg(test)]
+    pub filter: gtk::ComboBoxText,
+    /// Interactive handles, exercised by widget tests (reopen/filter/clear).
+    #[cfg(test)]
+    pub clear: gtk::Button,
+}
+
+/// Fixed history-dialog captions for one language. Plain owned strings:
+/// widgets take copies, the table stays authoritative.
+pub(crate) struct HistoryDialogCaptions {
+    pub title: String,
+    pub close: String,
+    pub level: String,
+    pub filter_all: String,
+    pub filter_info: String,
+    pub filter_warning: String,
+    pub filter_error: String,
+    pub clear: String,
+}
+
 pub(crate) struct GtkOsd {
     manager: OsdManager,
     raster: nerust_render_osd::OsdRaster,
@@ -165,10 +211,30 @@ impl GtkOsd {
 
     /// Build the history dialog without presenting: the caller owns
     /// presentation and lifetime (parity with the debugger window).
+    /// Fixed dialog captions for a language: title, close, level caption,
+    /// filter items, and clear. Pure i18n lookup so the mapping itself is
+    /// unit-testable without a display; `refresh` applies it whenever the
+    /// tracked language changes (NER-326).
+    pub(crate) fn history_dialog_captions(
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> HistoryDialogCaptions {
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        HistoryDialogCaptions {
+            title: ui_text(language, UiText::NotificationHistory).to_string(),
+            close: ui_text(language, UiText::Close).to_string(),
+            level: ui_text(language, UiText::HistoryLevel).to_string(),
+            filter_all: ui_text(language, UiText::HistoryFilterAll).to_string(),
+            filter_info: ui_text(language, UiText::NotificationInfo).to_string(),
+            filter_warning: ui_text(language, UiText::NotificationWarning).to_string(),
+            filter_error: ui_text(language, UiText::Error).to_string(),
+            clear: ui_text(language, UiText::HistoryClear).to_string(),
+        }
+    }
+
     pub(crate) fn build_history(
         window: &gtk::ApplicationWindow,
         state: &Rc<RefCell<State>>,
-    ) -> (gtk::Dialog, Rc<dyn Fn()>) {
+    ) -> HistoryDialog {
         use nerust_gui_shell::session::notification::NotificationLevel;
         let language = state.borrow().settings_snapshot().shared.general.language;
         let dialog = gtk::Dialog::with_buttons(
@@ -229,14 +295,27 @@ impl GtkOsd {
         body.append(&toolbar);
         body.append(&scrolled);
         dialog.content_area().append(&body);
+        // Fixed-caption widgets refresh alongside the rows.
+        let close_button = dialog
+            .widget_for_response(gtk::ResponseType::Close)
+            .and_downcast::<gtk::Button>();
         // Same (seq, language, filter) gate as the tao twin: a refresh with
         // unchanged inputs rebuilds nothing instead of re-allocating rows.
         let last_sync = Rc::new(RefCell::new(None));
+        // Reentrancy guard: rebuilding the filter items below emits
+        // `changed`; without this the handler would refresh recursively
+        // until the stack overflows (NER-326).
+        let syncing_captions = Rc::new(std::cell::Cell::new(false));
         let refresh = Rc::new({
             let state = Rc::clone(state);
+            let dialog = dialog.clone();
             let grid = grid.clone();
             let filter = filter.clone();
             let count = count.clone();
+            let level_caption = level_caption.clone();
+            let clear = clear.clone();
+            let close_button = close_button.clone();
+            let syncing_captions = Rc::clone(&syncing_captions);
             let last_sync = Rc::clone(&last_sync);
             move || {
                 // Gate inputs first: a refresh with unchanged inputs
@@ -256,6 +335,28 @@ impl GtkOsd {
                     return;
                 }
                 *last_sync.borrow_mut() = Some(key);
+                // Fixed captions follow the language like the rows do: an
+                // open dialog never keeps stale title/buttons/filters
+                // (NER-326). The selection survives the filter rebuild.
+                let _caption_sync = CaptionSyncGuard::new(&syncing_captions);
+                let captions = Self::history_dialog_captions(language);
+                dialog.set_title(Some(&captions.title));
+                if let Some(close) = close_button.as_ref() {
+                    close.set_label(&captions.close);
+                }
+                level_caption.set_text(&captions.level);
+                let selected = filter.active_id();
+                filter.remove_all();
+                for (id, label) in [
+                    ("all", captions.filter_all.as_str()),
+                    ("info", captions.filter_info.as_str()),
+                    ("warning", captions.filter_warning.as_str()),
+                    ("error", captions.filter_error.as_str()),
+                ] {
+                    filter.append(Some(id), label);
+                }
+                filter.set_active_id(selected.as_deref());
+                clear.set_label(&captions.clear);
                 let mut borrowed = state.borrow_mut();
                 let lines = borrowed.history_lines_cached(language);
                 while let Some(child) = grid.first_child() {
@@ -354,7 +455,12 @@ impl GtkOsd {
         refresh();
         filter.connect_changed({
             let refresh = Rc::clone(&refresh);
-            move |_| refresh()
+            let syncing_captions = Rc::clone(&syncing_captions);
+            move |_| {
+                if !syncing_captions.get() {
+                    refresh()
+                }
+            }
         });
         clear.connect_clicked({
             let state = Rc::clone(state);
@@ -387,7 +493,14 @@ impl GtkOsd {
             close.set_margin_bottom(16);
         }
         dialog.connect_response(|dialog, _| dialog.destroy());
-        (dialog, refresh)
+        HistoryDialog {
+            dialog,
+            refresh,
+            #[cfg(test)]
+            filter,
+            #[cfg(test)]
+            clear,
+        }
     }
 }
 impl GtkOsd {
@@ -428,6 +541,122 @@ impl GtkOsd {
             }
         });
         dialog.present();
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod history_dialog_tests {
+    use super::GtkOsd;
+    use gtk::prelude::*;
+    use nerust_settings_core::model::language::AppLanguage;
+
+    /// NER-326: the caption table itself follows the language. Display
+    /// application rides `refresh`, covered by the widget test below.
+    #[test]
+    fn history_captions_follow_language() {
+        let en = GtkOsd::history_dialog_captions(AppLanguage::English);
+        let ja = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
+        for captions in [&en, &ja] {
+            for text in [
+                &captions.title,
+                &captions.close,
+                &captions.level,
+                &captions.filter_all,
+                &captions.filter_info,
+                &captions.filter_warning,
+                &captions.filter_error,
+                &captions.clear,
+            ] {
+                assert!(!text.is_empty());
+            }
+        }
+        assert_ne!(en.title, ja.title);
+        assert_ne!(en.clear, ja.clear);
+        assert_ne!(en.filter_all, ja.filter_all);
+    }
+
+    fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+    )> {
+        use std::rc::Rc;
+        use std::sync::Arc;
+        if !crate::test_support::ui_test_available() {
+            return None;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.history-test")
+            .build();
+        let window = gtk::ApplicationWindow::builder().application(&app).build();
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: Rc::new(MockPipelineFactory),
+            registry,
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: audio,
+        };
+        let state = Rc::new(std::cell::RefCell::new(
+            crate::State::new(ctx).expect("test state builds"),
+        ));
+        Some((app, window, state))
+    }
+
+    #[derive(Debug)]
+    struct MockPipelineFactory;
+
+    impl nerust_render_traits::renderer::PipelineFactory for MockPipelineFactory {
+        fn create_pipeline(
+            &self,
+            _config: &nerust_render_traits::renderer::RendererConfig,
+            _display: raw_window_handle::RawDisplayHandle,
+        ) -> Result<
+            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
+            nerust_render_traits::renderer::RendererError,
+        > {
+            Err(nerust_render_traits::renderer::RendererError::new(
+                "test",
+                Box::new(std::io::Error::other("no renderer in tests")),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for MockRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            Err(nerust_gui_shell::load::RomLoaderError::from_session(
+                nerust_gui_shell::session::SessionError::NoCore,
+            ))
+        }
+    }
+
+    /// NER-326 AC-1/AC-3: the dialog builds, refreshes, filters, clears,
+    /// and destroys; a fresh build after destroy reopens cleanly.
+    #[test]
+    fn history_dialog_lifecycle_runs_without_display_errors() {
+        let Some((_app, window, state)) = harness() else {
+            return;
+        };
+        let built = GtkOsd::build_history(&window, &state);
+        (built.refresh)();
+        // Filter to warnings on an empty history: still the empty state.
+        built.filter.set_active_id(Some("warning"));
+        (built.refresh)();
+        built.clear.emit_clicked();
+        (built.refresh)();
+        built.dialog.destroy();
+        // Reopen pattern: a fresh build works after destroy.
+        let rebuilt = GtkOsd::build_history(&window, &state);
+        (rebuilt.refresh)();
+        rebuilt.dialog.destroy();
     }
 }
 

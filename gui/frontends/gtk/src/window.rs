@@ -404,15 +404,15 @@ impl WindowExtend for Window {
             refresh();
             return;
         }
-        let (dialog, refresh) = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
+        let built = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
         {
             let result = self.clone();
-            dialog.connect_destroy(move |_| {
+            built.dialog.connect_destroy(move |_| {
                 result.borrow_mut().history_dialog = None;
             });
         }
-        self.borrow_mut().history_dialog = Some((dialog.clone(), refresh));
-        dialog.present();
+        self.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh));
+        built.dialog.present();
     }
 
     fn open_debugger(&self) {
