@@ -10,7 +10,11 @@ use sha2::{Digest, Sha256};
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, RomPickerResult};
-use crate::{fetch_seq::FetchSeq, import_metadata};
+use crate::{
+    fetch_seq::FetchSeq,
+    import_metadata,
+    picker_lane::{BumperBudget, LatestLane},
+};
 
 const ROM_PICKER_BUFFER_CAPACITY: usize = 64 * 1024;
 
@@ -32,25 +36,28 @@ enum FetchJob {
 /// Monotonic fetch generation: every request takes the next id.
 static FETCH_SEQ: FetchSeq = FetchSeq::new();
 
-/// Single fetch worker: one thread serves every request in order.
-/// Stale completions drop instead of racing the latest request.
-static FETCH_WORKER: OnceLock<Sender<FetchJob>> = OnceLock::new();
+/// Single fetch lane: one pending slot, newer pushes drop the stale one.
+/// Total retention is pending (<=1) plus the active job, never a backlog of
+/// cloned apps and URIs behind a stuck provider (NER-306 AC-2, NER-307 AC-3).
+static FETCH_LANE: LatestLane<FetchJob> = LatestLane::new();
 
-fn fetch_worker() -> &'static Sender<FetchJob> {
-    FETCH_WORKER.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<FetchJob>();
+/// Starts the single worker once; a failed spawn closes the lane so senders
+/// report instead of queueing behind a worker that will never run.
+fn ensure_fetch_worker() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
         if let Err(error) = std::thread::Builder::new()
             .name("nerust-picker-fetch".to_string())
-            .spawn(move || {
-                for job in rx {
+            .spawn(|| {
+                while let Some(job) = FETCH_LANE.take() {
                     run_fetch_job(job);
                 }
             })
         {
             log::error!("failed to spawn Android picker fetch worker: {error}");
+            FETCH_LANE.close();
         }
-        tx
-    })
+    });
 }
 
 /// Latest request wins: a stale completion drops before publishing.
@@ -162,21 +169,20 @@ pub(super) fn has_pending_result() -> bool {
 
 pub(super) fn reset_transient() {
     // Take the slot handles here so a reset job can never start provider
-    // I/O the resetter cannot cancel (NER-306). The bumper lanes are
-    // already initialized whenever handles can exist: every handle-publishing
-    // path runs after a spawn, and every spawn cancels first.
+    // I/O the resetter cannot cancel (NER-306). Handles imply a prior spawn,
+    // which cached the VM below, so lanes are always available for them.
     let (signal, stream) = bridge::with_picker(|state| {
         FETCH_SEQ.next();
         state.result = None;
         state.in_flight = None;
         (state.in_flight_signal.take(), state.in_flight_stream.take())
     });
-    match BUMPER_LANES.get() {
-        Some(lanes) => send_to_bumper(lanes, signal, stream),
+    match CACHED_VM.get() {
+        Some(vm) => send_to_bumper(ensure_bumper(vm), signal, stream),
         None => {
+            debug_assert!(signal.is_none() && stream.is_none());
             drop(signal);
             drop(stream);
-            log::warn!("picker reset before any bumper init; handles dropped uncancelled");
         }
     }
 }
@@ -243,19 +249,24 @@ pub(super) fn spawn_document_fetch(app: AndroidApp, uri: String, restore_hidden_
     // calls before queuing behind it.
     cancel_in_flight(&app);
     let seq = begin_fetch();
-    if fetch_worker()
-        .send(FetchJob::Document {
-            seq,
-            app,
-            uri,
-            restore_hidden_state,
-        })
-        .is_err()
-    {
+    ensure_fetch_worker();
+    let dropped_before = FETCH_LANE.dropped();
+    if !FETCH_LANE.send(FetchJob::Document {
+        seq,
+        app,
+        uri,
+        restore_hidden_state,
+    }) {
         publish_if_latest(
             seq,
             RomPickerResult::Failed("picker fetch worker is gone".to_string()),
         );
+    } else {
+        // Latest wins: a replaced queue entry owned the previous push.
+        if FETCH_LANE.dropped() != dropped_before {
+            log::debug!("picker fetch superseded a queued job");
+        }
+        debug_assert!(FETCH_LANE.pending() <= 1);
     }
 }
 
@@ -266,14 +277,18 @@ pub(super) fn spawn_library_fetch(app: AndroidApp, path: std::path::PathBuf, id:
     // documents: cancel its provider calls before queuing behind it.
     cancel_in_flight(&app);
     let seq = begin_fetch();
-    if fetch_worker()
-        .send(FetchJob::Library { seq, path, id })
-        .is_err()
-    {
+    ensure_fetch_worker();
+    let dropped_before = FETCH_LANE.dropped();
+    if !FETCH_LANE.send(FetchJob::Library { seq, path, id }) {
         publish_if_latest(
             seq,
             RomPickerResult::RestoreLibraryFailed("picker fetch worker is gone".to_string()),
         );
+    } else {
+        if FETCH_LANE.dropped() != dropped_before {
+            log::debug!("picker fetch superseded a queued job");
+        }
+        debug_assert!(FETCH_LANE.pending() <= 1);
     }
 }
 
@@ -533,12 +548,42 @@ fn read_stream_bytes_inner(
             .err()
             .unwrap_or(jni::errors::Error::JavaException));
     }
-    let close_stream = env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[]);
-    let close_descriptor = env.call_method(&descriptor, jni_str!("close"), jni_sig!("()V"), &[]);
+    // Ownership decides the single stream closer: a bumper that took the
+    // handle closes it, so a taken-over worker skips its local close and
+    // ignores racy close errors instead of failing a good read (NER-307).
+    // The descriptor is never shared, so the worker always closes it here.
+    let owned = take_job_stream_if_ours(seq);
+    let stream_error = if owned {
+        env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[])
+            .err()
+    } else {
+        None
+    };
+    let descriptor_error = env
+        .call_method(&descriptor, jni_str!("close"), jni_sig!("()V"), &[])
+        .err();
     read_result?;
-    close_stream?;
-    close_descriptor?;
+    if owned {
+        if let Some(error) = stream_error {
+            return Err(error);
+        }
+        if let Some(error) = descriptor_error {
+            return Err(error);
+        }
+    }
     Ok(bytes)
+}
+
+/// Reclaim the stream handle before the local close: the slot take decides
+/// the single closer, so a bumper-owned stream is never closed here (NER-307).
+fn take_job_stream_if_ours(seq: u64) -> bool {
+    bridge::with_picker(|state| {
+        if state.in_flight == Some(seq) {
+            state.in_flight_stream.take().is_some()
+        } else {
+            false
+        }
+    })
 }
 
 fn begin_fetch() -> u64 {
@@ -555,9 +600,12 @@ fn begin_fetch() -> u64 {
 /// stream is closed, so a stuck provider stops wedging the single fetch lane.
 /// Runs on the event thread, which owns an `AndroidApp` for the VM.
 fn cancel_in_flight(app: &AndroidApp) {
+    let vm = CACHED_VM
+        .get_or_init(|| unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) })
+        .clone();
     let (signal, stream) =
         bridge::with_picker(|state| (state.in_flight_signal.take(), state.in_flight_stream.take()));
-    send_to_bumper(bumper_lanes(app), signal, stream);
+    send_to_bumper(ensure_bumper(&vm), signal, stream);
 }
 
 /// Route taken handles to the bumper lanes, or drop them with a log when the
@@ -574,16 +622,39 @@ fn send_to_bumper(
     // Never touch the provider here: enqueue for the bumper so a stuck
     // cancel listener or close cannot stall the event thread (NER-307).
     if let Some(signal) = signal {
+        if !CANCEL_BUDGET.pushed() {
+            log::warn!(
+                "picker cancel lane over cap (pending={}); provider may be stuck",
+                CANCEL_BUDGET.pending()
+            );
+        }
         if lanes.cancel.send(signal).is_err() {
+            CANCEL_BUDGET.popped();
             log::error!("picker cancel lane is gone; signal dropped uncancelled");
         }
     }
     if let Some(stream) = stream {
+        if !CLOSE_BUDGET.pushed() {
+            log::warn!(
+                "picker close lane over cap (pending={}); provider may be stuck",
+                CLOSE_BUDGET.pending()
+            );
+        }
         if lanes.close.send(stream).is_err() {
+            CLOSE_BUDGET.popped();
             log::error!("picker close lane is gone; stream dropped unclosed");
         }
     }
 }
+
+/// Process-global VM cached from the first cancelling call: every later call
+/// resolves to the same VM, so resets route without an app handle (NER-306).
+static CACHED_VM: OnceLock<JavaVM> = OnceLock::new();
+
+/// Bumper pressure gauges: live generations stay tiny (one slot plus one
+/// pending fetch), so a count past the cap means a stuck provider (NER-307).
+static CANCEL_BUDGET: BumperBudget = BumperBudget::new(16);
+static CLOSE_BUDGET: BumperBudget = BumperBudget::new(16);
 
 /// Cancel/close lanes plus the process VM they run against. The VM is
 /// captured once from the first cancelling call (single VM per process), so
@@ -600,10 +671,10 @@ struct BumperLanes {
 
 static BUMPER_LANES: OnceLock<BumperLanes> = OnceLock::new();
 
-fn bumper_lanes(app: &AndroidApp) -> &'static BumperLanes {
+/// Lanes for an explicit VM: the cached process VM in production.
+/// Split from the spawner so resets route without an app handle.
+fn ensure_bumper(vm: &JavaVM) -> &'static BumperLanes {
     BUMPER_LANES.get_or_init(|| {
-        // JavaVM is process-global: every later call resolves to the same VM.
-        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as _) };
         let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<Global<JObject<'static>>>();
         let (close_tx, close_rx) = std::sync::mpsc::channel::<Global<JObject<'static>>>();
         let cancel_vm = vm.clone();
@@ -612,6 +683,7 @@ fn bumper_lanes(app: &AndroidApp) -> &'static BumperLanes {
             .spawn(move || {
                 for signal in cancel_rx {
                     cancel_bumper_signal(&cancel_vm, signal);
+                    CANCEL_BUDGET.popped();
                 }
             })
         {
@@ -623,6 +695,7 @@ fn bumper_lanes(app: &AndroidApp) -> &'static BumperLanes {
             .spawn(move || {
                 for stream in close_rx {
                     cancel_bumper_stream(&close_vm, stream);
+                    CLOSE_BUDGET.popped();
                 }
             })
         {
@@ -670,6 +743,7 @@ fn store_job_stream(env: &mut jni::Env<'_>, seq: u64, stream: &JObject<'_>) -> b
 
 /// Slot decision shared by signal/stream registration: only the owning
 /// generation may publish; a refused job must not start provider I/O.
+/// Mirrors `picker_lane::SlotState::publish`; the matrix lives there.
 fn publish_handle(
     state: &mut bridge::PickerSlot,
     seq: u64,
@@ -693,10 +767,10 @@ fn publish_handle(
 
 /// Drop this job's slot handles if no bumper took them first. Exactly one
 /// side owns each global ref: the slot take decides the owner. The gate
-/// stays generation-scoped on purpose: a stale completion must not take the
-/// current job's freshly published handles. Leftovers from a reset generation
-/// are already collected at the reset/begin boundary, so there is nothing
-/// stale left for the gated release to reclaim.
+/// stays generation-scoped on purpose (mirrors `SlotState::release_if_ours`):
+/// a stale completion must not take the current job's freshly published
+/// handles. Leftovers from a reset generation are already collected at the
+/// reset/begin boundary, so there is nothing stale left to reclaim here.
 fn release_job_handles(seq: u64) {
     let (signal, stream) = bridge::with_picker(|state| {
         if state.in_flight == Some(seq) {
