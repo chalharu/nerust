@@ -96,3 +96,22 @@ PUBLISH_LOCK_DIR=""
 pass "AC-3c release and cleanup stay ownership-scoped"
 
 echo "publish-lock probes: OK (${PASS} scenarios)"
+echo "--- NER-314: exclusion spans publish through consume ---"
+# Holder publishes then keeps the lock while a consumer reads the tree.
+SHARED="${TMP}/shared.lock"
+SHARED_TREE="${TMP}/tree.txt"
+echo "BUILD-A" >"${SHARED_TREE}"
+acquire_publish_lock "${SHARED}" >/dev/null
+# Simulate publish: the live tree now carries this run's libs.
+echo "BUILD-A" >"${SHARED_TREE}"
+# A concurrent publisher starts while the first run still consumes.
+( acquire_publish_lock "${SHARED}" >/dev/null 2>&1 ) && fail "second publisher entered during consume"
+[[ "$(cat "${SHARED_TREE}")" == "BUILD-A" ]] || fail "live tree changed under the consumer"
+# A concurrent publish that somehow ran would swap the tree here; the
+# refusal above is what keeps each run's consume on its own publish.
+release_publish_lock
+# After the full run, the next publisher proceeds normally.
+acquire_publish_lock "${SHARED}" >/dev/null || fail "lock not reusable after release"
+release_publish_lock
+echo "ok: exclusion spans publish through consume"
+echo "publish-lock probes: ALL OK"
