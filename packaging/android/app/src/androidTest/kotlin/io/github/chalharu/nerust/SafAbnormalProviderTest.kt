@@ -1,5 +1,6 @@
 package io.github.chalharu.nerust
 
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.ByteArrayOutputStream
@@ -15,33 +16,46 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Emulator abnormal-path tests against a real DocumentsContract provider
- * (NER-321/322/312). The fault provider speaks the same interface as any
- * production DocumentsProvider, so no physical device is needed: outage,
- * corrupt, and oversized modes are driven through static volatiles.
- * Runs in CI inside the android-e2e matrix via e2e.sh (FAULT_CLASS).
+ * Emulator abnormal-path tests against a stub speaking the DocumentsContract
+ * wire protocol (NER-321/322/312). No physical device is needed: outage,
+ * corrupt, and oversized modes are driven through the stub. Runs in CI
+ * inside the android-e2e matrix via e2e.sh (FAULT_CLASS).
  */
 @RunWith(AndroidJUnit4::class)
 class SafAbnormalProviderTest {
     private val treeUri = FaultDocumentsProvider.TREE_URI.toString()
 
     /**
-     * Debug-build stub DocumentsProvider, same APK/UID as the consumer:
-     * installed with the mandated MANAGE_DOCUMENTS protection and
-     * reachable through the target context's resolver with no grant.
-     * Never shipped in release builds (debug source set only).
+     * Plain-ContentProvider stub in the test package: exported with no
+     * permissions (cf. TestRomProvider), reachable through the target
+     * context's resolver. Never shipped: androidTest source set only.
      */
     private fun repository(): SafRepository =
         SafRepository(ApplicationProvider.getApplicationContext())
 
+    /**
+     * Fault control plane: the stub runs in the test package process while
+     * this test runs in the app process, so statics are not shared; the
+     * outage count is driven through ContentProvider.call instead.
+     */
+    private fun setOutage(count: Int) {
+        val appContext = ApplicationProvider.getApplicationContext<Context>()
+        appContext.contentResolver.call(
+            FaultDocumentsProvider.COMMAND_URI,
+            FaultDocumentsProvider.SET_OUTAGE_METHOD,
+            count.toString(),
+            null,
+        )
+    }
+
     @Before
     fun clearFaults() {
-        FaultDocumentsProvider.outageFailures.set(0)
+        setOutage(0)
     }
 
     @After
     fun resetFaults() {
-        FaultDocumentsProvider.outageFailures.set(0)
+        setOutage(0)
     }
 
     private fun readFully(repository: SafRepository, sessionId: Long): ByteArray {
@@ -59,7 +73,7 @@ class SafAbnormalProviderTest {
     fun transientOutageIsScanErrorNeverMissing() {
         repository().use { repository ->
             // Provider-wide outage: every query/open burns a failure.
-            FaultDocumentsProvider.outageFailures.set(100)
+            setOutage(100)
             assertEquals(
                 "transient outage must be an error (0), never missing (-1)",
                 0L,
@@ -72,7 +86,7 @@ class SafAbnormalProviderTest {
                 assertTrue(error.message.orEmpty().contains("unreadable SAF listing"))
             }
             // Recovery: the same documents serve once the outage clears.
-            FaultDocumentsProvider.outageFailures.set(0)
+            setOutage(0)
             val session = repository.openSafReadSession(treeUri, "good.state")
             assertTrue("recovered session must be valid, got $session", session > 0)
             try {
