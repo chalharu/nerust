@@ -98,11 +98,13 @@ pub trait AutoSaveBackend: Send {
     fn delete_autosave(&self, dir: &StorageLocation) -> Result<(), PersistenceError>;
     /// Quarantine the hidden autosave aside instead of deleting it.
     /// Returns the quarantine path, or `None` when nothing was kept.
+    /// The default keeps the data in place: backends without isolation
+    /// must not silently delete on this path (NER-319).
     fn quarantine_autosave(
         &self,
-        dir: &StorageLocation,
+        _dir: &StorageLocation,
     ) -> Result<Option<StorageLocation>, PersistenceError> {
-        self.delete_autosave(dir).map(|_| None)
+        Ok(None)
     }
 }
 
@@ -127,7 +129,7 @@ mod ports_cov_tests {
     use crate::session::ports::*;
 
     #[test]
-    fn default_quarantine_deletes() {
+    fn default_quarantine_keeps_data_in_place() {
         struct Noop;
         impl AutoSaveBackend for Noop {
             fn write_autosave(
@@ -146,7 +148,7 @@ mod ports_cov_tests {
                 Ok(None)
             }
             fn delete_autosave(&self, _: &StorageLocation) -> Result<(), PersistenceError> {
-                Ok(())
+                panic!("default quarantine must not delete (NER-319)")
             }
         }
         let dir = std::env::temp_dir().join("nerust-ports-quarantine-probe");
