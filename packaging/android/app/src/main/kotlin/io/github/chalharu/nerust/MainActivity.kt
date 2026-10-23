@@ -87,6 +87,11 @@ class MainActivity :
 
     @Volatile private var lastLoadedSystemForTest: String? = null
 
+    /** Set only on the user-initiated finish paths (back, Exit menu):
+     * the native side exits the process exactly then, never on a
+     * framework-driven destroy (NER-327). */
+    private var userInitiatedExit = false
+
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
 
@@ -277,7 +282,7 @@ class MainActivity :
         safRepository.close()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
-        onActivityDestroyed()
+        onActivityDestroyed(userInitiatedExit)
         super.onDestroy()
     }
 
@@ -293,6 +298,7 @@ class MainActivity :
 
     private fun handleBackNavigation() {
         if (!chromeManager.removeDrawerOverlay()) {
+            userInitiatedExit = true
             finish()
         }
     }
@@ -774,7 +780,7 @@ class MainActivity :
         statusPosition: Int,
     ): Boolean
 
-    private external fun onActivityDestroyed()
+    private external fun onActivityDestroyed(userInitiatedExit: Boolean)
 
     private external fun onCartridgeAcceleration(
         xG: Float,

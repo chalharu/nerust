@@ -55,6 +55,9 @@ use winit::{
     window::WindowId,
 };
 
+/// Re-exported for the post-loop exit decision in lib.rs: the bridge
+/// module itself stays private to this module.
+pub(crate) use self::bridge::take_user_exit_request;
 use self::{
     bridge::RomPickerResult,
     dialog_coordinator::{DialogCoordinator, ScreenSource},
@@ -113,7 +116,7 @@ pub(super) fn register_main_activity_natives(
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("onActivityDestroyed"),
-                jni_str!("()V"),
+                jni_str!("(Z)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed
                     as *mut c_void,
             ),
@@ -597,6 +600,10 @@ impl AndroidFrontend {
                 MenuAction::Exit => {
                     self.unload_for_exit();
                     self.core.session.flush_before_exit();
+                    // User-initiated: the destroy that follows must end
+                    // the process, including under instrumentation where
+                    // the termination gate verifies it (NER-327).
+                    bridge::request_user_exit();
                     // Fire-and-forget: the activity teardown never
                     // blocks the event thread on a JNI round-trip.
                     bridge::post_to_activity(

@@ -12,9 +12,11 @@ trap - EXIT
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 PASS=0
-# Shared stub matcher: every adb stub below matches the same
+# Shared stub matchers: every adb stub below matches the same
 # instrumentation call shape (Sonar S1192: no repeated literal).
 INSTRUMENT_CMD="am instrument"
+PIDOF_MATCH="pidof"
+FORCE_STOP_MATCH="am force-stop"
 fail() {
     echo "FAIL: $1" >&2
     exit 1
@@ -52,7 +54,8 @@ adb() {
     # shellcheck disable=SC2124
     case "$*" in
         *"${INSTRUMENT_CMD}"*) echo "error: device '(null)' not found" >&2; return 1 ;;
-        *pidof*) echo "1234" ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) echo "1234" ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
 }
@@ -65,15 +68,18 @@ fi
 unset -f adb
 
 # --- termination gate with stubbed adb: genuine pass still passes ---
-# First pidof (pre-request evidence) reports alive, later ones report gone.
+# Freshness sees a lingering process and force-stops it; the pre-request
+# check relaunches it; the test runs; later pidofs report gone.
 echo 0 >"${TMP}/genuine-pidof-calls"
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
-        *pidof*)
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *monkey*) return 0 ;;
+        *${PIDOF_MATCH}*)
             n=$(($(cat "${TMP}/genuine-pidof-calls") + 1))
             echo "${n}" >"${TMP}/genuine-pidof-calls"
-            if ((n == 1)); then echo "1234"; else return 1; fi ;;
+            if ((n == 1 || n == 3)); then echo "1234"; else return 1; fi ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -89,7 +95,7 @@ unset -f adb
 # --- adb failure inside the wait must fail, not pass ---
 adb() {
     case "$*" in
-        *pidof*) echo "error: device offline" >&2; return 1 ;;
+        *${PIDOF_MATCH}*) echo "error: device offline" >&2; return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
 }
@@ -105,6 +111,8 @@ unset -f adb
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -121,6 +129,8 @@ unset -f adb
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_CODE: 1\nOK (2 tests)\n' ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -137,6 +147,8 @@ unset -f adb
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) return 1 ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
 }
@@ -151,7 +163,7 @@ unset -f adb
 # --- unknown adb failure text never converts to gone ---
 adb() {
     case "$*" in
-        *pidof*) echo "error: closed" >&2; return 1 ;;
+        *${PIDOF_MATCH}*) echo "error: closed" >&2; return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
 }
@@ -164,12 +176,16 @@ fi
 unset -f adb
 
 # --- pre-dead process: a pre-existing crash plus absence proves nothing ---
-# The gate relaunches once; an unstartable process still fails.
+# Freshness skips force-stop when nothing runs; the relaunch fails; the
+# crash output without progress still fails the gate.
 export E2E_ENSURE_PROCESS_TIMEOUT=2
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
-        *pidof*) return 1 ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *monkey*) return 1 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
+        *logcat*) printf 'no finished marker here\n' ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -183,29 +199,38 @@ fi
 unset -f adb
 unset E2E_ENSURE_PROCESS_TIMEOUT
 
-# --- relaunch when dead: force-stop aftermath still terminates ---
-# First pidof misses (post-instrumentation force-stop), monkey starts the
-# app, the poll sees it, the test reports OK, then the process is gone.
-echo 0 >"${TMP}/relaunch-pidof-calls"
+# --- freshness force-stops a lingering process before the test ---
+# A dead event loop would be reused otherwise: pidof reports alive once,
+# exactly one force-stop runs, the pre-request check relaunches, the
+# test reports OK, then it is gone.
+echo 0 >"${TMP}/fresh-force-stop-calls"
+echo 0 >"${TMP}/fresh-pidof-calls"
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) printf 'INSTRUMENTATION_CODE: -1\nOK (1 test)\n' ;;
+        *${FORCE_STOP_MATCH}*)
+            n=$(($(cat "${TMP}/fresh-force-stop-calls") + 1))
+            echo "${n}" >"${TMP}/fresh-force-stop-calls"
+            return 0 ;;
         *monkey*) return 0 ;;
-        *pidof*)
-            n=$(($(cat "${TMP}/relaunch-pidof-calls") + 1))
-            echo "${n}" >"${TMP}/relaunch-pidof-calls"
-            if ((n == 1)); then return 1; fi
-            if ((n == 2)); then echo "1234"; return 0; fi
-            return 1 ;;
+        *${PIDOF_MATCH}*)
+            n=$(($(cat "${TMP}/fresh-pidof-calls") + 1))
+            echo "${n}" >"${TMP}/fresh-pidof-calls"
+            if ((n == 1 || n == 3)); then echo "1234"; else return 1; fi ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
 }
 export -f adb
-if expect_process_termination "io.github.Fake#Relaunched" >/dev/null 2>&1; then
-    pass "relaunch-when-dead still terminates"
+if expect_process_termination "io.github.Fake#Fresh" >/dev/null 2>&1; then
+    pass "lingering process is cleared before the test"
 else
-    fail "relaunch-when-dead broke the termination gate"
+    fail "freshness gate broke the termination path"
+fi
+if [[ $(cat "${TMP}/fresh-force-stop-calls") -eq 1 ]]; then
+    pass "exactly one force-stop precedes the test"
+else
+    fail "force-stop count wrong: $(cat "${TMP}/fresh-force-stop-calls")"
 fi
 unset -f adb
 
@@ -222,6 +247,8 @@ adb() {
                 printf 'INSTRUMENTATION_CODE: -1\nOK (1 test)\n'
             fi ;;
         *logcat*) printf 'TestRunner: finished: FakeRetry(io.github.Fake)\n' ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
@@ -248,6 +275,8 @@ adb() {
             echo "${n}" >"${TMP}/noprogress-instrument-calls"
             printf 'INSTRUMENTATION_STATUS: test=FakeCrash\nINSTRUMENTATION_STATUS_CODE: 1\nINSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_CODE: 0\n' ;;
         *logcat*) printf 'some unrelated log line\n' ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
         *) echo "unexpected adb call: $*" >&2; return 1 ;;
     esac
     return 0
