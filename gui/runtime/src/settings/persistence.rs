@@ -236,8 +236,12 @@ fn copy_storage_contents(
             if let Some(parent) = destination_mapper.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::copy(source_mapper, destination_mapper)?;
-            copied.push(destination_mapper.to_path_buf());
+            copy_one_tracked(
+                &mut copied,
+                source_mapper,
+                destination_mapper,
+                |src, dst| fs::copy(src, dst),
+            )?;
         }
         match fs::read_dir(source_states) {
             Ok(entries) => {
@@ -247,8 +251,9 @@ fn copy_storage_contents(
                     let path = entry.path();
                     if path.is_file() {
                         let target = destination_states.join(entry.file_name());
-                        fs::copy(&path, &target)?;
-                        copied.push(target);
+                        copy_one_tracked(&mut copied, &path, &target, |src, dst| {
+                            fs::copy(src, dst)
+                        })?;
                     }
                 }
             }
@@ -259,10 +264,45 @@ fn copy_storage_contents(
     })();
     if result.is_err() {
         for path in copied {
-            let _ = fs::remove_file(path);
+            // A failed cleanup must not mask the migration error, but it
+            // must not pass silently either: a leftover target would still
+            // block the retry. Already-swept targets are quiet.
+            if let Err(error) = fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!(
+                    "storage migration rollback could not remove {}: {error}",
+                    path.display()
+                );
+            }
         }
     }
     result
+}
+
+/// Copy one migration file with rollback reservation: the target joins the
+/// rollback set BEFORE the write, so a copy that fails mid-stream still has
+/// its partial target removed (NER-325).
+fn copy_one_tracked(
+    copied: &mut Vec<std::path::PathBuf>,
+    source: &Path,
+    target: &Path,
+    copy: impl FnOnce(&Path, &Path) -> std::io::Result<u64>,
+) -> Result<(), SettingsError> {
+    copied.push(target.to_path_buf());
+    if let Err(error) = copy(source, target) {
+        // Remove the partial target now instead of relying on the outer
+        // sweep: the reservation must hold even if the caller never
+        // reaches it. The sweep stays as the backstop for earlier files.
+        if let Err(cleanup) = fs::remove_file(target) {
+            log::warn!(
+                "storage migration rollback could not remove {}: {cleanup}",
+                target.display()
+            );
+        }
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -298,6 +338,34 @@ mod tests {
         );
         assert!(first.states_dir.native_path().unwrap().ends_with("states"));
         assert!(!system_storage_key(&DummySystemId, &identity).is_empty());
+    }
+
+    /// NER-325: the rollback reservation happens before the write, so a
+    /// copy that fails mid-stream still has its partial target removed and
+    /// the next load can retry from a clean state.
+    #[test]
+    fn tracked_copy_removes_partial_target_on_mid_stream_failure() {
+        use super::copy_one_tracked;
+        let dir = super::super::test_root("tracked-copy-partial");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("7.state");
+        let mut copied = Vec::new();
+        let error = copy_one_tracked(
+            &mut copied,
+            std::path::Path::new("source"),
+            &target,
+            |_, dst| {
+                // Simulate a mid-stream failure that leaves a partial target.
+                fs::write(dst, vec![0u8; 1024]).unwrap();
+                Err(std::io::Error::other("mid-stream failure"))
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, super::super::SettingsError::Io(_)));
+        assert_eq!(copied, vec![target.clone()]);
+        assert!(!target.exists(), "partial target must not block retry");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
