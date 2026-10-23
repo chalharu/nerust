@@ -1631,6 +1631,65 @@ mod tests {
         assert!(!repeat.images.is_empty());
     }
 
+    /// NER-324: a panel-only redelivery keeps the served pixels, not just a
+    /// non-empty placeholder. Both the live and drain paths funnel through
+    /// this store, so pixel equality here is their common retention.
+    #[test]
+    fn redelivery_keeps_served_pixels_for_panel_only_batches() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        let picture = || {
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels: vec![0, 1],
+            }]
+        };
+        let first = core.images_store(picture(), sent_generation(&core));
+        assert!(first.fresh);
+        let repeat = core.images_store(picture(), sent_generation(&core));
+        assert!(!repeat.fresh);
+        assert_eq!(repeat.generation, first.generation);
+        let pixels = |images: &std::sync::Arc<Vec<DebugImage>>| {
+            images
+                .iter()
+                .flat_map(|image| image.pixels.iter().copied())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pixels(&repeat.images), pixels(&first.images));
+        assert_eq!(pixels(&repeat.images), vec![0, 1]);
+    }
+
+    /// NER-324: non-empty to truly empty clears with fresh. A genuine empty
+    /// reply is not a redelivery: viewers must drop the held decode.
+    #[test]
+    fn true_empty_reply_clears_held_images() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        let first = core.images_store(
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels: vec![0, 1],
+            }],
+            sent_generation(&core),
+        );
+        assert!(first.fresh);
+        assert!(!first.images.is_empty());
+        core.mark_images_dirty();
+        let cleared = core.images_store(Vec::new(), sent_generation(&core));
+        assert!(cleared.fresh);
+        assert!(cleared.images.is_empty());
+    }
+
     /// NER-323: a reply older than a newer invalidation never clears it.
     #[test]
     fn stale_reply_keeps_newer_dirty() {
