@@ -332,6 +332,7 @@ enum Outstanding {
     Images {
         rx: Receiver<Result<Vec<DebugImage>, DebuggerError>>,
         sent_at: Instant,
+        sent_generation: u64,
     },
     Watch {
         rx: Receiver<Result<InspectResult, InspectError>>,
@@ -589,12 +590,20 @@ impl DrainFlight {
                 }
                 self.phase = FlightPhase::Images;
             }
-            Outstanding::Images { rx, sent_at } => {
+            Outstanding::Images {
+                rx,
+                sent_at,
+                sent_generation,
+            } => {
                 match await_reply(&rx, sent_at, self.deadline) {
                     Awaited::Waiting => {
-                        return Settle::Waiting(Outstanding::Images { rx, sent_at });
+                        return Settle::Waiting(Outstanding::Images {
+                            rx,
+                            sent_at,
+                            sent_generation,
+                        });
                     }
-                    Awaited::Ready(reply) => self.resolve_images(reply),
+                    Awaited::Ready(reply) => self.resolve_images(reply, sent_generation),
                     Awaited::Lost => {}
                 }
                 self.phase = FlightPhase::Watch;
@@ -860,10 +869,11 @@ impl DrainFlight {
             return;
         }
         match core.images_send() {
-            Ok(rx) => {
+            Ok((rx, sent_generation)) => {
                 self.outstanding = Some(Outstanding::Images {
                     rx,
                     sent_at: Instant::now(),
+                    sent_generation,
                 });
             }
             Err(_) => {
@@ -1002,13 +1012,17 @@ impl DrainFlight {
         });
     }
 
-    fn resolve_images(&mut self, reply: Result<Vec<DebugImage>, DebuggerError>) {
+    fn resolve_images(
+        &mut self,
+        reply: Result<Vec<DebugImage>, DebuggerError>,
+        sent_generation: u64,
+    ) {
         let images = match reply {
             Ok(images) => images,
             Err(_) => return,
         };
         if let Some(core) = self.ctx.core.as_ref() {
-            let stored = core.images_store(images);
+            let stored = core.images_store(images, sent_generation);
             // Unchanged content reports the served generation: skip the RGBA conversion too.
             self.images_gen = stored.generation;
             self.images = if stored.fresh {
@@ -1197,6 +1211,7 @@ enum LiveImagesState {
     Fetching {
         rx: Receiver<Result<Vec<DebugImage>, DebuggerError>>,
         sent_at: Instant,
+        sent_generation: u64,
     },
     Ready(crate::emu_core::images::LiveImages),
 }
@@ -1236,13 +1251,14 @@ impl LiveImagesFlight {
             };
         }
         match core.images_send() {
-            Ok(rx) => Self {
+            Ok((rx, sent_generation)) => Self {
                 core: Some(core),
                 epoch: None,
                 deadline,
                 state: Some(LiveImagesState::Fetching {
                     rx,
                     sent_at: Instant::now(),
+                    sent_generation,
                 }),
             },
             Err(_) => Self::ready(None, deadline),
@@ -1274,27 +1290,34 @@ impl LiveImagesFlight {
         match state {
             None | Some(LiveImagesState::Ready(None)) => LiveImagesPoll::Done(None),
             Some(LiveImagesState::Ready(live)) => LiveImagesPoll::Done(live),
-            Some(LiveImagesState::Fetching { rx, sent_at }) => {
-                match await_reply(&rx, sent_at, self.deadline) {
-                    Awaited::Waiting => {
-                        self.state = Some(LiveImagesState::Fetching { rx, sent_at });
-                        LiveImagesPoll::Pending
-                    }
-                    Awaited::Ready(reply) => LiveImagesPoll::Done(self.store(reply)),
-                    Awaited::Lost => LiveImagesPoll::Done(None),
+            Some(LiveImagesState::Fetching {
+                rx,
+                sent_at,
+                sent_generation,
+            }) => match await_reply(&rx, sent_at, self.deadline) {
+                Awaited::Waiting => {
+                    self.state = Some(LiveImagesState::Fetching {
+                        rx,
+                        sent_at,
+                        sent_generation,
+                    });
+                    LiveImagesPoll::Pending
                 }
-            }
+                Awaited::Ready(reply) => LiveImagesPoll::Done(self.store(reply, sent_generation)),
+                Awaited::Lost => LiveImagesPoll::Done(None),
+            },
         }
     }
 
     fn store(
         &self,
         reply: Result<Vec<DebugImage>, DebuggerError>,
+        sent_generation: u64,
     ) -> crate::emu_core::images::LiveImages {
         use crate::emu_core::images::{LiveImage, LiveImageBatch};
         let images = reply.ok()?;
         let core = self.core.as_ref()?;
-        let stored = core.images_store(images);
+        let stored = core.images_store(images, sent_generation);
         // Unchanged content skips the RGBA conversion like the drain
         // flight: the served generation makes viewers drop it.
         let items = if stored.fresh {

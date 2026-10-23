@@ -72,6 +72,12 @@ pub struct TickSnapshot {
 
 /// Shared image batch: generation plus refcounted decode.
 pub type SharedDebugImages = std::sync::Arc<Vec<DebugImage>>;
+/// Pending images fetch: the reply channel plus the generation at send time,
+/// so the reply binds to its invalidation generation (NER-323).
+pub(crate) type ImagesFetch = (
+    std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>,
+    u64,
+);
 /// Debugger image outcome: thread errors outer, domain errors inner.
 pub type DebugImagesOutcome =
     Result<Result<(u64, SharedDebugImages), DebuggerError>, OperationError>;
@@ -139,11 +145,9 @@ pub trait LiveCore: PlaybackPort + FramePort + AudioPort + LiveDebugPort {
     /// Paused PPU-viewer cache leg.
     fn images_cache_lookup(&self) -> Option<(u64, std::sync::Arc<Vec<DebugImage>>)>;
     /// Paused PPU-viewer cache leg.
-    fn images_send(
-        &self,
-    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>;
+    fn images_send(&self) -> Result<ImagesFetch, OperationError>;
     /// Paused PPU-viewer cache leg.
-    fn images_store(&self, images: Vec<DebugImage>) -> StoredImages;
+    fn images_store(&self, images: Vec<DebugImage>, sent_generation: u64) -> StoredImages;
     /// Owned handle for the async debug drain.
     fn drain_handle(&self) -> Box<dyn LiveCore>;
     /// Persistence view of this core; object-safe upcast for boxed holders.
@@ -947,13 +951,14 @@ impl EmuCore {
         if let Some((generation, shared)) = self.images_cache_lookup() {
             return Ok(Ok((generation, std::sync::Arc::clone(&shared))));
         }
-        let result = recv_debug_reply(self.images_send()?);
+        let (reply_rx, sent_generation) = self.images_send()?;
+        let result = recv_debug_reply(reply_rx);
         let images = match result {
             Ok(Ok(images)) => images,
             Ok(Err(error)) => return Ok(Err(error)),
             Err(_) => return Err(OperationError::NoReply),
         };
-        let stored = self.images_store(images);
+        let stored = self.images_store(images, sent_generation);
         Ok(Ok((stored.generation, stored.images)))
     }
 
@@ -968,20 +973,30 @@ impl EmuCore {
     }
 
     /// Send half of the [`EmuCore::debug_images`] fetch: queues without
-    /// blocking so the async debug drain can poll on its own tick.
-    pub(crate) fn images_send(
-        &self,
-    ) -> Result<mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError> {
+    /// blocking so the async debug drain can poll on its own tick. Returns
+    /// the generation at send time so the reply binds to it (NER-323).
+    pub(crate) fn images_send(&self) -> Result<ImagesFetch, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
             .send(EmuCommand::DebuggerImages { reply: reply_tx })
             .map_err(|_| OperationError::WorkerUnavailable)?;
-        Ok(reply_rx)
+        let generation = self
+            .image_cache
+            .lock()
+            .map(|cache| cache.generation)
+            .unwrap_or(0);
+        Ok((reply_rx, generation))
     }
 
     /// Store a fetched decode and report freshness; a poisoned cache still serves.
     /// Content-identical refetches report the *served* generation so viewers skip re-deriving.
-    pub(crate) fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
+    /// A reply older than a newer invalidation never clears it: the cache and
+    /// the report keep the served generation instead (NER-323).
+    pub(crate) fn images_store(
+        &self,
+        images: Vec<DebugImage>,
+        sent_generation: u64,
+    ) -> StoredImages {
         let hash = hash_debug_images(&images);
         // One shared copy: the cache holds it, the report moves the input without re-cloning.
         let shared = std::sync::Arc::new(images);
@@ -989,6 +1004,15 @@ impl EmuCore {
             log::warn!("image cache mutex poisoned, recovering");
             e.into_inner()
         });
+        if cache.generation != sent_generation {
+            // A newer invalidation arrived after this fetch started: keep
+            // it. Report the served generation so viewers drop the stale reply.
+            return StoredImages {
+                generation: cache.served_generation,
+                images: std::sync::Arc::new(Vec::new()),
+                fresh: false,
+            };
+        }
         cache.images = std::sync::Arc::clone(&shared);
         cache.dirty = false;
         if cache.served_hash == Some(hash) {
@@ -1001,6 +1025,10 @@ impl EmuCore {
                 fresh: false,
             }
         } else {
+            // Different pixels must not reuse the served revision.
+            if cache.generation == cache.served_generation {
+                cache.generation = cache.generation.wrapping_add(1);
+            }
             cache.served_hash = Some(hash);
             cache.served_generation = cache.generation;
             StoredImages {
@@ -1099,15 +1127,12 @@ impl LiveCore for EmuCore {
         self.images_cache_lookup()
     }
 
-    fn images_send(
-        &self,
-    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>, OperationError>
-    {
+    fn images_send(&self) -> Result<ImagesFetch, OperationError> {
         self.images_send()
     }
 
-    fn images_store(&self, images: Vec<DebugImage>) -> StoredImages {
-        self.images_store(images)
+    fn images_store(&self, images: Vec<DebugImage>, sent_generation: u64) -> StoredImages {
+        self.images_store(images, sent_generation)
     }
 
     fn drain_handle(&self) -> Box<dyn LiveCore> {
@@ -1456,15 +1481,19 @@ mod tests {
     fn resume_then_pause_invalidates_images_without_intermediate_fetch() {
         let core = loaded_core();
         core.pause().unwrap();
-        core.images_store(vec![DebugImage {
-            id: "tiles",
-            label_id: "Tiles",
-            width: 1,
-            height: 1,
-            format: nerust_core_traits::debugger::ImageFormat::Indexed2bpp,
-            palette: vec![[0, 0, 0]],
-            pixels: vec![0],
-        }]);
+        let sent = core.image_cache.lock().unwrap().generation;
+        core.images_store(
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 1,
+                height: 1,
+                format: nerust_core_traits::debugger::ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0]],
+                pixels: vec![0],
+            }],
+            sent,
+        );
         assert!(core.images_cache_lookup().is_some());
         core.resume().unwrap();
         core.pause().unwrap();
@@ -1543,6 +1572,10 @@ mod tests {
         core.pause().expect("thread");
     }
 
+    fn sent_generation(core: &crate::emu_core::EmuCore) -> u64 {
+        core.image_cache.lock().unwrap().generation
+    }
+
     #[test]
     fn images_store_advances_only_on_changed_content() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1558,18 +1591,66 @@ mod tests {
                 pixels,
             }]
         };
-        let first = core.images_store(picture(vec![0, 1]));
+        let first = core.images_store(picture(vec![0, 1]), sent_generation(&core));
         assert!(first.fresh);
         let served = first.generation;
         // Identical content: same generation back, no freshness.
-        let repeat = core.images_store(picture(vec![0, 1]));
+        let repeat = core.images_store(picture(vec![0, 1]), sent_generation(&core));
         assert!(!repeat.fresh);
         assert_eq!(repeat.generation, served);
         // Changed byte: fresh with the current generation.
         core.mark_images_dirty();
-        let changed = core.images_store(picture(vec![0, 2]));
+        let changed = core.images_store(picture(vec![0, 2]), sent_generation(&core));
         assert!(changed.fresh);
         assert!(changed.generation > served);
+    }
+
+    /// NER-323: a reply older than a newer invalidation never clears it.
+    #[test]
+    fn stale_reply_keeps_newer_dirty() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        core.mark_images_dirty();
+        let sent = sent_generation(&core);
+        // Newer invalidation after the fetch started.
+        core.mark_images_dirty();
+        let stored = core.images_store(
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels: vec![9],
+            }],
+            sent,
+        );
+        assert!(!stored.fresh);
+        assert!(core.images_cache_lookup().is_none());
+        let _ = stored;
+    }
+
+    /// NER-323: different published images never share a revision.
+    #[test]
+    fn different_content_never_reuses_served_generation() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        let picture = |pixels: Vec<u8>| {
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels,
+            }]
+        };
+        let first = core.images_store(picture(vec![0, 1]), sent_generation(&core));
+        let second = core.images_store(picture(vec![0, 2]), sent_generation(&core));
+        assert!(second.fresh);
+        assert_ne!(second.generation, first.generation);
     }
 
     #[test]
