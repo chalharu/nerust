@@ -243,4 +243,13 @@ expect_process_termination "${TEST_CLASS}#backTerminatesApplicationProcess"
 run_instrumentation "${TEST_CLASS}#appLaunchesAfterTermination"
 expect_process_termination "${TEST_CLASS}#exitTerminatesApplicationProcess"
 run_instrumentation "${TEST_CLASS}#appLaunchesAfterTermination"
-run_instrumentation "${TEST_CLASS}#runtimeMeetsMinimumSupportedApi,${TEST_CLASS}#romPickerIntentUsesSafPersistableReadAccess,${TEST_CLASS}#directoryPickerIntentUsesPersistableReadWriteAccess,${TEST_CLASS}#pushedZonesParseToDrawableRects,${TEST_CLASS}#pushedJoystickParsesHomeGeometry,${TEST_CLASS}#delayedDismissCannotAcknowledgeReplacementDialog"
+# One test per instrumentation run: the process exits on activity destroy
+# by design, so a shared run would start later tests in a dying process
+# and lose their results. Separate runs keep the per-test isolation the
+# suite above already relies on (NER-327).
+run_instrumentation "${TEST_CLASS}#runtimeMeetsMinimumSupportedApi"
+run_instrumentation "${TEST_CLASS}#romPickerIntentUsesSafPersistableReadAccess"
+run_instrumentation "${TEST_CLASS}#directoryPickerIntentUsesPersistableReadWriteAccess"
+run_instrumentation "${TEST_CLASS}#pushedZonesParseToDrawableRects"
+run_instrumentation "${TEST_CLASS}#pushedJoystickParsesHomeGeometry"
+run_instrumentation "${TEST_CLASS}#delayedDismissCannotAcknowledgeReplacementDialog"
