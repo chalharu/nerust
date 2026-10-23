@@ -264,7 +264,10 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
         events.borrow_mut().push(what);
     };
     let outcome = publish_state_with_sidecar(
-        || record(&events, "invalidate"),
+        || {
+            record(&events, "invalidate");
+            Ok(())
+        },
         || {
             record(&events, "state");
             Ok(())
@@ -280,7 +283,10 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     // Sidecar failure: the stale sidecar is dropped, the save still succeeds.
     events.borrow_mut().clear();
     let outcome = publish_state_with_sidecar(
-        || record(&events, "invalidate"),
+        || {
+            record(&events, "invalidate");
+            Ok(())
+        },
         || {
             record(&events, "state");
             Ok(())
@@ -299,7 +305,10 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     // State failure: nothing is published and the sidecar is never written.
     events.borrow_mut().clear();
     let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
-        || record(&events, "invalidate"),
+        || {
+            record(&events, "invalidate");
+            Ok(())
+        },
         || {
             record(&events, "state");
             Err(fail())
@@ -311,6 +320,55 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     );
     assert!(outcome.is_err());
     assert_eq!(*events.borrow(), ["invalidate", "state"]);
+
+    // Unremovable stale sidecar: the publish refuses instead of letting the
+    // scan adopt old metadata for the fresh archive (NER-309).
+    events.borrow_mut().clear();
+    let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            Err(fail())
+        },
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Ok(())
+        },
+    );
+    assert!(outcome.is_err());
+    assert_eq!(*events.borrow(), ["invalidate"]);
+
+    // Failed sidecar cleanup after a failed sidecar write fails the op: a
+    // stale sidecar would otherwise shadow the fresh archive.
+    events.borrow_mut().clear();
+    let attempts = std::rc::Rc::new(std::cell::Cell::new(0));
+    let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            if attempts.get() == 0 {
+                attempts.set(1);
+                Ok(())
+            } else {
+                Err(fail())
+            }
+        },
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Err(fail())
+        },
+    );
+    assert!(outcome.is_err());
+    assert_eq!(
+        *events.borrow(),
+        ["invalidate", "state", "sidecar", "invalidate"]
+    );
 }
 
 /// NER-312: the cap rejects decodable metadata, not just garbage. A huge
