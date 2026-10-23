@@ -494,10 +494,11 @@ impl PersistenceManager {
                     true
                 }
             }
-            Ok(None) => {
-                let _ = self.autosave_backend.delete_autosave(dir);
-                false
-            }
+            // A missing read proves nothing to delete: a backend that
+            // collapses a transient failure into `None` must not trigger
+            // destruction, and a genuine absence makes deletion a no-op.
+            // Foreign-identity files are overwritten by the next save (NER-321).
+            Ok(None) => false,
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
             // Transport failures are retryable: a transient read plus a
             // successful delete would destroy good bytes (NER-321).
@@ -1081,6 +1082,26 @@ mod persistence_cov_tests {
             0,
             "retry loads the same bytes"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A missing read deletes nothing either: a backend that collapses
+        // a transient failure into `None` must not destroy bytes, and a
+        // genuine absence has nothing to delete. The retry still loads.
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let quarantines = Arc::new(AtomicUsize::new(0));
+        let (manager, dir) = manager_with(
+            vec![Ok(None), Ok(Some(valid_slot()))],
+            &deletes,
+            &quarantines,
+        );
+        assert!(!manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "missing read must not delete"
+        );
+        assert_eq!(quarantines.load(Ordering::SeqCst), 0);
+        assert!(manager.load_hidden(&exporter));
         let _ = std::fs::remove_dir_all(&dir);
 
         // Corrupt bytes: quarantined, never deleted.
