@@ -61,7 +61,8 @@ class SafRepository(private val context: Context) : AutoCloseable {
         val files = directory.listFiles()
         val visible = files.filter { it.name?.startsWith(PREFIX) == false }
             .associateBy { requireNotNull(it.name) }.toMutableMap()
-        val committed = generations(files)
+        val survey = surveyGenerations(files)
+        val committed = survey.committed
         for ((name, generation) in committed) {
             if (generation.data == null) visible.remove(name) else visible[name] = generation.data
         }
@@ -89,8 +90,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
         }
         // Amortized recovery scan: staged data without a commit marker is a
         // process-death orphan once past the grace window. In-flight stages
-        // have fresh or unknown mtimes and are never touched.
-        reclaimOrphanedStages(directory, files, committed.values.mapNotNull { it.data?.name }.toSet())
+        // have fresh or unknown mtimes and are never touched. An incomplete
+        // survey skips reclamation: a missed marker must not orphan live data.
+        reclaimOrphanedStages(
+            directory,
+            files,
+            committed.values.mapNotNull { it.data?.name }.toSet(),
+            survey.complete,
+        )
         return array.toString()
     }
 
@@ -154,12 +161,13 @@ class SafRepository(private val context: Context) : AutoCloseable {
         directory: DocumentFile,
         files: Array<DocumentFile>,
         referenced: Set<String>,
+        surveyComplete: Boolean,
     ) {
         val now = System.currentTimeMillis()
         for (name in selectOrphanedStages(files.mapNotNull { file ->
             val fileName = file.name
             if (fileName != null && isStagedData(fileName)) fileName to file.lastModified() else null
-        }.toMap(), referenced, now)) {
+        }.toMap(), referenced, now, surveyComplete)) {
             runCatching { directory.findFile(name)?.delete() }
         }
     }
@@ -190,22 +198,37 @@ class SafRepository(private val context: Context) : AutoCloseable {
             }
         }.getOrNull()
 
-    private fun generations(files: Array<DocumentFile>): Map<String, Generation> {
+    private fun generations(files: Array<DocumentFile>): Map<String, Generation> =
+        surveyGenerations(files).committed
+
+    /**
+     * Generations survey: the display map plus whether every marker resolved.
+     * A single unreadable marker makes the survey incomplete; destructive
+     * reclamation must not run on an incomplete survey (NER-311).
+     */
+    private fun surveyGenerations(files: Array<DocumentFile>): GenerationSurvey {
         val byName = files.associateBy { it.name }
         val result = mutableMapOf<String, Generation>()
+        var complete = true
         for (marker in commitMarkers(files)) {
             try {
-                val raw = readCommitMarker(marker) ?: continue
-                val (name, generation) = parseGeneration(raw, byName) ?: continue
+                val raw = readCommitMarker(marker) ?: run { complete = false; continue }
+                val (name, generation) = parseGeneration(raw, byName) ?: run {
+                    complete = false
+                    continue
+                }
                 if (result[name]?.order?.let { it >= generation.order } != true) {
                     result[name] = generation
                 }
             } catch (error: Exception) {
                 Log.w(TAG, "Ignoring incomplete SAF commit", error)
+                complete = false
             }
         }
-        return result
+        return GenerationSurvey(result, complete)
     }
+
+    private data class GenerationSurvey(val committed: Map<String, Generation>, val complete: Boolean)
 
     private fun commitMarkers(files: Array<DocumentFile>): List<DocumentFile> =
         files.filter { isCommitMarker(it.name) }
@@ -335,18 +358,25 @@ class SafRepository(private val context: Context) : AutoCloseable {
          * Orphaned staged data: unreferenced by any live marker and older than
          * the grace window. Unknown mtimes (0) count as fresh, never stale.
          * Stable name order keeps successive capped sweeps deterministic.
+         * An incomplete survey selects nothing: destructive reclamation needs
+         * every marker resolved, so a missed marker never orphans live data.
          */
         internal fun selectOrphanedStages(
             dataFiles: Map<String, Long>,
             referenced: Set<String>,
             nowMs: Long,
+            surveyComplete: Boolean = true,
         ): List<String> =
-            dataFiles
-                .filter { (name, _) -> name !in referenced }
-                .filter { (_, modified) -> modified > 0 && nowMs - modified > ORPHAN_GRACE_MS }
-                .keys
-                .sorted()
-                .take(MAX_RECLAIM_PER_LISTING)
+            if (!surveyComplete) {
+                emptyList()
+            } else {
+                dataFiles
+                    .filter { (name, _) -> name !in referenced }
+                    .filter { (_, modified) -> modified > 0 && nowMs - modified > ORPHAN_GRACE_MS }
+                    .keys
+                    .sorted()
+                    .take(MAX_RECLAIM_PER_LISTING)
+            }
 
         /** Sweep predicate: same name with a strictly older order. Orders sort lexicographically. */
         internal fun isSupersededMarker(

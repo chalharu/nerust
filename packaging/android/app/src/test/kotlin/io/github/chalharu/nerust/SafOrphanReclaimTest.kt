@@ -34,4 +34,19 @@ class SafOrphanReclaimTest {
         val files = (0 until 10).associate { "s$it.data" to old }
         assertEquals(4, SafRepository.selectOrphanedStages(files, emptySet(), now).size)
     }
+
+    @Test fun incompleteSurveyReclaimsNothing() {
+        // A single unreadable marker makes the reference set suspect:
+        // live data must survive until the next complete survey (NER-311).
+        val files = mapOf("a.data" to old)
+        assertEquals(
+            emptyList<String>(),
+            SafRepository.selectOrphanedStages(files, emptySet(), now, false),
+        )
+        // Same input with a complete survey still reclaims.
+        assertEquals(
+            listOf("a.data"),
+            SafRepository.selectOrphanedStages(files, emptySet(), now, true),
+        )
+    }
 }
