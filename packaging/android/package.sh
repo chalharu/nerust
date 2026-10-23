@@ -246,8 +246,10 @@ if ! mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"; then
     exit 1
 fi
 rm -rf "${stage_publish_old}"
-# Explicit release on the success path; the EXIT trap covers failures.
-release_publish_lock
+# The lock stays held while Gradle consumes the published tree: releasing
+# before assemble lets a concurrent publisher swap the libs under the
+# build. Same-tree runs serialize end to end; different trees use
+# different lock dirs and never contend (NER-314).
 
 (
     cd "${SCRIPT_DIR}"
@@ -267,4 +269,6 @@ fi
 
 
 publish_apk "${APK_SRC}" "${OUT_DIR}" "${APK_NAME}"
+# Explicit release on the success path; the EXIT trap covers failures.
+release_publish_lock
 echo "effective native budget: $(native_budget_bytes) bytes (BUDGET_BYTES=${BUDGET_BYTES:-default})"
