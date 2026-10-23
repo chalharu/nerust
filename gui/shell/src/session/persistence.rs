@@ -1226,6 +1226,111 @@ mod persistence_cov_tests {
         assert_eq!(manager.active_slot_id(), Some(7));
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    /// NER-322 AC-2 in one sequence: a failed scan keeps the previous
+    /// list (distinguishable by `Err`), while a genuinely empty scan
+    /// succeeds and clears it. The setup notice path keys on exactly
+    /// this `Ok`/`Err` split.
+    #[test]
+    fn failed_scan_stays_visible_but_empty_scan_clears() {
+        use crate::session::ports::SlotBackend;
+        use nerust_persistence::model::StateSlotSummary;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        struct FlakyThenEmpty {
+            fail: Arc<AtomicBool>,
+            empty: Arc<AtomicBool>,
+        }
+        impl SlotBackend for FlakyThenEmpty {
+            fn scan(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+            ) -> Result<Vec<StateSlotSummary>, nerust_persistence::error::PersistenceError>
+            {
+                if self.fail.load(Ordering::SeqCst) {
+                    return Err(nerust_persistence::error::PersistenceError::Io(
+                        std::io::Error::other("scan failed"),
+                    ));
+                }
+                if self.empty.load(Ordering::SeqCst) {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: 7,
+                    path: std::path::PathBuf::from("s").into(),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: String::new(),
+                }])
+            }
+            fn allocate_next_id(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+            ) -> Result<u64, nerust_persistence::error::PersistenceError> {
+                Ok(1)
+            }
+            #[allow(unused_variables)]
+            fn write_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+                _data: &[u8],
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+                _thumbnail: Option<&nerust_persistence::thumbnail::ThumbnailSource>,
+            ) -> Result<StateSlotSummary, nerust_persistence::error::PersistenceError> {
+                panic!("unused");
+            }
+            fn read_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<
+                Option<nerust_persistence::model::LoadedStateSlot>,
+                nerust_persistence::error::PersistenceError,
+            > {
+                Ok(None)
+            }
+            fn delete_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<(), nerust_persistence::error::PersistenceError> {
+                Ok(())
+            }
+        }
+        let fail = Arc::new(AtomicBool::new(false));
+        let empty = Arc::new(AtomicBool::new(false));
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FlakyThenEmpty {
+                fail: Arc::clone(&fail),
+                empty: Arc::clone(&empty),
+            }),
+            autosave: Box::new(crate::session::fs::FsAutosave),
+            mapper: Box::new(crate::session::fs::FsMapper),
+        });
+        let dir = crate::test_helpers::unique_temp_dir("scan-keep-vs-clear");
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        manager.refresh_slots(&exporter).unwrap();
+        assert_eq!(manager.slots().len(), 1);
+        assert_eq!(manager.active_slot_id(), Some(7));
+        fail.store(true, Ordering::SeqCst);
+        assert!(manager.refresh_slots(&exporter).is_err());
+        assert_eq!(manager.slots().len(), 1, "failed scan keeps previous slots");
+        assert_eq!(manager.active_slot_id(), Some(7));
+        fail.store(false, Ordering::SeqCst);
+        empty.store(true, Ordering::SeqCst);
+        manager.refresh_slots(&exporter).unwrap();
+        assert!(manager.slots().is_empty(), "empty scan clears the list");
+        assert_eq!(manager.active_slot_id(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[cfg(test)]
