@@ -25,7 +25,7 @@ use winit::platform::android::activity::AndroidApp;
 
 use super::bridge;
 use crate::{
-    bridge_contract::SAF_CHUNK_BYTES,
+    bridge_contract::{SAF_CHUNK_BYTES, SAF_SUMMARY_BYTES},
     saf_decision::{CollectError, collect_stream_capped},
 };
 
@@ -58,6 +58,17 @@ impl AndroidStorageBackend {
     /// One fixed raw stream: open -1 = missing, 0 = error, positive = session.
     /// Nonempty chunks are data, empty chunks EOF, null/exception an I/O error.
     fn read(&self, location: &StorageLocation) -> Result<Option<Vec<u8>>, PersistenceError> {
+        let limit = usize::try_from(MAX_SLOT_ARCHIVE_BYTES).unwrap_or(usize::MAX);
+        self.read_capped(location, limit)
+    }
+
+    /// Bounded variant: sidecars use the metadata cap instead of sharing the
+    /// archive budget, so a huge summary stops mid-transfer (NER-312).
+    fn read_capped(
+        &self,
+        location: &StorageLocation,
+        limit: usize,
+    ) -> Result<Option<Vec<u8>>, PersistenceError> {
         let (uri, relative) = Self::document_key(location)?;
         let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as _) };
         bridge::with_java_env(&vm, |env| {
@@ -73,7 +84,6 @@ impl AndroidStorageBackend {
             if session <= 0 {
                 return Err(jni::errors::Error::NullPtr("Android SAF open failed"));
             }
-            let limit = usize::try_from(MAX_SLOT_ARCHIVE_BYTES).unwrap_or(usize::MAX);
             let mut result = collect_stream_capped(
                 || Self::call_read_session_chunk_inner(env, activity, session),
                 limit,
@@ -291,7 +301,8 @@ impl AndroidStorageBackend {
 
     /// Bounded sidecar lookup for one scanned archive: metadata bytes instead
     /// of the whole zip. `None` means miss, mismatch, or corruption, and the
-    /// caller falls back to the archive read.
+    /// caller falls back to the archive read. Transfer and decode caps match
+    /// the wire pin (`SAF_SUMMARY_BYTES`); the decode layer rechecks.
     fn read_summary_sidecar(
         &self,
         dir: &StorageLocation,
@@ -300,7 +311,7 @@ impl AndroidStorageBackend {
     ) -> Option<StateSlotSummary> {
         let base = state_name.strip_suffix(".state")?;
         let path = dir.child(&format!("{base}.summary")).ok()?;
-        let bytes = self.read(&path).ok()??;
+        let bytes = self.read_capped(&path, SAF_SUMMARY_BYTES).ok()??;
         load_state_summary_from_metadata_bytes(path, &bytes, Some(identity)).ok()?
     }
 }
@@ -575,6 +586,11 @@ mod tests {
     #[test]
     fn saf_chunk_bytes_matches_kotlin_contract() {
         assert_eq!(super::SAF_CHUNK_BYTES, 64 * 1024);
+        assert_eq!(super::SAF_SUMMARY_BYTES, 64 * 1024);
+        assert_eq!(
+            super::SAF_SUMMARY_BYTES,
+            nerust_persistence::slots::MAX_METADATA_BYTES
+        );
     }
 
     #[test]

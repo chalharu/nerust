@@ -5,6 +5,8 @@ pub(crate) const BRIDGE_EVENT_VERSION: u32 = 1;
 pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 1;
 #[allow(dead_code)]
 pub(crate) const SAF_CHUNK_BYTES: usize = 65536;
+#[allow(dead_code)]
+pub(crate) const SAF_SUMMARY_BYTES: usize = 65536;
 pub(crate) const ACTION_EXIT: &str = "exit";
 pub(crate) const ACTION_LOAD_STATE: &str = "load_state";
 pub(crate) const ACTION_OPEN_ROM: &str = "open_rom";

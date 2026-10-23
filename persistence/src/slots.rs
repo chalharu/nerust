@@ -8,6 +8,7 @@ use std::{
 use nerust_core_traits::identity::SystemIdentity;
 
 pub use crate::archive::MAX_SLOT_ARCHIVE_BYTES;
+pub use crate::metadata::MAX_METADATA_BYTES;
 use crate::{
     archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
     error::PersistenceError,

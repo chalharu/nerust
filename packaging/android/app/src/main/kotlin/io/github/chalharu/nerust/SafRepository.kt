@@ -76,7 +76,9 @@ class SafRepository(private val context: Context) : AutoCloseable {
                 val sidecar = byName[name.removeSuffix(".state") + ".summary"]
                 val bytes = try {
                     sidecar?.uri?.let { uri ->
-                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            readCapped(stream, SAF_SUMMARY_BYTES + 1)
+                        }?.takeIf { it.size <= SAF_SUMMARY_BYTES }
                     }
                 } catch (error: Exception) {
                     Log.w(TAG, "listSafFilesWithSizes: sidecar read failed", error)
@@ -188,6 +190,22 @@ class SafRepository(private val context: Context) : AutoCloseable {
     }
 
     private data class Generation(val order: String, val data: DocumentFile?, val size: Long)
+
+    /** Scan transfer guard: sidecar bytes above this are skipped, so a huge
+     * summary never crosses on the batch path either (NER-312). */
+    private fun readCapped(stream: java.io.InputStream, limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        var remaining = limit
+        while (remaining > 0) {
+            val count = stream.read(chunk, 0, minOf(chunk.size, remaining))
+            if (count < 0) break
+            if (count == 0) throw java.io.IOException("zero sidecar read")
+            out.write(chunk, 0, count)
+            remaining -= count
+        }
+        return out.toByteArray()
+    }
 
     private fun knownSize(file: DocumentFile): Long? =
         runCatching {

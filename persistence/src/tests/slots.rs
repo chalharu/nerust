@@ -312,3 +312,19 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     assert!(outcome.is_err());
     assert_eq!(*events.borrow(), ["invalidate", "state"]);
 }
+
+/// NER-312: the metadata cap is enforced by the decoder itself, so a huge
+/// sidecar is rejected even when handed over directly.
+#[test]
+fn metadata_decode_rejects_oversized_sidecar_bytes() {
+    use crate::slots::{MAX_METADATA_BYTES, load_state_summary_from_metadata_bytes};
+    use nerust_core_traits::identity::SystemIdentity;
+    let dir: std::path::PathBuf = "unused".into();
+    let identity: Option<SystemIdentity> = None;
+    let oversized = vec![0u8; MAX_METADATA_BYTES + 1];
+    assert!(
+        load_state_summary_from_metadata_bytes(dir.clone().into(), &oversized, identity.as_ref())
+            .is_err()
+    );
+    assert!(load_state_summary_from_metadata_bytes(dir.into(), &[], identity.as_ref()).is_err());
+}
