@@ -25,6 +25,32 @@ verify_native_library() {
     echo "${library}: ${size} bytes, no DWARF"
 }
 
+# Real artifact check, not a transfer checksum: the APK must be a valid
+# zip containing the expected native library for at least one ABI.
+# A corrupt download and a wrong-artifact publish both fail here.
+verify_apk_contents() {
+    local apk="$1" expected="$2"
+    [[ -s "${apk}" ]] || {
+        echo "missing or empty APK: ${apk}" >&2
+        return 1
+    }
+    python3 - "${apk}" "${expected}" <<'EOF' || return 1
+import sys
+import zipfile
+apk, expected = sys.argv[1], sys.argv[2]
+try:
+    names = zipfile.ZipFile(apk).namelist()
+except zipfile.BadZipFile as error:
+    print(f"APK is not a valid zip: {apk}: {error}", file=sys.stderr)
+    raise SystemExit(1)
+hits = [name for name in names if name.endswith("/" + expected)]
+if not hits:
+    print(f"APK has no {expected} under lib/<abi>/", file=sys.stderr)
+    raise SystemExit(1)
+print(f"APK contents OK: {expected} in {sorted({name.split('/')[1] for name in hits})}")
+EOF
+}
+
 publish_apk() (
     local source="$1" output="$2" name="$3"
     mkdir -p "${output}" || return 1
