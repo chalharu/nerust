@@ -16,7 +16,8 @@ use nerust_persistence::{
     sidecar::StorageLocation,
     slots::{
         MAX_SLOT_ARCHIVE_BYTES, build_state_slot_bytes, load_state_slot_bytes,
-        load_state_summary_bytes, load_state_summary_from_metadata_bytes, publish_state_with_sidecar,
+        load_state_summary_bytes, load_state_summary_from_metadata_bytes,
+        publish_state_with_sidecar,
     },
     thumbnail::ThumbnailSource,
 };
@@ -236,22 +237,17 @@ impl AndroidStorageBackend {
     }
 
     /// One listing contract: negative sizes mean unknown, never trigger fallback.
+    /// Entries also carry sidecar bytes when the provider listed them.
     fn sized_listing(
         &self,
         location: &StorageLocation,
-    ) -> Result<Vec<(String, Option<i64>)>, PersistenceError> {
+    ) -> Result<Vec<SizedEntry>, PersistenceError> {
         let (uri, relative) = Self::document_key(location)?;
         let value = self
             .call_saf_string(&bridge::methods::LIST_SAF_FILES_WITH_SIZES, uri, relative)?
             .ok_or_else(|| Self::persist("Android SAF listing failed"))?;
         let entries: Vec<SizedEntry> = serde_json::from_str(&value).map_err(Self::persist)?;
-        Ok(entries
-            .into_iter()
-            .map(|entry| {
-                let size = entry.known_size();
-                (entry.name, size)
-            })
-            .collect())
+        Ok(entries)
     }
 
     fn call_saf_string(
@@ -310,11 +306,15 @@ impl AndroidStorageBackend {
 }
 
 /// One entry of the `listSafFilesWithSizes` batch; unknown sizes are `None`.
+/// `summary` carries the scan sidecar bytes (base64) when the provider
+/// listed one, so scans avoid a second resolution pass per slot (NER-310).
 #[derive(Debug, serde::Deserialize)]
 struct SizedEntry {
     name: String,
     #[serde(default)]
     size: Option<i64>,
+    #[serde(default)]
+    summary: Option<String>,
 }
 
 impl SizedEntry {
@@ -334,28 +334,51 @@ impl SlotBackend for AndroidStorageBackend {
         if let StorageLocation::Native(_) = dir {
             return FsSlots.scan(dir, identity);
         }
-        let entries: Vec<(String, Option<i64>)> = self.sized_listing(dir)?;
+        let entries = self.sized_listing(dir)?;
         let mut result = Vec::new();
-        for (name, size) in entries
+        for entry in entries
             .into_iter()
-            .filter(|(name, _)| name.ends_with(".state"))
+            .filter(|entry| entry.name.ends_with(".state"))
         {
-            // Empty files cannot hold an archive; unknown sizes still read.
-            // Oversized files cannot load, so scans skip before transfer.
-            if size == Some(0) || !Self::scan_candidate(size) {
-                continue;
-            }
+            let size = entry.known_size();
             // Untrusted listing names never abort the scan: skip and move on.
-            let path = match dir.child(&name) {
+            let path = match dir.child(&entry.name) {
                 Ok(path) => path,
                 Err(_) => {
                     log::warn!("SAF scan: skipping invalid entry name");
                     continue;
                 }
             };
+            // Empty files cannot hold an archive; unknown sizes still read.
+            // Oversized files cannot load, so scans skip before transfer.
+            if size == Some(0) || !Self::scan_candidate(size) {
+                continue;
+            }
+            // Batched sidecar first: one generations pass serves the whole
+            // listing instead of re-resolving per slot. Any miss or mismatch
+            // falls back to the single sidecar read, then the archive.
+            let batched: Option<StateSlotSummary> = entry
+                .summary
+                .as_deref()
+                .and_then(|encoded| {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD
+                        .decode(encoded)
+                        .ok()
+                })
+                .filter(|bytes| !bytes.is_empty())
+                .and_then(|bytes| {
+                    load_state_summary_from_metadata_bytes(path.clone(), &bytes, Some(identity))
+                        .ok()
+                })
+                .flatten();
+            if let Some(summary) = batched {
+                result.push(summary);
+                continue;
+            }
             // Sidecar first: one bounded metadata transfer instead of the
             // whole archive. Any miss or mismatch falls back to the archive.
-            if let Some(summary) = Self::read_summary_sidecar(self, dir, &name, identity) {
+            if let Some(summary) = Self::read_summary_sidecar(self, dir, &entry.name, identity) {
                 result.push(summary);
                 continue;
             }
@@ -378,7 +401,7 @@ impl SlotBackend for AndroidStorageBackend {
         Ok(self
             .sized_listing(dir)?
             .iter()
-            .filter_map(|(name, _)| name.strip_suffix(".state")?.parse::<u64>().ok())
+            .filter_map(|entry| entry.name.strip_suffix(".state")?.parse::<u64>().ok())
             .max()
             .unwrap_or(0)
             .saturating_add(1)
@@ -557,15 +580,18 @@ mod tests {
     #[test]
     fn sized_entry_batch_normalizes_names_and_sizes() {
         let entries: Vec<super::SizedEntry> = serde_json::from_str(
-            r#"[{"name":"0.state","size":42},{"name":"1.state"},{"name":"2.state","size":-1}]"#,
+            r#"[{"name":"0.state","size":42},{"name":"1.state"},{"name":"2.state","size":-1},{"name":"3.state","size":10,"summary":"aGk="}]"#,
         )
         .unwrap();
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 4);
         assert_eq!(entries[0].known_size(), Some(42));
         // Missing sizes are unknown, never a decode failure.
         assert_eq!(entries[1].known_size(), None);
         // Negative Kotlin lengths normalize to unknown.
         assert_eq!(entries[2].known_size(), None);
+        // Batched sidecar bytes ride the listing (NER-310).
+        assert_eq!(entries[3].summary.as_deref(), Some("aGk="));
+        assert!(entries[0].summary.is_none());
     }
 
     #[test]
