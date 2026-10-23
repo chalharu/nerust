@@ -1,35 +1,50 @@
 package io.github.chalharu.nerust;
 
+import android.content.ContentProvider;
+import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
-import android.os.CancellationSignal;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
-import android.provider.DocumentsProvider;
 
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Fault-injecting stub DocumentsProvider for emulator abnormal-path tests
+ * Fault-injecting stub content provider for emulator abnormal-path tests
  * (NER-321/322/312). No physical device needed: the test drives outage,
- * corrupt, and oversized modes through static volatiles, and the provider
- * speaks the real DocumentsContract interface the production SafRepository
- * consumes. Debug source set only: same APK/UID as the consumer, never
- * shipped in release builds.
+ * corrupt, and oversized modes, and the provider speaks the same wire
+ * protocol the production SafRepository consumes through
+ * DocumentFile/ContentResolver (tree/document/children URIs plus document
+ * columns).
+ *
+ * <p>Deliberately a plain ContentProvider, NOT a DocumentsProvider: the
+ * platform mandates that installed DocumentsProviders be protected by
+ * {@code android.permission.MANAGE_DOCUMENTS}, a system-only permission a
+ * regular third-party app cannot meaningfully hold. A test stub must not
+ * depend on it. This mirrors the existing TestRomProvider pattern:
+ * androidTest manifest, exported, no permissions. Faults are driven
+ * cross-process through {@link #call}: the stub runs in the test package
+ * process while tests run in the app process, so statics are not shared.
  */
-public final class FaultDocumentsProvider extends DocumentsProvider {
+public final class FaultDocumentsProvider extends ContentProvider {
     public static final String AUTHORITY = "io.github.chalharu.nerust.faultdocs";
     public static final String ROOT_ID = "faultroot";
     public static final Uri TREE_URI =
             Uri.parse("content://" + AUTHORITY + "/tree/" + ROOT_ID);
+    public static final Uri COMMAND_URI =
+            Uri.parse("content://" + AUTHORITY + "/command");
+    /** {@link #call} method selecting the remaining outage failure count. */
+    public static final String SET_OUTAGE_METHOD = "setOutageFailures";
 
     /** Remaining provider-wide transient failures; each query/open burns one. */
-    public static final AtomicInteger outageFailures = new AtomicInteger(0);
+    private static final AtomicInteger outageFailures = new AtomicInteger(0);
 
     private static final String DOC_GOOD = "good.state";
     private static final String DOC_CORRUPT = "corrupt.state";
@@ -58,27 +73,6 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
         DOC_GOOD, DOC_CORRUPT, DOC_SLOT1_STATE, DOC_SUMMARY1, DOC_SLOT2_STATE, DOC_SUMMARY2,
     };
 
-    /** Tree-descendant document id: the platform rejects ids outside the tree. */
-    private static String docId(String leaf) {
-        return ROOT_ID + "/" + leaf;
-    }
-
-    /** Leaf display name for a tree-descendant document id. */
-    private static String leafOf(String documentId) {
-        String prefix = ROOT_ID + "/";
-        if (documentId != null && documentId.startsWith(prefix)) {
-            return documentId.substring(prefix.length());
-        }
-        return documentId;
-    }
-
-    private static final String[] ROOT_PROJECTION = {
-        DocumentsContract.Root.COLUMN_ROOT_ID,
-        DocumentsContract.Root.COLUMN_FLAGS,
-        DocumentsContract.Root.COLUMN_TITLE,
-        DocumentsContract.Root.COLUMN_DOCUMENT_ID,
-    };
-
     private static final String[] DOCUMENT_PROJECTION = {
         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
         DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -99,53 +93,73 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
         }
     }
 
+    /** Tree-descendant document id: matches real provider id shapes. */
+    private static String docId(String leaf) {
+        return ROOT_ID + "/" + leaf;
+    }
+
+    /** Leaf display name for a tree-descendant document id. */
+    private static String leafOf(String documentId) {
+        String prefix = ROOT_ID + "/";
+        if (documentId != null && documentId.startsWith(prefix)) {
+            return documentId.substring(prefix.length());
+        }
+        return documentId;
+    }
+
+    private static boolean isTreeShape(List<String> segments) {
+        return segments.size() >= 4
+                && "tree".equals(segments.get(0))
+                && "document".equals(segments.get(2));
+    }
+
+    private static boolean isChildrenUri(List<String> segments) {
+        return segments.size() == 5 && isTreeShape(segments) && "children".equals(segments.get(4));
+    }
+
+    private static boolean isDocumentUri(List<String> segments) {
+        return segments.size() == 4 && isTreeShape(segments);
+    }
+
     @Override
-    public Cursor queryRoots(String[] projection) {
+    public Cursor query(
+            Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
         burnOutage();
-        MatrixCursor cursor = new MatrixCursor(
-                projection != null ? projection : ROOT_PROJECTION);
-        MatrixCursor.RowBuilder row = cursor.newRow();
-        for (String column : (projection != null ? projection : ROOT_PROJECTION)) {
-            if (DocumentsContract.Root.COLUMN_ROOT_ID.equals(column)) {
-                row.add(column, ROOT_ID);
-            } else if (DocumentsContract.Root.COLUMN_FLAGS.equals(column)) {
-                row.add(column, 0);
-            } else if (DocumentsContract.Root.COLUMN_TITLE.equals(column)) {
-                row.add(column, "fault");
-            } else if (DocumentsContract.Root.COLUMN_DOCUMENT_ID.equals(column)) {
-                row.add(column, ROOT_ID);
-            } else {
-                row.add(column, null);
+        List<String> segments = uri.getPathSegments();
+        if (isChildrenUri(segments)) {
+            String parent = segments.get(3);
+            if (!ROOT_ID.equals(parent)) {
+                throw new IllegalArgumentException("unknown parent: " + parent);
             }
+            MatrixCursor cursor = new MatrixCursor(
+                    projection != null ? projection : DOCUMENT_PROJECTION);
+            for (String childId : CHILD_IDS) {
+                addRow(cursor, docId(childId), projection);
+            }
+            return cursor;
         }
-        return cursor;
+        if (isDocumentUri(segments)) {
+            return cursorFor(segments.get(3), projection);
+        }
+        throw new IllegalArgumentException("unsupported uri: " + uri);
     }
 
     @Override
-    public Cursor queryDocument(String documentId, String[] projection)
-            throws FileNotFoundException {
-        burnOutage();
-        return cursorFor(documentId, projection);
+    public Bundle call(String method, String arg, Bundle extras) {
+        // Control plane: never burns outage, so an active outage cannot
+        // block recovery. Test-only; unsupported methods fail loudly.
+        if (SET_OUTAGE_METHOD.equals(method)) {
+            try {
+                outageFailures.set(Integer.parseInt(arg));
+            } catch (NumberFormatException error) {
+                throw new IllegalArgumentException("bad outage count: " + arg);
+            }
+            return null;
+        }
+        throw new IllegalArgumentException("unsupported call: " + method);
     }
 
-    @Override
-    public Cursor queryChildDocuments(
-            String parentDocumentId, String[] projection, String sortOrder)
-            throws FileNotFoundException {
-        burnOutage();
-        if (!ROOT_ID.equals(parentDocumentId)) {
-            throw new FileNotFoundException("unknown parent: " + parentDocumentId);
-        }
-        MatrixCursor cursor = new MatrixCursor(
-                projection != null ? projection : DOCUMENT_PROJECTION);
-        for (String childId : CHILD_IDS) {
-            addRow(cursor, docId(childId), projection);
-        }
-        return cursor;
-    }
-
-    private MatrixCursor cursorFor(String documentId, String[] projection)
-            throws FileNotFoundException {
+    private MatrixCursor cursorFor(String documentId, String[] projection) {
         if (ROOT_ID.equals(documentId)) {
             MatrixCursor cursor = new MatrixCursor(
                     projection != null ? projection : DOCUMENT_PROJECTION);
@@ -163,7 +177,7 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
                 return cursor;
             }
         }
-        throw new FileNotFoundException("unknown document: " + documentId);
+        throw new IllegalArgumentException("unknown document: " + documentId);
     }
 
     private Object rootValue(String column) {
@@ -245,23 +259,26 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
     }
 
     @Override
-    public ParcelFileDescriptor openDocument(
-            String documentId, String mode, CancellationSignal signal)
-            throws FileNotFoundException {
+    public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         burnOutage();
+        List<String> segments = uri.getPathSegments();
+        if (!isDocumentUri(segments)) {
+            throw new FileNotFoundException("cannot open: " + uri);
+        }
+        String leaf = leafOf(segments.get(3));
         boolean known = false;
         for (String childId : CHILD_IDS) {
-            known |= docId(childId).equals(documentId);
+            known |= childId.equals(leaf);
         }
         if (!known) {
-            throw new FileNotFoundException("cannot open: " + documentId);
+            throw new FileNotFoundException("cannot open: " + uri);
         }
         if (getContext() == null) {
             throw new FileNotFoundException("provider is not attached");
         }
-        File file = new File(getContext().getCacheDir(), "fault-" + leafOf(documentId));
+        File file = new File(getContext().getCacheDir(), "fault-" + leaf);
         try (FileOutputStream output = new FileOutputStream(file)) {
-            output.write(bytesOf(leafOf(documentId)));
+            output.write(bytesOf(leaf));
         } catch (IOException error) {
             FileNotFoundException failure =
                     new FileNotFoundException("could not stage fault document");
@@ -269,5 +286,25 @@ public final class FaultDocumentsProvider extends DocumentsProvider {
             throw failure;
         }
         return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+    }
+
+    @Override
+    public String getType(Uri uri) {
+        return "application/octet-stream";
+    }
+
+    @Override
+    public Uri insert(Uri uri, ContentValues values) {
+        throw new UnsupportedOperationException("read-only stub");
+    }
+
+    @Override
+    public int delete(Uri uri, String selection, String[] selectionArgs) {
+        throw new UnsupportedOperationException("read-only stub");
+    }
+
+    @Override
+    public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
+        throw new UnsupportedOperationException("read-only stub");
     }
 }

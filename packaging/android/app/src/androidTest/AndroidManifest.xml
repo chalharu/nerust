@@ -7,5 +7,13 @@
             android:authorities="io.github.chalharu.nerust.testrom"
             android:exported="true"
             android:grantUriPermissions="true" />
+        <!-- Fault stub for the emulator abnormal-path tests: a plain
+            ContentProvider speaking the DocumentsContract wire protocol,
+            no permissions required (cf. TestRomProvider). -->
+        <provider
+            android:name="io.github.chalharu.nerust.FaultDocumentsProvider"
+            android:authorities="io.github.chalharu.nerust.faultdocs"
+            android:exported="true"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>
