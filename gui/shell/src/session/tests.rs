@@ -1426,7 +1426,8 @@ fn debug_live_images_follow_running_without_snapshot() {
         "inspect refuses while running"
     );
     // The live images path still flows here, so the PPU follow needs no snapshot sections.
-    // Identical content reports the served generation with no payload (content-hash skip).
+    // Identical content reports the served generation with the held images,
+    // so a panel-only update never rebuilds from an empty image (NER-324).
     let live =
         crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Fetch);
     let batch = live.expect("running fetch serves");
@@ -1435,9 +1436,10 @@ fn debug_live_images_follow_running_without_snapshot() {
         running_gen, paused_gen,
         "static tiles keep one generation while running"
     );
-    assert!(
-        running_images.is_empty(),
-        "identical refetch skips the RGBA conversion"
+    assert_eq!(
+        running_images.len(),
+        1,
+        "identical refetch carries the held images"
     );
     session.debug_drain(&[DebugAction::Pause], &input);
 }
@@ -1692,8 +1694,8 @@ fn live_images_flight_refetches_while_running() {
         "static tiles keep one generation while running"
     );
     assert_eq!(
-        second_len, 0,
-        "second begin refetches (identical collapse) instead of serving the stale cache"
+        second_len, 1,
+        "identical refetch carries the held images instead of empty (NER-324)"
     );
     session.debug_pause();
 }

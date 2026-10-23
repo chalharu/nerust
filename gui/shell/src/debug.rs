@@ -1023,13 +1023,10 @@ impl DrainFlight {
         };
         if let Some(core) = self.ctx.core.as_ref() {
             let stored = core.images_store(images, sent_generation);
-            // Unchanged content reports the served generation: skip the RGBA conversion too.
+            // Always keep the served decode: a panel-only redraw must
+            // rebuild from held images, never an empty image (NER-324).
             self.images_gen = stored.generation;
-            self.images = if stored.fresh {
-                stored.images
-            } else {
-                Arc::new(Vec::new())
-            };
+            self.images = stored.images;
         }
     }
 
@@ -1318,18 +1315,14 @@ impl LiveImagesFlight {
         let images = reply.ok()?;
         let core = self.core.as_ref()?;
         let stored = core.images_store(images, sent_generation);
-        // Unchanged content skips the RGBA conversion like the drain
-        // flight: the served generation makes viewers drop it.
-        let items = if stored.fresh {
-            stored
-                .images
-                .iter()
-                .map(vm::rgba_image)
-                .map(LiveImage::from)
-                .collect()
-        } else {
-            Vec::new()
-        };
+        // Always convert the served decode: panel-only updates must keep
+        // the held images instead of an empty image (NER-324).
+        let items = stored
+            .images
+            .iter()
+            .map(vm::rgba_image)
+            .map(LiveImage::from)
+            .collect();
         Some(LiveImageBatch {
             generation: stored.generation,
             images: items,
