@@ -1,11 +1,7 @@
 package io.github.chalharu.nerust
 
-import android.content.ContentResolver
-import android.content.Context
-import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.provider.ProviderTestRule
 import java.io.ByteArrayOutputStream
 import org.json.JSONArray
 import org.junit.After
@@ -15,7 +11,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -31,17 +26,14 @@ class SafAbnormalProviderTest {
     private val treeUri = FaultDocumentsProvider.TREE_URI.toString()
 
     /**
-     * In-process isolated provider: no manifest entry, so the platform
-     * never installs it as a system DocumentsProvider (which would demand
-     * MANAGE_DOCUMENTS protection) and no cross-APK grant is needed. The
-     * repository under test talks to the real DocumentsContract interface
-     * through the rule's resolver.
+     * Manifest-declared stub DocumentsProvider (test APK): installed as a
+     * system DocumentsProvider, which mandates the MANAGE_DOCUMENTS
+     * protection in the manifest. The repository under test talks to the
+     * real DocumentsContract interface through the test context's
+     * resolver; provider and consumer share the test UID.
      */
-    @get:Rule
-    val providerRule: ProviderTestRule = ProviderTestRule.Builder(
-        FaultDocumentsProvider::class.java,
-        FaultDocumentsProvider.AUTHORITY,
-    ).build()
+    private fun repository(): SafRepository =
+        SafRepository(ApplicationProvider.getApplicationContext())
 
     @Before
     fun clearFaults() {
@@ -51,14 +43,6 @@ class SafAbnormalProviderTest {
     @After
     fun resetFaults() {
         FaultDocumentsProvider.outageFailures.set(0)
-    }
-
-    private fun repository(): SafRepository {
-        val appContext = ApplicationProvider.getApplicationContext<Context>()
-        val isolated = object : ContextWrapper(appContext) {
-            override fun getContentResolver(): ContentResolver = providerRule.resolver
-        }
-        return SafRepository(isolated)
     }
 
     private fun readFully(repository: SafRepository, sessionId: Long): ByteArray {
