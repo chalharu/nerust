@@ -495,8 +495,13 @@ impl PersistenceManager {
                 false
             }
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
+            // Transport failures are retryable: a transient read plus a
+            // successful delete would destroy good bytes (NER-321).
+            Err(PersistenceError::Io(_)) => false,
             Err(_) => {
-                let _ = self.autosave_backend.delete_autosave(dir);
+                // Unreadable bytes are corrupt, not missing: preserve them
+                // aside instead of deleting (NER-319 quarantine discipline).
+                let _ = self.autosave_backend.quarantine_autosave(dir);
                 false
             }
         }
@@ -941,6 +946,132 @@ mod persistence_cov_tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), b"progress");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// NER-321: a transient autosave read failure must not delete, and the
+    /// retry after recovery loads the same bytes. Corrupt bytes quarantine
+    /// instead of deleting.
+    #[test]
+    fn transient_autosave_read_failure_never_deletes() {
+        use nerust_persistence::model::{LoadedStateSlot, StateSlotSummary};
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct FlakyAutosave {
+            reads: RefCell<VecDeque<Result<Option<LoadedStateSlot>, PersistenceError>>>,
+            deletes: Arc<AtomicUsize>,
+            quarantines: Arc<AtomicUsize>,
+        }
+        impl AutoSaveBackend for FlakyAutosave {
+            fn write_autosave(
+                &self,
+                _: &StorageLocation,
+                _: &[u8],
+                _: &SystemIdentity,
+            ) -> Result<StateSlotSummary, PersistenceError> {
+                panic!("unused");
+            }
+            fn read_autosave(
+                &self,
+                _: &StorageLocation,
+                _: &SystemIdentity,
+            ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+                self.reads.borrow_mut().pop_front().expect("scripted read")
+            }
+            fn delete_autosave(&self, _: &StorageLocation) -> Result<(), PersistenceError> {
+                self.deletes.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn quarantine_autosave(
+                &self,
+                _: &StorageLocation,
+            ) -> Result<Option<StorageLocation>, PersistenceError> {
+                self.quarantines.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+        }
+        fn valid_slot() -> LoadedStateSlot {
+            use nerust_core_traits::save_state::save_state_with_header;
+            LoadedStateSlot {
+                summary: StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: 0,
+                    path: std::path::PathBuf::from("autosave").into(),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: String::new(),
+                },
+                machine_state: save_state_with_header(&[7; 32]),
+                thumbnail_png: None,
+            }
+        }
+        fn transient() -> PersistenceError {
+            PersistenceError::Io(std::io::Error::other("provider unavailable"))
+        }
+        fn manager_with(
+            reads: Vec<Result<Option<LoadedStateSlot>, PersistenceError>>,
+            deletes: &Arc<AtomicUsize>,
+            quarantines: &Arc<AtomicUsize>,
+        ) -> (PersistenceManager, std::path::PathBuf) {
+            let dir = crate::test_helpers::unique_temp_dir("flaky-autosave");
+            let mut manager = PersistenceManager::new();
+            manager.configure_backends(PersistenceBackends {
+                slot: Box::new(crate::session::fs::FsSlots),
+                autosave: Box::new(FlakyAutosave {
+                    reads: RefCell::new(reads.into()),
+                    deletes: Arc::clone(deletes),
+                    quarantines: Arc::clone(quarantines),
+                }),
+                mapper: Box::new(crate::session::fs::FsMapper),
+            });
+            manager.configure(dir.clone().into(), dir.join("game.sav").into());
+            (manager, dir)
+        }
+
+        // Transient failure: no delete, then the retry loads the same bytes.
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let quarantines = Arc::new(AtomicUsize::new(0));
+        let exporter = exporter_ok();
+        let (manager, dir) = manager_with(
+            vec![Err(transient()), Ok(Some(valid_slot()))],
+            &deletes,
+            &quarantines,
+        );
+        assert!(!manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "transient read must not delete"
+        );
+        assert_eq!(quarantines.load(Ordering::SeqCst), 0);
+        assert!(manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "retry loads the same bytes"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Corrupt bytes: quarantined, never deleted.
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let quarantines = Arc::new(AtomicUsize::new(0));
+        let (manager, dir) = manager_with(
+            vec![Err(PersistenceError::Validation("bad".into()))],
+            &deletes,
+            &quarantines,
+        );
+        assert!(!manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "corrupt bytes must not delete"
+        );
+        assert_eq!(quarantines.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
