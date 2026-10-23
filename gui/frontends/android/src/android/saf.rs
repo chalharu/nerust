@@ -393,12 +393,23 @@ impl SlotBackend for AndroidStorageBackend {
                 result.push(summary);
                 continue;
             }
-            let bytes = self.read(&path)?;
+            let bytes = match self.read(&path) {
+                Ok(bytes) => bytes,
+                // One bad slot must not fail the whole scan (NER-322).
+                Err(error) => {
+                    log::warn!("SAF scan: skipping unreadable entry: {error:?}");
+                    continue;
+                }
+            };
             let Some(bytes) = bytes else {
                 continue;
             };
-            if let Some(summary) = load_state_summary_bytes(path, bytes, Some(identity))? {
-                result.push(summary);
+            match load_state_summary_bytes(path, bytes, Some(identity)) {
+                Ok(Some(summary)) => result.push(summary),
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!("SAF scan: skipping corrupt entry: {error:?}");
+                }
             }
         }
         result.sort_by_key(|slot| slot.slot_id);
