@@ -245,3 +245,70 @@ fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
         );
     }
 }
+
+/// NER-309: sidecar publish order. A stale summary must never survive the
+/// state it describes: invalidate first (crash window), drop again when the
+/// sidecar write itself fails (scan falls back to the archive).
+#[test]
+fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
+    use crate::{error::PersistenceError, slots::publish_state_with_sidecar};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn fail() -> PersistenceError {
+        PersistenceError::Io(std::io::Error::other("injected"))
+    }
+
+    // Happy path: invalidate, state, sidecar, in that order.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let record = |events: &Rc<RefCell<Vec<&'static str>>>, what: &'static str| {
+        events.borrow_mut().push(what);
+    };
+    let outcome = publish_state_with_sidecar(
+        || record(&events, "invalidate"),
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Ok(())
+        },
+    );
+    assert!(outcome.is_ok());
+    assert_eq!(*events.borrow(), ["invalidate", "state", "sidecar"]);
+
+    // Sidecar failure: the stale sidecar is dropped, the save still succeeds.
+    events.borrow_mut().clear();
+    let outcome = publish_state_with_sidecar(
+        || record(&events, "invalidate"),
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Err(fail())
+        },
+    );
+    assert!(outcome.is_ok());
+    assert_eq!(
+        *events.borrow(),
+        ["invalidate", "state", "sidecar", "invalidate"]
+    );
+
+    // State failure: nothing is published and the sidecar is never written.
+    events.borrow_mut().clear();
+    let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
+        || record(&events, "invalidate"),
+        || {
+            record(&events, "state");
+            Err(fail())
+        },
+        || {
+            record(&events, "sidecar");
+            Ok(())
+        },
+    );
+    assert!(outcome.is_err());
+    assert_eq!(*events.borrow(), ["invalidate", "state"]);
+}
