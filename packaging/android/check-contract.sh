@@ -26,6 +26,10 @@ phase "contract tests"
 python3 "${SCRIPT_DIR}/test-contract.py"
 phase "inventory gate self-tests"
 python3 "${SCRIPT_DIR}/test-inventory.py"
+phase "shell probes (host only, <60s)"
+bash "${SCRIPT_DIR}/test-publish-lock.sh"
+bash "${SCRIPT_DIR}/test-e2e-wait.sh"
+bash "${SCRIPT_DIR}/test-apk-contents.sh"
 if [[ "${1:-}" == "--fast-only" ]]; then
     echo "Android bridge contract (fast): OK"
     exit 0

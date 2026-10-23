@@ -38,6 +38,13 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check Android bridge and packaging contracts (host only)
         run: bash packaging/android/check-contract.sh
+      - name: Shell probes and inventory fixtures (host only)
+        run: |
+          set -euo pipefail
+          bash packaging/android/test-publish-lock.sh
+          bash packaging/android/test-e2e-wait.sh
+          bash packaging/android/test-apk-contents.sh
+          python3 packaging/android/test-inventory.py
       - name: Clippy (default members)
         run: |
           cargo clippy --locked --all-targets --quiet \

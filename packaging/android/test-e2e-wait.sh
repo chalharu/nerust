@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Regression probes for e2e.sh shutdown detection (NER-327). Manual run:
 #   bash packaging/android/test-e2e-wait.sh
+# Wired into CI: check-contract.sh "shell probes" phase + the lint job's
+# explicit shell-probes step in .github/workflows/ci.yml.
+# NER-327: the same has_instrumentation_output / wait_until_gone /
+# run_instrumentation gates below run against the real emulator in CI
+# (.github/workflows/ci.yml `android-e2e` matrix API 28/35, which executes
+# packaging/android/e2e.sh); the stub probes here prove the
+# runner-missing shape fails the gate without needing a device.
 # Stubs adb and drives the real wait/evidence helpers.
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=e2e.sh
@@ -122,6 +129,27 @@ if run_instrumentation "io.github.Fake#CrashOnly" >/dev/null 2>&1; then
     fail "crash-only run_instrumentation passed"
 else
     pass "crash-only run_instrumentation fails"
+fi
+unset -f adb
+
+# --- run path: runner-missing output fails, never converts to a pass ---
+# NER-327 stub-path proof: the instrumentation call emits only adb's
+# runner-missing error (no INSTRUMENTATION_* block), so the output gate
+# must fail. The same gate runs against the real emulator in CI
+# (`android-e2e` jobs), where a missing runner likewise fails e2e.sh.
+adb() {
+    case "$*" in
+        *"${INSTRUMENT_CMD}"*) echo "error: device '(null)' not found" >&2; return 1 ;;
+        *${FORCE_STOP_MATCH}*) return 0 ;;
+        *${PIDOF_MATCH}*) return 1 ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+}
+export -f adb
+if run_instrumentation "io.github.Fake#RunnerMissing" >/dev/null 2>&1; then
+    fail "runner-missing run_instrumentation passed"
+else
+    pass "runner-missing run_instrumentation fails"
 fi
 unset -f adb
 
