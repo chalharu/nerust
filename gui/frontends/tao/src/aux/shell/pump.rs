@@ -167,14 +167,16 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         if messages.peek().is_none() && !invalidated.load(Ordering::Acquire) {
             return false;
         }
-        // Run the messages against the instance, then drop the warm cache
-        // instead of rebuilding now: the next pump builds once from the
-        // updated instance. A synchronous rebuild here would double the
-        // per-input build count for zero visual gain.
+        // Run the messages against the instance and keep the warm cache:
+        // the next pump rebuilds the view once from the updated instance,
+        // diffing against the retained tree so widget state (focus, cursor,
+        // scroll) survives. Dropping the cache here would rebuild identity
+        // from scratch and strand in-progress text input (NER-304).
+        // A synchronous rebuild here would double the per-input build count
+        // for zero visual gain.
         for msg in messages {
             let _task = self.tree.instance.update(msg);
         }
-        self.tree.cache = Cache::default();
         invalidated.store(false, Ordering::Release);
         true
     }
@@ -483,5 +485,141 @@ mod tests {
             None,
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// NER-304: typing into an aux-window address field must survive the
+    /// message batch between keystrokes. The widget emits the new value,
+    /// the batch applies it to the model without rebuilding, and the next
+    /// keystroke lands in the still-focused input with the cursor intact.
+    #[test]
+    fn text_input_keeps_focus_across_message_batches() {
+        use iced::keyboard::{self, key::Code as KeyCode, key::Physical};
+
+        #[derive(Default)]
+        struct InputState {
+            value: String,
+        }
+        #[derive(Debug, Clone)]
+        enum InputMessage {
+            Typed(String),
+        }
+        #[derive(Default)]
+        struct InputProgram;
+        impl Program for InputProgram {
+            type State = InputState;
+            type Message = InputMessage;
+            type Theme = iced::Theme;
+            type Renderer = Renderer;
+            type Executor = iced_winit::futures::backend::default::Executor;
+
+            fn name() -> &'static str {
+                "input-stub"
+            }
+
+            fn settings(&self) -> iced::Settings {
+                iced::Settings::default()
+            }
+
+            fn window(&self) -> Option<iced::window::Settings> {
+                None
+            }
+
+            fn boot(&self) -> (Self::State, iced::Task<Self::Message>) {
+                (InputState::default(), iced::Task::none())
+            }
+
+            fn update(
+                &self,
+                state: &mut Self::State,
+                message: Self::Message,
+            ) -> iced::Task<Self::Message> {
+                let InputMessage::Typed(value) = message;
+                state.value = value;
+                iced::Task::none()
+            }
+
+            fn view<'a>(
+                &self,
+                state: &'a Self::State,
+                _window: iced::window::Id,
+            ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+                iced::widget::text_input("addr", &state.value)
+                    .on_input(InputMessage::Typed)
+                    .into()
+            }
+        }
+
+        fn redraw() -> iced::Event {
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            ))
+        }
+        fn press(ch: &str) -> iced::Event {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Character(ch.into()),
+                modified_key: keyboard::Key::Character(ch.into()),
+                physical_key: Physical::Code(KeyCode::KeyA),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: Some(ch.into()),
+                repeat: false,
+            })
+        }
+
+        let (instance, _) = program::Instance::new(InputProgram);
+        let mut shell = UiShell::new(
+            instance,
+            iced::window::Id::unique(),
+            iced::Size::new(800.0, 600.0),
+        );
+        let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
+        let mut clipboard = Clipboard::unconnected();
+        let mut out = Vec::new();
+        let over_input = mouse::Cursor::Available(iced::Point::new(400.0, 10.0));
+        // Prime the retained tree, then focus the input with a click.
+        shell.pump(
+            redraw(),
+            mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        shell.pump(
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        // First keystroke: the focused widget emits the new value.
+        shell.pump(
+            press("a"),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(
+            matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "a"),
+            "first keystroke reaches the focused input: {out:?}"
+        );
+        // Apply to the model without rebuilding: focus and cursor survive.
+        assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
+        // Second keystroke lands in the same input, after the kept cursor.
+        shell.pump(
+            press("b"),
+            over_input,
+            &mut clipboard,
+            &mut backend,
+            &mut out,
+            None,
+        );
+        assert!(
+            matches!(out.as_slice(), [InputMessage::Typed(value)] if value == "ab"),
+            "second keystroke continues without refocus: {out:?}"
+        );
     }
 }
