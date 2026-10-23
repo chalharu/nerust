@@ -364,6 +364,21 @@ impl GtkOsd {
                 refresh();
             }
         });
+        // Follow new notifications while open: the gate inside refresh
+        // rebuilds only on change, and destroy removes the source.
+        let follow_refresh = Rc::clone(&refresh);
+        let follow = std::cell::Cell::new(Some(glib::timeout_add_local(
+            std::time::Duration::from_millis(500),
+            move || {
+                follow_refresh();
+                glib::ControlFlow::Continue
+            },
+        )));
+        dialog.connect_destroy(move |_| {
+            if let Some(source) = follow.take() {
+                source.remove();
+            }
+        });
         // Modeless like the tao twin: a modal would park all keys
         // in the dialog. Destroy (not hide) so focus returns.
         if let Some(close) = dialog.widget_for_response(gtk::ResponseType::Close) {
