@@ -44,6 +44,31 @@ class SelectedE2eTests(unittest.TestCase):
         text = 'run_instrumentation "${TEST_CLASS}#alpha" # "${TEST_CLASS}#beta"\n'
         self.assertEqual(selected_e2e_tests(text), {"alpha"})
 
+    def test_assignment_is_not_selected(self):
+        text = (
+            'TEST_CLASS="x"\n'
+            'stored="${TEST_CLASS}#alpha"\n'
+            'run_instrumentation "${TEST_CLASS}#beta"\n'
+        )
+        self.assertEqual(selected_e2e_tests(text), {"beta"})
+
+    def test_printf_string_is_not_selected(self):
+        text = (
+            'printf \'%s\\n\' "${TEST_CLASS}#alpha"\n'
+            'echo "selected ${TEST_CLASS}#beta"\n'
+            'expect_process_termination "${TEST_CLASS}#gamma"\n'
+        )
+        self.assertEqual(selected_e2e_tests(text), {"gamma"})
+
+    def test_heredoc_body_is_not_selected(self):
+        text = (
+            'cat <<EOF\n'
+            'run_instrumentation "${TEST_CLASS}#alpha"\n'
+            'EOF\n'
+            'run_instrumentation "${TEST_CLASS}#beta"\n'
+        )
+        self.assertEqual(selected_e2e_tests(text), {"beta"})
+
     def test_hash_inside_quotes_is_kept(self):
         # A literal '#' inside quotes is part of the argument, not a comment:
         # the rest of the line is still scanned.
