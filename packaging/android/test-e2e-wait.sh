@@ -161,6 +161,8 @@ fi
 unset -f adb
 
 # --- pre-dead process: a pre-existing crash plus absence proves nothing ---
+# The gate relaunches once; an unstartable process still fails.
+export E2E_ENSURE_PROCESS_TIMEOUT=2
 adb() {
     case "$*" in
         *"am instrument"*) printf 'INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_STATUS_CODE: 0\n' ;;
@@ -174,6 +176,33 @@ if expect_process_termination "io.github.Fake#PreDead" >/dev/null 2>&1; then
     fail "pre-dead termination passed without causing the exit"
 else
     pass "pre-dead process fails the termination gate"
+fi
+unset -f adb
+unset E2E_ENSURE_PROCESS_TIMEOUT
+
+# --- relaunch when dead: force-stop aftermath still terminates ---
+# First pidof misses (post-instrumentation force-stop), monkey starts the
+# app, the poll sees it, the test reports OK, then the process is gone.
+echo 0 >"${TMP}/relaunch-pidof-calls"
+adb() {
+    case "$*" in
+        *"am instrument"*) printf 'INSTRUMENTATION_CODE: -1\nOK (1 test)\n' ;;
+        *monkey*) return 0 ;;
+        *pidof*)
+            n=$(($(cat "${TMP}/relaunch-pidof-calls") + 1))
+            echo "${n}" >"${TMP}/relaunch-pidof-calls"
+            if ((n == 1)); then return 1; fi
+            if ((n == 2)); then echo "1234"; return 0; fi
+            return 1 ;;
+        *) echo "unexpected adb call: $*" >&2; return 1 ;;
+    esac
+    return 0
+}
+export -f adb
+if expect_process_termination "io.github.Fake#Relaunched" >/dev/null 2>&1; then
+    pass "relaunch-when-dead still terminates"
+else
+    fail "relaunch-when-dead broke the termination gate"
 fi
 unset -f adb
 

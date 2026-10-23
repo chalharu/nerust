@@ -704,11 +704,24 @@ mod tests {
             .to_path_buf();
         fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
         // Readonly destination tree: the mapper copy cannot land.
+        // Root ignores permission bits, so probe first and early-pass
+        // there like the display-gated widget tests do.
         fs::set_permissions(
             destination_mapper.parent().unwrap(),
             fs::Permissions::from_mode(0o555),
         )
         .unwrap();
+        let probe = destination_mapper.parent().unwrap().join(".readonly-probe");
+        if fs::write(&probe, b"probe").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(
+                destination_mapper.parent().unwrap(),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            eprintln!("skipping readonly assertion: test runs with write privilege");
+            return;
+        }
         assert!(copy_storage_contents(&source, &destination).is_err());
         assert!(
             !destination_mapper.exists(),

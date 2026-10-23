@@ -259,7 +259,7 @@ rm -rf "${stage_publish_old}"
 
 # Verify the artifact itself before trusting the signature: a corrupt or
 # wrong APK must fail here even when apksigner is absent.
-verify_apk_contents "${APK_SRC}" "libnerust_android.so" || exit 1
+verify_apk_contents "${APK_SRC}" "libmain.so" || exit 1
 # Verify the release signature when tooling and a signature exist.
 # A missing apksigner or unsigned artifact only warns; an invalid signature fails.
 if command -v apksigner >/dev/null 2>&1; then

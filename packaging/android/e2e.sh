@@ -94,21 +94,33 @@ has_instrumentation_output() {
     grep -Eq 'INSTRUMENTATION_(RESULT|STATUS_CODE|CODE)' <<< "${output}"
 }
 
+# Pre-request evidence that the process runs before the termination
+# test: a pre-existing crash plus absence would otherwise pass without
+# the test terminating anything. A finished instrumentation run leaves
+# the system to force-stop the app, so relaunch when missing and fail
+# only when it cannot be started: only a start failure proves a
+# device/app problem (NER-327).
+ensure_process_running() {
+    local before
+    if before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)" && [[ -n "${before//[[:space:]]/}" ]]; then
+        return 0
+    fi
+    adb shell monkey -p "${APP_PACKAGE}" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    local deadline=$((SECONDS + ${E2E_ENSURE_PROCESS_TIMEOUT:-30}))
+    while ((SECONDS < deadline)); do
+        if before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)" && [[ -n "${before//[[:space:]]/}" ]]; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "cannot confirm the process runs before the termination test" >&2
+    return 1
+}
+
 expect_process_termination() {
     local test="$1"
     local output rc=0
-    # Pre-request evidence: the process must be alive before the request.
-    # Otherwise a pre-existing crash plus absence would pass without the
-    # test terminating anything (NER-327).
-    local before
-    if ! before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)"; then
-        echo "cannot confirm the process runs before the termination test: ${before}" >&2
-        return 1
-    fi
-    if [[ -z "${before//[[:space:]]/}" ]]; then
-        echo "process not running before the termination test" >&2
-        return 1
-    fi
+    ensure_process_running || return 1
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1)" || rc=$?
     printf '%s\n' "${output}"
     if ! has_instrumentation_output "${output}"; then
