@@ -258,6 +258,91 @@ mod tests {
         assert!(runtime.host.close_exited());
     }
 
+    /// Drop-logging renderer: proves the ordered teardown drops the
+    /// pipeline before host close runs. Blanket `RenderPipeline`
+    /// needs all five sinks; every arm is a no-op here.
+    #[derive(Debug)]
+    struct DropLogRenderer {
+        log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl Drop for DropLogRenderer {
+        fn drop(&mut self) {
+            self.log.lock().unwrap().push("renderer");
+        }
+    }
+
+    impl nerust_render_traits::renderer::SurfaceLifecycle for DropLogRenderer {
+        fn size(&self) -> nerust_render_traits::SurfaceSize {
+            nerust_render_traits::SurfaceSize::new(960, 720)
+        }
+
+        fn attach(
+            &mut self,
+            _window_handle: raw_window_handle::RawWindowHandle,
+            _display_handle: raw_window_handle::RawDisplayHandle,
+            _size: nerust_render_traits::SurfaceSize,
+        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
+            Ok(())
+        }
+
+        fn detach(&mut self) {}
+
+        fn resize(&mut self, _size: nerust_render_traits::SurfaceSize) {}
+    }
+
+    impl nerust_render_traits::renderer::FrameSink for DropLogRenderer {
+        fn render(
+            &mut self,
+            _frame: &nerust_render_traits::FrameBuffer,
+        ) -> nerust_render_traits::renderer::RenderResult {
+            nerust_render_traits::renderer::RenderResult::Skipped
+        }
+    }
+
+    impl nerust_render_traits::renderer::OsdSink for DropLogRenderer {
+        fn set_osd_layer(&mut self, _layer: Option<nerust_render_traits::renderer::OsdLayer>) {}
+    }
+
+    impl nerust_render_traits::renderer::StripSink for DropLogRenderer {}
+
+    impl nerust_render_traits::renderer::ProfileSwitch for DropLogRenderer {
+        fn update_render_profile(
+            &mut self,
+            _profile: &nerust_render_traits::VideoRenderProfile,
+        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn menu_quit_defers_teardown_to_ordered_begin_close() {
+        use crate::event::MenuCommand;
+        use crate::runtime::host::HostAction;
+        let (mut runtime, _) = test_runtime();
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        runtime.renderer = Some(Box::new(DropLogRenderer {
+            log: std::sync::Arc::clone(&log),
+        }));
+        let opener = FakeOpener::failing("no display");
+        // Menu Quit returns the exit intent only: renderer and host teardown wait.
+        assert_eq!(
+            runtime.host.on_menu_command(MenuCommand::Quit, &opener),
+            HostAction::Exit
+        );
+        assert!(runtime.renderer.is_some());
+        assert!(!runtime.host.close_exited());
+        assert!(log.lock().unwrap().is_empty());
+        // The runtime owns the ordered teardown: the pipeline drops
+        // before host close runs, exactly once across repeated delivery.
+        runtime.begin_close();
+        assert!(runtime.renderer.is_none());
+        assert!(runtime.host.close_exited());
+        assert_eq!(*log.lock().unwrap(), ["renderer"]);
+        runtime.begin_close();
+        assert_eq!(log.lock().unwrap().len(), 1);
+    }
+
     #[test]
     fn main_focus_arms_without_syncing() {
         // Focus handlers only drive focus truth now: no chrome sync,
