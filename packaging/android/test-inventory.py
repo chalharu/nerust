@@ -3,7 +3,9 @@
 
 Run directly (no Android SDK needed); also wired into check-contract.sh.
 """
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -62,6 +64,75 @@ class DiffNames(unittest.TestCase):
 
     def test_matching_sets_are_clean(self):
         self.assertEqual(diff_names({"alpha"}, {"alpha"}), ([], []))
+
+
+XML_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="{cls}" tests="2">
+  <testcase name="ran" classname="io.github.chalharu.nerust.{cls}" time="0.01"/>
+  <testcase name="skipped" classname="io.github.chalharu.nerust.{cls}" time="0">
+    <skipped message="not ready"/>
+  </testcase>
+</testsuite>
+"""
+
+
+def write_xml(results, cls):
+    (results / f"TEST-{cls}.xml").write_text(XML_TEMPLATE.format(cls=cls))
+
+
+class JvmSkipped(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        write_xml(self.tmp, "SampleTest")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_skipped_case_is_not_executed(self):
+        executed, skipped = inventory.jvm_executed_tests(self.tmp)
+        self.assertEqual(executed, {"SampleTest": {"ran"}})
+        self.assertEqual(skipped, {"SampleTest": {"skipped"}})
+
+    def test_all_and_partial_skips_are_unexecuted(self):
+        source = {"SampleTest": {"ran", "skipped"}}
+        executed = {"SampleTest": {"ran"}}
+        skipped = {"SampleTest": {"skipped"}}
+        # No allowance: the skipped method is both missing and unallowed.
+        missing, unallowed = inventory.unexecuted_jvm_tests(
+            source, executed, skipped, {}, "2026-10-23"
+        )
+        self.assertEqual(missing, [("SampleTest", "skipped")])
+        self.assertEqual(unallowed, [("SampleTest", "skipped")])
+        # Live allowance with a reason: the skip passes the gate.
+        allowed = {"SampleTest.skipped": ("waiting on device", "2099-01-01")}
+        missing, unallowed = inventory.unexecuted_jvm_tests(
+            source, executed, skipped, allowed, "2026-10-23"
+        )
+        self.assertEqual(missing, [])
+        self.assertEqual(unallowed, [])
+
+    def test_expired_and_unknown_allowances_fail(self):
+        from bridge_schema import ContractError
+
+        source = {"SampleTest": {"ran", "skipped"}}
+        executed = {"SampleTest": {"ran"}}
+        skipped = {"SampleTest": {"skipped"}}
+        with self.assertRaises(ContractError):
+            inventory.unexecuted_jvm_tests(
+                source,
+                executed,
+                skipped,
+                {"SampleTest.skipped": ("old reason", "2020-01-01")},
+                "2026-10-23",
+            )
+        with self.assertRaises(ContractError):
+            inventory.unexecuted_jvm_tests(
+                source,
+                executed,
+                skipped,
+                {"SampleTest.gone": ("stale entry", "2099-01-01")},
+                "2026-10-23",
+            )
 
 
 if __name__ == "__main__":
