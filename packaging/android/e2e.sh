@@ -93,7 +93,8 @@ wait_until_gone_with_timeout() {
 # any instrumentation block the runner never started (or adb is offline),
 # and a missing process proves nothing (NER-327).
 has_instrumentation_output() {
-    grep -Eq 'INSTRUMENTATION_(RESULT|STATUS_CODE|CODE)' <<< "$1"
+    local output="$1"
+    grep -Eq 'INSTRUMENTATION_(RESULT|STATUS_CODE|CODE)' <<< "${output}"
 }
 
 expect_process_termination() {

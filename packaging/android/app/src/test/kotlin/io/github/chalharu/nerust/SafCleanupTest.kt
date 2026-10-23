@@ -48,7 +48,7 @@ class SafCleanupTest {
         val workerRelease = CountDownLatch(1)
         SafCleanup.executor.execute {
             workerBlock.countDown()
-            workerRelease.await(10, TimeUnit.SECONDS)
+            assertTrue(workerRelease.await(10, TimeUnit.SECONDS))
         }
         assertTrue(workerBlock.await(10, TimeUnit.SECONDS))
         // Fill the queue so the next four tasks spill to overflow threads.
@@ -63,7 +63,7 @@ class SafCleanupTest {
         repeat(4) {
             SafCleanup.executor.execute {
                 overflowBlock.countDown()
-                overflowRelease.await(10, TimeUnit.SECONDS)
+                assertTrue(overflowRelease.await(10, TimeUnit.SECONDS))
             }
         }
         assertTrue(overflowBlock.await(10, TimeUnit.SECONDS))
