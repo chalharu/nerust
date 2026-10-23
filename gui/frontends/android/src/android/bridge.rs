@@ -189,6 +189,12 @@ pub(super) struct AndroidBridgeState {
     priority_events: VecDeque<FrontendEvent>,
     normal_events: VecDeque<FrontendEvent>,
     exit_requested: bool,
+    /// Armed only by user-initiated exit (back finish, menu Exit): the
+    /// destroy that follows must end the process. Deliberately NOT
+    /// cleared by clear_queues: suspend runs between arming (menu/back)
+    /// and destroy, and wiping it there would downgrade a user exit to
+    /// a silent linger. Consumed exactly once at the exit decision.
+    user_exit_requested: bool,
     /// Last UI-thread insets push, [top, right, bottom, left] in physical px.
     /// The render thread reads the cache only and never blocks on JNI.
     insets_cache: Option<[i32; 4]>,
@@ -201,6 +207,7 @@ impl AndroidBridgeState {
             priority_events: VecDeque::new(),
             normal_events: VecDeque::new(),
             exit_requested: false,
+            user_exit_requested: false,
             insets_cache: None,
         }
     }
@@ -274,13 +281,23 @@ pub(super) fn bind_accelerometer(handle: Option<AccelerometerInputHandle>) {
     }) = handle;
 }
 
-pub(super) fn request_exit() {
-    with_queue(|state| state.exit_requested = true);
+/// User-initiated exit (back finish, menu Exit): arms process exit for
+/// the destroy that follows. OR-ed, never cleared except by the
+/// consumer: Kotlin passes its own back flag through onActivityDestroyed
+/// while the Rust Exit arm sets this directly, and either order must win.
+pub(super) fn request_user_exit() {
+    with_queue(|state| state.user_exit_requested = true);
     wake();
 }
 
 pub(super) fn take_exit_request() -> bool {
     with_queue(|state| std::mem::take(&mut state.exit_requested))
+}
+
+/// Consumed once at the post-loop exit decision (lib.rs). A stale arm
+/// can only linger in a process that already lingers today.
+pub(crate) fn take_user_exit_request() -> bool {
+    with_queue(|state| std::mem::take(&mut state.user_exit_requested))
 }
 
 pub(super) fn wake() {
@@ -418,8 +435,13 @@ pub(super) fn post_to_activity(
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed(
     _env: jni::EnvUnowned<'_>,
     _activity: jni::objects::JObject<'_>,
+    user_initiated: jni::sys::jboolean,
 ) {
-    request_exit();
+    with_queue(|state| {
+        state.exit_requested = true;
+        state.user_exit_requested |= user_initiated;
+    });
+    wake();
 }
 
 #[unsafe(no_mangle)]

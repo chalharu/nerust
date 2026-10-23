@@ -37,6 +37,7 @@ trap dump_logcat_on_failure EXIT
 run_instrumentation() {
     local tests="$1"
     local output rc=0
+    ensure_fresh_process
     output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1)" || rc=$?
     printf '%s\n' "${output}"
     if ! has_instrumentation_output "${output}"; then
@@ -59,6 +60,7 @@ run_instrumentation() {
         return 1
     fi
     echo "result delivery raced process exit; retrying once" >&2
+    ensure_fresh_process
     output="$(adb shell am instrument -w -r -e class "${tests}" "${TEST_RUNNER}" 2>&1)" || rc=$?
     printf '%s\n' "${output}"
     if ! has_instrumentation_output "${output}"; then
@@ -144,12 +146,24 @@ has_instrumentation_output() {
     grep -Eq 'INSTRUMENTATION_(RESULT|STATUS_CODE|CODE)' <<< "${output}"
 }
 
+# Fresh process per test: non-user destroy no longer exits the process
+# under instrumentation (exit is user-initiated only), so a lingering
+# process would be reused with a dead event loop. Force-stop first; the
+# next `am instrument` cold-starts. A pre-existing crash can never leak
+# across tests, and adb/offline failures still fail at the output gate.
+ensure_fresh_process() {
+    local before
+    if before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)" && [[ -n "${before//[[:space:]]/}" ]]; then
+        adb shell am force-stop "${APP_PACKAGE}" >/dev/null 2>&1 || true
+    fi
+}
+
 # Pre-request evidence that the process runs before the termination
 # test: a pre-existing crash plus absence would otherwise pass without
-# the test terminating anything. A finished instrumentation run leaves
-# the system to force-stop the app, so relaunch when missing and fail
-# only when it cannot be started: only a start failure proves a
-# device/app problem (NER-327).
+# the test terminating anything. Freshness runs first, so the process
+# is normally gone here: start it when missing and fail only when it
+# cannot be started. Only a start failure proves a device/app problem
+# (NER-327).
 ensure_process_running() {
     local before
     if before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)" && [[ -n "${before//[[:space:]]/}" ]]; then
@@ -170,6 +184,7 @@ ensure_process_running() {
 expect_process_termination() {
     local test="$1"
     local output rc=0
+    ensure_fresh_process
     ensure_process_running || return 1
     output="$(adb shell am instrument -w -r -e class "${test}" "${TEST_RUNNER}" 2>&1)" || rc=$?
     printf '%s\n' "${output}"
