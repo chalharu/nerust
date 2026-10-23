@@ -1051,10 +1051,13 @@ pub(crate) fn store_images(
             fresh: false,
         }
     } else {
-        // Different pixels must not reuse the served revision.
-        if cache.generation == cache.served_generation {
-            cache.generation = cache.generation.wrapping_add(1);
-        }
+        // Different pixels must not reuse any served revision: always mint
+        // a fresh generation, even when invalidations already advanced the
+        // cache past the served one. A conditional bump would report the
+        // current generation for new content that a cache hit may already
+        // have served with older pixels, and viewers skipping on the
+        // revision would keep the stale decode (NER-323).
+        cache.generation = cache.generation.wrapping_add(1);
         cache.served_hash = Some(hash);
         cache.served_generation = cache.generation;
         StoredImages {
