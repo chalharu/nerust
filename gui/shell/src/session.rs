@@ -363,6 +363,10 @@ struct PreSwitchState {
     assignments: InputAssignments,
     pressed: std::collections::HashSet<nerust_keyboard::Key>,
     persistence: persistence::PersistSnapshot,
+    /// Whether the stashed runtime ran: it is frozen across the switch so
+    /// no battery RAM update can slip past the pre-switch flush, and
+    /// rollback resumes it.
+    was_running: bool,
 }
 
 fn display_name_for(
@@ -846,11 +850,34 @@ impl SessionHandle {
         )
         .map_err(SystemActivationError::from_session)?;
 
+        // Freeze the outgoing core before its final export: it keeps
+        // running while stashed, so an unpaused stash would lose battery RAM
+        // updates written after this flush (NER-320).
+        let tick = self.tick_metrics();
+        let was_running = tick.loaded && !tick.paused;
+        if was_running {
+            self.emu
+                .require_live()
+                .map_err(SystemActivationError::from_session)?
+                .pause()
+                .map_err(|error| SystemActivationError::from_session(error.into()))?;
+        }
         if let Ok(exporter) = self.emu.exporter() {
-            self.media
+            let flushed = self
+                .media
                 .persistence
                 .flush_mapper_save(exporter)
-                .map_err(|e| SystemActivationError::from_session(e.into()))?;
+                .map_err(|e| SystemActivationError::from_session(e.into()));
+            if let Err(error) = flushed {
+                // The switch did not happen: restore the running state.
+                if was_running
+                    && let Ok(live) = self.emu.require_live()
+                    && let Err(resume) = live.resume()
+                {
+                    log::warn!("switch aborted, resume failed: {resume:?}");
+                }
+                return Err(error);
+            }
         }
 
         // Snapshot the live state before publishing: a later load failure in
@@ -872,6 +899,7 @@ impl SessionHandle {
             ),
             pressed: std::mem::take(&mut self.input.pressed_keys),
             persistence: self.media.persistence.snapshot_state(),
+            was_running,
         };
         self.pre_switch = Some(pre_switch);
         self.media.persistence.reset();
@@ -892,6 +920,7 @@ impl SessionHandle {
         let Some(stashed) = self.pre_switch.take() else {
             return;
         };
+        let was_running = stashed.was_running;
         self.emu.restore(stashed.runtime);
         self.media.loaded = stashed.loaded;
         self.active_system_id = stashed.system_id;
@@ -902,6 +931,16 @@ impl SessionHandle {
         self.input.invalidate_topology();
         self.debug_clear_write();
         self.rebuild_key_field_map();
+        // The switch froze a running core: unfreeze it now that it is live
+        // again, or rollback would strand a paused game. Held execution
+        // stays held, mirroring the load-path resume gate.
+        if was_running
+            && !self.execution_held
+            && let Ok(live) = self.emu.require_live()
+            && let Err(error) = live.resume()
+        {
+            log::warn!("rollback kept a paused core: {error:?}");
+        }
     }
 }
 
