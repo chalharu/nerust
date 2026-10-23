@@ -17,7 +17,7 @@ use nerust_persistence::{
     slots::{
         MAX_SLOT_ARCHIVE_BYTES, build_state_slot_bytes, load_state_slot_bytes,
         load_state_summary_bytes, load_state_summary_from_metadata_bytes,
-        publish_state_with_sidecar,
+        publish_state_with_sidecar, quarantine_by_copy,
     },
     thumbnail::ThumbnailSource,
 };
@@ -518,6 +518,26 @@ impl AutoSaveBackend for AndroidStorageBackend {
             return FsAutosave.delete_autosave(dir);
         }
         self.delete(&dir.child(".autosave_slot")?)
+    }
+
+    /// Quarantine by copy-then-delete: the original autosave is removed
+    /// only after the quarantined copy is stored (NER-319).
+    fn quarantine_autosave(
+        &self,
+        dir: &StorageLocation,
+    ) -> Result<Option<StorageLocation>, PersistenceError> {
+        if let StorageLocation::Native(_) = dir {
+            return FsAutosave.quarantine_autosave(dir);
+        }
+        let path = dir.child(".autosave_slot")?;
+        let quarantined = dir.child(".autosave_slot.quarantined")?;
+        let quarantine_target = quarantined.clone();
+        quarantine_by_copy(
+            || self.read(&path),
+            |bytes| self.write(&quarantine_target, bytes),
+            || self.delete(&path),
+            quarantined,
+        )
     }
 }
 

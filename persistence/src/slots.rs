@@ -112,6 +112,23 @@ pub fn state_slot_path(states_dir: &Path, slot_id: u64) -> PathBuf {
     states_dir.join(format!("{slot_id}.state"))
 }
 
+/// Quarantine by copy-then-delete for stores without atomic rename: the
+/// original is removed only after the copy is stored, so any failure keeps
+/// the original bytes recoverable. A missing original is `None`, not an error.
+pub fn quarantine_by_copy(
+    read_original: impl FnOnce() -> Result<Option<Vec<u8>>, PersistenceError>,
+    write_copy: impl FnOnce(&[u8]) -> Result<(), PersistenceError>,
+    delete_original: impl FnOnce() -> Result<(), PersistenceError>,
+    quarantined: StorageLocation,
+) -> Result<Option<StorageLocation>, PersistenceError> {
+    let Some(bytes) = read_original()? else {
+        return Ok(None);
+    };
+    write_copy(&bytes)?;
+    delete_original()?;
+    Ok(Some(quarantined))
+}
+
 pub fn autosave_state_slot_path(states_dir: &Path) -> PathBuf {
     states_dir.join(AUTOSAVE_SLOT_ENTRY)
 }

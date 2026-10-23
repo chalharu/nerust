@@ -328,3 +328,72 @@ fn metadata_decode_rejects_oversized_sidecar_bytes() {
     );
     assert!(load_state_summary_from_metadata_bytes(dir.into(), &[], identity.as_ref()).is_err());
 }
+
+/// NER-319: copy-then-delete keeps the original on every failure path.
+#[test]
+fn quarantine_by_copy_never_deletes_before_the_copy_is_stored() {
+    use crate::{error::PersistenceError, slots::quarantine_by_copy};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn fail() -> PersistenceError {
+        PersistenceError::Io(std::io::Error::other("injected"))
+    }
+    let target = crate::sidecar::StorageLocation::Native("q".into());
+
+    // Happy path: read, write, delete, in that order.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let record = |events: &Rc<RefCell<Vec<&'static str>>>, what: &'static str| {
+        events.borrow_mut().push(what);
+    };
+    let outcome = quarantine_by_copy(
+        || {
+            record(&events, "read");
+            Ok(Some(vec![7]))
+        },
+        |bytes| {
+            record(&events, "write");
+            assert_eq!(bytes, [7]);
+            Ok(())
+        },
+        || {
+            record(&events, "delete");
+            Ok(())
+        },
+        target.clone(),
+    );
+    assert_eq!(outcome.unwrap(), Some(target.clone()));
+    assert_eq!(*events.borrow(), ["read", "write", "delete"]);
+
+    // Missing original: quiet no-op, nothing else runs.
+    let outcome = quarantine_by_copy(
+        || Ok(None),
+        |_| panic!("no copy without an original"),
+        || panic!("no delete without an original"),
+        target.clone(),
+    );
+    assert_eq!(outcome.unwrap(), None);
+
+    // Write failure: the original is kept, the error propagates.
+    let deleted = Rc::new(RefCell::new(false));
+    let probe = Rc::clone(&deleted);
+    let outcome: Result<Option<_>, PersistenceError> = quarantine_by_copy(
+        || Ok(Some(vec![7])),
+        |_| Err(fail()),
+        || {
+            *probe.borrow_mut() = true;
+            Ok(())
+        },
+        target.clone(),
+    );
+    assert!(outcome.is_err());
+    assert!(!*deleted.borrow(), "original must survive a failed copy");
+
+    // Delete failure: the copy is already stored, the error propagates.
+    let outcome: Result<Option<_>, PersistenceError> = quarantine_by_copy(
+        || Ok(Some(vec![7])),
+        |_| Ok(()),
+        || Err(fail()),
+        target.clone(),
+    );
+    assert!(outcome.is_err());
+}
