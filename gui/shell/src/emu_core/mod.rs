@@ -1017,9 +1017,12 @@ impl EmuCore {
         cache.images = std::sync::Arc::clone(&shared);
         cache.dirty = false;
         if cache.served_hash == Some(hash) {
-            // Identical content collapses the dirty bump back to the served generation.
-            // Same pixels, same generation: viewers skip re-deriving instead of flapping.
-            cache.generation = cache.served_generation;
+            // Identical content reports the served generation so viewers skip
+            // re-deriving instead of flapping. The cache generation itself
+            // never rewinds: rewinding would let an old sent value become
+            // current again, so a stale outstanding reply could clear a newer
+            // invalidation (ABA, NER-323). Staleness binds to the monotonic
+            // cache generation; viewer skip uses the served one.
             StoredImages {
                 generation: cache.served_generation,
                 images: std::sync::Arc::clone(&shared),
@@ -1714,6 +1717,47 @@ mod tests {
         assert!(!stored.fresh);
         assert!(core.images_cache_lookup().is_none());
         let _ = stored;
+    }
+
+    /// NER-323: an old sent value never becomes current again. An
+    /// identical-content store in between must not rewind the generation, so
+    /// a stale outstanding reply still misses and keeps the newer dirty.
+    #[test]
+    fn stale_sent_value_never_becomes_current_again() {
+        use nerust_core_traits::debugger::ImageFormat;
+        let core = loaded_core();
+        let picture = |pixels: Vec<u8>| {
+            vec![DebugImage {
+                id: "tiles",
+                label_id: "Tiles",
+                width: 2,
+                height: 1,
+                format: ImageFormat::Indexed2bpp,
+                palette: vec![[0, 0, 0], [255, 255, 255]],
+                pixels,
+            }]
+        };
+        let first = core.images_store(picture(vec![0, 1]), sent_generation(&core));
+        assert!(first.fresh);
+        core.mark_images_dirty();
+        let sent_old = sent_generation(&core);
+        // Identical-content store collapses to the served generation.
+        let collapsed = core.images_store(picture(vec![0, 1]), sent_old);
+        assert!(!collapsed.fresh);
+        assert_eq!(collapsed.generation, first.generation);
+        // A newer invalidation lands after the collapse.
+        core.mark_images_dirty();
+        // The old outstanding reply arrives late with different pixels: it
+        // must miss, keep the dirty flag, and never publish its pixels.
+        let stale = core.images_store(picture(vec![9]), sent_old);
+        assert!(!stale.fresh);
+        assert!(core.images_cache_lookup().is_none(), "dirty survives");
+        let held = stale
+            .images
+            .iter()
+            .flat_map(|image| image.pixels.iter().copied())
+            .collect::<Vec<_>>();
+        assert_eq!(held, vec![0, 1], "stale pixels never publish");
     }
 
     /// NER-323: different published images never share a revision.
