@@ -38,23 +38,30 @@ struct Registration {
     thread: Option<std::thread::ThreadId>,
 }
 
-/// Lifecycle of the single process-wide hook adapter: the chained previous
+/// Lifecycle of the single process-wide hook adapter: the original process
 /// hook plus whether our dispatcher is installed. Install and drop mutate it
 /// under its own lock; the dispatcher never takes it, so std hook writes here
-/// cannot deadlock against panic delivery.
+/// cannot deadlock against panic delivery. `previous` survives idle restores
+/// so reinstalls reuse the original hook instead of rewrapping it (NER-301).
 struct Lifecycle {
     previous: Option<Hook>,
     installed: bool,
-    epoch: u64,
     retired: Vec<Hook>,
 }
 
 static LIFECYCLE: Mutex<Lifecycle> = Mutex::new(Lifecycle {
     previous: None,
     installed: false,
-    epoch: 0,
     retired: Vec::new(),
 });
+
+/// Serializes hook swaps (first install, last restore). Swap paths hold it
+/// across the std swap while owning no other lock: std dispatches under its
+/// read lock, so waiting for its write lock while holding `LIFECYCLE` would
+/// deadlock against a panicking sink taking `LIFECYCLE` (NER-300).
+/// Lock order is `HOOK_SWAP` -> `LIFECYCLE` -> `REGISTRATIONS`; `HOOK_SWAP`
+/// is only ever acquired with no other lock held.
+static HOOK_SWAP: Mutex<()> = Mutex::new(());
 
 /// Live registrations snapshotted by the dispatcher. The dispatcher clones
 /// under this lock and releases it before capturing or calling any sink, so
@@ -88,45 +95,48 @@ impl Drop for HookGuard {
     fn drop(&mut self) {
         // std forbids set_hook while unwinding. Retain the registration but
         // leave the dispatcher: the next non-panicking guard drop restores it.
-        // In particular, a guard dropped by a sink must not wait for another
-        // install that is itself waiting for this panic hook to return.
+        // The light path below takes only brief adapter locks, so a sink drop
+        // racing an installer swap always finishes (NER-300).
         let can_restore = !std::thread::panicking();
         drain_retired();
-        let epoch = LIFECYCLE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .epoch;
-        {
+        if !can_restore {
             let mut registrations = REGISTRATIONS
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             registrations.retain(|entry| !Arc::ptr_eq(entry, &self.registration));
-        }
-        if !can_restore {
             return;
         }
-        {
+        // The check, reserve, swap, and retire serialize under `HOOK_SWAP`: a
+        // racing install either publishes first (the check sees it) or
+        // reinstalls after (it sees the idle adapter). Either way a live
+        // guard is never orphaned (NER-300).
+        let _swap = HOOK_SWAP
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let restore = {
             let mut lifecycle = LIFECYCLE
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // Re-check under the lifecycle lock: an install that pushed after
-            // our retain bumped the epoch first, so restoring now cannot orphan it.
-            let empty = REGISTRATIONS
+            let mut registrations = REGISTRATIONS
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_empty();
-            if lifecycle.installed && lifecycle.epoch == epoch && empty {
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            registrations.retain(|entry| !Arc::ptr_eq(entry, &self.registration));
+            if lifecycle.installed && registrations.is_empty() {
                 lifecycle.installed = false;
-                if let Some(previous) = lifecycle.previous.take() {
-                    // take_hook drops the replaced closure into retirement:
-                    // its destructor may install a new guard, so destruction
-                    // waits for the next install/drop entry outside all locks.
-                    let replaced = panic::take_hook();
-                    panic::set_hook(Box::new(move |info| previous(info)));
-                    lifecycle.retired.push(Arc::from(replaced));
-                }
+                lifecycle.previous.as_ref().map(Arc::clone)
+            } else {
+                None
             }
-        }
+        };
+        let Some(previous) = restore else { return };
+        // No locks held: restore the process hook outside every adapter lock.
+        let replaced = panic::take_hook();
+        panic::set_hook(Box::new(move |info| previous(info)));
+        LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retired
+            .push(Arc::from(replaced));
     }
 }
 
@@ -158,48 +168,90 @@ fn install_erased(
         thread,
     });
     drain_retired();
-    // The lifecycle lock never nests inside the snapshot lock or user code:
-    // hook swaps run under it, but the dispatcher only takes the snapshot lock.
+    // Fast path: dispatcher already live. Publishing under `LIFECYCLE`
+    // serializes against a concurrent final drop's check, so the check
+    // either sees this registration or runs before it (NER-300).
+    {
+        let lifecycle = LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if lifecycle.installed {
+            REGISTRATIONS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(Arc::clone(&registration));
+            return HookGuard { registration };
+        }
+    }
+    // Slow path: idle adapter. Holding `HOOK_SWAP` across reserve, swap, and
+    // publish keeps a racing last-drop restore from interleaving (NER-300).
+    let _swap = HOOK_SWAP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    {
+        let lifecycle = LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if lifecycle.installed {
+            REGISTRATIONS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(Arc::clone(&registration));
+            return HookGuard { registration };
+        }
+    }
+    // No locks held: swap the process hook. This waits for std's write lock
+    // while dispatch may hold its read lock, so no adapter lock is owned here.
+    let taken = panic::take_hook();
+    let previous = {
+        let mut lifecycle = LIFECYCLE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Clone first to avoid holding the borrow across the retire push.
+        match lifecycle.previous.as_ref().map(Arc::clone) {
+            Some(stored) => {
+                // Reuse the original hook and retire the idle wrapper just
+                // taken: reinstall cycles keep one forwarding layer (NER-301).
+                lifecycle.retired.push(Arc::from(taken));
+                stored
+            }
+            None => {
+                let stored: Hook = Arc::from(taken);
+                lifecycle.previous = Some(Arc::clone(&stored));
+                stored
+            }
+        }
+    };
+    panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current().id();
+        let registrations = {
+            let registrations = REGISTRATIONS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            registrations
+                .iter()
+                .filter(|entry| entry.thread.is_none_or(|owner| owner == thread))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        // Capture at the panic site once, using the newest live source.
+        if let Some(newest) = registrations.last() {
+            let record = PanicRecord::capture_with(Arc::from(info.to_string()), (newest.source)());
+            for registration in registrations.iter().rev() {
+                (registration.sink)(&record);
+            }
+        }
+        previous(info);
+    }));
     {
         let mut lifecycle = LIFECYCLE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Every install bumps the epoch before pushing: a concurrent final
-        // drop that already retained sees the bump and skips its restore.
-        lifecycle.epoch += 1;
-        if !lifecycle.installed {
-            let previous: Hook = Arc::from(panic::take_hook());
-            lifecycle.previous = Some(Arc::clone(&previous));
-            panic::set_hook(Box::new(move |info| {
-                let thread = std::thread::current().id();
-                let registrations = {
-                    let registrations = REGISTRATIONS
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    registrations
-                        .iter()
-                        .filter(|entry| entry.thread.is_none_or(|owner| owner == thread))
-                        .cloned()
-                        .collect::<Vec<_>>()
-                };
-                // Capture at the panic site once, using the newest live source.
-                if let Some(newest) = registrations.last() {
-                    let record =
-                        PanicRecord::capture_with(Arc::from(info.to_string()), (newest.source)());
-                    for registration in registrations.iter().rev() {
-                        (registration.sink)(&record);
-                    }
-                }
-                previous(info);
-            }));
-            lifecycle.installed = true;
-        }
-    }
-    {
-        let mut registrations = REGISTRATIONS
+        lifecycle.installed = true;
+        REGISTRATIONS
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        registrations.push(Arc::clone(&registration));
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Arc::clone(&registration));
     }
     HookGuard { registration }
 }
@@ -349,13 +401,17 @@ mod tests {
 
     static SINK_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-    /// Process hook fully restored and no chain retained.
+    /// Process hook restored and nothing live or retired. The original hook
+    /// stays cached across idle restores so reinstalls reuse it (NER-301).
     fn adapter_is_idle() -> bool {
         drain_retired();
         let lifecycle = LIFECYCLE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        !lifecycle.installed && lifecycle.previous.is_none() && lifecycle.retired.is_empty()
+        let registrations = REGISTRATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !lifecycle.installed && registrations.is_empty() && lifecycle.retired.is_empty()
     }
 
     fn counting_sink(_record: &PanicRecord) {
@@ -554,8 +610,8 @@ mod tests {
         assert_eq!(fixed_b.load(Ordering::SeqCst), 50);
         drop(keep_a);
         drop(keep_b);
-        // Unanchored churn passes through empty restores: a panic in the swap
-        // window may miss, but a live guard is never called twice per panic.
+        // Churn never orphans a published guard: a final drop racing an
+        // install serializes against the publish, so each live guard fires once.
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 scope.spawn(|| {
@@ -575,10 +631,107 @@ mod tests {
                     stub_source,
                 );
                 let _ = panic::catch_unwind(|| panic!("gap probe"));
-                assert!(fired.load(Ordering::SeqCst) <= 1, "double delivery");
+                assert_eq!(
+                    fired.load(Ordering::SeqCst),
+                    1,
+                    "live install survives churn"
+                );
                 drop(guard);
             }
         });
+        assert!(adapter_is_idle());
+    }
+
+    /// NER-300 AC-1: a final drop racing a fresh publish must not orphan the
+    /// live guard. The barrier aligns the drop's check with the install's
+    /// publish; every interleaving must still deliver exactly once.
+    #[test]
+    fn publish_racing_final_drop_never_orphans_live_guard() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        for _ in 0..200 {
+            let doomed = install(|_| {}, stub_source);
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let fired = Arc::new(AtomicUsize::new(0));
+            std::thread::scope(|scope| {
+                let (gate, fired) = (Arc::clone(&gate), Arc::clone(&fired));
+                let worker_gate = Arc::clone(&gate);
+                scope.spawn(move || {
+                    worker_gate.wait();
+                    drop(doomed);
+                });
+                gate.wait();
+                let probe = Arc::clone(&fired);
+                let fresh = install(
+                    move |_| {
+                        probe.fetch_add(1, Ordering::SeqCst);
+                    },
+                    stub_source,
+                );
+                let _ = panic::catch_unwind(|| panic!("race probe"));
+                assert_eq!(fired.load(Ordering::SeqCst), 1, "racing publish stays live");
+                drop(fresh);
+            });
+            assert!(adapter_is_idle());
+        }
+    }
+
+    /// NER-300 AC-2: a sink drop (light path, no swap wait) racing installer
+    /// swaps on another thread always finishes; scope join bounds the wait.
+    #[test]
+    fn sink_drop_racing_install_completes() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let spare = Arc::new(Mutex::new(Some(install(|_| {}, stub_source))));
+        let fired = Arc::new(AtomicUsize::new(0));
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..100 {
+                    let guard = install(|_| {}, stub_source);
+                    drop(guard);
+                }
+            });
+            let (spare, probe) = (Arc::clone(&spare), Arc::clone(&fired));
+            let guard = install(
+                move |_| {
+                    probe.fetch_add(1, Ordering::SeqCst);
+                    drop(spare.lock().unwrap().take());
+                },
+                stub_source,
+            );
+            let _ = panic::catch_unwind(|| panic!("sink drop probe"));
+            assert_eq!(fired.load(Ordering::SeqCst), 1);
+            drop(guard);
+        });
+        assert!(spare.lock().unwrap().is_none());
+        assert!(adapter_is_idle());
+    }
+
+    /// NER-301 AC-1/AC-2: reinstall cycles reuse the original process hook
+    /// instead of rewrapping it, so the forwarding depth stays constant.
+    #[test]
+    fn reinstall_cycles_keep_single_forwarding_layer() {
+        let _lock = HOOK_TEST_LOCK.lock().unwrap();
+        let snapshot = || {
+            LIFECYCLE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .previous
+                .as_ref()
+                .map(Arc::clone)
+        };
+        for _ in 0..3 {
+            let guard = install(|_| {}, stub_source);
+            drop(guard);
+        }
+        let first = snapshot();
+        for _ in 0..3 {
+            let guard = install(|_| {}, stub_source);
+            drop(guard);
+        }
+        let second = snapshot();
+        let (Some(first), Some(second)) = (first, second) else {
+            panic!("original hook must survive idle restores");
+        };
+        assert!(Arc::ptr_eq(&first, &second), "no rewrapping per cycle");
         assert!(adapter_is_idle());
     }
 
