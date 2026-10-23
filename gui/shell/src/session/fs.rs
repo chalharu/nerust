@@ -269,6 +269,22 @@ mod fs_cov_tests {
         let _ = std::fs::remove_dir_all(d.native_path().unwrap());
     }
 
+    /// NER-319 AC-1/3: a failed quarantine keeps the original autosave
+    /// bytes. A directory at the quarantine name blocks the rename, so the
+    /// error path must leave the source readable and unchanged.
+    #[test]
+    fn failed_quarantine_keeps_original_autosave_bytes() {
+        let back = FsAutosave;
+        let d = dir("narrow-quarantine-fail");
+        let id = identity();
+        back.write_autosave(&d, &[1, 2, 3], &id).unwrap();
+        std::fs::create_dir(d.native_path().unwrap().join(".autosave_slot.quarantined")).unwrap();
+        assert!(back.quarantine_autosave(&d).is_err());
+        let loaded = back.read_autosave(&d, &id).unwrap().expect("original kept");
+        assert_eq!(loaded.machine_state, vec![1, 2, 3]);
+        let _ = std::fs::remove_dir_all(d.native_path().unwrap());
+    }
+
     /// Each narrow leg serves its own round-trip.
     #[test]
     fn narrow_mapper_leg_round_trips() {
