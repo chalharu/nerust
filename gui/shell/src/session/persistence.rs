@@ -300,12 +300,16 @@ impl PersistenceManager {
     }
 
     fn refresh_slots_inner(&mut self, identity: Option<&SystemIdentity>) {
-        self.slots = if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
-            self.slot_backend.scan(dir, identity).unwrap_or_default()
+        // A failed scan keeps the previous list: a transient backend
+        // failure must not wipe the slots (NER-322).
+        if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
+            match self.slot_backend.scan(dir, identity) {
+                Ok(slots) => self.slots = slots.into(),
+                Err(error) => log::warn!("slot scan failed, keeping previous list: {error:?}"),
+            }
         } else {
-            Vec::new()
+            self.slots = Vec::new().into();
         }
-        .into();
         if self
             .active_slot_id
             .is_some_and(|slot_id| !self.slots.iter().any(|slot| slot.slot_id == slot_id))
@@ -1072,6 +1076,97 @@ mod persistence_cov_tests {
         );
         assert_eq!(quarantines.load(Ordering::SeqCst), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// NER-322 AC-2: a failed scan keeps the previous list instead of
+    /// wiping it to an empty success.
+    #[test]
+    fn failed_scan_keeps_previous_slots() {
+        use crate::session::ports::SlotBackend;
+        use nerust_persistence::model::StateSlotSummary;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        struct FlakyScan {
+            fail: Arc<AtomicBool>,
+        }
+        impl SlotBackend for FlakyScan {
+            fn scan(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+            ) -> Result<Vec<StateSlotSummary>, nerust_persistence::error::PersistenceError>
+            {
+                if self.fail.load(Ordering::SeqCst) {
+                    return Err(nerust_persistence::error::PersistenceError::Io(
+                        std::io::Error::other("scan failed"),
+                    ));
+                }
+                Ok(vec![StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: 7,
+                    path: std::path::PathBuf::from("s").into(),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: String::new(),
+                }])
+            }
+            fn allocate_next_id(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+            ) -> Result<u64, nerust_persistence::error::PersistenceError> {
+                Ok(1)
+            }
+            #[allow(unused_variables)]
+            fn write_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+                _data: &[u8],
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+                _thumbnail: Option<&nerust_persistence::thumbnail::ThumbnailSource>,
+            ) -> Result<StateSlotSummary, nerust_persistence::error::PersistenceError> {
+                panic!("unused");
+            }
+            fn read_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<
+                Option<nerust_persistence::model::LoadedStateSlot>,
+                nerust_persistence::error::PersistenceError,
+            > {
+                Ok(None)
+            }
+            fn delete_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<(), nerust_persistence::error::PersistenceError> {
+                Ok(())
+            }
+        }
+        let fail = Arc::new(AtomicBool::new(false));
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FlakyScan {
+                fail: Arc::clone(&fail),
+            }),
+            autosave: Box::new(crate::session::fs::FsAutosave),
+            mapper: Box::new(crate::session::fs::FsMapper),
+        });
+        let dir = crate::test_helpers::unique_temp_dir("scan-keep");
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        manager.refresh_slots(&exporter);
+        assert_eq!(manager.slots().len(), 1);
+        fail.store(true, Ordering::SeqCst);
+        manager.refresh_slots(&exporter);
+        assert_eq!(manager.slots().len(), 1, "failed scan keeps previous slots");
+        assert_eq!(manager.active_slot_id(), Some(7));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 
