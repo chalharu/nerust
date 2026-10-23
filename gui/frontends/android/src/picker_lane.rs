@@ -104,7 +104,7 @@ impl<T> LatestLane<T> {
             slot = self
                 .waker
                 .wait(slot)
-                .unwrap_or_else(|poison| poison.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 
@@ -124,7 +124,9 @@ impl<T> LatestLane<T> {
 }
 
 fn lock_recovered<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Bumper pressure gauge: counts queued cancels/closes against a cap.

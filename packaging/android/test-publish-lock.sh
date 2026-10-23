@@ -176,7 +176,8 @@ publish_lock_dir_id() {
     if ((n >= 2)); then
         echo "replaced-dir-id"
     else
-        command stat -c '%d:%i' "$1" 2>/dev/null || echo "nostat"
+        local target="$1"
+        command stat -c '%d:%i' "${target}" 2>/dev/null || echo "nostat"
     fi
 }
 if acquire_publish_lock "${VERIFYLOCK}"; then

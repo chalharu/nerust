@@ -39,7 +39,7 @@ def kotlin_test_methods(path):
 #: printf/echo strings, and heredoc bodies that merely mention a test never
 #: execute it (NER-315).
 CALL_LINE_RE = re.compile(r"^\s*(run_instrumentation|expect_process_termination)\b")
-HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z0-9_]+)['\"]?")
+HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?(\w+)['\"]?")
 
 
 def selected_e2e_tests(text):
@@ -125,24 +125,33 @@ def jvm_executed_tests(results):
     return executed, skipped
 
 
+def _validated_allowance_pairs(allowances):
+    """"Class.method" pairs; malformed keys fail the gate loudly."""
+    allowed_pairs = set()
+    for key in allowances:
+        pair = tuple(key.split(".", 1))
+        require(len(pair) == 2, f"skip allowance without Class.method shape: {key}")
+        allowed_pairs.add(pair)
+    return allowed_pairs
+
+
+def _test_pairs(mapping):
+    """{(class, method)} flattened from a class-to-methods mapping."""
+    return {(cls, method) for cls, methods in mapping.items() for method in methods}
+
+
 def unexecuted_jvm_tests(source, executed, skipped, allowances, today):
     """(missing, unallowed) for the gate. Allowances map "Class.method" to
     (reason, review-by date); expired entries and entries without a matching
     test fail the gate instead of passing silently."""
     expired = sorted(key for key, (_, date) in allowances.items() if date < today)
     require(not expired, f"expired skip allowances (re-justify or remove): {expired}")
-    source_pairs = {(cls, method) for cls, methods in source.items() for method in methods}
-    allowed_pairs = set()
-    for key in allowances:
-        pair = tuple(key.split(".", 1))
-        require(len(pair) == 2, f"skip allowance without Class.method shape: {key}")
-        allowed_pairs.add(pair)
+    source_pairs = _test_pairs(source)
+    allowed_pairs = _validated_allowance_pairs(allowances)
     unknown = sorted(f"{cls}.{method}" for cls, method in allowed_pairs - source_pairs)
     require(not unknown, f"skip allowances without a matching test: {unknown}")
-    executed_pairs = {(cls, method) for cls, methods in executed.items() for method in methods}
-    skipped_pairs = {(cls, method) for cls, methods in skipped.items() for method in methods}
-    missing = sorted(source_pairs - executed_pairs - allowed_pairs)
-    unallowed = sorted(skipped_pairs - allowed_pairs)
+    missing = sorted(source_pairs - _test_pairs(executed) - allowed_pairs)
+    unallowed = sorted(_test_pairs(skipped) - allowed_pairs)
     return missing, unallowed
 
 
