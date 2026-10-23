@@ -25,10 +25,9 @@ impl HostState {
     ) -> HostAction {
         if self.settings_open() {
             return match command {
-                MenuCommand::Quit => {
-                    self.prepare_close();
-                    HostAction::Exit
-                }
+                // Exit intent only: the runtime drops the renderer before
+                // running host teardown in `begin_close` (NER-305).
+                MenuCommand::Quit => HostAction::Exit,
                 _ => HostAction::None,
             };
         }
@@ -69,10 +68,7 @@ impl HostState {
                 self.sync_chrome(&ctx, false);
                 HostAction::None
             }
-            MenuCommand::Quit => {
-                self.prepare_close();
-                HostAction::Exit
-            }
+            MenuCommand::Quit => HostAction::Exit,
         }
     }
 
@@ -352,7 +348,8 @@ mod tests {
             host.on_menu_command(MenuCommand::Quit, &opener),
             HostAction::Exit
         );
-        assert!(host.close_exited());
+        // Intent only: host teardown waits for the runtime's ordered close.
+        assert!(!host.close_exited());
     }
 
     #[test]
@@ -377,6 +374,8 @@ mod tests {
             host.on_menu_command(MenuCommand::Quit, &opener),
             HostAction::Exit
         );
+        // Intent only: no teardown before the runtime's ordered close.
+        assert!(!host.close_exited());
     }
 
     #[test]
