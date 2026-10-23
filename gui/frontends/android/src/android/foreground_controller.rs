@@ -142,7 +142,7 @@ impl super::AndroidFrontend {
         log::info!(
             "try_resume_foreground: fetching last ROM id={id} on the worker for lifecycle restore"
         );
-        picker::spawn_library_fetch(path, id);
+        picker::spawn_library_fetch(self.app.clone(), path, id);
     }
 
     /// Drop pending restore flags plus the hidden lifecycle snapshot.
