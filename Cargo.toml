@@ -1,6 +1,21 @@
 [workspace]
-default-members = [".", "nes/core", "gbc/core", "gba/core"]
+default-members = [".", "console/nes/core", "console/gbc/core", "console/gba/core"]
 members = [
+  "console/gba/core",
+  "console/gba/device",
+  "console/gba/factory",
+  "console/gba/settings",
+  "console/gbc/core",
+  "console/gbc/device",
+  "console/gbc/factory",
+  "console/gbc/settings",
+  "console/input",
+  "console/nes/controller",
+  "console/nes/core",
+  "console/nes/device",
+  "console/nes/factory",
+  "console/nes/settings",
+  "gui/emu-thread",
   "gui/frontends/android",
   "gui/frontends/gtk",
   "gui/frontends/kernel",
@@ -11,20 +26,7 @@ members = [
   "gui/shell",
   "gui/viewmodel",
   "crash-guard",
-  "gba/core",
-  "gba/device",
-  "gba/factory",
-  "gba/settings",
-  "gbc/core",
-  "gbc/device",
-  "gbc/factory",
-  "gbc/settings",
   "keyboard",
-  "nes/controller",
-  "nes/core",
-  "nes/device",
-  "nes/factory",
-  "nes/settings",
   "persistence",
   "render/filters",
   "render/gl",
@@ -43,7 +45,6 @@ members = [
   "sound/spectrum",
   "timer",
   "traits/core",
-  "traits/emu-thread",
   "traits/input",
   "traits/settings",
   "traits/system",
@@ -176,15 +177,16 @@ muda = { default-features = false, features = ["gtk3"], version = "=0.21.2" }
 nerust_android = { path = "gui/frontends/android" }
 nerust_core_traits = { path = "traits/core" }
 nerust_system_traits = { path = "traits/system" }
-nerust_emu_thread = { path = "traits/emu-thread" }
-nerust_gba_core = { path = "gba/core" }
-nerust_gba_device = { path = "gba/device" }
-nerust_gba_factory = { path = "gba/factory" }
-nerust_gba_settings = { path = "gba/settings" }
-nerust_gbc_core = { path = "gbc/core" }
-nerust_gbc_device = { path = "gbc/device" }
-nerust_gbc_factory = { path = "gbc/factory" }
-nerust_gbc_settings = { path = "gbc/settings" }
+nerust_console_input = { path = "console/input" }
+nerust_emu_thread = { path = "gui/emu-thread" }
+nerust_gba_core = { path = "console/gba/core" }
+nerust_gba_device = { path = "console/gba/device" }
+nerust_gba_factory = { path = "console/gba/factory" }
+nerust_gba_settings = { path = "console/gba/settings" }
+nerust_gbc_core = { path = "console/gbc/core" }
+nerust_gbc_device = { path = "console/gbc/device" }
+nerust_gbc_factory = { path = "console/gbc/factory" }
+nerust_gbc_settings = { path = "console/gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
@@ -193,11 +195,11 @@ nerust_frontend_kernel = { path = "gui/frontends/kernel" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_keyboard = { default-features = false, path = "keyboard" }
-nerust_nes_controller = { path = "nes/controller" }
-nerust_nes_core = { path = "nes/core" }
-nerust_nes_device = { path = "nes/device" }
-nerust_nes_factory = { path = "nes/factory" }
-nerust_nes_settings = { path = "nes/settings" }
+nerust_nes_controller = { path = "console/nes/controller" }
+nerust_nes_core = { path = "console/nes/core" }
+nerust_nes_device = { path = "console/nes/device" }
+nerust_nes_factory = { path = "console/nes/factory" }
+nerust_nes_settings = { path = "console/nes/settings" }
 nerust_persistence = { path = "persistence" }
 nerust_render_filters = { path = "render/filters" }
 nerust_render_gl = { path = "render/gl" }

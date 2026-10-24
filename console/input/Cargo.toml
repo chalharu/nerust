@@ -1,0 +1,14 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "nerust_console_input"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log.workspace = true
+nerust_input_traits.workspace = true
+
+[features]
+test-utils = []
