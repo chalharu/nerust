@@ -1,8 +1,10 @@
+use log::warn;
+
 use nerust_render_traits::{ReservedStrip, SurfaceSize, physical::PhysicalSize};
 use wgpu::{
-    Color, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
+    Color, CommandEncoder, CommandEncoderDescriptor, Extent3d, LoadOp, Operations, Origin3d,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, TexelCopyBufferInfo,
-    TexelCopyBufferLayout, TexelCopyTextureInfo, TextureViewDescriptor,
+    TexelCopyBufferLayout, TexelCopyTextureInfo, TextureView, TextureViewDescriptor,
 };
 
 use super::{RenderOutcome, RenderPipeline, fit_surface_size_to_limit};
@@ -14,6 +16,15 @@ pub(super) struct Viewport {
     pub(super) y: f32,
     pub(super) width: f32,
     pub(super) height: f32,
+}
+
+/// True when readback bytes arrive BGR-ordered and need an R/B swap for
+/// the R8G8B8A8 image contract.
+pub(super) fn bgra_order(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    )
 }
 
 pub(super) fn compute_viewport(
@@ -65,6 +76,17 @@ pub(super) fn compute_viewport(
 }
 
 impl RenderPipeline {
+    /// Point the OSD layer bookkeeping at an explicit size (the in-memory
+    /// image path has no swapchain to reconfigure). Mirrors the OSD half of
+    /// [`Self::reconfigure_surface`]; the next `set_osd_layer` rebuilds.
+    pub fn sync_osd_surface(&mut self, size: SurfaceSize) {
+        if self.osd_surface != size {
+            // The backend re-applies its authoritative layer after resize.
+            self.osd_visible = false;
+            self.osd_surface = size;
+        }
+    }
+
     pub fn reconfigure_surface(&mut self, surface: &wgpu::Surface<'_>, surface_size: SurfaceSize) {
         if surface_size.width == 0 || surface_size.height == 0 {
             return;
@@ -137,6 +159,217 @@ impl RenderPipeline {
         Ok(())
     }
 
+    /// Game quad over a cleared backdrop, viewport-clipped. Shared by the
+    /// surface present and the in-memory image path.
+    fn draw_game(&self, encoder: &mut CommandEncoder, view: &TextureView, viewport: &Viewport) {
+        let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("nerust_render_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::BLACK),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        if viewport.width > 0.0 && viewport.height > 0.0 {
+            render_pass.set_viewport(
+                viewport.x,
+                viewport.y,
+                viewport.width,
+                viewport.height,
+                0.0,
+                1.0,
+            );
+            render_pass.set_pipeline(&self.pipeline);
+            render_pass.set_bind_group(0, &self.bind_group, &[]);
+            render_pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Render into memory instead of the swapchain, for frontends that
+    /// composite themselves (in-window chrome must survive presents: a
+    /// swapchain present would bury it). Same passes as `render`, copied
+    /// out through a staging buffer; nothing is presented.
+    pub fn render_image(
+        &mut self,
+        size: SurfaceSize,
+        frame_buffer: &[u8],
+        source_bytes_per_row: usize,
+    ) -> Option<nerust_render_traits::RenderedImage> {
+        if size.width == 0 || size.height == 0 {
+            return None;
+        }
+        if nerust_render_traits::FrameLayout::checked(
+            self.frame_logical_size,
+            self.frame_upload_layout.bytes_per_pixel as usize,
+            source_bytes_per_row,
+            frame_buffer.len(),
+        )
+        .is_err()
+        {
+            warn!("wgpu: invalid frame for image render");
+            return None;
+        }
+        let size = fit_surface_size_to_limit(size, self.device.limits().max_texture_dimension_2d);
+        if size.width == 0 || size.height == 0 {
+            return None;
+        }
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("nerust_render_image_encoder"),
+            });
+        if self
+            .update_frame_texture(&mut encoder, frame_buffer, source_bytes_per_row)
+            .is_err()
+        {
+            return None;
+        }
+        let viewport = compute_viewport(size, self.content_size, self.reserved);
+        self.ensure_image_target(size);
+        let view = self
+            .image_texture
+            .as_ref()
+            .map(|(_, texture)| texture.create_view(&TextureViewDescriptor::default()))?;
+        self.draw_game(&mut encoder, &view, &viewport);
+        self.draw_osd(&mut encoder, &view);
+        let pitch = self.ensure_image_staging(size)?;
+        let staging = &self.image_staging.as_ref()?.2;
+        encoder.copy_texture_to_buffer(
+            TexelCopyTextureInfo {
+                texture: &self.image_texture.as_ref()?.1,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            TexelCopyBufferInfo {
+                buffer: staging,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(pitch),
+                    rows_per_image: Some(size.height),
+                },
+            },
+            Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        // Drop cached GPU objects on failure so the next frame rebuilds
+        // them instead of retrying a dead mapping.
+        if self
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .is_err()
+        {
+            self.image_texture = None;
+            self.image_staging = None;
+            return None;
+        }
+        if receiver.recv().ok().is_none_or(|result| result.is_err()) {
+            staging.unmap();
+            self.image_texture = None;
+            self.image_staging = None;
+            return None;
+        }
+        let bgra = bgra_order(self.config.format);
+        let row_bytes = size.width.saturating_mul(4) as usize;
+        let mut pixels = Vec::with_capacity(row_bytes.saturating_mul(size.height as usize));
+        {
+            let mapped = staging.slice(..).get_mapped_range().map_err(|error| {
+                warn!("wgpu: image readback map failed: {error}");
+                staging.unmap();
+            });
+            let Ok(mapped) = mapped else {
+                return None;
+            };
+            for y in 0..size.height as usize {
+                let row = &mapped[y * pitch as usize..y * pitch as usize + row_bytes];
+                if bgra {
+                    for px in row.as_chunks::<4>().0 {
+                        pixels.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+                    }
+                } else {
+                    pixels.extend_from_slice(row);
+                }
+            }
+        }
+        staging.unmap();
+        Some(nerust_render_traits::RenderedImage {
+            width: size.width,
+            height: size.height,
+            stride_bytes: row_bytes,
+            pixels,
+        })
+    }
+
+    /// Offscreen target sized to the requested image, recreated on change.
+    fn ensure_image_target(&mut self, size: SurfaceSize) {
+        let current = self.image_texture.as_ref().map(|(size, _)| *size);
+        if current == Some(size) {
+            return;
+        }
+        self.image_texture = Some((
+            size,
+            self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("nerust_image_texture"),
+                size: Extent3d {
+                    width: size.width,
+                    height: size.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            }),
+        ));
+        self.image_staging = None;
+    }
+
+    /// Staging buffer pitch for one image readback: 256-byte aligned rows.
+    /// Returns `None` when there is nothing to stage.
+    fn ensure_image_staging(&mut self, size: SurfaceSize) -> Option<u32> {
+        let pitch = size.width.saturating_mul(4).next_multiple_of(256);
+        let current = self
+            .image_staging
+            .as_ref()
+            .map(|(size, pitch, _)| (*size, *pitch));
+        if current != Some((size, pitch)) {
+            if size.height == 0 {
+                return None;
+            }
+            self.image_staging = Some((
+                size,
+                pitch,
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("nerust_image_staging"),
+                    size: u64::from(pitch).saturating_mul(u64::from(size.height)),
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                }),
+            ));
+        }
+        Some(pitch)
+    }
+
     pub fn render(
         &mut self,
         surface: &wgpu::Surface<'_>,
@@ -184,38 +417,7 @@ impl RenderPipeline {
             });
         self.update_frame_texture(&mut encoder, frame_buffer, source_bytes_per_row)?;
         let viewport = compute_viewport(surface_size, self.content_size, self.reserved);
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("nerust_render_pass"),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: Operations {
-                        load: LoadOp::Clear(Color::BLACK),
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-            if viewport.width > 0.0 && viewport.height > 0.0 {
-                render_pass.set_viewport(
-                    viewport.x,
-                    viewport.y,
-                    viewport.width,
-                    viewport.height,
-                    0.0,
-                    1.0,
-                );
-                render_pass.set_pipeline(&self.pipeline);
-                render_pass.set_bind_group(0, &self.bind_group, &[]);
-                render_pass.draw(0..3, 0..1);
-            }
-        }
+        self.draw_game(&mut encoder, &view, &viewport);
         self.draw_osd(&mut encoder, &view);
 
         self.queue.submit(Some(encoder.finish()));

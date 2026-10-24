@@ -157,6 +157,43 @@ impl SurfaceLifecycle for WgpuRenderer {
 }
 
 impl FrameSink for WgpuRenderer {
+    fn render_image(
+        &mut self,
+        frame: &FrameBuffer,
+        size: SurfaceSize,
+    ) -> Option<nerust_render_traits::RenderedImage> {
+        let pipeline = self.pipeline.as_mut()?;
+        if size.width == 0 || size.height == 0 || size.width > 8192 || size.height > 8192 {
+            return None;
+        }
+        if FrameLayout::validate(
+            frame,
+            self.render_profile.input_size(),
+            self.render_profile.frame_format,
+        )
+        .is_err()
+        {
+            return None;
+        }
+        if let Some(palette) = frame.palette()
+            && self.last_palette.as_deref() != Some(palette)
+            && let Some(rgba8) = frame.palette_as_rgba8()
+        {
+            pipeline.update_palette_texture(&rgba8);
+            self.last_palette = Some(palette.into());
+        }
+        pipeline.sync_osd_surface(size);
+        if self.osd_dirty {
+            let accepted = crate::renderer::setup::set_osd_layer(pipeline, self.osd.as_ref());
+            if self.osd_policy.charge(accepted) {
+                self.osd.take();
+                log::warn!("wgpu: dropping OSD layer after repeated upload failures");
+            }
+            self.osd_dirty = self.osd.is_some() && !accepted;
+        }
+        pipeline.render_image(size, frame.as_ref(), frame.stride())
+    }
+
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
         let Some(ref surface) = self.surface else {
             return RenderResult::Skipped;
@@ -320,6 +357,38 @@ mod tests {
             RenderResult::Presented
         );
         assert!(renderer.last_render_error.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn render_image_returns_rgba_without_presenting() {
+        use nerust_render_traits::{
+            FrameBuffer, PixelFormat, SurfaceSize,
+            renderer::{FrameSink, ProfileSwitch, SurfaceLifecycle},
+        };
+        let _guard = crate::test_window::lock();
+        let Some(window) = crate::test_window::TestWindow::open() else {
+            return;
+        };
+        let mut renderer = detached_renderer();
+        let mut profile = test_profile();
+        profile.logical_size.width = 4;
+        profile.logical_size.height = 4;
+        renderer.update_render_profile(&profile).unwrap();
+        let (wh, dh) = window.handles();
+        renderer.attach(wh, dh, SurfaceSize::new(64, 64)).unwrap();
+        let mut frame = FrameBuffer::with_capacity(8, 8, PixelFormat::Rgba);
+        frame.resize(4, 4);
+        for pixel in frame.as_mut().as_chunks_mut::<4>().0 {
+            pixel.copy_from_slice(&[255, 0, 0, 255]);
+        }
+        let image = renderer
+            .render_image(&frame, SurfaceSize::new(8, 8))
+            .expect("headless image render");
+        assert_eq!((image.width, image.height), (8, 8));
+        assert_eq!(image.stride_bytes, 32);
+        assert_eq!(image.pixels.len(), 8 * 32);
+        assert_eq!(&image.pixels[..4], &[255, 0, 0, 255]);
     }
 
     #[cfg(target_os = "linux")]

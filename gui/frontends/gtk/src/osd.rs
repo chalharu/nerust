@@ -95,6 +95,7 @@ impl GtkOsd {
         state: &mut State,
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
+        size: nerust_render_traits::SurfaceSize,
     ) {
         use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
         let generation = renderer.borrow().output_generation();
@@ -136,7 +137,7 @@ impl GtkOsd {
             tick.paused,
             tick.fps,
             renderer,
-            window,
+            size,
         );
     }
 
@@ -172,12 +173,11 @@ impl GtkOsd {
         paused: bool,
         fps: f32,
         renderer: &Rc<RefCell<GtkRenderer>>,
-        window: &gtk::ApplicationWindow,
+        size: nerust_render_traits::SurfaceSize,
     ) {
         use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
-        let scale = window.scale_factor().max(1) as u32;
-        let w = window.width().max(0) as u32 * scale;
-        let h = window.height().max(0) as u32 * scale;
+        let w = size.width;
+        let h = size.height;
         let chrome = nerust_gui_shell::session::osd::OsdChrome::from(settings);
         let decision = {
             let GtkOsd {

@@ -90,6 +90,11 @@ pub struct RenderPipeline {
     frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
     reserved: nerust_render_traits::ReservedStrip,
+    /// Offscreen target for in-memory renders (frontends that composite
+    /// themselves): same passes as the swapchain path, copied out through
+    /// the staging buffer instead of being presented.
+    image_texture: Option<(SurfaceSize, Texture)>,
+    image_staging: Option<(SurfaceSize, u32, Buffer)>,
 }
 
 impl RenderPipeline {

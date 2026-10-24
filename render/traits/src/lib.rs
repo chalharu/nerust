@@ -195,6 +195,16 @@ pub struct SurfaceSize {
     pub height: u32,
 }
 
+/// In-memory RGBA frame for frontends that composite themselves.
+/// Row-major top-down R8G8B8A8, `stride_bytes` per row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedImage {
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: usize,
+    pub pixels: Vec<u8>,
+}
+
 impl SurfaceSize {
     pub const fn new(width: u32, height: u32) -> Self {
         Self { width, height }

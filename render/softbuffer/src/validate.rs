@@ -2,7 +2,7 @@
 //! Guards and indexer setup share the single result.
 
 use log::warn;
-use nerust_render_traits::{FrameBuffer, FrameLayout, PixelFormat};
+use nerust_render_traits::{FrameBuffer, FrameLayout, PixelFormat, SurfaceSize};
 
 use super::SoftbufferRenderer;
 
@@ -20,14 +20,26 @@ pub(crate) struct ValidatedFrame {
 
 impl SoftbufferRenderer {
     pub(crate) fn validate_frame(&self, frame: &FrameBuffer) -> Option<ValidatedFrame> {
-        let input = Self::validate_input(self.profile(), frame)?;
-        let dst_w = self.output_size().width as usize;
-        let dst_h = self.output_size().height as usize;
-        if dst_w == 0 || dst_h == 0 || !self.surface_attached() {
+        if !self.surface_attached() {
             return None;
         }
-        let avail_h = dst_h
-            .saturating_sub(self.reserved_strip().height_loss(self.output_size().height) as usize);
+        self.validate_frame_for(frame, self.size)
+    }
+
+    /// Size-parameterized validation without any surface requirement, for
+    /// in-memory renders.
+    pub(crate) fn validate_frame_for(
+        &self,
+        frame: &FrameBuffer,
+        size: SurfaceSize,
+    ) -> Option<ValidatedFrame> {
+        let input = Self::validate_input(self.profile(), frame)?;
+        let dst_w = size.width as usize;
+        let dst_h = size.height as usize;
+        if dst_w == 0 || dst_h == 0 {
+            return None;
+        }
+        let avail_h = dst_h.saturating_sub(self.reserved_strip().height_loss(size.height) as usize);
         let src_stride = frame.stride();
         let use_ntsc = matches!(frame.format(), PixelFormat::PaletteIndex { .. })
             && self.profile().ntsc_packed_rgba8.is_some();
