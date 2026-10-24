@@ -104,6 +104,16 @@ pub(super) struct TouchZone {
     pub(super) bounds: TouchRect,
 }
 
+/// Platform safe-area insets in physical pixels: system bars plus the
+/// display cutout, one per edge. Portrait ignores them; landscape lays
+/// the control band out inside the box they describe.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct EdgeInsets {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
 /// One pushed joystick home: idle center plus base/knob radii.
 /// Relative: center over surface size, radii over the minor axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,35 +143,45 @@ pub(super) struct FloatingDpadState {
 }
 
 impl ProfileTouchOverlay {
-    /// `top_inset_px` / `bottom_inset_px` are the status-bar/cutout and
-    /// gesture-bar heights in the same physical pixels as
-    /// `width`/`height` (0 when the platform has not pushed insets yet).
-    /// Landscape lays out inside the safe box between them; portrait's
-    /// band sits far from both bars, so the insets leave it untouched.
+    /// `insets` are the platform safe-area margins in the same physical
+    /// pixels as `width`/`height` (zeroed when the platform has not pushed
+    /// them yet). Landscape lays out inside the box they describe;
+    /// portrait's band sits far from every bar, so insets leave it alone.
     pub(super) fn new(
         width: f32,
         height: f32,
         controls: Vec<TouchControl>,
         scale_percent: u8,
         vertical_offset_percent: i8,
-        top_inset_px: f32,
-        bottom_inset_px: f32,
+        insets: EdgeInsets,
     ) -> Self {
         let portrait = height >= width;
         let base = width.min(height);
         let scale = f32::from(scale_percent.clamp(50, 150)) / 100.0;
         let vertical_offset = height * f32::from(vertical_offset_percent.clamp(-30, 30)) / 100.0;
+        // Outside landscape the insets stay zero: portrait geometry below
+        // is bit-identical with or without a platform push.
+        let (safe_top, safe_bottom, safe_left, safe_right) = if portrait {
+            (0.0, 0.0, 0.0, 0.0)
+        } else {
+            (
+                insets.top.max(0.0),
+                insets.bottom.max(0.0),
+                insets.left.max(0.0),
+                insets.right.max(0.0),
+            )
+        };
         let control_top = if portrait {
             height * PORTRAIT_CONTROL_TOP
         } else {
-            top_inset_px.max(0.0)
+            safe_top
         };
         // Bottom system/gesture bars bound the landscape band; portrait
         // geometry already clears them, so the inset leaves portrait alone.
         let band_bottom = if portrait {
             height
         } else {
-            (height - bottom_inset_px.max(0.0)).max(control_top)
+            (height - safe_bottom).max(control_top)
         };
         let control_height = band_bottom - control_top;
         let dpad_size = base * DPAD_SIZE_OF_BASE * scale;
@@ -176,7 +196,11 @@ impl ProfileTouchOverlay {
         let action_left = if portrait {
             width * PORTRAIT_ACTION_LEFT
         } else {
-            width - base * LANDSCAPE_ACTION_MARGIN_OF_BASE - action_size * 2.0 - action_gap
+            width
+                - safe_right
+                - base * LANDSCAPE_ACTION_MARGIN_OF_BASE
+                - action_size * 2.0
+                - action_gap
         };
         let action_top = dpad_center_y - action_size * 0.50;
         let center_width = base * CENTER_WIDTH_OF_BASE * scale;
@@ -187,8 +211,8 @@ impl ProfileTouchOverlay {
         let shoulder_height = base * SHOULDER_HEIGHT_OF_BASE * scale;
         let shoulder_margin_x = width * SHOULDER_MARGIN_X_OF_WIDTH;
         let shoulder_top = control_top + base * SHOULDER_TOP_NUDGE_OF_BASE + vertical_offset;
-        let shoulder_left_x = shoulder_margin_x;
-        let shoulder_right_x = width - shoulder_margin_x - shoulder_width;
+        let shoulder_left_x = shoulder_margin_x + safe_left;
+        let shoulder_right_x = width - safe_right - shoulder_margin_x - shoulder_width;
         let center_gap = base * CENTER_GAP_OF_BASE;
         let center_row_width = center_width * 2.0 + center_gap;
         let center_left = (width - center_row_width) * 0.5;
@@ -252,7 +276,7 @@ impl ProfileTouchOverlay {
         };
         // Idle joystick home, pushed so Kotlin never recomputes geometry.
         let joystick_home = TouchPoint {
-            x: base * JOY_HOME_X_OF_BASE + dpad_size * 0.5,
+            x: safe_left + base * JOY_HOME_X_OF_BASE + dpad_size * 0.5,
             y: dpad_center_y,
         };
         Self {
@@ -265,9 +289,9 @@ impl ProfileTouchOverlay {
                 .collect(),
             dpad_controls,
             dpad_activation: TouchRect {
-                x: dpad_radius,
+                x: safe_left + dpad_radius,
                 y: activation_top + dpad_radius,
-                width: (activation_right - dpad_radius * 2.0).max(0.0),
+                width: (activation_right - safe_left - dpad_radius * 2.0).max(0.0),
                 height: (band_bottom - activation_top - dpad_radius * 2.0).max(0.0),
             },
             dpad_radius,
@@ -439,13 +463,10 @@ mod tests {
     }
 
     fn portrait_overlay() -> ProfileTouchOverlay {
-        portrait_overlay_with_insets(0.0, 0.0)
+        portrait_overlay_with_insets(EdgeInsets::default())
     }
 
-    fn portrait_overlay_with_insets(
-        top_inset_px: f32,
-        bottom_inset_px: f32,
-    ) -> ProfileTouchOverlay {
+    fn portrait_overlay_with_insets(insets: EdgeInsets) -> ProfileTouchOverlay {
         ProfileTouchOverlay::new(
             1080.0,
             1920.0,
@@ -464,12 +485,11 @@ mod tests {
             .collect(),
             100,
             0,
-            top_inset_px,
-            bottom_inset_px,
+            insets,
         )
     }
 
-    fn landscape_overlay(top_inset_px: f32, bottom_inset_px: f32) -> ProfileTouchOverlay {
+    fn landscape_overlay(insets: EdgeInsets) -> ProfileTouchOverlay {
         ProfileTouchOverlay::new(
             800.0,
             360.0,
@@ -490,8 +510,7 @@ mod tests {
             .collect(),
             100,
             0,
-            top_inset_px,
-            bottom_inset_px,
+            insets,
         )
     }
 
@@ -613,12 +632,12 @@ mod tests {
     }
 
     /// Landscape lays out inside the safe box between the platform bars:
-    /// buttons clear the top inset and stay above the gesture bar.
-    /// Without a push both insets are zero and reproduce the previous
-    /// zero-based geometry exactly.
+    /// buttons clear the top inset, stay above the gesture bar, and keep
+    /// off the side bars and cutouts. Without a push all insets are zero
+    /// and reproduce the previous zero-based geometry exactly.
     #[test]
     fn landscape_insets_bound_control_band() {
-        let plain = landscape_overlay(0.0, 0.0);
+        let plain = landscape_overlay(EdgeInsets::default());
         let zones = plain.relative_zones(800.0, 360.0);
         assert!(!zones.is_empty());
         let min_top_px = zones
@@ -626,11 +645,20 @@ mod tests {
             .map(|zone| zone.y * 360.0)
             .fold(f32::INFINITY, f32::min);
         assert!(min_top_px < 48.0);
-        // Zero insets pin the previous geometry: joystick home at 0.65H.
+        // Zero insets pin the previous geometry: joystick home at 0.65H
+        // and the idle x offset off the left edge.
         let joystick = plain.relative_joystick(800.0, 360.0);
         assert!((joystick.y * 360.0 - 360.0 * LANDSCAPE_DPAD_CENTER).abs() < 1e-3);
+        assert!(
+            (joystick.x * 800.0 - (360.0 * JOY_HOME_X_OF_BASE + 360.0 * DPAD_SIZE_OF_BASE * 0.5))
+                .abs()
+                < 1e-3
+        );
 
-        let top = landscape_overlay(48.0, 0.0);
+        let top = landscape_overlay(EdgeInsets {
+            top: 48.0,
+            ..EdgeInsets::default()
+        });
         let min_top_px = top
             .relative_zones(800.0, 360.0)
             .iter()
@@ -638,7 +666,10 @@ mod tests {
             .fold(f32::INFINITY, f32::min);
         assert!(min_top_px >= 48.0);
 
-        let bottom = landscape_overlay(0.0, 48.0);
+        let bottom = landscape_overlay(EdgeInsets {
+            bottom: 48.0,
+            ..EdgeInsets::default()
+        });
         let zones = bottom.relative_zones(800.0, 360.0);
         assert!(!zones.is_empty());
         for zone in &zones {
@@ -649,13 +680,46 @@ mod tests {
                 super::zone_label(zone.role),
             );
         }
+
+        // A right-side system bar (3-button nav in landscape) pushes the
+        // right-anchored buttons left; a left cutout pushes the joystick
+        // home and the shoulder strip right.
+        let sides = landscape_overlay(EdgeInsets {
+            right: 96.0,
+            left: 64.0,
+            ..EdgeInsets::default()
+        });
+        let zones = sides.relative_zones(800.0, 360.0);
+        assert!(!zones.is_empty());
+        for zone in &zones {
+            let left_px = zone.x * 800.0;
+            let right_px = (zone.x + zone.width) * 800.0;
+            assert!(
+                left_px >= 64.0,
+                "zone {} left {left_px} sits under the 64px left cutout",
+                super::zone_label(zone.role),
+            );
+            assert!(
+                right_px <= 800.0 - 96.0,
+                "zone {} right {right_px} sits under the 96px right bar",
+                super::zone_label(zone.role),
+            );
+        }
+        let joystick = sides.relative_joystick(800.0, 360.0);
+        assert!(joystick.x * 800.0 >= 64.0);
     }
 
-    /// Portrait's band sits far from both bars; insets must not move it.
+    /// Portrait's band sits far from every bar; insets must not move it.
     #[test]
     fn portrait_ignores_insets() {
         let plain = portrait_overlay().relative_zones(1080.0, 1920.0);
-        let inset = portrait_overlay_with_insets(48.0, 48.0).relative_zones(1080.0, 1920.0);
+        let all = EdgeInsets {
+            top: 48.0,
+            right: 48.0,
+            bottom: 48.0,
+            left: 48.0,
+        };
+        let inset = portrait_overlay_with_insets(all).relative_zones(1080.0, 1920.0);
         assert_eq!(plain.len(), inset.len());
         for (got, want) in inset.iter().zip(plain.iter()) {
             assert!((got.x - want.x).abs() < 1e-6);

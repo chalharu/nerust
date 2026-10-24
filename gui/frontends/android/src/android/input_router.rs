@@ -98,12 +98,20 @@ impl InputRouter {
         // keep the previous ROM's zones alive across Unload.
         let loaded = session.tick_metrics().loaded;
         // System bars and cutouts live in the same physical pixels as the
-        // window size; the layout pins the landscape band inside the safe
+        // window size; the layout confines the landscape band to the safe
         // box between them. Missing pushes (desktop tests, early startup)
-        // mean no insets, which reproduces the previous geometry exactly.
-        let (top_inset_px, bottom_inset_px) = super::bridge::cached_system_insets()
-            .map(|insets| (insets[0].max(0) as f32, insets[2].max(0) as f32))
-            .unwrap_or((0.0, 0.0));
+        // mean zero insets, which reproduces the previous geometry exactly.
+        let insets = super::bridge::cached_system_insets()
+            .map(|insets| {
+                use super::touch_layout::EdgeInsets;
+                EdgeInsets {
+                    top: insets[0].max(0) as f32,
+                    right: insets[1].max(0) as f32,
+                    bottom: insets[2].max(0) as f32,
+                    left: insets[3].max(0) as f32,
+                }
+            })
+            .unwrap_or_default();
         self.overlay = if !loaded
             || overlay_settings.visibility
                 == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
@@ -116,8 +124,7 @@ impl InputRouter {
                 model.controls,
                 overlay_settings.scale_percent,
                 overlay_settings.vertical_offset_percent,
-                top_inset_px,
-                bottom_inset_px,
+                insets,
             ))
         };
         let zones = self
