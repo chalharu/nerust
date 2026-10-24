@@ -3832,7 +3832,6 @@ name = "nerust_render_osd"
 version = "0.1.0-dev"
 dependencies = [
  "cosmic-text 0.19.0",
- "fontdb",
  "log",
  "nerust_render_traits",
 ]
