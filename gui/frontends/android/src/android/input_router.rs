@@ -93,8 +93,28 @@ impl InputRouter {
         let overlay_settings = &session.settings_snapshot().local.touch_overlay;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
         let model = session.touch_overlay_model(self.overlay_revision);
-        self.overlay = if overlay_settings.visibility
-            == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
+        // Unloaded frames push no zones: a stale D-Pad on a ROM-less
+        // screen is confusing, and the memo below would otherwise
+        // keep the previous ROM's zones alive across Unload.
+        let loaded = session.tick_metrics().loaded;
+        // System bars and cutouts live in the same physical pixels as the
+        // window size; the layout confines the landscape band to the safe
+        // box between them. Missing pushes (desktop tests, early startup)
+        // mean zero insets, which reproduces the previous geometry exactly.
+        let insets = super::bridge::cached_system_insets()
+            .map(|insets| {
+                use super::touch_layout::EdgeInsets;
+                EdgeInsets {
+                    top: insets[0].max(0) as f32,
+                    right: insets[1].max(0) as f32,
+                    bottom: insets[2].max(0) as f32,
+                    left: insets[3].max(0) as f32,
+                }
+            })
+            .unwrap_or_default();
+        self.overlay = if !loaded
+            || overlay_settings.visibility
+                == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
         {
             None
         } else {
@@ -104,6 +124,7 @@ impl InputRouter {
                 model.controls,
                 overlay_settings.scale_percent,
                 overlay_settings.vertical_offset_percent,
+                insets,
             ))
         };
         let zones = self

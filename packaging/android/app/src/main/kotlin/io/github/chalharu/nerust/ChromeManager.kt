@@ -12,8 +12,10 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.PopupWindow
 import android.widget.TextView
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -22,6 +24,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +36,7 @@ import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -96,6 +101,7 @@ class ChromeManager(private val activity: MainActivity) {
     private var drawerFullScreenPopup: PopupWindow? = null
     private var drawerOverlayView: View? = null
     private var drawerComposeView: View? = null
+    private var drawerScrollState: ScrollState? = null
     private var fpsOverlayView: TextView? = null
     private var fpsOverlayPopup: PopupWindow? = null
     private var fpsValue: Float = 0f
@@ -198,6 +204,12 @@ class ChromeManager(private val activity: MainActivity) {
     fun floatingDpadStateForTest(): FloatArray? =
         (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
 
+    /** Pushed touch-zone count: 0 while unloaded or hidden. Unload assertions use this. */
+    fun controlsZoneCountForTest(): Int = controlsPushedZones.size
+
+    /** Drawer sheet scroll range in pixels, null while the drawer is closed. */
+    fun drawerScrollMaxForTest(): Int? = drawerScrollState?.maxValue
+
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
@@ -257,6 +269,7 @@ class ChromeManager(private val activity: MainActivity) {
                         NerustDrawerOverlay(
                             onDismissRequest = { removeDrawerOverlay() },
                             onMenuAction = ::dispatchMenuAction,
+                            onScrollState = { drawerScrollState = it },
                         )
                     }
                 }
@@ -642,6 +655,7 @@ class ChromeManager(private val activity: MainActivity) {
 
     private fun clearDrawerWindowReferences() {
         drawerShowing = false
+        drawerScrollState = null
         drawerOverlayView = null
         drawerComposeView = null
     }
@@ -676,10 +690,16 @@ class ChromeManager(private val activity: MainActivity) {
 private fun NerustDrawerOverlay(
     onDismissRequest: () -> Unit,
     onMenuAction: (String) -> Unit,
+    onScrollState: (ScrollState?) -> Unit = {},
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Open)
     val actionPending = remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val drawerScroll = rememberScrollState()
+    DisposableEffect(drawerScroll) {
+        onScrollState(drawerScroll)
+        onDispose { onScrollState(null) }
+    }
 
     fun closeAndRun(action: String) {
         actionPending.value = true
@@ -699,25 +719,27 @@ private fun NerustDrawerOverlay(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(modifier = Modifier.statusBarsPadding()) {
-                androidx.compose.material3.Text(
-                    text = DRAWER_TITLE,
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
-                )
-                Text(
-                    text = "Open ROMs and control the current session.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
-                )
-                DRAWER_ACTIONS.forEachIndexed { index, action ->
-                    DrawerActionItem(
-                        label = action.label,
-                        onClick = {
-                            closeAndRun(action.action)
-                        },
+                Column(modifier = Modifier.verticalScroll(drawerScroll)) {
+                    androidx.compose.material3.Text(
+                        text = DRAWER_TITLE,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
                     )
-                    if (index == 1) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "Open ROMs and control the current session.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
+                    )
+                    DRAWER_ACTIONS.forEachIndexed { index, action ->
+                        DrawerActionItem(
+                            label = action.label,
+                            onClick = {
+                                closeAndRun(action.action)
+                            },
+                        )
+                        if (index == 1) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        }
                     }
                 }
             }

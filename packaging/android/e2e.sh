@@ -259,6 +259,8 @@ run_instrumentation "${TEST_CLASS}#directoryPickerIntentUsesPersistableReadWrite
 run_instrumentation "${TEST_CLASS}#pushedZonesParseToDrawableRects"
 run_instrumentation "${TEST_CLASS}#pushedJoystickParsesHomeGeometry"
 run_instrumentation "${TEST_CLASS}#delayedDismissCannotAcknowledgeReplacementDialog"
+run_instrumentation "${TEST_CLASS}#unloadClearsTouchOverlay"
+run_instrumentation "${TEST_CLASS}#drawerScrollsInLandscape"
 run_instrumentation "${FAULT_CLASS}#transientOutageIsScanErrorNeverMissing"
 run_instrumentation "${FAULT_CLASS}#corruptDocumentReadsBackExactlyForQuarantine"
 run_instrumentation "${FAULT_CLASS}#oversizedSidecarSummaryIsCappedOutOfListing"
