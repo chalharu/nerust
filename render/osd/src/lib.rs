@@ -11,7 +11,7 @@ pub use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
 
 /// System font preference. Extra scan roots arrive via
 /// [`OsdRaster::with_font_dirs`].
-fn best_sans_name(db: &fontdb::Database) -> Option<String> {
+fn best_sans_name(db: &cosmic_text::fontdb::Database) -> Option<String> {
     for name in [
         "Noto Sans",
         "DejaVu Sans",
@@ -19,9 +19,9 @@ fn best_sans_name(db: &fontdb::Database) -> Option<String> {
         "Arial",
         "Helvetica",
     ] {
-        let query = fontdb::Query {
-            families: &[fontdb::Family::Name(name)],
-            ..fontdb::Query::default()
+        let query = cosmic_text::fontdb::Query {
+            families: &[cosmic_text::fontdb::Family::Name(name)],
+            ..cosmic_text::fontdb::Query::default()
         };
         if db.query(&query).is_some() {
             return Some(name.to_string());
