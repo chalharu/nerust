@@ -61,13 +61,11 @@ pub trait ReportRenderer {
     fn render(&self, report: &Report<'_>, output_dir: &Path) -> Result<PathBuf, RomTestError>;
 }
 
-/// Upstream suite name derived from the manifest ROM path
-/// (`collection/suite/file`): the second segment when present,
-/// otherwise the first. Heuristic, documented as such: the manifest
-/// carries no suite field, and adding one would churn 1300+ cases.
-/// `nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes` → `blargg_apu_2005.07.30`.
+/// Suite name from a manifest ROM path: the second segment, except the
+/// `nes/` tree nests suites under an aggregator dir, so its lead is skipped.
 pub fn suite_name(rom: &str) -> &str {
-    let mut segments = rom.split('/');
+    let rest = rom.strip_prefix("nes/").unwrap_or(rom);
+    let mut segments = rest.split('/');
     let first = segments.next().unwrap_or(rom);
     segments.next().unwrap_or(first)
 }
@@ -104,11 +102,11 @@ mod tests {
     #[test]
     fn suite_name_prefers_second_segment() {
         assert_eq!(
-            suite_name("nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes"),
+            suite_name("nes/nes-test-roms/blargg_apu_2005.07.30/01.len_ctr.nes"),
             "blargg_apu_2005.07.30"
         );
         assert_eq!(
-            suite_name("nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"),
+            suite_name("nes/nes-test-roms/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"),
             "cpu_interrupts_v2"
         );
         assert_eq!(
