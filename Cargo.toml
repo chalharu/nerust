@@ -205,7 +205,6 @@ nerust_render_ntsc = { path = "render/ntsc" }
 nerust_render_osd = { path = "render/osd" }
 ab_glyph = { version = "=0.2.32" }
 cosmic-text = { version = "=0.19.0" }
-fontdb = { version = "=0.24.0" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_render_traits = { default-features = false, path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
