@@ -622,6 +622,14 @@ impl AndroidFrontend {
                 MenuAction::Unload => {
                     self.unload_for_exit();
                     self.core.session.clear_display();
+                    // Unload drops the ROM but keeps the window: refresh the
+                    // overlay so the loaded-gated rebuild pushes empty zones
+                    // instead of leaving the previous ROM's behind.
+                    self.chrome.input.rebuild_overlay(
+                        &self.core.session,
+                        &self.app,
+                        self.flow.render_sync.window_size(),
+                    );
                     self.flow.render_sync.request_redraw(&mut self.core.shell);
                 }
                 MenuAction::LoadState => {

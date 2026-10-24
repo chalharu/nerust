@@ -198,6 +198,9 @@ class ChromeManager(private val activity: MainActivity) {
     fun floatingDpadStateForTest(): FloatArray? =
         (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
 
+    /** Pushed touch-zone count: 0 while unloaded or hidden. Unload assertions use this. */
+    fun controlsZoneCountForTest(): Int = controlsPushedZones.size
+
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
