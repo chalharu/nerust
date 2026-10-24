@@ -8,7 +8,7 @@ use std::path::Path;
 use nerust_gui_shell::context::FrontendContext;
 use nerust_render_traits::{
     SurfaceSize,
-    renderer::{GpuRenderer, RendererConfig},
+    renderer::{RenderPipeline, RendererConfig},
 };
 use raw_window_handle::HasDisplayHandle;
 #[cfg(target_os = "macos")]
@@ -26,10 +26,8 @@ use crate::ports::{NativeDialogs, TaoWindowOpener};
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     host: HostState,
-    renderer: Option<Box<dyn GpuRenderer>>,
+    renderer: Option<Box<dyn RenderPipeline>>,
     /// Native target the surface is attached to (`None` = toplevel).
-    /// The attach binds a drawable, so a target change needs a
-    /// recreate, not a resize.
     surface_xid: Option<u64>,
 }
 
@@ -55,47 +53,80 @@ impl WindowRuntime {
         })
     }
 
-    fn build_renderer_and_surface(&mut self, window: &tao::window::Window) -> Option<()> {
-        let (raw_window_handle, size, xid) = self.host.surface_target()?;
-        let session = self.host.session();
-        let vsync = session.settings_snapshot().local.video.presentation.vsync;
-        let raw_display_handle = match window.display_handle() {
-            Ok(handle) => handle.as_raw(),
-            Err(e) => {
-                log::error!("failed to get display handle: {e}");
-                return None;
+    /// Live-follow pulse: parked with no wakeups unless a viewer
+    /// wants live ticks; arming wakes it, disarming re-parks it.
+    fn spawn_tick_thread(
+        tick_proxy: tao::event_loop::EventLoopProxy<UserEvent>,
+        tick_armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<std::thread::Thread> {
+        let (thread_tx, thread_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = thread_tx.send(std::thread::current());
+            use std::sync::atomic::Ordering;
+            loop {
+                if tick_armed.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
+                        break;
+                    }
+                } else {
+                    std::thread::park();
+                }
             }
-        };
-        let render_profile = session.render_profile().cloned()?;
+        });
+        thread_rx.recv().ok()
+    }
+
+    /// Pipeline for the live profile; reports creation faults to the host.
+    /// `None` keeps the previous renderer instead of a half-built one.
+    fn create_pipeline(
+        &mut self,
+        raw_display_handle: raw_window_handle::RawDisplayHandle,
+    ) -> Option<Box<dyn RenderPipeline>> {
+        let render_profile = self.host.render_profile()?;
         let config = RendererConfig {
             render_profile,
-            vsync,
+            vsync: self.host.settings_snapshot().local.video.presentation.vsync,
+            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
         };
-        // Drop the old renderer before the new attach makes its own
-        // context current: GL object names die with their context, and
-        // a fresh context reuses the same ids.
+        // Drop the old renderer before the new attach makes its own context current.
         self.renderer = None;
-        let mut renderer = match self
+        match self
             .host
             .gpu_factory()
-            .create_renderer(&config, raw_display_handle)
+            .create_pipeline(&config, raw_display_handle)
         {
-            Ok(renderer) => renderer,
+            Ok(renderer) => Some(renderer),
             Err(e) => {
                 log::error!("failed to create renderer: {e}");
-                return None;
+                self.host
+                    .render_failed(format!("Failed to create renderer: {e}"));
+                None
             }
-        };
+        }
+    }
+
+    fn build_renderer_and_surface(
+        &mut self,
+        raw_display_handle: raw_window_handle::RawDisplayHandle,
+    ) -> Option<()> {
+        let (raw_window_handle, size, xid) = self.host.surface_target()?;
+        let mut renderer = self.create_pipeline(raw_display_handle)?;
         if let Err(e) = renderer.attach(
             raw_window_handle,
             raw_display_handle,
             SurfaceSize::new(size.width, size.height),
         ) {
             log::error!("failed to attach renderer: {e}");
+            self.host
+                .render_failed(format!("Failed to attach renderer: {e}"));
             return None;
         }
         self.surface_xid = xid;
         self.renderer = Some(renderer);
+        // Fresh view holds no layer; re-push on the next sync
+        // instead of skipping on a stale fingerprint.
+        self.host.note_renderer_replaced();
         Some(())
     }
 
@@ -106,16 +137,9 @@ impl WindowRuntime {
                 true
             }
             Err(detail) => {
-                // Startup runs before the main window exists, so the
-                // standalone dialog is the only explanation for a bad
-                // `--rom` path.
+                // Startup runs before the main window exists: standalone dialog only.
                 crate::ports::show_rom_load_error(
-                    self.host
-                        .session()
-                        .settings_snapshot()
-                        .shared
-                        .general
-                        .language,
+                    self.host.settings_snapshot().shared.general.language,
                     &detail,
                 );
                 false
@@ -130,18 +154,11 @@ impl WindowRuntime {
             .take()
             .expect("WindowRuntime::run() called more than once");
 
-        // Live-follow pulse: nudges the loop each interval so the PPU
-        // viewer tracks a running core with no input events. Throttled;
-        // exits when the loop is gone.
-        let tick_proxy = event_loop.create_proxy();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(250));
-                if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
-                    break;
-                }
-            }
-        });
+        if let Some(thread) =
+            Self::spawn_tick_thread(event_loop.create_proxy(), self.host.live_tick_armed())
+        {
+            self.host.register_tick_thread(thread);
+        }
 
         event_loop.run(move |event, event_loop, control_flow| match event {
             Event::NewEvents(StartCause::Init) => {
@@ -158,43 +175,22 @@ impl WindowRuntime {
             }
             Event::WindowEvent {
                 event, window_id, ..
-            } if self.host.is_settings_window(window_id) => {
-                self.on_settings_event(event);
+            } => {
+                if let Some(kind) = self.host.aux_kind_of(window_id) {
+                    let opener = TaoWindowOpener::new(event_loop);
+                    self.on_aux_event(kind, event, &opener);
+                }
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
-            Event::RedrawRequested(window_id) if self.host.is_settings_window(window_id) => {
-                if let Some(handle) = self.host.settings_window.as_mut() {
-                    handle.render();
-                }
-            }
-            Event::WindowEvent {
-                event, window_id, ..
-            } if self.host.debug.is_debug_window(window_id) => {
-                let opener = TaoWindowOpener::new(event_loop);
-                self.on_debug_event(&opener, event);
-            }
-            Event::RedrawRequested(window_id) if self.host.debug.is_debug_window(window_id) => {
-                let opener = TaoWindowOpener::new(event_loop);
-                self.on_debug_redrawn(&opener);
-            }
-            Event::WindowEvent {
-                event, window_id, ..
-            } if self.host.debug.is_ppu_window(window_id) => {
-                self.on_ppu_event(event);
-            }
-            Event::WindowEvent {
-                event, window_id, ..
-            } if self.host.is_history_window(window_id) => {
-                self.host.on_history_event(event);
-            }
-            Event::RedrawRequested(window_id) if self.host.is_history_window(window_id) => {
-                if let Some(handle) = self.host.history_window.as_mut() {
-                    handle.render();
-                }
-            }
-            Event::RedrawRequested(window_id) if self.host.debug.is_ppu_window(window_id) => {
-                if let Some(handle) = self.host.debug.ppu_window.as_mut() {
-                    handle.render();
+            Event::RedrawRequested(window_id) => {
+                // Debugger redraws also drain; the rest only render.
+                if let Some(kind) = self.host.aux_kind_of(window_id) {
+                    if kind == crate::aux::focus::AuxKind::Debug {
+                        let opener = TaoWindowOpener::new(event_loop);
+                        self.on_debug_redrawn(&opener);
+                    } else {
+                        self.on_aux_redrawn(kind);
+                    }
                 }
             }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
@@ -206,7 +202,10 @@ impl WindowRuntime {
                     match action {
                         HostAction::None => (),
                         HostAction::RomLoaded => self.recreate_renderer(),
-                        HostAction::Exit => *control_flow = ControlFlow::Exit,
+                        HostAction::Exit => {
+                            self.begin_close();
+                            *control_flow = ControlFlow::Exit
+                        }
                     }
                 }
             },
@@ -216,47 +215,64 @@ impl WindowRuntime {
     }
 
     fn on_update(&mut self) {
+        if !self.host.render_ready() {
+            return;
+        }
+        if self.renderer.is_none() {
+            self.recreate_renderer();
+        }
         let Some(window_size) = self.host.window_surface_size() else {
             return;
         };
+        if window_size.width == 0 || window_size.height == 0 {
+            return;
+        }
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
 
-        // Keep the output sized to the current target. A size change
-        // resizes in place, but a target change (toplevel fallback to
-        // content area once laid out) rebinds a drawable and needs a
-        // full recreate.
+        // Keep the output sized to the current target: target change needs a full recreate.
         let current_xid = self.host.surface_xid();
         if self.surface_xid != current_xid {
-            if let Some(window) = self.host.window().cloned() {
-                self.build_renderer_and_surface(&window);
-            }
+            self.recreate_renderer();
             return;
         }
         if renderer.size() != window_size {
             renderer.resize(window_size);
         }
 
-        let strip = self.host.reserved_strip();
-        if strip != self.host.osd_last_strip {
-            self.host.osd_last_strip = strip;
-            renderer.set_reserved_strip(strip);
-        }
-        self.host.poll_notifications();
-        self.host.sync_osd_layer(renderer.as_mut(), window_size);
+        // No notification drain here: `update_control_flow` drains every pass.
+        // One capture for the whole redraw: strips and layer sync share the frame.
+        let ctx = self.host.frame_ctx();
+        self.host
+            .render_osd_frame(renderer.as_mut(), window_size, &ctx);
 
-        self.host.session_mut().swap_frame_buffer();
-        if let Some(fb) = self.host.session_mut().frame_buffer() {
+        self.host.swap_frame_buffer();
+        if let Some(fb) = self.host.frame_buffer() {
+            let frame_counter = ctx.tick().frame_counter;
             let result = renderer.render(fb);
-            self.host.on_render_result(result);
+            self.host.on_render_result(result, frame_counter);
+            if matches!(result, nerust_render_traits::renderer::RenderResult::Error) {
+                self.renderer = None;
+            }
         }
     }
 
     fn recreate_renderer(&mut self) {
         self.renderer = None;
-        if let Some(window) = self.host.window().cloned() {
-            self.build_renderer_and_surface(&window);
+        if !self.host.render_ready() {
+            return;
+        }
+        // Owned display handle out; the attach below only borrows the host.
+        let display = self
+            .host
+            .with_main_window(|window| window.display_handle().ok().map(|handle| handle.as_raw()));
+        if let Some(Some(raw_display)) = display {
+            self.build_renderer_and_surface(raw_display);
+        } else if display.is_some() {
+            log::error!("failed to get display handle");
+            self.host
+                .render_failed("Failed to get display handle".into());
         }
     }
 }
@@ -264,5 +280,15 @@ impl WindowRuntime {
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
         self.renderer = None;
+    }
+}
+
+impl WindowRuntime {
+    /// Ordered exit teardown: the surface dies before the native owner it
+    /// borrows, on every close path. Idempotent via `prepare_close`.
+    fn begin_close(&mut self) {
+        self.renderer = None;
+        self.host.prepare_close();
+        self.surface_xid = None;
     }
 }

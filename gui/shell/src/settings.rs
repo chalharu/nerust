@@ -4,7 +4,27 @@ pub mod defaults;
 use nerust_core_traits::audio::{AudioBackend, AudioBackendRegistry, GainBackend};
 use nerust_settings_core::model::local::{HostBackendLocalSettings, ScalingMode};
 
+/// Port for building the live audio speaker from local settings.
+/// Session code depends on this seam; the registry adapter implements it once.
+pub trait AudioSpeakerFactory: Send + Sync {
+    /// Build the gain-wrapped speaker for `settings`.
+    fn build_speaker(&self, settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend>;
+}
+
+impl AudioSpeakerFactory for AudioBackendRegistry {
+    fn build_speaker(&self, settings: &HostBackendLocalSettings) -> Box<dyn AudioBackend> {
+        build_speaker_impl(self, settings)
+    }
+}
+
 pub fn build_speaker(
+    registry: &AudioBackendRegistry,
+    settings: &HostBackendLocalSettings,
+) -> Box<dyn AudioBackend> {
+    build_speaker_impl(registry, settings)
+}
+
+fn build_speaker_impl(
     registry: &AudioBackendRegistry,
     settings: &HostBackendLocalSettings,
 ) -> Box<dyn AudioBackend> {
@@ -64,5 +84,39 @@ mod tests {
     fn scaling_factor_uses_none_for_fit_mode() {
         assert_eq!(scaling_factor(ScalingMode::FitToWindow), None);
         assert_eq!(scaling_factor(ScalingMode::X4), Some(4));
+    }
+
+    #[test]
+    fn scaling_factor_covers_every_mode() {
+        for (mode, expected) in [
+            (ScalingMode::X1, Some(1)),
+            (ScalingMode::X2, Some(2)),
+            (ScalingMode::X3, Some(3)),
+            (ScalingMode::X5, Some(5)),
+        ] {
+            assert_eq!(scaling_factor(mode), expected);
+        }
+    }
+
+    #[test]
+    fn speaker_factory_builds_gain_wrapped_backend() {
+        use nerust_core_traits::audio::AudioBackendRegistry;
+        let registry = AudioBackendRegistry::new();
+        let settings = crate::session::test_util::test_session()
+            .settings_snapshot()
+            .local
+            .clone();
+        let speaker = super::build_speaker(&registry, &settings);
+        assert!(speaker.sample_rate() > 0);
+        let via_trait = <AudioBackendRegistry as super::AudioSpeakerFactory>::build_speaker(
+            &registry, &settings,
+        );
+        assert_eq!(via_trait.sample_rate(), speaker.sample_rate());
+        let mut muted = settings.clone();
+        muted.audio.muted = true;
+        let _ = super::build_speaker(&registry, &muted);
+        let mut zero_rate = settings;
+        zero_rate.audio.sample_rate = 0;
+        let _ = super::build_speaker(&registry, &zero_rate);
     }
 }

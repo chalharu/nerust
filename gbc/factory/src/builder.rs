@@ -1,18 +1,14 @@
 use nerust_core_traits::{
     audio::AudioBackend,
-    factory::{CoreParts, FactoryError, settings::FactorySettingsView},
     peripheral::{HostPeripheralHandles, accelerometer_channel, rumble_channel},
 };
 use nerust_gbc_core::console_core::GbcConsoleCore;
 use nerust_gbc_settings::GbcSettings;
-use nerust_input_traits::{
-    ControllerCollection, EmuInput, GuiInput, InputAssignments, InputSystemFactory, ProfileId,
-};
+use nerust_input_traits::InputAssignments;
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
-
-use crate::input_profiles::GBC_ATTACHMENT;
+use nerust_system_traits::factory::{CoreParts, FactoryError, settings::FactorySettingsView};
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
@@ -23,29 +19,10 @@ pub(crate) fn create_core_and_adapter(
         .as_deref()
         .and_then(|value| value.downcast_ref::<GbcSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    if assignments.slots.len() != 1 || assignments.slots[0].0 != GBC_ATTACHMENT {
-        return Err(FactoryError::Create(
-            "GBC requires exactly one player1 assignment".to_string(),
-        ));
-    }
-    let profile = assignments.slots[0]
-        .1
-        .as_ref()
-        .ok_or_else(|| FactoryError::Create("GBC controller is not assigned".to_string()))?;
-    if profile.profile_id() != ProfileId::new("gbc.standard_pad") {
-        return Err(FactoryError::Create(format!(
-            "unsupported GBC controller: {}",
-            profile.profile_id()
-        )));
-    }
-
-    let controllers =
-        ControllerCollection::new(vec![Box::new(nerust_gbc_device::StandardPad::new())]);
-    let resources = crate::GbcFactory
-        .create_split(&controllers)
-        .map_err(|error| FactoryError::Create(error.to_string()))?;
-    let gui_input = GuiInput::from_split(&resources.split);
-    let emu_input = EmuInput::from_split(&resources.split);
+    // NES mirrors this: the factory validates assignments and builds entries.
+    let resources = crate::GbcFactory.create_split(assignments)?;
+    // Unified map travels end to end; no lossy projection.
+    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();
@@ -57,8 +34,8 @@ pub(crate) fn create_core_and_adapter(
     Ok(CoreParts {
         core: Box::new(core),
         audio: speaker,
-        gui_input,
-        field_map: resources.field_map,
+        gui_input: Box::new(gui_input),
+        field_map,
         render_profile: VideoRenderProfile {
             source_logical_size: logical_size,
             logical_size,
@@ -77,11 +54,12 @@ pub(crate) fn create_core_and_adapter(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::audio::NullAudio;
-    use nerust_core_traits::factory::settings::Language;
     use nerust_gbc_settings::GbcSettings;
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
+    use nerust_system_traits::factory::settings::Language;
 
     use super::*;
+    use crate::input_profiles::GBC_ATTACHMENT;
 
     #[test]
     fn builds_rgba_core_parts() {
@@ -106,9 +84,7 @@ mod tests {
             language: Language::SystemDefault,
             system_config: Some(Box::new(GbcSettings::default())),
         };
-        let assignments = InputAssignments {
-            slots: vec![(GBC_ATTACHMENT, None)],
-        };
+        let assignments = InputAssignments::new(vec![(GBC_ATTACHMENT, None)]);
         assert!(create_core_and_adapter(&view, Box::new(NullAudio), &assignments).is_err());
     }
 }

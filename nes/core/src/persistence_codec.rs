@@ -25,8 +25,36 @@ pub(crate) fn validate_schema_version(version: u32) -> Result<(), PersistenceErr
     if version == PERSISTENCE_SCHEMA_VERSION {
         Ok(())
     } else {
-        Err(PersistenceError::Validation(format!(
-            "unsupported persistence schema version: {version}"
-        )))
+        Err(PersistenceError::UnsupportedVersion(version))
+    }
+}
+
+/// Version accessor so the envelope parses the body once: success validates
+/// the body's own version; only failures fall back to a minimal header parse
+/// to keep unsupported-version errors outranking corrupt bodies.
+pub(crate) trait HasSchemaVersion {
+    fn schema_version(&self) -> u32;
+}
+
+#[derive(serde::Deserialize)]
+struct VersionHeader {
+    schema_version: u32,
+}
+
+pub(crate) fn decode_versioned_payload<T>(bytes: &[u8]) -> Result<T, PersistenceError>
+where
+    T: serde::de::DeserializeOwned + HasSchemaVersion,
+{
+    match decode_payload::<T>(bytes) {
+        Ok(body) => {
+            validate_schema_version(body.schema_version())?;
+            Ok(body)
+        }
+        Err(body_error) => {
+            if let Ok(header) = decode_payload::<VersionHeader>(bytes) {
+                validate_schema_version(header.schema_version)?;
+            }
+            Err(body_error)
+        }
     }
 }

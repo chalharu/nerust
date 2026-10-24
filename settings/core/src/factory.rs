@@ -1,10 +1,8 @@
-use nerust_core_traits::{
-    factory::{
-        CoreFactory, FactoryError,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
-        settings::{FactorySettingsView, Language},
-    },
-    identity::SystemId,
+use nerust_core_traits::identity::SystemId;
+use nerust_system_traits::factory::{
+    CoreFactory, FactoryError,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
+    settings::{FactorySettingsView, Language},
 };
 // SystemDefaults is needed in scope for the return type of
 // CoreFactory::as_system_defaults() → Option<&dyn SystemDefaults>.
@@ -12,7 +10,7 @@ use nerust_core_traits::{
 // through a method return type from another trait.
 use crate::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 #[allow(unused_imports)]
-use nerust_core_traits::factory::SystemDefaults;
+use nerust_system_traits::factory::SystemDefaults;
 
 fn language_to_factory_lang(lang: AppLanguage) -> Language {
     match lang {
@@ -72,19 +70,16 @@ mod tests {
         app_state::DesktopAppState, language::AppLanguage, local::HostBackendLocalSettings,
         shared::DesktopSharedSettings, snapshot::SettingsSnapshot,
     };
-    use nerust_core_traits::{
-        declare_system_id,
-        factory::{
-            CoreFactory, CoreParts, FactoryError, SystemDefaults,
-            descriptor::{
-                SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
-                SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
-            },
-            settings::{FactorySettingsView, Language},
-        },
-        identity::SystemId,
-    };
+    use nerust_core_traits::{declare_system_id, identity::SystemId};
     use nerust_settings_traits::SystemSettings;
+    use nerust_system_traits::factory::{
+        CoreFactory, CoreParts, FactoryError, SystemDefaults,
+        descriptor::{
+            SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
+            SystemSettingsFieldKind, SystemSettingsFieldModel, SystemSettingsPageModel,
+        },
+        settings::{FactorySettingsView, Language},
+    };
     use std::sync::Arc;
 
     use super::{apply_settings_choice, language_to_factory_lang, resolve_label, settings_view};
@@ -174,7 +169,7 @@ mod tests {
             view.system_config = Some(settings);
             Ok(())
         }
-        fn probe_media(&self, _: &nerust_core_traits::factory::load::MediaObject) -> bool {
+        fn probe_media(&self, _: &nerust_system_traits::factory::load::MediaObject) -> bool {
             false
         }
         fn create_core_and_adapter_with_assignments(
@@ -188,13 +183,14 @@ mod tests {
         fn resolve_load_request(
             &self,
             _: &FactorySettingsView,
-            _: Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptions>,
-        ) -> Result<nerust_core_traits::factory::load::ResolvedLoadRequest, FactoryError> {
+            _: Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptions>,
+        ) -> Result<nerust_system_traits::factory::load::ResolvedLoadRequest, FactoryError>
+        {
             unreachable!()
         }
         fn default_load_options(
             &self,
-        ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptions> {
+        ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptions> {
             unreachable!()
         }
         fn input_system_factory(&self) -> &dyn nerust_input_traits::InputSystemFactory {
@@ -202,7 +198,7 @@ mod tests {
         }
         fn load_options_schema(
             &self,
-        ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+        ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
             unreachable!()
         }
     }

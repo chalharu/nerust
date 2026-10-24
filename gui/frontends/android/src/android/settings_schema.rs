@@ -1,0 +1,351 @@
+//! Android field bindings: one source for descriptors, bounds and keyed decoding.
+use std::sync::Arc;
+
+use super::settings_model::AndroidSettings;
+use nerust_settings_core::model::{
+    local::{
+        NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
+        TouchOverlayVisibility,
+    },
+    shared::StoragePolicy,
+};
+
+const VOLUME_MIN: u8 = 0;
+const VOLUME_MAX: u8 = 100;
+const LATENCY_MIN: u16 = 10;
+const LATENCY_MAX: u16 = 200;
+const SAMPLE_RATE_CHOICES: &[u32] = &[44_100, 48_000];
+const OVERLAY_SCALE_MIN: u8 = 50;
+const OVERLAY_SCALE_MAX: u8 = 150;
+const OVERLAY_OFFSET_MIN: i8 = -30;
+const OVERLAY_OFFSET_MAX: i8 = 30;
+
+/// Ranged-int encoding: Kotlin expands `min..=max` with `unit`.
+/// The 101-string tables are never built or shipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RangeSpec {
+    pub min: i64,
+    pub max: i64,
+    pub unit: &'static str,
+}
+
+/// One settings-dialog row: key, label, choices, and current index travel together.
+/// All arrays and codecs derive from `setting_defs`; rows cannot drift from choices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingDef {
+    pub key: String,
+    pub label: String,
+    pub choices: Vec<String>,
+    pub current: usize,
+    /// `Some` for ranged ints: `choices` stays empty, Kotlin expands locally.
+    pub range: Option<RangeSpec>,
+    /// Same-edge rule resolved in Rust; Kotlin only filters on this flag.
+    pub visible: bool,
+}
+
+/// Canonical corner order shared by labels and indices.
+/// Every position picker follows this sequence; nothing else assumes the mapping.
+const CORNERS: [NotificationPosition; 4] = [
+    NotificationPosition::BottomLeft,
+    NotificationPosition::BottomRight,
+    NotificationPosition::TopLeft,
+    NotificationPosition::TopRight,
+];
+
+fn corner_index(position: NotificationPosition) -> usize {
+    CORNERS
+        .iter()
+        .position(|&corner| corner == position)
+        .unwrap_or(0)
+}
+
+// Descriptor construction and caching belong to the schema, not the snapshot model.
+impl AndroidSettings {
+    /// One settings row: key, label, choices, and current index in one struct.
+    pub(super) fn setting_defs(&self) -> Vec<SettingDef> {
+        defs(self)
+    }
+
+    pub(super) fn cached_setting_defs_locked(
+        entry: &mut Option<(AndroidSettings, Arc<Vec<SettingDef>>)>,
+        current: &AndroidSettings,
+    ) -> Arc<Vec<SettingDef>> {
+        if let Some((cached, defs)) = entry
+            && cached == current
+        {
+            return Arc::clone(defs);
+        }
+        let defs = Arc::new(current.setting_defs());
+        *entry = Some((current.clone(), Arc::clone(&defs)));
+        defs
+    }
+}
+
+/// Key shared by the visibility rule and the tolerance below: one literal.
+const STATUS_AREA_MODE_KEY: &str = "status.area_mode";
+
+struct Binding {
+    key: &'static str,
+    label: &'static str,
+    range: Option<RangeSpec>,
+    choices: Vec<String>,
+    read: fn(&AndroidSettings) -> usize,
+    write: fn(&mut AndroidSettings, usize) -> Option<()>,
+    /// Missing keys abort decoding, except rows hidden by the same-edge rule.
+    required: bool,
+}
+
+/// Static descriptors: literals plus fn pointers, built once.
+/// Per-call work stays limited to reading `current` indices.
+fn bindings() -> &'static [Binding] {
+    static DESCRIPTORS: std::sync::OnceLock<Vec<Binding>> = std::sync::OnceLock::new();
+    DESCRIPTORS.get_or_init(build_bindings)
+}
+
+fn build_bindings() -> Vec<Binding> {
+    macro_rules! choice {
+        ($field:ident, $key:literal, $label:literal, [$($value:expr => $text:literal),+ $(,)?]) => {
+            Binding {
+                key: $key, label: $label, range: None, required: true,
+                choices: vec![$($text.into()),+],
+                read: |s| [$($value),+].iter().position(|v| *v == s.$field).unwrap_or_default(),
+                write: |s, index| { s.$field = *[$($value),+].get(index)?; Some(()) },
+            }
+        };
+    }
+    macro_rules! toggle {
+        ($field:ident, $key:literal, $label:literal) => {
+            choice!($field, $key, $label, [false => "Off", true => "On"])
+        };
+    }
+    macro_rules! range {
+        ($field:ident, $key:literal, $label:literal, $min:expr, $max:expr, $unit:literal) => {
+            Binding {
+                key: $key,
+                label: $label,
+                required: true,
+                range: Some(RangeSpec {
+                    min: i64::from($min),
+                    max: i64::from($max),
+                    unit: $unit,
+                }),
+                choices: Vec::new(),
+                read: |s| {
+                    (i64::from(s.$field).clamp(i64::from($min), i64::from($max)) - i64::from($min))
+                        as usize
+                },
+                write: |s, index| {
+                    let value = i64::try_from(index).ok()?.checked_add(i64::from($min))?;
+                    if !(i64::from($min)..=i64::from($max)).contains(&value) {
+                        return None;
+                    }
+                    s.$field = value.try_into().ok()?;
+                    Some(())
+                },
+            }
+        };
+    }
+    macro_rules! position {
+        ($field:ident, $key:literal, $label:literal) => {
+            Binding {
+                key: $key,
+                label: $label,
+                range: None,
+                required: true,
+                choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
+                    .map(str::to_string)
+                    .to_vec(),
+                read: |s| corner_index(s.$field),
+                write: |s, index| {
+                    s.$field = *CORNERS.get(index)?;
+                    Some(())
+                },
+            }
+        };
+    }
+    let mut bindings = vec![
+        toggle!(audio_muted, "audio_muted", "Mute"),
+        range!(
+            master_volume_percent,
+            "master_volume",
+            "Volume",
+            VOLUME_MIN,
+            VOLUME_MAX,
+            "%"
+        ),
+        range!(
+            latency_ms,
+            "latency_ms",
+            "Audio Latency (ms)",
+            LATENCY_MIN,
+            LATENCY_MAX,
+            " ms"
+        ),
+        Binding {
+            key: "sample_rate",
+            label: "Sample Rate (Hz)",
+            range: None,
+            required: true,
+            choices: SAMPLE_RATE_CHOICES
+                .iter()
+                .map(|rate| format!("{rate} Hz"))
+                .collect(),
+            read: |s| {
+                SAMPLE_RATE_CHOICES
+                    .iter()
+                    .position(|rate| *rate == s.sample_rate)
+                    .unwrap_or(SAMPLE_RATE_CHOICES.len() - 1)
+            },
+            write: |s, index| {
+                s.sample_rate = *SAMPLE_RATE_CHOICES.get(index)?;
+                Some(())
+            },
+        },
+        toggle!(vsync, "vsync", "VSync"),
+        choice!(screen_orientation, "screen.orientation", "Screen Orientation", [ScreenOrientation::Auto => "Auto Rotate", ScreenOrientation::Portrait => "Portrait", ScreenOrientation::Landscape => "Landscape"]),
+        choice!(storage_policy, "storage.policy", "Save Location", [StoragePolicy::Sidecar => "Next to ROM", StoragePolicy::AppSharedData => "App Storage", StoragePolicy::CustomDirectory => "Custom Directory"]),
+        choice!(overlay_visibility, "controls.overlay.visibility", "Touch Overlay", [TouchOverlayVisibility::Always => "Always", TouchOverlayVisibility::Auto => "Auto", TouchOverlayVisibility::Hidden => "Hidden"]),
+        range!(
+            overlay_opacity_percent,
+            "controls.overlay.opacity",
+            "Overlay Opacity",
+            0,
+            100,
+            "%"
+        ),
+        range!(
+            overlay_scale_percent,
+            "controls.overlay.scale",
+            "Overlay Scale",
+            OVERLAY_SCALE_MIN,
+            OVERLAY_SCALE_MAX,
+            "%"
+        ),
+        range!(
+            overlay_vertical_offset_percent,
+            "controls.overlay.vertical_offset",
+            "Overlay Vertical Position",
+            OVERLAY_OFFSET_MIN,
+            OVERLAY_OFFSET_MAX,
+            "%"
+        ),
+        toggle!(
+            overlay_haptics,
+            "controls.overlay.haptics",
+            "Overlay Haptics"
+        ),
+        toggle!(
+            motion_enabled,
+            "controls.cartridge.motion",
+            "Cartridge Motion Sensor"
+        ),
+        toggle!(
+            rumble_enabled,
+            "controls.cartridge.rumble",
+            "Cartridge Rumble"
+        ),
+        range!(
+            rumble_strength_percent,
+            "controls.cartridge.rumble_strength",
+            "Rumble Strength",
+            0,
+            100,
+            "%"
+        ),
+        choice!(rumble_target, "controls.cartridge.rumble_target", "Rumble Target", [RumbleTarget::Auto => "Auto", RumbleTarget::Handset => "Handset", RumbleTarget::Controller => "Controller"]),
+        toggle!(
+            notifications_info_enabled,
+            "notifications.info",
+            "Info Notifications"
+        ),
+        toggle!(
+            notifications_warning_enabled,
+            "notifications.warning",
+            "Warning Notifications"
+        ),
+        toggle!(
+            notifications_error_enabled,
+            "notifications.error",
+            "Error Notifications"
+        ),
+        position!(
+            notifications_position,
+            "notifications.position",
+            "Notification Position"
+        ),
+        choice!(notifications_area_mode, "notifications.area_mode", "Notification Area", [NotificationAreaMode::Overlay => "Overlay", NotificationAreaMode::Strip => "Strip"]),
+        toggle!(status_enabled, "status.enabled", "Status Display"),
+        position!(status_position, "status.position", "Status Position"),
+        choice!(status_area_mode, "status.area_mode", "Status Area", [NotificationAreaMode::Overlay => "Overlay", NotificationAreaMode::Strip => "Strip"]),
+    ];
+    for binding in &mut bindings {
+        if binding.key == STATUS_AREA_MODE_KEY {
+            binding.required = false;
+        }
+    }
+    bindings
+}
+
+/// Draft projection for the dialog: recompute the same-edge rule from corner
+/// indices without persisting anything. Out-of-range indices fall back to the
+/// first corner, matching the dialog's clamped default selection.
+pub(super) fn project_status_area_visible(
+    notifications_position_index: usize,
+    status_position_index: usize,
+) -> bool {
+    let top = |index: usize| CORNERS.get(index).copied().unwrap_or(CORNERS[0]).is_top();
+    top(notifications_position_index) != top(status_position_index)
+}
+
+pub(super) fn defs(current: &AndroidSettings) -> Vec<SettingDef> {
+    let mut defs: Vec<_> = bindings()
+        .iter()
+        .map(|binding| SettingDef {
+            key: binding.key.into(),
+            label: binding.label.into(),
+            current: (binding.read)(current),
+            choices: binding.choices.clone(),
+            range: binding.range,
+            visible: binding.key != STATUS_AREA_MODE_KEY
+                || current.notifications_position.is_top() != current.status_position.is_top(),
+        })
+        .collect();
+    defs.extend(current.system_choices.iter().map(|choice| {
+        SettingDef {
+            key: format!("system.{}.{}", choice.system_id, choice.field_id.as_str()),
+            label: choice.label.clone(),
+            choices: choice
+                .options
+                .iter()
+                .map(|(_, label)| label.clone())
+                .collect(),
+            current: choice
+                .options
+                .iter()
+                .position(|(id, _)| id == &choice.selected)
+                .unwrap_or_default(),
+            range: None,
+            visible: true,
+        }
+    }));
+    defs
+}
+
+pub(super) fn decode(
+    current: &AndroidSettings,
+    by_key: &dyn Fn(&str) -> Option<usize>,
+) -> Option<AndroidSettings> {
+    let mut next = current.clone();
+    for binding in bindings() {
+        match by_key(binding.key) {
+            Some(value) => (binding.write)(&mut next, value)?,
+            None if !binding.required => {}
+            None => return None,
+        }
+    }
+    for choice in &mut next.system_choices {
+        let key = format!("system.{}.{}", choice.system_id, choice.field_id.as_str());
+        choice.selected = choice.options.get(by_key(&key)?)?.0.clone();
+    }
+    Some(next)
+}

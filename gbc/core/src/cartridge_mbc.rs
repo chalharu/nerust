@@ -1,9 +1,42 @@
+use crate::persistence_error::GbcPersistenceError;
 use std::time::SystemTime;
 
 use crate::{
     cartridge_descriptor::{CartridgeDescriptor, DetectedMapper},
     cartridge_header::CartridgeHeader,
 };
+
+/// Identity accessor so mapper state parses once: version and kind are read
+/// from the decoded body instead of a throwaway header pass.
+pub(crate) trait MapperIdentity {
+    fn schema_version(&self) -> u32;
+    fn kind(&self) -> Option<MbcKind>;
+}
+
+/// Boilerplate-free [`MapperIdentity`]: machine states carry no kind,
+/// `kinded` persistent states report their own.
+macro_rules! impl_mapper_identity {
+    ($type:ty) => {
+        impl crate::cartridge_mbc::MapperIdentity for $type {
+            fn schema_version(&self) -> u32 {
+                self.schema_version
+            }
+            fn kind(&self) -> Option<crate::cartridge_mbc::MbcKind> {
+                None
+            }
+        }
+    };
+    ($type:ty, kinded) => {
+        impl crate::cartridge_mbc::MapperIdentity for $type {
+            fn schema_version(&self) -> u32 {
+                self.schema_version
+            }
+            fn kind(&self) -> Option<crate::cartridge_mbc::MbcKind> {
+                Some(self.kind)
+            }
+        }
+    };
+}
 
 mod huc1;
 mod huc3;
@@ -27,23 +60,9 @@ pub use mbc7::Mbc7;
 pub use mmm01::Mmm01;
 pub use wisdom_tree::WisdomTree;
 
-const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
+pub use crate::cartridge_descriptor::MbcKind;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MbcKind {
-    RomOnly,
-    Mbc1,
-    Mbc2,
-    Mbc3,
-    Mbc5,
-    Mbc6,
-    Mbc7,
-    M161,
-    Mmm01,
-    WisdomTree,
-    HuC1,
-    HuC3,
-}
+const PERSISTENT_STATE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MbcPersistentState {
@@ -58,32 +77,99 @@ fn encode_persistent_state(
     kind: MbcKind,
     ram: &[u8],
     rtc: Option<Vec<u8>>,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, GbcPersistenceError> {
     rmp_serde::to_vec_named(&MbcPersistentState {
         schema_version: PERSISTENT_STATE_SCHEMA_VERSION,
         kind,
         ram: ram.to_vec(),
         rtc,
     })
-    .map_err(|error| error.to_string())
+    .map_err(GbcPersistenceError::from)
 }
 
-fn decode_persistent_state(data: &[u8], kind: MbcKind) -> Result<MbcPersistentState, String> {
-    let state: MbcPersistentState =
-        rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-    if state.schema_version != PERSISTENT_STATE_SCHEMA_VERSION {
-        return Err(format!(
-            "unsupported MBC persistent state version: {}",
-            state.schema_version
-        ));
+fn decode_persistent_state(
+    data: &[u8],
+    kind: MbcKind,
+) -> Result<MbcPersistentState, GbcPersistenceError> {
+    decode_mapper_state(
+        data,
+        PERSISTENT_STATE_SCHEMA_VERSION,
+        "MBC persistent state",
+        Some(kind),
+    )
+}
+
+impl_mapper_identity!(MbcPersistentState, kinded);
+impl_mapper_identity!(Mbc1MachineState);
+impl_mapper_identity!(Mbc2MachineState);
+
+fn decode_mapper_state<T>(
+    data: &[u8],
+    version: u32,
+    component: &'static str,
+    kind: Option<MbcKind>,
+) -> Result<T, GbcPersistenceError>
+where
+    T: serde::de::DeserializeOwned + MapperIdentity,
+{
+    match rmp_serde::from_slice::<T>(data) {
+        Ok(state) => {
+            check_mapper_identity(
+                state.schema_version(),
+                state.kind(),
+                version,
+                component,
+                kind,
+            )?;
+            Ok(state)
+        }
+        Err(body_error) => {
+            // Precedence survives undecodable bodies: a readable header still
+            // reports version/kind faults instead of generic corruption.
+            if let Ok(header) = rmp_serde::from_slice::<MapperHeader>(data) {
+                check_mapper_identity(
+                    header.schema_version,
+                    header.kind,
+                    version,
+                    component,
+                    kind,
+                )?;
+            }
+            Err(body_error.into())
+        }
     }
-    if state.kind != kind {
-        return Err(format!(
-            "MBC persistent state kind mismatch: expected {kind:?}, got {:?}",
-            state.kind
-        ));
+}
+
+/// Shared version/kind precedence for decoded bodies and fallback headers.
+fn check_mapper_identity(
+    schema_version: u32,
+    actual_kind: Option<MbcKind>,
+    version: u32,
+    component: &'static str,
+    kind: Option<MbcKind>,
+) -> Result<(), GbcPersistenceError> {
+    if schema_version != version {
+        return Err(GbcPersistenceError::UnsupportedMapperVersion {
+            component,
+            version: schema_version,
+        });
     }
-    Ok(state)
+    if let (Some(expected), Some(actual)) = (kind, actual_kind)
+        && expected != actual
+    {
+        return Err(GbcPersistenceError::MapperKindMismatch {
+            component,
+            expected,
+            actual,
+        });
+    }
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct MapperHeader {
+    schema_version: u32,
+    kind: Option<MbcKind>,
 }
 
 /// Memory Bank Controller trait.
@@ -131,14 +217,17 @@ pub trait Mbc: std::fmt::Debug + Send {
 
     fn reset_runtime(&mut self) {}
 
-    fn export_persistent_state(&self, _now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    fn export_persistent_state(
+        &self,
+        _now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         if !self.has_battery() {
             return Ok(None);
         }
         encode_persistent_state(self.kind(), self.ram_data().unwrap_or_default(), None).map(Some)
     }
 
-    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), String> {
+    fn import_persistent_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         if !self.has_battery() {
             return Err("cartridge has no battery-backed persistent state".into());
         }
@@ -151,14 +240,15 @@ pub trait Mbc: std::fmt::Debug + Send {
             return Err(format!(
                 "persistent RAM length mismatch: expected {expected_len}, got {}",
                 state.ram.len()
-            ));
+            )
+            .into());
         }
         self.ram_restore(&state.ram);
         Ok(())
     }
 
     fn serialize_state(&self) -> Vec<u8>;
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String>;
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError>;
 }
 
 /// ROM Only MBC: no banking, no RAM.
@@ -190,7 +280,7 @@ impl Mbc for RomOnly {
         Vec::new()
     }
 
-    fn deserialize_state(&mut self, _data: &[u8]) -> Result<(), String> {
+    fn deserialize_state(&mut self, _data: &[u8]) -> Result<(), GbcPersistenceError> {
         Ok(())
     }
 }
@@ -372,15 +462,8 @@ impl Mbc for Mbc1 {
         .expect("MBC1 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc1MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != 1 {
-            return Err(format!(
-                "unsupported MBC1 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc1MachineState = decode_mapper_state(data, 1, "MBC1 machine state", None)?;
         if state.ram.len() != self.ram.len() {
             return Err("MBC1 machine state RAM length mismatch".into());
         }
@@ -510,15 +593,8 @@ impl Mbc for Mbc2 {
         .expect("MBC2 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc2MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != 1 {
-            return Err(format!(
-                "unsupported MBC2 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc2MachineState = decode_mapper_state(data, 1, "MBC2 machine state", None)?;
         if state.ram.len() != self.ram.len() || state.ram.iter().any(|value| value & 0xF0 != 0) {
             return Err("invalid MBC2 machine state RAM".into());
         }
@@ -829,7 +905,14 @@ mod tests {
             .expect("battery state");
         let mut target = Mbc2::new(vec![0; 0x8000], true);
 
-        assert!(target.import_persistent_state(&state).is_err());
+        assert!(matches!(
+            target.import_persistent_state(&state),
+            Err(GbcPersistenceError::MapperKindMismatch {
+                component: "MBC persistent state",
+                expected: MbcKind::Mbc2,
+                actual: MbcKind::Mbc1,
+            })
+        ));
     }
 
     #[test]

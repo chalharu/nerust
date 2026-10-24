@@ -5,8 +5,8 @@ use std::{
 };
 
 use nerust_core_traits::CoreOptions;
-use nerust_core_traits::factory::load::SystemLoadOptions;
 use nerust_input_traits::AttachmentId;
+use nerust_system_traits::factory::load::SystemLoadOptions;
 
 mod core_mock;
 mod factory_mock;

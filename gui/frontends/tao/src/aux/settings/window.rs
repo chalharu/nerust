@@ -8,15 +8,12 @@ use tao::event_loop::EventLoopWindowTarget;
 
 use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
 use crate::aux::bridge::lock_recovered;
-use crate::aux::shell::{AuxShell, PumpOutcome, WindowScaffold};
-use crate::convert::convert_tao_window_event;
+use crate::aux::shell::{AuxShell, AuxSurface};
 
-/// Settings dialog: the shared [`AuxShell`] host plus the
-/// settings-only pieces (pending-apply staging and the external
-/// view-invalidation flag shared with the program). Matches the
-/// debugger/PPU shape so the three aux windows cannot drift apart.
+/// Settings dialog: shared [`AuxShell`] host plus pending-apply staging.
+/// Matches the debugger/PPU shape.
 pub(crate) struct SettingsWindowHandle {
-    pub(crate) shell: AuxShell<SettingsAppProgram>,
+    shell: AuxShell<SettingsAppProgram>,
     view_invalidated: Arc<AtomicBool>,
     pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
 }
@@ -45,24 +42,30 @@ impl SettingsWindowHandle {
             view_invalidated: Arc::clone(&view_invalidated),
         };
         let (instance, _task) = program::Instance::new(program);
-        let scaffold = WindowScaffold::open(
+        let surface = AuxSurface::open(
             event_loop,
             "Preferences",
             (960.0, 720.0),
             None,
             None,
             "settings window",
-        )?;
+            Arc::clone(&should_close),
+        )
+        .map_err(|error| {
+            // Typed scaffold failure: surface the tagged native detail here.
+            log::error!("{error}");
+            error
+        })
+        .ok()?;
         // Birth geometry is a placeholder on some compositors; record
         // it to tell "born 0x0, never resized" apart from later traffic.
+        let (viewport_w, viewport_h) = surface.viewport();
         log::debug!(
-            "settings create: physical={}x{} scale={} bounds={:?}",
-            scaffold.viewport_physical.0,
-            scaffold.viewport_physical.1,
-            scaffold.scale_factor,
-            scaffold.bounds,
+            "settings create: physical={viewport_w}x{viewport_h} scale={} bounds={:?}",
+            surface.scale(),
+            surface.bounds(),
         );
-        let shell = AuxShell::assemble(scaffold, instance, should_close);
+        let shell = AuxShell::assemble(surface, instance);
         Some(Self {
             shell,
             view_invalidated,
@@ -70,85 +73,52 @@ impl SettingsWindowHandle {
         })
     }
 
-    pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
-        let mut messages = Vec::new();
+    pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
+        lock_recovered(&self.pending_apply).take()
+    }
+}
 
-        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+impl crate::aux::focus::AuxShellRef for SettingsWindowHandle {
+    fn kind(&self) -> crate::aux::focus::AuxKind {
+        crate::aux::focus::AuxKind::Settings
+    }
+
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
+    }
+}
+
+impl crate::aux::registry::AuxController for SettingsWindowHandle {
+    fn as_settings(&mut self) -> Option<&mut dyn crate::aux::registry::SettingsClosePort> {
+        Some(self)
+    }
+}
+
+impl crate::aux::registry::SettingsClosePort for SettingsWindowHandle {
+    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {
+        self.take_pending_apply()
+    }
+}
+
+impl crate::aux::focus::AuxEvents for SettingsWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
+        let capture = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,
             ..
         }) = &mapped
-            && let Some(key) =
-                crate::aux::settings::program::keyboard_key_from_physical(*physical_key)
         {
-            messages.push(Message::CaptureKey(key));
-        }
-
-        let Some(ui) = self.shell.ui_state.ui_mut() else {
-            log::warn!("aux window ui unavailable after panicked relayout");
-            return;
+            crate::aux::settings::program::keyboard_key_from_physical(*physical_key)
+                .map(Message::CaptureKey)
+        } else {
+            None
         };
-        let (ui_outcome, _) = ui.update(
-            &[mapped],
-            self.shell.cursor,
-            &mut self.shell.renderer.backend,
-            &mut self.shell.clipboard,
-            &mut messages,
-        );
-        let outcome = crate::aux::shell::pump_outcome(&ui_outcome);
-        match outcome {
-            PumpOutcome::Rebuild => {
-                self.view_invalidated
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
-            PumpOutcome::Repaint => {
-                self.shell.window.request_redraw();
-            }
-            PumpOutcome::Idle => {}
-        }
-
-        if !messages.is_empty() || matches!(outcome, PumpOutcome::Rebuild) {
-            let bounds = self.shell.logical_bounds();
-            let window_id = self.shell.window_id;
-            self.shell.ui_state.process_messages(
-                messages,
-                window_id,
-                bounds,
-                &mut self.shell.renderer.backend,
-                &self.view_invalidated,
-            );
-        }
-    }
-
-    pub(crate) fn render(&mut self) {
-        self.shell.render("settings");
-    }
-
-    pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
-        lock_recovered(&self.pending_apply).take()
-    }
-
-    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = convert_tao_window_event(
-            event,
-            &mut self.shell.cursor,
-            self.shell.scale_factor,
-            &mut self.shell.modifiers,
-            &self.shell.should_close,
-        ) {
-            self.handle_event(iced_event);
-        }
-    }
-}
-
-impl crate::aux::shell::AuxWindow for SettingsWindowHandle {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        // Modifiers/close ride the shared prelude; convert repeats
-        // both idempotently inside `handle_tao_event`, so no second
-        // pass is needed here.
-        self.shell.handle_common_event(&event);
-        self.handle_tao_event(event);
-        self.shell.window.request_redraw();
+        self.shell
+            .pump_finish(mapped, capture, &self.view_invalidated)
     }
 }
 #[cfg(test)]
@@ -157,9 +127,28 @@ mod tests {
     use tao::{dpi::PhysicalPosition, event::WindowEvent};
 
     use super::*;
+    use crate::aux::native::adapt_event;
+    use crate::convert::{FeedContext, feed_domain_event};
 
     fn initial_cursor() -> mouse::Cursor {
         mouse::Cursor::Available(Point::new(0.0, 0.0))
+    }
+
+    fn feed(
+        event: WindowEvent,
+        cursor: &mut mouse::Cursor,
+        modifiers: &mut keyboard::Modifiers,
+        should_close: &AtomicBool,
+    ) -> Option<Event> {
+        feed_domain_event(
+            adapt_event(&event),
+            &mut FeedContext {
+                cursor,
+                modifiers,
+                scale_factor: 1.0,
+                should_close,
+            },
+        )
     }
 
     // Helper: Tao's MouseInput/CursorMoved/etc require a deprecated modifiers field.
@@ -183,8 +172,7 @@ mod tests {
             position: PhysicalPosition::new(200.0, 300.0),
             modifiers: dummy_mods(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_some());
         assert!(matches!(
             result.unwrap(),
@@ -201,8 +189,7 @@ mod tests {
         let event = WindowEvent::CursorLeft {
             device_id: dummy_dev(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
         assert!(matches!(cursor, mouse::Cursor::Unavailable));
     }
@@ -213,8 +200,7 @@ mod tests {
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
         let event = WindowEvent::CloseRequested;
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
     }
@@ -230,8 +216,7 @@ mod tests {
             button: tao::event::MouseButton::Left,
             modifiers: dummy_mods(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_some());
         assert!(matches!(
             result.unwrap(),
@@ -250,8 +235,7 @@ mod tests {
             button: tao::event::MouseButton::Other(5),
             modifiers: dummy_mods(),
         };
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
     }
 
@@ -260,10 +244,9 @@ mod tests {
         let mut cursor = initial_cursor();
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
-        // Focused is not handled by settings UI (falls through to _ => None)
+        // Focused is not handled by settings UI (falls through to _ => None).
         let event = WindowEvent::Focused(true);
-        let result =
-            convert_tao_window_event(event, &mut cursor, 1.0, &mut modifiers, &should_close);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
         assert!(result.is_none());
     }
 }

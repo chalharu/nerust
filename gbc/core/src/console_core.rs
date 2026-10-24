@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::SystemTime};
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreFault, VideoSignalKind,
     audio::StereoSample,
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
@@ -10,7 +10,7 @@ use nerust_core_traits::{
         rumble_channel,
     },
 };
-use nerust_input_traits::EmuInput;
+use nerust_input_traits::InputReceiver;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -23,8 +23,6 @@ use crate::{
 enum GbcCoreError {
     #[error("invalid or unsupported Game Boy ROM")]
     InvalidRom,
-    #[error("GBC input buffer has the wrong concrete type")]
-    InvalidInputBuffer,
 }
 
 struct LoadedGbc {
@@ -36,31 +34,30 @@ struct LoadedGbc {
 
 pub struct GbcConsoleCore {
     loaded: Option<LoadedGbc>,
-    emu_input: EmuInput,
+    emu_input: InputReceiver<GbcInputBuffer>,
     paused: bool,
     accelerometer: AccelerometerInputPort,
     rumble: RumbleOutputPort,
-    /// Device sample rate for the APU resampler, stamped from
-    /// `CoreConfig::audio_sample_rate` at load (data only; the backend
-    /// lives in the session layer).
+    /// Device sample rate for the APU resampler, stamped at load.
+    /// Data only; the backend lives in the session layer.
     sample_rate: u32,
 }
 
 impl GbcConsoleCore {
-    pub fn new_empty(emu_input: EmuInput) -> Self {
+    pub fn new_empty(emu_input: impl Into<InputReceiver<GbcInputBuffer>>) -> Self {
         let (_, accelerometer) = accelerometer_channel();
         let (_, rumble) = rumble_channel();
         Self::with_peripherals(emu_input, accelerometer, rumble)
     }
 
     pub fn with_peripherals(
-        emu_input: EmuInput,
+        emu_input: impl Into<InputReceiver<GbcInputBuffer>>,
         accelerometer: AccelerometerInputPort,
         rumble: RumbleOutputPort,
     ) -> Self {
         Self {
             loaded: None,
-            emu_input,
+            emu_input: emu_input.into(),
             paused: false,
             accelerometer,
             rumble,
@@ -87,16 +84,28 @@ impl GbcConsoleCore {
         options: GbcCoreOptions,
         sample_rate: u32,
     ) -> Result<LoadedGbc, CoreError> {
-        let descriptor = detect_cartridge(rom)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
-        let identity = GbcRomIdentity::from_descriptor(rom, &descriptor)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+        let descriptor = detect_cartridge(rom).ok_or_else(|| CoreError::RomParse {
+            kind: CoreFault::Corrupt,
+            source: Box::new(GbcCoreError::InvalidRom),
+        })?;
+        let identity = GbcRomIdentity::from_descriptor(rom, &descriptor).ok_or_else(|| {
+            CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(GbcCoreError::InvalidRom),
+            }
+        })?;
         if identity.rom_len < identity.declared_rom_len {
-            return Err(CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)));
+            return Err(CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(GbcCoreError::InvalidRom),
+            });
         }
         let mut system =
             GbcSystem::from_descriptor(options.hardware_model, rom.to_vec(), &descriptor)
-                .ok_or_else(|| CoreError::RomParse(Box::new(GbcCoreError::InvalidRom)))?;
+                .ok_or_else(|| CoreError::RomParse {
+                    kind: CoreFault::Corrupt,
+                    source: Box::new(GbcCoreError::InvalidRom),
+                })?;
         system.bus.set_audio_sample_rate(sample_rate);
         Ok(LoadedGbc {
             system,
@@ -114,9 +123,8 @@ impl GbcConsoleCore {
         self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)
     }
 
-    /// Advance to the next instruction boundary via `step_tcycle`, reporting
-    /// consumed T-cycles. A halted CPU waits bounded for its wake interrupt;
-    /// STOP (no wake source while paused) returns zero immediately.
+    /// Advance to the next instruction boundary, reporting consumed T-cycles.
+    /// A halted CPU waits bounded; STOP with no wake source returns zero.
     pub(crate) fn step_instruction(&mut self) -> Result<u64, CoreError> {
         let loaded = self.loaded_mut()?;
         if loaded.system.bus.is_stopped() {
@@ -140,10 +148,7 @@ impl GbcConsoleCore {
     }
 
     /// Advance one frame, reporting the T-cycles the bus counted.
-    ///
-    /// Same path as the [`ConsoleCore::render_frame`] implementation;
-    /// the count that path discards is returned here for debugger
-    /// stepping. One loop iteration is one T-cycle by construction.
+    /// Same path as [`ConsoleCore::render_frame`]; one loop iteration is one T-cycle.
     pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -157,13 +162,7 @@ impl GbcConsoleCore {
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
     ) -> Result<u64, CoreError> {
-        self.emu_input.take();
-        let input = self
-            .emu_input
-            .read_buf
-            .downcast_ref::<GbcInputBuffer>()
-            .ok_or_else(|| CoreError::Core(Box::new(GbcCoreError::InvalidInputBuffer)))?
-            .0;
+        let input = self.emu_input.receive().0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded
             .system
@@ -277,7 +276,7 @@ impl ConsoleCore for GbcConsoleCore {
             loaded.options,
             SystemTime::now(),
         )
-        .map_err(|error| CoreError::Core(Box::new(error)))
+        .map_err(CoreError::from)
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
@@ -291,7 +290,7 @@ impl ConsoleCore for GbcConsoleCore {
             loaded.options,
             SystemTime::now(),
         )
-        .map_err(|error| CoreError::Core(Box::new(error)))?;
+        .map_err(CoreError::from)?;
         self.loaded_mut()?.system = candidate.system;
         self.sync_rumble();
         Ok(())
@@ -300,13 +299,13 @@ impl ConsoleCore for GbcConsoleCore {
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
         let loaded = self.loaded_ref()?;
         persistence::export_mapper_save(&loaded.system, loaded.identity, SystemTime::now())
-            .map_err(|error| CoreError::Core(Box::new(error)))
+            .map_err(CoreError::from)
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let loaded = self.loaded_mut()?;
         persistence::import_mapper_save(&mut loaded.system, data, loaded.identity)
-            .map_err(|error| CoreError::Core(Box::new(error)))?;
+            .map_err(CoreError::from)?;
         if loaded.options.rtc_sync.syncs_save_data() {
             loaded.system.bus.sync_cartridge_rtc(SystemTime::now());
         }
@@ -348,14 +347,8 @@ impl ConsoleCore for GbcConsoleCore {
     }
 }
 
-/// GBC execution control.
-///
-/// Holds the console: frame stepping reuses the exact `render_frame`
-/// path and reports the T-cycles it counted. The scratch buffer is
-/// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. Debugger pokes land where hardware is writable
-/// (VRAM/OAM bypass the PPU mode locks); ROM refuses as
-/// `ReadOnlySpace` instead of driving MBC commands.
+/// GBC execution control and memory editing.
+/// Holds the console: frame stepping reuses the exact `render_frame` path.
 pub struct GbcDebugControl<'a> {
     console: &'a mut GbcConsoleCore,
     frame_slot: FrameBuffer,
@@ -395,9 +388,8 @@ impl DebugControl for GbcDebugControl<'_> {
         width: u8,
         value: u64,
     ) -> Result<(), DebuggerError> {
-        // One table-owned gate: bad width, unknown space, unmapped
-        // address, then ROM refusal, in that order. The cast below is
-        // safe: check_write pins addr + width - 1.
+        // One table-owned gate in fixed order: width, space, address, ROM refusal.
+        // The cast below is safe: check_write pins addr + width - 1.
         GBC_SPACE_TABLE.check_write(space, addr, width)?;
         let loaded = self
             .console
@@ -420,8 +412,7 @@ impl DebugControl for GbcDebugControl<'_> {
             .as_mut()
             .ok_or(DebuggerError::Unsupported)?;
         // Values mask to the register width; unknown names refuse.
-        // A mid-instruction poke applies immediately and the next
-        // boundary normalizes, same as a memory poke.
+        // A mid-instruction poke applies immediately, normalized at the next boundary.
         let regs = loaded.system.cpu.registers_mut();
         match name {
             "a" => regs.set_a(value as u8),
@@ -442,16 +433,12 @@ impl DebugControl for GbcDebugControl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
+    use std::collections::HashMap;
 
     use nerust_core_traits::{
         CoreOptions,
         peripheral::{AccelerationSample, RumbleState, accelerometer_channel, rumble_channel},
     };
-    use nerust_input_traits::{BufferError, InputStateBuffer, InputValue};
 
     use super::*;
     use crate::debugger::SPACE_MEMORY;
@@ -461,37 +448,8 @@ mod tests {
 
     impl CoreOptions for OtherOptions {}
 
-    #[derive(Debug)]
-    struct OtherInput;
-
-    impl InputStateBuffer for OtherInput {
-        fn set(&mut self, field: usize, _value: InputValue) -> Result<(), BufferError> {
-            Err(BufferError::FieldNotFound { field })
-        }
-
-        fn clear(&mut self) {}
-
-        fn copy_state(&mut self, _other: &dyn InputStateBuffer) {}
-    }
-
-    fn input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<GbcInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<GbcInputBuffer>::default()),
-        )
-    }
-
-    fn wrong_input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::new(OtherInput)));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::new(OtherInput)),
-        )
+    fn input() -> InputReceiver<GbcInputBuffer> {
+        GbcInputBuffer::default().into()
     }
 
     fn rom() -> Vec<u8> {
@@ -614,8 +572,57 @@ mod tests {
         let mut target = GbcConsoleCore::new_empty(input());
         target.load(&distinct_rom(), &config()).unwrap();
         let identity_before = target.identity().unwrap();
-        assert!(target.load_state(&state).is_err());
+        assert_eq!(
+            target.load_state(&state).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
         assert_eq!(target.identity().unwrap(), identity_before);
+    }
+
+    #[test]
+    fn persistence_faults_distinguish_options_schema_and_decode() {
+        use crate::{persistence_error::GbcPersistenceError, system::HardwareModel};
+        use nerust_core_traits::CoreFault;
+        #[derive(serde::Serialize)]
+        struct Header {
+            schema_version: u32,
+        }
+        let mut core = GbcConsoleCore::new_empty(input());
+        core.load(&rom(), &config()).unwrap();
+        let saved = core.save_state().unwrap();
+        let options = GbcCoreOptions {
+            hardware_model: HardwareModel::Dmg,
+            ..GbcCoreOptions::default()
+        };
+        core.load(&rom(), &config_with_options(options)).unwrap();
+        let error = core.load_state(&saved).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Incompatible);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped options error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<GbcPersistenceError>(),
+            Some(GbcPersistenceError::OptionsMismatch)
+        ));
+        for (version, fault) in [(3, CoreFault::Incompatible), (2, CoreFault::Corrupt)] {
+            let bytes = rmp_serde::to_vec_named(&Header {
+                schema_version: version,
+            })
+            .unwrap();
+            assert_eq!(core.load_state(&bytes).unwrap_err().fault(), fault);
+            assert_eq!(core.import_mapper_save(&bytes).unwrap_err().fault(), fault);
+        }
+        let error = core.load_state(&saved[..saved.len() / 2]).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Corrupt);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped decode error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<GbcPersistenceError>(),
+            Some(GbcPersistenceError::Decode(_))
+        ));
+        core.load(&rom(), &config()).unwrap();
+        core.load_state(&saved).unwrap();
     }
 
     #[test]
@@ -640,24 +647,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_rom_options_and_input_type() {
+    fn rejects_invalid_rom_and_options() {
         let mut core = GbcConsoleCore::new_empty(input());
         assert!(matches!(
             core.load(&[], &config()),
-            Err(CoreError::RomParse(_))
+            Err(CoreError::RomParse { .. })
         ));
         assert!(matches!(
             core.load(&rom(), &config_with_options(OtherOptions)),
             Err(CoreError::InvalidCoreOptions)
-        ));
-
-        let mut core = GbcConsoleCore::new_empty(wrong_input());
-        core.load(&rom(), &config()).unwrap();
-        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
-        let mut audio = Vec::new();
-        assert!(matches!(
-            core.render_frame(&mut frame, &mut audio),
-            Err(CoreError::Core(_))
         ));
     }
 
@@ -800,9 +798,8 @@ mod tests {
     fn gbc_debugger_truncated_tail_degrades_to_raw_db() {
         let mut console = GbcConsoleCore::new_empty(input());
         console.load(&rom(), &config()).expect("test ROM loads");
-        // Park a two-byte prefix at the range end through the control
-        // path: the missing tail byte must degrade to raw instead of
-        // fabricating or panicking.
+        // Park a two-byte prefix at the range end: the missing tail byte
+        // must degrade to raw instead of fabricating or panicking.
         {
             let mut boxed: Box<dyn DebugControl + '_> =
                 Box::new(GbcDebugControl::new(&mut console));

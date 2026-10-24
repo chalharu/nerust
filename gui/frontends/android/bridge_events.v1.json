@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "nerust Android bridge events v1",
+  "x-settings-schema-version": 1,
+  "x-saf-chunk-bytes": 65536,
+  "x-saf-summary-bytes": 65536,
+  "description": "Canonical v1 Kotlin→Rust bridge strings. The Rust bridge_events.rs decoder validates this schema before dispatch. Error acknowledgements require the correlated request_id; Kotlin sends it through the dedicated onErrorDialogDismissed(J)V native.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/definitions/menuEvent" },
+    { "$ref": "#/definitions/errorDialogDismissedEvent" }
+  ],
+  "definitions": {
+    "menuEvent": {
+      "type": "object",
+      "required": ["v", "type", "action"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "menu" },
+        "action": {
+          "type": "string",
+          "enum": [
+            "exit",
+            "load_state",
+            "open_rom",
+            "open_settings",
+            "orientation_changed",
+            "reset",
+            "save_state",
+            "toggle_pause",
+            "unload",
+            "controller"
+          ]
+        },
+        "device_id": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
+        "key": {
+          "type": "string",
+          "enum": [
+            "button1",
+            "button2",
+            "button5",
+            "button6",
+            "start",
+            "select",
+            "up",
+            "down",
+            "left",
+            "right"
+          ]
+        },
+        "pressed": { "type": "boolean" }
+      },
+      "additionalProperties": false,
+      "if": {
+        "properties": { "action": { "const": "controller" } },
+        "required": ["action"]
+      },
+      "then": { "required": ["device_id", "key", "pressed"] }
+    },
+    "errorDialogDismissedEvent": {
+      "type": "object",
+      "required": ["v", "type", "request_id"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "error_dialog_dismissed" },
+        "request_id": { "type": "integer", "minimum": 1, "maximum": 9223372036854775807 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-menu-action-table": {
+    "exit": "MenuAction::Exit",
+    "load_state": "MenuAction::LoadState",
+    "open_rom": "MenuAction::OpenRom",
+    "open_settings": "MenuAction::OpenSettings",
+    "orientation_changed": "MenuAction::OrientationChanged",
+    "reset": "MenuAction::Reset",
+    "save_state": "MenuAction::SaveState",
+    "toggle_pause": "MenuAction::TogglePause",
+    "unload": "MenuAction::Unload",
+    "controller": "MenuAction::ControllerInput{device_id,key,pressed}"
+  },
+  "x-kotlin-constants": {
+    "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust decoder in gui/frontends/android/src/bridge_events.rs accepts v1 JSON only. A Rust unit test pins this schema version, action table, and key set.",
+    "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeWire.kt"
+  }
+}

@@ -1,17 +1,20 @@
 use std::path::Path;
 
-use nerust_core_traits::{
-    factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SystemActivationError {
     #[error("system not registered: {0}")]
     NotRegistered(Box<dyn SystemId>),
-    #[error("system activation failed: {0}")]
-    Activation(String),
+    /// Typed activation failure: renders once at this boundary, keeping the chain as `source`.
+    /// Shaping matches the removed `Activation` spelling so persisted logs do not change.
+    #[error("system activation failed: {source}")]
+    ActivationFailed {
+        #[source]
+        source: Box<crate::session::SessionError>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -22,27 +25,46 @@ pub enum RomLoaderError {
     Detect(String),
     #[error("load request resolution failed: {0}")]
     Resolve(String),
-    #[error("ROM load failed: {0}")]
-    Load(String),
+    /// Typed load failure: renders once at this boundary, keeping the `source` chain.
+    /// Shaping matches the removed `Load` spelling so persisted logs and wording do not change.
+    #[error("ROM load failed: {source}")]
+    LoadFailed {
+        #[source]
+        source: Box<crate::session::SessionError>,
+    },
+    /// Typed activation failure at the load boundary: renders once, keeping the chain as `source`.
+    /// Shaping matches the removed `Load` spelling wrapping the activation error text.
+    #[error("ROM load failed: {source}")]
+    ActivationFailed {
+        #[source]
+        source: Box<SystemActivationError>,
+    },
 }
 
-/// Target for a ROM load operation.
-///
-/// Abstracts the session operations needed by `RomLoader` implementations,
-/// allowing them to work with any type (not just `SessionHandle`).
-pub trait RomLoadTarget {
+impl RomLoaderError {
+    /// Typed constructor for session-driven loads: keeps the chain as `source`, renders once.
+    pub fn from_session(source: crate::session::SessionError) -> Self {
+        Self::LoadFailed {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl SystemActivationError {
+    /// Typed constructor from a session error; keeps the chain renderable.
+    pub fn from_session(source: crate::session::SessionError) -> Self {
+        Self::ActivationFailed {
+            source: Box::new(source),
+        }
+    }
+}
+
+/// Environment half of a ROM load: options, settings, activation.
+/// Loaders read this; executors extend it below.
+pub trait LoadEnvironment {
     fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>>;
     fn settings_snapshot(&self) -> &SettingsSnapshot;
-    fn load_resolved(
-        &mut self,
-        media: MediaObject,
-        resolved: ResolvedLoadRequest,
-    ) -> Result<(), RomLoaderError>;
-    fn resume(&mut self);
-
     /// Notifies the target of the detected system for the ROM being loaded.
-    /// Returns `Err` if the system is not recognised or activation fails.
-    /// Default implementation accepts any system (no-op).
     fn set_active_system(
         &mut self,
         _system_id: &dyn SystemId,
@@ -51,9 +73,19 @@ pub trait RomLoadTarget {
     }
 }
 
-/// Loads a ROM file into a [`RomLoadTarget`] and resumes. Implementors
-/// read the disk file, build the `MediaObject`, resolve options, load,
-/// then resume.
+/// Target for a ROM load operation.
+/// Session operations needed by `RomLoader` implementations, for any session type.
+pub trait RomLoadTarget: LoadEnvironment {
+    fn load_resolved(
+        &mut self,
+        media: MediaObject,
+        resolved: ResolvedLoadRequest,
+    ) -> Result<(), RomLoaderError>;
+    fn resume(&mut self);
+}
+
+/// Loads a ROM file into a [`RomLoadTarget`] and resumes.
+/// Implementors read the disk file, build the `MediaObject`, resolve options, and load.
 pub trait RomLoader {
     fn load_rom(
         &mut self,
@@ -72,15 +104,35 @@ pub enum LoadRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    #[test]
+    fn load_failed_keeps_source_chain_with_compat_text() {
+        use super::RomLoaderError;
+        use std::error::Error as _;
+        let typed = RomLoaderError::from_session(crate::session::SessionError::NoCore);
+        // Display matches the removed `Load` wording.
+        assert_eq!(
+            typed.to_string(),
+            "ROM load failed: no emulation core active"
+        );
+        // The chain is inspectable, not stringified away.
+        assert!(typed.source().is_some());
+    }
+}
 
-    use nerust_core_traits::factory::load::MediaObject;
+#[cfg(test)]
+mod activation_tests {
+    use crate::load::*;
 
     #[test]
-    fn media_object_tracks_path_extension() {
-        let media = MediaObject::new(Some(PathBuf::from("/tmp/test.NES")), vec![1, 2, 3]);
-
-        assert_eq!(media.extension.as_deref(), Some("nes"));
-        assert_eq!(media.bytes.as_ref(), [1, 2, 3]);
+    fn activation_error_constructs_from_session() {
+        let error = SystemActivationError::from_session(crate::session::SessionError::NoCore);
+        assert!(matches!(
+            error,
+            SystemActivationError::ActivationFailed { .. }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "system activation failed: no emulation core active"
+        );
     }
 }

@@ -1,4 +1,5 @@
 use super::{Mbc, MbcKind};
+use crate::persistence_error::GbcPersistenceError;
 use nerust_core_traits::peripheral::RumbleState;
 
 const MACHINE_STATE_SCHEMA_VERSION: u32 = 1;
@@ -27,6 +28,8 @@ struct Mbc5MachineState {
     #[serde(with = "serde_bytes")]
     ram: Vec<u8>,
 }
+
+impl_mapper_identity!(Mbc5MachineState);
 
 impl Mbc5 {
     pub fn new(rom: Vec<u8>, ram: Vec<u8>, battery: bool, rumble: bool) -> Self {
@@ -143,15 +146,13 @@ impl Mbc for Mbc5 {
         .expect("MBC5 machine state should serialize")
     }
 
-    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), String> {
-        let state: Mbc5MachineState =
-            rmp_serde::from_slice(data).map_err(|error| error.to_string())?;
-        if state.schema_version != MACHINE_STATE_SCHEMA_VERSION {
-            return Err(format!(
-                "unsupported MBC5 machine state version: {}",
-                state.schema_version
-            ));
-        }
+    fn deserialize_state(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
+        let state: Mbc5MachineState = super::decode_mapper_state(
+            data,
+            MACHINE_STATE_SCHEMA_VERSION,
+            "MBC5 machine state",
+            None,
+        )?;
         if state.rumble != self.rumble {
             return Err("MBC5 machine rumble capability mismatch".into());
         }

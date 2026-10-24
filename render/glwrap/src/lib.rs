@@ -1,11 +1,20 @@
+pub mod bindings;
+pub mod context;
 mod error;
 pub mod raw;
 pub mod vertex;
 
+use bindings as gl;
+pub use bindings::Context;
+pub use context::{Current, DeletionPolicy, GlObject, ScopeGuard};
+pub use error::Error as GlError;
+/// Re-exported for typed test construction; production reads kinds from drains.
+pub use error::ErrorKind as GlErrorKind;
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
-    ptr, str,
+    ptr,
 };
 
 use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
@@ -13,14 +22,19 @@ use gl::types::{GLchar, GLenum, GLint, GLsizei, GLuint};
 use self::{
     error::*,
     raw::{
-        get_active_attrib, get_active_uniform, get_attrib_location, get_programiv,
+        delete_program, get_active_attrib, get_active_uniform, get_attrib_location, get_programiv,
         get_uniform_location,
     },
 };
 
-fn gl_error_handle<T, F: Fn() -> T>(func: F) -> Result<T, Error> {
+/// Debug builds drain per call; release builds skip the synchronous drain
+/// and rely on [`check_frame`] at transaction boundaries. Single body with
+/// an explicit branch so both policies stay visible in one place.
+fn gl_error_handle<T, F: FnMut() -> T>(mut func: F) -> Result<T, Error> {
     let result = func();
-    gl_get_error()?;
+    if std::cfg!(debug_assertions) {
+        gl_get_error()?;
+    }
     Ok(result)
 }
 
@@ -40,55 +54,194 @@ fn gl_get_error() -> Result<(), Error> {
     Ok(())
 }
 
+/// Batched error drain. Check before committing cached GL state and after
+/// frame/composite restoration. In debug wrappers also drain per call.
+pub fn check_frame() -> Result<(), Error> {
+    gl_get_error()
+}
+
 pub fn use_program(program: GLuint) -> Result<(), Error> {
     gl_error_handle(|| unsafe { gl::UseProgram(program) })
 }
 
+/// Which introspection query failed. Structural match target so
+/// callers never parse the detail string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryStage {
+    ActiveAttribs,
+    ActiveAttrib,
+    AttribName,
+    AttribLocation,
+    ActiveUniforms,
+    ActiveUniform,
+    UniformName,
+    UniformLocation,
+    LinkStatus,
+    InfoLog,
+}
+
+/// Why a program failed to link. Typed so callers match on stage
+/// instead of parsing a string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShaderError {
+    Compile { stage: &'static str, log: String },
+    Link { log: String },
+    Query { stage: QueryStage, detail: String },
+}
+
+impl core::fmt::Display for ShaderError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ShaderError::Compile { stage, log } => write!(f, "{stage} compile failed: {log}"),
+            ShaderError::Link { log } => write!(f, "link failed: {log}"),
+            ShaderError::Query { stage, detail } => {
+                write!(f, "query failed ({stage:?}): {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ShaderError {}
+
 #[derive(Debug)]
 pub struct Shader {
     program: GLuint,
-    attributes: HashMap<String, GLuint>,
-    uniforms: HashMap<String, GLint>,
+    attributes: HashMap<Box<str>, GLuint>,
+    uniforms: HashMap<Box<str>, GLint>,
+    deleted: bool,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
-impl Shader {
-    pub fn new(vert_src: &str, flag_src: &str) -> Self {
-        Self::try_new(vert_src, flag_src).unwrap_or_else(|e| panic!("{e}"))
+/// RAII shader-object guard: deleting happens on drop.
+/// Failed compiles/links orphan nothing; success paths detach then drop.
+struct ShaderId(GLuint);
+
+struct ProgramId(GLuint);
+
+impl Drop for ProgramId {
+    fn drop(&mut self) {
+        unsafe { gl::DeleteProgram(self.0) };
     }
+}
 
-    pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, String> {
-        let vtx_shader_id = compile_shader(vert_src, gl::VERTEX_SHADER)?;
-        let flag_shader_id = compile_shader(flag_src, gl::FRAGMENT_SHADER)?;
-        let program_id = link_program(vtx_shader_id, flag_shader_id)?;
+impl ShaderId {
+    fn id(&self) -> GLuint {
+        self.0
+    }
+}
 
+impl Drop for ShaderId {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe {
+                gl::DeleteShader(self.0);
+            }
+        }
+    }
+}
+
+/// Programs die with the view: rebuilds and detach must not orphan names.
+/// Explicit `destroy_if_current` does the delete; Drop only reports leaks.
+impl Shader {
+    pub fn try_new(vert_src: &str, flag_src: &str) -> Result<Self, ShaderError> {
+        let vtx = ShaderId(compile_shader(vert_src, gl::VERTEX_SHADER)?);
+        let frag = ShaderId(compile_shader(flag_src, gl::FRAGMENT_SHADER)?);
+        let program = ProgramId(link_program(vtx.id(), frag.id())?);
+        let program_id = program.0;
+        // Link keeps its own copy: detach then delete via Drop.
+        unsafe {
+            gl::DetachShader(program_id, vtx.id());
+            gl::DetachShader(program_id, frag.id());
+        }
+        drop(vtx);
+        drop(frag);
+
+        let attributes = get_attributes(program_id)?;
+        let uniforms = get_uniforms(program_id)?;
+        check_frame().map_err(|e| ShaderError::Query {
+            stage: QueryStage::LinkStatus,
+            detail: e.to_string(),
+        })?;
+        // Ownership moves into `Self`; the guard must not delete it.
+        let _retained = std::mem::ManuallyDrop::new(program);
         Ok(Self {
             program: program_id,
-            attributes: get_attributes(program_id),
-            uniforms: get_uniforms(program_id),
+            attributes,
+            uniforms,
+            deleted: false,
+            _thread: std::marker::PhantomData,
         })
     }
 
-    pub fn get_attribute(&self, key: &str) -> GLuint {
-        self.attributes.get(key).map_or_else(|| 0, |&x| x)
+    /// Attribute location, if the linker kept the name. `None` instead
+    /// of ambiguous `0`: location 0 is valid; optimized-out names miss legitimately.
+    pub fn attribute_opt(&self, key: &str) -> Option<GLuint> {
+        self.attributes.get(key).copied()
     }
 
-    pub fn get_uniform(&self, key: &str) -> GLint {
-        self.uniforms.get(key).map_or(-1, |&x| x)
+    /// Uniform location, if the linker kept the name. `None` instead of
+    /// sentinel `-1`: callers skip the upload instead of threading magic.
+    pub fn uniform_opt(&self, key: &str) -> Option<GLint> {
+        self.uniforms.get(key).copied()
     }
 
-    pub fn use_program(&self) {
-        use_program(self.program).unwrap();
+    pub fn use_program(&self) -> Result<(), Error> {
+        use_program(self.program)
+    }
+
+    pub fn id(&self) -> GLuint {
+        self.program
+    }
+
+    /// Delete the program when the context is current.
+    /// `None` skips the GL call and reports failure (caller counts the orphan).
+    pub fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
+        if self.deleted {
+            return false;
+        }
+        let Some(_current) = current else {
+            log::debug!(
+                "orphan GL program {} skipped: no current context",
+                self.program
+            );
+            self.deleted = true;
+            return true;
+        };
+        let failed = delete_program(self.program).is_err();
+        self.deleted = true;
+        failed
     }
 }
 
-fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
+/// No GL calls here: without a current context delete would fail.
+impl Drop for Shader {
+    fn drop(&mut self) {
+        if !self.deleted {
+            log::debug!("orphan GL program {} leaked at drop", self.program);
+        }
+    }
+}
+
+fn get_attributes(program_id: GLuint) -> Result<HashMap<Box<str>, GLuint>, ShaderError> {
     let mut count: GLint = 0;
-    get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).unwrap();
+    get_programiv(program_id, gl::ACTIVE_ATTRIBUTES, &mut count).map_err(|e| {
+        ShaderError::Query {
+            stage: QueryStage::ActiveAttribs,
+            detail: e.to_string(),
+        }
+    })?;
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
-    const BUF_SIZE: GLsizei = 16;
-    let mut name_buf = vec![GLchar::default(); BUF_SIZE as usize];
+    let mut buf_size = 0;
+    get_programiv(program_id, gl::ACTIVE_ATTRIBUTE_MAX_LENGTH, &mut buf_size).map_err(|e| {
+        ShaderError::Query {
+            stage: QueryStage::AttribName,
+            detail: e.to_string(),
+        }
+    })?;
+    let buf_size = buf_size.max(1);
+    let mut name_buf = vec![GLchar::default(); buf_size as usize];
     let mut length: GLsizei = 0;
 
     let mut result = HashMap::new();
@@ -97,36 +250,58 @@ fn get_attributes(program_id: GLuint) -> HashMap<String, GLuint> {
         get_active_attrib(
             program_id,
             i,
-            BUF_SIZE,
+            buf_size,
             &mut length,
             &mut size,
             &mut ty,
-            name_buf.as_mut_ptr(),
+            &mut name_buf,
         )
-        .unwrap();
+        .map_err(|e| ShaderError::Query {
+            stage: QueryStage::ActiveAttrib,
+            detail: e.to_string(),
+        })?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
-                .unwrap(),
+                .map_err(|e| ShaderError::Query {
+                    stage: QueryStage::AttribName,
+                    detail: e.to_string(),
+                })?,
         );
         let location =
-            get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).unwrap();
-        let _ = result.insert(
-            name,
-            u32::try_from(location).expect("OpenGL attribute location must be non-negative"),
-        );
+            get_attrib_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).map_err(
+                |e| ShaderError::Query {
+                    stage: QueryStage::AttribLocation,
+                    detail: e.to_string(),
+                },
+            )?;
+        let location = u32::try_from(location).map_err(|e| ShaderError::Query {
+            stage: QueryStage::AttribLocation,
+            detail: format!("attribute {name} has no location: {e}"),
+        })?;
+        let _ = result.insert(name.into_boxed_str(), location);
     }
-    result
+    Ok(result)
 }
 
-fn get_uniforms(program_id: GLuint) -> HashMap<String, GLint> {
+fn get_uniforms(program_id: GLuint) -> Result<HashMap<Box<str>, GLint>, ShaderError> {
     let mut count: GLint = 0;
-    get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).unwrap();
+    get_programiv(program_id, gl::ACTIVE_UNIFORMS, &mut count).map_err(|e| ShaderError::Query {
+        stage: QueryStage::ActiveUniforms,
+        detail: e.to_string(),
+    })?;
 
     let mut size: GLint = 0;
     let mut ty: GLenum = 0;
-    const BUF_SIZE: GLsizei = 16;
-    let mut name_buf = vec![GLchar::default(); BUF_SIZE as usize];
+    let mut buf_size = 0;
+    get_programiv(program_id, gl::ACTIVE_UNIFORM_MAX_LENGTH, &mut buf_size).map_err(|e| {
+        ShaderError::Query {
+            stage: QueryStage::UniformName,
+            detail: e.to_string(),
+        }
+    })?;
+    let buf_size = buf_size.max(1);
+    let mut name_buf = vec![GLchar::default(); buf_size as usize];
     let mut length: GLsizei = 0;
 
     let mut result = HashMap::new();
@@ -135,44 +310,60 @@ fn get_uniforms(program_id: GLuint) -> HashMap<String, GLint> {
         get_active_uniform(
             program_id,
             i,
-            BUF_SIZE,
+            buf_size,
             &mut length,
             &mut size,
             &mut ty,
-            name_buf.as_mut_ptr(),
+            &mut name_buf,
         )
-        .unwrap();
+        .map_err(|e| ShaderError::Query {
+            stage: QueryStage::ActiveUniform,
+            detail: e.to_string(),
+        })?;
         let name = String::from(
             unsafe { CStr::from_ptr(name_buf.as_ptr()) }
                 .to_str()
-                .unwrap(),
+                .map_err(|e| ShaderError::Query {
+                    stage: QueryStage::UniformName,
+                    detail: e.to_string(),
+                })?,
         );
         let location =
-            get_uniform_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) }).unwrap();
-        let _ = result.insert(name, location);
+            get_uniform_location(program_id, unsafe { CStr::from_ptr(name_buf.as_ptr()) })
+                .map_err(|e| ShaderError::Query {
+                    stage: QueryStage::UniformLocation,
+                    detail: e.to_string(),
+                })?;
+        let _ = result.insert(name.into_boxed_str(), location);
     }
 
-    result
+    Ok(result)
 }
 
 fn info_log_buffer(len: GLint) -> Vec<u8> {
-    vec![0; usize::try_from(len).expect("OpenGL info log length must be non-negative")]
+    vec![0; len.max(0) as usize]
 }
 
-fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> &str {
-    let written =
-        usize::try_from(written).expect("OpenGL written info log length must be non-negative");
-    let written = written.min(buf.len());
+fn trim_info_log(buf: &mut Vec<u8>, written: GLsizei) -> String {
+    let written = (written.max(0) as usize).min(buf.len());
     buf.truncate(written);
     if buf.last() == Some(&0) {
         let _ = buf.pop();
     }
-    str::from_utf8(buf.as_slice()).expect("OpenGL info log not valid utf8")
+    String::from_utf8_lossy(buf.as_slice()).into_owned()
 }
 
-fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
-    let shader = unsafe { gl::CreateShader(ty) };
-    let c_str = CString::new(src.as_bytes()).unwrap();
+fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, ShaderError> {
+    let c_str = CString::new(src.as_bytes()).map_err(|e| ShaderError::Compile {
+        stage: if ty == gl::VERTEX_SHADER {
+            "vertex"
+        } else {
+            "fragment"
+        },
+        log: e.to_string(),
+    })?;
+    let guard = ShaderId(unsafe { gl::CreateShader(ty) });
+    let shader = guard.id();
     unsafe {
         gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
         gl::CompileShader(shader);
@@ -186,32 +377,129 @@ fn compile_shader(src: &str, ty: GLenum) -> Result<GLuint, String> {
             let mut written = 0;
             let mut buf = info_log_buffer(len);
             gl::GetShaderInfoLog(shader, len, &mut written, buf.as_mut_ptr().cast());
-            gl::DeleteShader(shader);
-            return Err(trim_info_log(&mut buf, written).to_owned());
+            return Err(ShaderError::Compile {
+                stage: if ty == gl::VERTEX_SHADER {
+                    "vertex"
+                } else {
+                    "fragment"
+                },
+                log: trim_info_log(&mut buf, written),
+            });
         }
     }
+    // Ownership moves to the caller as a raw id; the guard must not delete it.
+    let _retained = std::mem::ManuallyDrop::new(guard);
     Ok(shader)
 }
 
-fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, String> {
+fn link_program(vs: GLuint, fs: GLuint) -> Result<GLuint, ShaderError> {
     unsafe {
-        let program = gl::CreateProgram();
+        let guard = ProgramId(gl::CreateProgram());
+        let program = guard.0;
         gl::AttachShader(program, vs);
         gl::AttachShader(program, fs);
+        // Both pipelines share quad geometry; never depend on linker ordering.
+        gl::BindAttribLocation(program, 0, c"position".as_ptr());
+        gl::BindAttribLocation(program, 1, c"uv".as_ptr());
         gl::LinkProgram(program);
 
         let mut status = GLint::from(gl::FALSE);
-        get_programiv(program, gl::LINK_STATUS, &mut status).unwrap();
+        get_programiv(program, gl::LINK_STATUS, &mut status).map_err(|e| ShaderError::Query {
+            stage: QueryStage::LinkStatus,
+            detail: e.to_string(),
+        })?;
 
         if status != GLint::from(gl::TRUE) {
             let mut len: GLint = 0;
-            get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).unwrap();
+            get_programiv(program, gl::INFO_LOG_LENGTH, &mut len).map_err(|e| {
+                ShaderError::Query {
+                    stage: QueryStage::InfoLog,
+                    detail: e.to_string(),
+                }
+            })?;
             let mut written = 0;
             let mut buf = info_log_buffer(len);
             gl::GetProgramInfoLog(program, len, &mut written, buf.as_mut_ptr().cast());
-            gl::DeleteProgram(program);
-            return Err(trim_info_log(&mut buf, written).to_owned());
+            return Err(ShaderError::Link {
+                log: trim_info_log(&mut buf, written),
+            });
         }
+        // Ownership moves to the caller as a raw id; the guard must not delete it.
+        let _retained = std::mem::ManuallyDrop::new(guard);
         Ok(program)
+    }
+}
+
+impl context::GlObject for Shader {
+    fn destroy_if_current(&mut self, current: Option<Current>) -> bool {
+        Shader::destroy_if_current(self, current)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QueryStage, ShaderError, info_log_buffer, trim_info_log};
+
+    #[test]
+    fn shader_error_display_names_stage() {
+        let err = ShaderError::Compile {
+            stage: "vertex",
+            log: "boom".to_string(),
+        };
+        assert!(err.to_string().contains("vertex"));
+        let err = ShaderError::Link {
+            log: "bad".to_string(),
+        };
+        assert!(err.to_string().contains("link"));
+        let err = ShaderError::Query {
+            stage: QueryStage::AttribLocation,
+            detail: "d".to_string(),
+        };
+        assert!(err.to_string().contains("AttribLocation"));
+        assert_eq!(
+            ShaderError::Link {
+                log: "x".to_string()
+            },
+            ShaderError::Link {
+                log: "x".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn info_log_buffer_clamps_negative_len() {
+        assert!(info_log_buffer(0).is_empty());
+        assert_eq!(info_log_buffer(-4).len(), 0);
+        assert_eq!(info_log_buffer(9).len(), 9);
+    }
+
+    #[test]
+    fn trim_info_log_drops_nul_and_bounds_written() {
+        let mut buf = b"oops\0junk".to_vec();
+        assert_eq!(trim_info_log(&mut buf, 4), "oops");
+        let mut buf = b"ab".to_vec();
+        assert_eq!(trim_info_log(&mut buf, 99), "ab");
+        let mut buf = b"\0".to_vec();
+        assert_eq!(trim_info_log(&mut buf, 1), "");
+        let mut buf = b"z\0".to_vec();
+        assert_eq!(trim_info_log(&mut buf, -3), "");
+    }
+
+    #[test]
+    fn query_stage_covers_every_introspection_step() {
+        let stages = [
+            QueryStage::ActiveAttribs,
+            QueryStage::ActiveAttrib,
+            QueryStage::AttribName,
+            QueryStage::AttribLocation,
+            QueryStage::ActiveUniforms,
+            QueryStage::ActiveUniform,
+            QueryStage::UniformName,
+            QueryStage::UniformLocation,
+            QueryStage::LinkStatus,
+            QueryStage::InfoLog,
+        ];
+        assert_eq!(stages.len(), 10);
+        assert!(stages.contains(&QueryStage::LinkStatus));
     }
 }

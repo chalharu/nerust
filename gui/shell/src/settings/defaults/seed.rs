@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use nerust_core_traits::factory::CoreFactory;
 use nerust_settings_core::model::{
     app_state::DesktopAppState, input::IMPLICIT_PROFILE_ID, local::HostBackendLocalSettings,
     shared::DesktopSharedSettings,
 };
+use nerust_system_traits::factory::CoreFactory;
 
 pub fn default_shared_settings(factories: &[Arc<dyn CoreFactory>]) -> DesktopSharedSettings {
     let mut settings = DesktopSharedSettings::default();

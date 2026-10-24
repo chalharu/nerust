@@ -4,36 +4,44 @@ use nerust_gui_runtime::{
 };
 use nerust_gui_shell::{
     context::FrontendContext,
-    debug::{DrainFlight, LiveImagesFlight},
-    session::{SessionHandle, lifecycle::WindowSize},
+    session::{SessionHandle, osd::TickMetrics, session_query::WindowSize},
 };
-use nerust_render_traits::{SurfaceSize, renderer::GpuFactory};
+use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 use nerust_settings_core::model::app_state::RememberedWindowSize;
 #[cfg(test)]
 use std::path::PathBuf;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::ElementState,
-    window::{Fullscreen, Window as TaoWindow, WindowBuilder},
+    window::{Fullscreen, Window as TaoWindow, WindowBuilder, WindowId},
 };
 
 use crate::menu::MenuSink;
 
-use super::debug_windows::DebugWindows;
+use crate::aux::focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent};
+use crate::aux::registry::AuxRegistry;
 
+mod chrome;
+pub(crate) mod close;
 mod commands;
+pub(super) mod debug;
 mod focus;
+mod frame;
 mod osd;
-use osd::ModalFlight;
+mod osd_state;
 mod presentation;
 mod settings;
 mod window;
+use chrome::ChromeSync;
+use debug::DebugOrchestrator;
+use frame::FrameCache;
+pub(crate) use frame::FrameCtx;
+use osd_state::OsdService;
 
-use self::focus::FocusState;
-use crate::aux::osd::HistoryWindowHandle;
+pub(crate) use window::{WakeNeed, WindowCluster};
+
 use crate::ports::DialogPorts;
-use nerust_gui_shell::session::osd::OsdManager;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
@@ -46,8 +54,6 @@ const DEFAULT_FIT_WINDOW_WIDTH: f64 = 960.0;
 const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 
 /// Headless `HostState`: temp settings paths, recording menu.
-/// Lives here (not in `test_*`) so the fake modules never
-/// depend back on `host` (see `crate::ports` for the seam split).
 #[cfg(test)]
 pub(crate) struct TestHost {
     pub(crate) host: HostState,
@@ -58,6 +64,31 @@ pub(crate) struct TestHost {
 
 #[cfg(test)]
 impl TestHost {
+    pub(crate) fn with_nes() -> Self {
+        let loader = crate::test_session::FakeRomLoader::succeeding();
+        let mut support = crate::test_session::TestContext::with_loader(loader.clone());
+        let paths = support.settings_paths();
+        support.ctx.registry =
+            std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+                nerust_nes_factory::NesFactory::boxed().into(),
+            ]));
+        let menu = crate::test_menu::MenuRecorderHandle::default();
+        let dialogs = crate::test_dialogs::FakeDialogs::default();
+        let host = HostState::new_with_settings_paths(
+            support.ctx,
+            menu.clone().into_box(),
+            std::sync::Arc::new(dialogs.clone()),
+            Some(paths),
+        )
+        .expect("NES host");
+        Self {
+            host,
+            menu,
+            loader,
+            dialogs,
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self::with_pick(None)
     }
@@ -104,64 +135,65 @@ fn backend_capabilities() -> HostBackendCapabilities {
 }
 
 pub(crate) struct HostState {
-    window: Option<Arc<TaoWindow>>,
-    /// Window creation failure: the loop exits gracefully.
-    fatal_error: Option<String>,
-    pub(super) session: SessionHandle,
+    /// Main window cluster: handle, liveness, surface target.
+    pub(super) windows: WindowCluster,
+    /// Session handle. Private: `runtime` reaches session state only
+    /// through the narrow accessors and drain/chrome methods below.
+    session: SessionHandle,
     ctx: FrontendContext,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     shell: NativeShellState,
-    pub(super) settings_window: Option<crate::aux::settings::window::SettingsWindowHandle>,
-    settings_open: bool,
-    resume_after_settings: bool,
-    pending_fullscreen_sync: Option<bool>,
-    /// Focus truth plus the deferred auto-pause protocol.
-    pub(super) focus: FocusState,
-    /// In-flight async debug drain: `run_debug_drain` starts it, the
-    /// event loop polls it (`poll_debug_flight`). A newer batch
-    /// supersedes the stored one; orphaned replies are ignored.
-    pub(super) drain_flight: Option<DrainFlight>,
-    /// In-flight async live-images fetch: the live tick starts it,
-    /// the event loop polls it. At most one; a newer tick supersedes.
-    pub(super) live_flight: Option<LiveImagesFlight>,
-    /// Aux-window state (debugger + PPU viewer). Orchestration lives
-    /// here; ownership lives there.
-    pub(super) debug: DebugWindows,
-    /// OSD notification display state plus the history window.
-    pub(super) osd: OsdManager,
-    pub(super) osd_raster: nerust_render_osd::OsdRaster,
-    /// Owns the whole OSD sync fingerprint (dirty flag, status
-    /// gate, surface size, layer liveness). The per-frame decision
-    /// procedure lives in shell [`OsdPresenter`](nerust_gui_shell::session::osd::OsdPresenter);
-    /// this host only rasterizes the resulting plan.
-    pub(super) osd_presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    /// Last applied edge strip. The reservation only changes with
-    /// settings or surface size, so unchanged strips skip the
-    /// renderer call (same gate pattern as the gtk frontend).
-    pub(super) osd_last_strip: nerust_render_traits::ReservedStrip,
-    pub(super) history_window: Option<HistoryWindowHandle>,
-    /// In-flight async error dialog plus resume bookkeeping.
-    pub(super) modal_flight: Option<ModalFlight>,
-    pub(super) resume_after_modal: bool,
-    /// Last synced history content: sequence plus language. The sync
-    /// runs on every loop pass while the viewer is open; unchanged
-    /// content skips the full row rebuild (P1 perf gate).
-    pub(super) history_sync_key: Option<(u64, nerust_settings_core::model::language::AppLanguage)>,
-    /// Linux render target below the muda menubar (`None` elsewhere).
-    /// When it yields no native target (Wayland, pre-layout) the
-    /// toplevel fallback applies and the menu stays occluded.
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ))]
-    content_area: Option<crate::gtk_embed::ContentArea>,
+    /// Aux-window route table: every secondary window lives here.
+    pub(super) aux: AuxRegistry,
+    /// Focus truth plus the deferred auto-pause protocol; never poked field by field.
+    focus: FocusCoordinator,
+    /// Aux-window cluster plus in-flight async flights.
+    pub(super) debug: DebugOrchestrator,
+    /// OSD overlay domain: layer sync plus history plus modal queue.
+    osd: OsdService,
+    /// Last pushed menu signature plus window title, each with its own gate.
+    chrome: ChromeSync,
+    /// Static chrome cache; tick metrics are never cached.
+    frame_cache: FrameCache,
+    pause_policy: nerust_frontend_kernel::pause::PausePolicy,
+    render_retry: nerust_frontend_kernel::retry::RenderRetry,
 }
 
 impl HostState {
+    #[cfg(test)]
+    pub(crate) fn load_test_rom(&mut self) {
+        use nerust_system_traits::factory::settings::FactorySettingsView;
+        let factory = nerust_nes_factory::NesFactory::boxed();
+        // Resolve before switching so a bad request never touches live state.
+        let view = FactorySettingsView {
+            language: Default::default(),
+            system_config: factory
+                .as_system_defaults()
+                .unwrap()
+                .default_system_settings(),
+        };
+        let resolved = factory
+            .resolve_load_request(&view, factory.default_load_options())
+            .unwrap();
+        self.session
+            .set_active_system(factory.system_id().as_ref())
+            .expect("NES system activates");
+        let mut rom = vec![0; 16 + 16384 + 8192];
+        rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
+        rom[16..19].copy_from_slice(&[0x4c, 0x00, 0x80]);
+        for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
+            rom[16 + vector..18 + vector].copy_from_slice(&[0x00, 0x80]);
+        }
+        self.session
+            .load_resolved(
+                nerust_system_traits::factory::load::MediaObject::new(None, rom),
+                resolved,
+            )
+            .expect("valid NROM loads");
+        self.reconcile_pause();
+    }
+
     pub(crate) fn new(
         ctx: FrontendContext,
         app_menu: Box<dyn MenuSink>,
@@ -194,54 +226,286 @@ impl HostState {
             e.to_string()
         })?;
         Ok(Self {
-            window: None,
-            fatal_error: None,
+            windows: WindowCluster::new(),
             session,
             ctx,
             app_menu,
             dialogs,
             shell: NativeShellState::new(),
-            settings_window: None,
-            settings_open: false,
-            resume_after_settings: false,
-            pending_fullscreen_sync: None,
-            focus: FocusState::new(),
-            drain_flight: None,
-            live_flight: None,
-            debug: DebugWindows::new(),
-            osd: OsdManager::new(),
-            osd_raster: nerust_render_osd::OsdRaster::new(),
-            osd_presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
-            osd_last_strip: nerust_render_traits::ReservedStrip::default(),
-            modal_flight: None,
-            resume_after_modal: false,
-            history_window: None,
-            history_sync_key: None,
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            ))]
-            content_area: None,
+            aux: AuxRegistry::new(),
+            focus: FocusCoordinator::new(),
+            debug: DebugOrchestrator::new(),
+            osd: OsdService::new(),
+            chrome: ChromeSync::new(),
+            frame_cache: FrameCache::new(),
+            pause_policy: Default::default(),
+            render_retry: Default::default(),
         })
     }
 
-    pub(crate) fn gpu_factory(&self) -> &Rc<dyn GpuFactory> {
+    /// Fresh tick per pass, sharing static chrome until its sources change.
+    pub(crate) fn frame_ctx(&mut self) -> FrameCtx {
+        self.frame_cache.frame_ctx(&self.session)
+    }
+
+    pub(crate) fn gpu_factory(&self) -> &Rc<dyn PipelineFactory> {
         &self.ctx.gpu_factory
     }
 
+    #[cfg(test)]
     pub(crate) fn session(&self) -> &SessionHandle {
         &self.session
     }
 
-    pub(crate) fn session_mut(&mut self) -> &mut SessionHandle {
-        &mut self.session
+    /// Current tick liveness; the only liveness read outside the frame cache.
+    pub(crate) fn tick(&self) -> nerust_gui_shell::session::osd::TickMetrics {
+        self.session.tick_metrics()
     }
 
-    pub(crate) fn window(&self) -> Option<&Arc<TaoWindow>> {
-        self.window.as_ref()
+    /// Shared settings snapshot for chrome and target math.
+    pub(crate) fn settings_snapshot(&self) -> &nerust_gui_runtime::settings::SettingsSnapshot {
+        self.session.settings_snapshot()
+    }
+
+    /// Render profile for surface attach.
+    pub(crate) fn render_profile(&self) -> Option<nerust_render_traits::VideoRenderProfile> {
+        self.session.render_profile().cloned()
+    }
+
+    /// Debug epoch for drain invalidation.
+    pub(crate) fn debug_epoch(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.session.debug_epoch()
+    }
+
+    /// Owned context for one async drain flight.
+    pub(crate) fn debug_drain_begin(
+        &self,
+        actions: &[nerust_gui_shell::debug::DebugAction],
+        input: &nerust_gui_shell::debug::DebugDrainInput,
+    ) -> nerust_gui_shell::debug::DrainFlight {
+        self.session.debug_drain_begin(actions, input)
+    }
+
+    /// Owned context for one live image fetch.
+    pub(crate) fn debug_live_images_begin(
+        &self,
+        need_images: bool,
+    ) -> nerust_gui_shell::debug::LiveImagesFlight {
+        self.session.debug_live_images_begin(need_images)
+    }
+
+    /// Mapped debugger spaces for aux open.
+    pub(crate) fn debug_spaces(&self) -> Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> {
+        crate::aux::registry::debug_spaces(&self.session)
+    }
+
+    /// Narrow live-core swap for the frame pump; the port stays inside.
+    pub(crate) fn swap_frame_buffer(&mut self) {
+        self.session.swap_frame_buffer();
+    }
+
+    /// Borrowed frame for the render call; `None` before the first swap.
+    pub(crate) fn frame_buffer(&self) -> Option<&nerust_render_traits::FrameBuffer> {
+        self.session.frame_buffer()
+    }
+
+    /// Host-origin failure detail for the notification queue.
+    pub(crate) fn report_host_error(&mut self, detail: String) {
+        self.session.report_external_error(
+            nerust_gui_shell::session::notification::FailureOrigin::Host,
+            detail,
+        );
+    }
+
+    /// Clear the bounded review history.
+    pub(crate) fn clear_history(&mut self) {
+        self.session.clear_notification_history();
+    }
+
+    /// Cached window title for the chrome gate.
+    pub(crate) fn cached_title(&mut self, tick: &TickMetrics) -> String {
+        self.session.window_title_cached(tick).to_owned()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn window(&self) -> Option<&std::sync::Arc<tao::window::Window>> {
+        self.windows.live()
+    }
+
+    /// Shared native window for renderer attach paths.
+    pub(crate) fn with_main_window<R>(&self, f: impl FnOnce(&TaoWindow) -> R) -> Option<R> {
+        self.windows.with_usable(f)
+    }
+
+    /// Narrow orchestrator access for the `runtime` drain router.
+    pub(super) fn orchestrator_mut(&mut self) -> &mut DebugOrchestrator {
+        &mut self.debug
+    }
+
+    /// Focus-domain entry: dispatch maps `WindowEvent::Focused` to
+    /// [`FocusEvent`] and applies the returned [`FocusEffect`].
+    pub(super) fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
+        self.focus.on(event)
+    }
+
+    /// Record a protocol-driven pause (user pauses never set this).
+    pub(super) fn note_protocol_pause(&mut self) {
+        self.focus.note_protocol_pause();
+    }
+
+    /// Main window gained focus: activate and report a pending resume.
+    #[cfg(test)]
+    pub(super) fn note_main_arrival(&mut self) -> bool {
+        matches!(
+            self.focus.on(FocusEvent::Main(true)),
+            Some(FocusEffect::Resume)
+        )
+    }
+
+    /// Main window lost focus: deactivate and arm the deferred pause.
+    #[cfg(test)]
+    pub(super) fn note_main_departure(&mut self) {
+        let _ = self.focus.on(FocusEvent::Main(false));
+    }
+
+    /// Main window holds focus (for the redraw policy).
+    pub(super) fn main_active(&self) -> bool {
+        self.focus.main_active()
+    }
+
+    /// Kind of the aux window behind this id, if registered.
+    pub(super) fn aux_kind_of(&self, id: WindowId) -> Option<AuxKind> {
+        self.aux.kind_of(crate::aux::native::native_id_of(id))
+    }
+
+    /// Pump one domain event through the matching aux entry.
+    pub(super) fn aux_on_event(
+        &mut self,
+        kind: AuxKind,
+        event: crate::aux::domain::AuxNativeEvent,
+    ) -> Option<crate::aux::registry::AuxOutcome> {
+        self.aux.on_event(kind, event)
+    }
+
+    /// Render the aux window of this kind, if open.
+    pub(super) fn render_aux(&mut self, kind: AuxKind) -> Option<crate::aux::registry::AuxOutcome> {
+        self.aux.render_kind(kind)
+    }
+
+    /// Settings window owns the screen iff registered.
+    pub(crate) fn settings_open(&self) -> bool {
+        self.aux.contains(AuxKind::Settings)
+    }
+
+    /// Close the settings window and rebuild the renderer when the render target changed.
+    pub(super) fn close_settings_and_maybe_rebuild(&mut self) -> bool {
+        let pending = self.aux.settings_take_pending();
+        self.aux.remove_kind(AuxKind::Settings);
+        let plan = self.close_settings_window(pending);
+        let rebuild = plan.is_some_and(|p| p.renderer_needs_rebuild);
+        self.request_redraw();
+        rebuild
+    }
+
+    /// Close teardown already ran. Test-only read of the idempotence
+    /// guard: double-delivered close events must flush exactly once.
+    #[cfg(test)]
+    pub(crate) fn close_exited(&self) -> bool {
+        self.windows.close_exited()
+    }
+
+    /// Aux window of this kind still registered. Test-only read: the
+    /// ordered teardown must leave no aux window behind.
+    #[cfg(test)]
+    pub(crate) fn aux_open(&self, kind: AuxKind) -> bool {
+        self.aux.contains(kind)
+    }
+}
+
+/// `HostState` orchestration over the [`DebugOrchestrator`].
+impl HostState {
+    pub(crate) fn is_debug_open(&self) -> bool {
+        self.aux.contains(AuxKind::Debug)
+    }
+
+    pub(crate) fn is_ppu_open(&self) -> bool {
+        self.aux.contains(AuxKind::Ppu)
+    }
+
+    /// Narrow shared bridge for PPU-viewer creation. Cloned `Arc`, never a lock.
+    pub(super) fn debug_bridge_for_ppu(
+        &self,
+    ) -> Option<std::sync::Arc<crate::aux::bridge::DebugBridge>> {
+        self.aux.debug_bridge()
+    }
+
+    pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
+        self.debug.windows().debug_window_pos()
+    }
+
+    pub(crate) fn ppu_window_pos(&self) -> Option<(i32, i32)> {
+        self.debug.windows().ppu_window_pos()
+    }
+
+    pub(crate) fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
+        self.debug.windows_mut().remember_debug_window_pos(x, y);
+    }
+
+    pub(crate) fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
+        self.debug.windows_mut().remember_ppu_window_pos(x, y);
+    }
+
+    pub(crate) fn request_debug_open(&mut self) {
+        self.debug.windows_mut().request_debug_open();
+    }
+
+    pub(super) fn request_ppu_open(&mut self) {
+        self.debug.windows_mut().request_ppu_open();
+    }
+
+    pub(super) fn last_drain_paused(&self) -> Option<bool> {
+        self.debug.windows().last_drain_paused()
+    }
+
+    pub(super) fn set_last_drain_paused(&mut self, paused: bool) {
+        self.debug.windows_mut().set_last_drain_paused(paused);
+    }
+
+    pub(super) fn live_due(&mut self, now: std::time::Instant) -> bool {
+        self.debug.windows_mut().live_due(now)
+    }
+
+    /// Live-tick interest handle for the tick thread (parks when clear).
+    pub(super) fn live_tick_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.debug.windows().live_armed()
+    }
+
+    /// Register the parked tick thread for arm wakeups.
+    pub(super) fn register_tick_thread(&self, thread: std::thread::Thread) {
+        self.debug.windows().register_tick_thread(thread);
+    }
+
+    pub(super) fn next_live_tick(&self) -> Option<std::time::Instant> {
+        self.debug.windows().next_live_tick()
+    }
+
+    pub(super) fn drop_debug_window(&mut self) {
+        self.aux.remove_kind(AuxKind::Debug);
+    }
+
+    pub(super) fn drop_ppu_window(&mut self) {
+        self.aux.remove_kind(AuxKind::Ppu);
+    }
+
+    pub(super) fn drop_history_window(&mut self) {
+        self.aux.remove_kind(AuxKind::History);
+        self.osd.history.sync_key.clear();
+    }
+
+    /// Whether a live-images flight is still pending (control-flow
+    /// backstop input).
+    pub(super) fn live_flight_pending(&self) -> bool {
+        self.debug.live_flight_pending()
     }
 }
 
@@ -254,14 +518,6 @@ fn create_window_builder(
         .with_title(title)
         .with_inner_size(size)
         .with_fullscreen(fullscreen_mode(fullscreen))
-}
-
-fn window_is_fullscreen(window: &TaoWindow) -> bool {
-    window.fullscreen().is_some()
-}
-
-fn set_window_fullscreen(window: &TaoWindow, fullscreen: bool) {
-    window.set_fullscreen(fullscreen_mode(fullscreen));
 }
 
 fn fullscreen_mode(fullscreen: bool) -> Option<Fullscreen> {
@@ -338,8 +594,9 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let _ = host.gpu_factory();
-        let _ = host.session_mut();
-        assert!(!host.session().loaded());
+        let tick = host.frame_ctx().tick();
+        let _ = host.cached_title(&tick);
+        assert!(!host.session().tick_metrics().loaded);
     }
 
     #[test]
@@ -358,8 +615,9 @@ mod tests {
     fn headless_host_builds_and_syncs_menu() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.session().loaded());
-        host.sync_menu_state();
+        assert!(!host.session().tick_metrics().loaded);
+        let ctx = host.frame_ctx();
+        host.sync_menu_state(&ctx);
         assert_eq!(
             support.menu.updates(),
             [crate::test_menu::MenuSyncSnapshot {
@@ -436,7 +694,7 @@ mod tests {
 
     #[test]
     fn window_size_math_scales_and_falls_back() {
-        use nerust_gui_shell::session::lifecycle::WindowSize;
+        use nerust_gui_shell::session::session_query::WindowSize;
         use nerust_settings_core::model::app_state::RememberedWindowSize;
 
         use super::{
@@ -470,5 +728,57 @@ mod tests {
         assert!(fullscreen_mode(false).is_none());
         let surface = window_surface_size(tao::dpi::PhysicalSize::new(960, 720));
         assert_eq!((surface.width, surface.height), (960, 720));
+    }
+
+    #[test]
+    fn aux_routing_stays_total_without_windows() {
+        use crate::aux::domain::NativeWindowId;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let id = unsafe { tao::window::WindowId::dummy() };
+        assert!(host.aux_kind_of(id).is_none());
+        let _ = NativeWindowId::dummy();
+        assert!(host.with_main_window(|_| ()).is_none());
+        assert!(!host.is_debug_open());
+        assert!(!host.is_ppu_open());
+        assert!(host.debug_bridge_for_ppu().is_none());
+        assert!(host.debug_window_pos().is_none());
+        assert!(host.ppu_window_pos().is_none());
+        host.remember_debug_window_pos(3, 4);
+        host.remember_ppu_window_pos(5, 6);
+        assert_eq!(host.debug_window_pos(), Some((3, 4)));
+        assert_eq!(host.ppu_window_pos(), Some((5, 6)));
+        host.drop_debug_window();
+        host.drop_ppu_window();
+        host.drop_history_window();
+        assert!(host.last_drain_paused().is_none());
+        host.set_last_drain_paused(true);
+        assert_eq!(host.last_drain_paused(), Some(true));
+        let armed = host.live_tick_armed();
+        assert!(!armed.load(std::sync::atomic::Ordering::Acquire));
+        host.register_tick_thread(std::thread::current());
+        assert!(host.next_live_tick().is_none());
+    }
+
+    #[test]
+    fn live_gate_arms_once_then_holds() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let now = std::time::Instant::now();
+        assert!(host.live_due(now));
+        assert!(host.next_live_tick().is_some());
+        assert!(!host.live_due(std::time::Instant::now()));
+    }
+
+    #[test]
+    fn request_flags_round_trip_without_windows() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.request_debug_open();
+        assert!(host.take_debug_open_request());
+        assert!(!host.take_debug_open_request());
+        host.request_ppu_open();
+        assert!(host.take_ppu_open_request());
+        assert!(!host.take_ppu_open_request());
     }
 }

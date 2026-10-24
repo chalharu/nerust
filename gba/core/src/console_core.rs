@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, VideoSignalKind,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreFault, VideoSignalKind,
     audio::StereoSample,
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
-use nerust_input_traits::EmuInput;
+use nerust_input_traits::InputReceiver;
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -30,34 +30,38 @@ struct LoadedGba {
 
 pub struct GbaConsoleCore {
     loaded: Option<LoadedGba>,
-    emu_input: EmuInput,
+    emu_input: InputReceiver<GbaInputBuffer>,
     paused: bool,
-    /// Device sample rate for the APU resampler, stamped from
-    /// `CoreConfig::audio_sample_rate` at load (the core never sees the
-    /// backend; it only needs the rate as data).
+    /// Device sample rate for the APU resampler, stamped at load.
+    /// Data only; the core never sees the backend.
     sample_rate: u32,
 }
 
 impl GbaConsoleCore {
-    pub fn new(emu_input: EmuInput) -> Self {
+    pub fn new(emu_input: impl Into<InputReceiver<GbaInputBuffer>>) -> Self {
         Self {
             loaded: None,
-            emu_input,
+            emu_input: emu_input.into(),
             paused: false,
             sample_rate: 48_000,
         }
     }
 
-    pub fn new_empty(emu_input: EmuInput) -> Self {
+    pub fn new_empty(emu_input: impl Into<InputReceiver<GbaInputBuffer>>) -> Self {
         Self::new(emu_input)
     }
 
     fn create_loaded(rom: &[u8], options: GbaCoreOptions) -> Result<LoadedGba, CoreError> {
-        let identity = GbaRomIdentity::from_rom(rom)
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbaLoadError::InvalidRom)))?;
+        let identity = GbaRomIdentity::from_rom(rom).ok_or_else(|| CoreError::RomParse {
+            kind: CoreFault::Corrupt,
+            source: Box::new(GbaLoadError::InvalidRom),
+        })?;
         let mut system = GbaSystem::from_test_rom(rom.to_vec())
             .or_else(|| GbaSystem::from_rom(rom.to_vec()))
-            .ok_or_else(|| CoreError::RomParse(Box::new(GbaLoadError::InvalidRom)))?;
+            .ok_or_else(|| CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(GbaLoadError::InvalidRom),
+            })?;
         if let Some(cart) = system.bus.cartridge_mut() {
             cart.gpio.set_solar_level(options.solar_light_level);
         }
@@ -74,10 +78,7 @@ impl GbaConsoleCore {
     }
 
     /// Advance one frame, reporting the cycles the bus counted.
-    ///
-    /// Same path as the [`ConsoleCore::render_frame`] implementation;
-    /// the count that path discards is returned here for debugger
-    /// stepping.
+    /// Same path as the [`ConsoleCore::render_frame`] implementation.
     pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -91,13 +92,7 @@ impl GbaConsoleCore {
         frame_slot: &mut FrameBuffer,
         audio_out: &mut Vec<StereoSample>,
     ) -> Result<u64, CoreError> {
-        self.emu_input.take();
-        let input = self
-            .emu_input
-            .read_buf
-            .downcast_ref::<GbaInputBuffer>()
-            .ok_or_else(|| CoreError::Core(Box::new(GbaLoadError::InvalidInputBuffer)))?
-            .0;
+        let input = self.emu_input.receive().0;
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         loaded.system.bus.set_keyinput(input);
         // Run one LCD frame (228 lines * 1232 cycles), batched to the
@@ -199,9 +194,8 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn set_audio_sample_rate(&mut self, sample_rate: u32) {
-        // The APU drain reads this rate every frame
-        // (`drain_resampled_into`), so a field write re-basis live
-        // production with no DSP cache to invalidate.
+        // The APU drain reads this rate every frame, so a field write
+        // re-basis live production with no DSP cache to invalidate.
         self.sample_rate = sample_rate;
     }
 
@@ -213,7 +207,7 @@ impl ConsoleCore for GbaConsoleCore {
             loaded.options,
             self.sample_rate,
         )
-        .map_err(|e| CoreError::Core(Box::new(e)))
+        .map_err(CoreError::from)
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
@@ -225,7 +219,7 @@ impl ConsoleCore for GbaConsoleCore {
             loaded.options,
             self.sample_rate,
         )
-        .map_err(|e| CoreError::Core(Box::new(e)))?;
+        .map_err(CoreError::from)?;
         // Solar level lives in options; re-apply it onto the restored GPIO.
         if let Some(cart) = candidate.bus.cartridge_mut() {
             cart.gpio.set_solar_level(loaded.options.solar_light_level);
@@ -240,19 +234,19 @@ impl ConsoleCore for GbaConsoleCore {
         let Some(cart) = loaded.system.bus.cartridge() else {
             return Ok(None);
         };
-        export_mapper_save(cart, loaded.identity.clone()).map_err(|e| CoreError::Core(Box::new(e)))
+        export_mapper_save(cart, loaded.identity.clone()).map_err(CoreError::from)
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let loaded = self.loaded.as_mut().ok_or(CoreError::NoRomLoaded)?;
         let Some(cart) = loaded.system.bus.cartridge_mut() else {
-            return Err(CoreError::Core(Box::new(
+            return Err(CoreError::from(
                 crate::persistence_error::GbaPersistenceError::Cartridge(
                     "no cartridge loaded".to_string(),
                 ),
-            )));
+            ));
         };
-        import_mapper_save(cart, data, &loaded.identity).map_err(|e| CoreError::Core(Box::new(e)))
+        import_mapper_save(cart, data, &loaded.identity).map_err(CoreError::from)
     }
 
     fn identity(&self) -> Result<SystemIdentity, CoreError> {
@@ -288,10 +282,8 @@ impl ConsoleCore for GbaConsoleCore {
     }
 
     fn take_channel_bytes(&mut self, channel: &str) -> Vec<u8> {
-        // Single tested implementation of the commit protocol lives
-        // in the bus (buffer/NUL/enable): flatten committed lines to
-        // newline-delimited bytes. Levels never matched anything
-        // (legacy matched text only), so they stay behind.
+        // Only the bus commit protocol is flattened here (buffer/NUL/enable).
+        // Levels never matched anything, so they stay behind.
         #[cfg(feature = "mgba-debug-log")]
         if channel == "mgba-log"
             && let Some(loaded) = self.loaded.as_mut()
@@ -308,14 +300,8 @@ impl ConsoleCore for GbaConsoleCore {
     }
 }
 
-/// GBA execution control.
-///
-/// Holds the console: frame stepping reuses the exact `render_frame`
-/// path and reports the cycles it counted. The scratch buffer is
-/// display-irrelevant; stepped frames are not published to any shared
-/// framebuffer here. Debugger pokes travel the CPU store path, so
-/// mirrors, VRAM/OAM byte rules, SRAM/flash, and I/O side effects
-/// behave like CPU stores; BIOS and ROM refuse as `ReadOnlySpace`.
+/// GBA execution control and memory editing.
+/// Holds the console: frame stepping reuses the exact `render_frame` path.
 pub struct GbaDebugControl<'a> {
     console: &'a mut GbaConsoleCore,
     frame_slot: FrameBuffer,
@@ -365,11 +351,8 @@ impl DebugControl for GbaDebugControl<'_> {
             .loaded
             .as_mut()
             .ok_or(DebuggerError::Unsupported)?;
-        // Byte-wise through the CPU store path: mirrors, VRAM/OAM
-        // byte rules, SRAM/flash, and I/O side effects all behave
-        // like CPU stores. Gap lanes vanish like hardware open bus.
-        // Wait-cycle charging is timing-model only; it perturbs the
-        // next frame by a few cycles, never function.
+        // Byte-wise through the CPU store path (gap lanes vanish as open bus).
+        // Wait-cycle charging is timing-model only, never function.
         for i in 0..width as u32 {
             loaded.system.bus.write8(addr + i, (value >> (8 * i)) as u8);
         }
@@ -398,25 +381,60 @@ impl DebugControl for GbaDebugControl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
+    use std::collections::HashMap;
 
     use nerust_core_traits::CoreConfig;
-    use nerust_input_traits::{EmuInput, InputStateBuffer};
 
     use super::*;
     use crate::{debugger::SPACE_MEMORY, input_types::GbaInputBuffer};
 
-    fn test_emu_input() -> EmuInput {
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<GbaInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<GbaInputBuffer>::default()),
-        )
+    fn test_emu_input() -> InputReceiver<GbaInputBuffer> {
+        GbaInputBuffer::default().into()
+    }
+
+    #[test]
+    fn persistence_faults_distinguish_schema_audio_rate_and_decode() {
+        use crate::persistence_error::GbaPersistenceError;
+        use nerust_core_traits::CoreFault;
+        #[derive(serde::Serialize)]
+        struct Header {
+            schema_version: u32,
+        }
+        let mut console = load_console();
+        let before = console.save_state().unwrap();
+        for (version, fault) in [(2, CoreFault::Incompatible), (1, CoreFault::Corrupt)] {
+            let bytes = rmp_serde::to_vec_named(&Header {
+                schema_version: version,
+            })
+            .unwrap();
+            assert_eq!(console.load_state(&bytes).unwrap_err().fault(), fault);
+            assert_eq!(
+                console.import_mapper_save(&bytes).unwrap_err().fault(),
+                fault
+            );
+        }
+        let error = console.load_state(&before[..before.len() / 2]).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Corrupt);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped decode error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<GbaPersistenceError>(),
+            Some(GbaPersistenceError::Decode(_))
+        ));
+        assert_eq!(console.save_state().unwrap(), before);
+        console.set_audio_sample_rate(44_100);
+        let error = console.load_state(&before).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Incompatible);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped audio rate error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<GbaPersistenceError>(),
+            Some(GbaPersistenceError::AudioRateMismatch(48_000, 44_100))
+        ));
+        console.set_audio_sample_rate(48_000);
+        console.load_state(&before).unwrap();
     }
 
     #[test]
@@ -580,9 +598,7 @@ mod tests {
         assert!(core.load_state(&[0xDE, 0xAD, 0xBE, 0xEF]).is_err());
         assert!(core.load_state(&before[..before.len() / 2]).is_err());
         let mut wrong_version = before.clone();
-        // Corrupt the schema version field deep inside the payload is
-        // fragile; flipping the first byte breaks the map header instead,
-        // which must still decode as an error, not a panic.
+        // Flip the first byte: it must decode as an error, not a panic.
         wrong_version[0] ^= 0xFF;
         assert!(core.load_state(&wrong_version).is_err());
         assert_eq!(core.save_state().unwrap(), before);
@@ -613,7 +629,10 @@ mod tests {
         rom2[0x200] ^= 1;
         crate::cartridge::header::finalize_test_gba_rom(&mut rom2);
         other.load(&rom2, &config).unwrap();
-        assert!(other.import_mapper_save(&payload).is_err());
+        assert_eq!(
+            other.import_mapper_save(&payload).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
         // Garbage must not panic or wipe RAM.
         a.loaded
             .as_mut()
@@ -621,7 +640,10 @@ mod tests {
             .system
             .bus
             .write8(0x0E000123, 0x5A);
-        assert!(a.import_mapper_save(&[1, 2, 3]).is_err());
+        assert_eq!(
+            a.import_mapper_save(&[1, 2, 3]).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Corrupt
+        );
         assert_eq!(
             a.loaded.as_mut().unwrap().system.bus.read8(0x0E000123),
             0x5A
@@ -653,9 +675,8 @@ mod tests {
             nerust_render_traits::PixelFormat::Rgba,
         );
         core.render_frame(&mut frame, &mut Vec::new()).unwrap();
-        // Battery RAM, GPIO attachment and solar level are set pre-reset.
-        // The solar level comes from options (the only production source);
-        // reset must not clobber the options-applied level.
+        // Battery RAM, GPIO and solar level are set pre-reset and survive it.
+        // The solar level comes from options, the only production source.
         core.loaded
             .as_mut()
             .unwrap()
@@ -786,7 +807,10 @@ mod tests {
             audio_sample_rate: None,
         };
         core.load(&rom(), &config).unwrap();
-        assert!(core.load_state(&saved).is_err());
+        assert_eq!(
+            core.load_state(&saved).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
         // The refused import changed nothing: a fresh export validates
         // against the current (new-options) system.
         let fresh = core.save_state().unwrap();
@@ -841,10 +865,8 @@ mod tests {
             .write8(0x0E000123, 0x00);
         core.render_frame(&mut frame, &mut Vec::new()).unwrap();
         core.load_state(&saved).unwrap();
-        // NOTE: no bus reads before the re-export below. `bus.read8` is
-        // not side-effect-free: it accumulates wait cycles and advances
-        // the N/S trackers, so any read would legitimately perturb the
-        // exported bytes.
+        // No bus reads before the re-export: `bus.read8` accumulates wait
+        // cycles, so any read would legitimately perturb the exported bytes.
         assert_eq!(core.save_state().unwrap(), saved);
         let loaded = core.loaded.as_mut().unwrap();
         assert_eq!(loaded.system.bus.read8(0x0E000123), 0x5A);
@@ -889,7 +911,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(b.load_state(&state).is_err());
+        assert_eq!(
+            b.load_state(&state).unwrap_err().fault(),
+            nerust_core_traits::CoreFault::Incompatible
+        );
     }
 
     #[test]

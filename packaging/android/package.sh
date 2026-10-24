@@ -1,12 +1,36 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps | perl -0ne 'print $1 if /"target_directory"\s*:\s*"([^"]+)"/')}"
+source "${SCRIPT_DIR}/package-helpers.sh"
+source "${SCRIPT_DIR}/publish-lock.sh"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required (cargo metadata target_directory parsing)" >&2
+    exit 1
+fi
+TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" --format-version 1 --no-deps 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 
-TAG_NAME="${TAG_NAME:-$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")}"
+if [[ -z "${TAG_NAME:-}" ]]; then
+    TAG_NAME="$(git -C "${WORKSPACE_ROOT}" describe --tags --abbrev=0 2>/dev/null || true)"
+    if [[ -z "${TAG_NAME}" ]]; then
+        # Only real releases need a reproducible version: tag builds
+        # export TAG_NAME explicitly, PR/CI snapshots use the fallback.
+        if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            echo "release builds must export TAG_NAME (no git tag found)" >&2
+            exit 1
+        fi
+        # Non-reproducible dev fallback: release builds must export TAG_NAME.
+        echo "warning: no git tag found; using non-reproducible version v0.1.0" >&2
+        TAG_NAME="v0.1.0"
+    fi
+fi
+if [[ -z "${TARGET_DIR}" ]]; then
+    echo "cannot resolve target directory: cargo metadata failed and CARGO_TARGET_DIR is unset" >&2
+    exit 1
+fi
 OUT_DIR="${OUT_DIR:-${TARGET_DIR}/dist}"
 JNI_LIBS_DIR="${SCRIPT_DIR}/app/src/main/jniLibs"
 APK_SRC="${SCRIPT_DIR}/app/build/outputs/apk/release/app-release.apk"
@@ -15,11 +39,19 @@ SIGNING_TEMP_DIR=""
 export CARGO_NDK_PLATFORM="${CARGO_NDK_PLATFORM:-28}"
 
 cleanup() {
-    if [[ -n "${SIGNING_TEMP_DIR}" && -d "${SIGNING_TEMP_DIR}" ]]; then
+    if [[ -n "${SIGNING_TEMP_DIR:-}" && -d "${SIGNING_TEMP_DIR}" ]]; then
         rm -rf "${SIGNING_TEMP_DIR}"
     fi
 }
-trap cleanup EXIT
+
+cleanup_staging() {
+    if [[ -n "${STAGE_JNI_LIBS:-}" && -d "${STAGE_JNI_LIBS}" ]]; then
+        rm -rf "${STAGE_JNI_LIBS}"
+    fi
+    publish_lock_cleanup
+    cleanup
+}
+trap cleanup_staging EXIT
 
 prepare_signing_keystore() {
     if [[ -n "${ANDROID_KEY_STORE_PATH:-}" ]]; then
@@ -92,22 +124,146 @@ prepare_signing_keystore() {
 echo "Packaging Android APK"
 echo "  output : ${OUT_DIR}/${APK_NAME}"
 
-rm -rf "${JNI_LIBS_DIR}"
-mkdir -p "${JNI_LIBS_DIR}"
+# Stage native libs outside the tree: a failed build must not leave
+# a half-populated jniLibs behind (stale .so would ship silently).
+STAGE_JNI_LIBS="$(mktemp -d)"
+# Single EXIT trap (cleanup_staging covers both temp dirs).
+mkdir -p "${STAGE_JNI_LIBS}"
 
 prepare_signing_keystore
+
+# AGP's strip task silently skips without a resolved NDK. Resolve the cargo-ndk NDK side-by-side and fail loudly.
+# An unresolved NDK once shipped a 156MB APK.
+if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+    sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+    if [[ -n "${sdk_root}" && -d "${sdk_root}/ndk" ]]; then
+        # One tree scan; version sort with a plain-sort fallback.
+        ndk_names="$(find "${sdk_root}/ndk" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null)"
+        latest_ndk="$(printf '%s\n' "${ndk_names}" | sort -V 2>/dev/null | tail -n 1)"
+        if [[ -z "${latest_ndk}" ]]; then
+            latest_ndk="$(printf '%s\n' "${ndk_names}" | sort | tail -n 1)"
+        fi
+        if [[ -n "${latest_ndk}" ]]; then
+            export ANDROID_NDK_HOME="${sdk_root}/ndk/${latest_ndk}"
+        fi
+    fi
+fi
+if [[ -z "${ANDROID_NDK_HOME:-}" || ! -d "${ANDROID_NDK_HOME}" ]]; then
+    echo "Android NDK not found: set ANDROID_NDK_HOME or install a side-by-side NDK" >&2
+    exit 1
+fi
+echo "Using Android NDK: ${ANDROID_NDK_HOME}"
 
 cargo ndk \
     --manifest-path "${WORKSPACE_ROOT}/Cargo.toml" \
     -t arm64-v8a \
-    -o "${JNI_LIBS_DIR}" \
+    -o "${STAGE_JNI_LIBS}" \
     build -p nerust_android --release
+
+# Native bloat gate: no DWARF, each release .so within its per-ABI budget. Gates the staged tree.
+# BUDGET_BYTES only ever lowers the budget; extend the table (not the gate logic) for new ABIs.
+NATIVE_BUDGET_DEFAULT_BYTES=41943040
+native_budget_bytes() {
+    local requested="${BUDGET_BYTES:-${NATIVE_BUDGET_DEFAULT_BYTES}}"
+    if (( requested < NATIVE_BUDGET_DEFAULT_BYTES )); then
+        printf '%s' "${requested}"
+    elif [[ -n "${BUDGET_BYTES:-}" ]]; then
+        echo "BUDGET_BYTES=${BUDGET_BYTES} exceeds the lower-only default ${NATIVE_BUDGET_DEFAULT_BYTES}: refusing" >&2
+        exit 1
+    else
+        printf '%s' "${NATIVE_BUDGET_DEFAULT_BYTES}"
+    fi
+}
+readelf_bin=""
+# Quoted array expansion keeps NDK paths with spaces intact. The length guard keeps `set -u` happy.
+shopt -s nullglob
+ndk_readelfs=("${ANDROID_NDK_HOME}"/toolchains/llvm/prebuilt/*/bin/llvm-readelf)
+shopt -u nullglob
+if (( ${#ndk_readelfs[@]} > 0 )); then
+    for cand in "${ndk_readelfs[@]}"; do
+        if [[ -x "${cand}" ]]; then
+            readelf_bin="${cand}"
+            break
+        fi
+    done
+fi
+if [[ -z "${readelf_bin}" ]] && command -v llvm-readelf >/dev/null 2>&1; then
+    readelf_bin="llvm-readelf"
+fi
+if [[ -z "${readelf_bin}" ]] && command -v readelf >/dev/null 2>&1; then
+    readelf_bin="readelf"
+fi
+# Fail-closed: SKIP_NATIVE_GATE no longer bypasses the gate. Missing reader or bloated .so fails hard.
+if [[ -n "${SKIP_NATIVE_GATE:-}" ]]; then
+    echo "SKIP_NATIVE_GATE is no longer honored: the native DWARF/size gate always runs" >&2
+    exit 1
+elif [[ -z "${readelf_bin}" ]]; then
+    echo "no llvm-readelf/readelf found: cannot verify DWARF strip" >&2
+    exit 1
+else
+    shopt -s nullglob
+    so_files=("${STAGE_JNI_LIBS}"/*/libmain.so)
+    shopt -u nullglob
+    if (( ${#so_files[@]} == 0 )); then
+        echo "no libmain.so produced under staging dir; refusing to ship stale jniLibs" >&2
+        exit 1
+    fi
+    for main_so in "${so_files[@]}"; do
+        budget="$(native_budget_bytes)"
+        verify_native_library "${readelf_bin}" "${main_so}" "${budget}"
+    done
+fi
+# Publish staged libs via rename swap; concurrent publishers are refused.
+PUBLISH_LOCK_DIR="${JNI_LIBS_DIR}.lock"
+if ! acquire_publish_lock "${PUBLISH_LOCK_DIR}"; then
+    exit 1
+fi
+stage_publish_tmp="${JNI_LIBS_DIR}.new"
+stage_publish_old="${JNI_LIBS_DIR}.old"
+# A previous run may have died between the two renames, leaving only `.old`.
+if [[ ! -e "${JNI_LIBS_DIR}" && -d "${stage_publish_old}" ]]; then
+    echo "restoring jniLibs from leftover ${stage_publish_old}" >&2
+    mv "${stage_publish_old}" "${JNI_LIBS_DIR}"
+fi
+rm -rf "${stage_publish_tmp}" "${stage_publish_old}"
+mkdir -p "${stage_publish_tmp}"
+cp -r "${STAGE_JNI_LIBS}/." "${stage_publish_tmp}/"
+if [[ -d "${JNI_LIBS_DIR}" ]]; then
+    mv "${JNI_LIBS_DIR}" "${stage_publish_old}"
+fi
+if ! mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"; then
+    # Publish failed: restore the previous tree instead of shipping nothing.
+    if [[ -d "${stage_publish_old}" ]]; then
+        mv "${stage_publish_old}" "${JNI_LIBS_DIR}"
+    fi
+    echo "failed to publish staged jniLibs; previous tree restored" >&2
+    exit 1
+fi
+rm -rf "${stage_publish_old}"
+# Hold the lock while Gradle consumes the tree; same-tree runs serialize.
 
 (
     cd "${SCRIPT_DIR}"
     ./gradlew --no-daemon assembleRelease
 )
 
-mkdir -p "${OUT_DIR}"
-cp "${APK_SRC}" "${OUT_DIR}/${APK_NAME}"
-sha256sum "${OUT_DIR}/${APK_NAME}" > "${OUT_DIR}/${APK_NAME}.sha256"
+# Verify the artifact itself before trusting the signature: a corrupt or
+# wrong APK must fail here even when apksigner is absent.
+verify_apk_contents "${APK_SRC}" "libmain.so" || exit 1
+# Verify the release signature when tooling and a signature exist.
+# A missing apksigner or unsigned artifact only warns; an invalid signature fails.
+if command -v apksigner >/dev/null 2>&1; then
+    if ! apksigner verify --print-certs "${APK_SRC}"; then
+        echo "release signature invalid" >&2
+        exit 1
+    fi
+else
+    echo "apksigner not found: skipping release signature verification" >&2
+fi
+
+
+publish_apk "${APK_SRC}" "${OUT_DIR}" "${APK_NAME}"
+# Explicit release on the success path; the EXIT trap covers normal
+# failures, never SIGKILL or power loss (stale recovery covers those).
+release_publish_lock
+echo "effective native budget: $(native_budget_bytes) bytes (BUDGET_BYTES=${BUDGET_BYTES:-default})"

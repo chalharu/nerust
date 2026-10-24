@@ -8,12 +8,14 @@ use std::{
 };
 
 use nerust_core_traits::debugger::{
-    DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, DebugImage, DebuggerError, HexRow, InspectError,
-    InspectRequest, InspectResult, SnapshotResult, SpaceId, StepUnit,
+    DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, DebugImage, DebuggerError, DisasmLine, HexRow,
+    InspectError, InspectRequest, InspectResult, SnapshotResult, SpaceId, StepUnit,
 };
-use nerust_gui_viewmodel::debugger::{self as vm, DisplayCache};
+use nerust_gui_runtime::debug_transaction::WriteTransaction;
+use nerust_gui_runtime::debugger as debug_vm;
+use nerust_gui_runtime::debugger::{self as vm, DisplayCache};
 
-use crate::{emu_core::EmuCore, session::SessionHandle};
+use crate::emu_core::{LiveCore, LiveDebugPort};
 
 /// One debugger action batch. Same variants as the former per-frontend
 /// request enums; frontends only translate widgets into these.
@@ -67,66 +69,152 @@ pub struct DebugDrainOutput {
     pub reselected: Option<(u32, Option<u8>)>,
 }
 
-impl SessionHandle {
-    /// Run one action batch and return the render-ready display.
-    /// Phase order: execution, cancel/commit, stale-kill, prepare and
-    /// staging, freeze re-apply, single batched snapshot last.
-    /// Tests/headless only; frontends use the flight.
-    pub fn debug_drain(
-        &self,
-        actions: &[DebugAction],
-        input: &DebugDrainInput,
-    ) -> DebugDrainOutput {
-        let mut flight = self.debug_drain_begin(actions, input);
-        loop {
-            match flight.poll() {
-                DrainPoll::Done(output) => return *output,
-                DrainPoll::Pending => std::thread::sleep(Duration::from_millis(1)),
-            }
+/// Typed debugger failure for one thread round-trip: transport vs refusal.
+/// Domain errors ride typed; only the fallthrough renders once per status site.
+#[derive(Debug, Clone)]
+pub(crate) enum CoreFailure {
+    /// No live core behind the session.
+    NoCore,
+    /// The emu thread is gone or never answered.
+    TransportGone,
+    /// Accepted command lost its reply; it may already have mutated the core.
+    OutcomeUnknown,
+    /// The core refused a debugger request; renders once at the status site.
+    RefusedDebug(DebuggerError),
+    /// The core refused an inspect request; renders once at the status site.
+    RefusedInspect(InspectError),
+    /// The thread refused with a message; renders once at the status site.
+    RefusedReply(String),
+}
+
+impl From<nerust_emu_thread::OperationError> for CoreFailure {
+    fn from(error: nerust_emu_thread::OperationError) -> Self {
+        use nerust_emu_thread::OperationError as Op;
+        match error {
+            Op::WorkerUnavailable => Self::TransportGone,
+            Op::NoReply => Self::OutcomeUnknown,
+            Op::Reply(detail) => Self::RefusedReply(detail),
         }
-    }
-
-    /// Start one action batch without blocking (`try_send`s only):
-    /// safe on the UI thread. Poll to `Done`; a newer batch drops the
-    /// old flight (FIFO order keeps the newest view correct).
-    pub fn debug_drain_begin(
-        &self,
-        actions: &[DebugAction],
-        input: &DebugDrainInput,
-    ) -> DrainFlight {
-        self.debug_drain_begin_with_deadline(actions, input, DEBUG_DRAIN_TIMEOUT)
-    }
-
-    /// [`SessionHandle::debug_drain_begin`] with an explicit per-await
-    /// deadline. Production uses the 5s UI budget; tests inject
-    /// milliseconds to cover the timeout fallbacks without waiting.
-    pub(crate) fn debug_drain_begin_with_deadline(
-        &self,
-        actions: &[DebugAction],
-        input: &DebugDrainInput,
-        deadline: Duration,
-    ) -> DrainFlight {
-        DrainFlight::begin(self.drain_ctx(), actions, input, deadline)
-    }
-
-    /// Start one images-only live fetch without blocking: only the
-    /// cache lookup and a non-blocking send run here. Drive the
-    /// returned flight with `poll` on the live tick until
-    /// [`LiveImagesPoll::Done`]. Cache hits and coreless sessions
-    /// resolve on the first poll.
-    pub fn debug_live_images_begin(&self, need_images: bool) -> LiveImagesFlight {
-        LiveImagesFlight::begin(self.drain_ctx().core, need_images, DEBUG_DRAIN_TIMEOUT)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Async drain flight
-// ---------------------------------------------------------------------------
+impl From<nerust_core_traits::debugger::DebuggerError> for CoreFailure {
+    fn from(error: nerust_core_traits::debugger::DebuggerError) -> Self {
+        Self::RefusedDebug(error)
+    }
+}
 
-/// Per-await UI-thread budget. Same 5s as the blocking
-/// `recv_debug_reply`: every await degrades to the identical fallback
-/// instead of wedging input, so the worst case costs wall time but
-/// never responsiveness.
+impl From<nerust_core_traits::debugger::InspectError> for CoreFailure {
+    fn from(error: nerust_core_traits::debugger::InspectError) -> Self {
+        Self::RefusedInspect(error)
+    }
+}
+
+impl CoreFailure {
+    pub(crate) fn no_core() -> Self {
+        Self::NoCore
+    }
+
+    /// Single render point for refusal details; typed errors format here, never at call sites.
+    fn detail(self) -> String {
+        match self {
+            Self::NoCore => "no core".to_string(),
+            Self::TransportGone => "transport unavailable".to_string(),
+            Self::OutcomeUnknown => "operation outcome unknown".to_string(),
+            Self::RefusedDebug(error) => format!("{error:?}"),
+            Self::RefusedInspect(error) => format!("{error:?}"),
+            Self::RefusedReply(detail) => detail,
+        }
+    }
+
+    /// Shared refusal mapping: transport and absence stay typed, the rest
+    /// carries the once-rendered detail.
+    fn refused(
+        self,
+        wrap: impl FnOnce(String) -> debug_vm::StatusMessage,
+    ) -> debug_vm::StatusMessage {
+        match self {
+            Self::OutcomeUnknown => debug_vm::StatusMessage::OutcomeUnknown,
+            Self::NoCore => debug_vm::StatusMessage::NoCore,
+            Self::TransportGone => {
+                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+            }
+            failure => wrap(failure.detail()),
+        }
+    }
+
+    pub(crate) fn thread_status(self) -> debug_vm::StatusMessage {
+        self.refused(debug_vm::StatusMessage::ThreadFailed)
+    }
+
+    pub(crate) fn register_status(self) -> debug_vm::StatusMessage {
+        self.refused(|detail| {
+            if detail.is_empty() {
+                debug_vm::StatusMessage::RegisterRefused("refused".to_string())
+            } else {
+                debug_vm::StatusMessage::RegisterRefused(detail)
+            }
+        })
+    }
+
+    pub(crate) fn write_status(self) -> debug_vm::StatusMessage {
+        self.refused(debug_vm::StatusMessage::WriteRefused)
+    }
+
+    pub(crate) fn pause_status(self, pausing: bool) -> debug_vm::StatusMessage {
+        // Pause/Resume share the refusal mapping with a site-specific wrap.
+        if pausing {
+            self.refused(debug_vm::StatusMessage::PauseFailed)
+        } else {
+            self.refused(debug_vm::StatusMessage::ResumeFailed)
+        }
+    }
+
+    pub(crate) fn step_status(self) -> debug_vm::StatusMessage {
+        self.refused(debug_vm::StatusMessage::StepFailed)
+    }
+}
+
+/// Whether a debugger pass fetches system images: the drain boundary
+/// spells the conversion out instead of hiding it behind `From<bool>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageNeed {
+    /// Skip the fetch (no PPU viewer open): CHR decode is skipped,
+    /// not just unused.
+    #[default]
+    Skip,
+    /// Fetch system images through the emu thread.
+    Fetch,
+}
+
+impl ImageNeed {
+    /// Explicit boundary conversion from the frontend `bool` flag.
+    pub fn from_flag(need_images: bool) -> Self {
+        if need_images { Self::Fetch } else { Self::Skip }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrafficKind {
+    /// Step/refresh/pause traffic: kills staged-but-uncommitted values.
+    StateChanging,
+    /// Select/stage/commit traffic: builds the transaction in place.
+    Transactional,
+}
+
+impl TrafficKind {
+    /// Explicit boundary conversion from the `state_changing` flag.
+    pub fn from_flag(state_changing: bool) -> Self {
+        if state_changing {
+            Self::StateChanging
+        } else {
+            Self::Transactional
+        }
+    }
+}
+
+/// Read budget, not proof of cancellation. Accepted mutation timeouts report outcome unknown
+/// and stop the batch without sending any further operations.
 pub(crate) const DEBUG_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Poll result for [`DrainFlight`]: either the batch needs more ticks
@@ -136,19 +224,65 @@ pub enum DrainPoll {
     Done(Box<DebugDrainOutput>),
 }
 
-/// Owned drain context: a cloned core (shared transport, metrics, and
-/// image cache through `Arc`s) plus the shared write transaction.
-/// No borrows, so a flight can live across UI ticks inside frontend
-/// state; coherence with the session holds through the `Arc`s.
-#[derive(Clone)]
+/// Owned drain context: boxed live core plus the shared write transaction, no borrows.
+/// A flight can live across UI ticks inside frontend state.
 pub struct DrainCtx {
-    core: Option<EmuCore>,
-    txn: Arc<Mutex<vm::WriteTransaction>>,
+    pub(crate) core: Option<Box<dyn LiveCore>>,
+    txn: Arc<Mutex<WriteTransaction>>,
+    epoch: Arc<std::sync::atomic::AtomicBool>,
+    execution_held: bool,
+}
+
+impl Clone for DrainCtx {
+    /// Share transport and image generation through fresh drain handles.
+    fn clone(&self) -> Self {
+        Self {
+            core: self.core.as_ref().map(|core| core.drain_handle()),
+            txn: Arc::clone(&self.txn),
+            epoch: Arc::clone(&self.epoch),
+            execution_held: self.execution_held,
+        }
+    }
 }
 
 impl DrainCtx {
-    pub(crate) fn new(core: Option<EmuCore>, txn: Arc<Mutex<vm::WriteTransaction>>) -> Self {
-        Self { core, txn }
+    pub(crate) fn new(core: Option<Box<dyn LiveCore>>, txn: Arc<Mutex<WriteTransaction>>) -> Self {
+        Self {
+            core,
+            txn,
+            epoch: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            execution_held: false,
+        }
+    }
+
+    pub(crate) fn with_epoch(mut self, epoch: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.epoch = epoch;
+        self
+    }
+
+    pub(crate) fn with_execution_held(mut self, held: bool) -> Self {
+        self.execution_held = held;
+        self
+    }
+
+    /// Narrow debug port behind the owned core; flights program against this.
+    pub fn core_port(&self) -> Option<&dyn LiveDebugPort> {
+        if !self.epoch.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        self.core.as_deref().map(|core| core as &dyn LiveDebugPort)
+    }
+
+    /// Scoped transaction access: the guard never escapes, so flights cannot deadlock.
+    /// Exactly one logging point for the poison recovery.
+    pub(crate) fn with_txn<R>(&self, f: impl FnOnce(&mut WriteTransaction) -> R) -> R {
+        match self.txn.lock() {
+            Ok(mut txn) => f(&mut txn),
+            Err(error) => {
+                log::error!("debug transaction mutex poisoned, recovering");
+                f(&mut error.into_inner())
+            }
+        }
     }
 }
 
@@ -170,8 +304,7 @@ enum PrepOp {
 }
 
 /// One outstanding thread reply with everything its resolution needs.
-/// Exactly one exists at a time: phases run sequentially, mirroring
-/// the blocking drain's round-trip order.
+/// Exactly one exists at a time: phases run sequentially.
 enum Outstanding {
     Step {
         rx: Receiver<Result<u64, DebuggerError>>,
@@ -199,6 +332,7 @@ enum Outstanding {
     Images {
         rx: Receiver<Result<Vec<DebugImage>, DebuggerError>>,
         sent_at: Instant,
+        sent_generation: u64,
     },
     Watch {
         rx: Receiver<Result<InspectResult, InspectError>>,
@@ -218,18 +352,15 @@ enum FlightPhase {
     Build,
 }
 
-/// Settled reply or still waiting. `Lost` covers both a dead thread
-/// (disconnect, resolve now) and an over-deadline wait (same 5s
-/// budget as the blocking drain, then the identical fallback).
+/// Settled reply or still waiting; `Lost` resolves now on disconnect or over-deadline wait.
 enum Awaited<T> {
     Waiting,
     Ready(T),
     Lost,
 }
 
-/// One debugger batch as a tick-driven state machine. See the module
-/// docs: same phase order and fallbacks as the blocking drain, but
-/// `begin` only sends and `poll` only `try_recv`s.
+/// One debugger batch as a tick-driven state machine: `begin` sends, `poll` receives.
+/// Same phase order and fallbacks as the blocking drain.
 pub struct DrainFlight {
     ctx: DrainCtx,
     deadline: Duration,
@@ -242,7 +373,7 @@ pub struct DrainFlight {
     freeze: Option<(u32, u8)>,
     reg_target: Option<&'static str>,
     prev_dump_rows: Vec<HexRow>,
-    need_images: bool,
+    need_images: ImageNeed,
     steps: VecDeque<StepUnit>,
     commits: VecDeque<CommitOp>,
     preps: VecDeque<PrepOp>,
@@ -255,14 +386,12 @@ pub struct DrainFlight {
     reg_sent: Option<(&'static str, u64)>,
     snap: Option<StoredSnapshot>,
     images_gen: u64,
-    images: Vec<DebugImage>,
+    images: Arc<Vec<DebugImage>>,
     watch_value: Option<u8>,
 }
 
 /// Snapshot sections stored at the snapshot phase for the build step.
-/// `None` while unavailable (no core, refused inspect, lost reply):
-/// the build then carries degenerates, exactly like the blocking
-/// drain's early return.
+/// `None` while unavailable; the build then carries degenerates.
 #[derive(Default)]
 struct StoredSnapshot {
     regs: Vec<(&'static str, u64)>,
@@ -278,7 +407,7 @@ enum Settle {
 }
 
 impl DrainFlight {
-    fn begin(
+    pub(crate) fn begin(
         ctx: DrainCtx,
         actions: &[DebugAction],
         input: &DebugDrainInput,
@@ -296,7 +425,7 @@ impl DrainFlight {
             freeze: input.freeze,
             reg_target: input.reg_target,
             prev_dump_rows: input.prev_dump_rows.to_vec(),
-            need_images: input.need_images,
+            need_images: ImageNeed::from_flag(input.need_images),
             steps: VecDeque::new(),
             commits: VecDeque::new(),
             preps: VecDeque::new(),
@@ -307,18 +436,15 @@ impl DrainFlight {
             reg_sent: None,
             snap: None,
             images_gen: 0,
-            images: Vec::new(),
+            images: Arc::new(Vec::new()),
             watch_value: None,
         };
         flight.classify(actions);
         flight
     }
 
-    /// Single dispatch over the batch: fire-and-forget sends run now
-    /// (they never wait), remote ops queue for their phases in batch
-    /// order. One match, so a new action touches this pass only —
-    /// not three parallel queues. Status wording mirrors
-    /// `SessionHandle::debug_pause` and friends.
+    /// Single dispatch over the batch: fire-and-forget sends run now, remote ops queue in order.
+    /// A new action touches this pass only, not three parallel queues.
     fn classify(&mut self, actions: &[DebugAction]) {
         for action in actions {
             match action {
@@ -330,12 +456,15 @@ impl DrainFlight {
                     self.preps.push_back(PrepOp::Select(*addr));
                 }
                 DebugAction::Pause => {
+                    self.state_changing = true;
                     self.status = Some(self.ctx.pause_mirror(true));
                 }
                 DebugAction::Resume => {
+                    self.state_changing = true;
                     self.status = Some(self.ctx.pause_mirror(false));
                 }
                 DebugAction::TogglePause => {
+                    self.state_changing = true;
                     let paused = self.ctx.paused_mirror();
                     self.status = Some(self.ctx.pause_mirror(!paused));
                 }
@@ -347,9 +476,7 @@ impl DrainFlight {
                     self.state_changing = true;
                     self.steps.push_back(StepUnit::Instruction);
                 }
-                // Transaction traffic never kills: it builds the
-                // transaction the commit phase consumes. Cancel clears
-                // there; register writes carry no transaction state.
+                // Transaction traffic builds what commit consumes; register writes carry none.
                 DebugAction::EditStage(value) => {
                     self.preps.push_back(PrepOp::Stage(*value));
                 }
@@ -362,11 +489,20 @@ impl DrainFlight {
         }
     }
 
-    /// Advance the flight without blocking: settle one reply or run
-    /// one phase step. Local-only phases chain within the call, so a
-    /// no-core batch completes on the first poll exactly like the
-    /// old synchronous drain.
+    /// Advance the flight without blocking: settle one reply or run one phase step.
+    /// A no-core batch completes on the first poll, like the old synchronous drain.
     pub fn poll(&mut self) -> DrainPoll {
+        if !self.ctx.epoch.load(std::sync::atomic::Ordering::Acquire) {
+            self.ctx.core = None;
+            self.outstanding = None;
+            self.snap = None;
+            self.images = Arc::new(Vec::new());
+            self.images_gen = 0;
+            self.watch_value = None;
+            self.status = Some(vm::StatusMessage::NoCore);
+            self.reselected = None;
+            return DrainPoll::Done(Box::new(self.finish()));
+        }
         loop {
             if let Some(out) = self.outstanding.take() {
                 match self.settle(out) {
@@ -433,7 +569,14 @@ impl DrainFlight {
                     Awaited::Waiting => {
                         return Settle::Waiting(Outstanding::Freeze { rx, sent_at });
                     }
-                    Awaited::Ready(_) | Awaited::Lost => {}
+                    Awaited::Ready(Ok(())) => {}
+                    Awaited::Ready(Err(error)) => {
+                        self.status = Some(CoreFailure::from(error).write_status());
+                    }
+                    Awaited::Lost => {
+                        self.resolve_mutation_unknown();
+                        return Settle::Settled;
+                    }
                 }
                 self.phase = FlightPhase::Snapshot;
             }
@@ -447,12 +590,20 @@ impl DrainFlight {
                 }
                 self.phase = FlightPhase::Images;
             }
-            Outstanding::Images { rx, sent_at } => {
+            Outstanding::Images {
+                rx,
+                sent_at,
+                sent_generation,
+            } => {
                 match await_reply(&rx, sent_at, self.deadline) {
                     Awaited::Waiting => {
-                        return Settle::Waiting(Outstanding::Images { rx, sent_at });
+                        return Settle::Waiting(Outstanding::Images {
+                            rx,
+                            sent_at,
+                            sent_generation,
+                        });
                     }
-                    Awaited::Ready(reply) => self.resolve_images(reply),
+                    Awaited::Ready(reply) => self.resolve_images(reply, sent_generation),
                     Awaited::Lost => {}
                 }
                 self.phase = FlightPhase::Watch;
@@ -471,9 +622,8 @@ impl DrainFlight {
         Settle::Settled
     }
 
-    /// Run the current phase's local work and sends. Either parks on
-    /// one reply (poll resumes there) or steps the phase forward, so
-    /// the `poll` loop always terminates the call without blocking.
+    /// Run the current phase local work and sends, parking on one reply or stepping forward.
+    /// The `poll` loop always terminates the call without blocking.
     fn advance_phase(&mut self) {
         match self.phase {
             FlightPhase::Exec => self.advance_exec(),
@@ -512,27 +662,25 @@ impl DrainFlight {
             // Stale-kill runs after commit, before prepare — same
             // seat as the blocking drain.
             if self.state_changing {
-                self.ctx.txn.lock().unwrap().on_state_changing_traffic();
+                self.ctx.with_txn(|txn| txn.on_state_changing_traffic());
             }
             self.phase = FlightPhase::Prepare;
             return;
         };
         match op {
             CommitOp::Cancel => {
-                self.ctx.txn.lock().unwrap().clear();
+                self.ctx.with_txn(|txn| txn.clear());
             }
             CommitOp::Confirm => self.send_confirm(),
             CommitOp::RegWrite(value) => self.send_reg_write(value),
         }
     }
 
-    /// Commit entry: take the staged write (consuming, exactly once)
-    /// and send it in the same non-blocking step, so superseding
-    /// between ticks can never lose a confirmed write silently: the
-    /// take only happens together with its send.
+    /// Commit entry: take the staged write and send it in the same non-blocking step.
+    /// The take only happens together with its send, so a confirmed write is never lost silently.
     fn send_confirm(&mut self) {
         use nerust_core_traits::debugger::MemoryWrite;
-        let staged = self.ctx.txn.lock().unwrap().take_commit();
+        let staged = self.ctx.with_txn(|txn| txn.take_commit());
         let (space, addr, value) = match staged {
             Some(staged) => staged,
             None => {
@@ -577,6 +725,9 @@ impl DrainFlight {
     ) {
         match sent {
             Some(Ok(rx)) => {
+                if let Some(core) = self.ctx.core.as_ref() {
+                    core.mark_images_dirty();
+                }
                 self.outstanding = Some(Outstanding::Commit {
                     rx,
                     sent_at: Instant::now(),
@@ -584,7 +735,7 @@ impl DrainFlight {
                 });
             }
             Some(Err(error)) => {
-                self.status = Some(vm::StatusMessage::ThreadFailed(format!("{error:?}")));
+                self.status = Some(CoreFailure::from(error).thread_status());
             }
             None => {
                 self.status = Some(vm::StatusMessage::NoCore);
@@ -599,16 +750,14 @@ impl DrainFlight {
         };
         match op {
             PrepOp::Stage(value) => {
-                self.ctx.txn.lock().unwrap().stage(value);
+                self.ctx.with_txn(|txn| txn.stage(value));
             }
             PrepOp::Select(addr) => self.send_prepare(addr),
         }
     }
 
-    /// Selection prepare: the old byte rides back on the reply and
-    /// feeds both the transaction and the selection display, exactly
-    /// like `SessionHandle::debug_prepare_write`. Without a space the
-    /// blocking drain skips the prepare but still reports the row.
+    /// Selection prepare: the old byte rides back on the reply for the transaction and display.
+    /// Without a space the blocking drain skips the prepare but still reports the row.
     fn send_prepare(&mut self, addr: u32) {
         let Some(space) = self.space else {
             self.reselected = Some((addr, None));
@@ -633,15 +782,13 @@ impl DrainFlight {
             // Send failure reads as empty, like the blocking path's
             // `None` old byte.
             Some(Err(_)) | None => {
-                self.ctx.txn.lock().unwrap().prepare(space, addr, None);
+                self.ctx.with_txn(|txn| txn.prepare(space, addr, None));
                 self.reselected = Some((addr, None));
             }
         }
     }
 
-    /// Freeze re-apply: silent by design, but the blocking drain still
-    /// waits for the reply, so the flight awaits it too (same
-    /// deadline, result ignored).
+    /// Freeze re-apply: await confirmation and stop the batch if its outcome is unknown.
     fn advance_freeze(&mut self) {
         use nerust_core_traits::debugger::MemoryWrite;
         let (Some((addr, value)), Some(space)) = (self.freeze, self.space) else {
@@ -658,6 +805,9 @@ impl DrainFlight {
         });
         match sent {
             Some(Ok(rx)) => {
+                if let Some(core) = self.ctx.core.as_ref() {
+                    core.mark_images_dirty();
+                }
                 self.outstanding = Some(Outstanding::Freeze {
                     rx,
                     sent_at: Instant::now(),
@@ -699,7 +849,7 @@ impl DrainFlight {
     }
 
     fn advance_images(&mut self) {
-        if !self.need_images {
+        if self.need_images == ImageNeed::Skip {
             self.phase = FlightPhase::Watch;
             return;
         }
@@ -707,22 +857,23 @@ impl DrainFlight {
             self.phase = FlightPhase::Watch;
             return;
         };
-        // A running core advances memory at any time: dirty first so
-        // the lookup below always refetches (mirrors `debug_images`).
-        if !core.metrics().paused {
+        // A running core advances memory at any time: dirty first so the
+        // lookup below always refetches (mirrors `debug_images`).
+        if !core.is_paused() {
             core.mark_images_dirty();
         }
-        if let Some((generation, images)) = core.images_cache_lookup() {
+        if let Some((generation, shared)) = core.images_cache_lookup() {
             self.images_gen = generation;
-            self.images = images;
+            self.images = Arc::clone(&shared);
             self.phase = FlightPhase::Watch;
             return;
         }
         match core.images_send() {
-            Ok(rx) => {
+            Ok((rx, sent_generation)) => {
                 self.outstanding = Some(Outstanding::Images {
                     rx,
                     sent_at: Instant::now(),
+                    sent_generation,
                 });
             }
             Err(_) => {
@@ -767,10 +918,7 @@ impl DrainFlight {
 
     fn fold_watch(&self, addr: u32) -> Option<u8> {
         let snap = self.snap.as_ref()?;
-        snap.dump_rows
-            .iter()
-            .find(|row| addr >= row.addr && addr < row.addr + u32::from(row.valid))
-            .map(|row| row.bytes[(addr - row.addr) as usize])
+        fold_watch_byte(&snap.dump_rows, addr)
     }
 
     fn resolve_step(&mut self, reply: Result<u64, DebuggerError>) {
@@ -782,15 +930,14 @@ impl DrainFlight {
                 self.status = Some(vm::StatusMessage::Stepped(count));
             }
             Err(error) => {
-                self.status = Some(vm::StatusMessage::StepFailed(format!("{error:?}")));
+                self.status = Some(CoreFailure::from(error).step_status());
             }
         }
     }
 
-    /// Lost step reply (dead thread / over deadline): the blocking
-    /// drain's `recv_timeout` maps this to `ThreadFailed(NoReply)`.
+    /// An accepted step without a reply has an unknown outcome, not a refusal.
     fn resolve_step_lost(&mut self) {
-        self.status = Some(vm::StatusMessage::ThreadFailed("NoReply".to_string()));
+        self.resolve_mutation_unknown();
     }
 
     fn resolve_commit(&mut self, reply: Result<(), DebuggerError>, confirm: bool) {
@@ -804,19 +951,30 @@ impl DrainFlight {
                 let (_, addr, value) = self.confirm_sent.unwrap_or((SpaceId(0), 0, 0));
                 vm::StatusMessage::WroteMemory { addr, value }
             }
-            (true, Err(error)) => vm::StatusMessage::WriteRefused(format!("{error:?}")),
+            (true, Err(error)) => CoreFailure::from(error).write_status(),
             (false, Ok(())) => {
                 let (name, value) = self.reg_sent.unwrap_or(("?", 0));
                 vm::StatusMessage::RegisterWrote { name, value }
             }
-            (false, Err(error)) => vm::StatusMessage::RegisterRefused(format!("{error:?}")),
+            (false, Err(error)) => CoreFailure::from(error).register_status(),
         });
     }
 
-    /// Lost commit reply: same `ThreadFailed(NoReply)` fallback as
-    /// the blocking drain's timeout path (both ops share it).
+    /// An accepted write without a reply must not be retried or treated as unapplied.
     fn resolve_commit_lost(&mut self) {
-        self.status = Some(vm::StatusMessage::ThreadFailed("NoReply".to_string()));
+        self.resolve_mutation_unknown();
+    }
+
+    /// A deadline/disconnection does not undo a queued write or step. Never retry it or
+    /// continue into freeze/prepare writes whose prerequisites are now unknown.
+    fn resolve_mutation_unknown(&mut self) {
+        self.status = Some(vm::StatusMessage::OutcomeUnknown);
+        self.ctx.with_txn(|txn| txn.clear());
+        self.steps.clear();
+        self.commits.clear();
+        self.preps.clear();
+        self.snap = None;
+        self.phase = FlightPhase::Build;
     }
 
     fn resolve_prepare(
@@ -826,12 +984,12 @@ impl DrainFlight {
         addr: u32,
     ) {
         let old = first_byte(reply);
-        self.ctx.txn.lock().unwrap().prepare(space, addr, old);
+        self.ctx.with_txn(|txn| txn.prepare(space, addr, old));
         self.reselected = Some((addr, old));
     }
 
     fn resolve_prepare_lost(&mut self, space: SpaceId, addr: u32) {
-        self.ctx.txn.lock().unwrap().prepare(space, addr, None);
+        self.ctx.with_txn(|txn| txn.prepare(space, addr, None));
         self.reselected = Some((addr, None));
     }
 
@@ -842,43 +1000,49 @@ impl DrainFlight {
             Ok(batch) => batch,
             Err(_) => return,
         };
-        let inspected = match batch.inspect {
-            Ok(inspected) => inspected,
-            Err(_) => return,
+        let Some(parts) = assemble_snapshot_parts(batch) else {
+            return;
         };
         self.snap = Some(StoredSnapshot {
-            regs: inspected
-                .registers
-                .iter()
-                .map(|&(name, value)| (name, value))
-                .collect(),
-            reg_names: inspected.registers.iter().map(|(name, _)| *name).collect(),
-            dump_rows: inspected.dump.rows.iter().copied().collect(),
-            panels: inspected.panels.iter().cloned().collect(),
-            disasm: batch.disasm,
+            regs: parts.regs,
+            reg_names: parts.reg_names,
+            dump_rows: parts.dump_rows,
+            panels: parts.panels,
+            disasm: parts.disasm,
         });
     }
 
-    fn resolve_images(&mut self, reply: Result<Vec<DebugImage>, DebuggerError>) {
+    fn resolve_images(
+        &mut self,
+        reply: Result<Vec<DebugImage>, DebuggerError>,
+        sent_generation: u64,
+    ) {
         let images = match reply {
             Ok(images) => images,
             Err(_) => return,
         };
         if let Some(core) = self.ctx.core.as_ref() {
-            let stored = core.images_store(images);
-            // Unchanged content reports the served generation: skip
-            // the RGBA conversion too, not just the viewer re-derive
-            // — the frontend generation guard drops the empty pixels.
+            let stored = core.images_store(images, sent_generation);
+            // Always keep the served decode: a panel-only redraw must rebuild
+            // from held images, never an empty image.
             self.images_gen = stored.generation;
-            self.images = if stored.fresh {
-                stored.images
-            } else {
-                Vec::new()
-            };
+            self.images = stored.images;
         }
     }
 
     fn finish(&mut self) -> DebugDrainOutput {
+        // Domain snapshot first; the display adapter renders it against the previous rows.
+        let snapshot = self.finish_snapshot();
+        let reselected = snapshot.reselected;
+        let display = snapshot.into_display(&self.prev_dump_rows);
+        DebugDrainOutput {
+            display,
+            reselected,
+        }
+    }
+
+    /// Domain snapshot for one finished batch: moves the stored sections out, no cloning.
+    fn finish_snapshot(&mut self) -> DrainSnapshot {
         // Move out of the stored snapshot: the flight is done, so the
         // vecs travel instead of cloning (same output, no second copy).
         let snap = self.snap.take().unwrap_or_default();
@@ -888,26 +1052,72 @@ impl DrainFlight {
         } else {
             vm::StatusMessage::Running
         });
-        let display = DisplayCache {
+        DrainSnapshot {
             regs: snap.regs,
-            diff: vm::diff_rows(&self.prev_dump_rows, &snap.dump_rows),
+            reg_names: snap.reg_names,
             dump_rows: snap.dump_rows,
-            disasm_lines: snap.disasm,
             panels: snap.panels,
-            images: std::mem::take(&mut self.images)
-                .iter()
-                .map(vm::rgba_image)
-                .collect(),
+            disasm: snap.disasm,
+            images: std::mem::replace(&mut self.images, Arc::new(Vec::new())),
             images_gen: self.images_gen,
             watch_value: self.watch_value,
             paused,
-            reg_names: snap.reg_names,
             status,
-            pending: self.ctx.txn.lock().unwrap().pending(),
-        };
-        DebugDrainOutput {
-            display,
+            pending: if self.ctx.epoch.load(std::sync::atomic::Ordering::Acquire) {
+                self.ctx.with_txn(|txn| txn.pending())
+            } else {
+                None
+            },
             reselected: self.reselected,
+        }
+    }
+}
+
+/// Domain snapshot for one drain batch: structured sections, no rendering decisions.
+/// The display adapter consumes this; the flight never formats.
+pub struct DrainSnapshot {
+    /// Register `(name, value)` pairs in thread order.
+    pub regs: Vec<(&'static str, u64)>,
+    /// Register names in thread order.
+    pub reg_names: Vec<&'static str>,
+    /// Memory dump rows.
+    pub dump_rows: Vec<HexRow>,
+    /// Debugger panels.
+    pub panels: Vec<nerust_core_traits::debugger::DebugPanel>,
+    /// Disassembly lines at the anchor.
+    pub disasm: Vec<nerust_core_traits::debugger::DisasmLine>,
+    /// Fetched system images (empty when unchanged or skipped).
+    pub images: Arc<Vec<DebugImage>>,
+    /// Source generation of the served images.
+    pub images_gen: u64,
+    /// Folded watch value, if the watch landed on the page or the fallback read.
+    pub watch_value: Option<u8>,
+    /// Pause truth behind this batch.
+    pub paused: bool,
+    /// Batch status for the status line.
+    pub status: vm::StatusMessage,
+    /// Staged but uncommitted write, if any.
+    pub pending: Option<vm::PendingWrite>,
+    /// Fresh `(address, old byte)` when the batch selected a row.
+    pub reselected: Option<(u32, Option<u8>)>,
+}
+
+impl DrainSnapshot {
+    /// Render-ready display for one domain snapshot, diffed against the previous dump rows.
+    pub fn into_display(self, prev_dump_rows: &[HexRow]) -> DisplayCache {
+        DisplayCache {
+            regs: self.regs,
+            diff: vm::diff_rows(prev_dump_rows, &self.dump_rows),
+            dump_rows: self.dump_rows,
+            disasm_lines: self.disasm,
+            panels: self.panels,
+            images: self.images.iter().map(vm::rgba_image).collect(),
+            images_gen: self.images_gen,
+            watch_value: self.watch_value,
+            paused: self.paused,
+            reg_names: self.reg_names,
+            status: self.status,
+            pending: self.pending,
         }
     }
 }
@@ -916,44 +1126,47 @@ impl DrainCtx {
     /// Pause truth without blocking: no core reads as paused, like
     /// `SessionHandle::debug_paused`.
     fn paused_mirror(&self) -> bool {
-        self.core.as_ref().is_none_or(|core| core.metrics().paused)
+        self.core.as_ref().is_none_or(|core| core.is_paused())
     }
 
-    /// Fire-and-forget pause/resume with the same status wording as
-    /// `SessionHandle::debug_pause` / `debug_resume`. Sends never
-    /// block (`try_send`); only the metrics lock is touched.
+    /// Fire-and-forget pause/resume with the same status wording as the session pause/resume.
+    /// Sends never block; only the metrics lock is touched.
     fn pause_mirror(&self, pause: bool) -> vm::StatusMessage {
         let Some(core) = self.core.as_ref() else {
             return vm::StatusMessage::NoCore;
         };
+        if !pause && self.execution_held {
+            return vm::StatusMessage::Paused;
+        }
         let result = if pause { core.pause() } else { core.resume() };
         match result {
             Ok(()) if pause => vm::StatusMessage::Paused,
             Ok(()) => vm::StatusMessage::Resume,
-            Err(error) if pause => vm::StatusMessage::PauseFailed(format!("{error:?}")),
-            Err(error) => vm::StatusMessage::ResumeFailed(format!("{error:?}")),
+            Err(error) => CoreFailure::from(error).pause_status(pause),
         }
     }
 
-    /// Queue one step without blocking. The `Err` status mirrors
-    /// `SessionHandle::debug_step`'s no-core path; thread failures
-    /// surface at reply time instead.
+    /// Queue one step without blocking through the narrow port.
     fn step_send(
         &self,
         unit: StepUnit,
     ) -> Result<Receiver<Result<u64, DebuggerError>>, vm::StatusMessage> {
-        match self.core.as_ref() {
-            Some(core) => core
-                .step_send(unit)
-                .map_err(|error| vm::StatusMessage::ThreadFailed(format!("{error:?}"))),
+        match self.core_port() {
+            Some(port) => {
+                let reply = port
+                    .step_send(unit)
+                    .map_err(|error| CoreFailure::from(error).thread_status())?;
+                if let Some(core) = self.core.as_ref() {
+                    core.mark_images_dirty();
+                }
+                Ok(reply)
+            }
             None => Err(vm::StatusMessage::NoCore),
         }
     }
 }
 
-/// Non-blocking reply poll with the drain deadline. `Lost` covers a
-/// dead thread (resolve now, silently) and an over-deadline wait
-/// (same warn + fallback as the blocking `recv_debug_reply`).
+/// Non-blocking reply poll with the drain deadline; `Lost` resolves now or falls back on timeout.
 fn await_reply<T>(rx: &Receiver<T>, sent_at: Instant, deadline: Duration) -> Awaited<T> {
     match rx.try_recv() {
         Ok(reply) => Awaited::Ready(reply),
@@ -969,32 +1182,24 @@ fn await_reply<T>(rx: &Receiver<T>, sent_at: Instant, deadline: Duration) -> Awa
     }
 }
 
-/// Old-byte / watch-value extraction, mirroring
-/// `SessionHandle::debug_read_byte`: the first row's first byte when
-/// valid, `None` on any refusal.
+/// Old-byte / watch-value extraction: the first row's first byte when valid, `None` on refusal.
 fn first_byte(reply: Result<InspectResult, InspectError>) -> Option<u8> {
     let inspected = reply.ok()?;
     let row = inspected.dump.rows.first()?;
     (row.valid > 0).then_some(row.bytes[0])
 }
 
-// ---------------------------------------------------------------------------
-// Async live-images flight
-// ---------------------------------------------------------------------------
-
-/// Poll result for [`LiveImagesFlight`]: either the fetch needs more
-/// ticks or it finished (`None` when imageless or failed, like the
-/// blocking refresh).
+/// Poll result for [`LiveImagesFlight`]: needs more ticks, or finished (`None` when imageless).
 pub enum LiveImagesPoll {
     Pending,
-    Done(crate::session::LiveImages),
+    Done(crate::emu_core::images::LiveImages),
 }
 
-/// One images-only fetch as a tick-driven state machine. `begin`
-/// sends without blocking; `poll` receives without blocking. Cache
-/// hits and coreless sessions resolve on the first poll.
+/// One images-only fetch as a tick-driven state machine: non-blocking send, non-blocking poll.
+/// Cache hits and coreless sessions resolve on the first poll.
 pub struct LiveImagesFlight {
-    core: Option<EmuCore>,
+    core: Option<Box<dyn LiveCore>>,
+    epoch: Option<Arc<std::sync::atomic::AtomicBool>>,
     deadline: Duration,
     state: Option<LiveImagesState>,
 }
@@ -1003,96 +1208,335 @@ enum LiveImagesState {
     Fetching {
         rx: Receiver<Result<Vec<DebugImage>, DebuggerError>>,
         sent_at: Instant,
+        sent_generation: u64,
     },
-    Ready(crate::session::LiveImages),
+    Ready(crate::emu_core::images::LiveImages),
 }
 
 impl LiveImagesFlight {
-    fn begin(core: Option<EmuCore>, need_images: bool, deadline: Duration) -> Self {
-        if !need_images {
+    pub(crate) fn begin(
+        core: Option<Box<dyn LiveCore>>,
+        need_images: ImageNeed,
+        deadline: Duration,
+    ) -> Self {
+        if need_images == ImageNeed::Skip {
             return Self::ready(None, deadline);
         }
         let Some(core) = core else {
             return Self::ready(None, deadline);
         };
-        // A running core advances memory at any time: dirty first so
-        // the lookup below refetches (mirrors DrainFlight and
-        // EmuCore::debug_images). Without this the first stored decode
-        // serves forever and live follow freezes on one frame.
-        if !core.metrics().paused {
+        // Dirty first on a running core so the lookup below refetches; memory may advance anytime.
+        // Without this the first stored decode serves forever and live follow freezes.
+        if !core.is_paused() {
             core.mark_images_dirty();
         }
-        if let Some((generation, images)) = core.images_cache_lookup() {
+        if let Some((generation, shared)) = core.images_cache_lookup() {
             return Self {
                 core: Some(core),
+                epoch: None,
                 deadline,
-                state: Some(LiveImagesState::Ready(Some((
-                    generation,
-                    images.iter().map(vm::rgba_image).collect(),
-                )))),
+                state: Some(LiveImagesState::Ready(Some(
+                    crate::emu_core::images::LiveImageBatch {
+                        generation,
+                        images: shared
+                            .iter()
+                            .map(vm::rgba_image)
+                            .map(crate::emu_core::images::LiveImage::from)
+                            .collect(),
+                    },
+                ))),
             };
         }
         match core.images_send() {
-            Ok(rx) => Self {
+            Ok((rx, sent_generation)) => Self {
                 core: Some(core),
+                epoch: None,
                 deadline,
                 state: Some(LiveImagesState::Fetching {
                     rx,
                     sent_at: Instant::now(),
+                    sent_generation,
                 }),
             },
             Err(_) => Self::ready(None, deadline),
         }
     }
 
-    fn ready(live: crate::session::LiveImages, deadline: Duration) -> Self {
+    fn ready(live: crate::emu_core::images::LiveImages, deadline: Duration) -> Self {
         Self {
             core: None,
+            epoch: None,
             deadline,
             state: Some(LiveImagesState::Ready(live)),
         }
     }
 
     /// Advance the fetch without blocking: at most one `try_recv`.
-    /// A still-waiting fetch stays stored; anything else resolves to
-    /// `Done`, so orphaned flights from a closed viewer settle
-    /// harmlessly on the next tick.
+    /// Anything but still-waiting resolves to `Done`, so orphaned flights settle harmlessly.
     pub fn poll(&mut self) -> LiveImagesPoll {
+        if self
+            .epoch
+            .as_ref()
+            .is_some_and(|epoch| !epoch.load(std::sync::atomic::Ordering::Acquire))
+        {
+            self.state = None;
+            self.core = None;
+            return LiveImagesPoll::Done(None);
+        }
         let state = self.state.take();
         match state {
             None | Some(LiveImagesState::Ready(None)) => LiveImagesPoll::Done(None),
             Some(LiveImagesState::Ready(live)) => LiveImagesPoll::Done(live),
-            Some(LiveImagesState::Fetching { rx, sent_at }) => {
-                match await_reply(&rx, sent_at, self.deadline) {
-                    Awaited::Waiting => {
-                        self.state = Some(LiveImagesState::Fetching { rx, sent_at });
-                        LiveImagesPoll::Pending
-                    }
-                    Awaited::Ready(reply) => LiveImagesPoll::Done(self.store(reply)),
-                    Awaited::Lost => LiveImagesPoll::Done(None),
+            Some(LiveImagesState::Fetching {
+                rx,
+                sent_at,
+                sent_generation,
+            }) => match await_reply(&rx, sent_at, self.deadline) {
+                Awaited::Waiting => {
+                    self.state = Some(LiveImagesState::Fetching {
+                        rx,
+                        sent_at,
+                        sent_generation,
+                    });
+                    LiveImagesPoll::Pending
                 }
-            }
+                Awaited::Ready(reply) => LiveImagesPoll::Done(self.store(reply, sent_generation)),
+                Awaited::Lost => LiveImagesPoll::Done(None),
+            },
         }
     }
 
-    fn store(&self, reply: Result<Vec<DebugImage>, DebuggerError>) -> crate::session::LiveImages {
+    fn store(
+        &self,
+        reply: Result<Vec<DebugImage>, DebuggerError>,
+        sent_generation: u64,
+    ) -> crate::emu_core::images::LiveImages {
+        use crate::emu_core::images::{LiveImage, LiveImageBatch};
         let images = reply.ok()?;
         let core = self.core.as_ref()?;
-        let stored = core.images_store(images);
-        // Unchanged content skips the RGBA conversion like the drain
-        // flight: the served generation makes viewers drop it.
-        let items = if stored.fresh {
-            stored.images.iter().map(vm::rgba_image).collect()
-        } else {
-            Vec::new()
+        let stored = core.images_store(images, sent_generation);
+        // Always convert the served decode: panel-only updates must keep the
+        // held images instead of an empty image.
+        let items = stored
+            .images
+            .iter()
+            .map(vm::rgba_image)
+            .map(LiveImage::from)
+            .collect();
+        Some(LiveImageBatch {
+            generation: stored.generation,
+            images: items,
+        })
+    }
+
+    pub(crate) fn with_epoch(mut self, epoch: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.epoch = Some(epoch);
+        self
+    }
+}
+
+/// Shared debugger snapshot assembly: blocking snapshot and drain flight
+/// both build their sections from these parts.
+#[derive(Default)]
+pub(crate) struct SnapshotParts {
+    /// Register `(name, value)` pairs in thread order.
+    pub regs: Vec<(&'static str, u64)>,
+    /// Register names in thread order.
+    pub reg_names: Vec<&'static str>,
+    /// Memory dump rows.
+    pub dump_rows: Vec<HexRow>,
+    /// Debugger panels.
+    pub panels: Vec<nerust_core_traits::debugger::DebugPanel>,
+    /// Disassembly lines at the anchor.
+    pub disasm: Vec<DisasmLine>,
+    /// Program-counter anchor (`None` means no anchor).
+    pub anchor: Option<u32>,
+}
+
+/// Split one thread batch into render-ready sections.
+/// `None` on inspect failure: the caller serves degenerates, like the blocking drain.
+pub(crate) fn assemble_snapshot_parts(batch: SnapshotResult) -> Option<SnapshotParts> {
+    let inspected = batch.inspect.ok()?;
+    Some(SnapshotParts {
+        regs: inspected
+            .registers
+            .iter()
+            .map(|&(name, value)| (name, value))
+            .collect(),
+        reg_names: inspected.registers.iter().map(|(name, _)| *name).collect(),
+        dump_rows: inspected.dump.rows.iter().copied().collect(),
+        panels: inspected.panels.iter().cloned().collect(),
+        disasm: batch.disasm,
+        anchor: batch.anchor,
+    })
+}
+
+/// Watch-byte fold: the value at `addr` when the page row covers it.
+/// Shared by the blocking snapshot and the drain flight.
+pub(crate) fn fold_watch_byte(rows: &[HexRow], addr: u32) -> Option<u8> {
+    rows.iter()
+        .find(|row| addr >= row.addr && addr < row.addr + u32::from(row.valid))
+        .map(|row| row.bytes[(addr - row.addr) as usize])
+}
+
+#[cfg(test)]
+mod snapshot_cov_tests {
+    use crate::debug::{assemble_snapshot_parts, fold_watch_byte};
+    use nerust_core_traits::debugger::HexRow;
+
+    fn row(addr: u32, bytes: [u8; 16], valid: u8) -> HexRow {
+        HexRow { addr, bytes, valid }
+    }
+
+    #[test]
+    fn assemble_rejects_failed_inspect() {
+        use nerust_core_traits::debugger::{InspectError, SnapshotResult};
+        let batch = SnapshotResult {
+            inspect: Err(InspectError::NotPaused),
+            disasm: vec![],
+            anchor: None,
         };
-        Some((stored.generation, items))
+        assert!(assemble_snapshot_parts(batch).is_none());
+    }
+
+    #[test]
+    fn fold_returns_byte_only_inside_valid_span() {
+        let rows = [row(0x10, [9; 16], 4)];
+        assert_eq!(fold_watch_byte(&rows, 0x12), Some(9));
+        assert_eq!(fold_watch_byte(&rows, 0x0F), None);
+        assert_eq!(fold_watch_byte(&rows, 0x14), None);
+        assert_eq!(fold_watch_byte(&[], 0x10), None);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_epoch_neither_exposes_nor_clears_a_shared_transaction() {
+        let txn = Arc::new(Mutex::new(WriteTransaction::Empty));
+        txn.lock().unwrap().prepare(SpaceId(0), 0x10, Some(1));
+        txn.lock().unwrap().stage(2);
+        let pending = txn.lock().unwrap().pending();
+        let epoch = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let input = DebugDrainInput {
+            space: None,
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: None,
+            prev_dump_rows: &[],
+            need_images: false,
+        };
+        let mut flight = DrainFlight::begin(
+            DrainCtx::new(None, txn.clone()).with_epoch(epoch),
+            &[],
+            &input,
+            Duration::ZERO,
+        );
+        let DrainPoll::Done(output) = flight.poll() else {
+            panic!("stale flight must settle immediately")
+        };
+        assert_eq!(output.display.status, vm::StatusMessage::NoCore);
+        assert!(output.display.pending.is_none());
+        assert_eq!(txn.lock().unwrap().pending(), pending);
+    }
+
+    #[test]
+    fn accepted_step_timeout_stops_all_later_mutations_as_outcome_unknown() {
+        use crate::emu_core::{EmuCore, EmuThreadPort};
+        use nerust_core_traits::EmuCommand;
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        use std::sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc,
+        };
+
+        #[derive(Debug)]
+        struct StalledPort {
+            sends: Arc<AtomicUsize>,
+            replies: Mutex<Vec<mpsc::Sender<Result<u64, DebuggerError>>>>,
+            frame: Arc<Mutex<FrameBuffer>>,
+        }
+        impl EmuThreadPort for StalledPort {
+            fn send(&self, command: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+                self.sends.fetch_add(1, Ordering::SeqCst);
+                match command {
+                    EmuCommand::Step { reply, .. } => {
+                        self.replies.lock().unwrap().push(reply);
+                        Ok(())
+                    }
+                    other => Err(mpsc::TrySendError::Disconnected(other)),
+                }
+            }
+            fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+                &self.frame
+            }
+            fn frame_count(&self) -> u64 {
+                0
+            }
+            fn fps(&self) -> f32 {
+                0.0
+            }
+        }
+        let frame = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+            0,
+            0,
+            PixelFormat::Rgba,
+        )));
+        let sends = Arc::new(AtomicUsize::new(0));
+        let core = EmuCore::new(
+            Arc::new(StalledPort {
+                sends: sends.clone(),
+                replies: Mutex::new(Vec::new()),
+                frame: frame.clone(),
+            }),
+            crate::test_helpers::build_test_core_parts().render_profile,
+            frame,
+            FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let txn = Arc::new(Mutex::new(WriteTransaction::Empty));
+        txn.lock().unwrap().prepare(SpaceId(0), 0, Some(0));
+        txn.lock().unwrap().stage(5);
+        let input = DebugDrainInput {
+            space: Some(SpaceId(0)),
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: Some("a"),
+            freeze: Some((0, 9)),
+            prev_dump_rows: &[],
+            need_images: true,
+        };
+        let mut flight = DrainFlight::begin(
+            DrainCtx::new(Some(Box::new(core)), txn.clone()),
+            &[
+                DebugAction::StepInstr,
+                DebugAction::StepFrame,
+                DebugAction::WriteConfirm,
+                DebugAction::RegisterWrite(7),
+                DebugAction::SelectRow(0),
+                DebugAction::EditStage(8),
+            ],
+            &input,
+            Duration::ZERO,
+        );
+        let DrainPoll::Done(output) = flight.poll() else {
+            panic!("zero budget settles immediately")
+        };
+        assert_eq!(output.display.status, vm::StatusMessage::OutcomeUnknown);
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            1,
+            "no later writes, freeze, or second step"
+        );
+        assert!(txn.lock().unwrap().pending().is_none());
+        assert!(output.reselected.is_none());
+    }
+
     #[test]
     fn await_reply_waits_readies_and_loses() {
         use std::sync::mpsc;
@@ -1125,5 +1569,113 @@ mod tests {
             await_reply(&rx, past, Duration::from_secs(5)),
             Awaited::Lost
         ));
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    use crate::debug::*;
+
+    #[test]
+    fn drain_ctx_exposes_narrow_debug_port() {
+        let empty = DrainCtx::new(None, Arc::new(Mutex::new(vm::WriteTransaction::Empty)));
+        assert!(empty.core_port().is_none());
+    }
+}
+
+#[cfg(test)]
+mod debug_cov_tests {
+    use crate::debug::*;
+
+    #[test]
+    fn need_and_traffic_convert_from_bool() {
+        assert_eq!(ImageNeed::from_flag(true), ImageNeed::Fetch);
+        assert_eq!(ImageNeed::from_flag(false), ImageNeed::Skip);
+        assert_eq!(TrafficKind::from_flag(true), TrafficKind::StateChanging);
+        assert_eq!(TrafficKind::from_flag(false), TrafficKind::Transactional);
+        assert_eq!(ImageNeed::default(), ImageNeed::Skip);
+    }
+
+    #[test]
+    fn core_failure_carries_typed_errors_and_renders_once() {
+        use nerust_core_traits::debugger::{DebuggerError, InspectError};
+        use nerust_gui_runtime::debugger::StatusMessage as S;
+        // Typed refusal rides without formatting; the status site renders it.
+        let typed = CoreFailure::from(DebuggerError::Unsupported);
+        assert!(matches!(typed, CoreFailure::RefusedDebug(_)));
+        let typed = CoreFailure::from(InspectError::NotPaused);
+        assert!(matches!(typed, CoreFailure::RefusedInspect(_)));
+        // Rendered once at the status site, matching the old `format!("{error:?}")` text.
+        let status = CoreFailure::from(DebuggerError::Unsupported).step_status();
+        assert!(matches!(status, S::StepFailed(_)));
+        let old_text = format!("{:?}", DebuggerError::Unsupported);
+        let S::StepFailed(new_text) = status else {
+            panic!("expected StepFailed");
+        };
+        assert_eq!(new_text, old_text);
+        let status = CoreFailure::RefusedReply("denied".into()).thread_status();
+        assert!(matches!(status, S::ThreadFailed(_)));
+    }
+
+    #[test]
+    fn core_failure_maps_every_variant() {
+        use nerust_gui_runtime::debugger::StatusMessage as S;
+        assert!(matches!(CoreFailure::no_core().thread_status(), S::NoCore));
+        assert!(matches!(
+            CoreFailure::no_core().register_status(),
+            S::NoCore
+        ));
+        assert!(matches!(CoreFailure::no_core().write_status(), S::NoCore));
+        assert!(matches!(CoreFailure::no_core().step_status(), S::NoCore));
+        assert!(matches!(
+            CoreFailure::no_core().pause_status(true),
+            S::NoCore
+        ));
+        for failure in [
+            CoreFailure::TransportGone,
+            CoreFailure::RefusedReply("boom".to_string()),
+        ] {
+            let status = failure.thread_status();
+            assert!(matches!(status, S::ThreadFailed(_)));
+        }
+        assert!(matches!(
+            CoreFailure::TransportGone.step_status(),
+            S::ThreadFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::RefusedReply("boom".to_string()).step_status(),
+            S::StepFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::TransportGone.pause_status(true),
+            S::ThreadFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::RefusedReply("x".to_string()).pause_status(true),
+            S::PauseFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::RefusedReply("x".to_string()).pause_status(false),
+            S::ResumeFailed(_)
+        ));
+        assert!(matches!(
+            CoreFailure::RefusedReply(String::new()).register_status(),
+            S::RegisterRefused(_)
+        ));
+        assert!(matches!(
+            CoreFailure::RefusedReply("r".to_string()).register_status(),
+            S::RegisterRefused(_)
+        ));
+        assert!(matches!(
+            CoreFailure::RefusedReply("w".to_string()).write_status(),
+            S::WriteRefused(_)
+        ));
+        for error in [
+            nerust_emu_thread::OperationError::WorkerUnavailable,
+            nerust_emu_thread::OperationError::NoReply,
+            nerust_emu_thread::OperationError::Reply("denied".to_string()),
+        ] {
+            let _ = CoreFailure::from(error).thread_status();
+        }
     }
 }

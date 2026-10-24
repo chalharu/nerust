@@ -1,6 +1,5 @@
-//! Debugger view builders plus the per-rebuild snapshot they
-//! read. Widgets see owned locals only; `capture_view` is the single
-//! place that locks the bridge.
+//! Debugger view builders plus the per-rebuild snapshot they read. Widgets see owned locals only;
+//! `capture_view` is the single place that locks the bridge.
 
 use iced_tiny_skia::Renderer;
 use nerust_core_traits::debugger::{DisasmLine, HexRow};
@@ -9,19 +8,16 @@ use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::DebugMessage;
-use crate::aux::bridge::{DebugBridge, lock_recovered};
+use crate::aux::bridge::DebugBridge;
 
-/// Two-char marker prefix for a disassembly row, kept out of the
-/// view so the width contract stays unit-tested. The PC `>` itself
-/// lives in [`vm::format_disasm_line`]; this only adds the pinned
-/// `@` (or blanks), so composing both never double-marks.
+/// Two-char marker prefix for a disassembly row, kept out of the view so the width contract stays
+/// unit-tested. The PC `>` itself lives in [`vm::format_disasm_line`]; this only adds the pinned `@` (or blanks), so composing both never double-marks.
 pub(super) fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
     if !is_pc && is_pinned { "@ " } else { "  " }
 }
 
-/// Owned per-rebuild snapshot: widgets read locals, never the live
-/// bridge. Locks are sequential, so it is one consistent read in
-/// practice, strictly more coherent than per-widget locking.
+/// Owned per-rebuild snapshot: widgets read locals, never the live bridge. Locks are sequential, so
+/// it is one consistent read in practice, strictly more coherent than per-widget locking.
 pub(super) struct ViewSnapshot {
     pub(super) language: AppLanguage,
     pub(super) mem_input: String,
@@ -52,16 +48,12 @@ pub(super) struct ViewSnapshot {
 /// Lock the bridge once and clone an owned snapshot out of it.
 /// No widget code runs here; see `anchor()` for the anchor rule.
 pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
-    let language = bridge.language;
-    let nav = lock_recovered(&bridge.nav).clone();
-    let display = lock_recovered(&bridge.display).clone_without_images();
-    let bookmarks = lock_recovered(&bridge.bookmarks).clone();
-    let bm_input = lock_recovered(&bridge.bm_input).clone();
-    let watch = *lock_recovered(&bridge.watch);
-    let freeze = *lock_recovered(&bridge.freeze);
-    let freeze_input = lock_recovered(&bridge.freeze_input).clone();
-    let selected = *lock_recovered(&bridge.selected);
-    let edit_input = lock_recovered(&bridge.edit_input).clone();
+    let language = bridge.language();
+    // One coherent pass: core fields clone under one guard, images
+    // ride the display `Arc` and clone lock-free below.
+    let view = bridge.view_snapshot();
+    let nav = view.nav;
+    let display = view.display;
     let pending = display.pending;
     let selected_name = bridge.selected_name();
     let regs = display.regs;
@@ -75,11 +67,9 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     let back_len = nav.back_len();
     let watch_value = display.watch_value;
     let paused = display.paused;
-    // Coreless windows never drain, so the default Empty status
-    // would sit blank forever and the toggle would offer Pause
-    // against nothing. Read coreless as paused with an explicit
-    // "no core" status — the same agreement as the gtk twin.
-    let coreless = bridge.spaces.is_empty();
+    // Coreless windows never drain, so the default Empty status would sit blank forever and the
+    // toggle would offer Pause against nothing. Read coreless as paused with an explicit "no core" status — the same agreement as the gtk twin.
+    let coreless = bridge.spaces().is_empty();
     let paused = paused || coreless;
     let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
         vm::StatusMessage::NoCore
@@ -93,8 +83,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     } else {
         nav.dis_addr().unwrap_or(0)
     };
-    let reg_target = *lock_recovered(&bridge.reg_target);
-    let reg_input = lock_recovered(&bridge.reg_input).clone();
+    let reg_target = view.reg_target;
+    let reg_input = view.reg_input;
     ViewSnapshot {
         language,
         mem_input,
@@ -102,14 +92,14 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
         follow_pc,
         back_len,
         anchor,
-        bookmarks,
-        bm_input,
-        watch,
+        bookmarks: view.bookmarks,
+        bm_input: view.bm_input,
+        watch: view.watch,
         watch_value,
-        freeze,
-        freeze_input,
-        selected,
-        edit_input,
+        freeze: view.freeze,
+        freeze_input: view.freeze_input,
+        selected: view.selected,
+        edit_input: view.edit_input,
         pending,
         selected_name,
         regs,
@@ -123,9 +113,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     }
 }
 
-/// One pane builders: each renders a single debugger section from
-/// plain locals (`view` stays a capture-and-assemble pass). The toolbar
-/// carries a single Pause/Resume toggle following the drained pause.
+/// One pane builders: each renders a single debugger section from plain locals (`view` stays a
+/// capture-and-assemble pass). The toolbar carries a single Pause/Resume toggle following the drained pause.
 pub(super) fn view_toolbar(
     paused: bool,
     language: AppLanguage,
@@ -204,9 +193,8 @@ pub(super) fn view_mem_nav(
     .into()
 }
 
-/// Dump rows are text-style buttons; selection inverts, changed rows
-/// carry a `*` mark. The list fills its share in a scrollable;
-/// shrunken windows scroll natively.
+/// Dump rows are text-style buttons; selection inverts, changed rows carry a `*` mark. The list
+/// fills its share in a scrollable; shrunken windows scroll natively.
 pub(super) fn view_dump_col(
     dump_rows: &[HexRow],
     diff: &[u32],
@@ -214,10 +202,8 @@ pub(super) fn view_dump_col(
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, column, row, scrollable, text};
-    // Byte-precise selection: every byte is its own button, so the
-    // write target reads exactly (the address head keeps the old
-    // row-base pick). The drain, transaction, and commit path were
-    // already byte-exact; only the click granularity was row-wide.
+    // Byte-precise selection: every byte is its own button, so the write target reads exactly (the
+    // address head keeps the old row-base pick). The drain, transaction, and commit path were already byte-exact; only the click granularity was row-wide.
     let mut dump_col = column![].spacing(2);
     for hex_row in dump_rows {
         let selected_addr = selected.map(|(a, _)| a);
@@ -270,9 +256,8 @@ pub(super) fn view_dump_col(
     scrollable(dump_col).height(Length::Fill).into()
 }
 
-/// Registers flow into two clickable columns so tall lists cost
-/// half the height. Row click picks the write target; the Set row
-/// writes the parsed hex value through the drain.
+/// Registers flow into two clickable columns so tall lists cost half the height. Row click picks
+/// the write target; the Set row writes the parsed hex value through the drain.
 pub(super) fn view_regs_section(
     regs: &[(&'static str, u64)],
     reg_target: Option<&'static str>,
@@ -453,10 +438,8 @@ pub(super) fn view_dis_col(
         dis_col = dis_col.push(text(ui_text(language, UiText::DisassemblyHint)).size(14));
     }
     for line in disasm_lines {
-        // Marker column is two chars wide for every row. The PC `>`
-        // already comes from `format_disasm_line`, so the PC row
-        // contributes blanks here; the pinned anchor row carries `@`.
-        // (Prepending another `"> "` double-marked the PC row.)
+        // Marker column is two chars wide for every row. The PC `>` already comes from
+        // `format_disasm_line`, so the PC row contributes blanks here; the pinned anchor row carries `@`. (Prepending another `"> "` double-marked the PC row.)
         let is_pinned = pinned == Some(line.addr);
         let marker = disasm_marker(line.is_pc, is_pinned);
         let line_button = button(

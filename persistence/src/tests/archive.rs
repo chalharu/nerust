@@ -133,7 +133,7 @@ fn state_archive_round_trip_preserves_metadata_and_thumbnail() {
         }),
     )
     .unwrap();
-    let loaded = load_state_slot(&summary.path).unwrap();
+    let loaded = load_state_slot(summary.path.native_path().unwrap()).unwrap();
 
     assert_eq!(loaded.summary.slot_id, 7);
     assert_eq!(loaded.machine_state, b"machine-state");

@@ -1,6 +1,5 @@
-//! Debugger window: two-pane memory/disassembly probe plus register,
-//! watch, freeze, and bookmark state. Pure view; the host drain runs
-//! requests and refreshes the display cache.
+//! Debugger window: memory/disassembly probe plus register, watch, freeze, bookmarks.
+//! Pure view; the host drain runs requests and refreshes the display cache.
 
 #[cfg(test)]
 mod tests;
@@ -17,14 +16,14 @@ use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
 use nerust_core_traits::debugger::SpaceId;
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::DisplayCache;
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
 
-use crate::aux::shell::{WindowScaffold, aux_settings, aux_theme};
+use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
-use super::bridge::{DebugBridge, lock_recovered};
+use super::bridge::DebugBridge;
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -154,16 +153,12 @@ impl Program for DebugProgram {
             reg_target,
             reg_input,
         } = views::capture_view(&state.bridge);
-        // Button hierarchy: one primary per flow (the Phase E
-        // Confirm), secondary for toolbar/nav, text for list rows
-        // and escape actions.
+        // Button hierarchy: one primary per flow, secondary for toolbar/nav.
         let toolbar = views::view_toolbar(paused, language);
         // Settings form language: fixed label column + stepper.
         let space_row = views::view_space_row(selected_name.as_deref().unwrap_or(""), language);
         let mem_nav = views::view_mem_nav(&mem_input, language);
-        // Heavy lists ride `lazy` so unrelated keystrokes only rebuild
-        // headers. Keep every visual input in the dependency tuples or
-        // its highlight freezes.
+        // Heavy lists ride `lazy`; keep every visual input in the dependency tuples.
         let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
             views::view_dump_col(rows, diff, *selected)
         });
@@ -181,10 +176,7 @@ impl Program for DebugProgram {
         // a text escape. The drain owns the authoritative text.
         let confirm_row = views::view_confirm_row(pending, language);
         let dis_nav = views::view_dis_nav(follow_pc, back_len, anchor, &dis_input, language);
-        // Per-line disassembly: line click pins the anchor (the
-        // pinned row carries `@`, the PC row `>`), and structured
-        // targets offer follow buttons. In follow-PC mode nothing
-        // is pinned, so no `@` shows.
+        // Per-line disassembly: line click pins the anchor; targets offer follow buttons.
         let pinned = if follow_pc { None } else { Some(anchor) };
         let dis_col = lazy(
             (disasm_lines, pinned, language),
@@ -218,10 +210,7 @@ impl Program for DebugProgram {
             right: 16.0,
             ..Default::default()
         });
-        // Tall state (GBA: 17 registers) scrolls inside the panes
-        // instead of pushing Bookmarks and Memory out of view. The
-        // panes row takes the remaining window height so the scroll
-        // viewport is bounded; Refresh stays pinned at the bottom.
+        // Tall state scrolls inside the panes; Refresh stays pinned at the bottom.
         let right_scroll = scrollable(right_col).height(Length::Fill);
         let content = column![
             row![left_col, right_scroll]
@@ -252,13 +241,39 @@ impl Program for DebugProgram {
 }
 
 pub(crate) struct DebugWindowHandle {
-    pub(crate) shell: crate::aux::shell::AuxShell<DebugProgram>,
-    pub(crate) bridge: Arc<DebugBridge>,
+    shell: crate::aux::shell::AuxShell<DebugProgram>,
+    bridge: Arc<DebugBridge>,
 }
 
-/// Window-scoped shortcuts on physical codes: F6 steps a frame,
-/// F7 an instruction, F9 toggles pause. Pure mapping shared by the
-/// event handler and the tests below.
+impl DebugWindowHandle {
+    /// Narrow live-images apply for the PPU follow tick: images land when newer.
+    /// Returns whether the viewer needs a rebuild.
+    pub(crate) fn apply_live(
+        &mut self,
+        generation: u64,
+        images: Vec<DebugImageRgba>,
+        running: bool,
+    ) -> bool {
+        self.bridge.apply_live_images(generation, images, running)
+    }
+
+    /// Share the bridge for PPU-viewer creation. Narrow: creation only, never display locks.
+    pub(crate) fn shared_bridge(&self) -> &Arc<DebugBridge> {
+        &self.bridge
+    }
+
+    /// Narrow selection write + paused-section restore for a finished
+    /// drain. The host never holds a `display` guard itself.
+    pub(crate) fn apply_drain_display(
+        &mut self,
+        display: DisplayCache,
+        reselected: Option<(u32, Option<u8>)>,
+    ) {
+        self.bridge.apply_drain_display(display, reselected);
+    }
+}
+
+/// Window-scoped shortcuts on physical codes: F6 frame, F7 instruction, F9 pause.
 fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugAction> {
     use iced::keyboard::key::{Code, Physical};
     match *physical {
@@ -291,40 +306,97 @@ impl DebugWindowHandle {
     ) -> Option<Self> {
         let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
         let title = ui_text(language, UiText::Debugger).to_string();
-        let scaffold = WindowScaffold::open(
+        let surface = AuxSurface::open(
             event_loop,
             &title,
             DEBUG_WINDOW_SIZE,
             Some(DEBUG_WINDOW_MIN_SIZE),
             position,
             "debugger window",
-        )?;
+            Arc::new(AtomicBool::new(false)),
+        )
+        .map_err(|error| {
+            // Typed scaffold failure: surface the tagged native detail here.
+            log::error!("{error}");
+            error
+        })
+        .ok()?;
         let program = DebugProgram {
             bridge: Arc::clone(&bridge),
         };
         let (instance, _task) = program::Instance::new(program);
-        let shell = crate::aux::shell::AuxShell::assemble(
-            scaffold,
-            instance,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
         Some(Self { shell, bridge })
     }
 
-    pub(crate) fn set_display(&mut self, display: DisplayCache) {
-        *lock_recovered(&self.bridge.display) = display;
+    pub(crate) fn sync_from_bridge(&mut self) {
+        self.bridge.view_invalidated.store(true, Ordering::Release);
+        self.shell
+            .process(Vec::new(), &self.bridge.view_invalidated);
+    }
+}
+
+impl super::focus::AuxShellRef for DebugWindowHandle {
+    fn kind(&self) -> super::focus::AuxKind {
+        super::focus::AuxKind::Debug
+    }
+
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
+    }
+}
+
+impl super::registry::DebugDrainPort for DebugWindowHandle {
+    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
+        use crate::aux::bridge::BridgeLock;
+        Some(self.bridge.take_debug_batch())
+    }
+
+    fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>) {
+        self.apply_drain_display(display, reselected);
+    }
+}
+
+impl super::registry::LiveImagesPort for DebugWindowHandle {
+    fn apply_live(&mut self, generation: u64, images: Vec<DebugImageRgba>, running: bool) -> bool {
+        self.apply_live(generation, images, running)
+    }
+}
+
+impl super::registry::AuxController for DebugWindowHandle {
+    fn sync_view(&mut self) {
         self.sync_from_bridge();
     }
 
-    pub(crate) fn take_requests(&self) -> Vec<DebugAction> {
-        self.bridge.take_requests()
+    fn as_debug(&mut self) -> Option<&mut dyn super::registry::DebugDrainPort> {
+        Some(self)
     }
 
-    pub(crate) fn render(&mut self) {
-        self.shell.render("debugger");
+    fn debug_snapshot_of(&self, ppu_open: bool) -> Option<super::bridge::DrainSnapshot> {
+        use crate::aux::bridge::BridgeLock;
+        let lock: &dyn BridgeLock = &*self.bridge;
+        Some(lock.drain_snapshot(ppu_open))
     }
 
-    pub(crate) fn handle_event(&mut self, mapped: iced::Event) {
+    fn as_live(&mut self) -> Option<&mut dyn super::registry::LiveImagesPort> {
+        Some(self)
+    }
+
+    fn shared_bridge(&self) -> Option<std::sync::Arc<super::bridge::DebugBridge>> {
+        Some(std::sync::Arc::clone(self.shared_bridge()))
+    }
+
+    fn debug_lock_audit(&self) -> Vec<&'static str> {
+        self.bridge.try_lock_audit()
+    }
+}
+
+impl super::focus::AuxEvents for DebugWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
         // Window-scoped shortcuts on physical codes (F6/F7/F9).
         // Dereference `physical_key` before matching (binds by ref).
         if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -336,10 +408,7 @@ impl DebugWindowHandle {
         {
             self.bridge.push(request);
         }
-        // Cursor keys page the dump (Up = toward lower addresses).
-        // Left/Right stay with the widgets: hijacking them would break
-        // caret movement in every text input. Computed before `mapped`
-        // moves into the UI update below.
+        // Cursor keys page the dump; Left/Right stay with the widgets.
         let page = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,
@@ -350,59 +419,7 @@ impl DebugWindowHandle {
         } else {
             None
         };
-        let (mut messages, outcome) = self.shell.ui_state.pump(
-            mapped,
-            self.shell.cursor,
-            &mut self.shell.clipboard,
-            &mut self.shell.renderer.backend,
-        );
-        messages.extend(page);
-        match outcome {
-            crate::aux::shell::PumpOutcome::Rebuild => {
-                self.bridge.view_invalidated.store(true, Ordering::Release);
-            }
-            crate::aux::shell::PumpOutcome::Repaint => {
-                self.shell.window.request_redraw();
-            }
-            crate::aux::shell::PumpOutcome::Idle => {}
-        }
-        if !messages.is_empty() || matches!(outcome, crate::aux::shell::PumpOutcome::Rebuild) {
-            let bounds = self.shell.logical_bounds();
-            self.shell.ui_state.process_messages(
-                messages,
-                self.shell.window_id,
-                bounds,
-                &mut self.shell.renderer.backend,
-                &self.bridge.view_invalidated,
-            );
-            self.shell.window.request_redraw();
-        }
-    }
-
-    fn handle_tao_event(&mut self, event: tao::event::WindowEvent) {
-        if let Some(iced_event) = self.shell.feed_tao_event(event) {
-            self.handle_event(iced_event);
-        }
-    }
-
-    pub(crate) fn sync_from_bridge(&mut self) {
-        self.bridge.view_invalidated.store(true, Ordering::Release);
-        let bounds = self.shell.logical_bounds();
-        self.shell.ui_state.process_messages(
-            Vec::new(),
-            self.shell.window_id,
-            bounds,
-            &mut self.shell.renderer.backend,
-            &self.bridge.view_invalidated,
-        );
-        self.shell.window.request_redraw();
-    }
-}
-
-impl crate::aux::shell::AuxWindow for DebugWindowHandle {
-    fn pump_window_event(&mut self, event: tao::event::WindowEvent) {
-        self.shell.handle_common_event(&event);
-        self.handle_tao_event(event);
-        self.shell.window.request_redraw();
+        self.shell
+            .pump_finish(mapped, page, &self.bridge.view_invalidated)
     }
 }

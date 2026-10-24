@@ -1,27 +1,25 @@
 mod builder;
+pub mod field;
 mod input_profiles;
 mod labels;
 mod settings;
 
 use std::rc::Rc;
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError, SystemDefaults,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-            SystemLoadOptions, SystemLoadOptionsSchema,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_gba_settings::GbaSettings;
 use nerust_input_traits::{ControllerProfile, InputAssignments, InputSystemFactory};
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError, SystemDefaults,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{
+        DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        SystemLoadOptions, SystemLoadOptionsSchema,
+    },
+    settings::FactorySettingsView,
+};
 
-pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
+pub fn gba_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_gba_device::gba_device_controller_profiles()
 }
 
@@ -29,9 +27,8 @@ pub fn gba_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
 pub struct GbaFactory;
 
 impl GbaFactory {
-    /// Boxed `dyn CoreFactory` for generic drivers. Construction
-    /// selects the system once here; everything downstream drives
-    /// through `dyn CoreFactory` without naming this type.
+    /// Boxed `dyn CoreFactory` for generic drivers. The system is
+    /// selected once here.
     pub fn boxed() -> Box<dyn CoreFactory> {
         Box::new(Self)
     }
@@ -137,7 +134,7 @@ impl SystemLoadOptionsSchema for GbaLoadOptionsSchema {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::SystemDefaults;
+    use nerust_system_traits::factory::SystemDefaults;
 
     use super::*;
 

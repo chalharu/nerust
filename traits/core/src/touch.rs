@@ -19,7 +19,7 @@ pub struct TouchControl {
     pub attachment_id: AttachmentId,
     pub control_id: DigitalControlId,
     pub role: TouchControlRole,
-    pub label: String,
+    pub label: std::sync::Arc<str>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

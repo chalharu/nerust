@@ -1,18 +1,16 @@
 use std::rc::Rc;
 
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
+    AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
+    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId, StrobeTarget,
 };
 
-pub fn gbc_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
-    vec![Rc::new(StandardPadProfile) as Rc<dyn ControllerProfile>]
+pub fn gbc_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
+    [Rc::new(StandardPadProfile) as Rc<dyn ControllerProfile>].into_iter()
 }
 
 /// GBC joypad bit assignments for the 1-byte input buffer.
-///
-/// Field indices 0-7 correspond to the bit positions used by
-/// `GbcInputBuffer::set()` to map each button to a joypad register bit.
+/// Field indices 0-7 map each button to a joypad register bit.
 const FIELD_A: usize = 0;
 const FIELD_B: usize = 1;
 const FIELD_SELECT: usize = 2;
@@ -32,12 +30,40 @@ impl StandardPad {
     pub fn new() -> Self {
         Self { cached: 0xFF }
     }
+
+    /// Static joypad wiring; no controller runtime is needed by the GBC bus.
+    pub fn input_fields(port: &dyn Port) -> Vec<FieldEntry> {
+        let attachment = port.attachment_id();
+        [
+            ("gbc.control.a", FIELD_A),
+            ("gbc.control.b", FIELD_B),
+            ("gbc.control.select", FIELD_SELECT),
+            ("gbc.control.start", FIELD_START),
+            ("gbc.control.right", FIELD_RIGHT),
+            ("gbc.control.left", FIELD_LEFT),
+            ("gbc.control.up", FIELD_UP),
+            ("gbc.control.down", FIELD_DOWN),
+        ]
+        .into_iter()
+        .map(|(id, field)| {
+            FieldEntry::new(
+                attachment,
+                ControlId::digital(DigitalControlId::new(id)),
+                field,
+            )
+        })
+        .collect()
+    }
 }
 
 impl Default for StandardPad {
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl StrobeTarget for StandardPad {
+    fn strobe(&mut self, _value: u8) {}
 }
 
 impl Controller for StandardPad {
@@ -53,42 +79,8 @@ impl Controller for StandardPad {
 
     fn write(&mut self, _port: &dyn Port, _value: u8) {}
 
-    fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
-        let attachment = port.as_attachment_id();
-        vec![
-            (attachment, DigitalControlId::new("gbc.control.a"), FIELD_A),
-            (attachment, DigitalControlId::new("gbc.control.b"), FIELD_B),
-            (
-                attachment,
-                DigitalControlId::new("gbc.control.select"),
-                FIELD_SELECT,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gbc.control.start"),
-                FIELD_START,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gbc.control.right"),
-                FIELD_RIGHT,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gbc.control.left"),
-                FIELD_LEFT,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gbc.control.up"),
-                FIELD_UP,
-            ),
-            (
-                attachment,
-                DigitalControlId::new("gbc.control.down"),
-                FIELD_DOWN,
-            ),
-        ]
+    fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
+        Self::input_fields(port)
     }
 }
 
@@ -114,49 +106,49 @@ impl ControllerProfile for StandardPadProfile {
         use ControlKind::Digital;
         const C: &[ControlInfo] = &[
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.a"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.a")),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.b"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.b")),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.select"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.select")),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.start"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.start")),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.up"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.up")),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.down"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.down")),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.left"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.left")),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: DigitalControlId::new("gbc.control.right"),
+                id: ControlId::digital(DigitalControlId::new("gbc.control.right")),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
@@ -194,15 +186,15 @@ mod tests {
     #[test]
     fn field_map_has_eight_entries() {
         let pad = StandardPad::default();
-        let map = pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"));
+        let map = pad.field_entries(&nerust_input_traits::SimplePort::new(0, "test"));
         assert_eq!(map.len(), 8);
     }
 
     #[test]
     fn field_map_indices_are_unique_and_in_range() {
         let pad = StandardPad::default();
-        let map = pad.field_map(&nerust_input_traits::SimplePort::new(0, "test"));
-        let indices: Vec<usize> = map.iter().map(|(_, _, idx)| *idx).collect();
+        let map = pad.field_entries(&nerust_input_traits::SimplePort::new(0, "test"));
+        let indices: Vec<usize> = map.iter().map(|entry| entry.field).collect();
         let mut sorted = indices.clone();
         sorted.sort();
         sorted.dedup();

@@ -10,7 +10,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
     access::SettingsResult,
-    access::{PauseControl, SessionControl, SlotControl},
+    access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
     commands::SessionCommand,
 };
 
@@ -23,15 +23,10 @@ impl HostState {
         command: MenuCommand,
         opener: &dyn WindowOpener,
     ) -> HostAction {
-        if self.settings_open {
+        if self.settings_open() {
             return match command {
-                MenuCommand::Quit => {
-                    if self.prepare_close() {
-                        HostAction::Exit
-                    } else {
-                        HostAction::None
-                    }
-                }
+                // Exit intent only: the runtime drops the renderer before host teardown.
+                MenuCommand::Quit => HostAction::Exit,
                 _ => HostAction::None,
             };
         }
@@ -60,23 +55,24 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                let _ = self.session.run_command(command);
-                self.sync_menu_state();
-                self.refresh_window_title();
+                match command {
+                    SessionCommand::Pause => self.pause(),
+                    SessionCommand::Resume => self.resume(),
+                    SessionCommand::TogglePause => self.toggle_pause(),
+                    command => {
+                        let _ = self.session.run_command(command);
+                    }
+                }
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, false);
                 HostAction::None
             }
-            MenuCommand::Quit => {
-                if self.prepare_close() {
-                    HostAction::Exit
-                } else {
-                    HostAction::None
-                }
-            }
+            MenuCommand::Quit => HostAction::Exit,
         }
     }
 
     pub(crate) fn on_keyboard_input(&mut self, input: KeyEvent) {
-        if self.settings_open {
+        if self.settings_open() {
             return;
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
@@ -104,9 +100,7 @@ impl HostState {
         true
     }
 
-    /// ROM-picker filters from the registered cores, extracted pure
-    /// so the dialog wiring stays unit-testable. Cores without
-    /// extensions never reach the picker.
+    /// ROM-picker filters from the registered cores; cores without extensions never reach.
     fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
         registry
             .all()
@@ -125,43 +119,44 @@ impl HostState {
 
     fn close_rom(&mut self) {
         SessionControl::unload(self);
-        self.sync_menu_state();
-        self.request_redraw();
-        self.refresh_window_title();
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, true);
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
         use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
-            // The debugger open rides the same schema as every other
-            // shortcut (default F4, rebindable in Settings): it only
-            // sets the flag here because opening needs the event loop,
-            // which the runtime arm owns.
+            // Only sets the flag here; opening needs the event loop the runtime arm owns.
             KeyboardShortcut::OpenDebugger => {
-                self.debug.request_debug_open();
+                self.request_debug_open();
                 return;
             }
-            KeyboardShortcut::Session(action) => dispatch_session_action(self, action),
+            KeyboardShortcut::Session(action) => {
+                let _ = dispatch_session_action(self, action);
+            }
             KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
         }
-        self.sync_menu_state();
-        self.refresh_window_title();
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, false);
     }
 }
 
 impl PauseControl for HostState {
     fn pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Pause);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
     }
     fn resume(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Resume);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
     }
     fn toggle_pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::TogglePause);
+        self.set_pause_owner(
+            nerust_frontend_kernel::pause::PauseOwner::User,
+            !self.session.tick_metrics().paused,
+        );
     }
 }
 
-impl SlotControl for HostState {
+impl SlotIo for HostState {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -173,12 +168,6 @@ impl SlotControl for HostState {
             .run_command(SessionCommand::LoadActiveSlot)
             .unwrap_or_default()
             .executed
-    }
-    fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
-    }
-    fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -194,6 +183,15 @@ impl SlotControl for HostState {
             .session
             .run_command(SessionCommand::DeleteSlot(slot_id));
     }
+}
+
+impl SlotNav for HostState {
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
     fn select_slot(&mut self, slot_id: u64) {
         let _ = self
             .session
@@ -202,6 +200,9 @@ impl SlotControl for HostState {
     fn create_slot(&mut self) {
         let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
+}
+
+impl ResetControl for HostState {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
@@ -217,14 +218,12 @@ impl SessionControl for HostState {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
+        let plan = self.session.apply_settings(settings);
+        self.reconcile_pause();
+        let plan = plan?;
         Ok(SettingsResult {
-            // The renderer follows presentation, not the session: a
-            // live filter swap rebuilds no core but still needs the new
-            // GPU assets (same rule as the android twin).
-            renderer_needs_rebuild: plan.renderer_rebuild_required
-                || plan.session_rebuild_required
-                || plan.window_settings_changed,
+            // The renderer follows presentation, not the session.
+            renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: plan.scaling_changed,
         })
@@ -232,9 +231,7 @@ impl SessionControl for HostState {
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
         Ok(SettingsResult {
-            renderer_needs_rebuild: plan.renderer_rebuild_required
-                || plan.session_rebuild_required
-                || plan.window_settings_changed,
+            renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: false,
         })
@@ -249,6 +246,7 @@ mod tests {
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::test_session::FakeRomLoader;
+    use crate::testkit::StubAux;
     use nerust_gui_shell::registry::SystemRegistry;
     use nerust_gui_shell::session::commands::SessionCommand;
 
@@ -285,14 +283,16 @@ mod tests {
         let mut host = support.host;
         assert!(!host.open_rom_dialog());
         assert_eq!(support.loader.attempted(), [path]);
-        assert_eq!(support.dialogs.errors(), ["ROM load failed: bad rom"]);
+        assert_eq!(
+            support.dialogs.errors(),
+            ["ROM load failed: no emulation core active"]
+        );
     }
 
     #[test]
     fn settings_open_guard_swallows_non_quit() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.settings_open = true;
         let opener = FakeOpener::failing("no display");
         assert_eq!(
             host.on_menu_command(MenuCommand::Open, &opener),
@@ -300,6 +300,68 @@ mod tests {
         );
         assert!(opener.calls().is_empty());
         assert!(support.loader.attempted().is_empty());
+    }
+
+    fn settings_blocked_host() -> TestHost {
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.aux
+            .insert(Box::new(StubAux::new(crate::aux::focus::AuxKind::Settings)));
+        assert!(host.settings_open());
+        TestHost {
+            host,
+            menu: support.menu,
+            loader: support.loader,
+            dialogs: support.dialogs,
+        }
+    }
+
+    #[test]
+    fn open_settings_blocks_menu_commands() {
+        use crate::event::MenuCommand as Cmd;
+        use nerust_gui_shell::session::commands::SessionCommand;
+        let support = settings_blocked_host();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        for command in [
+            Cmd::Open,
+            Cmd::Close,
+            Cmd::Settings,
+            Cmd::Debugger,
+            Cmd::NotificationHistory,
+            Cmd::Session(SessionCommand::TogglePause),
+        ] {
+            assert_eq!(host.on_menu_command(command, &opener), HostAction::None);
+        }
+        assert!(opener.calls().is_empty());
+        assert!(support.loader.attempted().is_empty());
+        assert!(support.menu.updates().is_empty());
+    }
+
+    #[test]
+    fn open_settings_lets_quit_through() {
+        let support = settings_blocked_host();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::Quit, &opener),
+            HostAction::Exit
+        );
+        // Intent only: host teardown waits for the runtime's ordered close.
+        assert!(!host.close_exited());
+    }
+
+    #[test]
+    fn history_menu_records_open_attempt() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        assert_eq!(
+            host.on_menu_command(MenuCommand::NotificationHistory, &opener),
+            HostAction::None
+        );
+        assert_eq!(opener.calls(), [OpenerCall::History]);
+        assert!(!host.aux.contains(crate::aux::focus::AuxKind::History));
     }
 
     #[test]
@@ -311,6 +373,8 @@ mod tests {
             host.on_menu_command(MenuCommand::Quit, &opener),
             HostAction::Exit
         );
+        // Intent only: no teardown before the runtime's ordered close.
+        assert!(!host.close_exited());
     }
 
     #[test]
@@ -360,7 +424,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
-        assert!(!host.settings_open);
+        assert!(!host.settings_open());
     }
 
     #[test]
@@ -373,7 +437,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(host.debug.debug_window.is_none());
+        assert!(!host.is_debug_open());
     }
 
     #[test]
@@ -403,21 +467,24 @@ mod tests {
                 HostAction::None
             );
         }
-        // Every command syncs the menu, none opens a window.
-        assert_eq!(support.menu.updates().len(), before + 13);
+        // dirty gate: identical chrome skips the IPC. Only the
+        // first sync and the active-slot selection change the sig.
+        assert_eq!(support.menu.updates().len(), before + 2);
         assert!(opener.calls().is_empty());
     }
 
     #[test]
     fn session_delegates_stay_total_without_core() {
-        use nerust_gui_shell::session::access::{PauseControl, SessionControl, SlotControl};
+        use nerust_gui_shell::session::access::{
+            PauseControl, ResetControl, SessionControl, SlotIo, SlotNav,
+        };
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.session.paused());
+        assert!(!host.session.tick_metrics().paused);
         host.pause();
         host.resume();
         host.toggle_pause();
-        assert!(!host.session.paused());
+        assert!(!host.session.tick_metrics().paused);
         assert!(!host.save_active_slot());
         assert!(!host.load_active_slot());
         host.select_next_slot();
@@ -429,30 +496,30 @@ mod tests {
         host.create_slot();
         host.reset();
         host.unload();
-        assert!(!host.session.loaded());
+        assert!(!host.session.tick_metrics().loaded);
     }
 
     #[test]
     fn error_modal_returns_without_blocking() {
-        use nerust_gui_shell::session::commands::SessionCommand;
         let support = TestHost::new();
         let mut host = support.host;
-        // No core: TogglePause fails into a CommandFailed error,
-        // which routes to the modal path (error_modal defaults on).
-        let _ = host.session.run_command(SessionCommand::TogglePause);
-        host.poll_notifications();
-        // Bounded wait for the background ack. The loop itself never
-        // blocked: rfd runs on its own thread (see `ModalFlight`).
-        // FakeDialogs answers instantly, so this exits on an early pass.
+        host.session.report_external_error(
+            nerust_gui_shell::session::notification::FailureOrigin::Host,
+            "test error".into(),
+        );
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
+        // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
         while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
-            host.poll_notifications();
+            let ctx = host.frame_ctx();
+            host.poll_notifications(&ctx);
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(support.dialogs.errors().len(), 1);
-        assert!(support.dialogs.errors()[0].contains("TogglePause"));
+        assert!(support.dialogs.errors()[0].contains("test error"));
         assert_eq!(host.osd.modal_pending(), 0);
     }
 
@@ -465,13 +532,12 @@ mod tests {
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
-        host.modal_flight = Some(ModalFlight {
-            done: rx,
-            resume_after: false,
-        });
-        host.poll_notifications();
+        host.osd
+            .inject_modal_flight_for_test(ModalFlight { done: rx });
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
         // Reaped as a failed ack: flight gone, queue unblocked.
-        assert!(host.modal_flight.is_none());
+        assert!(!host.osd.modal_showing());
         assert_eq!(host.osd.modal_pending(), 0);
     }
 
@@ -481,11 +547,13 @@ mod tests {
         let mut host = support.host;
         // No notifications, no windows: drain, expiry, dirty gate,
         // and the history fast path all no-op without a core.
-        host.poll_notifications();
-        host.poll_notifications();
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
+        let ctx = host.frame_ctx();
+        host.poll_notifications(&ctx);
         assert!(support.dialogs.errors().is_empty());
         assert_eq!(host.osd.modal_pending(), 0);
-        assert!(host.history_sync_key.is_none());
+        assert!(host.osd.history_key().is_none());
     }
 
     #[test]
@@ -499,7 +567,9 @@ mod tests {
         assert!(support.menu.updates().is_empty());
         host.apply_keyboard_shortcut(KeyboardShortcut::Session(ShortcutAction::TogglePause));
         host.apply_keyboard_shortcut(KeyboardShortcut::ToggleFullscreen);
-        assert_eq!(support.menu.updates().len(), 2);
+        // dirty gate: the pause sync pushes once (headless toggle
+        // without a window adds no second change).
+        assert_eq!(support.menu.updates().len(), 1);
     }
 
     #[test]
@@ -507,11 +577,11 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.resume_session();
-        host.pause_session();
+        super::PauseControl::pause(&mut host);
         host.clear_keys();
         host.sync_fullscreen_from_settings();
         let _ = host.persist_fullscreen_default(false);
-        assert!(!host.session.loaded());
+        assert!(!host.session.tick_metrics().loaded);
     }
 
     #[test]
@@ -522,6 +592,6 @@ mod tests {
         let snapshot = host.session.settings_snapshot().clone();
         let _ = host.apply_settings(snapshot);
         let _ = host.set_fullscreen_default(true);
-        assert!(!host.session.loaded());
+        assert!(!host.session.tick_metrics().loaded);
     }
 }

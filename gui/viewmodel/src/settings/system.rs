@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use nerust_core_traits::{
-    factory::{
-        CoreFactory,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind},
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
+use nerust_system_traits::factory::{
+    CoreFactory,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind},
+};
 
 use super::{
     EditorState,
@@ -125,7 +123,7 @@ mod tests {
 
     #[test]
     fn system_choice_applies_through_test_factory() {
-        use nerust_core_traits::factory::descriptor::{
+        use nerust_system_traits::factory::descriptor::{
             SystemSettingsChoiceId, SystemSettingsFieldId,
         };
 

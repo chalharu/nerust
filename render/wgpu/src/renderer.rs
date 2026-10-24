@@ -90,6 +90,11 @@ pub struct RenderPipeline {
     frame_logical_size: LogicalSize,
     content_size: PhysicalSize,
     reserved: nerust_render_traits::ReservedStrip,
+    /// Offscreen target for in-memory renders (frontends that composite
+    /// themselves): same passes as the swapchain path, copied out through
+    /// the staging buffer instead of being presented.
+    image_texture: Option<(SurfaceSize, Texture)>,
+    image_staging: Option<(SurfaceSize, u32, Buffer)>,
 }
 
 impl RenderPipeline {
@@ -108,6 +113,11 @@ impl RenderPipeline {
     /// Edge strips the game viewport avoids; applied on next render.
     pub fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
         self.reserved = strip;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reserved_strip(&self) -> nerust_render_traits::ReservedStrip {
+        self.reserved
     }
 
     /// Composite the OSD layer after the game pass, if one is set.

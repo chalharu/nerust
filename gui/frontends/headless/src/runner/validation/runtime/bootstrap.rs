@@ -3,7 +3,7 @@ use crate::{error::RomTestError, factory_adapter, manifest::RomCase, media::Hash
 
 impl ValidationRuntime {
     pub(in crate::runner::validation) fn new(
-        factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
+        factories: &[Box<dyn nerust_system_traits::factory::CoreFactory>],
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {

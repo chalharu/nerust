@@ -68,17 +68,13 @@ impl Cartridge for Mmc2 {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if state.extra_kind != MAPPER_KIND_MMC2 {
-            return Err(PersistenceError::Validation(
-                "unexpected MMC2 runtime kind".into(),
-            ));
+            return Err(PersistenceError::MapperRuntimeKind("MMC2"));
         }
-        self.state
-            .validate_for_import(
-                &state.mapper_state,
-                self.data_ref().prog_rom_len(),
-                self.data_ref().char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
         let runtime: Mmc2RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.chr_bank_0_fd = runtime.chr_bank_0_fd;

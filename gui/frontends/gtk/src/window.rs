@@ -8,15 +8,16 @@ use gtk::{
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
-    access::{PauseControl, SessionControl, SlotControl},
+    access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
 };
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_traits::renderer::GpuFactory;
+use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL, build_menu_model,
     surface::{Surface, SurfaceExtend},
+    surface_state::surface_gone,
 };
 use crate::preferences::present_preferences_dialog;
 
@@ -33,23 +34,80 @@ pub(crate) struct WindowCore {
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
     debugger_window: Option<crate::debugger::DebuggerWindow>,
-    close_action: gio::SimpleAction,
-    pause_action: gio::SimpleAction,
-    resume_action: gio::SimpleAction,
-    reset_action: gio::SimpleAction,
-    debugger_action: gio::SimpleAction,
-    history_action: gio::SimpleAction,
-    state_create_action: gio::SimpleAction,
-    state_save_active_action: gio::SimpleAction,
-    state_load_active_action: gio::SimpleAction,
-    state_select_slot_action: gio::SimpleAction,
-    state_save_slot_action: gio::SimpleAction,
-    state_load_slot_action: gio::SimpleAction,
-    state_delete_slot_action: gio::SimpleAction,
+    history_dialog: Option<(gtk::Dialog, std::rc::Rc<dyn Fn()>)>,
+    actions: WindowActions,
     select_active_slot_menu: gio::Menu,
     save_slot_menu: gio::Menu,
     load_slot_menu: gio::Menu,
     delete_slot_menu: gio::Menu,
+}
+
+/// Window action cluster: every menu/toolbar command in one place.
+/// `WindowCore` owns one; wiring and gating go through these narrow ports.
+pub(crate) struct WindowActions {
+    pub close: gio::SimpleAction,
+    pub pause: gio::SimpleAction,
+    pub resume: gio::SimpleAction,
+    pub reset: gio::SimpleAction,
+    pub debugger: gio::SimpleAction,
+    pub history: gio::SimpleAction,
+    pub state_create: gio::SimpleAction,
+    pub state_save_active: gio::SimpleAction,
+    pub state_load_active: gio::SimpleAction,
+    pub state_select_slot: gio::SimpleAction,
+    pub state_save_slot: gio::SimpleAction,
+    pub state_load_slot: gio::SimpleAction,
+    pub state_delete_slot: gio::SimpleAction,
+}
+
+impl WindowActions {
+    /// Fresh disabled-by-default actions; `update` gates them per tick.
+    pub fn new() -> Self {
+        Self {
+            close: gio::SimpleAction::new("close", None),
+            pause: gio::SimpleAction::new("pause", None),
+            resume: gio::SimpleAction::new("resume", None),
+            reset: gio::SimpleAction::new("reset", None),
+            debugger: gio::SimpleAction::new("debugger", None),
+            history: gio::SimpleAction::new("history", None),
+            state_create: gio::SimpleAction::new("state-create", None),
+            state_save_active: gio::SimpleAction::new("state-save-active", None),
+            state_load_active: gio::SimpleAction::new("state-load-active", None),
+            state_select_slot: gio::SimpleAction::new(
+                "state-select-slot",
+                Some(&u64::static_variant_type()),
+            ),
+            state_save_slot: gio::SimpleAction::new(
+                "state-save-slot",
+                Some(&u64::static_variant_type()),
+            ),
+            state_load_slot: gio::SimpleAction::new(
+                "state-load-slot",
+                Some(&u64::static_variant_type()),
+            ),
+            state_delete_slot: gio::SimpleAction::new(
+                "state-delete-slot",
+                Some(&u64::static_variant_type()),
+            ),
+        }
+    }
+
+    /// Seat every action on the window: one call instead of twelve.
+    pub fn add_to(&self, window: &gtk::ApplicationWindow) {
+        window.add_action(&self.close);
+        window.add_action(&self.pause);
+        window.add_action(&self.resume);
+        window.add_action(&self.reset);
+        window.add_action(&self.debugger);
+        window.add_action(&self.history);
+        window.add_action(&self.state_create);
+        window.add_action(&self.state_save_active);
+        window.add_action(&self.state_load_active);
+        window.add_action(&self.state_select_slot);
+        window.add_action(&self.state_save_slot);
+        window.add_action(&self.state_load_slot);
+        window.add_action(&self.state_delete_slot);
+    }
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
@@ -58,8 +116,9 @@ pub(crate) trait WindowExtend {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
+        picture: gtk::Picture,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn GpuFactory>,
+        factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
@@ -92,7 +151,7 @@ fn key_event_pressed(event: KeyEventState) -> bool {
 
 fn load_active_slot(state: &RefCell<State>) -> bool {
     let active_slot_id = state.borrow().active_slot_id();
-    active_slot_id.is_some_and(|slot_id| SlotControl::load_slot(&mut *state.borrow_mut(), slot_id))
+    active_slot_id.is_some_and(|slot_id| SlotIo::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {
@@ -103,48 +162,36 @@ impl WindowExtend for Window {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
+        picture: gtk::Picture,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn GpuFactory>,
+        factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
     ) -> Window {
-        let close_action = gio::SimpleAction::new("close", None);
-        let pause_action = gio::SimpleAction::new("pause", None);
-        let resume_action = gio::SimpleAction::new("resume", None);
-        let reset_action = gio::SimpleAction::new("reset", None);
-        let debugger_action = gio::SimpleAction::new("debugger", None);
-        let history_action = gio::SimpleAction::new("history", None);
-        let state_create_action = gio::SimpleAction::new("state-create", None);
-        let state_save_active_action = gio::SimpleAction::new("state-save-active", None);
-        let state_load_active_action = gio::SimpleAction::new("state-load-active", None);
-        let state_select_slot_action =
-            gio::SimpleAction::new("state-select-slot", Some(&u64::static_variant_type()));
-        let state_save_slot_action =
-            gio::SimpleAction::new("state-save-slot", Some(&u64::static_variant_type()));
-        let state_load_slot_action =
-            gio::SimpleAction::new("state-load-slot", Some(&u64::static_variant_type()));
-        let state_delete_slot_action =
-            gio::SimpleAction::new("state-delete-slot", Some(&u64::static_variant_type()));
+        let actions = WindowActions::new();
+        let close_action = actions.close.clone();
+        let pause_action = actions.pause.clone();
+        let resume_action = actions.resume.clone();
+        let reset_action = actions.reset.clone();
+        let debugger_action = actions.debugger.clone();
+        let history_action = actions.history.clone();
+        let state_create_action = actions.state_create.clone();
+        let state_save_active_action = actions.state_save_active.clone();
+        let state_load_active_action = actions.state_load_active.clone();
+        let state_select_slot_action = actions.state_select_slot.clone();
+        let state_save_slot_action = actions.state_save_slot.clone();
+        let state_load_slot_action = actions.state_load_slot.clone();
+        let state_delete_slot_action = actions.state_delete_slot.clone();
         let settings_action = gio::SimpleAction::new("settings", None);
-        let _ = Surface::bind(&window, state.clone(), factory);
+        let _ = Surface::bind(&window, &picture, state.clone(), factory);
+        actions.add_to(&window);
         let result = Rc::new(RefCell::new(WindowCore {
             application,
             window: window.clone(),
             state,
             open_dialog: None,
             debugger_window: None,
-            close_action: close_action.clone(),
-            pause_action: pause_action.clone(),
-            resume_action: resume_action.clone(),
-            reset_action: reset_action.clone(),
-            debugger_action: debugger_action.clone(),
-            history_action: history_action.clone(),
-            state_create_action: state_create_action.clone(),
-            state_save_active_action: state_save_active_action.clone(),
-            state_load_active_action: state_load_active_action.clone(),
-            state_select_slot_action: state_select_slot_action.clone(),
-            state_save_slot_action: state_save_slot_action.clone(),
-            state_load_slot_action: state_load_slot_action.clone(),
-            state_delete_slot_action: state_delete_slot_action.clone(),
+            history_dialog: None,
+            actions,
             select_active_slot_menu: state_menus.select_active_slot_menu,
             save_slot_menu: state_menus.save_slot_menu,
             load_slot_menu: state_menus.load_slot_menu,
@@ -205,7 +252,6 @@ impl WindowExtend for Window {
                 result.close();
             });
         }
-        window.add_action(&close_action);
 
         {
             let result = result.clone();
@@ -214,7 +260,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&pause_action);
 
         {
             let result = result.clone();
@@ -223,7 +268,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&resume_action);
 
         {
             let result = result.clone();
@@ -232,7 +276,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&reset_action);
 
         {
             let result = result.clone();
@@ -240,7 +283,6 @@ impl WindowExtend for Window {
                 result.open_debugger();
             });
         }
-        window.add_action(&debugger_action);
 
         {
             let result = result.clone();
@@ -248,7 +290,6 @@ impl WindowExtend for Window {
                 result.open_history();
             });
         }
-        window.add_action(&history_action);
 
         {
             let result = result.clone();
@@ -257,7 +298,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&state_create_action);
 
         {
             let result = result.clone();
@@ -266,7 +306,6 @@ impl WindowExtend for Window {
                 result.update_actions();
             });
         }
-        window.add_action(&state_save_active_action);
 
         {
             let result = result.clone();
@@ -277,7 +316,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_load_active_action);
 
         {
             let result = result.clone();
@@ -288,7 +326,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_select_slot_action);
 
         {
             let result = result.clone();
@@ -299,7 +336,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_save_slot_action);
 
         {
             let result = result.clone();
@@ -310,7 +346,6 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_load_slot_action);
 
         {
             let result = result.clone();
@@ -321,20 +356,25 @@ impl WindowExtend for Window {
                 }
             });
         }
-        window.add_action(&state_delete_slot_action);
 
         {
             let result = result.clone();
-            let _ = settings_action.connect_activate(move |_, _| {
-                let was_running = !result.state().borrow().paused();
-                result.state().borrow_mut().pause();
+            let _ = settings_action.connect_activate(move |action, _| {
+                action.set_enabled(false);
+                let action = action.clone();
+                result
+                    .state()
+                    .borrow_mut()
+                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
                 let state = result.state();
                 let window = result.window();
                 let result_for_close = result.clone();
                 present_preferences_dialog(&window, state, move || {
-                    if was_running {
-                        result_for_close.state().borrow_mut().resume();
-                    }
+                    result_for_close.state().borrow_mut().set_pause_owner(
+                        nerust_frontend_kernel::pause::PauseOwner::Settings,
+                        false,
+                    );
+                    action.set_enabled(true);
                     result_for_close.rebuild_menubar();
                     result_for_close.update_actions();
                 });
@@ -360,16 +400,50 @@ impl WindowExtend for Window {
     }
 
     fn open_history(&self) {
-        crate::osd::GtkOsd::show_history(&self.window(), &self.state());
+        // Parity with the debugger: an existing dialog presents
+        // instead of duplicating; destroy clears the slot.
+        // Clone out of the borrow first: clearing the slot below
+        // re-borrows mutably, and the `if let` scrutinee guard would
+        // otherwise still be alive (RefCell panic).
+        let existing = self.borrow().history_dialog.clone();
+        if let Some((existing, refresh)) = existing {
+            if surface_gone(&existing) {
+                self.borrow_mut().history_dialog = None;
+            } else {
+                existing.present();
+                refresh();
+                return;
+            }
+        }
+        let built = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
+        {
+            let result = self.clone();
+            built.dialog.connect_destroy(move |_| {
+                result.borrow_mut().history_dialog = None;
+            });
+        }
+        self.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh));
+        built.dialog.present();
     }
 
     fn open_debugger(&self) {
         // Idempotent open: an existing window refreshes and presents
-        // instead of duplicating.
-        if let Some(existing) = self.borrow().debugger_window.clone() {
-            crate::debugger::DebuggerWindowCore::refresh(&existing);
-            existing.borrow().present();
-            return;
+        // instead of duplicating. An externally destroyed window keeps
+        // its slot (no signal fires), so a gone check rebuilds instead
+        // of presenting a dead surface (fatal X error: GTK would query
+        // a destroyed native window).
+        // Clone out of the borrow first: clearing the slot below
+        // re-borrows mutably, and the `if let` scrutinee guard would
+        // otherwise still be alive (RefCell panic).
+        let existing = self.borrow().debugger_window.clone();
+        if let Some(existing) = existing {
+            if existing.borrow().is_gone() {
+                self.borrow_mut().debugger_window = None;
+            } else {
+                crate::debugger::DebuggerWindowCore::refresh(&existing);
+                existing.borrow().present();
+                return;
+            }
         }
         let debugger = crate::debugger::DebuggerWindowCore::open(
             &self.application(),
@@ -388,7 +462,7 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
-        for factory in self.state().borrow().session.registry().all() {
+        for factory in self.state().borrow().session.factories() {
             let extensions = factory.supported_extensions();
             if extensions.is_empty() {
                 continue;
@@ -424,9 +498,8 @@ impl WindowExtend for Window {
     }
 
     fn load_path(&self, path: &Path) {
-        // End the state borrow before presenting: the dialog reads
-        // settings back through the same RefCell, so holding the
-        // guard across the call would panic on double-borrow.
+        // End the state borrow before presenting: the dialog reads settings back
+        // through the same RefCell, so holding the guard would double-borrow.
         let detail = self.state().borrow_mut().load_path(path).err();
         if let Some(detail) = detail {
             show_rom_load_error(&self.window(), self.state(), &detail);
@@ -448,9 +521,8 @@ impl WindowExtend for Window {
         if w > 0 && h > 0 {
             let state = self.state();
             let _ = state
-                .borrow()
+                .borrow_mut()
                 .session
-                .settings_manager()
                 .update_window_size(w as u32, h as u32);
         }
         self.application().quit();
@@ -468,36 +540,40 @@ impl WindowExtend for Window {
     fn update_actions(&self) {
         let state = self.state();
         let state = state.borrow();
-        self.borrow().close_action.set_enabled(state.loaded());
-        self.borrow().pause_action.set_enabled(state.can_pause());
-        self.borrow().resume_action.set_enabled(state.can_resume());
-        self.borrow().reset_action.set_enabled(state.loaded());
-        // Coreless open is a designed state (NoCore status with
-        // guidance, same as F4): gating on `loaded` would disagree
+        let tick = state.session.tick_metrics();
+        self.borrow().actions.close.set_enabled(tick.loaded);
+        self.borrow().actions.pause.set_enabled(tick.can_pause());
+        self.borrow().actions.resume.set_enabled(tick.can_resume());
+        self.borrow().actions.reset.set_enabled(tick.loaded);
+        // Coreless open is a designed state: gating on `loaded` would disagree
         // with the shortcut, so the action stays enabled.
-        self.borrow().debugger_action.set_enabled(true);
-        self.borrow().history_action.set_enabled(true);
+        self.borrow().actions.debugger.set_enabled(true);
+        self.borrow().actions.history.set_enabled(true);
+        self.borrow().actions.state_create.set_enabled(tick.loaded);
         self.borrow()
-            .state_create_action
-            .set_enabled(state.loaded());
+            .actions
+            .state_save_active
+            .set_enabled(tick.loaded);
         self.borrow()
-            .state_save_active_action
-            .set_enabled(state.loaded());
-        self.borrow()
-            .state_load_active_action
+            .actions
+            .state_load_active
             .set_enabled(state.active_slot_id().is_some());
         self.borrow()
-            .state_select_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .actions
+            .state_select_slot
+            .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
-            .state_save_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .actions
+            .state_save_slot
+            .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
-            .state_load_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .actions
+            .state_load_slot
+            .set_enabled(tick.loaded && !state.slots().is_empty());
         self.borrow()
-            .state_delete_slot_action
-            .set_enabled(state.loaded() && !state.slots().is_empty());
+            .actions
+            .state_delete_slot
+            .set_enabled(tick.loaded && !state.slots().is_empty());
 
         let language = state.settings_snapshot().shared.general.language;
         rebuild_slot_menu(
@@ -549,13 +625,14 @@ impl WindowExtend for Window {
     }
 
     fn refresh_title(&self) {
-        let title = self.state().borrow().title();
+        let title = self.state().borrow_mut().title_cached();
         self.window().set_title(Some(title.as_str()));
     }
 
     fn sync_fullscreen_from_settings(&self) {
         let state = self.state();
-        let snapshot = state.borrow().settings_snapshot().clone();
+        let borrowed = state.borrow();
+        let snapshot = borrowed.settings_snapshot();
         let fullscreen = snapshot.local.video.window.fullscreen_default;
 
         // Restore remembered window size when not in fullscreen or scaling mode.
@@ -571,9 +648,8 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        // No hardcoded F-keys: the debugger open rides the shortcut
-        // schema (default F4, rebindable in Settings) like every other
-        // shortcut, so a user binding always wins.
+        // No hardcoded F-keys: the debugger open rides the shortcut schema
+        // (default F4, rebindable in Settings), so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
             let shortcut = self
                 .state()
@@ -590,7 +666,7 @@ impl WindowExtend for Window {
         use nerust_gui_shell::session::access::dispatch_session_action;
         match shortcut {
             KeyboardShortcut::Session(action) => {
-                dispatch_session_action(&mut *self.state().borrow_mut(), action)
+                let _ = dispatch_session_action(&mut *self.state().borrow_mut(), action);
             }
             KeyboardShortcut::ToggleFullscreen => {
                 toggle_window_fullscreen(self);
@@ -664,24 +740,207 @@ fn rebuild_slot_menu(
     }
 }
 
-/// Modal error dialog for ROM load failures: mirrors the tao
-/// frontend so a bad file explains itself instead of failing
-/// silently.
-fn show_rom_load_error(parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
-    use gtk::prelude::*;
-    use nerust_settings_core::i18n::{UiText, text};
-    let language = state.borrow().settings_snapshot().shared.general.language;
-    let dialog = gtk::MessageDialog::builder()
-        .transient_for(parent)
-        .modal(true)
-        .message_type(gtk::MessageType::Error)
-        .buttons(gtk::ButtonsType::Close)
-        .text(text(language, UiText::RomLoadFailed))
-        .secondary_text(detail)
-        .build();
-    let dialog_clone = dialog.clone();
-    let _ = dialog.connect_response(move |_, _| {
-        dialog_clone.hide();
-    });
-    dialog.present();
+/// Use the single modal queue, including its pause ownership and acknowledgement path.
+fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
+    state.borrow_mut().session.report_external_error(
+        nerust_gui_shell::session::notification::FailureOrigin::Host,
+        detail.to_owned(),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use gio::prelude::ActionExt as _;
+    use gtk::prelude::GtkWindowExt as _;
+
+    use super::{KeyEventState, WindowActions, WindowExtend, key_event_pressed, rebuild_slot_menu};
+    use crate::surface_state::surface_gone;
+
+    /// Externally destroyed dialogs keep their slot (no signal fires):
+    /// reopening must rebuild instead of panicking on the slot borrow.
+    /// Widget-only: needs a display, run under Xvfb (skips headless).
+    #[test]
+    fn open_history_rebuilds_dead_dialog_without_borrow_panic() {
+        let Some((app, window, state)) = harness() else {
+            eprintln!("SKIP: window widget test needs a display (run under Xvfb)");
+            return;
+        };
+        let win = super::Window::bind(
+            app,
+            window.clone(),
+            gtk::Picture::new(),
+            state.clone(),
+            std::rc::Rc::new(MockPipelineFactory),
+            super::StateMenus {
+                select_active_slot_menu: gio::Menu::new(),
+                save_slot_menu: gio::Menu::new(),
+                load_slot_menu: gio::Menu::new(),
+                delete_slot_menu: gio::Menu::new(),
+            },
+        );
+        // Bypass the slot wiring: a directly built dialog carries no
+        // destroy hook, like an externally destroyed one whose
+        // close-request never ran.
+        let built = crate::osd::GtkOsd::build_history(&window, &state);
+        win.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh.clone()));
+        // External destroy disposes the widget without signals; the
+        // slot keeps the dead dialog.
+        built.dialog.destroy();
+        assert!(surface_gone(&built.dialog));
+        // Must rebuild, not panic on the slot borrow.
+        win.open_history();
+        let slot = win.borrow().history_dialog.clone();
+        assert!(slot.is_some());
+        let (dialog, _) = slot.expect("rebuilt dialog");
+        assert!(!surface_gone(&dialog));
+        dialog.destroy();
+    }
+
+    /// Headless-capable state: session plus settings only, no renderer.
+    fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+    )> {
+        if !crate::test_support::ui_test_available() {
+            return None;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.window-test")
+            .build();
+        let window = gtk::ApplicationWindow::builder().application(&app).build();
+        Some((app, window, model_state()))
+    }
+
+    fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+        use std::sync::Arc;
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: std::rc::Rc::new(MockPipelineFactory),
+            registry,
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: audio,
+        };
+        std::rc::Rc::new(std::cell::RefCell::new(
+            crate::State::new_for_tests(ctx).expect("test state builds"),
+        ))
+    }
+
+    #[derive(Debug)]
+    struct MockPipelineFactory;
+
+    impl nerust_render_traits::renderer::PipelineFactory for MockPipelineFactory {
+        fn create_pipeline(
+            &self,
+            _config: &nerust_render_traits::renderer::RendererConfig,
+            _display: raw_window_handle::RawDisplayHandle,
+        ) -> Result<
+            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
+            nerust_render_traits::renderer::RendererError,
+        > {
+            Err(nerust_render_traits::renderer::RendererError::new(
+                "test",
+                Box::new(std::io::Error::other("no renderer in tests")),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for MockRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            Err(nerust_gui_shell::load::RomLoaderError::from_session(
+                nerust_gui_shell::session::SessionError::NoCore,
+            ))
+        }
+    }
+
+    #[test]
+    fn key_press_state_maps_to_pressed_flag() {
+        assert!(key_event_pressed(KeyEventState::Press));
+        assert!(!key_event_pressed(KeyEventState::Release));
+    }
+
+    #[test]
+    fn action_cluster_names_every_command() {
+        // One home for all command names: renaming a command updates
+        // construction and wiring together, never just one side.
+        let actions = WindowActions::new();
+        for (action, name) in [
+            (&actions.close, "close"),
+            (&actions.pause, "pause"),
+            (&actions.resume, "resume"),
+            (&actions.reset, "reset"),
+            (&actions.debugger, "debugger"),
+            (&actions.history, "history"),
+            (&actions.state_create, "state-create"),
+            (&actions.state_save_active, "state-save-active"),
+            (&actions.state_load_active, "state-load-active"),
+            (&actions.state_select_slot, "state-select-slot"),
+            (&actions.state_save_slot, "state-save-slot"),
+            (&actions.state_load_slot, "state-load-slot"),
+            (&actions.state_delete_slot, "state-delete-slot"),
+        ] {
+            assert_eq!(action.name().as_str(), name);
+        }
+    }
+
+    fn slot_menu_count(menu: &gio::Menu) -> i32 {
+        use gio::prelude::MenuModelExt;
+        menu.n_items()
+    }
+
+    #[test]
+    fn slot_menu_explains_empty_state() {
+        use nerust_settings_core::model::language::AppLanguage;
+        let menu = gio::Menu::new();
+        rebuild_slot_menu(
+            &menu,
+            &[],
+            None,
+            "win.state-save-slot",
+            AppLanguage::English,
+        );
+        // One disabled item names the empty state, never a blank list.
+        assert_eq!(slot_menu_count(&menu), 1);
+    }
+
+    #[test]
+    fn slot_menu_lists_slots_with_action_targets() {
+        use nerust_persistence::model::StateSlotSummary;
+        use nerust_settings_core::model::language::AppLanguage;
+        let slots = vec![
+            StateSlotSummary {
+                schema_version: 1,
+                slot_id: 1,
+                path: nerust_persistence::sidecar::StorageLocation::Native("slot1".into()),
+                saved_at: std::time::SystemTime::UNIX_EPOCH,
+                has_thumbnail: false,
+                emulator_version: "test".to_string(),
+            },
+            StateSlotSummary {
+                schema_version: 1,
+                slot_id: 2,
+                path: nerust_persistence::sidecar::StorageLocation::Native("slot2".into()),
+                saved_at: std::time::SystemTime::UNIX_EPOCH,
+                has_thumbnail: false,
+                emulator_version: "test".to_string(),
+            },
+        ];
+        let menu = gio::Menu::new();
+        rebuild_slot_menu(
+            &menu,
+            &slots,
+            Some(2),
+            "win.state-load-slot",
+            AppLanguage::English,
+        );
+        assert_eq!(slot_menu_count(&menu), 2);
+    }
 }

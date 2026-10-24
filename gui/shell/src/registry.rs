@@ -1,13 +1,11 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use nerust_core_traits::{
-    factory::{
-        CoreFactory,
-        load::{DynSystemLoadOptions, MediaObject},
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_gui_runtime::rom::load_rom_path;
+use nerust_system_traits::factory::{
+    CoreFactory,
+    load::{DynSystemLoadOptions, MediaObject},
+};
 
 use crate::load::{RomLoadTarget, RomLoader, RomLoaderError};
 use nerust_settings_core::factory::settings_view;
@@ -20,11 +18,8 @@ pub enum RegistryError {
     AmbiguousMedia(Vec<Box<dyn SystemId>>),
 }
 
-/// Registry of all supported console systems.
-///
-/// Handles system auto-detection and dispatching to the correct
-/// `CoreFactory`. Currently only NES is registered, but SNES/GB
-/// can be added by appending to the `Vec` at construction time.
+/// Registry of all supported console systems: auto-detection plus dispatch.
+/// Add systems by appending to the `Vec` at construction time.
 pub struct SystemRegistry {
     factories: Vec<Arc<dyn CoreFactory>>,
     by_id: HashMap<Box<dyn SystemId>, Arc<dyn CoreFactory>>,
@@ -52,9 +47,7 @@ impl SystemRegistry {
     }
 
     /// Returns the sole factory that handles the given media.
-    ///
-    /// Returns `Ok(None)` when no factory matches and an error when multiple
-    /// factories claim the same media, avoiding registration-order dispatch.
+    /// `Ok(None)` when none matches; error when several claim the same media.
     pub fn detect(
         &self,
         media: &MediaObject,
@@ -77,8 +70,7 @@ impl SystemRegistry {
     }
 
     /// Creates a `RomLoader` that auto-detects the system per load.
-    /// Each `pending_options` entry is consumed on its system's first
-    /// load; later loads use default options.
+    /// Each `pending_options` entry is consumed on its system's first load.
     pub fn create_loader(
         self: &Arc<Self>,
         pending_options: HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>,
@@ -125,26 +117,23 @@ impl RomLoader for RegistryRomLoader {
 
         let system_id = factory.system_id();
 
-        // Notify the target BEFORE loading so it can rebuild the
-        // EmuCore with the correct factory if the system changed.
-        target
-            .set_active_system(system_id.as_ref())
-            .map_err(|e| RomLoaderError::Detect(e.to_string()))?;
-
+        // Resolve before switching: a resolve failure must leave the live session
+        // untouched; the switch below publishes immediately and rolls back on load failure.
         let view = settings_view(target.settings_snapshot(), system_id.as_ref());
         let options = self
             .pending_options
             .get_mut(&system_id)
             .and_then(|opt| opt.take())
-            .unwrap_or_else(|| {
-                target
-                    .default_load_options()
-                    .unwrap_or_else(|| factory.default_load_options())
-            });
+            .unwrap_or_else(|| factory.default_load_options());
 
         let resolved = factory
             .resolve_load_request(&view, options)
             .map_err(|e| RomLoaderError::Resolve(e.to_string()))?;
+
+        target
+            .set_active_system(system_id.as_ref())
+            .map_err(|e| RomLoaderError::Detect(e.to_string()))?;
+
         target.load_resolved(media, resolved)?;
 
         target.resume();
@@ -156,26 +145,23 @@ impl RomLoader for RegistryRomLoader {
 mod tests {
     use std::{fs, path::PathBuf, sync::Arc};
 
-    use nerust_core_traits::{
-        declare_system_id,
-        factory::{
-            CoreFactory, CoreParts, FactoryError,
-            descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-            load::{
-                DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-                SystemLoadOptions,
-            },
-            settings::FactorySettingsView,
-        },
-        identity::SystemId,
-    };
+    use nerust_core_traits::{declare_system_id, identity::SystemId};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_input_traits::{InputAssignments, InputSystemFactory};
     use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
+    use nerust_system_traits::factory::{
+        CoreFactory, CoreParts, FactoryError,
+        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+        load::{
+            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+            SystemLoadOptions,
+        },
+        settings::FactorySettingsView,
+    };
 
-    use super::*;
+    use crate::registry::*;
 
     declare_system_id!(DummySystemId, "registry-dummy");
     declare_system_id!(DummyOtherSystemId, "registry-other");
@@ -270,7 +256,7 @@ mod tests {
         }
     }
 
-    impl RomLoadTarget for RecordingTarget {
+    impl crate::load::LoadEnvironment for RecordingTarget {
         fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
             Some(NoopSystemLoadOptions.into())
         }
@@ -279,6 +265,16 @@ mod tests {
             &self.snapshot
         }
 
+        fn set_active_system(
+            &mut self,
+            system_id: &dyn SystemId,
+        ) -> Result<(), crate::load::SystemActivationError> {
+            self.active_system = Some(system_id.clone_box());
+            Ok(())
+        }
+    }
+
+    impl RomLoadTarget for RecordingTarget {
         fn load_resolved(
             &mut self,
             media: MediaObject,
@@ -290,14 +286,6 @@ mod tests {
 
         fn resume(&mut self) {
             self.resumed = true;
-        }
-
-        fn set_active_system(
-            &mut self,
-            system_id: &dyn SystemId,
-        ) -> Result<(), crate::load::SystemActivationError> {
-            self.active_system = Some(system_id.clone_box());
-            Ok(())
         }
     }
 

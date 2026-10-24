@@ -8,7 +8,11 @@ use std::{
 
 use crate::error::PersistenceError;
 
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
+/// Replace a file atomically. `Ok` means the replacement committed, is visible,
+/// and the parent directory sync succeeded. A parent-sync failure is returned:
+/// callers treat it as "save failed" and retry, which converges; silently
+/// reporting `Ok` would let callers believe the replacement is durable.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let temp_name = path
@@ -145,4 +149,32 @@ fn sync_parent_dir_impl(path: &Path) -> Result<(), PersistenceError> {
 #[cfg(windows)]
 fn sync_parent_dir_impl(_path: &Path) -> Result<(), PersistenceError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod atomic_write_tests {
+    use super::*;
+
+    #[test]
+    fn replacement_replaces_complete_contents_and_cleans_temporary_files() {
+        let dir = std::env::temp_dir().join(format!("nerust-atomic-{}", temp_nonce()));
+        let path = dir.join("settings.yaml");
+        write_atomic(&path, b"old long contents").unwrap();
+        write_atomic(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rejected_replacement_keeps_destination_and_removes_temporary_file() {
+        let dir = std::env::temp_dir().join(format!("nerust-atomic-{}", temp_nonce()));
+        let path = dir.join("settings.yaml");
+        fs::create_dir_all(&path).unwrap();
+        fs::write(path.join("original"), b"unchanged").unwrap();
+        assert!(write_atomic(&path, b"replacement").is_err());
+        assert_eq!(fs::read(path.join("original")).unwrap(), b"unchanged");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

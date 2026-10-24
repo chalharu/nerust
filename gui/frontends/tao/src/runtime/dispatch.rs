@@ -1,14 +1,12 @@
-//! Per-window event dispatch: one handler per window keeps the
-//! event-loop match in `super` a flat router. Handlers mirror the old
-//! inline arms (debug/PPU focus agreement shares helpers); check the
-//! arm history before reordering Destroyed/focus guards.
+//! Per-window event dispatch: one handler per window keeps the loop match a flat router.
+//! Destroyed/focus-guard order is load-bearing; do not reorder.
 
 use tao::{event::WindowEvent, event_loop::ControlFlow};
 
-use crate::aux::shell::AuxWindow;
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
+use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent};
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -18,29 +16,24 @@ impl WindowRuntime {
         control_flow: &mut ControlFlow,
     ) {
         match event {
-            WindowEvent::CloseRequested if self.host.prepare_close() => {
+            // Destroyed arrives without CloseRequested on external
+            // kills; both run the same idempotent teardown and exit.
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                self.begin_close();
                 *control_flow = ControlFlow::Exit;
             }
             WindowEvent::Focused(true) => {
-                // A same-burst aux focus already cancelled any
-                // pending pause; this is belt-and-braces.
-                if self.host.focus.arrive_main() {
-                    self.host.resume_session();
+                // Focus truth plus resume only; chrome sync and drains
+                // stay deferred to the tick burst (one pass, one capture).
+                if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
+                    self.host.release_focus_pause();
                 }
                 self.host.request_redraw();
-                // Keep the debugger toolbar truthful without
-                // re-hitting the emu thread when nothing moved.
-                self.host.sync_debug_chrome();
             }
             WindowEvent::Focused(false) => {
-                // Deferred: an aux window may take focus in the same
-                // burst, so the pause lands at MainEventsCleared only
-                // if focus truly left us.
-                self.host.focus.leave_main();
+                // Deferred: the pause lands at MainEventsCleared only if focus truly left.
+                let _ = self.host.focus_event(FocusEvent::Main(false));
                 self.host.clear_keys();
-                // Same agreement in the other direction, still
-                // without redundant round-trips.
-                self.host.sync_debug_chrome();
             }
             WindowEvent::Resized(_) => {
                 self.host.sync_fullscreen_default_from_window();
@@ -54,104 +47,122 @@ impl WindowRuntime {
         }
     }
 
-    /// Keyboard/F4 open wiring, extracted so the flag-to-window path
-    /// stays headless-testable (`KeyEvent` itself is unbuildable
-    /// outside tao, so the input arm above keeps no other logic).
+    /// Keyboard/F4 open wiring: flag-to-window path stays headless-testable.
     fn pump_debug_open_request(&mut self, opener: &dyn WindowOpener) {
         if self.host.take_debug_open_request() {
             self.host.open_debug_windows(opener, false);
         }
     }
 
+    /// Route one aux event by kind. The registry pumps; the host applies the outcome.
+    pub(super) fn on_aux_event(
+        &mut self,
+        kind: AuxKind,
+        event: WindowEvent,
+        opener: &dyn WindowOpener,
+    ) {
+        match kind {
+            AuxKind::Settings => self.on_settings_event(event),
+            AuxKind::Debug => self.on_debug_event(opener, event),
+            AuxKind::Ppu => self.on_ppu_event(event),
+            AuxKind::History => self.host.on_history_event(event),
+        }
+    }
+
     pub(super) fn on_settings_event(&mut self, event: WindowEvent) {
-        // External destroy without CloseRequested: the window
-        // is already gone, so run the normal close path (pending
-        // apply still commits).
+        // External destroy: run the normal close path (pending apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if let Some(handle) = self.host.settings_window.take() {
-                let plan = self.host.close_settings_window(handle);
-                if plan.is_some_and(|p| p.renderer_needs_rebuild) {
-                    self.recreate_renderer();
-                }
-                self.host.request_redraw();
-            }
-            return;
-        }
-        // Same-app focus moves cancel a pending auto-pause;
-        // leaving anywhere arms it (see the main arms). Runs
-        // before borrowing the handle below.
-        if matches!(event, WindowEvent::Focused(true)) {
-            self.host.focus.cancel_pending();
-        }
-        if matches!(event, WindowEvent::Focused(false)) {
-            self.host.focus.leave_aux();
-        }
-        let Some(handle) = self.host.settings_window.as_mut() else {
-            return;
-        };
-        handle.pump_window_event(event);
-        // Coalesced present: every visual path above already
-        // requested a redraw; presenting here per event would
-        // serialize a full draw behind every drag/motion event
-        // and unload the backlog as a hang on release.
-        if handle
-            .shell
-            .should_close
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            let Some(handle) = self.host.settings_window.take() else {
-                return;
-            };
-            let plan = self.host.close_settings_window(handle);
-            if plan.is_some_and(|p| p.renderer_needs_rebuild) {
+            if self.host.settings_open() && self.host.close_settings_and_maybe_rebuild() {
                 self.recreate_renderer();
             }
-            self.host.request_redraw();
+            return;
+        }
+        // Same-app focus moves cancel a pending pause; leaving anywhere arms it.
+        let _ = self.drive_focus(AuxKind::Settings, &event);
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Settings, domain) else {
+            return;
+        };
+        // Coalesced present: the pump above already requested a redraw.
+        if outcome.close && self.host.close_settings_and_maybe_rebuild() {
+            self.recreate_renderer();
+        }
+    }
+
+    /// Focus-only drive shared by every aux path: routes through the
+    /// host focus port, which resumes on `Resume` and reports arrival.
+    fn drive_focus(&mut self, kind: AuxKind, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::Focused(focused) => self.host.drive_aux_focus(kind, *focused),
+            _ => false,
         }
     }
 
     pub(super) fn on_debug_event(&mut self, opener: &dyn WindowOpener, event: WindowEvent) {
         if let WindowEvent::Moved(position) = &event {
-            self.host
-                .debug
-                .remember_debug_window_pos(position.x, position.y);
+            self.host.remember_debug_window_pos(position.x, position.y);
         }
-        // Focus re-reads, never force-pauses. External destroy
-        // drops the handle so a later F4 reopens; checked before
-        // focus handling so a dead window arms no auto-pause.
+        // Focus re-reads, never force-pauses; external destroy drops the handle.
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.debug.drop_debug_window();
+            self.host.drop_debug_window();
             self.host.request_redraw();
             return;
         }
-        let refocused = matches!(event, WindowEvent::Focused(true));
-        self.note_aux_focus(refocused);
-        {
-            let Some(handle) = self.host.debug.debug_window.as_mut() else {
-                return;
-            };
-            handle.pump_window_event(event);
-        }
-        if refocused {
-            self.host.sync_debug_chrome();
-        }
+        let _ = self.drive_focus(AuxKind::Debug, &event);
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Debug, domain) else {
+            return;
+        };
         self.drain_and_maybe_open_ppu(opener);
         // Closing never resumes: resume is always explicit.
-        if let Some(handle) = self.host.debug.debug_window.as_mut() {
-            // Coalesced present (see the settings arm): every
-            // visual path above already requested a redraw.
-            handle.shell.window.request_redraw();
+        if self.host.is_debug_open() {
+            // Coalesced redraw: the event/drain paths above already
+            // flagged what changed; one request covers the frame.
+            self.host.request_redraw();
         }
-        if self.host.debug.debug_close_requested() {
-            self.host.debug.drop_debug_window();
+        if outcome.close {
+            self.host.drop_debug_window();
             self.host.request_redraw();
         }
     }
 
     pub(super) fn on_debug_redrawn(&mut self, opener: &dyn WindowOpener) {
         self.drain_and_maybe_open_ppu(opener);
-        if let Some(handle) = self.host.debug.debug_window.as_mut() {
-            handle.render();
+        let outcome = self.host.render_aux(AuxKind::Debug);
+        // Redraw widgets may have emitted actions after the pre-render drain.
+        // Take them before a close outcome removes their bridge.
+        self.drain_and_maybe_open_ppu(opener);
+        if let Some(outcome) = outcome {
+            self.apply_aux_outcome(AuxKind::Debug, outcome);
+        }
+    }
+
+    pub(super) fn on_aux_redrawn(&mut self, kind: AuxKind) {
+        let Some(outcome) = self.host.render_aux(kind) else {
+            return;
+        };
+        self.apply_aux_outcome(kind, outcome);
+    }
+
+    fn apply_aux_outcome(&mut self, kind: AuxKind, outcome: crate::aux::registry::AuxOutcome) {
+        if let Some(detail) = outcome.error {
+            self.host.report_host_error(detail);
+        }
+        if outcome.cleared {
+            self.host.clear_history();
+        }
+        if !outcome.close {
+            return;
+        }
+        match kind {
+            AuxKind::Settings => {
+                if self.host.close_settings_and_maybe_rebuild() {
+                    self.recreate_renderer();
+                }
+            }
+            AuxKind::Debug => self.host.drop_debug_window(),
+            AuxKind::Ppu => self.host.drop_ppu_window(),
+            AuxKind::History => self.host.drop_history_window(),
         }
     }
 
@@ -159,40 +170,21 @@ impl WindowRuntime {
         // Same external-destroy guard as the debugger: a dead
         // handle must not linger and block reopening.
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.debug.drop_ppu_window();
+            self.host.drop_ppu_window();
             self.host.request_redraw();
             return;
         }
-        // A system-paused session resumes like on main focus;
-        // explicit pauses stay paused.
-        self.note_aux_focus(matches!(event, WindowEvent::Focused(true)));
+        let _ = self.drive_focus(AuxKind::Ppu, &event);
         if let WindowEvent::Moved(position) = &event {
-            self.host
-                .debug
-                .remember_ppu_window_pos(position.x, position.y);
+            self.host.remember_ppu_window_pos(position.x, position.y);
         }
-        {
-            let Some(handle) = self.host.debug.ppu_window.as_mut() else {
-                return;
-            };
-            handle.pump_window_event(event);
-        }
-        if self.host.debug.ppu_close_requested() {
-            self.host.debug.drop_ppu_window();
+        let domain = crate::aux::native::adapt_event(&event);
+        let Some(outcome) = self.host.aux_on_event(AuxKind::Ppu, domain) else {
+            return;
+        };
+        if outcome.close {
+            self.host.drop_ppu_window();
             self.host.request_redraw();
-        }
-    }
-
-    /// Aux-window focus agreement, shared by debugger and PPU:
-    /// same-app arrival cancels a pending auto-pause and resumes a
-    /// system-paused session; leaving anywhere arms it.
-    fn note_aux_focus(&mut self, focused: bool) {
-        if focused {
-            if self.host.focus.arrive_aux() {
-                self.host.resume_session();
-            }
-        } else {
-            self.host.focus.leave_aux();
         }
     }
 
@@ -212,6 +204,7 @@ mod tests {
     use tao::{dpi::PhysicalPosition, event::WindowEvent, event_loop::ControlFlow};
 
     use super::WindowRuntime;
+    use crate::aux::focus::AuxKind;
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
 
@@ -238,15 +231,145 @@ mod tests {
     }
 
     #[test]
-    fn main_focus_arms_syncs_chrome() {
+    fn main_destroyed_without_close_requests_exit() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.surface_xid = Some(42);
+        runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(runtime.host.close_exited());
+        assert!(runtime.surface_xid.is_none());
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn double_delivery_runs_close_once_and_exits() {
+        let (mut runtime, _) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        let mut flow = ControlFlow::Wait;
+        runtime.on_main_event(&opener, WindowEvent::CloseRequested, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(runtime.host.close_exited());
+        // Destroyed after CloseRequested still exits; the guarded
+        // teardown ran exactly once (see the host-level idempotence test).
+        runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
+        assert_eq!(flow, ControlFlow::Exit);
+        assert!(runtime.host.close_exited());
+    }
+
+    /// Drop-logging renderer: proves the ordered teardown drops the
+    /// pipeline before host close runs. Blanket `RenderPipeline`
+    /// needs all five sinks; every arm is a no-op here.
+    #[derive(Debug)]
+    struct DropLogRenderer {
+        log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl Drop for DropLogRenderer {
+        fn drop(&mut self) {
+            self.log.lock().unwrap().push("renderer");
+        }
+    }
+
+    impl nerust_render_traits::renderer::SurfaceLifecycle for DropLogRenderer {
+        fn size(&self) -> nerust_render_traits::SurfaceSize {
+            nerust_render_traits::SurfaceSize::new(960, 720)
+        }
+
+        fn attach(
+            &mut self,
+            _window_handle: raw_window_handle::RawWindowHandle,
+            _display_handle: raw_window_handle::RawDisplayHandle,
+            _size: nerust_render_traits::SurfaceSize,
+        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
+            Ok(())
+        }
+
+        fn detach(&mut self) {}
+
+        fn resize(&mut self, _size: nerust_render_traits::SurfaceSize) {}
+    }
+
+    impl nerust_render_traits::renderer::FrameSink for DropLogRenderer {
+        fn render(
+            &mut self,
+            _frame: &nerust_render_traits::FrameBuffer,
+        ) -> nerust_render_traits::renderer::RenderResult {
+            nerust_render_traits::renderer::RenderResult::Skipped
+        }
+    }
+
+    impl nerust_render_traits::renderer::OsdSink for DropLogRenderer {
+        fn set_osd_layer(&mut self, _layer: Option<nerust_render_traits::renderer::OsdLayer>) {}
+    }
+
+    impl nerust_render_traits::renderer::StripSink for DropLogRenderer {}
+
+    impl nerust_render_traits::renderer::ProfileSwitch for DropLogRenderer {
+        fn update_render_profile(
+            &mut self,
+            _profile: &nerust_render_traits::VideoRenderProfile,
+        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn menu_quit_defers_teardown_to_ordered_begin_close() {
+        use crate::event::MenuCommand;
+        use crate::runtime::host::HostAction;
+        let (mut runtime, _) = test_runtime();
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        runtime.renderer = Some(Box::new(DropLogRenderer {
+            log: std::sync::Arc::clone(&log),
+        }));
+        let opener = FakeOpener::failing("no display");
+        // Menu Quit returns the exit intent only: renderer and host teardown wait.
+        assert_eq!(
+            runtime.host.on_menu_command(MenuCommand::Quit, &opener),
+            HostAction::Exit
+        );
+        assert!(runtime.renderer.is_some());
+        assert!(!runtime.host.close_exited());
+        assert!(log.lock().unwrap().is_empty());
+        // The runtime owns the ordered teardown: the pipeline drops
+        // before host close runs, exactly once across repeated delivery.
+        // Post-state pins the contract: renderer gone, no aux window
+        // or error dialog left, settings closed, surface cleared.
+        runtime.begin_close();
+        assert!(runtime.renderer.is_none());
+        assert!(runtime.host.close_exited());
+        assert_eq!(*log.lock().unwrap(), ["renderer"]);
+        for kind in [
+            AuxKind::Debug,
+            AuxKind::Ppu,
+            AuxKind::History,
+            AuxKind::Settings,
+        ] {
+            assert!(!runtime.host.aux_open(kind), "{kind:?} closed");
+        }
+        assert!(!runtime.host.settings_open());
+        assert!(runtime.surface_xid.is_none());
+        runtime.begin_close();
+        assert_eq!(log.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn main_focus_arms_without_syncing() {
+        // Focus handlers only drive focus truth now: no chrome sync,
+        // no drain. The tick burst performs the single sync pass.
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
         let mut flow = ControlFlow::Wait;
         runtime.on_main_event(&opener, WindowEvent::Focused(false), &mut flow);
-        assert!(!runtime.host.focus.main_active());
+        assert!(!runtime.host.main_active());
         runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
-        assert!(runtime.host.focus.main_active());
-        assert_eq!(menu.updates().len(), 2);
+        assert!(runtime.host.main_active());
+        assert!(menu.updates().is_empty());
+        // Tick burst commits the armed pause state and syncs chrome once.
+        runtime.host.update_control_flow(&mut flow);
+        assert_eq!(menu.updates().len(), 1);
     }
 
     #[test]
@@ -267,7 +390,7 @@ mod tests {
     fn debug_open_request_reaches_opener_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.debug.request_debug_open();
+        runtime.host.request_debug_open();
         runtime.pump_debug_open_request(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         // Consumed: a second pump without re-arm stays quiet.
@@ -282,9 +405,11 @@ mod tests {
         let (mut runtime, menu) = test_runtime();
         runtime.on_settings_event(WindowEvent::Focused(true));
         runtime.on_settings_event(WindowEvent::Focused(false));
-        assert!(runtime.host.focus.main_active());
+        assert!(runtime.host.main_active());
         assert!(menu.updates().is_empty());
-        runtime.host.focus.cancel_pending();
+        let _ = runtime
+            .host
+            .focus_event(crate::aux::focus::FocusEvent::Aux(AuxKind::Settings, true));
     }
 
     #[test]
@@ -299,7 +424,7 @@ mod tests {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
         runtime.on_debug_event(&opener, WindowEvent::Moved(PhysicalPosition::new(60, 20)));
-        assert_eq!(runtime.host.debug.debug_window_pos(), Some((60, 20)));
+        assert_eq!(runtime.host.debug_window_pos(), Some((60, 20)));
     }
 
     #[test]
@@ -317,7 +442,7 @@ mod tests {
         // returns before chrome sync or drain.
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.focus.leave_main();
+        runtime.host.note_main_departure();
         runtime.on_debug_event(&opener, WindowEvent::Focused(true));
         assert!(menu.updates().is_empty());
         assert!(opener.calls().is_empty());
@@ -327,12 +452,15 @@ mod tests {
     fn ppu_moved_remembers_position() {
         let (mut runtime, _) = test_runtime();
         runtime.on_ppu_event(WindowEvent::Moved(PhysicalPosition::new(1250, 100)));
-        assert_eq!(runtime.host.debug.ppu_window_pos(), Some((1250, 100)));
+        assert_eq!(runtime.host.ppu_window_pos(), Some((1250, 100)));
     }
 
     #[test]
-    fn ppu_focused_without_window_returns_early() {
+    fn ppu_arrival_after_departure_drives_focus() {
+        // Departure arms the pause; aux arrival cancels it through
+        // the shared drive, even with no handle open.
         let (mut runtime, menu) = test_runtime();
+        runtime.host.note_main_departure();
         runtime.on_ppu_event(WindowEvent::Focused(true));
         runtime.on_ppu_event(WindowEvent::Focused(false));
         assert!(menu.updates().is_empty());
@@ -342,7 +470,7 @@ mod tests {
     fn ppu_request_opens_debugger_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.debug.request_ppu_open();
+        runtime.host.request_ppu_open();
         runtime.on_debug_redrawn(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         runtime.on_debug_redrawn(&opener);
@@ -373,7 +501,66 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         runtime.host.open_debug_windows(&opener, true);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(runtime.host.debug.debug_window.is_none());
-        assert!(runtime.host.debug.ppu_window.is_none());
+        assert!(!runtime.host.is_debug_open());
+        assert!(!runtime.host.is_ppu_open());
+    }
+
+    #[test]
+    fn host_focus_drive_reports_arrival_only() {
+        // Shared host port: arrival reports true, departure and
+        // non-focus events report false, without touching the menu.
+        let (mut runtime, menu) = test_runtime();
+        assert!(runtime.host.drive_aux_focus(AuxKind::Debug, true));
+        assert!(!runtime.host.drive_aux_focus(AuxKind::Debug, false));
+        runtime.on_settings_event(WindowEvent::Moved(PhysicalPosition::new(1, 2)));
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn drive_focus_reports_arrival_only() {
+        let (mut runtime, menu) = test_runtime();
+        // Arrival without a protocol pause reports true, no resume.
+        assert!(runtime.drive_focus(AuxKind::Debug, &WindowEvent::Focused(true)));
+        // Departure and non-focus events report false.
+        assert!(!runtime.drive_focus(AuxKind::Debug, &WindowEvent::Focused(false)));
+        assert!(!runtime.drive_focus(
+            AuxKind::Debug,
+            &WindowEvent::Moved(PhysicalPosition::new(1, 2))
+        ));
+        assert!(!runtime.drive_focus(
+            AuxKind::Settings,
+            &WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))
+        ));
+        assert!(menu.updates().is_empty());
+    }
+
+    #[test]
+    fn aux_routing_without_handles_stays_total() {
+        let (mut runtime, menu) = test_runtime();
+        let opener = FakeOpener::failing("no display");
+        // Every aux arm resolves to no handle: pump, outcome, and
+        // redraw all no-op without touching the menu.
+        runtime.on_aux_event(AuxKind::Settings, WindowEvent::Focused(true), &opener);
+        runtime.on_aux_event(AuxKind::Debug, WindowEvent::Focused(false), &opener);
+        runtime.on_aux_event(AuxKind::Ppu, WindowEvent::Focused(false), &opener);
+        runtime.on_aux_event(AuxKind::History, WindowEvent::Focused(true), &opener);
+        runtime.on_settings_event(WindowEvent::Resized(tao::dpi::PhysicalSize::new(1, 1)));
+        runtime.on_ppu_event(WindowEvent::Resized(tao::dpi::PhysicalSize::new(1, 1)));
+        assert!(menu.updates().is_empty());
+        assert!(opener.calls().is_empty());
+    }
+
+    #[test]
+    fn settings_moved_never_arms_pause() {
+        let (mut runtime, menu) = test_runtime();
+        runtime.host.note_main_departure();
+        runtime.on_settings_event(WindowEvent::Moved(PhysicalPosition::new(9, 9)));
+        // Still armed: a non-focus event cancels nothing, so burst
+        // end still commits the departure pause (which then no-ops).
+        let mut flow = ControlFlow::Wait;
+        runtime.host.update_control_flow(&mut flow);
+        assert_eq!(flow, ControlFlow::Wait);
+        // Burst-end chrome sync pushes once through the empty gate.
+        assert_eq!(menu.updates().len(), 1);
     }
 }

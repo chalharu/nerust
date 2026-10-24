@@ -38,30 +38,53 @@ struct SchemaVersion {
 // Current read/write
 // ---------------------------------------------------------------------------
 
+/// Scan transfer guard: sidecar and metadata entry bytes above this are
+/// rejected before parsing, so a huge summary never parses or caches.
+pub const MAX_METADATA_BYTES: usize = 64 * 1024;
+
 pub(crate) fn read_metadata<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<StateArchiveMetadata, PersistenceError> {
-    const MAX_METADATA_BYTES: usize = 64 * 1024;
-
     let mut metadata_file = archive.by_name(METADATA_ENTRY)?;
     let metadata_bytes =
         crate::fs_ops::read_limited(&mut metadata_file, MAX_METADATA_BYTES, "metadata")?;
+    decode_metadata_bytes(&metadata_bytes)
+}
 
-    let version = rmp_serde::from_slice::<SchemaVersion>(&metadata_bytes).map_err(|_| {
+/// Decode freestanding metadata bytes: the archive entry and the scan
+/// sidecar share this layout, so listings never parse the archive twice.
+pub(crate) fn decode_metadata_bytes(
+    bytes: &[u8],
+) -> Result<StateArchiveMetadata, PersistenceError> {
+    if bytes.len() > MAX_METADATA_BYTES {
+        return Err(PersistenceError::Validation(
+            "state metadata exceeds scan bound".into(),
+        ));
+    }
+    let version = rmp_serde::from_slice::<SchemaVersion>(bytes).map_err(|_| {
         PersistenceError::Validation("unrecognized state archive metadata format".into())
     })?;
     match version.schema_version {
-        STATE_ARCHIVE_SCHEMA_VERSION => match rmp_serde::from_slice(&metadata_bytes) {
+        STATE_ARCHIVE_SCHEMA_VERSION => match rmp_serde::from_slice(bytes) {
             Ok(metadata) => Ok(metadata),
-            Err(error) => legacy_nes::decode_mistagged_v3(&metadata_bytes)?
-                .ok_or_else(|| PersistenceError::from(error)),
+            Err(error) => {
+                legacy_nes::decode_mistagged_v3(bytes)?.ok_or_else(|| PersistenceError::from(error))
+            }
         },
-        2 => legacy_nes::decode_v2(&metadata_bytes),
-        1 => legacy_nes::decode_v1(&metadata_bytes),
+        2 => legacy_nes::decode_v2(bytes),
+        1 => legacy_nes::decode_v1(bytes),
         version => Err(PersistenceError::Validation(format!(
             "unsupported state archive schema version: {version}"
         ))),
     }
+}
+
+/// Encode the exact bytes stored as the archive metadata entry, reused for
+/// the scan sidecar so both paths decode identically.
+pub(crate) fn encode_metadata_bytes(
+    metadata: &StateArchiveMetadata,
+) -> Result<Vec<u8>, PersistenceError> {
+    Ok(rmp_serde::to_vec_named(metadata)?)
 }
 
 pub(crate) fn encode_slot_metadata(

@@ -788,28 +788,20 @@ impl Core {
 
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
         if usize::from(self.sprite_index) > 8 {
-            return Err(PersistenceError::Validation(
-                "PPU sprite index overflow".into(),
-            ));
+            return Err(PersistenceError::PpuSpriteIndex);
         }
         if self.sprite_index == 8
             && self.render_executing
             && self.scan_line <= 240
             && (257..316).contains(&self.cycle)
         {
-            return Err(PersistenceError::Validation(
-                "PPU sprite index terminal state is only valid after the final sprite fetch".into(),
-            ));
+            return Err(PersistenceError::PpuTerminalSpriteIndex);
         }
         if usize::from(self.sprite_count) > 8 {
-            return Err(PersistenceError::Validation(
-                "PPU sprite count overflow".into(),
-            ));
+            return Err(PersistenceError::PpuSpriteCount);
         }
         if usize::from(self.secondary_oam_address) > self.secondary_oam.len() {
-            return Err(PersistenceError::Validation(
-                "PPU secondary OAM address overflow".into(),
-            ));
+            return Err(PersistenceError::PpuSecondaryOamAddress);
         }
         Ok(())
     }

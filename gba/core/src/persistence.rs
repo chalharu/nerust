@@ -65,8 +65,7 @@ pub(crate) fn import_machine_state(
     expected_options: GbaCoreOptions,
     audio_rate: u32,
 ) -> Result<GbaSystem, GbaPersistenceError> {
-    let payload: MachineStatePayload = rmp_serde::from_slice(data)?;
-    validate_version(payload.schema_version)?;
+    let payload: MachineStatePayload = decode_payload(data)?;
     if &payload.rom_identity != expected_identity {
         return Err(GbaPersistenceError::RomIdentityMismatch);
     }
@@ -112,17 +111,16 @@ pub(crate) fn import_mapper_save(
     data: &[u8],
     expected_identity: &GbaRomIdentity,
 ) -> Result<(), GbaPersistenceError> {
-    let payload: MapperSavePayload = rmp_serde::from_slice(data)?;
-    validate_version(payload.schema_version)?;
+    let payload: MapperSavePayload = decode_payload(data)?;
     if &payload.rom_identity != expected_identity {
         return Err(GbaPersistenceError::RomIdentityMismatch);
     }
     let expected_kind = SaveTypeSer::from(cartridge.save.save_type());
     if payload.save_kind != expected_kind {
-        return Err(GbaPersistenceError::Cartridge(format!(
-            "mapper save kind mismatch: wire={:?} actual={expected_kind:?}",
-            payload.save_kind
-        )));
+        return Err(GbaPersistenceError::MapperSaveKindMismatch {
+            wire: payload.save_kind,
+            actual: expected_kind,
+        });
     }
     let Some(current) = cartridge.save.ram_data() else {
         return Err(GbaPersistenceError::Cartridge(
@@ -148,4 +146,46 @@ pub(crate) fn import_mapper_save(
         ));
     }
     Ok(())
+}
+
+/// Version accessor so the envelope parses the body once: success validates
+/// the body's own version; only failures fall back to a minimal header parse
+/// to keep unsupported-version errors outranking corrupt bodies.
+trait HasSchemaVersion {
+    fn schema_version(&self) -> u32;
+}
+
+impl HasSchemaVersion for MachineStatePayload {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+impl HasSchemaVersion for MapperSavePayload {
+    fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct VersionHeader {
+    schema_version: u32,
+}
+
+fn decode_payload<T>(data: &[u8]) -> Result<T, GbaPersistenceError>
+where
+    T: serde::de::DeserializeOwned + HasSchemaVersion,
+{
+    match rmp_serde::from_slice::<T>(data) {
+        Ok(body) => {
+            validate_version(body.schema_version())?;
+            Ok(body)
+        }
+        Err(body_error) => {
+            if let Ok(header) = rmp_serde::from_slice::<VersionHeader>(data) {
+                validate_version(header.schema_version)?;
+            }
+            Err(body_error.into())
+        }
+    }
 }

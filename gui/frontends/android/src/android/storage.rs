@@ -11,15 +11,15 @@ const STORAGE_POLICY_MIGRATION_FILE_NAME: &str = ".storage-policy-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LastMediaReference {
+pub(super) struct LastMediaReference {
     schema_version: u32,
-    pub(crate) uri: String,
-    pub(crate) display_name: String,
-    pub(crate) system_id: String,
+    pub(super) uri: String,
+    pub(super) display_name: String,
+    pub(super) system_id: String,
 }
 
 impl LastMediaReference {
-    pub(crate) fn new(uri: String, display_name: String, system_id: String) -> Self {
+    pub(super) fn new(uri: String, display_name: String, system_id: String) -> Self {
         Self {
             schema_version: LAST_MEDIA_REFERENCE_SCHEMA_VERSION,
             uri,
@@ -29,8 +29,8 @@ impl LastMediaReference {
     }
 }
 
-pub(crate) struct AndroidStorage {
-    pub(crate) rom_library: RomLibrary,
+pub(super) struct AndroidStorage {
+    rom_library: RomLibrary,
     last_rom_id_file: PathBuf,
     last_media_reference_file: PathBuf,
     restore_pending_file: PathBuf,
@@ -38,7 +38,7 @@ pub(crate) struct AndroidStorage {
 }
 
 impl AndroidStorage {
-    pub(crate) fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
+    pub(super) fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
         let rom_library =
             RomLibrary::open(RomLibraryPaths::new(root.join(ROM_LIBRARY_ROOT_DIR_NAME)))
@@ -52,7 +52,12 @@ impl AndroidStorage {
         })
     }
 
-    pub(crate) fn load_last_media_reference(&self) -> Result<Option<LastMediaReference>, String> {
+    /// Library path for an id, if the entry still exists.
+    pub(super) fn resolve_library_path(&self, id: &str) -> Option<PathBuf> {
+        self.rom_library.rom_path(id)
+    }
+
+    pub(super) fn load_last_media_reference(&self) -> Result<Option<LastMediaReference>, String> {
         let bytes = match fs::read(&self.last_media_reference_file) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -69,7 +74,7 @@ impl AndroidStorage {
         Ok(Some(reference))
     }
 
-    pub(crate) fn save_last_media_reference(
+    pub(super) fn save_last_media_reference(
         &self,
         reference: &LastMediaReference,
     ) -> Result<(), String> {
@@ -88,11 +93,11 @@ impl AndroidStorage {
             .map_err(|error| format!("failed to commit Android last media: {error}"))
     }
 
-    pub(crate) fn storage_policy_migration_completed(&self) -> bool {
+    pub(super) fn storage_policy_migration_completed(&self) -> bool {
         self.storage_policy_migration_file.is_file()
     }
 
-    pub(crate) fn complete_storage_policy_migration(&self) -> Result<(), String> {
+    pub(super) fn complete_storage_policy_migration(&self) -> Result<(), String> {
         if let Some(parent) = self.storage_policy_migration_file.parent() {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("failed to create Android storage root: {error}"))?;
@@ -101,11 +106,11 @@ impl AndroidStorage {
             .map_err(|error| format!("failed to save Android storage migration marker: {error}"))
     }
 
-    pub(crate) fn has_restore_pending(&self) -> bool {
+    pub(super) fn has_restore_pending(&self) -> bool {
         self.restore_pending_file.exists()
     }
 
-    pub(crate) fn touch_restore_pending(&self) {
+    pub(super) fn touch_restore_pending(&self) {
         if let Some(parent) = self.restore_pending_file.parent()
             && let Err(error) = fs::create_dir_all(parent)
         {
@@ -116,7 +121,7 @@ impl AndroidStorage {
         }
     }
 
-    pub(crate) fn clear_restore_pending(&self) {
+    pub(super) fn clear_restore_pending(&self) {
         if let Err(error) = fs::remove_file(&self.restore_pending_file)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -124,7 +129,7 @@ impl AndroidStorage {
         }
     }
 
-    pub(crate) fn load_last_rom_id(&self) -> Result<Option<String>, String> {
+    pub(super) fn load_last_rom_id(&self) -> Result<Option<String>, String> {
         match fs::read_to_string(&self.last_rom_id_file) {
             Ok(contents) => {
                 let id = contents.trim();

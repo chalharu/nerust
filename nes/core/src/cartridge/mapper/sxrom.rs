@@ -62,17 +62,13 @@ impl Cartridge for SxRom {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if state.extra_kind != MAPPER_KIND_SXROM {
-            return Err(PersistenceError::Validation(
-                "unexpected SXROM runtime kind".into(),
-            ));
+            return Err(PersistenceError::MapperRuntimeKind("SXROM"));
         }
-        self.state
-            .validate_for_import(
-                &state.mapper_state,
-                self.data_ref().prog_rom_len(),
-                self.data_ref().char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
         let runtime: SxRomRuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.control = runtime.control;

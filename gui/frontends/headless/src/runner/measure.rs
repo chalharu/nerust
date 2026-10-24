@@ -24,7 +24,7 @@ pub struct MeasureOutcome {
 /// `steps` counts one stepped frame per step, including the thread
 /// barrier — headless driving, not raw core throughput.
 pub fn measure_case(
-    factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
+    factories: &[Box<dyn nerust_system_traits::factory::CoreFactory>],
     case: &RomCase,
     rom_bytes: &[u8],
 ) -> Result<MeasureOutcome, RomTestError> {
@@ -46,7 +46,7 @@ struct MeasureRuntime {
 
 impl MeasureRuntime {
     fn new(
-        factories: &[Box<dyn nerust_core_traits::factory::CoreFactory>],
+        factories: &[Box<dyn nerust_system_traits::factory::CoreFactory>],
         case: &RomCase,
         rom_bytes: &[u8],
     ) -> Result<Self, RomTestError> {

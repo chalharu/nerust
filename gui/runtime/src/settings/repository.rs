@@ -17,14 +17,9 @@ pub(super) struct FileBackedStore(pub(super) SettingsPaths);
 
 impl SettingsStore for FileBackedStore {
     fn save(&self, document: &SettingsDocument) -> Result<(), SettingsError> {
-        use std::fs;
-        if let Some(parent) = self.0.settings_file.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(
-            &self.0.settings_file,
-            serde_saphyr::to_string(document.value())?,
-        )?;
+        let serialized = serde_saphyr::to_string(document.value())?;
+        nerust_persistence::write_atomic(&self.0.settings_file, serialized.as_bytes())
+            .map_err(|error| SettingsError::Io(std::io::Error::other(error)))?;
         Ok(())
     }
 
@@ -46,8 +41,11 @@ impl SettingsStore for EphemeralStore {
         Ok(())
     }
 
-    fn load(&self, _defaults: &SettingsSnapshot) -> (SettingsSnapshot, SettingsDocument) {
-        unreachable!("EphemeralStore::load is not called; reload falls back for ephemeral")
+    fn load(&self, defaults: &SettingsSnapshot) -> (SettingsSnapshot, SettingsDocument) {
+        (
+            defaults.clone(),
+            SettingsDocument::from_snapshot(defaults).expect("validated defaults must serialize"),
+        )
     }
 
     fn paths(&self) -> Option<SettingsPaths> {

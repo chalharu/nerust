@@ -30,7 +30,8 @@ pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) 
             .bindings
             .iter()
             .find(|binding| {
-                binding.attachment.as_str() == attachment && binding.control.as_str() == control
+                binding.attachment.as_str() == attachment
+                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
             })
             .map(|binding| binding.key),
         CaptureTarget::Shortcut(action) => snapshot
@@ -70,7 +71,8 @@ pub fn apply_capture_target(
                 .or_default()
                 .implicit_keyboard_profile_mut();
             profile.bindings.retain(|binding| {
-                !(binding.attachment.as_str() == attachment && binding.control.as_str() == control)
+                !(binding.attachment.as_str() == attachment
+                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control))
             });
             if let Some(key) = key {
                 profile.bindings.push(KeyboardBinding {
@@ -144,6 +146,52 @@ mod tests {
             control: "test.ctrl".into(),
         };
         assert_eq!(current_binding_key(&snapshot, &target), Some(Key::KeyZ));
+    }
+
+    #[test]
+    fn digital_capture_never_reads_or_removes_an_analog_id_with_the_same_text() {
+        let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
+        let target = CaptureTarget::Binding {
+            system: Box::new(TestSysId),
+            attachment: "test.att".into(),
+            control: "test.ctrl".into(),
+        };
+        let profile = snapshot
+            .shared
+            .input
+            .systems
+            .values_mut()
+            .next()
+            .unwrap()
+            .implicit_keyboard_profile_mut();
+        profile.bindings.insert(
+            0,
+            KeyboardBinding::new(
+                "test.att",
+                PersistedControlId::analog("test.ctrl"),
+                Key::KeyX,
+            ),
+        );
+        assert_eq!(current_binding_key(&snapshot, &target), Some(Key::KeyZ));
+        apply_capture_target(&mut snapshot, &target, Some(Key::KeyA));
+        assert_eq!(current_binding_key(&snapshot, &target), Some(Key::KeyA));
+        apply_capture_target(&mut snapshot, &target, None);
+        assert_eq!(current_binding_key(&snapshot, &target), None);
+        let profile = snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .next()
+            .unwrap()
+            .implicit_keyboard_profile()
+            .unwrap();
+        assert_eq!(profile.bindings.len(), 1);
+        assert_eq!(
+            profile.bindings[0].control,
+            PersistedControlId::analog("test.ctrl")
+        );
+        assert_eq!(profile.bindings[0].key, Key::KeyX);
     }
 
     #[test]

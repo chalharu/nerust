@@ -1,5 +1,8 @@
 use crate::GbcLoadOptions;
-use nerust_core_traits::factory::{
+use crate::field::{GbcSettingChoice, GbcSettingField};
+use nerust_gbc_core::core_options::{GbcCoreOptions, RtcSyncPolicy};
+use nerust_gbc_settings::{GbcSettings, HardwareModel, RtcSyncMode};
+use nerust_system_traits::factory::{
     FactoryError,
     descriptor::{
         SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsFieldKind,
@@ -7,11 +10,6 @@ use nerust_core_traits::factory::{
     },
     load::{DynSystemLoadOptions, DynSystemLoadOptionsExt, ResolvedLoadRequest},
     settings::FactorySettingsView,
-};
-use nerust_gbc_core::core_options::{GbcCoreOptions, RtcSyncPolicy};
-use nerust_gbc_settings::{
-    GbcSettings, HardwareModel, RtcSyncMode,
-    field::{GbcSettingChoice, GbcSettingField},
 };
 
 const EXPOSED_FIELDS: [GbcSettingField; 2] = [
@@ -125,7 +123,7 @@ pub(crate) fn resolve_gbc_load_request(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::factory::settings::Language;
+    use nerust_system_traits::factory::settings::Language;
 
     use super::*;
 

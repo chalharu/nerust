@@ -1,9 +1,6 @@
 use std::fmt;
 
-use nerust_core_traits::{
-    factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::AttachmentId;
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
@@ -11,6 +8,7 @@ use nerust_settings_core::model::{
     local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
     shared::StoragePolicy,
 };
+use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
 
 /// A labeled choice for pick-list widgets.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,12 +3,14 @@ default-members = [".", "nes/core", "gbc/core", "gba/core"]
 members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
+  "gui/frontends/kernel",
   "gui/frontends/rom_tool",
   "gui/frontends/tao",
   "gui/run-options",
   "gui/runtime",
   "gui/shell",
   "gui/viewmodel",
+  "crash-guard",
   "gba/core",
   "gba/device",
   "gba/factory",
@@ -44,6 +46,7 @@ members = [
   "traits/emu-thread",
   "traits/input",
   "traits/settings",
+  "traits/system",
 ]
 resolver = "3"
 
@@ -62,6 +65,7 @@ version.workspace = true
 clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
+nerust_system_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
@@ -70,7 +74,7 @@ nerust_gba_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
 nerust_render_gl = { optional = true, workspace = true }
 nerust_render_softbuffer = { optional = true, workspace = true }
-nerust_render_traits.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_render_wgpu = { optional = true, workspace = true }
 nerust_run_options.workspace = true
 nerust_sound_cpal = { optional = true, workspace = true }
@@ -96,10 +100,14 @@ wgpu = ["nerust_render_wgpu"]
 opt-level = 3
 
 [profile.release]
-debug = false
+debug = "line-tables-only"
 # ThinLTO improves Myst's release frame throughput in the core benchmark;
 # fat LTO was slower in the same benchmark.
 lto = "thin"
+# ThinLTO emits full DWARF despite line-tables-only (156MB APK incident);
+# strip it at link time, keeping symtab for backtrace symbol names.
+# Release backtraces are name-only: file:line needs DWARF, absent here.
+strip = "debuginfo"
 
 [profile.release.package.nerust_nes_core]
 codegen-units = 1
@@ -126,7 +134,6 @@ image = { version = "=0.25.10", default-features = false, features = [
   "jpeg",
 ] }
 android_logger = { version = "=0.15.1" }
-base64 = { version = "=0.23.1" }
 bitflags = { features = ["serde"], version = "=2.13.2" }
 clap = { features = ["derive"], version = "=4.6.7" }
 cpal = { version = "=0.18.2" }
@@ -168,6 +175,7 @@ log = { default-features = false, version = "=0.4.34" }
 muda = { default-features = false, features = ["gtk3"], version = "=0.21.2" }
 nerust_android = { path = "gui/frontends/android" }
 nerust_core_traits = { path = "traits/core" }
+nerust_system_traits = { path = "traits/system" }
 nerust_emu_thread = { path = "traits/emu-thread" }
 nerust_gba_core = { path = "gba/core" }
 nerust_gba_device = { path = "gba/device" }
@@ -181,6 +189,7 @@ nerust_glwrap = { path = "render/glwrap" }
 nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
+nerust_frontend_kernel = { path = "gui/frontends/kernel" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_keyboard = { default-features = false, path = "keyboard" }
@@ -198,9 +207,10 @@ ab_glyph = { version = "=0.2.32" }
 cosmic-text = { version = "=0.19.0" }
 fontdb = { version = "=0.23.0" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
-nerust_render_traits = { path = "render/traits" }
+nerust_render_traits = { default-features = false, path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
 nerust_rom_test = { path = "gui/frontends/headless" }
+nerust_crash_guard = { path = "crash-guard" }
 nerust_rom_tool = { path = "gui/frontends/rom_tool" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_serialize = { path = "serialize" }
@@ -242,6 +252,7 @@ serde-saphyr = { version = "=2.0.0" }
 serde-value = { version = "=0.7.0" }
 serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.154" }
+base64 = { version = "=0.23.1" }
 sha2 = { version = "=0.11.1" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }

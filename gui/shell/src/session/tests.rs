@@ -1,31 +1,27 @@
 use std::sync::{Arc, atomic::Ordering::AcqRel};
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
-use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, SettingsApplyPlan, SettingsManager, SettingsSnapshot,
-};
-use nerust_gui_viewmodel::debugger::{PendingWrite, StatusMessage};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
+use nerust_gui_runtime::debugger::{PendingWrite, StatusMessage};
+use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsApplyPlan, SettingsSnapshot};
 use nerust_input_traits::{InputAssignments, InputSystemFactory};
 use nerust_settings_core::factory::settings_view;
 use nerust_settings_core::model::language::AppLanguage;
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
+};
 
 use super::test_util::*;
 use crate::test_helpers::*;
 use crate::{
-    load::{RomLoadTarget, SystemActivationError},
+    load::SystemActivationError,
     registry::SystemRegistry,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        commands::{SessionCommand, SessionCommandOutcome, SlotOpFailure},
+        commands::{SessionCommand, SessionCommandOutcome},
+        error::SlotOpFailure,
     },
 };
 
@@ -101,7 +97,7 @@ impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
 
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         // CLI parsing not exercised in this test path
         unreachable!()
     }
@@ -126,12 +122,12 @@ fn shortcut_key_returns_shortcut_action_without_controller_event() {
 fn system_load_options_flow_into_session_load() {
     let mut session = test_session();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(
             &test_view(&session),
             session
-                .factory()
+                .active_factory_cloned()
                 .expect("no active system")
                 .default_load_options(),
         )
@@ -147,7 +143,7 @@ fn system_load_options_flow_into_session_load() {
 fn session_commands_drive_pause_resume_toggle_and_reset() {
     let mut session = test_session();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .unwrap()
         .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
         .unwrap();
@@ -155,8 +151,8 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
 
-    assert!(session.can_pause());
-    assert!(!session.can_resume());
+    assert!(session.tick_metrics().can_pause());
+    assert!(!session.tick_metrics().can_resume());
     assert_eq!(
         session.run_command(SessionCommand::Pause).unwrap(),
         SessionCommandOutcome {
@@ -175,7 +171,7 @@ fn session_commands_drive_pause_resume_toggle_and_reset() {
             .unwrap()
             .executed
     );
-    assert!(session.can_pause());
+    assert!(session.tick_metrics().can_pause());
     assert!(session.run_command(SessionCommand::Reset).unwrap().executed);
 }
 
@@ -209,30 +205,32 @@ fn session_commands_report_missing_core_and_empty_slots() {
 fn session_rebuild_reuses_previously_resolved_load_request() {
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 
     let mut next = session.settings_snapshot().clone();
-    next.local.audio.latency_ms = 90;
+    next.shared.systems.insert(
+        Box::new(DummySystemId),
+        Box::new(nerust_nes_settings::NesSettings::default()),
+    );
     let plan = session.apply_settings(next).unwrap();
 
-    assert!(plan.session_rebuild_required);
-    assert!(session.loaded());
+    assert!(plan.visual_changed);
+    assert!(session.tick_metrics().loaded);
 }
 
-/// `MockFactory` delegate answering the presentation query.
-/// Direction-aware by entry presence (absent→present wide,
-/// present→absent narrow); pins the session's `(before, after)` order.
+/// `MockFactory` delegate answering the presentation query, direction-aware by entry presence.
+/// Pins the session's `(before, after)` order.
 struct LiveSwapFactory;
 impl CoreFactory for LiveSwapFactory {
     fn system_id(&self) -> Box<dyn SystemId> {
@@ -267,7 +265,7 @@ impl CoreFactory for LiveSwapFactory {
     }
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         MockFactory.load_options_schema()
     }
     fn create_core_and_adapter_with_assignments(
@@ -328,12 +326,12 @@ fn live_swap_session() -> SessionHandle {
         .set_active_system(factory.system_id().as_ref())
         .unwrap();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(
             &test_view(&session),
             session
-                .factory()
+                .active_factory_cloned()
                 .expect("no active system")
                 .default_load_options(),
         )
@@ -341,8 +339,50 @@ fn live_swap_session() -> SessionHandle {
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
     session
+}
+
+/// Loaded session with an unwritable settings file, built through the
+/// public constructor: every settings save fails, so rollback paths run.
+fn live_swap_session_with_failing_settings() -> (SessionHandle, std::path::PathBuf) {
+    use nerust_gui_runtime::settings::SettingsPaths;
+    let factory: Arc<dyn CoreFactory> = Arc::new(LiveSwapFactory);
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let registry = Arc::new(SystemRegistry::new(vec![factory.clone()]));
+    let dir = crate::test_helpers::unique_temp_dir("failing-swap-settings");
+    let blocker = dir.join("blocker");
+    std::fs::write(&blocker, b"not a dir").expect("blocker file should write");
+    let paths = SettingsPaths {
+        settings_file: blocker.join("settings.toml"),
+        central_storage_root: dir.join("storage"),
+    };
+    let mut session = SessionHandle::new_with_settings_paths(
+        test_capabilities(),
+        registry,
+        audio_registry,
+        paths,
+    )
+    .expect("construction falls back to ephemeral settings");
+    session
+        .set_active_system(factory.system_id().as_ref())
+        .unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .expect("no active system")
+        .resolve_load_request(
+            &test_view(&session),
+            session
+                .active_factory_cloned()
+                .expect("no active system")
+                .default_load_options(),
+        )
+        .unwrap();
+    session
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .unwrap();
+    assert!(session.tick_metrics().loaded);
+    (session, dir)
 }
 
 /// Visual delta used by the presentation-swap tests: the active
@@ -366,16 +406,13 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
 
     let creations = mock_core_creations();
     let plan = session.apply_settings(next).unwrap();
-    assert!(
-        plan.session_rebuild_required,
-        "visual delta still flags the plan"
-    );
+    assert!(plan.visual_changed, "visual delta still flags the plan");
     assert_eq!(
         mock_core_creations(),
         creations,
         "presentation swap must not reconstruct the core"
     );
-    assert!(session.loaded(), "swap keeps the loaded ROM");
+    assert!(session.tick_metrics().loaded, "swap keeps the loaded ROM");
     assert_eq!(
         session
             .render_profile()
@@ -389,23 +426,8 @@ fn apply_settings_swaps_presentation_without_rebuild_on_visual_delta() {
 
 #[test]
 fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
-    use crate::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use nerust_gui_runtime::settings::repository::FailingStore;
-
-    let mut session = live_swap_session();
+    let (mut session, dir) = live_swap_session_with_failing_settings();
     let next = with_visual_delta(&session);
-
-    // Replace settings manager with one using a FailingStore.
-    let registry = crate::registry::SystemRegistry::new(vec![]);
-    let shared = default_shared_settings(registry.all());
-    session.set_settings(SettingsManager::with_store(
-        shared,
-        default_local_settings(),
-        default_app_state(),
-        Box::new(FailingStore),
-    ));
 
     // Save fails after the swap: the error surfaces and the previous
     // assets swap back behind a fresh reply (narrow profile again).
@@ -431,7 +453,11 @@ fn apply_settings_rolls_back_presentation_swap_on_save_failure() {
             .contains_key(&DummySystemId as &dyn SystemId),
         "snapshot keeps the previous (absent) settings"
     );
-    assert!(session.loaded(), "rollback keeps the loaded ROM");
+    assert!(
+        session.tick_metrics().loaded,
+        "rollback keeps the loaded ROM"
+    );
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -439,7 +465,7 @@ fn apply_settings_skips_rebuild_when_assignments_unchanged() {
     let mut session = test_session();
     let snapshot = session.settings_snapshot().clone();
     let plan = session.apply_settings(snapshot).unwrap();
-    assert!(!plan.session_rebuild_required);
+    assert!(!plan.visual_changed);
 }
 
 #[test]
@@ -448,18 +474,18 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
 
     let mut session = test_session();
     let options = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .default_load_options();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), options)
         .unwrap();
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 
     let mut next = session.settings_snapshot().clone();
     next.local.audio.latency_ms = 90;
@@ -475,32 +501,19 @@ fn apply_settings_swaps_audio_without_rebuild_when_latency_changes() {
         creations,
         "live swap must not reconstruct the core"
     );
-    assert!(session.loaded(), "swap keeps the loaded ROM");
+    assert!(session.tick_metrics().loaded, "swap keeps the loaded ROM");
     assert_eq!(session.settings_snapshot().local.audio.latency_ms, 90);
 }
 
 #[test]
 fn apply_settings_rolls_back_on_save_failure() {
-    use crate::settings::defaults::seed::{
-        default_app_state, default_local_settings, default_shared_settings,
-    };
-    use nerust_gui_runtime::settings::repository::FailingStore;
+    use crate::session::test_util::test_session_with_failing_settings;
 
-    let mut session = test_session();
+    let (mut session, dir) = test_session_with_failing_settings();
     let original = session.settings_snapshot().clone();
-    let original_assignments = session.current_assignments().clone();
+    let original_assignments = session.input.current_assignments.clone();
     let mut modified = original.clone();
     modified.local.audio.latency_ms = 90;
-
-    // Replace settings manager with one using a FailingStore
-    let registry = crate::registry::SystemRegistry::new(vec![]);
-    let shared = default_shared_settings(registry.all());
-    session.set_settings(SettingsManager::with_store(
-        shared,
-        default_local_settings(),
-        default_app_state(),
-        Box::new(FailingStore),
-    ));
 
     // Save fails → rollback should restore core state
     let err = session.apply_settings(modified).unwrap_err();
@@ -518,26 +531,26 @@ fn apply_settings_rolls_back_on_save_failure() {
 
     // Assignments should be rolled back
     assert_eq!(
-        session.current_assignments().to_string_pairs(),
-        original_assignments.to_string_pairs(),
+        session.input.current_assignments, original_assignments,
         "assignments should be rolled back on save failure"
     );
 
     // Core should still be present (swap-back rollback succeeded without
     // reconstructing anything)
     assert!(
-        session.emu_core.is_some(),
+        session.emu.require_live().is_ok(),
         "core should be restored after rollback"
     );
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn apply_settings_rebuilds_when_assignments_change() {
     use crate::test_helpers::{TEST_SLOT_P1, mock_core_creations};
     let mut session = test_session();
-    let prev_pairs = session.current_assignments().to_string_pairs();
+    let prev_assignments = session.input.current_assignments.clone();
 
-    let sid = session.factory().unwrap().system_id();
+    let sid = session.active_factory_cloned().unwrap().system_id();
     let mut next = session.settings_snapshot().clone();
     next.app_state.controller_assignments.insert(
         sid,
@@ -555,17 +568,92 @@ fn apply_settings_rebuilds_when_assignments_change() {
         "reassignment still reconstructs the core"
     );
 
-    let new_pairs = session.current_assignments().to_string_pairs();
+    let new_assignments = session.input.current_assignments.clone();
     assert_ne!(
-        new_pairs, prev_pairs,
+        new_assignments, prev_assignments,
         "assignments should be updated after apply"
     );
     assert!(
-        new_pairs
+        new_assignments
+            .slots()
             .iter()
-            .any(|(slot, _)| slot == TEST_SLOT_P1.as_str()),
+            .any(|(slot, _)| slot.as_str() == TEST_SLOT_P1.as_str()),
         "new assignments should include the test slot"
     );
+}
+
+#[test]
+fn rebuild_replaces_peripherals_and_input_mapping_together() {
+    use nerust_core_traits::peripheral::accelerometer_channel;
+    use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId};
+
+    let mut session = test_session();
+    let (handle, port) = accelerometer_channel();
+    port.set_requested(true);
+    let old_field = (
+        AttachmentId::new("old.slot"),
+        ControlId::digital(DigitalControlId::new("old.control")),
+    );
+    let old = session.emu.runtime.as_mut().unwrap();
+    old.host_peripherals.accelerometer = Some(handle.clone());
+    let _ = old.field_map.insert(old_field, 99);
+    assert!(session.host_peripherals().accelerometer.is_some());
+
+    let next = with_visual_delta(&session);
+    session.apply_settings(next).unwrap();
+    assert!(session.host_peripherals().accelerometer.is_none());
+    assert!(!session.emu.field_map().unwrap().contains_key(&old_field));
+    // The retained old channel is independent of the newly installed runtime.
+    assert!(handle.demand().requested);
+}
+
+#[test]
+fn failed_rebuild_restores_input_peripherals_and_running_state() {
+    use nerust_core_traits::peripheral::{AccelerationSample, accelerometer_channel};
+    use nerust_input_traits::{AttachmentId, ControlId, DigitalControlId};
+
+    let (mut session, dir) = test_session_with_failing_settings();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(MediaObject::new(None, test_rom()), resolved)
+        .unwrap();
+    let before = session.settings_arc();
+    let (handle, port) = accelerometer_channel();
+    let old_field = (
+        AttachmentId::new("old.slot"),
+        ControlId::digital(DigitalControlId::new("old.control")),
+    );
+    let old = session.emu.runtime.as_mut().unwrap();
+    let input = old.input.as_ref() as *const dyn nerust_input_traits::GuiInputPort as *const ();
+    old.host_peripherals.accelerometer = Some(handle);
+    let _ = old.field_map.insert(old_field, 99);
+
+    let next = with_visual_delta(&session);
+    assert!(matches!(
+        session.apply_settings(next),
+        Err(SessionError::Settings(_))
+    ));
+    let restored = session.emu.runtime.as_ref().unwrap();
+    assert_eq!(
+        restored.input.as_ref() as *const dyn nerust_input_traits::GuiInputPort as *const (),
+        input
+    );
+    assert_eq!(session.emu.field_map().unwrap().get(&old_field), Some(&99));
+    let sample = AccelerationSample::new(1.0, 2.0);
+    session
+        .host_peripherals()
+        .accelerometer
+        .as_ref()
+        .unwrap()
+        .publish(sample);
+    assert_eq!(port.latest(), Some(sample));
+    assert!(Arc::ptr_eq(&before, &session.settings_arc()));
+    assert!(session.tick_metrics().loaded && !session.tick_metrics().paused);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -622,13 +710,11 @@ fn session_creation_falls_back_to_defaults_when_custom_settings_fail() {
             ("nes.attachment.player2".to_string(), None),
         ],
     );
-    session.set_settings_snapshot(snapshot);
-    RomLoadTarget::set_active_system(&mut session, system_id.as_ref())
+    session.apply_settings(snapshot).unwrap();
+    session
+        .set_active_system(system_id.as_ref())
         .expect("fallback core creation should succeed");
-    assert_eq!(
-        session.current_assignments().to_string_pairs(),
-        expected_assignments.to_string_pairs()
-    );
+    assert_eq!(session.input.current_assignments, expected_assignments);
 }
 
 #[test]
@@ -638,10 +724,17 @@ fn session_factory_uses_primary_initially() {
     let registry = Arc::new(SystemRegistry::new(vec![factory]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
-    assert!(session.factory().is_none());
-    RomLoadTarget::set_active_system(&mut session, id.as_ref())
+    assert!(session.active_factory_cloned().is_none());
+    session
+        .set_active_system(id.as_ref())
         .expect("test setup should succeed for known system");
-    assert_eq!(session.factory().expect("no active system").system_id(), id);
+    assert_eq!(
+        session
+            .active_factory_cloned()
+            .expect("no active system")
+            .system_id(),
+        id
+    );
 }
 
 #[test]
@@ -651,10 +744,10 @@ fn set_active_system_rejects_unknown_id() {
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-    let err = RomLoadTarget::set_active_system(&mut session, &DummyOtherSystemId).unwrap_err();
+    let err = session.set_active_system(&DummyOtherSystemId).unwrap_err();
     assert!(matches!(err, SystemActivationError::NotRegistered(_)));
     assert!(session.active_system_id().is_none());
-    assert!(session.factory().is_none());
+    assert!(session.active_factory_cloned().is_none());
 }
 
 #[test]
@@ -666,23 +759,336 @@ fn switching_system_discards_previous_loaded_runtime_state() {
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
     let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
 
-    RomLoadTarget::set_active_system(&mut session, first.system_id().as_ref()).unwrap();
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .unwrap()
         .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
         .unwrap();
     session
         .load_resolved(MediaObject::new(None, test_rom()), resolved)
         .unwrap();
-    assert!(session.loaded());
+    assert!(session.tick_metrics().loaded);
 
-    RomLoadTarget::set_active_system(&mut session, second_id.as_ref()).unwrap();
+    session.set_active_system(second_id.as_ref()).unwrap();
 
     assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
-    assert!(!session.loaded());
-    assert!(session.loaded_media_ref().is_none());
+    assert!(!session.tick_metrics().loaded);
+    assert!(!session.has_loaded_media());
     assert!(session.slots().is_empty());
+}
+
+/// A factory whose load always fails after a good detect, so the registry
+/// reaches resolve and the session must keep its live state.
+struct FailResolveFactory;
+
+impl CoreFactory for FailResolveFactory {
+    fn system_id(&self) -> Box<dyn SystemId> {
+        Box::new(DummyOtherSystemId)
+    }
+    fn display_name(&self) -> &'static str {
+        "Failing (test)"
+    }
+    fn create_core_and_adapter_with_assignments(
+        &self,
+        view: &FactorySettingsView,
+        speaker: Box<dyn AudioBackend>,
+        assignments: &InputAssignments,
+    ) -> Result<CoreParts, FactoryError> {
+        MockFactory.create_core_and_adapter_with_assignments(view, speaker, assignments)
+    }
+    fn probe_media(&self, _media: &MediaObject) -> bool {
+        true
+    }
+    fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+        MockFactory.settings_page(view)
+    }
+    fn apply_settings_choice(
+        &self,
+        view: &mut FactorySettingsView,
+        field: &SystemSettingsFieldId,
+        choice: &SystemSettingsChoiceId,
+    ) -> Result<(), FactoryError> {
+        MockFactory.apply_settings_choice(view, field, choice)
+    }
+    fn resolve_load_request(
+        &self,
+        _view: &FactorySettingsView,
+        _options: Box<dyn DynSystemLoadOptions>,
+    ) -> Result<ResolvedLoadRequest, FactoryError> {
+        Err(FactoryError::Resolve("simulated resolve failure".into()))
+    }
+    fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+        MockFactory.default_load_options()
+    }
+    fn input_system_factory(&self) -> &dyn InputSystemFactory {
+        MockFactory.input_system_factory()
+    }
+    fn load_options_schema(
+        &self,
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
+        MockFactory.load_options_schema()
+    }
+}
+
+/// A resolve failure after detect keeps the live system, core state, media,
+/// save targets, and slots.
+#[test]
+fn failed_resolve_after_detect_keeps_previous_runtime() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone()]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-keep");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    session.run_command(SessionCommand::SaveSlot(7)).unwrap();
+    assert!(session.tick_metrics().loaded);
+    assert_eq!(session.slots().len(), 1);
+    let first_id = first.system_id();
+
+    // A different system detects but never resolves: nothing may change.
+    let failing: Arc<dyn CoreFactory> = Arc::new(FailResolveFactory);
+    let loader_registry = Arc::new(SystemRegistry::new(vec![failing]));
+    let mut loader = loader_registry
+        .create_loader(std::collections::HashMap::new())
+        .unwrap();
+    let bad_path = rom_dir.join("unloadable.nes");
+    std::fs::write(&bad_path, test_rom()).unwrap();
+    let error = loader.load_rom(&bad_path, &mut session).unwrap_err();
+    assert!(matches!(error, crate::load::RomLoaderError::Resolve(_)));
+    assert_eq!(session.active_system_id(), Some(first_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(session.has_loaded_media());
+    assert_eq!(session.slots().len(), 1);
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
+/// A load failure after a cross-system switch restores the previous runtime
+/// instead of stranding the new empty core.
+#[test]
+fn failed_load_after_switch_restores_previous_runtime() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let second: Arc<dyn CoreFactory> = Arc::new(AlternateMockFactory);
+    let second_id = second.system_id();
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone(), second]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-restore");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    session.run_command(SessionCommand::SaveSlot(7)).unwrap();
+    assert!(session.tick_metrics().loaded);
+    let first_id = first.system_id();
+
+    session.set_active_system(second_id.as_ref()).unwrap();
+    assert!(!session.tick_metrics().loaded);
+    // The outgoing running core is frozen across the switch: no battery RAM update
+    // slips past the pre-switch flush.
+    assert!(
+        session
+            .pre_switch
+            .as_ref()
+            .is_some_and(|stashed| stashed.was_running)
+    );
+
+    // An unloadable ROM fails the staged load: the old system comes back.
+    let retry = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    let error = session
+        .load_resolved(MediaObject::new(None, vec![]), retry)
+        .unwrap_err();
+    assert!(
+        matches!(error, SessionError::Operation(_)),
+        "empty ROM fails the staged load: {error:?}"
+    );
+    assert_eq!(session.active_system_id(), Some(first_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(!session.tick_metrics().paused);
+    assert!(session.has_loaded_media());
+    assert_eq!(session.slots().len(), 1);
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
+/// A successful switch consumes the rollback: a later load failure keeps the new
+/// system instead of resurrecting the old one.
+#[test]
+fn successful_switch_consumes_rollback() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let second: Arc<dyn CoreFactory> = Arc::new(AlternateMockFactory);
+    let second_id = second.system_id();
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone(), second]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-consume");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+
+    session.set_active_system(second_id.as_ref()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+
+    // No snapshot left: this failure keeps the new system live.
+    let retry = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    let error = session
+        .load_resolved(MediaObject::new(None, vec![]), retry)
+        .unwrap_err();
+    assert!(
+        matches!(error, SessionError::Operation(_)),
+        "empty ROM fails the staged load: {error:?}"
+    );
+    assert_eq!(session.active_system_id(), Some(second_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(session.has_loaded_media());
+    let _ = std::fs::remove_dir_all(rom_dir);
+}
+
+/// A create failure during activation keeps the live runtime.
+#[test]
+fn failed_activation_keeps_live_runtime() {
+    let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone()]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    session
+        .set_active_system(first.system_id().as_ref())
+        .unwrap();
+    let rom_dir = unique_temp_dir("nerust-rollback-activate");
+    std::fs::write(rom_dir.join("game.nes"), test_rom()).unwrap();
+    let resolved = session
+        .active_factory_cloned()
+        .unwrap()
+        .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
+        .unwrap();
+    session
+        .load_resolved(
+            MediaObject::new(Some(rom_dir.join("game.nes")), test_rom()),
+            resolved,
+        )
+        .unwrap();
+    assert!(session.tick_metrics().loaded);
+    let first_id = first.system_id();
+
+    struct AlwaysFail;
+    impl CoreFactory for AlwaysFail {
+        fn system_id(&self) -> Box<dyn SystemId> {
+            Box::new(DummyOtherSystemId)
+        }
+        fn display_name(&self) -> &'static str {
+            "Always failing (test)"
+        }
+        fn create_core_and_adapter_with_assignments(
+            &self,
+            _view: &FactorySettingsView,
+            _speaker: Box<dyn AudioBackend>,
+            _assignments: &InputAssignments,
+        ) -> Result<CoreParts, FactoryError> {
+            Err(FactoryError::Create("simulated failure".into()))
+        }
+        fn probe_media(&self, _media: &MediaObject) -> bool {
+            true
+        }
+        fn settings_page(&self, view: &FactorySettingsView) -> SystemSettingsPageModel {
+            MockFactory.settings_page(view)
+        }
+        fn apply_settings_choice(
+            &self,
+            view: &mut FactorySettingsView,
+            field: &SystemSettingsFieldId,
+            choice: &SystemSettingsChoiceId,
+        ) -> Result<(), FactoryError> {
+            MockFactory.apply_settings_choice(view, field, choice)
+        }
+        fn resolve_load_request(
+            &self,
+            _view: &FactorySettingsView,
+            _options: Box<dyn DynSystemLoadOptions>,
+        ) -> Result<ResolvedLoadRequest, FactoryError> {
+            unreachable!("activation fails before resolve")
+        }
+        fn default_load_options(&self) -> Box<dyn DynSystemLoadOptions> {
+            MockFactory.default_load_options()
+        }
+        fn input_system_factory(&self) -> &dyn InputSystemFactory {
+            MockFactory.input_system_factory()
+        }
+        fn load_options_schema(
+            &self,
+        ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
+            MockFactory.load_options_schema()
+        }
+    }
+    let always_fail: Arc<dyn CoreFactory> = Arc::new(AlwaysFail);
+    let registry = Arc::new(SystemRegistry::new(vec![first.clone(), always_fail]));
+    session.registry = registry;
+    let error = session.set_active_system(&DummyOtherSystemId).unwrap_err();
+    assert!(matches!(
+        error,
+        crate::load::SystemActivationError::ActivationFailed { .. }
+    ));
+    assert_eq!(session.active_system_id(), Some(first_id.as_ref()));
+    assert!(session.tick_metrics().loaded);
+    assert!(session.has_loaded_media());
+    let _ = std::fs::remove_dir_all(rom_dir);
 }
 
 fn test_capabilities() -> HostBackendCapabilities {
@@ -730,9 +1136,9 @@ fn debug_snapshot_without_core_is_unavailable() {
     let session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
     // No core: paused reads as true (nothing runs), spaces are empty,
     // and the snapshot carries degenerates only.
-    assert!(session.debug_paused());
+    assert!(session.debug_snapshot_ready());
     assert!(session.debug_spaces().is_empty());
-    let snapshot = session.debug_snapshot(None, 0, None, false, None);
+    let snapshot = session.debug_snapshot(None, 0, None, crate::debug::ImageNeed::Skip, None);
     assert!(!snapshot.available);
     assert!(snapshot.dump_rows.is_empty());
     assert!(snapshot.disasm_lines.is_empty());
@@ -774,6 +1180,7 @@ fn debug_write_transaction_without_core() {
 
 #[test]
 fn debug_traffic_kill_flows_through_session() {
+    use crate::debug::TrafficKind;
     use nerust_core_traits::debugger::SpaceId;
     let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
     let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
@@ -781,10 +1188,10 @@ fn debug_traffic_kill_flows_through_session() {
     session.debug_prepare_write(SpaceId(0), 0x10);
     session.debug_stage_write(0x42);
     // Non-state-changing traffic keeps the staged value.
-    session.debug_note_traffic(false);
+    session.debug_note_traffic(TrafficKind::Transactional);
     assert!(session.debug_pending_text().is_some());
     // State-changing traffic kills it.
-    session.debug_note_traffic(true);
+    session.debug_note_traffic(TrafficKind::StateChanging);
     assert_eq!(session.debug_pending_text(), None);
     // Explicit cancel clears too.
     session.debug_prepare_write(SpaceId(0), 0x10);
@@ -937,7 +1344,7 @@ fn debug_write_byte_without_core_is_silent() {
 fn loaded_debug_session() -> SessionHandle {
     let mut session = test_session();
     let resolved = session
-        .factory()
+        .active_factory_cloned()
         .expect("no active system")
         .resolve_load_request(&test_view(&session), NoopSystemLoadOptions.into())
         .expect("load resolves");
@@ -949,7 +1356,7 @@ fn loaded_debug_session() -> SessionHandle {
     session
         .run_command(SessionCommand::Pause)
         .expect("debug sessions start paused");
-    assert!(session.debug_paused());
+    assert!(session.debug_snapshot_ready());
     session
 }
 
@@ -972,7 +1379,13 @@ fn drain_input() -> crate::debug::DebugDrainInput<'static> {
 fn debug_snapshot_covers_loaded_mock_core() {
     use nerust_core_traits::debugger::SpaceId;
     let session = loaded_debug_session();
-    let snapshot = session.debug_snapshot(Some(SpaceId(0)), 0, None, true, Some(0x10));
+    let snapshot = session.debug_snapshot(
+        Some(SpaceId(0)),
+        0,
+        None,
+        crate::debug::ImageNeed::Fetch,
+        Some(0x10),
+    );
     assert!(snapshot.available);
     assert_eq!(snapshot.reg_names, vec!["a", "b"]);
     assert_eq!(snapshot.regs.len(), 2);
@@ -996,11 +1409,18 @@ fn debug_live_images_follow_running_without_snapshot() {
     // Paused baseline carries dump rows.
     let paused = session.debug_drain(&[DebugAction::Refresh], &input);
     assert!(!paused.display.dump_rows.is_empty());
-    assert!(session.debug_live_images(false).is_none());
-    let paused_live = session.debug_live_images(true);
-    let paused_gen = paused_live.as_ref().expect("paused fetch serves").0;
+    assert!(
+        crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Skip)
+            .is_none()
+    );
+    let paused_live =
+        crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Fetch);
+    let paused_gen = paused_live
+        .as_ref()
+        .expect("paused fetch serves")
+        .generation;
     assert_eq!(
-        paused_live.map(|(_, images)| images.len()),
+        paused_live.map(|batch| batch.images.len()),
         Some(1),
         "paused baseline converts the decode"
     );
@@ -1013,19 +1433,20 @@ fn debug_live_images_follow_running_without_snapshot() {
         running.display.dump_rows.is_empty(),
         "inspect refuses while running"
     );
-    // ...but the live images path still flows, so the PPU follow
-    // never needs (or blanks) the snapshot sections. Identical
-    // content reports the served generation with no payload (the
-    // content-hash skip): same pixels, same generation, zero UI work.
-    let live = session.debug_live_images(true);
-    let (running_gen, running_images) = live.expect("running fetch serves");
+    // The live images path still flows here, so the PPU follow needs no snapshot sections.
+    // Identical content reports the served generation with the held images.
+    let live =
+        crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Fetch);
+    let batch = live.expect("running fetch serves");
+    let (running_gen, running_images) = (batch.generation, batch.images);
     assert_eq!(
         running_gen, paused_gen,
         "static tiles keep one generation while running"
     );
-    assert!(
-        running_images.is_empty(),
-        "identical refetch skips the RGBA conversion"
+    assert_eq!(
+        running_images.len(),
+        1,
+        "identical refetch carries the held images"
     );
     session.debug_drain(&[DebugAction::Pause], &input);
 }
@@ -1042,9 +1463,7 @@ fn debug_drain_happy_path_reports_success() {
         "pause round-trips status"
     );
     let stepped = session.debug_drain(&[DebugAction::StepFrame], &input);
-    // Frame steps report the barrier frame counter (free-run may
-    // precede the pause), so only the variant is pinned; wording is
-    // the frontend's job (covered in the viewmodel render test).
+    // Frame steps report the barrier frame counter, so only the variant is pinned here.
     assert!(matches!(stepped.display.status, StatusMessage::Stepped(_)));
     // Memory write round-trips through the thread: stage, commit,
     // then read back the staged byte.
@@ -1120,7 +1539,7 @@ fn debug_drain_happy_path_reports_success() {
         Some(nerust_core_traits::debugger::SpaceId(0)),
         0,
         None,
-        false,
+        crate::debug::ImageNeed::Skip,
         None,
     );
     assert_eq!(after.regs[0], ("a", 7));
@@ -1210,9 +1629,7 @@ fn drain_flight_no_core_completes_on_first_poll() {
         prev_dump_rows: &[],
         need_images: false,
     };
-    // No thread crossings exist without a core: every phase resolves
-    // locally, so one poll finishes (widget tests rely on this to
-    // keep `act` synchronous in the coreless harness).
+    // No thread crossings exist without a core: every phase resolves locally.
     let mut flight = session.debug_drain_begin(&[DebugAction::Pause, DebugAction::Refresh], &input);
     let DrainPoll::Done(output) = flight.poll() else {
         panic!("coreless flight must complete on the first poll");
@@ -1238,7 +1655,7 @@ fn live_images_flight_completes_and_resolves_locally() {
             }
         }
     };
-    assert!(live.is_some_and(|(_, images)| images.len() == 1));
+    assert!(live.is_some_and(|batch| batch.images.len() == 1));
     // Not requested: the first poll resolves without crossings.
     let mut idle = session.debug_live_images_begin(false);
     assert!(matches!(idle.poll(), LiveImagesPoll::Done(None)));
@@ -1255,21 +1672,18 @@ fn live_images_flight_completes_and_resolves_locally() {
 fn live_images_flight_refetches_while_running() {
     use crate::debug::LiveImagesPoll;
     use std::time::{Duration, Instant};
-    // Regression: consecutive begins on a running core must refetch,
-    // not serve the first stored decode forever (live-freeze). The
-    // mock tiles never change, so the refetch collapses to the served
-    // generation with an empty payload — while the stale-cache bug
-    // would serve one converted image at the same generation.
+    // Regression: consecutive begins on a running core must refetch, not serve the first decode.
+    // The mock tiles never change, so the refetch collapses to the served generation.
     let session = loaded_debug_session();
     session.debug_resume();
-    assert!(!session.debug_paused());
+    assert!(!session.debug_snapshot_ready());
     fn fetch(session: &SessionHandle) -> (u64, usize) {
         let mut flight = session.debug_live_images_begin(true);
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match flight.poll() {
                 LiveImagesPoll::Done(live) => {
-                    break live.map(|(generation, images)| (generation, images.len()));
+                    break live.map(|batch| (batch.generation, batch.images.len()));
                 }
                 LiveImagesPoll::Pending => {
                     assert!(Instant::now() < deadline, "flight always terminates");
@@ -1287,8 +1701,243 @@ fn live_images_flight_refetches_while_running() {
         "static tiles keep one generation while running"
     );
     assert_eq!(
-        second_len, 0,
-        "second begin refetches (identical collapse) instead of serving the stale cache"
+        second_len, 1,
+        "identical refetch carries the held images instead of empty"
     );
     session.debug_pause();
+}
+
+/// Empty queue: the pump skips drain/channel work, reports clean,
+/// and leaves no rows or modal batches behind.
+#[test]
+fn pump_osd_empty_queue_reports_clean() {
+    use std::time::Instant;
+
+    use crate::session::osd::{OsdManager, PushInput, TransientPolicy};
+
+    let mut session = test_session();
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
+    let input = || PushInput {
+        policy: TransientPolicy::from(&snapshot.local.notifications),
+        language: AppLanguage::English,
+        now: Instant::now(),
+        tick,
+    };
+    // test_session activates a system but loads no ROM: unpresented.
+    assert!(!session.tick_metrics().loaded);
+    let report = session.pump_osd(&mut manager, input());
+    assert!(!report.changed);
+    assert!(!report.modal_queued);
+    assert!(manager.rows().is_empty());
+    assert_eq!(manager.modal_pending(), 0);
+    // Repeat: still clean, no accumulation.
+    let report = session.pump_osd(&mut manager, input());
+    assert!(!report.changed);
+    assert!(!report.modal_queued);
+}
+
+/// No-ROM command failure (Error) still reaches the modal through
+/// the pump: the desktop T7 behavior.
+#[test]
+fn pump_osd_routes_no_core_error_to_modal() {
+    use std::time::Instant;
+
+    use crate::session::osd::{OsdManager, PushInput, TransientPolicy};
+
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
+    // No core at all: Pause fails and pushes CommandFailed (Error).
+    let outcome = session.run_command(SessionCommand::Pause);
+    assert!(outcome.is_err());
+    let report = session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: TransientPolicy::from(&snapshot.local.notifications),
+            language: AppLanguage::English,
+            now: Instant::now(),
+            tick,
+        },
+    );
+    assert!(report.modal_queued);
+    let batch = manager.take_modal_batch().expect("error modal batch");
+    assert!(batch.contains("Pause"));
+    manager.modal_closed();
+}
+
+#[test]
+fn delete_slot_without_core_reports_not_executed() {
+    // No core ran anything: the outcome must not claim a deletion.
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    let outcome = session
+        .run_command(SessionCommand::DeleteSlot(1))
+        .expect("delete reports an outcome");
+    assert!(!outcome.executed);
+    assert_eq!(outcome.slot_failure, Some(SlotOpFailure::Empty));
+}
+
+#[test]
+fn report_external_error_truncates_and_labels_source() {
+    use crate::session::notification::{FailureOrigin, MAX_EXTERNAL_DETAIL};
+
+    let mut session = test_session();
+    let long = "x".repeat(MAX_EXTERNAL_DETAIL + 100);
+    session.report_external_error(FailureOrigin::Host, long);
+    let notes = session.drain_notifications();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].message.origin, Some(FailureOrigin::Host));
+    assert_eq!(notes[0].message.detail.len(), MAX_EXTERNAL_DETAIL);
+    assert_eq!(
+        notes[0].level,
+        crate::session::notification::NotificationLevel::Error
+    );
+}
+
+/// Info without a composited frame is dropped by the pump: no generation
+/// bump, no rows, no modal. Warnings still reach the modal.
+#[test]
+fn pump_osd_drops_info_without_frame() {
+    use std::time::Instant;
+
+    use crate::session::{
+        notification::Message,
+        osd::{OsdManager, PushInput, TransientPolicy},
+    };
+
+    let registry = Arc::new(SystemRegistry::new(vec![Arc::new(MockFactory)]));
+    let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+    let mut session = SessionHandle::new_ephemeral(test_capabilities(), registry, audio_registry);
+    assert!(!session.tick_metrics().loaded);
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
+    let input = || PushInput {
+        policy: TransientPolicy::from(&snapshot.local.notifications),
+        language: AppLanguage::English,
+        now: Instant::now(),
+        tick,
+    };
+    session.notifications.push(Message::paused());
+    let report = session.pump_osd(&mut manager, input());
+    assert!(!report.changed);
+    assert!(!report.modal_queued);
+    assert!(manager.rows().is_empty());
+    assert_eq!(manager.modal_pending(), 0);
+    session
+        .notifications
+        .push(Message::persistence_unavailable());
+    let report = session.pump_osd(&mut manager, input());
+    assert!(report.modal_queued);
+    assert_eq!(manager.modal_pending(), 1);
+}
+
+/// Cached frame data (title, history rows, touch overlay) rebuilds only on key change.
+#[test]
+fn cached_frame_data_rebuilds_only_on_key_change() {
+    use crate::session::notification::Message;
+
+    let mut session = test_session();
+    let tick = session.tick_metrics();
+    // Title cache: same tick serves the stored string.
+    let first = session.window_title_cached(&tick).to_string();
+    assert_eq!(session.window_title_cached(&tick), first);
+    assert_eq!(first, session.window_title(&tick));
+    // History cache: same seq and language reuses the stored rows.
+    session.notifications.push(Message::paused());
+    let rows = session.notification_history_lines_cached(AppLanguage::English);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].text, "Paused");
+    let again = session.notification_history_lines_cached(AppLanguage::English);
+    assert_eq!(again.len(), 1);
+    // Narrow settings adapters read the snapshot without the manager.
+    let chrome = session.chrome();
+    assert_eq!(
+        chrome,
+        crate::session::osd::OsdChrome::from(&session.settings_snapshot().local.notifications)
+    );
+    let policy = session.transient_policy();
+    assert_eq!(
+        policy.error_modal,
+        session.settings_snapshot().local.notifications.error_modal
+    );
+    // Touch cache: same revision reuses the stored model.
+    let model = session.touch_overlay_model_cached(7).clone();
+    assert_eq!(session.touch_overlay_model_cached(7).revision, 7);
+    assert_eq!(session.touch_overlay_model(7), model);
+    let changed = session.touch_overlay_model_cached(8);
+    assert_eq!(changed.revision, 8);
+}
+
+/// The tao/gtk `String` take path redelivers structured batches under new settings.
+/// A requeued taken batch re-renders in the new language; a disabled level suppresses it.
+#[test]
+fn taken_string_batch_requeued_applies_new_language_and_level_filter() {
+    use crate::session::notification::Message;
+    use crate::session::osd::{OsdManager, PushInput, TransientPolicy};
+    use std::time::Instant;
+
+    let mut session = test_session();
+    let mut manager = OsdManager::new();
+    let snapshot = session.settings_snapshot().clone();
+    let tick = session.tick_metrics();
+    assert!(
+        !tick.loaded,
+        "test session loads no ROM: unpresented channel"
+    );
+    let now = Instant::now();
+    // Warning over the unpresented channel routes to modal as a structured batch.
+    session
+        .notifications
+        .push(Message::persistence_unavailable());
+    let report = session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: TransientPolicy::from(&snapshot.local.notifications),
+            language: AppLanguage::English,
+            now,
+            tick,
+        },
+    );
+    assert!(report.modal_queued);
+    let first = manager
+        .take_modal_batch()
+        .expect("structured batch as String");
+    assert!(first.contains("Saves unavailable"), "{first}");
+    // Interrupt before ack: the structured batch goes back, not text.
+    assert!(manager.modal_queue().requeue_showing());
+    // New settings: Japanese, warnings still on. Redelivery translates.
+    session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: TransientPolicy::from(&snapshot.local.notifications),
+            language: AppLanguage::Japanese,
+            now,
+            tick,
+        },
+    );
+    let second = manager.take_modal_batch().expect("redelivery");
+    assert!(second.contains("保存機能が利用できません"), "{second}");
+    // New settings: Japanese, warnings off. Redelivery is suppressed.
+    manager.modal_queue().requeue_showing();
+    let off = TransientPolicy {
+        warning_enabled: false,
+        ..TransientPolicy::from(&snapshot.local.notifications)
+    };
+    session.pump_osd(
+        &mut manager,
+        PushInput {
+            policy: off,
+            language: AppLanguage::Japanese,
+            now,
+            tick,
+        },
+    );
+    assert_eq!(manager.take_modal_batch(), None);
 }

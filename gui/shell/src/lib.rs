@@ -1,12 +1,12 @@
 pub mod context;
 pub mod debug;
 pub mod emu_core;
-pub mod keyboard_defaults;
+pub(crate) mod keyboard_defaults;
 pub mod load;
 pub mod registry;
 pub mod session;
 pub mod settings;
-pub mod state;
+pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 

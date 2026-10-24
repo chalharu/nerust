@@ -1,6 +1,6 @@
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, ControlInfo, ControlKind, Controller, ControllerProfile,
-    DigitalControlId, OpenBusReadResult, Port, PortSet, ProfileId,
+    AbstractKey, AttachmentId, ControlId, ControlInfo, ControlKind, Controller, ControllerProfile,
+    DigitalControlId, FieldEntry, OpenBusReadResult, Port, PortSet, ProfileId, StrobeTarget,
 };
 
 /// NES Standard Controller: full 8-button pad for a single port.
@@ -9,9 +9,8 @@ pub struct StandardPad {
     pub(crate) cached: [u8; 2],
     pub(crate) result: [u8; 2],
     pub(crate) strobe: bool,
-    /// Open bus mask for this port
-    /// NES-001 & NES-004: 0x1F
-    /// NES-101 & NES-039: 0x1B,0x1F (D2: OpenBus)
+    /// Open bus mask for this port: 0x1F (NES-001/004),
+    /// 0x1B or 0x1F by D2 line (NES-101/039).
     open_bus_mask: u8,
 }
 
@@ -29,11 +28,25 @@ impl StandardPad {
         self.result = [0; 2];
         self.strobe = false;
     }
+
+    fn apply_strobe(&mut self, value: u8) {
+        let new_strobe = value & 1 == 1;
+        if self.strobe && !new_strobe {
+            self.result = self.cached;
+        }
+        self.strobe = new_strobe;
+    }
 }
 
 impl Default for StandardPad {
     fn default() -> Self {
         Self::new(0x1F)
+    }
+}
+
+impl StrobeTarget for StandardPad {
+    fn strobe(&mut self, value: u8) {
+        self.apply_strobe(value);
     }
 }
 
@@ -55,46 +68,60 @@ impl Controller for StandardPad {
         OpenBusReadResult::new(bit, self.open_bus_mask)
     }
     fn write(&mut self, _port: &dyn Port, value: u8) {
-        let new_strobe = value & 1 == 1;
-        if self.strobe && !new_strobe {
-            self.result = self.cached;
-        }
-        self.strobe = new_strobe;
+        self.apply_strobe(value);
     }
-    fn field_map(&self, port: &dyn Port) -> Vec<(AttachmentId, DigitalControlId, usize)> {
-        let attachment = port.as_attachment_id();
+    fn field_entries(&self, port: &dyn Port) -> Vec<FieldEntry> {
+        let attachment = port.attachment_id();
         let base = port.index() * 8;
         vec![
-            (attachment, DigitalControlId::new("nes.control.a"), base),
-            (attachment, DigitalControlId::new("nes.control.b"), base + 1),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.select"),
+                ControlId::from(nerust_input_traits::DigitalControlId::new("nes.control.a")),
+                base,
+            ),
+            FieldEntry::new(
+                attachment,
+                ControlId::from(nerust_input_traits::DigitalControlId::new("nes.control.b")),
+                base + 1,
+            ),
+            FieldEntry::new(
+                attachment,
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.select",
+                )),
                 base + 2,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.start"),
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.start",
+                )),
                 base + 3,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.up"),
+                ControlId::from(nerust_input_traits::DigitalControlId::new("nes.control.up")),
                 base + 4,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.down"),
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.down",
+                )),
                 base + 5,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.left"),
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.left",
+                )),
                 base + 6,
             ),
-            (
+            FieldEntry::new(
                 attachment,
-                DigitalControlId::new("nes.control.right"),
+                ControlId::from(nerust_input_traits::DigitalControlId::new(
+                    "nes.control.right",
+                )),
                 base + 7,
             ),
         ]
@@ -121,49 +148,49 @@ impl ControllerProfile for StandardPadProfile {
         use ControlKind::*;
         const C: &[ControlInfo] = &[
             ControlInfo {
-                id: DigitalControlId::new("nes.control.a"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.a")),
                 label: "A",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button1),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.b"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.b")),
                 label: "B",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Button2),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.select"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.select")),
                 label: "Select",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Select),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.start"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.start")),
                 label: "Start",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::Start),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.up"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.up")),
                 label: "Up",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadUp),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.down"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.down")),
                 label: "Down",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadDown),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.left"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.left")),
                 label: "Left",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadLeft),
             },
             ControlInfo {
-                id: DigitalControlId::new("nes.control.right"),
+                id: ControlId::digital(DigitalControlId::new("nes.control.right")),
                 label: "Right",
                 kind: Digital,
                 abstract_key: Some(AbstractKey::DpadRight),
@@ -236,8 +263,8 @@ mod tests {
     #[test]
     fn field_map_covers_eight_buttons_in_order() {
         let pad = StandardPad::default();
-        let map = pad.field_map(&player1());
-        let ids: Vec<&str> = map.iter().map(|(_, id, _)| id.as_str()).collect();
+        let map = pad.field_entries(&player1());
+        let ids: Vec<&str> = map.iter().map(|entry| entry.control.as_str()).collect();
         assert_eq!(
             ids,
             [
@@ -251,7 +278,7 @@ mod tests {
                 "nes.control.right",
             ]
         );
-        let offsets: Vec<usize> = map.iter().map(|(_, _, bit)| *bit).collect();
+        let offsets: Vec<usize> = map.iter().map(|entry| entry.field).collect();
         assert_eq!(offsets, [0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
@@ -263,5 +290,18 @@ mod tests {
         assert_eq!(profile.port_sets().len(), 2);
         assert_eq!(profile.port_groups().len(), 1);
         assert_eq!(profile.port_groups()[0].len(), 8);
+    }
+
+    #[test]
+    fn strobe_target_trait_latches_like_write() {
+        use nerust_input_traits::StrobeTarget;
+        let mut pad = StandardPad::new(0x1B);
+        pad.sync_input(&[0b0000_0001, 0]);
+        let port = player1();
+        StrobeTarget::strobe(&mut pad, 1);
+        assert_eq!(pad.read(&port).data & 1, 1);
+        assert_eq!(pad.read(&port).mask, 0x1B);
+        StrobeTarget::strobe(&mut pad, 0);
+        assert_eq!(pad.read(&port).data & 1, 1);
     }
 }

@@ -1,20 +1,16 @@
-//! Debugger and PPU-viewer window state: aux handles, positions,
-//! open-request flags, and the live-follow throttle. `HostState`
-//! orchestrates; this struct owns.
+//! Debugger and PPU-viewer window state: positions, open flags, throttle.
+//! Handles live in the aux registry; `HostState` orchestrates.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
-use tao::window::WindowId;
-
-/// Live PPU cadence while the core runs: the viewer follows the
-/// running picture instead of freezing on the open-time frame.
-/// Ticks are images-only empty batches (never kill staged
-/// transactions).
+/// Live PPU cadence while the core runs: images-only ticks, never full drains.
 pub(super) const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(super) struct DebugWindows {
-    pub(super) debug_window: Option<crate::aux::debug::DebugWindowHandle>,
-    pub(super) ppu_window: Option<crate::aux::ppu::PpuWindowHandle>,
     debug_open_requested: bool,
     ppu_open_requested: bool,
     debug_window_pos: Option<(i32, i32)>,
@@ -23,32 +19,45 @@ pub(super) struct DebugWindows {
     /// Pause state at the last completed debug drain, for focus
     /// coalescing. `None` before the first drain.
     last_drain_paused: Option<bool>,
+    /// Live-tick interest: set every pass; the tick thread parks when clear.
+    live_wanted: Arc<AtomicBool>,
+    /// Parked tick thread: set once, read lock-free on every arm.
+    tick_thread: std::sync::OnceLock<std::thread::Thread>,
 }
 
 impl DebugWindows {
     pub(crate) fn new() -> Self {
         Self {
-            debug_window: None,
-            ppu_window: None,
             debug_open_requested: false,
             ppu_open_requested: false,
             debug_window_pos: None,
             ppu_window_pos: None,
             last_ppu_live: None,
             last_drain_paused: None,
+            live_wanted: Arc::new(AtomicBool::new(false)),
+            tick_thread: std::sync::OnceLock::new(),
         }
     }
 
-    pub(crate) fn is_debug_window(&self, window_id: WindowId) -> bool {
-        self.debug_window
-            .as_ref()
-            .is_some_and(|h| h.shell.window.id() == window_id)
+    /// Live-tick interest handle for the tick thread (parks when clear).
+    pub(super) fn live_armed(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.live_wanted)
     }
 
-    pub(crate) fn is_ppu_window(&self, window_id: WindowId) -> bool {
-        self.ppu_window
-            .as_ref()
-            .is_some_and(|h| h.shell.window.id() == window_id)
+    /// Register the parked tick thread for arm wakeups (first wins).
+    pub(super) fn register_tick_thread(&self, thread: std::thread::Thread) {
+        let _ = self.tick_thread.set(thread);
+    }
+
+    /// Record live-tick interest: lock-free arm/unpark, park on clear.
+    pub(super) fn set_live_wanted(&self, wanted: bool) {
+        let was = self.live_wanted.swap(wanted, Ordering::Release);
+        if wanted
+            && !was
+            && let Some(thread) = self.tick_thread.get()
+        {
+            thread.unpark();
+        }
     }
 
     pub(crate) fn request_debug_open(&mut self) {
@@ -75,19 +84,6 @@ impl DebugWindows {
         self.last_drain_paused = Some(paused);
     }
 
-    /// Drain one batch from the debugger window: queued requests plus
-    /// the toolbar PPU-open flag. `None` with no debugger open.
-    pub(super) fn take_debug_batch(
-        &mut self,
-    ) -> Option<(bool, Vec<nerust_gui_shell::debug::DebugAction>)> {
-        let handle = self.debug_window.as_ref()?;
-        let open = handle
-            .bridge
-            .open_ppu
-            .swap(false, std::sync::atomic::Ordering::SeqCst);
-        Some((open, handle.take_requests()))
-    }
-
     pub(crate) fn debug_window_pos(&self) -> Option<(i32, i32)> {
         self.debug_window_pos
     }
@@ -104,14 +100,7 @@ impl DebugWindows {
         self.ppu_window_pos = Some((x, y));
     }
 
-    pub(crate) fn close_all(&mut self) {
-        self.debug_window.take();
-        self.ppu_window.take();
-    }
-
-    /// Throttle gate for the live follow: true at most once per
-    /// [`PPU_LIVE_INTERVAL`], recording the stamp. Pure state, no
-    /// session involved, so the cadence is unit-testable.
+    /// Throttle gate for the live follow: true at most once per [`PPU_LIVE_INTERVAL`].
     pub(crate) fn live_due(&mut self, now: Instant) -> bool {
         if self
             .last_ppu_live
@@ -128,37 +117,7 @@ impl DebugWindows {
     pub(crate) fn next_live_tick(&self) -> Option<Instant> {
         self.last_ppu_live.map(|last| last + PPU_LIVE_INTERVAL)
     }
-
-    /// Drop a dead handle (external destroy without CloseRequested):
-    /// a stale handle must not linger and block reopening.
-    pub(super) fn drop_debug_window(&mut self) {
-        self.debug_window.take();
-    }
-
-    /// Same guard for the PPU viewer.
-    pub(super) fn drop_ppu_window(&mut self) {
-        self.ppu_window.take();
-    }
-
-    /// Close-request flag raised by the debugger window itself.
-    pub(super) fn debug_close_requested(&self) -> bool {
-        self.debug_window.as_ref().is_some_and(|h| {
-            h.shell
-                .should_close
-                .load(std::sync::atomic::Ordering::Acquire)
-        })
-    }
-
-    /// Same flag for the PPU viewer.
-    pub(super) fn ppu_close_requested(&self) -> bool {
-        self.ppu_window.as_ref().is_some_and(|h| {
-            h.shell
-                .should_close
-                .load(std::sync::atomic::Ordering::Acquire)
-        })
-    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,17 +133,6 @@ mod tests {
         assert!(windows.take_ppu_open_request());
         assert!(!windows.take_debug_open_request());
         assert!(!windows.take_ppu_open_request());
-    }
-
-    #[test]
-    fn close_all_clears_without_windows() {
-        // Headless: no windows open, so this only proves the call
-        // is total and keeps the rest of the state intact.
-        let mut windows = DebugWindows::new();
-        windows.remember_debug_window_pos(1, 2);
-        windows.close_all();
-        assert_eq!(windows.debug_window_pos(), Some((1, 2)));
-        assert!(!windows.take_debug_open_request());
     }
 
     #[test]
@@ -211,13 +159,28 @@ mod tests {
     }
 
     #[test]
-    fn drop_and_close_flags_total_on_empty() {
-        // Headless: no windows open; drops are no-ops and no close
-        // is ever reported.
-        let mut windows = DebugWindows::new();
-        windows.drop_debug_window();
-        windows.drop_ppu_window();
-        assert!(!windows.debug_close_requested());
-        assert!(!windows.ppu_close_requested());
+    fn live_wanted_tracks_follow_interest() {
+        let windows = DebugWindows::new();
+        let wanted = windows.live_armed();
+        assert!(!wanted.load(Ordering::Acquire));
+        windows.set_live_wanted(true);
+        assert!(wanted.load(Ordering::Acquire));
+        windows.set_live_wanted(false);
+        assert!(!wanted.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn arming_unparks_registered_thread() {
+        let windows = DebugWindows::new();
+        windows.register_tick_thread(std::thread::current());
+        // No parking here: unparking a running thread only sets its
+        // token, so arming stays total without a sleeper.
+        windows.set_live_wanted(true);
+        assert!(windows.live_armed().load(Ordering::Acquire));
+        // First registration wins: a second thread never replaces it.
+        windows.register_tick_thread(std::thread::current());
+        windows.set_live_wanted(false);
+        windows.set_live_wanted(true);
+        assert!(windows.live_armed().load(Ordering::Acquire));
     }
 }

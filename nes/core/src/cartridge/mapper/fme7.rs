@@ -54,17 +54,13 @@ impl Cartridge for Fme7 {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if state.extra_kind != MAPPER_KIND_FME7 {
-            return Err(PersistenceError::Validation(
-                "unexpected FME-7 runtime kind".into(),
-            ));
+            return Err(PersistenceError::MapperRuntimeKind("FME-7"));
         }
-        self.state
-            .validate_for_import(
-                &state.mapper_state,
-                self.data_ref().prog_rom_len(),
-                self.data_ref().char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
         let runtime: Fme7RuntimeState = decode_payload(&state.extra_body)?;
         self.state = state.mapper_state;
         self.command = runtime.command;

@@ -2,20 +2,17 @@ use std::{collections::HashMap, path::PathBuf, rc::Rc, sync::Arc};
 
 use clap::Command;
 use log::LevelFilter;
-use nerust_core_traits::{
-    audio::AudioBackendRegistry,
-    factory::{CoreFactory, load::DynSystemLoadOptions},
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
-use nerust_render_traits::renderer::GpuFactory;
+use nerust_render_traits::renderer::PipelineFactory;
 use nerust_run_options::RunOptions;
+use nerust_system_traits::factory::{CoreFactory, load::DynSystemLoadOptions};
 use simple_logger::SimpleLogger;
 
 type LoadOptionsBySystem = HashMap<Box<dyn SystemId>, Box<dyn DynSystemLoadOptions>>;
 type CliParseResult = Result<(RunOptions, LoadOptionsBySystem), clap::Error>;
 
-fn create_factory() -> Box<dyn GpuFactory> {
+fn create_factory() -> Box<dyn PipelineFactory> {
     #[cfg(all(feature = "wgpu", not(any(feature = "opengl", feature = "softbuffer"))))]
     return Box::new(nerust_render_wgpu::WgpuFactory);
     #[cfg(all(feature = "opengl", not(any(feature = "wgpu", feature = "softbuffer"))))]
@@ -82,7 +79,7 @@ fn parse_cli_args_from(
 
 fn validate_unique_cli_arguments(
     factories: &[Arc<dyn CoreFactory>],
-    schemas: &[Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema>],
+    schemas: &[Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema>],
 ) -> Result<(), clap::Error> {
     let mut owners: HashMap<String, Box<dyn SystemId>> = HashMap::new();
     for (factory, schema) in factories.iter().zip(schemas) {
@@ -103,7 +100,7 @@ fn validate_unique_cli_arguments(
     Ok(())
 }
 
-pub fn run() {
+pub fn run() -> i32 {
     SimpleLogger::new()
         .with_level(LevelFilter::Warn)
         .env()
@@ -136,15 +133,16 @@ pub fn run() {
     };
 
     #[cfg(all(feature = "gtk", not(clippy)))]
-    nerust_gtk::run(ctx, options);
+    return nerust_gtk::run(ctx, options);
     #[cfg(all(feature = "tao", not(clippy)))]
-    nerust_tao::run(ctx, options);
+    return nerust_tao::run(ctx, options);
     #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
     compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
     #[cfg(clippy)]
     {
         let _ = ctx;
         let _ = options;
+        0
     }
 }
 
@@ -152,20 +150,14 @@ pub fn run() {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use nerust_core_traits::{
-        CoreOptions,
-        factory::{
-            CoreFactory,
-            load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        },
-    };
+    use nerust_core_traits::CoreOptions;
     #[cfg(feature = "gba")]
     use nerust_gba_factory::GbaFactory;
     #[cfg(feature = "gbc")]
     use nerust_gbc_factory::GbcFactory;
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::{
-        load::{RomLoadTarget, RomLoaderError},
+        load::{LoadEnvironment, RomLoadTarget, RomLoaderError},
         registry::SystemRegistry,
         settings::defaults::seed::{
             default_app_state, default_local_settings, default_shared_settings,
@@ -173,6 +165,10 @@ mod tests {
     };
     #[cfg(feature = "nes")]
     use nerust_nes_factory::NesFactory;
+    use nerust_system_traits::factory::{
+        CoreFactory,
+        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    };
 
     struct LoadRecorder {
         resolved: Option<Box<dyn CoreOptions>>,
@@ -180,13 +176,16 @@ mod tests {
         snapshot: SettingsSnapshot,
     }
 
-    impl RomLoadTarget for LoadRecorder {
+    impl LoadEnvironment for LoadRecorder {
         fn default_load_options(&self) -> Option<Box<dyn DynSystemLoadOptions>> {
             None
         }
         fn settings_snapshot(&self) -> &SettingsSnapshot {
             &self.snapshot
         }
+    }
+
+    impl RomLoadTarget for LoadRecorder {
         fn load_resolved(
             &mut self,
             _media: MediaObject,
