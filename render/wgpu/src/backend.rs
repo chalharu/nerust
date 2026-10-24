@@ -371,6 +371,7 @@ mod tests {
             return;
         };
         let mut renderer = detached_renderer();
+        renderer.instance = crate::surface::instance_with_display(window.clone());
         let mut profile = test_profile();
         profile.logical_size.width = 4;
         profile.logical_size.height = 4;
