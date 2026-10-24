@@ -327,7 +327,7 @@ impl GtkOsd {
                 // touch below queries a destroyed native window (fatal X
                 // error), so skip instead. A never-realized dialog has no
                 // surface to query, so it still refreshes.
-                if super::window::surface_dead(&dialog) {
+                if super::surface_state::surface_dead(&dialog) {
                     return;
                 }
                 // Gate inputs first: a refresh with unchanged inputs
@@ -491,7 +491,7 @@ impl GtkOsd {
         let follow = std::cell::Cell::new(Some(glib::timeout_add_local(
             std::time::Duration::from_millis(500),
             move || {
-                if super::window::surface_gone(&follow_dialog) {
+                if super::surface_state::surface_gone(&follow_dialog) {
                     return glib::ControlFlow::Break;
                 }
                 follow_refresh();

@@ -6,6 +6,7 @@ mod ppu_window;
 mod preferences;
 mod renderer;
 mod surface;
+mod surface_state;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod window;
