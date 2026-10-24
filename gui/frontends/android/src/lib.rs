@@ -86,19 +86,13 @@ use winit::platform::android::activity::AndroidApp;
 #[cfg(target_os = "android")]
 const ANDROID_LOG_TAG: &str = "Nerust";
 
-/// Marker left by e2e.sh (`adb shell touch`): present only when an
-/// instrumentation harness drives teardown and owns result delivery.
-/// `ActivityManager.isRunningInTestHarness()` is NOT usable here: it
-/// reflects the read-only `ro.test_harness` property, which
-/// `am instrument` never sets (NER-327).
+/// Marker left by e2e.sh: present only when a harness drives teardown and owns delivery.
+/// The framework harness query is unreliable, so the marker file is the signal.
 #[cfg(target_os = "android")]
 const HARNESS_TEARDOWN_MARKER: &str = "/data/local/tmp/nerust-harness-teardown";
 
-/// Exit unless the destroy came from instrumentation teardown: under
-/// `am instrument` the result delivery must precede process death, and
-/// the system force-stop owns teardown instead. User-initiated exit
-/// always ends the process, on any runner. Fail-closed: without the
-/// marker the unconditional exit of today applies.
+/// Exit unless the destroy came from harness teardown, which owns delivery and teardown.
+/// User-initiated exit always ends the process; fail-closed without the marker.
 #[cfg(target_os = "android")]
 fn should_exit_process() -> (bool, bool, bool) {
     let harness = std::path::Path::new(HARNESS_TEARDOWN_MARKER).exists();
@@ -203,9 +197,7 @@ pub fn android_main(app: AndroidApp) {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 /// Called by the JVM when the native library is loaded.
-///
-/// # Safety
-/// `vm` must be a valid `JavaVM` pointer from the runtime.
+/// # Safety: `vm` must be a valid `JavaVM` pointer from the runtime.
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut c_void,

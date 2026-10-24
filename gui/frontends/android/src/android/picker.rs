@@ -37,8 +37,7 @@ enum FetchJob {
 static FETCH_SEQ: FetchSeq = FetchSeq::new();
 
 /// Single fetch lane: one pending slot, newer pushes drop the stale one.
-/// Total retention is pending (<=1) plus the active job, never a backlog of
-/// cloned apps and URIs behind a stuck provider (NER-306 AC-2, NER-307 AC-3).
+/// Total retention is pending plus the active job, never a backlog.
 static FETCH_LANE: LatestLane<FetchJob> = LatestLane::new();
 
 /// Starts the single worker once; a failed spawn closes the lane so senders
@@ -168,9 +167,8 @@ pub(super) fn has_pending_result() -> bool {
 }
 
 pub(super) fn reset_transient() {
-    // Take the slot handles here so a reset job can never start provider
-    // I/O the resetter cannot cancel (NER-306). Handles imply a prior spawn,
-    // which cached the VM below, so lanes are always available for them.
+    // Take the slot handles here so a reset job never starts provider I/O
+    // the resetter cannot cancel; lanes stay available via the cached VM.
     let (signal, stream) = bridge::with_picker(|state| {
         FETCH_SEQ.next();
         state.result = None;
@@ -331,9 +329,8 @@ fn fetch_document_bytes(
                 )
                 .ok();
             if let Some(signal) = signal.as_ref() {
-                // Refused registration means this job lost the fetch before
-                // publishing a cancel handle: starting provider I/O now would
-                // be uncancellable and wedge the single worker (NER-306).
+                // Refused registration means this job lost the fetch: starting
+                // provider I/O now would be uncancellable and wedge the worker.
                 if !store_job_signal(env, seq, signal) {
                     return Err(jni::errors::Error::NullPtr(
                         "ROM fetch superseded before provider query",
@@ -490,9 +487,8 @@ fn read_stream_bytes_inner(
             "AssetFileDescriptor.createInputStream returned null",
         ));
     }
-    // Registered for cross-thread close: a bumper closes a stuck read.
-    // A refused registration leaves no handle for a bumper: close the
-    // just-opened stream here and abort instead of reading uncancellable.
+    // Registered for cross-thread close; a refused registration closes the stream
+    // here and aborts instead of reading uncancellable.
     if !store_job_stream(env, seq, &stream) {
         let _ = env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[]);
         let _ = env.call_method(&descriptor, jni_str!("close"), jni_sig!("()V"), &[]);
@@ -534,8 +530,7 @@ fn read_stream_bytes_inner(
                 continue;
             }
             // Copy only the bytes read, not the whole 64KB scratch.
-            // i8 scratch reused across chunks; the u8 reinterpretation
-            // below is a per-byte no-op the compiler vectorizes.
+            // The u8 reinterpretation below is a per-byte no-op.
             chunk.resize(read as usize, 0);
             buffer.get_region(env, 0, &mut chunk)?;
             bytes.extend(chunk.iter().map(|byte| *byte as u8));
@@ -548,10 +543,8 @@ fn read_stream_bytes_inner(
             .err()
             .unwrap_or(jni::errors::Error::JavaException));
     }
-    // Ownership decides the single stream closer: a bumper that took the
-    // handle closes it, so a taken-over worker skips its local close and
-    // ignores racy close errors instead of failing a good read (NER-307).
-    // The descriptor is never shared, so the worker always closes it here.
+    // Ownership decides the single stream closer: a bumper-owned handle skips
+    // the local close and ignores racy close errors instead of failing the read.
     let owned = take_job_stream_if_ours(seq);
     let stream_error = if owned {
         env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[])
@@ -574,8 +567,7 @@ fn read_stream_bytes_inner(
     Ok(bytes)
 }
 
-/// Reclaim the stream handle before the local close: the slot take decides
-/// the single closer, so a bumper-owned stream is never closed here (NER-307).
+/// Reclaim the stream handle before the local close: the slot take decides the single closer.
 fn take_job_stream_if_ours(seq: u64) -> bool {
     bridge::with_picker(|state| {
         if state.in_flight == Some(seq) {
@@ -595,9 +587,7 @@ fn begin_fetch() -> u64 {
     })
 }
 
-/// Cancel the previous generation's provider calls before a new fetch bumps
-/// the generation: the open/query signal is cancelled and an already-open
-/// stream is closed, so a stuck provider stops wedging the single fetch lane.
+/// Cancel the previous generation's provider calls before a new fetch bumps it.
 /// Runs on the event thread, which owns an `AndroidApp` for the VM.
 fn cancel_in_flight(app: &AndroidApp) {
     let vm = CACHED_VM
@@ -608,9 +598,7 @@ fn cancel_in_flight(app: &AndroidApp) {
     send_to_bumper(ensure_bumper(&vm), signal, stream);
 }
 
-/// Route taken handles to the bumper lanes, or drop them with a log when the
-/// lanes are gone. The lanes only go away with the process, so a drop means
-/// teardown is already underway.
+/// Route taken handles to the bumper lanes, or drop them when teardown is underway.
 fn send_to_bumper(
     lanes: &BumperLanes,
     signal: Option<Global<JObject<'static>>>,
@@ -619,8 +607,7 @@ fn send_to_bumper(
     if signal.is_none() && stream.is_none() {
         return;
     }
-    // Never touch the provider here: enqueue for the bumper so a stuck
-    // cancel listener or close cannot stall the event thread (NER-307).
+    // Never touch the provider here: enqueue for the bumper so the event thread never stalls.
     if let Some(signal) = signal {
         if !CANCEL_BUDGET.pushed() {
             log::warn!(
@@ -647,23 +634,15 @@ fn send_to_bumper(
     }
 }
 
-/// Process-global VM cached from the first cancelling call: every later call
-/// resolves to the same VM, so resets route without an app handle (NER-306).
+/// Process-global VM cached from the first cancelling call for handle-free resets.
 static CACHED_VM: OnceLock<JavaVM> = OnceLock::new();
 
-/// Bumper pressure gauges: live generations stay tiny (one slot plus one
-/// pending fetch), so a count past the cap means a stuck provider (NER-307).
+/// Bumper pressure gauges: a count past the cap means a stuck provider.
 static CANCEL_BUDGET: BumperBudget = BumperBudget::new(16);
 static CLOSE_BUDGET: BumperBudget = BumperBudget::new(16);
 
-/// Cancel/close lanes plus the process VM they run against. The VM is
-/// captured once from the first cancelling call (single VM per process), so
-/// resets and new generations route without an app handle and no per-task
-/// activity reference piles up behind a stuck provider (NER-306).
-/// Signal cancels and stream closes travel on separate single threads: a
-/// stalled cancel listener cannot delay a stream close behind it (NER-307).
-/// No thread-per-cancel escape, and no provider call ever runs on the event
-/// thread.
+/// Cancel/close lanes plus the process VM: separate threads keep closes behind slow cancels.
+/// No provider call ever runs on the event thread.
 struct BumperLanes {
     cancel: Sender<Global<JObject<'static>>>,
     close: Sender<Global<JObject<'static>>>,
@@ -724,11 +703,7 @@ fn cancel_bumper_stream(vm: &JavaVM, stream: Global<JObject<'static>>) {
     });
 }
 
-/// Publish the job's signal for cross-thread cancellation. Returns whether
-/// the job may proceed: a superseded job must not start provider I/O with
-/// an unregistered handle, while a current job without a handle degrades to
-/// the old local-only calls. A bumper takes and cancels a published handle;
-/// a job superseded before it started keeps only its local handle (NER-306).
+/// Publish the job's signal for cross-thread cancellation; superseded jobs keep local handles.
 fn store_job_signal(env: &mut jni::Env<'_>, seq: u64, signal: &JObject<'_>) -> bool {
     let global = env.new_global_ref(signal).ok();
     bridge::with_picker(|state| publish_handle(state, seq, global, true))
@@ -741,9 +716,8 @@ fn store_job_stream(env: &mut jni::Env<'_>, seq: u64, stream: &JObject<'_>) -> b
     bridge::with_picker(|state| publish_handle(state, seq, global, false))
 }
 
-/// Slot decision shared by signal/stream registration: only the owning
-/// generation may publish; a refused job must not start provider I/O.
-/// Mirrors `picker_lane::SlotState::publish`; the matrix lives there.
+/// Slot decision for signal/stream registration: only the owning generation may publish.
+/// Mirrors `picker_lane::SlotState::publish`.
 fn publish_handle(
     state: &mut bridge::PickerSlot,
     seq: u64,
@@ -765,12 +739,7 @@ fn publish_handle(
     true
 }
 
-/// Drop this job's slot handles if no bumper took them first. Exactly one
-/// side owns each global ref: the slot take decides the owner. The gate
-/// stays generation-scoped on purpose (mirrors `SlotState::release_if_ours`):
-/// a stale completion must not take the current job's freshly published
-/// handles. Leftovers from a reset generation are already collected at the
-/// reset/begin boundary, so there is nothing stale left to reclaim here.
+/// Drop this job's slot handles if no bumper took them first; stale completions take nothing.
 fn release_job_handles(seq: u64) {
     let (signal, stream) = bridge::with_picker(|state| {
         if state.in_flight == Some(seq) {
@@ -867,8 +836,7 @@ mod tests {
         assert!(!has_pending_result());
     }
 
-    /// NER-306: only the owning generation may publish a cancel handle.
-    /// A job refused at registration must not start provider I/O.
+    /// Only the owning generation may publish; refused jobs start no provider I/O.
     #[test]
     fn handle_publish_blocks_superseded_provider_io() {
         use bridge::PickerSlot;
@@ -889,7 +857,7 @@ mod tests {
         assert!(slot.in_flight_stream.is_none());
     }
 
-    /// NER-306: the reset/new-request/completion order matrix at state level.
+    /// Reset, request, and completion keep a single owner at state level.
     #[test]
     fn reset_and_request_orders_keep_one_owner() {
         reset_transient();
@@ -915,9 +883,7 @@ mod tests {
         publish_if_latest(next, RomPickerResult::Failed("fresh".into()));
         assert!(take_result().is_some());
         reset_transient();
-        // Reset then release: the gated release finds nothing stale to
-        // take, and the next generation owns the slot cleanly. Boundary
-        // takes in reset/begin already collected any published handles.
+        // Reset then release: the next generation owns the slot cleanly.
         let generation = begin_fetch();
         reset_transient();
         release_job_handles(generation);

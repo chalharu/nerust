@@ -112,9 +112,8 @@ pub fn state_slot_path(states_dir: &Path, slot_id: u64) -> PathBuf {
     states_dir.join(format!("{slot_id}.state"))
 }
 
-/// Quarantine by copy-then-delete for stores without atomic rename: the
-/// original is removed only after the copy is stored, so any failure keeps
-/// the original bytes recoverable. A missing original is `None`, not an error.
+/// Quarantine by copy-then-delete: the original is removed only after
+/// the copy is stored, so any failure keeps the original recoverable.
 pub fn quarantine_by_copy(
     read_original: impl FnOnce() -> Result<Option<Vec<u8>>, PersistenceError>,
     write_copy: impl FnOnce(&[u8]) -> Result<(), PersistenceError>,
@@ -134,22 +133,18 @@ pub fn autosave_state_slot_path(states_dir: &Path) -> PathBuf {
 }
 
 /// Publish a state archive with its scan sidecar. The sidecar is dropped
-/// before the state write so a crash after publishing cannot serve a stale
-/// summary, and dropped again when its own write fails so scans fall back
-/// to the archive. State errors propagate; sidecar steps are best-effort.
+/// before and after the state write so scans never serve a stale summary.
 pub fn publish_state_with_sidecar(
     delete_sidecar: impl Fn() -> Result<(), PersistenceError>,
     write_state: impl FnOnce() -> Result<(), PersistenceError>,
     write_sidecar: impl FnOnce() -> Result<(), PersistenceError>,
 ) -> Result<(), PersistenceError> {
     // A stale sidecar must not survive the publish: remove it first, and
-    // refuse to publish over an unremovable stale entry, or the scan would
-    // adopt old metadata for the fresh archive (NER-309).
+    // refuse to publish over an unremovable stale entry.
     delete_sidecar()?;
     write_state()?;
-    // A failed sidecar write is retried by dropping the entry again; the
-    // scan then falls back to the archive. Only a failed cleanup fails the
-    // op, since a stale sidecar would otherwise shadow the fresh archive.
+    // A failed sidecar write is retried by dropping the entry again; only
+    // a failed cleanup fails the op to avoid shadowing the fresh archive.
     if write_sidecar().is_err() {
         delete_sidecar()?;
     }
@@ -190,8 +185,7 @@ pub fn build_state_slot_bytes(
 }
 
 /// Scan entry point for sidecar bytes: metadata only, never the archive.
-/// Thumbnail presence comes from the metadata flag; the archive path keeps
-/// its entry-presence check.
+/// Thumbnail presence comes from the metadata flag.
 pub fn load_state_summary_from_metadata_bytes(
     path: StorageLocation,
     bytes: &[u8],
@@ -278,9 +272,8 @@ fn write_state_slot_to_path(
     )?;
     write_atomic(&path, &archive_bytes)?;
 
-    // If we created a reservation file earlier, attempt to remove it now that the
-    // real state file has been written. This keeps the storage directory tidy when
-    // using the fallback reservation strategy on platforms that lack file locks.
+    // Remove the reservation file once the real state file exists; keeps
+    // the directory tidy on platforms without file locks.
     if let Some(parent) = path.parent() {
         let reserve_path = parent.join(format!(".slot_reserve.{}", slot_id));
         let _ = fs::remove_file(reserve_path);

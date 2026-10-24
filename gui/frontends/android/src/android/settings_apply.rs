@@ -28,16 +28,12 @@ impl super::AndroidFrontend {
             log::warn!("handle_settings_result: applying settings while a newer dialog is open");
         } else if !is_applied {
             // Dismissed without changes: flush under the current presentation.
-            // The Applied path flushes after the session apply below, so the
-            // take renders under the new settings instead of the old ones (NER-318).
             self.flush_closed_settings_dialogs(tick);
         }
         true
     }
 
-    /// Settings-close dialog flush: take the next queued batch and show or
-    /// resume. Runs after the session apply for Applied results, standalone
-    /// for dismissals.
+    /// Settings-close dialog flush: take the next queued batch after the session apply.
     fn flush_closed_settings_dialogs(&mut self, tick: TickMetrics) {
         match self.chrome.osd.with_modal(|queue| {
             self.flow
@@ -121,9 +117,7 @@ impl super::AndroidFrontend {
             }
             SettingsPlan::Apply { next } => self.execute_settings_apply(next),
         }
-        // Applied settings are in: flush the dialog queue under the new
-        // presentation instead of the pre-apply one (NER-318). Racing-applied
-        // while a newer dialog is open stays shielded, as before.
+        // Applied settings are in: flush the dialog queue under the new presentation.
         if !self.flow.dialogs.is_settings_open() {
             self.flush_closed_settings_dialogs(tick);
         }

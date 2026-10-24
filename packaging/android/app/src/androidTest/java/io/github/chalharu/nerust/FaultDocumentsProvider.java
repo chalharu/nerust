@@ -16,23 +16,7 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Fault-injecting stub content provider for emulator abnormal-path tests
- * (NER-321/322/312). No physical device needed: the test drives outage,
- * corrupt, and oversized modes, and the provider speaks the same wire
- * protocol the production SafRepository consumes through
- * DocumentFile/ContentResolver (tree/document/children URIs plus document
- * columns).
- *
- * <p>Deliberately a plain ContentProvider, NOT a DocumentsProvider: the
- * platform mandates that installed DocumentsProviders be protected by
- * {@code android.permission.MANAGE_DOCUMENTS}, a system-only permission a
- * regular third-party app cannot meaningfully hold. A test stub must not
- * depend on it. This mirrors the existing TestRomProvider pattern:
- * androidTest manifest, exported, no permissions. Faults are driven
- * cross-process through {@link #call}: the stub runs in the test package
- * process while tests run in the app process, so statics are not shared.
- */
+/** Fault-injecting stub provider for emulator abnormal-path tests. */
 public final class FaultDocumentsProvider extends ContentProvider {
     public static final String AUTHORITY = "io.github.chalharu.nerust.faultdocs";
     public static final String ROOT_ID = "faultroot";

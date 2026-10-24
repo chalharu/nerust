@@ -35,10 +35,8 @@ impl std::fmt::Display for MapperFlushError {
 
 impl std::error::Error for MapperFlushError {}
 
-/// Classify a persistence-layer failure for user-facing messages.
-/// Single conversion point; see [`SlotOpFailure`].
-/// Outcome of a mapper-save flush. Callers distinguish "nothing
-/// to do" from "wrote" without re-reading manager state.
+/// Outcome of a mapper-save flush: "nothing to do" vs "wrote".
+/// Callers distinguish them without re-reading manager state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapperFlush {
     /// Battery save exported and written to the sidecar path.
@@ -309,9 +307,8 @@ impl PersistenceManager {
         outcome
     }
 
-    /// Scan outcome for the setup notice: a failed scan keeps the previous
-    /// list but reports, so an empty-looking list is distinguishable from a
-    /// backend failure (NER-322).
+    /// Scan outcome for the setup notice: a failed scan keeps the previous list
+    /// but reports, so empty-looking output stays distinguishable from failure.
     fn refresh_slots_inner(
         &mut self,
         identity: Option<&SystemIdentity>,
@@ -357,7 +354,7 @@ impl PersistenceManager {
         self.active_slot_id = None;
     }
 
-    /// Snapshot the in-memory setup for load-failure rollback (NER-320).
+    /// Snapshot the in-memory setup for load-failure rollback.
     pub(crate) fn snapshot_state(&self) -> PersistSnapshot {
         PersistSnapshot {
             states_dir: self.states_dir.clone(),
@@ -434,9 +431,8 @@ impl PersistenceManager {
         match self.mapper_backend.read_mapper_save(path) {
             Ok(Some(bytes)) => match emu.import_mapper(bytes) {
                 Ok(()) => {
-                    // The new runtime now mirrors the on-disk save: lift the
-                    // write protection a previous failed import had raised.
-                    // A mere rebind without this success keeps it (NER-302).
+                    // The new runtime mirrors the on-disk save: lift the write protection
+                    // a previous failed import had raised; a mere rebind keeps it.
                     self.mapper_save_flush_allowed = true;
                     self.mapper_save_recovery_written = false;
                     Ok(())
@@ -508,18 +504,16 @@ impl PersistenceManager {
                     true
                 }
             }
-            // A missing read proves nothing to delete: a backend that
-            // collapses a transient failure into `None` must not trigger
-            // destruction, and a genuine absence makes deletion a no-op.
-            // Foreign-identity files are overwritten by the next save (NER-321).
+            // A missing read proves nothing to delete: transient `None` must not destroy,
+            // and absence or foreign identity is a no-op the next save overwrites.
             Ok(None) => false,
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
-            // Transport failures are retryable: a transient read plus a
-            // successful delete would destroy good bytes (NER-321).
+            // Transport failures are retryable: deleting after a transient read
+            // would destroy good bytes.
             Err(PersistenceError::Io(_)) => false,
             Err(_) => {
-                // Unreadable bytes are corrupt, not missing: preserve them
-                // aside instead of deleting (NER-319 quarantine discipline).
+                // Unreadable bytes are corrupt, not missing: quarantine them aside
+                // instead of deleting.
                 let _ = self.autosave_backend.quarantine_autosave(dir);
                 false
             }
@@ -967,9 +961,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-302 AC-3: a missing save re-arms a degraded manager on its own,
-    /// with or without a previously written recovery file. Each case starts
-    /// from explicit latch states, independent of any prior import.
+    /// A missing save re-arms a degraded manager on its own, with or without
+    /// a previously written recovery file.
     #[test]
     fn missing_save_rearms_degraded_manager_with_or_without_recovery() {
         for recovery_written in [false, true] {
@@ -990,11 +983,8 @@ mod persistence_cov_tests {
         }
     }
 
-    /// NER-302: cross-runtime old-recovery carryover is out of scope by
-    /// design. The degraded latch follows the mapper path, not the
-    /// runtime: rebinding a *different* path resets it (no stale
-    /// recovery leaks across), while the same path preserves it.
-    /// Documents current `configure` behavior; no behavior change.
+    /// The degraded latch follows the mapper path, not the runtime: rebinding a
+    /// different path resets it, while the same path preserves it.
     #[test]
     fn degraded_latch_follows_mapper_path_not_runtime() {
         let dir = crate::test_helpers::unique_temp_dir("latch-path");
@@ -1011,9 +1001,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-321: a transient autosave read failure must not delete, and the
-    /// retry after recovery loads the same bytes. Corrupt bytes quarantine
-    /// instead of deleting.
+    /// A transient autosave read failure must not delete; corrupt bytes quarantine
+    /// instead, and the retry after recovery loads the same bytes.
     #[test]
     fn transient_autosave_read_failure_never_deletes() {
         use nerust_persistence::model::{LoadedStateSlot, StateSlotSummary};
@@ -1119,9 +1108,8 @@ mod persistence_cov_tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
 
-        // A missing read deletes nothing either: a backend that collapses
-        // a transient failure into `None` must not destroy bytes, and a
-        // genuine absence has nothing to delete. The retry still loads.
+        // A missing read deletes nothing either: transient `None` must not destroy
+        // bytes, and genuine absence has nothing to delete. The retry still loads.
         let deletes = Arc::new(AtomicUsize::new(0));
         let quarantines = Arc::new(AtomicUsize::new(0));
         let (manager, dir) = manager_with(
@@ -1157,8 +1145,7 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// NER-322 AC-2: a failed scan keeps the previous list instead of
-    /// wiping it to an empty success.
+    /// A failed scan keeps the previous list instead of wiping it to empty.
     #[test]
     fn failed_scan_keeps_previous_slots() {
         use crate::session::ports::SlotBackend;
@@ -1248,10 +1235,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-322 AC-2 in one sequence: a failed scan keeps the previous
-    /// list (distinguishable by `Err`), while a genuinely empty scan
-    /// succeeds and clears it. The setup notice path keys on exactly
-    /// this `Ok`/`Err` split.
+    /// A failed scan keeps the previous list (`Err`) while a genuinely empty scan
+    /// succeeds and clears it; the setup notice keys on this `Ok`/`Err` split.
     #[test]
     fn failed_scan_stays_visible_but_empty_scan_clears() {
         use crate::session::ports::SlotBackend;
@@ -1353,9 +1338,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-321: a transient slot-read failure is an error the caller can
-    /// retry, never `Missing` (which would let delete/tombstone paths treat
-    /// live data as gone). Only a complete successful survey proves absence.
+    /// A transient slot-read failure is a retryable error, never `Missing`.
+    /// Only a complete successful survey proves absence.
     #[test]
     fn transient_slot_read_is_error_not_missing() {
         use crate::session::ports::SlotBackend;
@@ -1435,10 +1419,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-319 (a): quarantine is copy-then-delete: the stepped-down copy is
-    /// stored first, so a delete failure after the copy keeps the original
-    /// bytes recoverable and the copy in place. The error still surfaces so
-    /// the caller knows the original was not retired.
+    /// Quarantine is copy-then-delete: the stepped-down copy lands first, so a
+    /// later delete failure keeps the original recoverable. The error still surfaces.
     #[test]
     fn quarantine_by_copy_survives_delete_failure_after_copy() {
         use nerust_persistence::slots::quarantine_by_copy;
@@ -1475,9 +1457,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-319 manager level: corrupt autosave bytes quarantine aside
-    /// instead of deleting, so the next save overwrites rather than the
-    /// failed load destroying evidence.
+    /// Corrupt autosave bytes quarantine aside instead of deleting, so the next
+    /// save overwrites rather than the failed load destroying evidence.
     #[test]
     fn corrupt_autosave_quarantines_instead_of_deleting() {
         let dir = crate::test_helpers::unique_temp_dir("quarantine-corrupt");
@@ -1494,10 +1475,8 @@ mod persistence_cov_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// NER-322 (b): one corrupt slot skips while healthy slots list. A
-    /// failed whole-directory scan is a different signal (it keeps the
-    /// previous list); here the directory reads fine and only the bad
-    /// entry drops out.
+    /// One corrupt slot skips while healthy slots list; a failed whole-directory
+    /// scan instead keeps the previous list.
     #[test]
     fn corrupt_slot_skipped_while_healthy_slots_list() {
         let dir = crate::test_helpers::unique_temp_dir("scan-corrupt-skip");

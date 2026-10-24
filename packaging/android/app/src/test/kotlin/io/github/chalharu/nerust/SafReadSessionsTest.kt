@@ -108,8 +108,7 @@ class SafReadSessionsTest {
     }
 
     @Test fun openBeyondCapRefusesAndClosesWithoutLeaking() {
-        // NER-308 AC-2: admission is capped; the refused open closes the
-        // passed stream through the cleanup lane instead of leaking it.
+        // Admission is capped; the refused open closes the passed stream via the lane.
         val sessions = SafReadSessions(java.util.concurrent.Executor { it.run() })
         val ids = (0 until 64).map {
             sessions.open(java.io.ByteArrayInputStream(byteArrayOf(1)))

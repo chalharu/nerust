@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Regression probes for publish-lock.sh (NER-313/314). Manual run:
-#   bash packaging/android/test-publish-lock.sh
-# Wired into CI: check-contract.sh "shell probes" phase + the lint job's
-# explicit shell-probes step in .github/workflows/ci.yml.
+# Regression probes for publish-lock.sh; also wired into CI.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=publish-lock.sh
@@ -20,8 +17,7 @@ pass() {
     echo "ok: $1"
 }
 
-# AC-1: a refused competitor must not delete the live owner's lock.
-# NOTE: start the holder directly; a holder spawned inside $() dies with it.
+# A refused competitor keeps the live lock.
 sleep 30 &
 HOLDER=$!
 LOCK1="${TMP}/pub.lock"
@@ -39,9 +35,9 @@ wait "${HOLDER}" 2>/dev/null || true
 publish_lock_cleanup
 [[ -d "${LOCK1}" ]] || fail "cleanup deleted a lock it never owned"
 rm -rf "${LOCK1}"
-pass "AC-1 refused competitor keeps the live lock"
+pass "refused competitor keeps the live lock"
 
-# AC-2: mkdir-to-pid-record window never admits two owners.
+# The pid-write window admits no second owner.
 LOCK2="${TMP}/win.lock"
 mkdir "${LOCK2}"
 ( sleep 0.5; echo "$$" >"${LOCK2}/pid" ) &
@@ -53,9 +49,9 @@ fi
 wait "${WRITER}" 2>/dev/null || true
 [[ -d "${LOCK2}" ]] || fail "window owner's lock was deleted while waiting"
 rm -rf "${LOCK2}"
-pass "AC-2 pid-write window admits no second owner"
+pass "pid-write window admits no second owner"
 
-# AC-3a: stale lock with a dead pid is recovered promptly.
+# A dead-pid lock is recovered promptly.
 LOCK3="${TMP}/stale.lock"
 mkdir "${LOCK3}"
 echo "999999999" >"${LOCK3}/pid"
@@ -66,10 +62,9 @@ fi
 ELAPSED=$(( $(date +%s) - START ))
 [[ "${ELAPSED}" -lt 4 ]] || fail "dead-pid recovery waited the unknown grace (${ELAPSED}s)"
 [[ "$(cat "${LOCK3}/pid")" == "$$" ]] || fail "recovered lock names the wrong owner"
-pass "AC-3a dead-pid lock recovered without the grace wait"
+pass "dead-pid lock recovered without the grace wait"
 
-# AC-3b: lock with no pid ever (crashed before recording) is recovered
-# after the grace wait, then released normally.
+# A pid-less lock is recovered after grace, then released.
 LOCK4="${TMP}/nopid.lock"
 mkdir "${LOCK4}"
 if ! acquire_publish_lock "${LOCK4}"; then
@@ -78,9 +73,9 @@ fi
 [[ "$(cat "${LOCK4}/pid")" == "$$" ]] || fail "recovered lock names the wrong owner"
 release_publish_lock
 [[ ! -e "${LOCK4}" ]] || fail "normal release left the lock behind"
-pass "AC-3b pid-less lock recovered after grace and released"
+pass "pid-less lock recovered after grace and released"
 
-# AC-3c: release and cleanup are idempotent and ownership-scoped.
+# Release and cleanup stay idempotent and ownership-scoped.
 LOCK5="${TMP}/rel.lock"
 acquire_publish_lock "${LOCK5}" >/dev/null
 release_publish_lock
@@ -94,11 +89,9 @@ publish_lock_cleanup
 [[ -d "${TMP}/foreign.lock" ]] || fail "cleanup deleted a foreign lock"
 rm -rf "${TMP}/foreign.lock"
 PUBLISH_LOCK_DIR=""
-pass "AC-3c release and cleanup stay ownership-scoped"
+pass "release and cleanup stay ownership-scoped"
 
-# NER-313 B1: a stalled owner (mkdir, stall past the grace, then write the
-# pid) is never double-owned: the competitor refuses or wins alone, and the
-# final record names exactly one owner.
+# A stalled owner is never double-owned.
 STALLOCK="${TMP}/stall.lock"
 mkdir "${STALLOCK}"
 ( sleep 7; printf '%s' "$$" >"${STALLOCK}/pid.tmp" && mv "${STALLOCK}/pid.tmp" "${STALLOCK}/pid" ) &
@@ -120,7 +113,7 @@ else
     pass "B1 stalled owner: refused without double ownership"
 fi
 
-# NER-313 B2: dual recoverers on a dead-pid lock converge to one winner.
+# Dual recoverers converge to one winner.
 DUELLOCK="${TMP}/duel.lock"
 mkdir "${DUELLOCK}"
 echo "999999999" >"${DUELLOCK}/pid"
@@ -138,8 +131,7 @@ SURVIVOR="$(cat "${DUELLOCK}/pid" 2>/dev/null || echo MISSING)"
 [[ "${SURVIVOR}" =~ ^[0-9]+$ ]] || fail "no single surviving owner record"
 pass "B2 dual recoverers converge to a single winner"
 
-# NER-313 B4: a steal landing exactly on a just-completed record yields the
-# directory back and refuses instead of orphaning the new owner.
+# A steal on a just-completed record yields back and refuses.
 YIELDLOCK="${TMP}/yield.lock"
 mkdir "${YIELDLOCK}"
 sleep 30 &
@@ -164,8 +156,7 @@ kill "${SLEEPER}" 2>/dev/null || true
 wait "${SLEEPER}" 2>/dev/null || true
 pass "B4 completed record during takeover yields back and refuses"
 
-# NER-313 B5: a directory replacement between record and verify blocks the
-# ownership claim.
+# A directory replacement blocks the ownership claim.
 VERIFYLOCK="${TMP}/verify.lock"
 STAT_CALLS_FILE="${TMP}/statcalls"
 echo 0 >"${STAT_CALLS_FILE}"
@@ -190,7 +181,7 @@ eval "$ORIG_DIR_ID"
 pass "B5 replaced directory blocks the ownership claim"
 
 echo "publish-lock probes: OK (${PASS} scenarios)"
-echo "--- NER-314: exclusion spans publish through consume ---"
+echo "--- exclusion spans publish through consume ---"
 # Holder publishes then keeps the lock while a consumer reads the tree.
 SHARED="${TMP}/shared.lock"
 SHARED_TREE="${TMP}/tree.txt"
@@ -201,8 +192,7 @@ echo "BUILD-A" >"${SHARED_TREE}"
 # A concurrent publisher starts while the first run still consumes.
 ( acquire_publish_lock "${SHARED}" >/dev/null 2>&1 ) && fail "second publisher entered during consume"
 [[ "$(cat "${SHARED_TREE}")" == "BUILD-A" ]] || fail "live tree changed under the consumer"
-# A concurrent publish that somehow ran would swap the tree here; the
-# refusal above is what keeps each run's consume on its own publish.
+# The refusal keeps each consume on its own publish.
 release_publish_lock
 # After the full run, the next publisher proceeds normally.
 acquire_publish_lock "${SHARED}" >/dev/null || fail "lock not reusable after release"

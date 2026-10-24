@@ -10,13 +10,9 @@ APP_PACKAGE="io.github.chalharu.nerust"
 TEST_PACKAGE="${APP_PACKAGE}.test"
 TEST_RUNNER="${TEST_PACKAGE}/androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS="io.github.chalharu.nerust.MainActivityE2eTest"
-# Abnormal SAF paths against a fault-injecting stub DocumentsProvider: a
-# real DocumentsContract interface on the emulator, no physical device
-# needed (NER-321/322/312).
+# Abnormal SAF paths run against a stub provider on the emulator.
 FAULT_CLASS="io.github.chalharu.nerust.SafAbnormalProviderTest"
-# Must match HARNESS_TEARDOWN_MARKER in gui/frontends/android/src/lib.rs:
-# presence keeps the process alive across instrumentation teardown so the
-# result summary is delivered before any exit (NER-327).
+# Marker keeps the process alive across teardown so the summary is delivered.
 HARNESS_TEARDOWN_MARKER="/data/local/tmp/nerust-harness-teardown"
 APP_APK="${SCRIPT_DIR}/app/build/outputs/apk/debug/app-debug.apk"
 TEST_APK="${SCRIPT_DIR}/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
@@ -55,15 +51,11 @@ run_instrumentation() {
     if instrumentation_ok <<< "${output}"; then
         return 0
     fi
-    # A hard failure fails immediately: a crash report never excuses an
-    # assertion or runner error (NER-327).
+    # A hard failure fails immediately; a crash never excuses it.
     if instrumentation_failed "${output}"; then
         return 1
     fi
-    # Crash after proven progress means the test body finished but the
-    # summary lost the race with process exit (activity destroy exits
-    # the process by design): retry once. A crash before any finished
-    # test fails without a retry. The second result is final.
+    # Retry once when the summary lost the race with process exit.
     if ! crashed_after_progress "${tests}"; then
         return 1
     fi
@@ -132,10 +124,7 @@ wait_until_gone_with_timeout() {
     while ((SECONDS < deadline)); do
         local out
         if ! out=$(adb shell pidof "${APP_PACKAGE}" 2>&1); then
-            # pidof exits nonzero both when the process is gone (empty
-            # output) and when adb itself fails. Only a confirmed absence
-            # passes: any adb-level failure text must fail, never convert
-            # to "gone", and no finite error list decides that (NER-327).
+            # Only a confirmed absence passes; adb failure text never means gone.
             if [[ -z "${out//[[:space:]]/}" ]]; then
                 return 0
             fi
@@ -147,19 +136,13 @@ wait_until_gone_with_timeout() {
     return 1
 }
 
-# Evidence that the instrumentation produced output for this test: without
-# any instrumentation block the runner never started (or adb is offline),
-# and a missing process proves nothing (NER-327).
+# Instrumentation output proves the runner started; absence proves nothing.
 has_instrumentation_output() {
     local output="$1"
     grep -Eq 'INSTRUMENTATION_(RESULT|STATUS_CODE|CODE)' <<< "${output}"
 }
 
-# Fresh process per test: non-user destroy no longer exits the process
-# under instrumentation (exit is user-initiated only), so a lingering
-# process would be reused with a dead event loop. Force-stop first; the
-# next `am instrument` cold-starts. A pre-existing crash can never leak
-# across tests, and adb/offline failures still fail at the output gate.
+# Fresh process per test: force-stop first so no dead loop is reused.
 ensure_fresh_process() {
     local before
     if before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)" && [[ -n "${before//[[:space:]]/}" ]]; then
@@ -167,12 +150,7 @@ ensure_fresh_process() {
     fi
 }
 
-# Pre-request evidence that the process runs before the termination
-# test: a pre-existing crash plus absence would otherwise pass without
-# the test terminating anything. Freshness runs first, so the process
-# is normally gone here: start it when missing and fail only when it
-# cannot be started. Only a start failure proves a device/app problem
-# (NER-327).
+# Start the process when missing; only a start failure proves a device problem.
 ensure_process_running() {
     local before
     if before="$(adb shell pidof "${APP_PACKAGE}" 2>&1)" && [[ -n "${before//[[:space:]]/}" ]]; then
@@ -260,9 +238,7 @@ adb uninstall "${APP_PACKAGE}" >/dev/null 2>&1 || true
 adb install "${APP_APK}"
 adb install "${TEST_APK}"
 
-# Harness owns teardown: leave the marker the native exit gate reads so
-# non-user destroys keep the process alive until the result is delivered.
-# Missing marker fails fast here instead of flaking every test below.
+# Leave the teardown marker; missing marker fails fast instead of flaking.
 adb shell "touch ${HARNESS_TEARDOWN_MARKER:?}" >/dev/null 2>&1
 if ! adb shell "test -f ${HARNESS_TEARDOWN_MARKER}" >/dev/null 2>&1; then
     echo "cannot place the harness teardown marker; refusing flaky run" >&2
@@ -276,10 +252,7 @@ expect_process_termination "${TEST_CLASS}#backTerminatesApplicationProcess"
 run_instrumentation "${TEST_CLASS}#appLaunchesAfterTermination"
 expect_process_termination "${TEST_CLASS}#exitTerminatesApplicationProcess"
 run_instrumentation "${TEST_CLASS}#appLaunchesAfterTermination"
-# One test per instrumentation run: the process exits on activity destroy
-# by design, so a shared run would start later tests in a dying process
-# and lose their results. Separate runs keep the per-test isolation the
-# suite above already relies on (NER-327).
+# One test per run: separate runs keep per-test isolation.
 run_instrumentation "${TEST_CLASS}#runtimeMeetsMinimumSupportedApi"
 run_instrumentation "${TEST_CLASS}#romPickerIntentUsesSafPersistableReadAccess"
 run_instrumentation "${TEST_CLASS}#directoryPickerIntentUsesPersistableReadWriteAccess"

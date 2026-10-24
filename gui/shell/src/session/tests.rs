@@ -780,8 +780,8 @@ fn switching_system_discards_previous_loaded_runtime_state() {
     assert!(session.slots().is_empty());
 }
 
-/// NER-320: a factory whose load always fails after a good detect, so the
-/// registry reaches resolve and the session must keep its live state.
+/// A factory whose load always fails after a good detect, so the registry
+/// reaches resolve and the session must keep its live state.
 struct FailResolveFactory;
 
 impl CoreFactory for FailResolveFactory {
@@ -833,8 +833,8 @@ impl CoreFactory for FailResolveFactory {
     }
 }
 
-/// NER-320 AC-1: a resolve failure after detect keeps the live system,
-/// core state, media, save targets, and slots.
+/// A resolve failure after detect keeps the live system, core state, media,
+/// save targets, and slots.
 #[test]
 fn failed_resolve_after_detect_keeps_previous_runtime() {
     let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
@@ -879,8 +879,8 @@ fn failed_resolve_after_detect_keeps_previous_runtime() {
     let _ = std::fs::remove_dir_all(rom_dir);
 }
 
-/// NER-320 AC-1: a load failure after a cross-system switch restores the
-/// previous runtime instead of stranding the new empty core.
+/// A load failure after a cross-system switch restores the previous runtime
+/// instead of stranding the new empty core.
 #[test]
 fn failed_load_after_switch_restores_previous_runtime() {
     let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
@@ -911,8 +911,8 @@ fn failed_load_after_switch_restores_previous_runtime() {
 
     session.set_active_system(second_id.as_ref()).unwrap();
     assert!(!session.tick_metrics().loaded);
-    // The outgoing running core is frozen across the switch: no battery RAM
-    // update can slip past the pre-switch flush (NER-320).
+    // The outgoing running core is frozen across the switch: no battery RAM update
+    // slips past the pre-switch flush.
     assert!(
         session
             .pre_switch
@@ -941,8 +941,8 @@ fn failed_load_after_switch_restores_previous_runtime() {
     let _ = std::fs::remove_dir_all(rom_dir);
 }
 
-/// NER-320 AC-2/AC-3: a successful switch consumes the rollback. A later
-/// load failure keeps the new system instead of resurrecting the old one.
+/// A successful switch consumes the rollback: a later load failure keeps the new
+/// system instead of resurrecting the old one.
 #[test]
 fn successful_switch_consumes_rollback() {
     let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
@@ -1002,7 +1002,7 @@ fn successful_switch_consumes_rollback() {
     let _ = std::fs::remove_dir_all(rom_dir);
 }
 
-/// NER-320 AC-1: a create failure during activation keeps the live runtime.
+/// A create failure during activation keeps the live runtime.
 #[test]
 fn failed_activation_keeps_live_runtime() {
     let first: Arc<dyn CoreFactory> = Arc::new(MockFactory);
@@ -1434,8 +1434,7 @@ fn debug_live_images_follow_running_without_snapshot() {
         "inspect refuses while running"
     );
     // The live images path still flows here, so the PPU follow needs no snapshot sections.
-    // Identical content reports the served generation with the held images,
-    // so a panel-only update never rebuilds from an empty image (NER-324).
+    // Identical content reports the served generation with the held images.
     let live =
         crate::session::test_util::poll_live_images(&session, crate::debug::ImageNeed::Fetch);
     let batch = live.expect("running fetch serves");
@@ -1703,7 +1702,7 @@ fn live_images_flight_refetches_while_running() {
     );
     assert_eq!(
         second_len, 1,
-        "identical refetch carries the held images instead of empty (NER-324)"
+        "identical refetch carries the held images instead of empty"
     );
     session.debug_pause();
 }
@@ -1876,10 +1875,8 @@ fn cached_frame_data_rebuilds_only_on_key_change() {
     assert_eq!(changed.revision, 8);
 }
 
-/// NER-318: the tao/gtk `String` take path redelivers structured batches
-/// under new settings. A taken batch requeued via `requeue_showing`
-/// re-renders in the new language, and a level disabled afterwards
-/// suppresses it — the same guarantee the android controller path has.
+/// The tao/gtk `String` take path redelivers structured batches under new settings.
+/// A requeued taken batch re-renders in the new language; a disabled level suppresses it.
 #[test]
 fn taken_string_batch_requeued_applies_new_language_and_level_filter() {
     use crate::session::notification::Message;

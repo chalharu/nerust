@@ -12,8 +12,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 
-/** SAF document I/O behind the JNI bridge. All methods run synchronously on the calling thread.
- * Rust and Kotlin are bundled: one raw-byte contract, no legacy transports. */
+/** SAF document I/O behind the JNI bridge. All methods run synchronously on the calling thread. */
 class SafRepository(private val context: Context) : AutoCloseable {
 
     fun deleteSafFile(treeUri: String, relativePath: String): String {
@@ -21,8 +20,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
         return if (publish(directory, name, null, 0)) "ok" else "error"
     }
 
-    /** Immutable generations are the fallback for providers without atomic replace/rename.
-     * No committed document is truncated. Incomplete generations/markers are invisible. */
+    /** Immutable generations are the fallback for providers without atomic replace. */
     fun openSafWriteSession(treeUri: String, relativePath: String): Long {
         return try {
             val (directory, name) = parent(treeUri, relativePath, true) ?: return 0L
@@ -53,18 +51,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
     fun writeSafWriteSession(id: Long, bytes: ByteArray): Boolean = writeSessions.write(id, bytes)
     fun closeSafWriteSession(id: Long, commit: Boolean): Boolean = writeSessions.finish(id, commit)
 
-    /** Batched name+size listing so Rust `scan` needs no per-entry probe. Unknown sizes encode as -1. */
+    /** Batched name+size listing so Rust scan needs no per-entry probe. */
     fun listSafFilesWithSizes(treeUri: String, relativePath: String): String {
-        // A bad tree is a configuration failure, not an empty listing: throwing
-        // surfaces it as a scan error instead of a silent empty (NER-322).
-        // A missing child directory is genuinely empty and stays "[]".
+        // A bad tree is a configuration failure, not an empty listing:
+        // throw so it surfaces as a scan error.
         DocumentFile.fromTreeUri(context, Uri.parse(treeUri))
             ?: throw IllegalArgumentException("unresolvable SAF tree: $treeUri")
-        // DocumentFile.listFiles() swallows provider failures to an empty
-        // array, which a vacuous survey would certify complete and clear the
-        // visible slots over. Probe the tree root first: an unreadable root
-        // is a scan error (the Rust side keeps the previous list), never an
-        // empty one (NER-321/322).
+        // DocumentFile swallows provider failures to empty; probe the root
+        // first so an outage is a scan error, never an empty listing.
         check(verifiedTreeRoot(treeUri)) { "unreadable SAF listing: $treeUri" }
         val directory =
             resolveSafDirectory(treeUri, relativePath, create = false)
@@ -78,18 +72,14 @@ class SafRepository(private val context: Context) : AutoCloseable {
         for ((name, generation) in committed) {
             if (generation.data == null) visible.remove(name) else visible[name] = generation.data
         }
-        // Sidecar bytes ride the same listing so one generations pass serves
-        // the whole Rust scan instead of re-resolving per slot (NER-310).
+        // Sidecar bytes ride the same listing so one pass serves the whole scan.
         val byName = files.associateBy { it.name }
         for ((name, file) in visible) {
             val size = committed[name]?.size ?: knownSize(file) ?: -1L
             val entry = org.json.JSONObject().put("name", name).put("size", size)
             if (name.endsWith(".state")) {
-                // Logical resolution first: generation-tracked sidecars have
-                // no stable physical name, so the committed map (not the raw
-                // listing) tells which staged file holds the current bytes.
-                // A tombstoned sidecar resolves to nothing and falls through
-                // to the archive, like a missing one (NER-310).
+                // Logical resolution first: the committed map names the staged
+                // file since generation-tracked sidecars have no stable name.
                 val base = name.removeSuffix(".state")
                 val sidecar = batchSidecarFile(base, { committed[it]?.data }, byName)
                 val bytes = try {
@@ -108,10 +98,8 @@ class SafRepository(private val context: Context) : AutoCloseable {
             }
             array.put(entry)
         }
-        // Amortized recovery scan: staged data without a commit marker is a
-        // process-death orphan once past the grace window. In-flight stages
-        // have fresh or unknown mtimes and are never touched. An incomplete
-        // survey skips reclamation: a missed marker must not orphan live data.
+        // Amortized recovery: staged data without a marker is a process-death
+        // orphan past the grace window; incomplete surveys skip reclamation.
         if (!survey.complete) {
             Log.w(TAG, "skipping orphan reclaim: incomplete generation survey")
         } else {
@@ -125,26 +113,20 @@ class SafRepository(private val context: Context) : AutoCloseable {
         return array.toString()
     }
 
-    /** -1 = missing document, 0 = open error, positive = session ID.
-     * NER-321: a name with no generation and no physical file is missing
-     * only after a COMPLETE survey. An incomplete survey (an unreadable
-     * commit marker) returns an error instead: collapsing it to missing
-     * would let the Rust side treat live data as gone and run the
-     * delete/tombstone/GC path over it. */
+    /** -1 = missing, 0 = open error, positive = session ID. Missing needs
+     * a COMPLETE survey; an incomplete survey returns an error instead. */
     fun openSafReadSession(treeUri: String, relativePath: String): Long {
         return try {
-            // Same probe-first discipline as the listing: a provider-wide
-            // outage must surface as 0 (error, never delete), not -1
-            // (missing, which runs the delete/tombstone/GC path) (NER-321).
+            // Same probe-first discipline: a provider-wide outage surfaces as
+            // 0 (error), never -1 (missing).
             if (!verifiedTreeRoot(treeUri)) return 0L
             val (directory, name) = parent(treeUri, relativePath, false) ?: return -1L
             val files = directory.listFiles()
             val survey = surveyGenerations(files)
             val generation = survey.committed[name]
             if (generation != null) {
-                // A parsed generation speaks for this name even when other
-                // markers failed: a tombstone is confirmed-absent, otherwise
-                // the staged data serves under its committed size.
+                // A parsed generation speaks for this name: a tombstone is
+                // confirmed-absent, otherwise the staged data serves.
                 val file = generation.data ?: return -1L
                 val stream = context.contentResolver.openInputStream(file.uri) ?: return 0L
                 readSessions.open(SafVerifiedInputStream(stream, generation.size))
@@ -196,9 +178,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
     }
 
     /**
-     * Amortized orphan recovery: delete unreferenced staged data past the
-     * grace window, capped per listing. A delete failure stays for the next
-     * listing; an in-flight stage is never a candidate.
+     * Amortized orphan recovery: delete unreferenced staged data past the grace window.
      */
     private fun reclaimOrphanedStages(
         directory: DocumentFile,
@@ -246,11 +226,6 @@ class SafRepository(private val context: Context) : AutoCloseable {
 
     /**
      * Generations survey: the display map plus whether every marker resolved.
-     * A single unreadable marker makes the survey incomplete; destructive
-     * reclamation must not run on an incomplete survey (NER-311).
-     * [allReferenced] covers every successfully parsed generation, not just
-     * the latest per name: GC must not orphan data an older unswept marker
-     * still points at, even when a newer generation already serves.
      */
     private fun surveyGenerations(files: Array<DocumentFile>): GenerationSurvey {
         val byName = files.associateBy { it.name }
@@ -310,10 +285,8 @@ class SafRepository(private val context: Context) : AutoCloseable {
         val size = record.getLong("size")
         val data = if (record.isNull("data")) null else {
             val file = byName[record.getString("data")] ?: return null
-            // Null SIZE is unknown, not an empty file. Verify at EOF on read.
-            // A known-size mismatch skips this marker so the previous
-            // generation keeps serving; the corrupt marker is swept on
-            // the next successful publish.
+            // Null SIZE is unknown, not an empty file. A known-size mismatch
+            // skips this marker so the previous generation keeps serving.
             val length = knownSize(file)
             if (length != null && length != size) {
                 Log.w(TAG, "SAF marker size mismatch; keeping previous generation")
@@ -357,12 +330,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
         }
     }
 
-    /** Probe-first listing health: DocumentFile list/find calls swallow
-     * provider failures (empty array / null), so a vacuous result cannot
-     * prove absence. Query the tree root document directly: it throws on a
-     * provider-wide outage. Non-tree URIs (single-document and legacy
-     * providers) keep the historical behavior since the probe is a
-     * DocumentsContract concept that must not fail them (NER-321). */
+    /** Probe-first listing health: a vacuous result cannot prove absence. */
     private fun verifiedTreeRoot(treeUri: String): Boolean {
         val parsed = Uri.parse(treeUri)
         if (parsed.pathSegments.firstOrNull() != "tree") return true
@@ -433,13 +401,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
         internal fun isStagedData(name: String) =
             name.startsWith(PREFIX) && name.endsWith(".data")
 
-        /**
-         * Batch sidecar resolution for one slot: the committed generation
-         * wins over the physical listing, and a tombstoned or absent sidecar
-         * resolves to nothing so the scan falls back to the archive.
-         * Generation-tracked sidecars have no stable physical name, so the
-         * raw listing alone would always miss them (NER-310).
-         */
+        /** Batch sidecar resolution: the committed generation wins, otherwise fall back. */
         internal fun batchSidecarFile(
             base: String,
             committedData: (String) -> DocumentFile?,
@@ -447,13 +409,7 @@ class SafRepository(private val context: Context) : AutoCloseable {
         ): DocumentFile? =
             committedData("$base.summary") ?: physical["$base.summary"]
 
-        /**
-         * Orphaned staged data: unreferenced by any live marker and older than
-         * the grace window. Unknown mtimes (0) count as fresh, never stale.
-         * Stable name order keeps successive capped sweeps deterministic.
-         * An incomplete survey selects nothing: destructive reclamation needs
-         * every marker resolved, so a missed marker never orphans live data.
-         */
+        /** Orphaned staged data: unreferenced and older than the grace window. */
         internal fun selectOrphanedStages(
             dataFiles: Map<String, Long>,
             referenced: Set<String>,
@@ -479,20 +435,11 @@ class SafRepository(private val context: Context) : AutoCloseable {
             order: String,
         ): Boolean = recordName == name && recordOrder < order
 
-        /**
-         * NER-321 read-outcome gate: a logical document is confirmed-absent
-         * only after a COMPLETE generation survey. An incomplete survey (an
-         * unreadable commit marker) must surface as an open error, never as
-         * missing, so the Rust side keeps its previous state and never runs
-         * the delete/tombstone/GC path over live data.
-         * Pure decision logic: JVM tests pin the truth table without a device.
-         */
+        /** Read-outcome gate: confirmed-absent only after a complete survey. */
         internal fun confirmedAbsent(surveyComplete: Boolean, fileFound: Boolean): Boolean =
             surveyComplete && !fileFound
 
-        /** Scan transfer guard: sidecar bytes above this are skipped, so a huge
-         * summary never crosses on the batch path either (NER-312). Pure
-         * `java.io`: JVM tests pin the bound without a provider. */
+        /** Scan transfer guard: sidecar bytes above the cap are skipped. */
         internal fun readCappedBytes(stream: java.io.InputStream, limit: Int): ByteArray {
             val out = java.io.ByteArrayOutputStream()
             val chunk = ByteArray(8192)

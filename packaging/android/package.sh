@@ -213,14 +213,7 @@ else
         verify_native_library "${readelf_bin}" "${main_so}" "${budget}"
     done
 fi
-# Gate passed: publish the staged libs via rename swap. Each rename is
-# atomic, but the pair is not: a failure between them is repaired below so the
-# live tree is always either the old or the new complete tree, never absent.
-# Concurrent publishers are refused: mkdir is atomic, the pid record is
-# written atomically, and only the owner releases. A missing pid waits out
-# a grace instead of proving death; a dead or never-recorded owner is taken
-# over through a single-winner move with a post-record identity check, so
-# at most one process ever observes itself as owner (NER-313).
+# Publish staged libs via rename swap; concurrent publishers are refused.
 PUBLISH_LOCK_DIR="${JNI_LIBS_DIR}.lock"
 if ! acquire_publish_lock "${PUBLISH_LOCK_DIR}"; then
     exit 1
@@ -247,10 +240,7 @@ if ! mv "${stage_publish_tmp}" "${JNI_LIBS_DIR}"; then
     exit 1
 fi
 rm -rf "${stage_publish_old}"
-# The lock stays held while Gradle consumes the published tree: releasing
-# before assemble lets a concurrent publisher swap the libs under the
-# build. Same-tree runs serialize end to end; different trees use
-# different lock dirs and never contend (NER-314).
+# Hold the lock while Gradle consumes the tree; same-tree runs serialize.
 
 (
     cd "${SCRIPT_DIR}"

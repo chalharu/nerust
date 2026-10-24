@@ -174,7 +174,7 @@ class JvmSkipped(unittest.TestCase):
 
 
 class CommentedOnlyGate(unittest.TestCase):
-    """NER-315: selections only in comments/heredoc/assignments fail end to end."""
+    """Selections only in comments/heredoc/assignments fail end to end."""
 
     COMMENTED_ONLY_TEXT = (
         '# run_instrumentation "${TEST_CLASS}#alpha"\n'
@@ -213,7 +213,7 @@ class CommentedOnlyGate(unittest.TestCase):
 
 
 class UnexecutedJvmGate(unittest.TestCase):
-    """NER-316: synthetic allowance matrix against unexecuted_jvm_tests."""
+    """Synthetic allowance matrix against unexecuted_jvm_tests."""
 
     TODAY = "2026-10-23"
 

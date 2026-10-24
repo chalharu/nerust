@@ -269,9 +269,8 @@ mod fs_cov_tests {
         let _ = std::fs::remove_dir_all(d.native_path().unwrap());
     }
 
-    /// NER-319 AC-1/3: a failed quarantine keeps the original autosave
-    /// bytes. A directory at the quarantine name blocks the rename, so the
-    /// error path must leave the source readable and unchanged.
+    /// A failed quarantine keeps the original autosave bytes readable and unchanged.
+    /// A directory at the quarantine name blocks the rename.
     #[test]
     fn failed_quarantine_keeps_original_autosave_bytes() {
         let back = FsAutosave;

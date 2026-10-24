@@ -21,8 +21,7 @@ pub enum PersistenceError {
 impl From<zip::result::ZipError> for PersistenceError {
     fn from(error: zip::result::ZipError) -> Self {
         // Transport failure inside the archive stays retryable instead of
-        // collapsing into corruption: a transient seek/read must not trigger
-        // quarantine or delete paths (NER-321).
+        // collapsing into corruption: transient reads must not trigger quarantine.
         match error {
             zip::result::ZipError::Io(error) => Self::Io(error),
             error => Self::Zip(error),
@@ -34,8 +33,8 @@ impl From<zip::result::ZipError> for PersistenceError {
 mod tests {
     use super::*;
 
-    /// NER-321: transport failure inside the archive stays an I/O error so
-    /// retryable paths never mistake it for confirmed corruption.
+    /// Transport failure inside the archive stays an I/O error so
+    /// retryable paths never mistake it for corruption.
     #[test]
     fn zip_transport_failure_stays_retryable_io() {
         let io = std::io::Error::new(std::io::ErrorKind::TimedOut, "transient");

@@ -59,9 +59,8 @@ impl SessionHandle {
         media: MediaObject,
         resolved: ResolvedLoadRequest,
     ) -> Result<(), SessionError> {
-        // A switch published earlier dies here with the load: restore the
-        // pre-switch live state instead of stranding the empty core.
-        // Without a pending switch this is a no-op (NER-320).
+        // A published switch dies here with the load: restore the pre-switch state.
+        // Without a pending switch this is a no-op.
         let candidate = match self.stage_candidate(&media, resolved.options.as_ref()) {
             Ok(candidate) => candidate,
             Err(error) => {

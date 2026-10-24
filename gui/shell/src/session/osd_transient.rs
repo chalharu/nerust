@@ -167,9 +167,8 @@ impl TransientQueue {
                 return false;
             }
             if showing && item.deadline <= now {
-                // Expired while showing: never resurrect as modal (NER-317).
-                // Pending rows keep provisional deadlines (TTL starts at
-                // promotion), so only the showing row is expiry-checked here.
+                // Expired while showing: never resurrect as modal. Pending rows keep
+                // provisional deadlines, so only the showing row is expiry-checked here.
                 return false;
             }
             item.base = renderer.render_message(&item.message).into();
@@ -644,8 +643,8 @@ mod tests {
         );
     }
 
-    /// NER-317 AC-1: an expired showing row never resurrects as modal when
-    /// the channel drops after its TTL.
+    /// An expired showing row never resurrects as modal when the channel drops
+    /// after its TTL.
     #[test]
     fn expired_showing_row_never_resurrects_as_modal() {
         let mut queue = TransientQueue::default();
@@ -662,9 +661,8 @@ mod tests {
         assert!(!queue.has_visible());
     }
 
-    /// NER-317: the expiry boundary is exact. At `deadline` the showing
-    /// row is already expired and drops; one millisecond earlier it is live
-    /// and reroutes.
+    /// The expiry boundary is exact: at `deadline` the showing row has expired
+    /// and drops; one millisecond earlier it is live and reroutes.
     #[test]
     fn expiry_boundary_drops_at_deadline_only() {
         let mut queue = TransientQueue::default();
@@ -693,9 +691,8 @@ mod tests {
         assert!(!queue.has_visible());
     }
 
-    /// NER-317: disabled levels vanish silently. A showing Warning/Error row
-    /// under a policy with that level disabled drops without modalizing,
-    /// even with error_modal armed.
+    /// Disabled levels vanish silently: a showing Warning/Error row under such a
+    /// policy drops without modalizing, even with error_modal armed.
     #[test]
     fn disabled_levels_drop_showing_rows_without_modal() {
         for (level, key) in [
@@ -738,9 +735,8 @@ mod tests {
         assert_eq!(modal[0].2, NotificationLevel::Warning);
     }
 
-    /// NER-317: `poll` drops at the exact deadline too (`deadline <= now`
-    /// fires when `now == deadline`), not only past it. The showing label
-    /// clears and the promotion underneath arms its own full duration.
+    /// `poll` drops at the exact deadline too (`deadline <= now` fires at equality).
+    /// The showing label clears and the promotion underneath arms its full duration.
     #[test]
     fn poll_drops_showing_at_exact_deadline() {
         let mut queue = TransientQueue::default();
@@ -756,9 +752,8 @@ mod tests {
         assert!(!queue.poll(now + Duration::from_millis(2_000)));
     }
 
-    /// NER-317 unload path: when the frame channel drops (ROM unloaded),
-    /// a live showing warning reroutes to modal while an info row drops
-    /// silently (info is never modal-worthy). Both leave nothing visible.
+    /// Unload path: when the frame channel drops, a live showing warning reroutes
+    /// to modal while an info row drops silently. Both leave nothing visible.
     #[test]
     fn unload_channel_reroutes_warning_but_drops_info() {
         let now = Instant::now();
@@ -787,9 +782,8 @@ mod tests {
         assert!(!infos.has_visible());
     }
 
-    /// NER-317 disabled-level path, pending side: disabling a level also
-    /// purges queued rows of that level instead of only the showing one,
-    /// and still modalizes nothing.
+    /// Disabling a level also purges queued rows of that level, not only the
+    /// showing one, and still modalizes nothing.
     #[test]
     fn disabled_levels_drop_pending_rows_without_modal() {
         let mut queue = TransientQueue::default();
@@ -813,8 +807,8 @@ mod tests {
         assert!(queue.pending.is_empty());
     }
 
-    /// NER-317 AC-2/AC-3: pending rows keep provisional deadlines (their TTL
-    /// starts at promotion), and error_modal applies to live errors only.
+    /// Pending rows keep provisional deadlines (TTL starts at promotion), and
+    /// error_modal applies to live errors only.
     #[test]
     fn pending_rows_ignore_stamps_and_error_modal_needs_live_error() {
         let mut queue = TransientQueue::default();

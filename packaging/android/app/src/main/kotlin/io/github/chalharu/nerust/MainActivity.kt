@@ -87,9 +87,7 @@ class MainActivity :
 
     @Volatile private var lastLoadedSystemForTest: String? = null
 
-    /** Set only on the user-initiated finish paths (back, Exit menu):
-     * the native side exits the process exactly then, never on a
-     * framework-driven destroy (NER-327). */
+    /** Set only on user-initiated finish paths; native exits then, never on destroy. */
     private var userInitiatedExit = false
 
     override val lifecycle: Lifecycle

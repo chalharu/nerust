@@ -30,9 +30,8 @@ pub(crate) enum MapperRestore {
 pub(crate) struct PersistenceBinder;
 
 impl PersistenceBinder {
-    /// Single wiring entry: optional exporter, path, and restore mode.
+    /// Single wiring entry (optional exporter, path, restore mode); returns the setup.
     /// `None` probes the live core inside, so callers never juggle its borrow.
-    /// Returns the setup; the caller pushes the notice via [`SessionHandle::note_persistence_setup`].
     pub(crate) fn bind(
         session: &mut SessionHandle,
         exporter: Option<&dyn StateExporter>,
@@ -54,8 +53,8 @@ impl PersistenceBinder {
             rom_path,
             mapper_restore,
         );
-        // A scan failure keeps the previous list but is not silent: the
-        // notice distinguishes a backend failure from an empty list (NER-322).
+        // A scan failure keeps the previous list but is not silent: the notice
+        // distinguishes a backend failure from an empty list.
         if let Some(fault) = scan_fault {
             session
                 .notifications
@@ -103,8 +102,8 @@ fn setup_persistence(
     persistence.configure(sidecars.states_dir, sidecars.mapper_save_path);
     let mut scan_fault = None;
     if let Some(exporter) = exporter {
-        // A failed scan keeps the previous list but is reported: the setup
-        // stays Ready while the notice distinguishes failure from empty (NER-322).
+        // A failed scan keeps the previous list but is reported: the setup stays
+        // Ready while the notice distinguishes failure from empty.
         if let Err(error) = persistence.refresh_slots(exporter) {
             scan_fault = Some(SlotOpFailure::from(&error));
         }
@@ -143,9 +142,8 @@ mod persistence_setup_cov_tests {
         assert_eq!(session.drain_notifications().len(), 1);
     }
 
-    /// NER-322 AC-2: a failed slot scan keeps the previous list but is not
-    /// silent. Setup stays Ready while a storage-failure notice tells an
-    /// empty-looking list apart from a backend failure.
+    /// A failed slot scan keeps the previous list but still notifies: setup
+    /// stays Ready while the notice tells empty apart from backend failure.
     #[test]
     fn failed_scan_stays_ready_but_notifies() {
         use crate::session::{

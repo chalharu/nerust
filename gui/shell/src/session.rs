@@ -347,10 +347,8 @@ pub struct SessionHandle {
     history_view: session_query::HistoryView,
     /// Reused OSD drain buffer: one allocation serves every tick.
     drain_scratch: Vec<notification::UiNotification>,
-    /// Pre-switch live state for load-failure rollback: a system switch
-    /// publishes immediately, and a later load failure in the same
-    /// set-then-load pair restores this instead of stranding an empty
-    /// core (NER-320). Single-use; every load consumes it.
+    /// Pre-switch live state for load-failure rollback: a later load failure
+    /// restores this instead of stranding an empty core. Single-use per load.
     pre_switch: Option<PreSwitchState>,
 }
 
@@ -363,9 +361,8 @@ struct PreSwitchState {
     assignments: InputAssignments,
     pressed: std::collections::HashSet<nerust_keyboard::Key>,
     persistence: persistence::PersistSnapshot,
-    /// Whether the stashed runtime ran: it is frozen across the switch so
-    /// no battery RAM update can slip past the pre-switch flush, and
-    /// rollback resumes it.
+    /// Whether the stashed runtime ran: frozen so no battery update slips past the flush.
+    /// Rollback resumes it.
     was_running: bool,
 }
 
@@ -850,9 +847,8 @@ impl SessionHandle {
         )
         .map_err(SystemActivationError::from_session)?;
 
-        // Freeze the outgoing core before its final export: it keeps
-        // running while stashed, so an unpaused stash would lose battery RAM
-        // updates written after this flush (NER-320).
+        // Freeze the outgoing core before its final export: a running stash
+        // would lose battery RAM updates written after this flush.
         let tick = self.tick_metrics();
         let was_running = tick.loaded && !tick.paused;
         if was_running {
@@ -880,9 +876,8 @@ impl SessionHandle {
             }
         }
 
-        // Snapshot the live state before publishing: a later load failure in
-        // this set-then-load pair rolls back instead of stranding the new
-        // system's empty core (NER-320).
+        // Snapshot the live state before publishing: a later load failure rolls back
+        // instead of stranding the new system's empty core.
         let pre_switch = PreSwitchState {
             runtime: self.emu.replace(ActiveRuntime::from(created.runtime)),
             loaded: self.media.loaded.take(),
@@ -931,9 +926,8 @@ impl SessionHandle {
         self.input.invalidate_topology();
         self.debug_clear_write();
         self.rebuild_key_field_map();
-        // The switch froze a running core: unfreeze it now that it is live
-        // again, or rollback would strand a paused game. Held execution
-        // stays held, mirroring the load-path resume gate.
+        // The switch froze a running core: unfreeze it now, or rollback strands a paused game.
+        // Held execution stays held, mirroring the load-path resume gate.
         if was_running
             && !self.execution_held
             && let Ok(live) = self.emu.require_live()

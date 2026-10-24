@@ -94,8 +94,7 @@ class SafWriteSessionsTest {
     }
 
     @Test fun openBeyondCapRefusesAndDiscardsWithoutLeaking() {
-        // NER-308 AC-2: admission is capped; the refused open discards the
-        // passed transaction through the cleanup lane instead of leaking it.
+        // Admission is capped; the refused open discards the transaction via the lane.
         val sessions = SafWriteSessions(java.util.concurrent.Executor { it.run() })
         val ids = (0 until 64).map { sessions.open(Transaction()) }
         assertTrue(ids.all { it > 0 })

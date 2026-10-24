@@ -4,18 +4,13 @@ import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 
-/** Reads/explicit close serialize per session. Activity destruction only detaches ownership.
- * No Android dependencies: the actual transport semantics are JVM-testable. */
+/** Reads/explicit close serialize per session. Activity destruction only detaches ownership. */
 internal class SafReadSessions(
     private val closeExecutor: Executor = SafCleanup.executor,
 ) : AutoCloseable {
     private class Session(val stream: InputStream)
-    // Lock-free reads: per-session monitors never nest inside the registry monitor.
-    // Registry monitor guards only id minting and teardown; lookups use the map directly.
-    // Admission is capped (NER-308): one close occupies at most one lane
-    // slot, so open sessions match the lane depth and a full teardown storm
-    // still fits the lane plus dock budget. A refused open closes the passed
-    // stream through the cleanup lane, so ownership is never lost or leaked.
+    // Open sessions match the lane depth so a teardown storm still fits
+    // the lane plus dock; a refused open closes the stream via the lane.
     private companion object {
         const val MAX_OPEN_SESSIONS = 64
     }

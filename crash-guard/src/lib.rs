@@ -1,8 +1,5 @@
-//! Outermost crash containment: hook diagnostics plus guarded entry. Hook records describe
-//! the panic site; caught reports describe only the caught payload, without claiming correlation.
-//! Dialogs and termination are the host's job. Sinks and sources travel by parameter.
-//! The std hook is process-global, so one process-default adapter remains;
-//! hosts only choose sinks and sources, hook chaining stays here.
+//! Outermost crash containment: hook diagnostics plus guarded entry; hosts own dialogs and termination.
+//! Hook records describe the panic site; caught reports describe only the payload.
 
 use std::{
     any::Any,
@@ -38,13 +35,8 @@ struct Registration {
     thread: Option<std::thread::ThreadId>,
 }
 
-/// Lifecycle of the single process-wide hook adapter: the current external
-/// hook plus whether our dispatcher is installed. Install and drop mutate it
-/// under its own lock; the dispatcher never takes it, so std hook writes here
-/// cannot deadlock against panic delivery. `previous` tracks the live
-/// external hook: a reinstall adopts what `take_hook` returns and retires
-/// the stale stored one, so an external `set_hook` while idle is preserved
-/// and reinstalls never grow a forwarding chain (NER-301).
+/// Lifecycle of the single process-wide hook adapter; the dispatcher never takes it,
+/// so std hook writes here cannot deadlock against panic delivery. Reinstalls adopt the live hook.
 struct Lifecycle {
     previous: Option<Hook>,
     installed: bool,
@@ -57,17 +49,12 @@ static LIFECYCLE: Mutex<Lifecycle> = Mutex::new(Lifecycle {
     retired: Vec::new(),
 });
 
-/// Serializes hook swaps (first install, last restore). Swap paths hold it
-/// across the std swap while owning no other lock: std dispatches under its
-/// read lock, so waiting for its write lock while holding `LIFECYCLE` would
-/// deadlock against a panicking sink taking `LIFECYCLE` (NER-300).
-/// Lock order is `HOOK_SWAP` -> `LIFECYCLE` -> `REGISTRATIONS`; `HOOK_SWAP`
-/// is only ever acquired with no other lock held.
+/// Serializes hook swaps (first install, last restore). Swap paths hold it across the std
+/// swap while owning no other lock; lock order is `HOOK_SWAP` -> `LIFECYCLE` -> `REGISTRATIONS`.
 static HOOK_SWAP: Mutex<()> = Mutex::new(());
 
-/// Live registrations snapshotted by the dispatcher. The dispatcher clones
-/// under this lock and releases it before capturing or calling any sink, so
-/// this lock never nests inside user code or std hook operations.
+/// Live registrations snapshotted by the dispatcher; the lock never nests inside user
+/// code or std hook operations.
 static REGISTRATIONS: Mutex<Vec<Arc<Registration>>> = Mutex::new(Vec::new());
 
 /// Drop retired dispatchers outside every lock: their captures may install
@@ -82,12 +69,8 @@ fn drain_retired() {
     drop(retired);
 }
 
-/// Owns one process-wide registration, not a snapshot of another guard's hook.
-/// Drops may occur in any order or thread; only live registrations are called,
-/// newest first, followed by the original process hook. In-flight snapshots may
-/// finish after a guard drops. Forgetting the guard makes its registration permanent.
-/// The newest source captures one record shared by all sinks. Coordinate external
-/// `set_hook`/`take_hook` users: std offers no atomic compare-and-swap for hooks.
+/// Owns one process-wide registration; drops may occur in any order or thread, and only
+/// live registrations are called, newest first, followed by the original process hook.
 #[must_use = "keep the guard alive while its panic handler is needed"]
 pub struct HookGuard {
     registration: Arc<Registration>,
@@ -95,10 +78,8 @@ pub struct HookGuard {
 
 impl Drop for HookGuard {
     fn drop(&mut self) {
-        // std forbids set_hook while unwinding. Retain the registration but
-        // leave the dispatcher: the next non-panicking guard drop restores it.
-        // The light path below takes only brief adapter locks, so a sink drop
-        // racing an installer swap always finishes (NER-300).
+        // std forbids set_hook while unwinding: retain the registration but leave the
+        // dispatcher; the next non-panicking guard drop restores it.
         let can_restore = !std::thread::panicking();
         drain_retired();
         if !can_restore {
@@ -108,10 +89,8 @@ impl Drop for HookGuard {
             registrations.retain(|entry| !Arc::ptr_eq(entry, &self.registration));
             return;
         }
-        // The check, reserve, swap, and retire serialize under `HOOK_SWAP`: a
-        // racing install either publishes first (the check sees it) or
-        // reinstalls after (it sees the idle adapter). Either way a live
-        // guard is never orphaned (NER-300).
+        // The check, reserve, swap, and retire serialize under `HOOK_SWAP`, so a live
+        // guard is never orphaned by a racing install.
         let _swap = HOOK_SWAP
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -142,9 +121,8 @@ impl Drop for HookGuard {
     }
 }
 
-/// Install the hook with an explicit sink and backtrace source, chaining the
-/// previous hook. Single entry point; the default pair is [`install_default`].
-/// Returns a guard; the last non-panicking drop restores the previous hook.
+/// Install the hook with an explicit sink and backtrace source, chaining the previous
+/// hook. The last non-panicking drop restores the previous hook.
 pub fn install(
     sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
     source: impl Fn() -> Arc<str> + Send + Sync + 'static,
@@ -170,12 +148,8 @@ fn install_erased(
         thread,
     });
     drain_retired();
-    // Fast path: dispatcher already live. Publishing under `HOOK_SWAP`
-    // serializes against a concurrent final drop's retain-and-decide, so the
-    // drop either sees this registration (no restore) or restores first (this
-    // install then takes the slow path and reinstalls). Either way a live
-    // guard is never orphaned (NER-300). Order stays HOOK_SWAP → LIFECYCLE →
-    // REGISTRATIONS, matching the drop path.
+    // Fast path: dispatcher already live. Publishing under `HOOK_SWAP` serializes against
+    // a concurrent final drop, so a live guard is never orphaned.
     let _swap = HOOK_SWAP
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -191,20 +165,15 @@ fn install_erased(
             return HookGuard { registration };
         }
     }
-    // Slow path: idle adapter. `HOOK_SWAP` stays held across reserve, swap,
-    // and publish, so a racing last-drop restore cannot interleave (NER-300).
-    // No adapter lock is held across the std swap below: std dispatches under
-    // its read lock, so waiting for its write lock while owning `LIFECYCLE`
-    // would deadlock against panic delivery.
-    // No adapter locks held: swap the process hook.
+    // Slow path: idle adapter. `HOOK_SWAP` stays held across reserve, swap, and publish,
+    // so a racing last-drop restore cannot interleave.
     let taken = panic::take_hook();
     let previous = {
         let mut lifecycle = LIFECYCLE
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Adopt the live hook: an external `set_hook` while idle supersedes
-        // the stored one, which is retired instead of the live hook (NER-301).
-        // Either way the new dispatcher calls registrations then one hook.
+        // Adopt the live hook: an external `set_hook` while idle supersedes the stored
+        // one, which is retired instead of the live hook.
         let live: Hook = Arc::from(taken);
         if let Some(stale) = lifecycle.previous.replace(Arc::clone(&live)) {
             lifecycle.retired.push(stale);
@@ -260,9 +229,8 @@ pub enum GuardOutcome<R> {
     Crashed(CrashReport),
 }
 
-/// Caught payload data for dialogs: getters only, log shape via `Display`.
-/// Hook diagnostics are logged separately: stable std cannot establish their
-/// identity with an arbitrary caught payload, especially after `resume_unwind`.
+/// Caught payload data for dialogs: getters only, log shape via `Display`. Hook diagnostics
+/// are logged separately and never correlated with a caught payload.
 #[derive(Debug, Clone)]
 pub struct CrashReport {
     thread: Arc<str>,
@@ -300,7 +268,6 @@ impl std::fmt::Display for CrashReport {
 
 /// Thread, hook detail, and panic-site backtrace captured once per hook invocation.
 /// This diagnostic is not evidence about the payload eventually caught by a guard.
-/// `Debug` exposes the same fields as the getters.
 #[derive(Debug, Clone)]
 pub struct PanicRecord {
     thread: Arc<str>,
@@ -353,13 +320,7 @@ fn payload_message(payload: &(dyn Any + Send)) -> Arc<str> {
 }
 
 /// Run `main` under a scoped hook; on unwind build the report and return it.
-/// Report construction is silent; caught state is never resumed or reused.
-/// The hook logs each invocation with one panic-site capture shared by its sinks.
-/// The report uses only the caught payload: hooks may belong to swallowed panics,
-/// and `resume_unwind` skips hooks. Addresses, types, and equal text cannot prove
-/// correlation (storage can move or be reused). Reports therefore always state
-/// that the hook record is unavailable for the caught payload. No catch-site
-/// trace is substituted and neither sink nor source is called after the catch.
+/// Reports state that the hook record is unavailable for the caught payload.
 pub fn run_guarded_with<R>(
     main: impl FnOnce() -> R,
     sink: impl Fn(&PanicRecord) + Send + Sync + 'static,
@@ -390,8 +351,7 @@ mod tests {
 
     static SINK_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-    /// Process hook restored and nothing live or retired. The original hook
-    /// stays cached across idle restores so reinstalls reuse it (NER-301).
+    /// Process hook restored and nothing live or retired: reinstalls reuse the cached hook.
     fn adapter_is_idle() -> bool {
         drain_retired();
         let lifecycle = LIFECYCLE
@@ -631,9 +591,8 @@ mod tests {
         assert!(adapter_is_idle());
     }
 
-    /// NER-300 AC-1: a final drop racing a fresh publish must not orphan the
-    /// live guard. The barrier aligns the drop's check with the install's
-    /// publish; every interleaving must still deliver exactly once.
+    /// A final drop racing a fresh publish must not orphan the live guard: every
+    /// interleaving must still deliver exactly once.
     #[test]
     fn publish_racing_final_drop_never_orphans_live_guard() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
@@ -664,8 +623,7 @@ mod tests {
         }
     }
 
-    /// NER-300 AC-2: a sink drop (light path, no swap wait) racing installer
-    /// swaps on another thread always finishes; scope join bounds the wait.
+    /// A sink drop racing installer swaps on another thread always finishes.
     #[test]
     fn sink_drop_racing_install_completes() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
@@ -694,9 +652,8 @@ mod tests {
         assert!(adapter_is_idle());
     }
 
-    /// NER-301: reinstall cycles never grow the forwarding depth. Each live
-    /// install observes exactly one delivery per panic: a rewrapped
-    /// dispatcher would call the shared registry twice.
+    /// Reinstall cycles never grow the forwarding depth: each live install observes
+    /// exactly one delivery per panic.
     #[test]
     fn reinstall_cycles_keep_single_forwarding_layer() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
@@ -718,9 +675,8 @@ mod tests {
         assert!(adapter_is_idle());
     }
 
-    /// NER-301 AC-3: an external `set_hook` while idle survives the next
-    /// install, and the final drop restores it (not the older stored hook).
-    /// Fully serial: H0 -> install/drop -> external H1 -> reinstall.
+    /// An external `set_hook` while idle survives the next install, and the final drop
+    /// restores it (not the older stored hook).
     #[test]
     fn reinstall_adopts_external_hook_set_while_idle() {
         let _lock = HOOK_TEST_LOCK.lock().unwrap();
