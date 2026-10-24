@@ -2,6 +2,8 @@ package io.github.chalharu.nerust
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -306,6 +308,61 @@ class MainActivityE2eTest {
             "Unload should clear pushed touch zones",
             waitUntil(DIALOG_TIMEOUT_MS) { activity.controlsZoneCountForTest() == 0 },
         )
+    }
+
+    @Suppress("DEPRECATION")
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun drawerScrollsInLandscape() {
+        val activity = launchActivity()
+
+        runOnActivityThread(activity) {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
+        assertTrue(
+            "Activity should rotate to landscape",
+            waitUntil(STARTUP_TIMEOUT_MS) {
+                activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            },
+        )
+        assertDrawerHandleAvailable(activity)
+
+        try {
+            runOnActivityThread(activity) {
+                activity.openDrawerForTest()
+            }
+            assertChromeViewAvailable(
+                activity,
+                DRAWER_OVERLAY_TAG,
+                DRAWER_TIMEOUT_MS,
+                "Drawer overlay should be attached in landscape",
+            )
+            // The sheet overflows the landscape height, so the published
+            // range must be measured (finite) and non-zero (scrollable).
+            val scrollMax =
+                waitUntilValue(DRAWER_TIMEOUT_MS) {
+                    activity.drawerScrollMaxForTest()?.takeIf { it != Int.MAX_VALUE }
+                }
+            requireNotNull(scrollMax) { "Drawer sheet should publish a measured scroll range" }
+            assertTrue("Drawer sheet should scroll in landscape (max=$scrollMax)", scrollMax > 0)
+
+            runOnActivityThread(activity) {
+                val drawerOverlay =
+                    requireNotNull(activity.findChromeViewForTest(DRAWER_OVERLAY_TAG)) {
+                        "Drawer overlay should be attached in landscape"
+                    }
+                assertEquals(
+                    EXPECTED_DRAWER_CONTENT,
+                    drawerOverlay.getTag(R.id.nerust_drawer_content_probe),
+                )
+                activity.onBackPressed()
+            }
+        } finally {
+            runOnActivityThread(activity) {
+                if (!activity.isDestroyed) {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+            }
+        }
     }
 
     /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
