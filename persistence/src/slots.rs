@@ -7,12 +7,15 @@ use std::{
 
 use nerust_core_traits::identity::SystemIdentity;
 
+pub use crate::archive::MAX_SLOT_ARCHIVE_BYTES;
+pub use crate::metadata::MAX_METADATA_BYTES;
 use crate::{
     archive::{build_state_archive, load_state_archive, read_state_summary, summary_from_metadata},
     error::PersistenceError,
     fs_ops::write_atomic,
-    metadata::encode_slot_metadata,
+    metadata::{decode_metadata_bytes, encode_metadata_bytes, encode_slot_metadata},
     model::{LoadedStateSlot, StateSlotSummary},
+    sidecar::StorageLocation,
     thumbnail::{ThumbnailSource, encode_thumbnail_png},
     time::{system_time_from_millis, unix_millis},
 };
@@ -109,8 +112,43 @@ pub fn state_slot_path(states_dir: &Path, slot_id: u64) -> PathBuf {
     states_dir.join(format!("{slot_id}.state"))
 }
 
+/// Quarantine by copy-then-delete: the original is removed only after
+/// the copy is stored, so any failure keeps the original recoverable.
+pub fn quarantine_by_copy(
+    read_original: impl FnOnce() -> Result<Option<Vec<u8>>, PersistenceError>,
+    write_copy: impl FnOnce(&[u8]) -> Result<(), PersistenceError>,
+    delete_original: impl FnOnce() -> Result<(), PersistenceError>,
+    quarantined: StorageLocation,
+) -> Result<Option<StorageLocation>, PersistenceError> {
+    let Some(bytes) = read_original()? else {
+        return Ok(None);
+    };
+    write_copy(&bytes)?;
+    delete_original()?;
+    Ok(Some(quarantined))
+}
+
 pub fn autosave_state_slot_path(states_dir: &Path) -> PathBuf {
     states_dir.join(AUTOSAVE_SLOT_ENTRY)
+}
+
+/// Publish a state archive with its scan sidecar. The sidecar is dropped
+/// before and after the state write so scans never serve a stale summary.
+pub fn publish_state_with_sidecar(
+    delete_sidecar: impl Fn() -> Result<(), PersistenceError>,
+    write_state: impl FnOnce() -> Result<(), PersistenceError>,
+    write_sidecar: impl FnOnce() -> Result<(), PersistenceError>,
+) -> Result<(), PersistenceError> {
+    // A stale sidecar must not survive the publish: remove it first, and
+    // refuse to publish over an unremovable stale entry.
+    delete_sidecar()?;
+    write_state()?;
+    // A failed sidecar write is retried by dropping the entry again; only
+    // a failed cleanup fails the op to avoid shadowing the fresh archive.
+    if write_sidecar().is_err() {
+        delete_sidecar()?;
+    }
+    Ok(())
 }
 
 pub fn write_state_slot(
@@ -130,23 +168,53 @@ pub fn write_state_slot(
 }
 
 pub fn build_state_slot_bytes(
-    path: PathBuf,
+    path: StorageLocation,
     slot_id: u64,
     machine_state: &[u8],
     identity: &SystemIdentity,
     preview: Option<&ThumbnailSource>,
-) -> Result<(Vec<u8>, StateSlotSummary), PersistenceError> {
+) -> Result<(Vec<u8>, Vec<u8>, StateSlotSummary), PersistenceError> {
     let saved_at = system_time_from_millis(unix_millis(SystemTime::now())?);
     let has_thumbnail = preview.is_some();
     let metadata = encode_slot_metadata(slot_id, saved_at, identity, has_thumbnail)?;
     let thumbnail_png = preview.map(encode_thumbnail_png).transpose()?;
     let bytes = build_state_archive(&metadata, machine_state, thumbnail_png.as_deref())?;
+    let metadata_bytes = encode_metadata_bytes(&metadata)?;
     let summary = summary_from_metadata(path, saved_at, &metadata, has_thumbnail);
-    Ok((bytes, summary))
+    Ok((bytes, metadata_bytes, summary))
+}
+
+/// Scan entry point for sidecar bytes: metadata only, never the archive.
+/// Thumbnail presence comes from the metadata flag.
+pub fn load_state_summary_from_metadata_bytes(
+    path: StorageLocation,
+    bytes: &[u8],
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<StateSlotSummary>, PersistenceError> {
+    let metadata = decode_metadata_bytes(bytes)?;
+    if identity.is_some_and(|identity| !crate::metadata::slot_matches_identity(&metadata, identity))
+    {
+        return Ok(None);
+    }
+    Ok(Some(summary_from_metadata(
+        path,
+        system_time_from_millis(metadata.saved_at_unix_ms),
+        &metadata,
+        metadata.has_thumbnail,
+    )))
+}
+
+/// Scan entry point: summary only, never the machine state or thumbnail.
+pub fn load_state_summary_bytes(
+    path: StorageLocation,
+    bytes: Vec<u8>,
+    identity: Option<&SystemIdentity>,
+) -> Result<Option<StateSlotSummary>, PersistenceError> {
+    crate::archive::read_state_summary_bytes(path, bytes, identity)
 }
 
 pub fn load_state_slot_bytes(
-    path: PathBuf,
+    path: StorageLocation,
     bytes: Vec<u8>,
     identity: Option<&SystemIdentity>,
 ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
@@ -156,7 +224,7 @@ pub fn load_state_slot_bytes(
     }) {
         return Ok(None);
     }
-    Ok(Some(loaded_state_slot_from_archive(&path, archive)))
+    Ok(Some(loaded_state_slot_from_archive(path, archive)))
 }
 
 pub fn write_autosave_state_slot(
@@ -182,7 +250,7 @@ pub fn load_state_slot_for_identity(
     if !crate::metadata::slot_matches_identity(&archive.metadata, identity) {
         return Ok(None);
     }
-    Ok(Some(loaded_state_slot_from_archive(path, archive)))
+    Ok(Some(loaded_state_slot_from_archive(path.into(), archive)))
 }
 
 fn write_state_slot_to_path(
@@ -195,13 +263,17 @@ fn write_state_slot_to_path(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let (archive_bytes, summary) =
-        build_state_slot_bytes(path.clone(), slot_id, machine_state, identity, preview)?;
+    let (archive_bytes, _, summary) = build_state_slot_bytes(
+        path.clone().into(),
+        slot_id,
+        machine_state,
+        identity,
+        preview,
+    )?;
     write_atomic(&path, &archive_bytes)?;
 
-    // If we created a reservation file earlier, attempt to remove it now that the
-    // real state file has been written. This keeps the storage directory tidy when
-    // using the fallback reservation strategy on platforms that lack file locks.
+    // Remove the reservation file once the real state file exists; keeps
+    // the directory tidy on platforms without file locks.
     if let Some(parent) = path.parent() {
         let reserve_path = parent.join(format!(".slot_reserve.{}", slot_id));
         let _ = fs::remove_file(reserve_path);
@@ -212,16 +284,16 @@ fn write_state_slot_to_path(
 
 pub fn load_state_slot(path: &Path) -> Result<LoadedStateSlot, PersistenceError> {
     let archive = load_state_archive(path)?;
-    Ok(loaded_state_slot_from_archive(path, archive))
+    Ok(loaded_state_slot_from_archive(path.into(), archive))
 }
 
 pub(crate) fn loaded_state_slot_from_archive(
-    path: &Path,
+    path: StorageLocation,
     archive: crate::archive::LoadedArchive,
 ) -> LoadedStateSlot {
     let has_thumbnail = archive.thumbnail_png.is_some();
     let summary = summary_from_metadata(
-        path.to_path_buf(),
+        path,
         system_time_from_millis(archive.metadata.saved_at_unix_ms),
         &archive.metadata,
         has_thumbnail,

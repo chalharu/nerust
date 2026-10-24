@@ -11,10 +11,118 @@ use crate::{
 
 const MAX_MAPPER_SAVE_BYTES: usize = 64 * 1024 * 1024;
 
+/// A validated `content://` document-tree URI. Construction funnels through
+/// [`StorageLocation::document_tree`], so no literal can smuggle in a bad URI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentTreeUri(String);
+
+impl DocumentTreeUri {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A resolved storage key. Document URIs never masquerade as filesystem paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageLocation {
+    Native(PathBuf),
+    DocumentTree {
+        uri: DocumentTreeUri,
+        relative: DocumentRelativePath,
+    },
+}
+
+/// Validated, slash-separated path inside a document tree (not an OS path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentRelativePath(String);
+
+impl DocumentRelativePath {
+    pub fn new(relative: impl Into<String>) -> Result<Self, PersistenceError> {
+        let relative = relative.into();
+        if relative.split('/').any(|segment| {
+            segment.is_empty()
+                || segment == "."
+                || segment == ".."
+                || segment.contains(['\\', '\0', ':'])
+        }) {
+            return Err(PersistenceError::Validation(
+                "invalid document-tree relative path".into(),
+            ));
+        }
+        Ok(Self(relative))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Storage key shared by all backends: a native path or a document-tree
+/// address plus validated relative path. The enum carries no platform types
+/// (no JNI, no provider handles); each backend interprets its own variant
+/// and delegates the other to the filesystem implementation.
+impl StorageLocation {
+    pub fn document_tree(uri: &str, relative: impl Into<String>) -> Result<Self, PersistenceError> {
+        let authority = uri
+            .strip_prefix("content://")
+            .and_then(|rest| rest.split('/').next());
+        if authority.is_none_or(str::is_empty)
+            || uri.contains('\0')
+            || uri.chars().any(char::is_whitespace)
+        {
+            return Err(PersistenceError::Validation(
+                "invalid document-tree URI".into(),
+            ));
+        }
+        Ok(Self::DocumentTree {
+            uri: DocumentTreeUri(uri.to_owned()),
+            relative: DocumentRelativePath::new(relative)?,
+        })
+    }
+
+    /// Explicit native boundary: unsupported storage fails before any filesystem I/O.
+    pub fn native_path(&self) -> Result<&Path, PersistenceError> {
+        match self {
+            Self::Native(path) => Ok(path),
+            Self::DocumentTree { .. } => Err(PersistenceError::Validation(
+                "document-tree storage requires a document backend".into(),
+            )),
+        }
+    }
+
+    /// Append a single untrusted entry name, rejecting traversal on either backend.
+    pub fn child(&self, name: &str) -> Result<Self, PersistenceError> {
+        DocumentRelativePath::new(name)?;
+        if name.contains('/') {
+            return Err(PersistenceError::Validation(
+                "invalid storage entry name".into(),
+            ));
+        }
+        match self {
+            Self::Native(path) => Ok(Self::Native(path.join(name))),
+            Self::DocumentTree { uri, relative } => {
+                Self::document_tree(uri.as_str(), format!("{}/{name}", relative.as_str()))
+            }
+        }
+    }
+}
+
+impl From<PathBuf> for StorageLocation {
+    fn from(path: PathBuf) -> Self {
+        Self::Native(path)
+    }
+}
+
+impl From<&Path> for StorageLocation {
+    fn from(path: &Path) -> Self {
+        Self::Native(path.to_path_buf())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidecarPaths {
-    pub mapper_save_path: PathBuf,
-    pub states_dir: PathBuf,
+    pub mapper_save_path: StorageLocation,
+    pub states_dir: StorageLocation,
 }
 
 pub fn resolve_sidecars(rom_path: &Path) -> SidecarPaths {
@@ -24,8 +132,8 @@ pub fn resolve_sidecars(rom_path: &Path) -> SidecarPaths {
         .unwrap_or("game");
     let base_dir = rom_path.parent().unwrap_or_else(|| Path::new("."));
     SidecarPaths {
-        mapper_save_path: base_dir.join(format!("{rom_name}.sav")),
-        states_dir: base_dir.join(format!("{rom_name}.states")),
+        mapper_save_path: base_dir.join(format!("{rom_name}.sav")).into(),
+        states_dir: base_dir.join(format!("{rom_name}.states")).into(),
     }
 }
 

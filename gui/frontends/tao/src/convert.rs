@@ -1,251 +1,169 @@
-use std::sync::atomic::AtomicBool;
+//! Domain-to-iced conversion: only domain types in, only iced events out.
+//! Tao-to-domain mapping lives in `crate::aux::tao_map`.
 
-use iced::{Event, Font, Point, keyboard, mouse};
-use iced_winit::core::SmolStr;
-use nerust_keyboard::Key;
-use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
+use iced::{Font, keyboard};
 
-/// Convert Tao modifiers to iced modifiers.
-pub(crate) fn tao_modifiers_to_iced(m: TaoModifiers) -> keyboard::Modifiers {
+use crate::aux::domain::{AuxButton, AuxModifiers};
+pub(crate) use crate::aux::tao_map::keycode_to_key;
+
+/// Map a domain button to its iced counterpart.
+pub(crate) fn aux_button_to_iced(button: AuxButton) -> iced::mouse::Button {
+    match button {
+        AuxButton::Left => iced::mouse::Button::Left,
+        AuxButton::Right => iced::mouse::Button::Right,
+        AuxButton::Middle => iced::mouse::Button::Middle,
+    }
+}
+
+/// Map domain modifiers to iced modifiers.
+pub(crate) fn aux_modifiers_to_iced(m: AuxModifiers) -> keyboard::Modifiers {
     let mut out = keyboard::Modifiers::empty();
-    out.set(keyboard::Modifiers::SHIFT, m.contains(TaoModifiers::SHIFT));
-    out.set(keyboard::Modifiers::CTRL, m.contains(TaoModifiers::CONTROL));
-    out.set(keyboard::Modifiers::ALT, m.contains(TaoModifiers::ALT));
-    out.set(keyboard::Modifiers::LOGO, m.contains(TaoModifiers::SUPER));
+    out.set(keyboard::Modifiers::SHIFT, m.shift());
+    out.set(keyboard::Modifiers::CTRL, m.ctrl());
+    out.set(keyboard::Modifiers::ALT, m.alt());
+    out.set(keyboard::Modifiers::LOGO, m.logo());
     out
 }
 
-/// Convert a Tao physical key code to the shared [`Key`].
-/// Total over the codes the app handles; anything else is `None`
-/// (callers fall back to `Backquote`, as before).
-pub(crate) fn keycode_to_key(code: tao::keyboard::KeyCode) -> Option<Key> {
-    Some(match code {
-        KeyCode::KeyA => Key::KeyA,
-        KeyCode::KeyB => Key::KeyB,
-        KeyCode::KeyC => Key::KeyC,
-        KeyCode::KeyD => Key::KeyD,
-        KeyCode::KeyE => Key::KeyE,
-        KeyCode::KeyF => Key::KeyF,
-        KeyCode::KeyG => Key::KeyG,
-        KeyCode::KeyH => Key::KeyH,
-        KeyCode::KeyI => Key::KeyI,
-        KeyCode::KeyJ => Key::KeyJ,
-        KeyCode::KeyK => Key::KeyK,
-        KeyCode::KeyL => Key::KeyL,
-        KeyCode::KeyM => Key::KeyM,
-        KeyCode::KeyN => Key::KeyN,
-        KeyCode::KeyO => Key::KeyO,
-        KeyCode::KeyP => Key::KeyP,
-        KeyCode::KeyQ => Key::KeyQ,
-        KeyCode::KeyR => Key::KeyR,
-        KeyCode::KeyS => Key::KeyS,
-        KeyCode::KeyT => Key::KeyT,
-        KeyCode::KeyU => Key::KeyU,
-        KeyCode::KeyV => Key::KeyV,
-        KeyCode::KeyW => Key::KeyW,
-        KeyCode::KeyX => Key::KeyX,
-        KeyCode::KeyY => Key::KeyY,
-        KeyCode::KeyZ => Key::KeyZ,
-        KeyCode::Digit0 => Key::Digit0,
-        KeyCode::Digit1 => Key::Digit1,
-        KeyCode::Digit2 => Key::Digit2,
-        KeyCode::Digit3 => Key::Digit3,
-        KeyCode::Digit4 => Key::Digit4,
-        KeyCode::Digit5 => Key::Digit5,
-        KeyCode::Digit6 => Key::Digit6,
-        KeyCode::Digit7 => Key::Digit7,
-        KeyCode::Digit8 => Key::Digit8,
-        KeyCode::Digit9 => Key::Digit9,
-        KeyCode::ArrowUp => Key::ArrowUp,
-        KeyCode::ArrowDown => Key::ArrowDown,
-        KeyCode::ArrowLeft => Key::ArrowLeft,
-        KeyCode::ArrowRight => Key::ArrowRight,
-        KeyCode::Enter => Key::Enter,
-        KeyCode::Escape => Key::Escape,
-        KeyCode::Space => Key::Space,
-        KeyCode::Tab => Key::Tab,
-        KeyCode::F1 => Key::F1,
-        KeyCode::F2 => Key::F2,
-        KeyCode::F3 => Key::F3,
-        KeyCode::F4 => Key::F4,
-        KeyCode::F5 => Key::F5,
-        KeyCode::F6 => Key::F6,
-        KeyCode::F7 => Key::F7,
-        KeyCode::F8 => Key::F8,
-        KeyCode::F9 => Key::F9,
-        KeyCode::F10 => Key::F10,
-        KeyCode::F11 => Key::F11,
-        KeyCode::F12 => Key::F12,
-        KeyCode::Backspace => Key::Backspace,
-        KeyCode::Delete => Key::Delete,
-        KeyCode::Home => Key::Home,
-        KeyCode::End => Key::End,
-        KeyCode::ShiftLeft => Key::ShiftLeft,
-        KeyCode::ShiftRight => Key::ShiftRight,
-        KeyCode::ControlLeft => Key::ControlLeft,
-        KeyCode::ControlRight => Key::ControlRight,
-        KeyCode::AltLeft => Key::AltLeft,
-        KeyCode::AltRight => Key::AltRight,
-        KeyCode::Backquote => Key::Backquote,
-        KeyCode::Comma => Key::Comma,
-        KeyCode::Period => Key::Period,
-        KeyCode::Slash => Key::Slash,
-        KeyCode::Semicolon => Key::Semicolon,
-        KeyCode::Quote => Key::Quote,
-        KeyCode::BracketLeft => Key::BracketLeft,
-        KeyCode::BracketRight => Key::BracketRight,
-        KeyCode::Backslash => Key::Backslash,
-        KeyCode::Minus => Key::Minus,
-        KeyCode::Equal => Key::Equal,
-        KeyCode::IntlRo => Key::IntlRo,
-        KeyCode::IntlYen => Key::IntlYen,
-        KeyCode::Hiragana => Key::Hiragana,
-        KeyCode::Katakana => Key::Katakana,
-        KeyCode::KanaMode => Key::KanaMode,
-        KeyCode::Numpad0 => Key::Numpad0,
-        KeyCode::Numpad1 => Key::Numpad1,
-        KeyCode::Numpad2 => Key::Numpad2,
-        KeyCode::Numpad3 => Key::Numpad3,
-        KeyCode::Numpad4 => Key::Numpad4,
-        KeyCode::Numpad5 => Key::Numpad5,
-        KeyCode::Numpad6 => Key::Numpad6,
-        KeyCode::Numpad7 => Key::Numpad7,
-        KeyCode::Numpad8 => Key::Numpad8,
-        KeyCode::Numpad9 => Key::Numpad9,
-        KeyCode::NumpadDecimal => Key::NumpadDecimal,
-        KeyCode::NumpadAdd => Key::NumpadAdd,
-        KeyCode::NumpadSubtract => Key::NumpadSubtract,
-        KeyCode::NumpadMultiply => Key::NumpadMultiply,
-        KeyCode::NumpadDivide => Key::NumpadDivide,
-        KeyCode::NumpadEnter => Key::NumpadEnter,
-        KeyCode::Insert => Key::Insert,
-        KeyCode::IntlBackslash => Key::IntlBackslash,
-        KeyCode::PageUp => Key::PageUp,
-        KeyCode::PageDown => Key::PageDown,
-        KeyCode::CapsLock => Key::CapsLock,
-        KeyCode::ScrollLock => Key::ScrollLock,
-        KeyCode::Pause => Key::Pause,
-        KeyCode::PrintScreen => Key::PrintScreen,
-        KeyCode::Convert => Key::Convert,
-        KeyCode::NonConvert => Key::NonConvert,
-        KeyCode::F13 => Key::F13,
-        KeyCode::F14 => Key::F14,
-        KeyCode::F15 => Key::F15,
-        KeyCode::F16 => Key::F16,
-        KeyCode::F17 => Key::F17,
-        KeyCode::F18 => Key::F18,
-        KeyCode::F19 => Key::F19,
-        KeyCode::F20 => Key::F20,
-        KeyCode::F21 => Key::F21,
-        KeyCode::F22 => Key::F22,
-        KeyCode::F23 => Key::F23,
-        KeyCode::F24 => Key::F24,
-        KeyCode::F25 => Key::F25,
-        KeyCode::F26 => Key::F26,
-        KeyCode::F27 => Key::F27,
-        KeyCode::F28 => Key::F28,
-        KeyCode::F29 => Key::F29,
-        KeyCode::F30 => Key::F30,
-        KeyCode::F31 => Key::F31,
-        KeyCode::F32 => Key::F32,
-        KeyCode::F33 => Key::F33,
-        KeyCode::F34 => Key::F34,
-        KeyCode::F35 => Key::F35,
-        KeyCode::Plus => Key::Plus,
-        KeyCode::NumpadEqual => Key::NumpadEqual,
-        KeyCode::NumpadComma => Key::NumpadComma,
-        KeyCode::NumpadBackspace => Key::NumpadBackspace,
-        KeyCode::NumpadClear => Key::NumpadClear,
-        KeyCode::NumpadClearEntry => Key::NumpadClearEntry,
-        KeyCode::NumpadHash => Key::NumpadHash,
-        KeyCode::NumpadMemoryAdd => Key::NumpadMemoryAdd,
-        KeyCode::NumpadMemoryClear => Key::NumpadMemoryClear,
-        KeyCode::NumpadMemoryRecall => Key::NumpadMemoryRecall,
-        KeyCode::NumpadMemoryStore => Key::NumpadMemoryStore,
-        KeyCode::NumpadMemorySubtract => Key::NumpadMemorySubtract,
-        KeyCode::NumpadParenLeft => Key::NumpadParenLeft,
-        KeyCode::NumpadParenRight => Key::NumpadParenRight,
-        KeyCode::NumpadStar => Key::NumpadStar,
-        KeyCode::SuperLeft => Key::SuperLeft,
-        KeyCode::SuperRight => Key::SuperRight,
-        KeyCode::AudioVolumeUp => Key::AudioVolumeUp,
-        KeyCode::AudioVolumeDown => Key::AudioVolumeDown,
-        KeyCode::AudioVolumeMute => Key::AudioVolumeMute,
-        KeyCode::MediaPlayPause => Key::MediaPlayPause,
-        KeyCode::MediaStop => Key::MediaStop,
-        KeyCode::MediaTrackNext => Key::MediaTrackNext,
-        KeyCode::MediaTrackPrevious => Key::MediaTrackPrevious,
-        KeyCode::MediaSelect => Key::MediaSelect,
-        KeyCode::BrowserBack => Key::BrowserBack,
-        KeyCode::BrowserFavorites => Key::BrowserFavorites,
-        KeyCode::BrowserForward => Key::BrowserForward,
-        KeyCode::BrowserHome => Key::BrowserHome,
-        KeyCode::BrowserRefresh => Key::BrowserRefresh,
-        KeyCode::BrowserSearch => Key::BrowserSearch,
-        KeyCode::BrowserStop => Key::BrowserStop,
-        KeyCode::NumLock => Key::NumLock,
-        KeyCode::ContextMenu => Key::ContextMenu,
-        KeyCode::Power => Key::Power,
-        KeyCode::Sleep => Key::Sleep,
-        KeyCode::WakeUp => Key::WakeUp,
-        KeyCode::Eject => Key::Eject,
-        KeyCode::Copy => Key::Copy,
-        KeyCode::Cut => Key::Cut,
-        KeyCode::Paste => Key::Paste,
-        KeyCode::Undo => Key::Undo,
-        KeyCode::Find => Key::Find,
-        KeyCode::Help => Key::Help,
-        KeyCode::Open => Key::Open,
-        KeyCode::Select => Key::Select,
-        KeyCode::Again => Key::Again,
-        KeyCode::Props => Key::Props,
-        KeyCode::Abort => Key::Abort,
-        KeyCode::Resume => Key::Resume,
-        KeyCode::Suspend => Key::Suspend,
-        KeyCode::Fn => Key::Fn,
-        KeyCode::FnLock => Key::FnLock,
-        KeyCode::Hyper => Key::Hyper,
-        KeyCode::Turbo => Key::Turbo,
-        KeyCode::Lang1 => Key::Lang1,
-        KeyCode::Lang2 => Key::Lang2,
-        KeyCode::Lang3 => Key::Lang3,
-        KeyCode::Lang4 => Key::Lang4,
-        KeyCode::Lang5 => Key::Lang5,
-        KeyCode::LaunchApp1 => Key::LaunchApp1,
-        KeyCode::LaunchApp2 => Key::LaunchApp2,
-        KeyCode::LaunchMail => Key::LaunchMail,
-        _ => return None,
-    })
-}
-
-/// Convert Tao KeyCode to iced key::Code.
-pub(crate) fn tao_keycode_to_iced_code(code: tao::keyboard::KeyCode) -> keyboard::key::Code {
-    let key = keycode_to_key(code).unwrap_or(Key::Backquote);
-    key.into()
-}
-
-/// Convert Tao Key to iced Key. Named editing keys map explicitly;
-/// anything else stays unidentified (physical codes cover shortcuts).
-pub(crate) fn tao_key_to_iced_key(key: &tao::keyboard::Key) -> keyboard::Key {
+/// Map a domain key plus produced text to an iced logical key.
+/// Control-carrying text never masks editing keys: tao reports Enter as
+/// `"\r"`, so `Named` wins whenever the key already has an identity.
+pub(crate) fn domain_key_to_iced(key: &nerust_keyboard::Key, text: Option<&str>) -> keyboard::Key {
     use iced::keyboard::key::Named;
-    match key {
-        tao::keyboard::Key::Character(s) => keyboard::Key::Character(SmolStr::new(s)),
-        tao::keyboard::Key::Backspace => keyboard::Key::Named(Named::Backspace),
-        tao::keyboard::Key::Delete => keyboard::Key::Named(Named::Delete),
-        tao::keyboard::Key::Enter => keyboard::Key::Named(Named::Enter),
-        tao::keyboard::Key::Escape => keyboard::Key::Named(Named::Escape),
-        tao::keyboard::Key::Tab => keyboard::Key::Named(Named::Tab),
+    use nerust_keyboard::Key as K;
+    let named = match key {
+        K::Backspace => Some(Named::Backspace),
+        K::Delete => Some(Named::Delete),
+        K::Enter | K::NumpadEnter => Some(Named::Enter),
+        K::Escape => Some(Named::Escape),
+        K::Tab => Some(Named::Tab),
+        // Caret and paging keys: aux text fields need logical identity,
+        // shortcuts keep reading the physical code.
+        K::ArrowUp => Some(Named::ArrowUp),
+        K::ArrowDown => Some(Named::ArrowDown),
+        K::ArrowLeft => Some(Named::ArrowLeft),
+        K::ArrowRight => Some(Named::ArrowRight),
+        K::Home => Some(Named::Home),
+        K::End => Some(Named::End),
+        K::PageUp => Some(Named::PageUp),
+        K::PageDown => Some(Named::PageDown),
+        K::Insert => Some(Named::Insert),
+        K::Space => Some(Named::Space),
+        K::F1 => Some(Named::F1),
+        K::F2 => Some(Named::F2),
+        K::F3 => Some(Named::F3),
+        K::F4 => Some(Named::F4),
+        K::F5 => Some(Named::F5),
+        K::F6 => Some(Named::F6),
+        K::F7 => Some(Named::F7),
+        K::F8 => Some(Named::F8),
+        K::F9 => Some(Named::F9),
+        K::F10 => Some(Named::F10),
+        K::F11 => Some(Named::F11),
+        K::F12 => Some(Named::F12),
+        _ => None,
+    };
+    if let Some(named) = named {
+        return keyboard::Key::Named(named);
+    }
+    match text {
+        Some(text) if !text.is_empty() && text.chars().all(|c| !c.is_control()) => {
+            keyboard::Key::Character(iced_winit::core::SmolStr::new(text))
+        }
         _ => keyboard::Key::Unidentified,
     }
 }
 
-/// Default font for auxiliary windows. CJK must resolve to a
-/// complete sans face on every OS: the shaper falls back per glyph
-/// through a hardcoded family list, so a bare SansSerif can mix
-/// serif faces into CJK text on machines without Noto CJK.
-/// Language-specific needs live in
-/// `nerust_settings_core::i18n::font_family`; this stays the
-/// language-agnostic window default (it also covers Latin).
+/// Owned feed state: cursor, modifiers, scale, and close in one borrow.
+/// Callers pass their live fields once instead of threading four params.
+pub(crate) struct FeedContext<'a> {
+    pub cursor: &'a mut iced::mouse::Cursor,
+    pub modifiers: &'a mut keyboard::Modifiers,
+    pub scale_factor: f32,
+    pub should_close: &'a std::sync::atomic::AtomicBool,
+}
+
+/// Feed one domain event, tracking cursor, modifiers, and close.
+/// Pure over caller-owned state: the shell passes its live [`FeedContext`].
+pub(crate) fn feed_domain_event(
+    event: crate::aux::domain::AuxNativeEvent,
+    ctx: &mut FeedContext<'_>,
+) -> Option<iced::Event> {
+    use crate::aux::domain::AuxNativeEvent as E;
+    let scale_factor = ctx.scale_factor;
+    let should_close = ctx.should_close;
+    let (cursor, modifiers) = (&mut *ctx.cursor, &mut *ctx.modifiers);
+    match event {
+        E::CursorMoved(x, y) => {
+            let point = iced::Point::new(x as f32 / scale_factor, y as f32 / scale_factor);
+            *cursor = iced::mouse::Cursor::Available(point);
+            Some(iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+                position: point,
+            }))
+        }
+        E::CursorLeft => {
+            *cursor = iced::mouse::Cursor::Unavailable;
+            None
+        }
+        E::KeyPressed { key, text, repeat } => {
+            let logical = domain_key_to_iced(&key, text.as_deref());
+            let produced = text.map(iced_winit::core::SmolStr::new);
+            Some(iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: logical.clone(),
+                modified_key: logical,
+                physical_key: iced::keyboard::key::Physical::Code(key.into()),
+                modifiers: *modifiers,
+                location: iced::keyboard::Location::Standard,
+                text: produced,
+                repeat,
+            }))
+        }
+        E::KeyReleased { key } => {
+            let logical = domain_key_to_iced(&key, None);
+            Some(iced::Event::Keyboard(iced::keyboard::Event::KeyReleased {
+                key: logical.clone(),
+                modified_key: logical,
+                physical_key: iced::keyboard::key::Physical::Code(key.into()),
+                modifiers: *modifiers,
+                location: iced::keyboard::Location::Standard,
+            }))
+        }
+        E::MousePressed(button) => {
+            let button = aux_button_to_iced(button);
+            Some(iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
+                button,
+            )))
+        }
+        E::MouseReleased(button) => {
+            let button = aux_button_to_iced(button);
+            Some(iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                button,
+            )))
+        }
+        E::WheelLines(x, y) => Some(iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+            delta: iced::mouse::ScrollDelta::Lines { x, y },
+        })),
+        E::WheelPixels(x, y) => Some(iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+            delta: iced::mouse::ScrollDelta::Pixels {
+                x: x / scale_factor,
+                y: y / scale_factor,
+            },
+        })),
+        E::ModifiersChanged(next) => {
+            *modifiers = aux_modifiers_to_iced(next);
+            None
+        }
+        E::CloseRequested => {
+            should_close.store(true, std::sync::atomic::Ordering::Release);
+            None
+        }
+        // Focus, moves, resizes, and unmapped input never reach the program.
+        _ => None,
+    }
+}
+
+/// Default font for auxiliary windows: CJK resolves to a complete sans face.
+/// Language-specific needs live in `nerust_settings_core::i18n::font_family`.
 pub(crate) fn default_font() -> Font {
     #[cfg(target_os = "windows")]
     {
@@ -261,108 +179,10 @@ pub(crate) fn default_font() -> Font {
     }
 }
 
-/// Convert a Tao window event to an iced event, tracking cursor,
-/// modifiers, and close requests. Shared by the settings and debugger
-/// windows.
-pub(crate) fn convert_tao_window_event(
-    event: tao::event::WindowEvent,
-    cursor: &mut mouse::Cursor,
-    scale_factor: f32,
-    modifiers: &mut keyboard::Modifiers,
-    should_close: &AtomicBool,
-) -> Option<iced::Event> {
-    use tao::event::WindowEvent;
-    match event {
-        WindowEvent::CursorMoved { position, .. } => {
-            let logical = position.to_logical::<f64>(scale_factor as f64);
-            let point = Point::new(logical.x as f32, logical.y as f32);
-            *cursor = mouse::Cursor::Available(point);
-            Some(Event::Mouse(mouse::Event::CursorMoved { position: point }))
-        }
-        WindowEvent::CursorLeft { .. } => {
-            *cursor = mouse::Cursor::Unavailable;
-            None
-        }
-        WindowEvent::KeyboardInput { event: ke, .. } => {
-            let iced_key = tao_key_to_iced_key(&ke.logical_key);
-            let physical_key =
-                keyboard::key::Physical::Code(tao_keycode_to_iced_code(ke.physical_key));
-            match ke.state {
-                tao::event::ElementState::Pressed => {
-                    Some(Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: iced_key.clone(),
-                        modified_key: iced_key.clone(),
-                        physical_key,
-                        modifiers: *modifiers,
-                        location: keyboard::Location::Standard,
-                        text: ke.text.map(SmolStr::new),
-                        repeat: ke.repeat,
-                    }))
-                }
-                tao::event::ElementState::Released => {
-                    Some(Event::Keyboard(keyboard::Event::KeyReleased {
-                        key: iced_key.clone(),
-                        modified_key: iced_key,
-                        physical_key,
-                        modifiers: *modifiers,
-                        location: keyboard::Location::Standard,
-                    }))
-                }
-                _ => None,
-            }
-        }
-        WindowEvent::MouseWheel { delta, .. } => {
-            // Without this the scrollables never move: every other
-            // arm maps, but the wheel fell into the catch-all below.
-            let delta = match delta {
-                tao::event::MouseScrollDelta::LineDelta(x, y) => mouse::ScrollDelta::Lines { x, y },
-                tao::event::MouseScrollDelta::PixelDelta(position) => {
-                    let logical = position.to_logical::<f64>(scale_factor as f64);
-                    mouse::ScrollDelta::Pixels {
-                        x: logical.x as f32,
-                        y: logical.y as f32,
-                    }
-                }
-                // Non-exhaustive upstream enum: unknown future
-                // deltas scroll nothing instead of breaking the build.
-                _ => return None,
-            };
-            Some(Event::Mouse(mouse::Event::WheelScrolled { delta }))
-        }
-        WindowEvent::MouseInput { button, state, .. } => {
-            let btn = match button {
-                tao::event::MouseButton::Left => mouse::Button::Left,
-                tao::event::MouseButton::Right => mouse::Button::Right,
-                tao::event::MouseButton::Middle => mouse::Button::Middle,
-                _ => return None,
-            };
-            match state {
-                tao::event::ElementState::Pressed => {
-                    Some(Event::Mouse(mouse::Event::ButtonPressed(btn)))
-                }
-                tao::event::ElementState::Released => {
-                    Some(Event::Mouse(mouse::Event::ButtonReleased(btn)))
-                }
-                _ => None,
-            }
-        }
-        WindowEvent::ModifiersChanged(state) => {
-            *modifiers = tao_modifiers_to_iced(state);
-            None
-        }
-        WindowEvent::CloseRequested => {
-            should_close.store(true, std::sync::atomic::Ordering::Release);
-            None
-        }
-        // Touch, IME, axis motion, and other platform-specific events
-        // are not needed for utility windows.
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_keyboard::Key;
 
     #[test]
     fn all_keycodes_have_mapping() {
@@ -563,11 +383,8 @@ mod tests {
             T::Plus,
         ];
         for code in codes {
-            let iced_code = tao_keycode_to_iced_code(code);
-            // Backquote is the fallback; no tested key should hit it.
-            assert_ne!(
-                iced_code as i32,
-                keyboard::key::Code::Backquote as i32,
+            assert!(
+                keycode_to_key(code).is_some(),
                 "KeyCode variant {:?} fell through to fallback",
                 code,
             );
@@ -575,41 +392,461 @@ mod tests {
     }
 
     #[test]
-    fn character_key_round_trip() {
-        let key = tao::keyboard::Key::Character("a");
-        let iced = tao_key_to_iced_key(&key);
-        assert_eq!(iced, keyboard::Key::Character(SmolStr::new("a")));
+    fn domain_feed_scales_by_live_scale() {
+        use iced::mouse;
+        use std::sync::atomic::AtomicBool;
+        let mut cursor = mouse::Cursor::default();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        // Physical pixels divide by the live scale, like the shell feed.
+        let moved = feed_domain_event(
+            crate::aux::domain::AuxNativeEvent::CursorMoved(200.0, 100.0),
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 2.0,
+                should_close: &should_close,
+            },
+        );
+        assert!(matches!(
+            moved,
+            Some(iced::Event::Mouse(mouse::Event::CursorMoved { position }))
+                if position == iced::Point::new(100.0, 50.0)
+        ));
     }
 
     #[test]
-    fn empty_string_character_preserved() {
-        let key = tao::keyboard::Key::Character("");
+    fn produced_text_wins_over_physical_name() {
         assert_eq!(
-            tao_key_to_iced_key(&key),
-            keyboard::Key::Character(SmolStr::new(""))
+            domain_key_to_iced(&Key::KeyA, Some("a")),
+            keyboard::Key::Character(iced_winit::core::SmolStr::new("a"))
+        );
+        assert_eq!(
+            domain_key_to_iced(&Key::KeyA, Some("あ")),
+            keyboard::Key::Character(iced_winit::core::SmolStr::new("あ"))
         );
     }
 
     #[test]
+    fn control_text_does_not_mask_editing_keys() {
+        use iced::keyboard::key::Named;
+        for (key, text, named) in [
+            (Key::Enter, "\r", Named::Enter),
+            (Key::Backspace, "\u{8}", Named::Backspace),
+            (Key::Tab, "\t", Named::Tab),
+            (Key::NumpadEnter, "\r", Named::Enter),
+        ] {
+            assert_eq!(
+                domain_key_to_iced(&key, Some(text)),
+                keyboard::Key::Named(named)
+            );
+        }
+        assert_eq!(
+            domain_key_to_iced(&Key::NumpadEnter, None),
+            keyboard::Key::Named(Named::Enter)
+        );
+    }
+
+    #[test]
+    fn named_editing_keys_map_explicitly() {
+        use iced::keyboard::key::Named;
+        for (key, named) in [
+            (Key::Backspace, Named::Backspace),
+            (Key::Delete, Named::Delete),
+            (Key::Enter, Named::Enter),
+            (Key::Escape, Named::Escape),
+            (Key::Tab, Named::Tab),
+            (Key::ArrowUp, Named::ArrowUp),
+            (Key::ArrowDown, Named::ArrowDown),
+            (Key::ArrowLeft, Named::ArrowLeft),
+            (Key::ArrowRight, Named::ArrowRight),
+            (Key::Home, Named::Home),
+            (Key::End, Named::End),
+            (Key::PageUp, Named::PageUp),
+            (Key::PageDown, Named::PageDown),
+            (Key::Insert, Named::Insert),
+            (Key::Space, Named::Space),
+            (Key::F1, Named::F1),
+            (Key::F6, Named::F6),
+            (Key::F12, Named::F12),
+        ] {
+            assert_eq!(domain_key_to_iced(&key, None), keyboard::Key::Named(named));
+        }
+        // Separately tracked modifiers stay unidentified: iced reads them
+        // from the modifiers state, not the logical key.
+        assert_eq!(
+            domain_key_to_iced(&Key::ShiftLeft, None),
+            keyboard::Key::Unidentified
+        );
+    }
+
+    #[test]
+    fn domain_key_round_trips_through_iced_physical() {
+        // The exhaustive physical table lives on `Key`: iced codes
+        // convert back without loss (except the known Plus gap).
+        for key in [Key::KeyA, Key::Enter, Key::F4, Key::Numpad9, Key::Hiragana] {
+            let code: iced::keyboard::key::Code = key.into();
+            let physical = iced::keyboard::key::Physical::Code(code);
+            let round_trip: Key = physical.try_into().expect("round trip");
+            assert_eq!(key, round_trip);
+        }
+    }
+
+    #[test]
+    fn default_font_matches_platform() {
+        #[cfg(target_os = "windows")]
+        assert_eq!(default_font(), Font::with_name("Yu Gothic UI"));
+        #[cfg(target_os = "macos")]
+        assert_eq!(default_font(), Font::with_name("Hiragino Sans"));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        assert_eq!(default_font(), Font::DEFAULT);
+    }
+
+    #[test]
+    fn backquote_maps_to_itself_not_fallback() {
+        use tao::keyboard::KeyCode as T;
+        assert_eq!(keycode_to_key(T::Backquote), Some(Key::Backquote));
+    }
+
+    #[test]
+    fn mapped_buttons_cross_but_others_drop() {
+        use crate::aux::native::adapt_event;
+        use tao::event::{DeviceId, ElementState, MouseButton, WindowEvent};
+        // SAFETY: test-only `DeviceId::dummy()`; no transmute in production.
+        let device = unsafe { DeviceId::dummy() };
+        for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+            let pressed = adapt_event(&WindowEvent::MouseInput {
+                device_id: device,
+                state: ElementState::Pressed,
+                button,
+                modifiers: tao::keyboard::ModifiersState::empty(),
+            });
+            assert!(matches!(
+                pressed,
+                crate::aux::domain::AuxNativeEvent::MousePressed(_)
+            ));
+        }
+        let other = adapt_event(&WindowEvent::MouseInput {
+            device_id: device,
+            state: ElementState::Pressed,
+            button: MouseButton::Other(9),
+            modifiers: tao::keyboard::ModifiersState::empty(),
+        });
+        assert_eq!(other, crate::aux::domain::AuxNativeEvent::Other);
+    }
+
+    #[test]
+    fn aux_buttons_map_to_each_iced_button() {
+        assert_eq!(
+            aux_button_to_iced(AuxButton::Left),
+            iced::mouse::Button::Left
+        );
+        assert_eq!(
+            aux_button_to_iced(AuxButton::Right),
+            iced::mouse::Button::Right
+        );
+        assert_eq!(
+            aux_button_to_iced(AuxButton::Middle),
+            iced::mouse::Button::Middle
+        );
+    }
+
+    #[test]
+    fn domain_modifiers_map_each_flag() {
+        use crate::aux::tao_map::tao_modifiers_to_domain;
+        use tao::keyboard::ModifiersState as M;
+        assert!(aux_modifiers_to_iced(tao_modifiers_to_domain(M::empty())).is_empty());
+        let shift = aux_modifiers_to_iced(tao_modifiers_to_domain(M::SHIFT));
+        assert!(shift.contains(keyboard::Modifiers::SHIFT));
+        assert!(!shift.contains(keyboard::Modifiers::CTRL));
+        let ctrl = aux_modifiers_to_iced(tao_modifiers_to_domain(M::CONTROL));
+        assert!(ctrl.contains(keyboard::Modifiers::CTRL));
+        let alt = aux_modifiers_to_iced(tao_modifiers_to_domain(M::ALT));
+        assert!(alt.contains(keyboard::Modifiers::ALT));
+        let logo = aux_modifiers_to_iced(tao_modifiers_to_domain(M::SUPER));
+        assert!(logo.contains(keyboard::Modifiers::LOGO));
+        let all = aux_modifiers_to_iced(tao_modifiers_to_domain(
+            M::SHIFT | M::CONTROL | M::ALT | M::SUPER,
+        ));
+        for flag in [
+            keyboard::Modifiers::SHIFT,
+            keyboard::Modifiers::CTRL,
+            keyboard::Modifiers::ALT,
+            keyboard::Modifiers::LOGO,
+        ] {
+            assert!(all.contains(flag));
+        }
+    }
+
+    fn feed_harness() -> (
+        iced::mouse::Cursor,
+        keyboard::Modifiers,
+        std::sync::atomic::AtomicBool,
+    ) {
+        (
+            iced::mouse::Cursor::default(),
+            keyboard::Modifiers::empty(),
+            std::sync::atomic::AtomicBool::new(false),
+        )
+    }
+
+    #[test]
+    fn feed_maps_key_press_and_release() {
+        use crate::aux::domain::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        // Text plus repeat ride into the iced key event.
+        let pressed = feed_domain_event(
+            E::KeyPressed {
+                key: Key::KeyA,
+                text: Some("a".to_string()),
+                repeat: true,
+            },
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        );
+        assert!(matches!(
+            pressed,
+            Some(iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                repeat: true,
+                ..
+            }))
+        ));
+        // Missing text falls back to the named table; release carries no text.
+        let no_text = feed_domain_event(
+            E::KeyPressed {
+                key: Key::Enter,
+                text: None,
+                repeat: false,
+            },
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        );
+        assert!(matches!(
+            no_text,
+            Some(iced::Event::Keyboard(
+                iced::keyboard::Event::KeyPressed { .. }
+            ))
+        ));
+        let released = feed_domain_event(
+            E::KeyReleased { key: Key::Enter },
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 1.0,
+                should_close: &should_close,
+            },
+        );
+        assert!(matches!(
+            released,
+            Some(iced::Event::Keyboard(
+                iced::keyboard::Event::KeyReleased { .. }
+            ))
+        ));
+        assert!(!should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn feed_drops_unmapped_domain_events() {
+        use crate::aux::domain::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        assert!(
+            feed_domain_event(
+                E::Other,
+                &mut FeedContext {
+                    cursor: &mut cursor,
+                    modifiers: &mut modifiers,
+                    scale_factor: 1.0,
+                    should_close: &should_close
+                }
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn feed_maps_each_mouse_button_both_edges() {
+        use crate::aux::domain::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        for (domain, iced_button) in [
+            (AuxButton::Left, iced::mouse::Button::Left),
+            (AuxButton::Right, iced::mouse::Button::Right),
+            (AuxButton::Middle, iced::mouse::Button::Middle),
+        ] {
+            let pressed = feed_domain_event(
+                E::MousePressed(domain),
+                &mut FeedContext {
+                    cursor: &mut cursor,
+                    modifiers: &mut modifiers,
+                    scale_factor: 1.0,
+                    should_close: &should_close,
+                },
+            );
+            assert!(matches!(
+                pressed,
+                Some(iced::Event::Mouse(iced::mouse::Event::ButtonPressed(b)))
+                    if b == iced_button
+            ));
+            let released = feed_domain_event(
+                E::MouseReleased(domain),
+                &mut FeedContext {
+                    cursor: &mut cursor,
+                    modifiers: &mut modifiers,
+                    scale_factor: 1.0,
+                    should_close: &should_close,
+                },
+            );
+            assert!(matches!(
+                released,
+                Some(iced::Event::Mouse(iced::mouse::Event::ButtonReleased(b)))
+                    if b == iced_button
+            ));
+        }
+    }
+
+    #[test]
+    fn feed_scales_wheel_pixels_and_passes_lines() {
+        use crate::aux::domain::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        let lines = feed_domain_event(
+            E::WheelLines(0.0, 3.0),
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 2.0,
+                should_close: &should_close,
+            },
+        );
+        assert!(matches!(
+            lines,
+            Some(iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Lines { y, .. }
+            })) if y == 3.0
+        ));
+        // Pixel deltas divide by the live scale like cursor moves.
+        let pixels = feed_domain_event(
+            E::WheelPixels(0.0, 24.0),
+            &mut FeedContext {
+                cursor: &mut cursor,
+                modifiers: &mut modifiers,
+                scale_factor: 2.0,
+                should_close: &should_close,
+            },
+        );
+        assert!(matches!(
+            pixels,
+            Some(iced::Event::Mouse(iced::mouse::Event::WheelScrolled {
+                delta: iced::mouse::ScrollDelta::Pixels { y, .. }
+            })) if y == 12.0
+        ));
+    }
+
+    #[test]
+    fn feed_tracks_modifiers_and_close() {
+        use crate::aux::domain::{AuxModifiers, AuxNativeEvent as E};
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        assert!(
+            feed_domain_event(
+                E::ModifiersChanged(AuxModifiers::empty()),
+                &mut FeedContext {
+                    cursor: &mut cursor,
+                    modifiers: &mut modifiers,
+                    scale_factor: 1.0,
+                    should_close: &should_close,
+                },
+            )
+            .is_none()
+        );
+        assert_eq!(modifiers, keyboard::Modifiers::empty());
+        assert!(
+            feed_domain_event(
+                E::CloseRequested,
+                &mut FeedContext {
+                    cursor: &mut cursor,
+                    modifiers: &mut modifiers,
+                    scale_factor: 1.0,
+                    should_close: &should_close,
+                },
+            )
+            .is_none()
+        );
+        assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn feed_ignores_non_program_events() {
+        use crate::aux::domain::AuxNativeEvent as E;
+        let (mut cursor, mut modifiers, should_close) = feed_harness();
+        for event in [
+            E::Focused(true),
+            E::Focused(false),
+            E::Destroyed,
+            E::Moved(1, 2),
+            E::Resized(800, 600),
+            E::ScaleChanged(2.0),
+            E::Other,
+        ] {
+            assert!(
+                feed_domain_event(
+                    event,
+                    &mut FeedContext {
+                        cursor: &mut cursor,
+                        modifiers: &mut modifiers,
+                        scale_factor: 1.0,
+                        should_close: &should_close
+                    }
+                )
+                .is_none()
+            );
+        }
+        // Cursor-left drops the pointer without an event.
+        assert!(
+            feed_domain_event(
+                E::CursorLeft,
+                &mut FeedContext {
+                    cursor: &mut cursor,
+                    modifiers: &mut modifiers,
+                    scale_factor: 1.0,
+                    should_close: &should_close,
+                },
+            )
+            .is_none()
+        );
+        assert!(matches!(cursor, iced::mouse::Cursor::Unavailable));
+        assert!(!should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
     fn window_events_convert_or_pass_through() {
+        use crate::aux::native::adapt_event;
+        use iced::mouse;
         use std::sync::atomic::AtomicBool;
         use tao::event::{DeviceId, ElementState, WindowEvent};
         let mut cursor = mouse::Cursor::default();
         let mut modifiers = keyboard::Modifiers::default();
         let should_close = AtomicBool::new(false);
-        fn convert(
-            event: WindowEvent,
-            cursor: &mut mouse::Cursor,
-            modifiers: &mut keyboard::Modifiers,
-            should_close: &AtomicBool,
-        ) -> Option<iced::Event> {
-            convert_tao_window_event(event, cursor, 1.0, modifiers, should_close)
-        }
         macro_rules! feed {
-            ($event:expr) => {
-                convert($event, &mut cursor, &mut modifiers, &should_close)
-            };
+            ($event:expr) => {{
+                let domain = adapt_event(&$event);
+                feed_domain_event(
+                    domain,
+                    &mut FeedContext {
+                        cursor: &mut cursor,
+                        modifiers: &mut modifiers,
+                        scale_factor: 1.0,
+                        should_close: &should_close,
+                    },
+                )
+            }};
         }
+        // SAFETY: test-only `DeviceId::dummy()`; no transmute in production.
         let device = unsafe { DeviceId::dummy() };
         // Cursor movement tracks the pointer.
         let moved = feed!(WindowEvent::CursorMoved {
@@ -696,85 +933,7 @@ mod tests {
         assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
         // Anything else (resizes and friends) passes through silently.
         assert!(feed!(WindowEvent::Resized(tao::dpi::PhysicalSize::new(800, 600))).is_none());
-    }
-
-    #[test]
-    fn modifiers_map_each_flag() {
-        use tao::keyboard::ModifiersState as M;
-        assert!(tao_modifiers_to_iced(M::empty()).is_empty());
-        let shift = tao_modifiers_to_iced(M::SHIFT);
-        assert!(shift.contains(keyboard::Modifiers::SHIFT));
-        assert!(!shift.contains(keyboard::Modifiers::CTRL));
-        let ctrl = tao_modifiers_to_iced(M::CONTROL);
-        assert!(ctrl.contains(keyboard::Modifiers::CTRL));
-        assert!(!ctrl.contains(keyboard::Modifiers::ALT));
-        let alt = tao_modifiers_to_iced(M::ALT);
-        assert!(alt.contains(keyboard::Modifiers::ALT));
-        let logo = tao_modifiers_to_iced(M::SUPER);
-        assert!(logo.contains(keyboard::Modifiers::LOGO));
-        let all = tao_modifiers_to_iced(M::SHIFT | M::CONTROL | M::ALT | M::SUPER);
-        for flag in [
-            keyboard::Modifiers::SHIFT,
-            keyboard::Modifiers::CTRL,
-            keyboard::Modifiers::ALT,
-            keyboard::Modifiers::LOGO,
-        ] {
-            assert!(all.contains(flag));
-        }
-    }
-
-    #[test]
-    fn named_editing_keys_map_explicitly() {
-        use iced::keyboard::key::Named;
-        use tao::keyboard::Key as T;
-        for (tao_key, named) in [
-            (T::Backspace, Named::Backspace),
-            (T::Delete, Named::Delete),
-            (T::Enter, Named::Enter),
-            (T::Escape, Named::Escape),
-            (T::Tab, Named::Tab),
-        ] {
-            assert_eq!(tao_key_to_iced_key(&tao_key), keyboard::Key::Named(named));
-        }
-        assert_eq!(
-            tao_key_to_iced_key(&tao::keyboard::Key::F1),
-            keyboard::Key::Unidentified
-        );
-        // Non-editing named keys stay unidentified: physical codes
-        // (not logical names) drive shortcuts.
-        assert_eq!(
-            tao_key_to_iced_key(&tao::keyboard::Key::Space),
-            keyboard::Key::Unidentified
-        );
-        assert_eq!(
-            tao_key_to_iced_key(&tao::keyboard::Key::Shift),
-            keyboard::Key::Unidentified
-        );
-    }
-
-    #[test]
-    fn default_font_matches_platform() {
-        #[cfg(target_os = "windows")]
-        assert_eq!(default_font(), Font::with_name("Yu Gothic UI"));
-        #[cfg(target_os = "macos")]
-        assert_eq!(default_font(), Font::with_name("Hiragino Sans"));
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        assert_eq!(default_font(), Font::DEFAULT);
-    }
-
-    #[test]
-    fn backquote_maps_to_itself_not_fallback() {
-        use tao::keyboard::KeyCode as T;
-        assert_eq!(keycode_to_key(T::Backquote), Some(Key::Backquote));
-    }
-
-    #[test]
-    fn unmapped_codes_fall_back_to_backquote() {
-        let code = tao::keyboard::KeyCode::Unidentified(tao::keyboard::NativeKeyCode::Unidentified);
-        assert!(keycode_to_key(code).is_none());
-        assert_eq!(
-            tao_keycode_to_iced_code(code) as i32,
-            keyboard::key::Code::Backquote as i32
-        );
+        // IME text arrives as its own event, dropped by conversion.
+        assert!(feed!(WindowEvent::ReceivedImeText("あ".to_string())).is_none());
     }
 }

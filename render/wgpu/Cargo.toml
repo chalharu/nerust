@@ -9,7 +9,7 @@ version.workspace = true
 [dependencies]
 log.workspace = true
 nerust_render_ntsc.workspace = true
-nerust_render_traits.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
 pollster.workspace = true
 raw-window-handle.workspace = true
 wgpu.workspace = true
@@ -17,3 +17,6 @@ zerocopy.workspace = true
 
 [dev-dependencies]
 nerust_render_filters.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11-dl = "=2.21.0"

@@ -118,14 +118,10 @@ impl Mmc5Pulse {
 
     pub(super) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
         if usize::from(self.duty_mode) >= DUTY_TABLE.len() {
-            return Err(PersistenceError::Validation(
-                "MMC5 pulse duty mode overflow".into(),
-            ));
+            return Err(PersistenceError::Mmc5PulseDutyMode);
         }
         if usize::from(self.duty_value) >= DUTY_TABLE[0].len() {
-            return Err(PersistenceError::Validation(
-                "MMC5 pulse duty value overflow".into(),
-            ));
+            return Err(PersistenceError::Mmc5PulseDutyValue);
         }
         Ok(())
     }

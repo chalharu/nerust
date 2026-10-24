@@ -1,10 +1,12 @@
-use std::{path::PathBuf, time::SystemTime};
+use std::time::SystemTime;
+
+use crate::sidecar::StorageLocation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateSlotSummary {
     pub schema_version: u32,
     pub slot_id: u64,
-    pub path: PathBuf,
+    pub path: StorageLocation,
     pub saved_at: SystemTime,
     pub has_thumbnail: bool,
     pub emulator_version: String,

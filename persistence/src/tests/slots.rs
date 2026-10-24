@@ -149,7 +149,7 @@ fn save_slot_summary_matches_loaded_summary() {
 
     let mut scanned_slots = scan_state_slots(&dir).unwrap();
     let scanned = scanned_slots.pop().unwrap();
-    let loaded = load_state_slot(&written.path).unwrap();
+    let loaded = load_state_slot(written.path.native_path().unwrap()).unwrap();
     assert_eq!(written.saved_at, scanned.saved_at);
     assert_eq!(scanned.schema_version, written.schema_version);
     assert_eq!(scanned.slot_id, written.slot_id);
@@ -157,4 +157,326 @@ fn save_slot_summary_matches_loaded_summary() {
     assert_eq!(scanned.has_thumbnail, written.has_thumbnail);
     assert_eq!(scanned.emulator_version, written.emulator_version);
     assert_eq!(loaded.summary, scanned);
+}
+
+#[test]
+fn summary_bytes_match_full_load_without_materializing_state() {
+    use crate::{
+        sidecar::StorageLocation,
+        slots::{build_state_slot_bytes, load_state_summary_bytes},
+    };
+    let identity = test_identity();
+    let path = StorageLocation::document_tree(
+        "content://provider/tree/primary%3Atest",
+        "nes/id/states/7.state",
+    )
+    .unwrap();
+    let big_state = vec![7u8; 1024 * 1024];
+    let (bytes, _metadata_bytes, written) =
+        build_state_slot_bytes(path.clone(), 7, &big_state, &identity, None).unwrap();
+    let summary = load_state_summary_bytes(path.clone(), bytes, Some(&identity))
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary, written);
+    assert!(load_state_summary_bytes(path, vec![0u8; 64], Some(&identity)).is_err());
+}
+
+#[test]
+fn sidecar_summary_matches_archive_without_transferring_state() {
+    use crate::{sidecar::StorageLocation, slots::load_state_summary_from_metadata_bytes};
+    let identity = test_identity();
+    let path = StorageLocation::document_tree(
+        "content://provider/tree/primary%3Atest",
+        "nes/id/states/7.state",
+    )
+    .unwrap();
+    // The sidecar carries metadata only: a 1MiB state stays on the provider.
+    let big_state = vec![7u8; 1024 * 1024];
+    let (_, metadata_bytes, written) =
+        crate::slots::build_state_slot_bytes(path.clone(), 7, &big_state, &identity, None).unwrap();
+    assert!(metadata_bytes.len() < 1024);
+    let summary =
+        load_state_summary_from_metadata_bytes(path.clone(), &metadata_bytes, Some(&identity))
+            .unwrap()
+            .unwrap();
+    assert_eq!(summary, written);
+    // Identity mismatch skips; corruption errors for the archive fallback.
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            path.clone(),
+            &metadata_bytes,
+            Some(&test_identity_with_bytes(vec![99])),
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        load_state_summary_from_metadata_bytes(path, b"not-metadata", Some(&identity)).is_err()
+    );
+}
+
+#[test]
+fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
+    use crate::{
+        sidecar::StorageLocation,
+        slots::{build_state_slot_bytes, load_state_slot_bytes},
+    };
+    let identity = test_identity();
+    for path in [
+        StorageLocation::Native("/tmp/states/7.state".into()),
+        StorageLocation::document_tree(
+            "content://provider/tree/primary%3A日本語",
+            "nes/id/states/7.state",
+        )
+        .unwrap(),
+    ] {
+        let (bytes, _, written) =
+            build_state_slot_bytes(path.clone(), 7, b"state", &identity, None).unwrap();
+        let loaded = load_state_slot_bytes(path.clone(), bytes.clone(), Some(&identity))
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.summary, written);
+        assert_eq!(loaded.summary.path, path);
+        assert_eq!(loaded.machine_state, b"state");
+        assert!(
+            load_state_slot_bytes(path, bytes, Some(&test_identity_with_bytes(vec![99])))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+/// Sidecar publish order: a stale summary must never survive the state
+/// it describes; invalidate first and drop again on sidecar failure.
+#[test]
+fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
+    use crate::{error::PersistenceError, slots::publish_state_with_sidecar};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn fail() -> PersistenceError {
+        PersistenceError::Io(std::io::Error::other("injected"))
+    }
+
+    // Happy path: invalidate, state, sidecar, in that order.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let record = |events: &Rc<RefCell<Vec<&'static str>>>, what: &'static str| {
+        events.borrow_mut().push(what);
+    };
+    let outcome = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            Ok(())
+        },
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Ok(())
+        },
+    );
+    assert!(outcome.is_ok());
+    assert_eq!(*events.borrow(), ["invalidate", "state", "sidecar"]);
+
+    // Sidecar failure: the stale sidecar is dropped, the save still succeeds.
+    events.borrow_mut().clear();
+    let outcome = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            Ok(())
+        },
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Err(fail())
+        },
+    );
+    assert!(outcome.is_ok());
+    assert_eq!(
+        *events.borrow(),
+        ["invalidate", "state", "sidecar", "invalidate"]
+    );
+
+    // State failure: nothing is published and the sidecar is never written.
+    events.borrow_mut().clear();
+    let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            Ok(())
+        },
+        || {
+            record(&events, "state");
+            Err(fail())
+        },
+        || {
+            record(&events, "sidecar");
+            Ok(())
+        },
+    );
+    assert!(outcome.is_err());
+    assert_eq!(*events.borrow(), ["invalidate", "state"]);
+
+    // Unremovable stale sidecar: the publish refuses instead of letting
+    // the scan adopt old metadata for the fresh archive.
+    events.borrow_mut().clear();
+    let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            Err(fail())
+        },
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Ok(())
+        },
+    );
+    assert!(outcome.is_err());
+    assert_eq!(*events.borrow(), ["invalidate"]);
+
+    // Failed sidecar cleanup after a failed sidecar write fails the op: a
+    // stale sidecar would otherwise shadow the fresh archive.
+    events.borrow_mut().clear();
+    let attempts = std::rc::Rc::new(std::cell::Cell::new(0));
+    let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
+        || {
+            record(&events, "invalidate");
+            if attempts.get() == 0 {
+                attempts.set(1);
+                Ok(())
+            } else {
+                Err(fail())
+            }
+        },
+        || {
+            record(&events, "state");
+            Ok(())
+        },
+        || {
+            record(&events, "sidecar");
+            Err(fail())
+        },
+    );
+    assert!(outcome.is_err());
+    assert_eq!(
+        *events.borrow(),
+        ["invalidate", "state", "sidecar", "invalidate"]
+    );
+}
+
+/// The cap rejects decodable metadata, not just garbage: oversized input
+/// fails through the bound while small and empty inputs behave normally.
+#[test]
+fn metadata_cap_rejects_valid_but_oversized_encoding() {
+    use crate::metadata::{encode_metadata_bytes, encode_slot_metadata};
+    use crate::slots::{MAX_METADATA_BYTES, load_state_summary_from_metadata_bytes};
+    let big = test_identity_with_bytes(vec![7u8; MAX_METADATA_BYTES]);
+    let big_bytes = encode_metadata_bytes(
+        &encode_slot_metadata(7, std::time::UNIX_EPOCH, &big, false).unwrap(),
+    )
+    .unwrap();
+    assert!(big_bytes.len() > MAX_METADATA_BYTES);
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            std::path::PathBuf::from("unused").into(),
+            &big_bytes,
+            None
+        )
+        .is_err()
+    );
+    let small_bytes = encode_metadata_bytes(
+        &encode_slot_metadata(7, std::time::UNIX_EPOCH, &test_identity(), false).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            std::path::PathBuf::from("unused").into(),
+            &small_bytes,
+            None
+        )
+        .is_ok()
+    );
+    assert!(
+        load_state_summary_from_metadata_bytes(
+            std::path::PathBuf::from("unused").into(),
+            &[],
+            None
+        )
+        .is_err()
+    );
+}
+
+/// Copy-then-delete keeps the original on every failure path.
+#[test]
+fn quarantine_by_copy_never_deletes_before_the_copy_is_stored() {
+    use crate::{error::PersistenceError, slots::quarantine_by_copy};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn fail() -> PersistenceError {
+        PersistenceError::Io(std::io::Error::other("injected"))
+    }
+    let target = crate::sidecar::StorageLocation::Native("q".into());
+
+    // Happy path: read, write, delete, in that order.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let record = |events: &Rc<RefCell<Vec<&'static str>>>, what: &'static str| {
+        events.borrow_mut().push(what);
+    };
+    let outcome = quarantine_by_copy(
+        || {
+            record(&events, "read");
+            Ok(Some(vec![7]))
+        },
+        |bytes| {
+            record(&events, "write");
+            assert_eq!(bytes, [7]);
+            Ok(())
+        },
+        || {
+            record(&events, "delete");
+            Ok(())
+        },
+        target.clone(),
+    );
+    assert_eq!(outcome.unwrap(), Some(target.clone()));
+    assert_eq!(*events.borrow(), ["read", "write", "delete"]);
+
+    // Missing original: quiet no-op, nothing else runs.
+    let outcome = quarantine_by_copy(
+        || Ok(None),
+        |_| panic!("no copy without an original"),
+        || panic!("no delete without an original"),
+        target.clone(),
+    );
+    assert_eq!(outcome.unwrap(), None);
+
+    // Write failure: the original is kept, the error propagates.
+    let deleted = Rc::new(RefCell::new(false));
+    let probe = Rc::clone(&deleted);
+    let outcome: Result<Option<_>, PersistenceError> = quarantine_by_copy(
+        || Ok(Some(vec![7])),
+        |_| Err(fail()),
+        || {
+            *probe.borrow_mut() = true;
+            Ok(())
+        },
+        target.clone(),
+    );
+    assert!(outcome.is_err());
+    assert!(!*deleted.borrow(), "original must survive a failed copy");
+
+    // Delete failure: the copy is already stored, the error propagates.
+    let outcome: Result<Option<_>, PersistenceError> = quarantine_by_copy(
+        || Ok(Some(vec![7])),
+        |_| Ok(()),
+        || Err(fail()),
+        target.clone(),
+    );
+    assert!(outcome.is_err());
 }

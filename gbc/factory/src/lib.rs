@@ -1,27 +1,25 @@
 mod builder;
+pub mod field;
 mod input_profiles;
 mod labels;
 mod settings;
 
 use std::rc::Rc;
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError, SystemDefaults,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-            SystemLoadOptions, SystemLoadOptionsSchema,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_gbc_settings::{GbcSettings, HardwareModel};
 use nerust_input_traits::{ControllerProfile, InputAssignments, InputSystemFactory};
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError, SystemDefaults,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{
+        DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        SystemLoadOptions, SystemLoadOptionsSchema,
+    },
+    settings::FactorySettingsView,
+};
 
-pub fn gbc_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
+pub fn gbc_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_gbc_device::gbc_device_controller_profiles()
 }
 
@@ -29,9 +27,8 @@ pub fn gbc_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
 pub struct GbcFactory;
 
 impl GbcFactory {
-    /// Boxed `dyn CoreFactory` for generic drivers. Construction
-    /// selects the system once here; everything downstream drives
-    /// through `dyn CoreFactory` without naming this type.
+    /// Boxed `dyn CoreFactory` for generic drivers. The system is
+    /// selected once here.
     pub fn boxed() -> Box<dyn CoreFactory> {
         Box::new(Self)
     }
@@ -136,7 +133,7 @@ impl SystemLoadOptionsSchema for GbcLoadOptionsSchema {
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::{CoreFactory, SystemDefaults, load::MediaObject};
+    use nerust_system_traits::factory::{CoreFactory, SystemDefaults, load::MediaObject};
 
     use super::*;
 
@@ -174,11 +171,8 @@ mod tests {
 
     #[test]
     fn probe_media_rejects_gba_rom() {
-        // First-match-wins routing depends on disjoint probes: a GBA
-        // ROM carries a different logo at the GB header offset, so the
-        // GB probe must refuse it (mirror of the GBA-side test, which
-        // likewise inlines the foreign logo: no core-to-core test
-        // dependency in either direction).
+        // First-match-wins routing needs disjoint probes: the GB probe
+        // must refuse GBA ROMs (mirrored foreign-logo test, no cross-core dep).
         let mut rom = vec![0; 0x4000];
         rom[0x04..0xA0].copy_from_slice(&[
             0x24, 0xFF, 0xAE, 0x51, 0x69, 0x9A, 0xA2, 0x21, 0x3D, 0x84, 0x82, 0x0A, 0x84, 0xE4,

@@ -4,7 +4,7 @@ use nerust_core_traits::{
     debugger::{DebugControl, DebuggerError, SpaceId, StepUnit},
     identity::SystemIdentity,
 };
-use nerust_input_traits::{ControllerCollection, ControllerHub as _, EmuInput};
+use nerust_input_traits::{ControllerCollection, ControllerHub as _, InputReceiver};
 use nerust_render_traits::{FrameBuffer, PixelFormat};
 
 use crate::{
@@ -12,9 +12,8 @@ use crate::{
     input_types::NesInputBuffer,
 };
 
-/// `Core` は `pub(crate)` な `Cartridge` trait (`Box<dyn Cartridge>`) を含む。
-/// 全ての具象 mapper は同一 crate 内 (`nes/core/src/cartridge/mapper/`) にあり、
-/// かつ全て Send であることが確認されているため、`unsafe impl Send` は安全。
+/// `Core` は `pub(crate)` な `Cartridge` trait を含む。全具象 mapper は同一 crate 内にあり
+/// 全て Send であるため、`unsafe impl Send` は安全。
 struct SendCore(Option<Core>);
 
 // Safety: 全ての Cartridge 実装は同一 crate 内にあり、全て Send。
@@ -24,17 +23,15 @@ unsafe impl Send for SendCore {}
 pub struct NesConsoleCore {
     core: SendCore,
     controller: ControllerCollection,
-    emu_input: EmuInput,
+    emu_input: InputReceiver<NesInputBuffer>,
     paused: bool,
-    /// Device sample rate for the APU resampler, stamped from
-    /// `CoreConfig::audio_sample_rate` at load (data only; the backend
-    /// lives in the session layer).
+    /// Device sample rate for the APU resampler, stamped at load.
+    /// Data only; the backend lives in the session layer.
     sample_rate: u32,
 }
 
-/// Session-side audio sink: collects the frame's nominal samples into
-/// the caller-provided Vec (transport separation: the core never sees
-/// the real backend).
+/// Session-side audio sink: collects the frame's nominal samples into the caller's Vec.
+/// The core never sees the real backend.
 struct VecSink<'a> {
     out: &'a mut Vec<StereoSample>,
     sample_rate: u32,
@@ -55,13 +52,13 @@ impl NesConsoleCore {
     pub fn new(
         cartridge_data: CartridgeData,
         controller: ControllerCollection,
-        emu_input: EmuInput,
+        emu_input: impl Into<InputReceiver<NesInputBuffer>>,
     ) -> Result<Self, CoreError> {
         let core = Core::new(cartridge_data).map_err(CoreError::Core)?;
         Ok(Self {
             core: SendCore(Some(core)),
             controller,
-            emu_input,
+            emu_input: emu_input.into(),
             paused: false,
             sample_rate: 48_000,
         })
@@ -69,11 +66,14 @@ impl NesConsoleCore {
 
     /// Creates a NesConsoleCore with no ROM loaded.
     /// Call `load()` before `render_frame()`.
-    pub fn new_empty(controller: ControllerCollection, emu_input: EmuInput) -> Self {
+    pub fn new_empty(
+        controller: ControllerCollection,
+        emu_input: impl Into<InputReceiver<NesInputBuffer>>,
+    ) -> Self {
         Self {
             core: SendCore(None),
             controller,
-            emu_input,
+            emu_input: emu_input.into(),
             paused: false,
             sample_rate: 48_000,
         }
@@ -90,10 +90,7 @@ impl NesConsoleCore {
     }
 
     /// Advance one frame, reporting the cycles the core counted.
-    ///
-    /// Same path as the [`ConsoleCore::render_frame`] implementation;
-    /// the cycle count that path discards is returned here for
-    /// debugger stepping.
+    /// Same path as the [`ConsoleCore::render_frame`] implementation.
     pub(crate) fn render_frame_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -102,10 +99,7 @@ impl NesConsoleCore {
         let core = self.core.0.as_mut().ok_or(CoreError::NoRomLoaded)?;
 
         // Take latest input and sync to controller
-        self.emu_input.take();
-        if let Some(state) = self.emu_input.read_buf.downcast_ref::<NesInputBuffer>() {
-            self.controller.sync_input(&state.0);
-        }
+        self.controller.sync_input(&self.emu_input.receive().0);
 
         // Nominal-rate audio production only: samples collect into the
         // caller buffer; the session layer owns transport to the backend.
@@ -120,8 +114,7 @@ impl NesConsoleCore {
     }
 
     /// Advance one instruction, reporting the cycles the core counted.
-    /// No input is taken and no audio is produced: stepping inspects a
-    /// frozen moment, it does not play it.
+    /// Inspects a frozen moment: no input taken, no audio produced.
     pub(crate) fn step_instruction_cycles(
         &mut self,
         frame_slot: &mut FrameBuffer,
@@ -152,8 +145,10 @@ impl ConsoleCore for NesConsoleCore {
 
     // `region` フィールドは NES PAL 対応時に使用する。
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
-        let cartridge_data =
-            crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse(Box::new(e)))?;
+        let cartridge_data = crate::rom_parse::parse_rom(rom).map_err(|e| CoreError::RomParse {
+            kind: nerust_core_traits::CoreFault::Corrupt,
+            source: Box::new(e),
+        })?;
         let options = if let Some(core_options) = &config.core_options {
             *core_options
                 .clone()
@@ -199,22 +194,22 @@ impl ConsoleCore for NesConsoleCore {
 
     fn save_state(&self) -> Result<Vec<u8>, CoreError> {
         let core = self.core_ref()?;
-        core.export_machine_state().map_err(CoreError::Core)
+        core.export_machine_state().map_err(CoreError::from)
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let core = self.core_mut()?;
-        core.import_machine_state(data).map_err(CoreError::Core)
+        core.import_machine_state(data).map_err(CoreError::from)
     }
 
     fn mapper_save(&self) -> Result<Option<Vec<u8>>, CoreError> {
         let core = self.core_ref()?;
-        core.export_mapper_save().map_err(CoreError::Core)
+        core.export_mapper_save().map_err(CoreError::from)
     }
 
     fn import_mapper_save(&mut self, data: &[u8]) -> Result<(), CoreError> {
         let core = self.core_mut()?;
-        core.import_mapper_save(data).map_err(CoreError::Core)
+        core.import_mapper_save(data).map_err(CoreError::from)
     }
 
     fn identity(&self) -> Result<SystemIdentity, CoreError> {
@@ -240,11 +235,7 @@ impl ConsoleCore for NesConsoleCore {
 }
 
 /// NES execution control and memory editing.
-///
-/// Holds the console (not just the core): frame stepping reuses the
-/// exact `render_frame` path and reports the cycles it counted.
-/// Scratch buffers are display-irrelevant (zeroed palette); stepped
-/// frames are not published to any shared framebuffer here.
+/// Holds the console (not just the core): stepping reuses the exact `render_frame` path.
 pub struct NesDebugControl<'a> {
     console: &'a mut NesConsoleCore,
     frame_slot: FrameBuffer,
@@ -318,14 +309,11 @@ impl DebugControl for NesDebugControl<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Mutex, atomic::AtomicBool},
-    };
+    use std::collections::HashMap;
 
     use nerust_core_traits::{CoreConfig, debugger::Debugger as _};
     use nerust_input_traits::{
-        Controller, ControllerCollection, EmuInput, OpenBusReadResult, Port,
+        Controller, ControllerCollection, OpenBusReadResult, Port, StrobeTarget,
     };
     use nerust_render_traits::PixelFormat;
 
@@ -336,19 +324,197 @@ mod tests {
         nrom_test_data,
     };
 
-    fn test_emu_input() -> EmuInput {
-        use nerust_input_traits::InputStateBuffer;
-        let shared: Arc<Mutex<Box<dyn InputStateBuffer>>> =
-            Arc::new(Mutex::new(Box::<NesInputBuffer>::default()));
-        EmuInput::new(
-            shared,
-            Arc::new(AtomicBool::new(false)),
-            Box::new(|| Box::<NesInputBuffer>::default()),
+    fn test_emu_input() -> InputReceiver<NesInputBuffer> {
+        NesInputBuffer::default().into()
+    }
+
+    #[test]
+    fn persistence_faults_are_typed_and_preserve_live_state() {
+        use crate::persistence_codec::{decode_payload, encode_payload};
+        use crate::{MachineStatePayload, persistence_error::PersistenceError};
+        use nerust_core_traits::CoreFault;
+
+        let mut console = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            test_emu_input(),
         )
+        .unwrap();
+        let before = console.save_state().unwrap();
+        for case in 0..4 {
+            let mut payload: MachineStatePayload = decode_payload(&before).unwrap();
+            let expected = match case {
+                0 => {
+                    payload.rom_identity.prg_rom_crc64 ^= 1;
+                    CoreFault::Incompatible
+                }
+                1 => {
+                    payload.options.mmc3_irq_variant =
+                        Some(crate::core_options::Mmc3IrqVariant::Sharp);
+                    CoreFault::Incompatible
+                }
+                2 => {
+                    payload.schema_version += 1;
+                    CoreFault::Incompatible
+                }
+                _ => {
+                    payload.cpu.set_internal_opcode_for_test(0x100);
+                    CoreFault::Corrupt
+                }
+            };
+            let error = console
+                .load_state(&encode_payload(&payload).unwrap())
+                .unwrap_err();
+            assert_eq!(error.fault(), expected);
+            let CoreError::Persistence { source, .. } = error else {
+                panic!("untyped persistence error")
+            };
+            let source = source.downcast_ref::<PersistenceError>().unwrap();
+            match case {
+                0 => assert!(matches!(source, PersistenceError::RomIdentityMismatch)),
+                1 => assert!(matches!(source, PersistenceError::OptionsMismatch)),
+                2 => assert!(matches!(source, PersistenceError::UnsupportedVersion(_))),
+                _ => assert!(matches!(source, PersistenceError::CpuOpcode)),
+            }
+            assert_eq!(console.save_state().unwrap(), before);
+        }
+        let error = console.load_state(&before[..before.len() / 2]).unwrap_err();
+        assert_eq!(error.fault(), CoreFault::Corrupt);
+        let CoreError::Persistence { source, .. } = error else {
+            panic!("untyped decode error")
+        };
+        assert!(matches!(
+            source.downcast_ref::<PersistenceError>(),
+            Some(PersistenceError::Decode(_))
+        ));
+    }
+
+    #[test]
+    fn persistence_version_is_checked_before_body_and_mapper_import_is_typed() {
+        use nerust_core_traits::CoreFault;
+        #[derive(serde::Serialize)]
+        struct Header {
+            schema_version: u32,
+        }
+        let mut console = NesConsoleCore::new(
+            crate::mmc6_test_data(),
+            ControllerCollection::new(vec![]),
+            test_emu_input(),
+        )
+        .unwrap();
+        for (version, fault) in [(3, CoreFault::Incompatible), (2, CoreFault::Corrupt)] {
+            let bytes = rmp_serde::to_vec_named(&Header {
+                schema_version: version,
+            })
+            .unwrap();
+            assert_eq!(console.load_state(&bytes).unwrap_err().fault(), fault);
+            assert_eq!(
+                console.import_mapper_save(&bytes).unwrap_err().fault(),
+                fault
+            );
+        }
+        let saved = console.mapper_save().unwrap().unwrap();
+        let mut payload: crate::MapperSavePayload =
+            crate::persistence_codec::decode_payload(&saved).unwrap();
+        payload.rom_identity.prg_rom_crc64 ^= 1;
+        let bytes = crate::persistence_codec::encode_payload(&payload).unwrap();
+        assert_eq!(
+            console.import_mapper_save(&bytes).unwrap_err().fault(),
+            CoreFault::Incompatible
+        );
+        payload.rom_identity.prg_rom_crc64 ^= 1;
+        payload.prg_ram.pop();
+        let bytes = crate::persistence_codec::encode_payload(&payload).unwrap();
+        assert_eq!(
+            console.import_mapper_save(&bytes).unwrap_err().fault(),
+            CoreFault::Corrupt
+        );
+        assert_eq!(console.mapper_save().unwrap().unwrap(), saved);
+    }
+
+    #[test]
+    fn fault_transport_and_io_classification_do_not_depend_on_diagnostic_text() {
+        use nerust_core_traits::CoreFault;
+        use std::{
+            io::{Error, ErrorKind},
+            sync::mpsc,
+        };
+        let (tx, rx) = mpsc::channel::<Result<(), CoreError>>();
+        for (error, expected) in [
+            (
+                CoreError::Core(Box::new(Error::new(
+                    ErrorKind::NotFound,
+                    "unsupported version",
+                ))),
+                CoreFault::Missing,
+            ),
+            (
+                CoreError::Core(Box::new(Error::new(
+                    ErrorKind::PermissionDenied,
+                    "ROM mismatch",
+                ))),
+                CoreFault::Storage,
+            ),
+            (
+                CoreError::Core("version mismatch storage".into()),
+                CoreFault::Corrupt,
+            ),
+            (
+                CoreError::from(crate::persistence_error::PersistenceError::OptionsMismatch),
+                CoreFault::Incompatible,
+            ),
+        ] {
+            let message = error.to_string();
+            tx.send(Err(error)).unwrap();
+            let received = rx.recv().unwrap().unwrap_err();
+            assert_eq!(received.fault(), expected);
+            assert_eq!(received.to_string(), message);
+            assert!(std::error::Error::source(&received).is_some());
+        }
+    }
+
+    #[test]
+    fn receiver_is_polled_once_per_frame_not_per_instruction() {
+        let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let source = std::sync::Arc::clone(&pending);
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(NesInputBuffer::default()));
+        let probe = std::sync::Arc::clone(&seen);
+        let receiver = InputReceiver::new(NesInputBuffer::default(), move |state| {
+            if let Some(next) = source.lock().unwrap().take() {
+                *state = next;
+            }
+            *probe.lock().unwrap() = *state;
+        });
+        let peek = || seen.lock().unwrap().0;
+        let mut core = NesConsoleCore::new(
+            nrom_test_data(),
+            ControllerCollection::new(vec![]),
+            receiver,
+        )
+        .unwrap();
+        let mut frame = FrameBuffer::with_capacity(
+            256,
+            240,
+            PixelFormat::PaletteIndex {
+                palette: Box::new([0; 256]),
+            },
+        );
+        let mut audio = Vec::new();
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        assert_eq!(peek(), [0; 3]);
+        *pending.lock().unwrap() = Some(NesInputBuffer([1, 0, 0]));
+        core.step_instruction_cycles(&mut frame).unwrap();
+        assert_eq!(peek(), [0; 3]);
+        core.render_frame(&mut frame, &mut audio).unwrap();
+        assert_eq!(peek(), [1, 0, 0]);
     }
 
     #[derive(Debug)]
     struct MockController;
+    impl StrobeTarget for MockController {
+        fn strobe(&mut self, _value: u8) {}
+    }
+
     impl Controller for MockController {
         fn read(&mut self, _port: &dyn Port) -> OpenBusReadResult {
             OpenBusReadResult::new(0, 0)
@@ -581,9 +747,8 @@ mod tests {
                 addr: 0x1FFF
             })
         );
-        // Instruction stepping advances exactly one instruction and
-        // reports real cycles; the program counter moves by the
-        // decoded instruction length.
+        // Instruction stepping advances one instruction with real cycles;
+        // the program counter moves by the decoded instruction length.
         let pc_of = |console: &NesConsoleCore| {
             console
                 .core_ref()

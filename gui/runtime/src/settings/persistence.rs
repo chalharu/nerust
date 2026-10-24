@@ -2,14 +2,13 @@ use std::{fs, path::Path};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
 use nerust_core_traits::identity::{SystemId, SystemIdentity};
-use nerust_persistence::sidecar::{SidecarPaths, resolve_sidecars};
+use nerust_persistence::sidecar::{SidecarPaths, StorageLocation, resolve_sidecars};
 use nerust_settings_core::model::shared::{DesktopSharedSettings, StoragePolicy};
 
 use super::{SettingsError, SettingsPaths};
 
 const MAPPER_SAVE_FILE_NAME: &str = "mapper.sav";
 const STATES_DIR_NAME: &str = "states";
-const DOCUMENT_TREE_MARKER: &str = "__nerust_document_tree__";
 
 pub fn resolve_persistence_paths(
     shared: &DesktopSharedSettings,
@@ -47,8 +46,8 @@ pub fn resolve_central_storage_paths(
         .join(system.to_string())
         .join(system_storage_key(system, identity));
     SidecarPaths {
-        mapper_save_path: base.join(MAPPER_SAVE_FILE_NAME),
-        states_dir: base.join(STATES_DIR_NAME),
+        mapper_save_path: base.join(MAPPER_SAVE_FILE_NAME).into(),
+        states_dir: base.join(STATES_DIR_NAME).into(),
     }
 }
 
@@ -56,59 +55,35 @@ pub fn resolve_document_tree_storage_paths(
     uri: &str,
     system: &dyn SystemId,
     identity: &SystemIdentity,
-) -> SidecarPaths {
-    let encoded_uri = uri
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let base = Path::new(DOCUMENT_TREE_MARKER)
-        .join(encoded_uri)
-        .join(system.to_string())
-        .join(system_storage_key(system, identity));
-    SidecarPaths {
-        mapper_save_path: base.join(MAPPER_SAVE_FILE_NAME),
-        states_dir: base.join(STATES_DIR_NAME),
-    }
+) -> Result<SidecarPaths, SettingsError> {
+    let base = format!("{system}/{}", system_storage_key(system, identity));
+    Ok(SidecarPaths {
+        mapper_save_path: StorageLocation::document_tree(
+            uri,
+            format!("{base}/{MAPPER_SAVE_FILE_NAME}"),
+        )
+        .map_err(storage_error)?,
+        states_dir: StorageLocation::document_tree(uri, format!("{base}/{STATES_DIR_NAME}"))
+            .map_err(storage_error)?,
+    })
 }
 
 pub fn resolve_document_tree_sidecar_paths(
     uri: &str,
     system: &dyn SystemId,
     identity: &SystemIdentity,
-) -> SidecarPaths {
-    let encoded_uri = uri
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let base = Path::new(DOCUMENT_TREE_MARKER).join(encoded_uri);
+) -> Result<SidecarPaths, SettingsError> {
     let key = format!("{}-{}", system, system_storage_key(system, identity));
-    SidecarPaths {
-        mapper_save_path: base.join(format!("{key}.sav")),
-        states_dir: base.join(format!("{key}.states")),
-    }
+    Ok(SidecarPaths {
+        mapper_save_path: StorageLocation::document_tree(uri, format!("{key}.sav"))
+            .map_err(storage_error)?,
+        states_dir: StorageLocation::document_tree(uri, format!("{key}.states"))
+            .map_err(storage_error)?,
+    })
 }
 
-pub fn decode_document_tree_path(path: &Path) -> Option<(String, String)> {
-    let mut components = path.components();
-    if components.next()?.as_os_str() != DOCUMENT_TREE_MARKER {
-        return None;
-    }
-    let encoded = components.next()?.as_os_str().to_str()?;
-    if encoded.len() % 2 != 0 {
-        return None;
-    }
-    let bytes = (0..encoded.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&encoded[index..index + 2], 16).ok())
-        .collect::<Option<Vec<_>>>()?;
-    let uri = String::from_utf8(bytes).ok()?;
-    let relative = components
-        .map(|component| component.as_os_str().to_str())
-        .collect::<Option<Vec<_>>>()?
-        .join("/");
-    Some((uri, relative))
+fn storage_error(error: nerust_persistence::error::PersistenceError) -> SettingsError {
+    SettingsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, error))
 }
 
 fn resolve_current_persistence_paths(
@@ -121,7 +96,7 @@ fn resolve_current_persistence_paths(
     match shared.persistence.storage_policy {
         StoragePolicy::Sidecar => {
             if let Some(uri) = shared.persistence.storage_document_tree_uri.as_deref() {
-                return Ok(resolve_document_tree_sidecar_paths(uri, system, identity));
+                return resolve_document_tree_sidecar_paths(uri, system, identity);
             }
             let rom_path = rom_path.ok_or(SettingsError::PersistenceUnavailable)?;
             Ok(resolve_sidecars(rom_path))
@@ -138,7 +113,7 @@ fn resolve_current_persistence_paths(
         }
         StoragePolicy::CustomDirectory => {
             if let Some(uri) = shared.persistence.storage_document_tree_uri.as_deref() {
-                return Ok(resolve_document_tree_storage_paths(uri, system, identity));
+                return resolve_document_tree_storage_paths(uri, system, identity);
             }
             let root = shared
                 .persistence
@@ -158,7 +133,10 @@ fn maybe_auto_import_storage(
     identity: &SystemIdentity,
     destination: &SidecarPaths,
 ) -> Result<(), SettingsError> {
-    if decode_document_tree_path(&destination.mapper_save_path).is_some() {
+    if matches!(
+        destination.mapper_save_path,
+        StorageLocation::DocumentTree { .. }
+    ) {
         return Ok(());
     }
     let Some(rom_path) = rom_path else {
@@ -220,8 +198,12 @@ fn maybe_auto_import_storage(
 }
 
 fn storage_is_empty(paths: &SidecarPaths) -> Result<bool, SettingsError> {
-    let mapper_exists = paths.mapper_save_path.is_file();
-    let states_exist = match fs::read_dir(&paths.states_dir) {
+    let mapper_exists = paths
+        .mapper_save_path
+        .native_path()
+        .map_err(storage_error)?
+        .is_file();
+    let states_exist = match fs::read_dir(paths.states_dir.native_path().map_err(storage_error)?) {
         Ok(mut entries) => entries.next().is_some(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error.into()),
@@ -233,25 +215,92 @@ fn copy_storage_contents(
     source: &SidecarPaths,
     destination: &SidecarPaths,
 ) -> Result<(), SettingsError> {
-    if source.mapper_save_path.is_file() {
-        if let Some(parent) = destination.mapper_save_path.parent() {
-            fs::create_dir_all(parent)?;
+    copy_storage_contents_with(source, destination, |src, dst| fs::copy(src, dst))
+}
+
+/// Migration copy with an injectable transfer: production passes `fs::copy`; tests
+/// inject a mid-stream failure to prove the mapper+states rollback.
+fn copy_storage_contents_with(
+    source: &SidecarPaths,
+    destination: &SidecarPaths,
+    copy: impl Fn(&Path, &Path) -> std::io::Result<u64> + Copy,
+) -> Result<(), SettingsError> {
+    let source_mapper = source
+        .mapper_save_path
+        .native_path()
+        .map_err(storage_error)?;
+    let destination_mapper = destination
+        .mapper_save_path
+        .native_path()
+        .map_err(storage_error)?;
+    let source_states = source.states_dir.native_path().map_err(storage_error)?;
+    let destination_states = destination
+        .states_dir
+        .native_path()
+        .map_err(storage_error)?;
+    // Roll back a partial migration so the next load retries from a clean state
+    // instead of freezing on a half-migrated target.
+    let mut copied: Vec<std::path::PathBuf> = Vec::new();
+    let result = (|| -> Result<(), SettingsError> {
+        if source_mapper.is_file() {
+            if let Some(parent) = destination_mapper.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            copy_one_tracked(&mut copied, source_mapper, destination_mapper, copy)?;
         }
-        let _ = fs::copy(&source.mapper_save_path, &destination.mapper_save_path)?;
-    }
-    match fs::read_dir(&source.states_dir) {
-        Ok(entries) => {
-            fs::create_dir_all(&destination.states_dir)?;
-            for entry in entries {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    let _ = fs::copy(&path, destination.states_dir.join(entry.file_name()))?;
+        match fs::read_dir(source_states) {
+            Ok(entries) => {
+                fs::create_dir_all(destination_states)?;
+                for entry in entries {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_file() {
+                        let target = destination_states.join(entry.file_name());
+                        copy_one_tracked(&mut copied, &path, &target, copy)?;
+                    }
                 }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+        Ok(())
+    })();
+    if result.is_err() {
+        for path in copied {
+            // A failed cleanup must not mask the migration error, but a leftover target
+            // would still block the retry. Already-swept targets are quiet.
+            if let Err(error) = fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!(
+                    "storage migration rollback could not remove {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+    result
+}
+
+/// Copy one migration file with rollback reservation: the target joins the rollback
+/// set before the write, so a mid-stream failure still removes the partial target.
+fn copy_one_tracked(
+    copied: &mut Vec<std::path::PathBuf>,
+    source: &Path,
+    target: &Path,
+    copy: impl FnOnce(&Path, &Path) -> std::io::Result<u64>,
+) -> Result<(), SettingsError> {
+    copied.push(target.to_path_buf());
+    if let Err(error) = copy(source, target) {
+        // Remove the partial target now instead of relying on the outer sweep: the
+        // reservation must hold even if the caller never reaches it.
+        if let Err(cleanup) = fs::remove_file(target) {
+            log::warn!(
+                "storage migration rollback could not remove {}: {cleanup}",
+                target.display()
+            );
+        }
+        return Err(error.into());
     }
     Ok(())
 }
@@ -260,16 +309,16 @@ fn copy_storage_contents(
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use nerust_persistence::sidecar::resolve_sidecars;
+    use nerust_persistence::sidecar::{StorageLocation, resolve_sidecars};
     use nerust_settings_core::model::shared::StoragePolicy;
 
     use crate::test::DummySystemId;
 
     use super::{
         super::{SettingsPaths, test_root, test_shared_defaults, test_system_identity},
-        decode_document_tree_path, resolve_central_storage_paths,
-        resolve_document_tree_sidecar_paths, resolve_document_tree_storage_paths,
-        resolve_persistence_paths_with_import, system_storage_key,
+        resolve_central_storage_paths, resolve_document_tree_sidecar_paths,
+        resolve_document_tree_storage_paths, resolve_persistence_paths_with_import,
+        system_storage_key,
     };
 
     #[test]
@@ -280,9 +329,182 @@ mod tests {
         let second = resolve_central_storage_paths(&root, &DummySystemId, &identity);
 
         assert_eq!(first, second);
-        assert!(first.mapper_save_path.ends_with("mapper.sav"));
-        assert!(first.states_dir.ends_with("states"));
+        assert!(
+            first
+                .mapper_save_path
+                .native_path()
+                .unwrap()
+                .ends_with("mapper.sav")
+        );
+        assert!(first.states_dir.native_path().unwrap().ends_with("states"));
         assert!(!system_storage_key(&DummySystemId, &identity).is_empty());
+    }
+
+    /// The rollback reservation happens before the write, so a mid-stream failure
+    /// still removes the partial target and the next load retries clean.
+    #[test]
+    fn tracked_copy_removes_partial_target_on_mid_stream_failure() {
+        use super::copy_one_tracked;
+        let dir = super::super::test_root("tracked-copy-partial");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("7.state");
+        let mut copied = Vec::new();
+        let error = copy_one_tracked(
+            &mut copied,
+            std::path::Path::new("source"),
+            &target,
+            |_, dst| {
+                // Simulate a mid-stream failure that leaves a partial target.
+                fs::write(dst, vec![0u8; 1024]).unwrap();
+                Err(std::io::Error::other("mid-stream failure"))
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, super::super::SettingsError::Io(_)));
+        assert_eq!(copied, vec![target.clone()]);
+        assert!(!target.exists(), "partial target must not block retry");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Full mapper+states retry: the mapper copies, a states copy fails, and rollback
+    /// removes the partial targets while untracked pre-existing files survive.
+    #[test]
+    fn mapper_ok_then_state_copy_fails_rolls_back_and_retry_completes() {
+        use super::{copy_storage_contents, copy_storage_contents_with};
+
+        let root = super::super::test_root("migrate-retry");
+        let _ = fs::remove_dir_all(&root);
+        let identity = crate::settings::test_system_identity();
+        let source =
+            super::resolve_central_storage_paths(&root.join("src"), &DummySystemId, &identity);
+        let destination =
+            super::resolve_central_storage_paths(&root.join("dst"), &DummySystemId, &identity);
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        let source_states = source.states_dir.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(&source_states).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        fs::write(source_states.join("1.state"), b"one").unwrap();
+        fs::write(source_states.join("2.state"), b"two").unwrap();
+
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        let destination_states = destination.states_dir.native_path().unwrap().to_path_buf();
+        // Pre-existing complete target files: a sentinel plus a complete
+        // slot from a prior run that shares no name with this migration.
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(&destination_states).unwrap();
+        fs::write(destination_states.join("sentinel"), b"keep").unwrap();
+        fs::write(destination_states.join("0.state"), b"prior-complete").unwrap();
+
+        let outcome = copy_storage_contents_with(&source, &destination, |src, dst| {
+            if src.file_name().and_then(|name| name.to_str()) == Some("2.state") {
+                // Simulate a mid-stream failure that leaves a partial target.
+                fs::write(dst, b"partial")?;
+                Err(std::io::Error::other("injected states failure"))
+            } else {
+                fs::copy(src, dst)
+            }
+        });
+        assert!(outcome.is_err(), "injected states failure must fail");
+        assert!(
+            !destination_mapper.exists(),
+            "the copied mapper must roll back"
+        );
+        assert!(
+            !destination_states.join("1.state").exists()
+                && !destination_states.join("2.state").exists(),
+            "partial targets of this run must not block the retry"
+        );
+        // No-clobber: the sweep only removes paths this run tracked.
+        assert_eq!(
+            fs::read(destination_states.join("sentinel")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            fs::read(destination_states.join("0.state")).unwrap(),
+            b"prior-complete"
+        );
+        // Source untouched by the failed migration.
+        assert_eq!(fs::read(&source_mapper).unwrap(), b"mapper");
+        assert_eq!(fs::read(source_states.join("1.state")).unwrap(), b"one");
+        assert_eq!(fs::read(source_states.join("2.state")).unwrap(), b"two");
+
+        // Retry with a healthy transfer: everything lands, all slots visible.
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        let mut visible: Vec<_> = fs::read_dir(&destination_states)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        visible.sort();
+        assert_eq!(visible, vec!["0.state", "1.state", "2.state", "sentinel"]);
+        assert_eq!(
+            fs::read(destination_states.join("1.state")).unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            fs::read(destination_states.join("2.state")).unwrap(),
+            b"two"
+        );
+        assert_eq!(
+            fs::read(destination_states.join("0.state")).unwrap(),
+            b"prior-complete",
+            "the retry must not overwrite pre-existing complete files"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A regular file blocking the states directory fails the migration for any user.
+    /// It covers the mapper-then-states rollback where permission tests cannot run.
+    #[test]
+    fn file_blocking_states_dir_fails_migration_for_any_user() {
+        use super::copy_storage_contents;
+
+        let root = super::super::test_root("migrate-blocked-states");
+        let _ = fs::remove_dir_all(&root);
+        let identity = crate::settings::test_system_identity();
+        let source =
+            super::resolve_central_storage_paths(&root.join("src"), &DummySystemId, &identity);
+        let destination =
+            super::resolve_central_storage_paths(&root.join("dst"), &DummySystemId, &identity);
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        let source_states = source.states_dir.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(&source_states).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        fs::write(source_states.join("1.state"), b"one").unwrap();
+
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        let destination_states = destination.states_dir.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        // A file where the states directory must go: create_dir_all fails
+        // for every user, even root.
+        fs::write(&destination_states, b"blocker").unwrap();
+        assert!(copy_storage_contents(&source, &destination).is_err());
+        assert!(
+            !destination_mapper.exists(),
+            "the copied mapper must roll back"
+        );
+        assert_eq!(fs::read(&source_mapper).unwrap(), b"mapper");
+        assert_eq!(fs::read(source_states.join("1.state")).unwrap(), b"one");
+        // Unblocked, the retry migrates everything.
+        fs::remove_file(&destination_states).unwrap();
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        assert_eq!(
+            fs::read(destination_states.join("1.state")).unwrap(),
+            b"one"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -292,12 +514,19 @@ mod tests {
             "content://provider/tree/primary%3ASaves",
             identity.system_id.as_ref(),
             &identity,
-        );
+        )
+        .unwrap();
 
-        let (uri, relative) = decode_document_tree_path(&paths.mapper_save_path).unwrap();
-        assert_eq!(uri, "content://provider/tree/primary%3ASaves");
-        assert!(relative.starts_with(&format!("{}/", identity.system_id)));
-        assert!(relative.ends_with("/mapper.sav"));
+        let StorageLocation::DocumentTree { uri, relative } = paths.mapper_save_path else {
+            panic!("expected document-tree storage");
+        };
+        assert_eq!(uri.as_str(), "content://provider/tree/primary%3ASaves");
+        assert!(
+            relative
+                .as_str()
+                .starts_with(&format!("{}/", identity.system_id))
+        );
+        assert!(relative.as_str().ends_with("/mapper.sav"));
     }
 
     #[test]
@@ -307,9 +536,21 @@ mod tests {
             "content://provider/tree/primary%3ASaves",
             identity.system_id.as_ref(),
             &identity,
-        );
-        let (_, mapper) = decode_document_tree_path(&paths.mapper_save_path).unwrap();
-        let (_, states) = decode_document_tree_path(&paths.states_dir).unwrap();
+        )
+        .unwrap();
+        let StorageLocation::DocumentTree {
+            relative: mapper, ..
+        } = paths.mapper_save_path
+        else {
+            panic!("expected document-tree mapper");
+        };
+        let StorageLocation::DocumentTree {
+            relative: states, ..
+        } = paths.states_dir
+        else {
+            panic!("expected document-tree states");
+        };
+        let (mapper, states) = (mapper.as_str(), states.as_str());
 
         assert!(!mapper.contains('/'));
         assert!(!states.contains('/'));
@@ -326,9 +567,13 @@ mod tests {
         let rom_path = root.join("game.nes");
         fs::write(&rom_path, [0_u8; 4]).unwrap();
         let sidecar = resolve_sidecars(&rom_path);
-        fs::write(&sidecar.mapper_save_path, b"mapper").unwrap();
-        fs::create_dir_all(&sidecar.states_dir).unwrap();
-        fs::write(sidecar.states_dir.join("slot-1.zip"), b"state").unwrap();
+        fs::write(sidecar.mapper_save_path.native_path().unwrap(), b"mapper").unwrap();
+        fs::create_dir_all(sidecar.states_dir.native_path().unwrap()).unwrap();
+        fs::write(
+            sidecar.states_dir.native_path().unwrap().join("slot-1.zip"),
+            b"state",
+        )
+        .unwrap();
 
         let mut shared = test_shared_defaults();
         shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
@@ -344,9 +589,19 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"mapper");
         assert_eq!(
-            fs::read(resolved.states_dir.join("slot-1.zip")).unwrap(),
+            fs::read(resolved.mapper_save_path.native_path().unwrap()).unwrap(),
+            b"mapper"
+        );
+        assert_eq!(
+            fs::read(
+                resolved
+                    .states_dir
+                    .native_path()
+                    .unwrap()
+                    .join("slot-1.zip")
+            )
+            .unwrap(),
             b"state"
         );
     }
@@ -360,13 +615,21 @@ mod tests {
         let rom_path = root.join("game.nes");
         fs::write(&rom_path, [0_u8; 4]).unwrap();
         let sidecar = resolve_sidecars(&rom_path);
-        fs::write(&sidecar.mapper_save_path, b"sidecar").unwrap();
+        fs::write(sidecar.mapper_save_path.native_path().unwrap(), b"sidecar").unwrap();
 
         let central_root = root.join("central");
         let identity = test_system_identity();
         let central = resolve_central_storage_paths(&central_root, &DummySystemId, &identity);
-        fs::create_dir_all(central.mapper_save_path.parent().unwrap()).unwrap();
-        fs::write(&central.mapper_save_path, b"central").unwrap();
+        fs::create_dir_all(
+            central
+                .mapper_save_path
+                .native_path()
+                .unwrap()
+                .parent()
+                .unwrap(),
+        )
+        .unwrap();
+        fs::write(central.mapper_save_path.native_path().unwrap(), b"central").unwrap();
 
         let mut shared = test_shared_defaults();
         shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
@@ -382,7 +645,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"central");
+        assert_eq!(
+            fs::read(resolved.mapper_save_path.native_path().unwrap()).unwrap(),
+            b"central"
+        );
     }
 
     #[test]
@@ -396,8 +662,16 @@ mod tests {
         let custom_root = root.join("custom");
         let identity = test_system_identity();
         let custom = resolve_central_storage_paths(&custom_root, &DummySystemId, &identity);
-        fs::create_dir_all(custom.mapper_save_path.parent().unwrap()).unwrap();
-        fs::write(&custom.mapper_save_path, b"custom").unwrap();
+        fs::create_dir_all(
+            custom
+                .mapper_save_path
+                .native_path()
+                .unwrap()
+                .parent()
+                .unwrap(),
+        )
+        .unwrap();
+        fs::write(custom.mapper_save_path.native_path().unwrap(), b"custom").unwrap();
 
         let mut shared = test_shared_defaults();
         shared.persistence.storage_policy = StoragePolicy::AppSharedData;
@@ -416,6 +690,187 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(fs::read(&resolved.mapper_save_path).unwrap(), b"custom");
+        assert_eq!(
+            fs::read(resolved.mapper_save_path.native_path().unwrap()).unwrap(),
+            b"custom"
+        );
+    }
+
+    #[test]
+    fn document_tree_policy_resolves_without_native_import_or_fallback() {
+        let identity = test_system_identity();
+        let uri = "content://provider/tree/primary%3ASaves";
+        for policy in [StoragePolicy::Sidecar, StoragePolicy::CustomDirectory] {
+            let mut shared = test_shared_defaults();
+            shared.persistence.storage_policy = policy;
+            shared.persistence.storage_document_tree_uri = Some(uri.into());
+            // A native path is neither required nor consulted for a selected tree.
+            let resolved = resolve_persistence_paths_with_import(
+                &shared,
+                None,
+                &DummySystemId,
+                None,
+                &identity,
+            )
+            .unwrap();
+            let expected = if policy == StoragePolicy::Sidecar {
+                resolve_document_tree_sidecar_paths(uri, &DummySystemId, &identity)
+            } else {
+                resolve_document_tree_storage_paths(uri, &DummySystemId, &identity)
+            }
+            .unwrap();
+            assert_eq!(resolved, expected);
+            assert!(resolved.mapper_save_path.native_path().is_err());
+            assert!(resolved.states_dir.native_path().is_err());
+            shared.persistence.storage_document_tree_uri = Some(String::new());
+            assert!(
+                resolve_persistence_paths_with_import(
+                    &shared,
+                    None,
+                    &DummySystemId,
+                    None,
+                    &identity,
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_and_retries_cleanly() {
+        use super::{copy_storage_contents, resolve_central_storage_paths};
+        use crate::settings::test_root;
+
+        let identity = crate::settings::test_system_identity();
+        let source =
+            resolve_central_storage_paths(&test_root("migrate-src"), &DummySystemId, &identity);
+        let destination =
+            resolve_central_storage_paths(&test_root("migrate-dst"), &DummySystemId, &identity);
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        let source_state = source.states_dir.native_path().unwrap().join("7.state");
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::create_dir_all(source_state.parent().unwrap()).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        fs::write(&source_state, b"state").unwrap();
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        let destination_states = destination.states_dir.native_path().unwrap().to_path_buf();
+        // Block the states copy: the mapper copy must roll back.
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        fs::write(&destination_states, b"blocker").unwrap();
+        assert!(copy_storage_contents(&source, &destination).is_err());
+        assert!(
+            !destination_mapper.exists(),
+            "partial migration must roll back"
+        );
+        // Unblocked retry migrates everything.
+        fs::remove_file(&destination_states).unwrap();
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        assert_eq!(
+            fs::read(destination_states.join("7.state")).unwrap(),
+            b"state"
+        );
+        let _ = fs::remove_dir_all(test_root("migrate-src"));
+        let _ = fs::remove_dir_all(test_root("migrate-dst"));
+    }
+
+    /// ENOSPC mid-migration rolls back the partial target and keeps the source.
+    /// The `/dev/full` kind maps to the injected kind, covering the real no-space path.
+    #[test]
+    fn no_space_mid_migration_rolls_back_and_keeps_source() {
+        use super::copy_one_tracked;
+        use std::io::ErrorKind;
+
+        // Real kernel proof: writing past capacity surfaces StorageFull.
+        let full = fs::write("/dev/full", b"no space");
+        assert_eq!(full.unwrap_err().kind(), ErrorKind::StorageFull);
+
+        // Same kind through the tracked copy: partial target removed.
+        let dir = super::super::test_root("migrate-enospc");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("7.state");
+        let mut copied = Vec::new();
+        let outcome = copy_one_tracked(
+            &mut copied,
+            std::path::Path::new("/nonexistent-src"),
+            &target,
+            |_, _| Err(std::io::Error::new(ErrorKind::StorageFull, "no space left")),
+        );
+        assert!(outcome.is_err(), "ENOSPC must fail the migration");
+        assert!(!target.exists(), "ENOSPC partial target must be removed");
+
+        // Source bytes are untouched by a failed tracked copy.
+        let source = dir.join("mapper.sav");
+        fs::write(&source, b"mapper").unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"mapper");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A readonly destination fails the migration and the partial mapper copy rolls
+    /// back instead of blocking the retry; the test skips where it runs privileged.
+    #[test]
+    fn readonly_destination_fails_migration_and_rolls_back() {
+        use super::copy_storage_contents;
+        use crate::settings::test_root;
+        use std::os::unix::fs::PermissionsExt;
+
+        let identity = crate::settings::test_system_identity();
+        let source = super::resolve_central_storage_paths(
+            &test_root("migrate-ro-src"),
+            &DummySystemId,
+            &identity,
+        );
+        let destination = super::resolve_central_storage_paths(
+            &test_root("migrate-ro-dst"),
+            &DummySystemId,
+            &identity,
+        );
+        let source_mapper = source.mapper_save_path.native_path().unwrap().to_path_buf();
+        fs::create_dir_all(source_mapper.parent().unwrap()).unwrap();
+        fs::write(&source_mapper, b"mapper").unwrap();
+        let destination_mapper = destination
+            .mapper_save_path
+            .native_path()
+            .unwrap()
+            .to_path_buf();
+        fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
+        // Readonly destination tree: the mapper copy cannot land. Probe first and
+        // early-pass where the test runs with write privilege.
+        fs::set_permissions(
+            destination_mapper.parent().unwrap(),
+            fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
+        let probe = destination_mapper.parent().unwrap().join(".readonly-probe");
+        if fs::write(&probe, b"probe").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(
+                destination_mapper.parent().unwrap(),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            eprintln!("skipping readonly assertion: test runs with write privilege");
+            return;
+        }
+        assert!(copy_storage_contents(&source, &destination).is_err());
+        assert!(
+            !destination_mapper.exists(),
+            "readonly failure must not leave a partial target"
+        );
+        // Source intact; restoring write access lets the retry succeed.
+        fs::set_permissions(
+            destination_mapper.parent().unwrap(),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        copy_storage_contents(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination_mapper).unwrap(), b"mapper");
+        let _ = fs::remove_dir_all(test_root("migrate-ro-src"));
+        let _ = fs::remove_dir_all(test_root("migrate-ro-dst"));
     }
 }

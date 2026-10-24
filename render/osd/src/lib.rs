@@ -3,14 +3,13 @@
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
 use cosmic_text::{CacheKey, SwashContent};
-use nerust_render_traits::renderer::{
-    OsdAnchor, OsdContent, OsdLayer, OsdStatus, SafeInsets, osd_font_px,
-};
+use nerust_render_traits::renderer::{OsdAnchor, OsdLayer, ViewInsets, osd_font_px};
+use std::{collections::HashMap, sync::Arc};
 
-/// System font preference: the shaping database doubles as the
-/// query source, so one scan serves both. Extra scan roots are a
-/// frontend concern: fontdb excludes some platforms (e.g. Android)
-/// from its system scan, so the outer layer passes them via
+/// Port-owned OSD DTOs, re-exported for frontends that only name the rasterizer crate.
+pub use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus};
+
+/// System font preference. Extra scan roots arrive via
 /// [`OsdRaster::with_font_dirs`].
 fn best_sans_name(db: &fontdb::Database) -> Option<String> {
     for name in [
@@ -58,12 +57,26 @@ struct ShapedGlyph {
 }
 
 /// One shaped line: glyph positions plus total advance.
+/// Shared by cache: identical lines shape once per size.
+#[derive(Clone)]
 struct ShapedSpan {
     glyphs: Vec<ShapedGlyph>,
     width: f32,
     ascent: f32,
     descent: f32,
 }
+
+/// Cache key for one shaped line: interned text plus pixel size.
+/// Single flat map (no nested maps, no linear rescan): hits never allocate.
+type ShapeKey = (Arc<str>, u32);
+
+/// Interned gap and empty spans: every pill shares one allocation.
+/// String literals are `'static` constants, so no global map is needed.
+const GAP_STR: &str = " ";
+const EMPTY_STR: &str = "";
+
+/// Bounded line-shape cache: single-eviction LRU; OSD text has a tiny live set.
+const SHAPE_CACHE_CAP: usize = 256;
 
 /// Rasterizer backed by cosmic-text shaping. Pixels are device pixels.
 pub struct OsdRaster {
@@ -72,7 +85,14 @@ pub struct OsdRaster {
     sans_name: String,
     has_fonts: bool,
     ui_scale: f32,
-    safe_insets: SafeInsets,
+    safe_insets: ViewInsets,
+    /// Flat shape cache keyed by (text, size); the stored epoch orders eviction.
+    shape_cache: HashMap<ShapeKey, (Arc<ShapedSpan>, u64)>,
+    /// Monotonic hit clock; eviction drops the smallest epoch. Wraps safely:
+    /// only relative order matters and inserts are many orders below `u64::MAX`.
+    cache_clock: u64,
+    gap_key: Arc<str>,
+    empty_key: Arc<str>,
 }
 
 impl OsdRaster {
@@ -80,9 +100,8 @@ impl OsdRaster {
         Self::with_font_dirs(&[])
     }
 
-    /// Extra font scan roots plus one scan total: the shaping
-    /// database doubles as the query source. Platform font paths
-    /// (e.g. Android's `/system/fonts`) are the caller's vocabulary.
+    /// Extra font scan roots; still one scan total.
+    /// Platform font paths (e.g. Android's `/system/fonts`) are the caller's vocabulary.
     pub fn with_font_dirs(dirs: &[&str]) -> Self {
         let mut font_system = FontSystem::new();
         for dir in dirs {
@@ -100,7 +119,11 @@ impl OsdRaster {
             sans_name,
             has_fonts,
             ui_scale: 1.0,
-            safe_insets: SafeInsets::default(),
+            safe_insets: ViewInsets::default(),
+            shape_cache: HashMap::new(),
+            cache_clock: 0,
+            gap_key: Arc::from(GAP_STR),
+            empty_key: Arc::from(EMPTY_STR),
         }
     }
 
@@ -110,10 +133,9 @@ impl OsdRaster {
         self.ui_scale = scale.clamp(0.25, 4.0);
     }
 
-    /// Extra edge padding for rounded corners, notches, or gesture
-    /// bars. Added to the layout margin on placement; zero by default
-    /// so desktop output is unchanged.
-    pub fn set_safe_insets(&mut self, insets: SafeInsets) {
+    /// Extra edge padding for rounded corners, notches, or gesture bars.
+    /// Zero by default so desktop output is unchanged.
+    pub fn set_safe_insets(&mut self, insets: ViewInsets) {
         self.safe_insets = insets;
     }
 
@@ -157,17 +179,19 @@ impl OsdRaster {
         for b in &boxes {
             let base_y = b.y - min_y;
             match &b.body {
-                RowBody::Line { span } => {
+                RowBody::Line {
+                    tag,
+                    text,
+                    gap,
+                    ascent,
+                    descent,
+                } => {
                     draw_pill(&mut rgba, width, b.x - min_x, b.y - min_y, b.w, b.h, radius);
-                    let baseline = self.centered_baseline(base_y, b.h, span.ascent, span.descent);
-                    self.draw_span(
-                        &mut rgba,
-                        width,
-                        span,
-                        (b.x - min_x + pad_x) as i32,
-                        baseline,
-                        b.rgb,
-                    );
+                    let baseline = self.centered_baseline(base_y, b.h, *ascent, *descent);
+                    let mut pen = (b.x - min_x + pad_x) as i32;
+                    self.draw_span(&mut rgba, width, tag, pen, baseline, b.rgb);
+                    pen += tag.width.ceil() as i32 + *gap as i32;
+                    self.draw_span(&mut rgba, width, text, pen, baseline, b.rgb);
                 }
                 RowBody::Pair {
                     outer,
@@ -208,13 +232,7 @@ impl OsdRaster {
                 }
             }
         }
-        Some(OsdLayer {
-            x: min_x,
-            y: min_y,
-            width,
-            height,
-            rgba,
-        })
+        Some(OsdLayer::new(min_x, min_y, width, height, rgba))
     }
 
     fn layout(
@@ -234,21 +252,20 @@ impl OsdRaster {
         Some(boxes)
     }
 
-    /// Split transient rows and the status readout by vertical edge.
-    /// Same-corner entries stack in push order; the status otherwise
-    /// joins its own edge.
-    fn collect_entries(content: &OsdContent) -> (Vec<Entry>, Vec<Entry>) {
+    /// Split rows and status by vertical edge; borrows content, never one string.
+    fn collect_entries(content: &OsdContent) -> (Vec<Entry<'_>>, Vec<Entry<'_>>) {
         let same_corner = content.position == content.status_position;
         let transient_top = content.position.is_top();
         let status_top = content.status_position.is_top();
-        let mut top: Vec<Entry> = Vec::new();
-        let mut bottom: Vec<Entry> = Vec::new();
+        let mut top: Vec<Entry<'_>> = Vec::new();
+        let mut bottom: Vec<Entry<'_>> = Vec::new();
         for row in &content.rows {
-            let entry = Entry::Line(
-                format!("{} {}", row.tag, row.text),
-                row.rgb,
-                content.position,
-            );
+            let entry = Entry::Line {
+                tag: Arc::clone(&row.tag),
+                text: Arc::clone(&row.text),
+                rgb: row.rgb,
+                anchor: content.position,
+            };
             if transient_top {
                 top.push(entry);
             } else {
@@ -256,7 +273,7 @@ impl OsdRaster {
             }
         }
         if let Some(status) = content.status.as_ref() {
-            let entry = Entry::Status(status.clone(), content.status_position);
+            let entry = Entry::Status(status, content.status_position);
             if same_corner {
                 if transient_top {
                     top.insert(0, entry);
@@ -272,9 +289,8 @@ impl OsdRaster {
         (top, bottom)
     }
 
-    /// Shape one edge: opposite sides sharing the edge sit side by
-    /// side on one row instead of stacking, so a status on the right
-    /// no longer stacks under a notification on the left.
+    /// Shape one edge: opposite sides sharing the edge sit side by side
+    /// on one row instead of stacking.
     fn place_entries(
         &mut self,
         list: Vec<Entry>,
@@ -364,16 +380,35 @@ impl OsdRaster {
     }
 
     /// Shape one entry: intrinsic width plus row height.
-    fn shape_entry(&mut self, entry: Entry, font_px: u32) -> Shaped {
+    /// Tag and body are two cached spans; the pill covers both plus one space.
+    fn shape_entry(&mut self, entry: Entry<'_>, font_px: u32) -> Shaped {
         let pad_x = self.scaled(PILL_PAD_X);
         match entry {
-            Entry::Line(line, rgb, anchor) => {
-                let span = self.shape_line(&line, font_px);
-                let row_h = self.row_height(font_px, span.ascent, span.descent);
-                let w = span.width.ceil() as u32 + pad_x * 2;
+            Entry::Line {
+                tag,
+                text,
+                rgb,
+                anchor,
+            } => {
+                let tag_span = self.shape_cached_shared(&tag, font_px);
+                let text_span = self.shape_cached_shared(&text, font_px);
+                let gap = self.shape_cached_rc(GAP_STR, font_px).width;
+                let ascent = tag_span.ascent.max(text_span.ascent);
+                let descent = tag_span.descent.min(text_span.descent);
+                let row_h = self.row_height(font_px, ascent, descent);
+                let w = tag_span.width.ceil() as u32
+                    + gap.ceil() as u32
+                    + text_span.width.ceil() as u32
+                    + pad_x * 2;
                 Shaped {
                     anchor,
-                    body: RowBody::Line { span },
+                    body: RowBody::Line {
+                        tag: tag_span,
+                        text: text_span,
+                        gap: gap.ceil() as u32,
+                        ascent,
+                        descent,
+                    },
                     rgb,
                     w,
                     row_h,
@@ -383,23 +418,26 @@ impl OsdRaster {
         }
     }
 
-    /// Shape the status readout: solo value pill, or a label/value
-    /// pair with the value on the margin side so the digits never
-    /// shift. Either way the value pill's outer edge pins to the
-    /// margin, so a Paused flip or a language change only grows the
-    /// inner label pill (left anchors read "value label", right
-    /// anchors "label value").
-    fn shape_status(&mut self, status: OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
-        let label = self.shape_line(&status.label, font_px);
-        let value = self.shape_line(&status.value, font_px);
+    /// Shape the status readout: solo value pill, or a label/value pair.
+    /// The value pill's outer edge pins to the margin either way.
+    fn shape_status(&mut self, status: &OsdStatus, anchor: OsdAnchor, font_px: u32) -> Shaped {
+        let label = self.shape_cached_shared(&status.label, font_px);
+        let value = self.shape_cached_shared(&status.value, font_px);
         if status.label.is_empty() {
             // Solo value pill, as before.
             let row_h = self.row_height(font_px, value.ascent, value.descent);
             let pad_x = self.scaled(PILL_PAD_X);
             let w = value.width.ceil() as u32 + pad_x * 2;
+            let gap = self.shape_cached_rc(GAP_STR, font_px).width;
             return Shaped {
                 anchor,
-                body: RowBody::Line { span: value },
+                body: RowBody::Line {
+                    tag: value.clone(),
+                    text: self.shape_cached_rc(EMPTY_STR, font_px),
+                    gap: gap.ceil() as u32,
+                    ascent: value.ascent,
+                    descent: value.descent,
+                },
                 rgb: status.rgb,
                 w,
                 row_h,
@@ -429,9 +467,63 @@ impl OsdRaster {
         }
     }
 
-    /// Shape one line with full GPOS kerning and script fallback.
-    /// Measure and draw share the span, so the box always fits.
-    fn shape_line(&mut self, line: &str, font_px: u32) -> ShapedSpan {
+    /// Cached shape: identical lines shape once per pixel size.
+    /// Flat-key lookup hits without allocating; misses intern one `Arc<str>`.
+    #[cfg(test)]
+    fn shape_cached(&mut self, line: &str, font_px: u32) -> Arc<ShapedSpan> {
+        self.shape_cached_shared(&Arc::from(line), font_px)
+    }
+
+    /// Shared-key shape: the caller's `Arc` keys the cache, so hits never allocate.
+    /// One hash lookup per call; the stored epoch refreshes in place, so hits
+    /// never scan. Eviction scans only on overflow inserts.
+    fn shape_cached_shared(&mut self, key: &Arc<str>, font_px: u32) -> Arc<ShapedSpan> {
+        self.cache_clock = self.cache_clock.wrapping_add(1);
+        let now = self.cache_clock;
+        if let Some((span, epoch)) = self.shape_cache.get_mut(&(Arc::clone(key), font_px)) {
+            *epoch = now;
+            return Arc::clone(span);
+        }
+        let span = Arc::new(self.shape_uncached(key, font_px));
+        if self.shape_cache.len() >= SHAPE_CACHE_CAP
+            && let Some(oldest) = self
+                .shape_cache
+                .iter()
+                .min_by_key(|(_, (_, epoch))| *epoch)
+                .map(|(key, _)| key.clone())
+        {
+            self.shape_cache.remove(&oldest);
+        }
+        self.shape_cache
+            .insert((Arc::clone(key), font_px), (Arc::clone(&span), now));
+        span
+    }
+
+    /// Interned-key variant: gap and empty spans share one allocation.
+    fn shape_cached_rc(&mut self, key: &'static str, font_px: u32) -> Arc<ShapedSpan> {
+        let interned = match key {
+            GAP_STR => Arc::clone(&self.gap_key),
+            EMPTY_STR => Arc::clone(&self.empty_key),
+            _ => unreachable!("only gap and empty literals use the interned path"),
+        };
+        self.shape_cached_shared(&interned, font_px)
+    }
+
+    /// Test seam for shaping assertions: production shapes through the cache.
+    #[cfg(test)]
+    fn shape_line(&mut self, line: &str, font_px: u32) -> Arc<ShapedSpan> {
+        self.shape_cached(line, font_px)
+    }
+
+    /// Live entry count across all sizes; eviction keeps this bounded.
+    #[cfg(test)]
+    fn shape_cache_len(&self) -> usize {
+        self.shape_cache.len()
+    }
+
+    /// Uncached shaping behind [`OsdRaster::shape_cached`].
+    /// One cosmic buffer per miss; hits never touch the font system.
+    fn shape_uncached(&mut self, line: &str, font_px: u32) -> ShapedSpan {
         let size = font_px as f32;
         let metrics = Metrics::new(size, size);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
@@ -481,8 +573,7 @@ impl OsdRaster {
     }
 
     /// Blit one shaped span at an integer base position.
-    /// Glyph images come from the shared swash cache, keyed by
-    /// shaping output, so hinting stays consistent everywhere.
+    /// Glyph images come from the shared swash cache.
     fn draw_span(
         &mut self,
         rgba: &mut [u8],
@@ -514,7 +605,7 @@ impl OsdRaster {
                         continue;
                     }
                     let (dx, dy) = (base_x + col as i32, base_y + row as i32);
-                    if dx < 0 || dy < 0 {
+                    if dx < 0 || dy < 0 || dx as u32 >= stride_w {
                         continue;
                     }
                     let offset = (dy as u32 * stride_w + dx as u32) as usize * 4;
@@ -543,9 +634,15 @@ struct PlacedRow {
 }
 
 /// Layout entry: each carries its own anchor corner for split placement.
-enum Entry {
-    Line(String, (u8, u8, u8), OsdAnchor),
-    Status(OsdStatus, OsdAnchor),
+/// Borrows the content; tag shares the row's `Arc`, body shapes as cached spans, never one string.
+enum Entry<'a> {
+    Line {
+        tag: Arc<str>,
+        text: Arc<str>,
+        rgb: (u8, u8, u8),
+        anchor: OsdAnchor,
+    },
+    Status(&'a OsdStatus, OsdAnchor),
 }
 
 /// Shaped entry: intrinsic width plus row height.
@@ -559,7 +656,11 @@ struct Shaped {
 
 enum RowBody {
     Line {
-        span: ShapedSpan,
+        tag: Arc<ShapedSpan>,
+        text: Arc<ShapedSpan>,
+        gap: u32,
+        ascent: f32,
+        descent: f32,
     },
     Pair {
         outer: StatusSpan,
@@ -571,7 +672,7 @@ enum RowBody {
 }
 
 struct StatusSpan {
-    span: ShapedSpan,
+    span: Arc<ShapedSpan>,
 }
 
 /// Baseline that centers the content block in the pill. The pill is
@@ -585,27 +686,41 @@ impl OsdRaster {
     }
 }
 
-/// Straight-alpha blend of one pixel over the layer buffer.
+/// Integer straight-alpha blend of one pixel over the layer buffer.
+/// Round-half-up fixed point; no FPU on the per-pixel path.
 fn blend_over(dst: &mut [u8], r: u8, g: u8, b: u8, a: u8) {
-    let alpha = f32::from(a) / 255.0;
-    dst[0] = (f32::from(r) * alpha + f32::from(dst[0]) * (1.0 - alpha)).round() as u8;
-    dst[1] = (f32::from(g) * alpha + f32::from(dst[1]) * (1.0 - alpha)).round() as u8;
-    dst[2] = (f32::from(b) * alpha + f32::from(dst[2]) * (1.0 - alpha)).round() as u8;
-    dst[3] = (f32::from(a) + f32::from(dst[3]) * (1.0 - alpha))
-        .round()
-        .min(255.0) as u8;
+    use nerust_render_traits::rgb::RgbaWord;
+    let previous = RgbaWord::from_rgba(dst[0], dst[1], dst[2], dst[3]);
+    dst[..4].copy_from_slice(&previous.blend_src_over([r, g, b, a]).to_bytes_be());
 }
 
 /// Rounded-rect pill fill on the layer (top-left origin, cropped space).
 fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, radius: u32) {
     let radius = radius.min(w / 2).min(h / 2) as f32;
+    let straight_top = radius;
+    let straight_bottom = h as f32 - radius;
+    // Squared distance: no sqrt on the hot path. The vec moves into the
+    // layer without copying, so per-pixel work dominates the allocation.
+    let r2 = radius * radius;
     for row in 0..h {
+        let py = row as f32 + 0.5;
+        if py >= straight_top && py <= straight_bottom {
+            // Straight band: full-width fill, no per-pixel test.
+            for col in 0..w {
+                let offset = ((y + row) * stride_w + (x + col)) as usize * 4;
+                if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
+                    blend_over(pixel, PILL_BG.0, PILL_BG.1, PILL_BG.2, PILL_BG.3);
+                }
+            }
+            continue;
+        }
         for col in 0..w {
             let px = col as f32 + 0.5;
-            let py = row as f32 + 0.5;
             let nearest_x = px.clamp(radius, w as f32 - radius);
             let nearest_y = py.clamp(radius, h as f32 - radius);
-            if (px - nearest_x).hypot(py - nearest_y) <= radius {
+            let dx = px - nearest_x;
+            let dy = py - nearest_y;
+            if dx * dx + dy * dy <= r2 {
                 let offset = ((y + row) * stride_w + (x + col)) as usize * 4;
                 if let Some(pixel) = rgba.get_mut(offset..offset + 4) {
                     blend_over(pixel, PILL_BG.0, PILL_BG.1, PILL_BG.2, PILL_BG.3);
@@ -618,13 +733,14 @@ fn draw_pill(rgba: &mut [u8], stride_w: u32, x: u32, y: u32, w: u32, h: u32, rad
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_render_traits::renderer::{OsdContent, OsdRow, OsdStatus, SafeInsets};
+    use super::{OsdContent, OsdRow, OsdStatus};
+    use nerust_render_traits::renderer::ViewInsets;
 
     fn content() -> OsdContent {
         OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
-                text: "Paused".to_string(),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -649,15 +765,15 @@ mod tests {
         }
         let layer = raster.rasterize(&content(), 960, 720).expect("ascii rows");
         assert_eq!(
-            layer.rgba.len(),
+            layer.rgba().len(),
             layer.width as usize * layer.height as usize * 4
         );
         assert!(layer.width < 960 && layer.height < 720);
         // Pill corners stay transparent (radius), text is opaque somewhere.
-        assert_eq!(layer.rgba[3], 0);
+        assert_eq!(layer.rgba()[3], 0);
         assert!(
             layer
-                .rgba
+                .rgba()
                 .as_chunks::<4>()
                 .0
                 .iter()
@@ -665,7 +781,7 @@ mod tests {
         );
         // Deterministic: the glyph cache makes the second pass identical.
         let again = raster.rasterize(&content(), 960, 720).expect("cached");
-        assert_eq!(layer.rgba, again.rgba);
+        assert_eq!(layer.rgba(), again.rgba());
     }
 
     #[test]
@@ -676,7 +792,7 @@ mod tests {
             return;
         }
         let plain = raster.rasterize(&content(), 960, 720).expect("plain");
-        raster.set_safe_insets(SafeInsets {
+        raster.set_safe_insets(ViewInsets {
             top: 60,
             right: 40,
             bottom: 60,
@@ -700,8 +816,8 @@ mod tests {
         // 720p: font 16px, row 16*16/10+4 = 29.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
-                text: "Paused".to_string(),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -736,9 +852,8 @@ mod tests {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        // Full GPOS shaping must tighten kerned pairs versus the
-        // sum of isolated advances. Skip when the system font
-        // lacks this pair instead of asserting font specifics.
+        // Full GPOS shaping must tighten kerned pairs versus isolated advances.
+        // Skip when the system font lacks this pair; font specifics are not asserted.
         let pair = raster.shape_line("AV", 16).width;
         let isolated = raster.shape_line("A", 16).width + raster.shape_line("V", 16).width;
         if pair >= isolated {
@@ -757,8 +872,8 @@ mod tests {
         }
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
-                text: "一時停止しました".to_string(),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("一時停止しました"),
                 rgb: (255, 255, 255),
             }],
             status: None,
@@ -767,7 +882,7 @@ mod tests {
         };
         let layer = raster.rasterize(&content, 960, 720).expect("cjk rows");
         let lit = layer
-            .rgba
+            .rgba()
             .as_chunks::<4>()
             .0
             .iter()
@@ -777,15 +892,15 @@ mod tests {
         // Body-only: the tag alone must not satisfy the assert above.
         let body = OsdContent {
             rows: vec![OsdRow {
-                tag: String::new(),
-                text: "一時停止しました".to_string(),
+                tag: Arc::from(""),
+                text: Arc::from("一時停止しました"),
                 rgb: (255, 255, 255),
             }],
             ..content
         };
         let layer = raster.rasterize(&body, 960, 720).expect("cjk body");
         let body_lit = layer
-            .rgba
+            .rgba()
             .as_chunks::<4>()
             .0
             .iter()
@@ -820,8 +935,8 @@ mod tests {
         let content = |label: &str, value: &str, anchor: OsdAnchor| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
-                label: label.to_string(),
-                value: value.to_string(),
+                label: Arc::from(label),
+                value: Arc::from(value),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -854,19 +969,17 @@ mod tests {
         let expect = pair_w(value_w, label_w);
         assert_eq!(paused_left.width, expect);
         assert_eq!(paused_right.width, expect);
-        // The margin between the pills stays transparent: a full-height
-        // seam with zero alpha separates value and label. Left anchors
-        // read "value label", right anchors "label value" (the value
-        // pill stays on the margin side either way).
+        // The margin between the pills stays transparent (zero-alpha seam).
+        // The value pill stays on the margin side either way.
         let seam_left = value_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
         for y in 0..paused_left.height {
-            let alpha = paused_left.rgba
+            let alpha = paused_left.rgba()
                 [(y as usize * paused_left.width as usize + seam_left as usize) * 4 + 3];
             assert_eq!(alpha, 0, "seam must be transparent at y={y}");
         }
         let seam_right = label_w.ceil() as u32 + super::PILL_PAD_X * 2 + super::ROW_GAP / 2;
         for y in 0..paused_right.height {
-            let alpha = paused_right.rgba
+            let alpha = paused_right.rgba()
                 [(y as usize * paused_right.width as usize + seam_right as usize) * 4 + 3];
             assert_eq!(alpha, 0, "seam must be transparent at y={y}");
         }
@@ -879,14 +992,13 @@ mod tests {
             eprintln!("SKIP: no system fonts");
             return;
         }
-        // Right anchors keep the value pill on the margin side: the
-        // layer's outer edge never moves when Paused appears, so the
-        // fps digits hold still instead of sliding with the label.
+        // Right anchors keep the value pill on the margin side, so the fps
+        // digits hold still instead of sliding with the label.
         let content = |label: &str| OsdContent {
             rows: Vec::new(),
             status: Some(OsdStatus {
-                label: label.to_string(),
-                value: "60.1 fps".to_string(),
+                label: Arc::from(label),
+                value: Arc::from("60.1 fps"),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -908,17 +1020,16 @@ mod tests {
             return;
         }
         // Notification bottom-left plus status bottom-right: one row,
-        // the status sits beside the transient instead of stacking
-        // under it, spanning margin to margin.
+        // spanning margin to margin instead of stacking.
         let content = OsdContent {
             rows: vec![OsdRow {
-                tag: "[INFO]".to_string(),
-                text: "Paused".to_string(),
+                tag: Arc::from("[INFO]"),
+                text: Arc::from("Paused"),
                 rgb: (255, 255, 255),
             }],
             status: Some(OsdStatus {
-                label: String::new(),
-                value: "60.1 fps".to_string(),
+                label: Arc::from(""),
+                value: Arc::from("60.1 fps"),
                 rgb: (200, 200, 200),
             }),
             position: OsdAnchor::BottomLeft,
@@ -940,5 +1051,109 @@ mod tests {
         assert_eq!(pixel[3], 184);
         blend_over(&mut pixel, 0, 0, 0, 184);
         assert!(pixel[3] > 200);
+        let mut clear = [10, 20, 30, 0];
+        blend_over(&mut clear, 255, 200, 100, 128);
+        assert_eq!(clear, [255, 200, 100, 128]);
+        let mut pill = [0, 0, 0, 184];
+        blend_over(&mut pill, 255, 255, 255, 128);
+        assert_eq!(pill, [149, 149, 149, 220]);
+    }
+
+    #[test]
+    fn shape_hits_share_one_span_without_realloc() {
+        let mut raster = OsdRaster::new();
+        let first = raster.shape_cached("Paused", 16);
+        let second = raster.shape_cached("Paused", 16);
+        // Borrowed lookup: same `Rc` back, no reshape and no new span.
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(raster.shape_cache_len(), 1);
+        // Different size is a distinct entry under the same interned text.
+        let big = raster.shape_cached("Paused", 32);
+        assert!(!Arc::ptr_eq(&first, &big));
+        assert_eq!(raster.shape_cache_len(), 2);
+    }
+
+    #[test]
+    fn gap_and_empty_share_interned_spans() {
+        let mut raster = OsdRaster::new();
+        let gap = raster.shape_cached(" ", 16);
+        let gap_again = raster.shape_cached_rc(GAP_STR, 16);
+        assert!(Arc::ptr_eq(&gap, &gap_again));
+        let empty = raster.shape_cached("", 16);
+        let empty_again = raster.shape_cached_rc(EMPTY_STR, 16);
+        assert!(Arc::ptr_eq(&empty, &empty_again));
+        assert!(!Arc::ptr_eq(&gap, &empty));
+    }
+
+    #[test]
+    fn literal_cache_keys_reuse_the_raster_owned_allocation() {
+        let mut raster = OsdRaster::new();
+        for (literal, key) in [
+            (GAP_STR, raster.gap_key.clone()),
+            (EMPTY_STR, raster.empty_key.clone()),
+        ] {
+            let first = raster.shape_cached_rc(literal, 16);
+            for _ in 0..8 {
+                assert!(Arc::ptr_eq(&first, &raster.shape_cached_rc(literal, 16)));
+                let (cached, _) = raster
+                    .shape_cache
+                    .keys()
+                    .find(|(text, size)| &**text == literal && *size == 16)
+                    .unwrap();
+                assert!(Arc::ptr_eq(cached, &key));
+            }
+        }
+    }
+
+    #[test]
+    fn tag_handles_share_one_allocation() {
+        let row = OsdRow {
+            tag: Arc::from("[INFO]"),
+            text: Arc::from("Paused"),
+            rgb: (255, 255, 255),
+        };
+        // Shared handle: clones the row's `Rc`; shaping keys by value.
+        assert_eq!(&*row.tag_shared(), "[INFO]");
+        let mut raster = OsdRaster::new();
+        let first = raster.shape_line("[INFO]", 16);
+        let second = raster.shape_line("[INFO]", 16);
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn repeated_rasters_dedup_by_exact_content() {
+        let mut raster = OsdRaster::new();
+        if !raster.has_fonts() {
+            eprintln!("SKIP: no system fonts");
+            return;
+        }
+        // Independent immutable payloads still compare equal.
+        let first = raster.rasterize(&content(), 960, 720).expect("first");
+        let second = raster.rasterize(&content(), 960, 720).expect("second");
+        // Matching digests are followed by exact byte comparison.
+        assert_eq!(first.content_hash(), second.content_hash());
+        assert!(first.same_content(Some(&second)));
+        assert!(OsdLayer::same_option(Some(&first), Some(&second)));
+    }
+
+    #[test]
+    fn overflow_evicts_cold_half_and_keeps_hot() {
+        let mut raster = OsdRaster::new();
+        let hot = raster.shape_cached("hot", 16);
+        for i in 0..(super::SHAPE_CACHE_CAP + 64) {
+            raster.shape_cached(&format!("line{i:04}"), 16);
+        }
+        // Bounded: never the full insert count, never a wholesale clear.
+        assert!(raster.shape_cache_len() <= super::SHAPE_CACHE_CAP);
+        assert!(raster.shape_cache_len() > super::SHAPE_CACHE_CAP / 2);
+        // Untouched oldest entries evicted; re-touch keeps a survivor hot.
+        let hot_again = raster.shape_cached("hot", 16);
+        assert!(!Arc::ptr_eq(&hot, &hot_again), "cold head must evict");
+        let warm = raster.shape_cached("warm", 16);
+        for i in 0..64 {
+            raster.shape_cached(&format!("fresh{i:04}"), 16);
+            raster.shape_cached("warm", 16);
+        }
+        assert!(Arc::ptr_eq(&warm, &raster.shape_cached("warm", 16)));
     }
 }

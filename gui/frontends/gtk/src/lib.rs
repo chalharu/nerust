@@ -6,17 +6,20 @@ mod ppu_window;
 mod preferences;
 mod renderer;
 mod surface;
+mod surface_state;
 #[cfg(test)]
 pub(crate) mod test_support;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gtk::{
+    gdk::prelude::SurfaceExt as _,
     gio, glib,
     prelude::{
         ActionMapExt as _, ApplicationExt as _, ApplicationExtManual as _,
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
+        NativeExt as _, WidgetExt as _,
     },
 };
 use nerust_gui_runtime::settings::{
@@ -26,13 +29,13 @@ use nerust_gui_shell::{
     context::FrontendContext,
     session::{
         KeyboardShortcut, SessionError, SessionHandle,
-        access::{PauseControl, SessionControl, SettingsResult, SlotControl},
+        access::{PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav},
         commands::SessionCommand,
     },
 };
 use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
-use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::GpuFactory};
+use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
 use nerust_run_options::RunOptions;
 use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
 use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
@@ -46,10 +49,11 @@ pub(crate) struct State {
     session: SessionHandle,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
+    pause_policy: nerust_frontend_kernel::pause::PausePolicy,
 }
 
 impl State {
-    pub(crate) fn new(ctx: FrontendContext) -> Self {
+    pub(crate) fn new(ctx: FrontendContext) -> Result<Self, SessionError> {
         let capabilities = HostBackendCapabilities {
             window: HostWindowCapabilities {
                 remembers_window_size: true,
@@ -58,21 +62,66 @@ impl State {
             },
             presentation: None,
         };
-        let session = SessionHandle::new(
-            capabilities,
-            ctx.registry.clone(),
-            ctx.audio_registry.clone(),
-        )
-        .unwrap_or_else(|e| {
-            log::error!("failed to create core: {e}");
-            std::process::exit(1);
-        });
+        Self::new_inner(ctx, capabilities, None)
+    }
 
-        Self {
+    /// Test-only construction: settings persist under a unique temp dir.
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(ctx: FrontendContext) -> Result<Self, SessionError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static TEST_SETTINGS_SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-gtk-test-{}-{}",
+            std::process::id(),
+            TEST_SETTINGS_SEQ.fetch_add(1, Ordering::SeqCst)
+        ));
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: false,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        Self::new_inner(
+            ctx,
+            capabilities,
+            Some(nerust_gui_runtime::settings::SettingsPaths {
+                settings_file: dir.join("settings.toml"),
+                central_storage_root: dir.join("storage"),
+            }),
+        )
+    }
+
+    fn new_inner(
+        ctx: FrontendContext,
+        capabilities: HostBackendCapabilities,
+        settings_paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
+    ) -> Result<Self, SessionError> {
+        let session = match settings_paths {
+            Some(paths) => SessionHandle::new_with_settings_paths(
+                capabilities,
+                ctx.registry.clone(),
+                ctx.audio_registry.clone(),
+                paths,
+            ),
+            None => SessionHandle::new(
+                capabilities,
+                ctx.registry.clone(),
+                ctx.audio_registry.clone(),
+            ),
+        }
+        .map_err(|e| {
+            log::error!("failed to create core: {e}");
+            e
+        })?;
+
+        Ok(Self {
             session,
             ctx,
             renderer_reload_pending: false,
-        }
+            pause_policy: Default::default(),
+        })
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
@@ -87,84 +136,94 @@ impl State {
         self.session.render_profile()
     }
 
-    pub(crate) fn can_pause(&self) -> bool {
-        self.session.can_pause()
-    }
-
-    pub(crate) fn can_resume(&self) -> bool {
-        self.session.can_resume()
-    }
-
     /// Load a ROM, flagging a renderer rebuild on success.
-    /// Returns the failure detail on error; presenting it (dialog)
-    /// is the caller's job so no error state is stashed here.
+    /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
         if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
             log::warn!("ROM load failed: {error}");
             return Err(error.to_string());
         }
-        if self.session.loaded() {
+        if self.session.tick_metrics().loaded {
             self.renderer_reload_pending = true;
         }
+        self.reconcile_pause();
         Ok(())
     }
 
-    pub(crate) fn loaded(&self) -> bool {
-        self.session.loaded()
-    }
-
     pub(crate) fn paused(&self) -> bool {
-        self.session.paused()
+        self.session.tick_metrics().paused
     }
 
-    pub(crate) fn title(&self) -> String {
-        self.session.window_title()
+    pub(crate) fn title_cached(&mut self) -> String {
+        let tick = self.session.tick_metrics();
+        self.session.window_title_cached(&tick).to_owned()
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
         self.session.flush_before_exit();
     }
 
-    pub(crate) fn take_renderer_reload_pending(&mut self) -> bool {
-        std::mem::take(&mut self.renderer_reload_pending)
-    }
-
-    pub(crate) fn drain_notifications(
+    pub(crate) fn history_lines_cached(
         &mut self,
-    ) -> Vec<nerust_gui_shell::session::notification::UiNotification> {
-        self.session.drain_notifications()
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> &[nerust_gui_shell::session::osd::HistoryLine] {
+        self.session.notification_history_lines_cached(language)
     }
 
-    pub(crate) fn notification_history_lines(
-        &self,
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) -> Vec<nerust_gui_shell::session::osd::HistoryLine> {
-        self.session.notification_history_lines(language)
+    /// History generation for the refresh gate: unchanged content
+    /// skips the full row rebuild (same contract as the tao twin).
+    pub(crate) fn notification_history_seq(&self) -> u64 {
+        self.session.notification_history_seq()
     }
 
     pub(crate) fn clear_notification_history(&mut self) {
         self.session.clear_notification_history();
     }
-
-    pub(crate) fn emulation_status(&self) -> (f32, bool) {
-        let metrics = self.session.metrics();
-        (metrics.emulation_fps, metrics.paused)
-    }
 }
 
 impl PauseControl for State {
     fn pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Pause);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
     }
     fn resume(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Resume);
+        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
     }
     fn toggle_pause(&mut self) {
-        let _ = self.session.run_command(SessionCommand::TogglePause);
+        self.set_pause_owner(
+            nerust_frontend_kernel::pause::PauseOwner::User,
+            !self.paused(),
+        );
     }
 }
 
-impl SlotControl for State {
+impl State {
+    fn reconcile_pause(&mut self) {
+        let tick = self.session.tick_metrics();
+        self.session.set_execution_held(self.pause_policy.paused());
+        if self.pause_policy.paused() && tick.loaded && !tick.paused {
+            let _ = self.session.run_command(SessionCommand::Pause);
+        }
+    }
+
+    pub(crate) fn set_pause_owner(
+        &mut self,
+        owner: nerust_frontend_kernel::pause::PauseOwner,
+        active: bool,
+    ) {
+        let tick = self.session.tick_metrics();
+        let paused = self.pause_policy.set(owner, active, tick.paused);
+        self.session.set_execution_held(paused);
+        if tick.loaded && tick.paused != paused {
+            let _ = self.session.run_command(if paused {
+                SessionCommand::Pause
+            } else {
+                SessionCommand::Resume
+            });
+        }
+    }
+}
+
+impl SlotIo for State {
     fn save_active_slot(&mut self) -> bool {
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
@@ -176,12 +235,6 @@ impl SlotControl for State {
             .run_command(SessionCommand::LoadActiveSlot)
             .unwrap_or_default()
             .executed
-    }
-    fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
-    }
-    fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
         self.session
@@ -197,6 +250,15 @@ impl SlotControl for State {
             .session
             .run_command(SessionCommand::DeleteSlot(slot_id));
     }
+}
+
+impl SlotNav for State {
+    fn select_next_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
+    }
+    fn select_previous_slot(&mut self) {
+        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
+    }
     fn select_slot(&mut self, slot_id: u64) {
         let _ = self
             .session
@@ -205,6 +267,9 @@ impl SlotControl for State {
     fn create_slot(&mut self) {
         let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
+}
+
+impl ResetControl for State {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
     }
@@ -220,11 +285,10 @@ impl SessionControl for State {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.apply_settings(settings)?;
-        if plan.renderer_rebuild_required
-            || plan.session_rebuild_required
-            || plan.window_settings_changed
-        {
+        let plan = self.session.apply_settings(settings);
+        self.reconcile_pause();
+        let plan = plan?;
+        if plan.renderer_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
@@ -235,7 +299,7 @@ impl SessionControl for State {
     }
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
-        if plan.session_rebuild_required || plan.window_settings_changed {
+        if plan.renderer_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
@@ -270,11 +334,16 @@ impl State {
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
     }
+
+    /// Share the authoritative session allocation without structural comparison.
+    pub(crate) fn settings_arc(&self) -> Arc<SettingsSnapshot> {
+        self.session.settings_arc()
+    }
 }
 
 fn build_window(
     app: &gtk::Application,
-    factory: &Rc<dyn GpuFactory>,
+    factory: &Rc<dyn PipelineFactory>,
     state: Rc<RefCell<State>>,
 ) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
@@ -307,6 +376,12 @@ fn build_window(
     app.set_menubar(Some(&menu_model));
     app.add_window(&window);
     window.set_show_menubar(true);
+    // Game viewport: a memory picture composited by GTK; backends never present here.
+    let picture = gtk::Picture::new();
+    picture.set_hexpand(true);
+    picture.set_vexpand(true);
+    picture.set_can_shrink(true);
+    window.set_child(Some(&picture));
 
     let quit_action = gio::SimpleAction::new("quit", None);
     {
@@ -350,6 +425,7 @@ fn build_window(
     Window::bind(
         app.clone(),
         window,
+        picture,
         state,
         Rc::clone(factory),
         StateMenus {
@@ -361,10 +437,8 @@ fn build_window(
     )
 }
 
-/// Menu label with the action's *current* shortcut hint, or the
-/// bare label when unbound. Binding-driven (tao twin:
-/// `shortcut_hint`) so Settings rebinding never leaves a stale
-/// hardcoded key in the menu.
+/// Menu label with the action's *current* shortcut hint, or the bare label.
+/// Binding-driven, so Settings rebinding never leaves a stale hardcoded key.
 fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
     match shortcut_key_label(shortcuts, action) {
         Some(key) => menu_label_with_shortcut(base, key),
@@ -416,9 +490,8 @@ pub(crate) fn build_menu_model(
     file_menu.append(Some(text(language, UiText::Settings)), Some("win.settings"));
     file_menu.append(Some(text(language, UiText::Quit)), Some("app.quit"));
 
-    // Order mirrors the tao frontend: Pause, Resume, Reset, Save
-    // States, Debugger. The debugger label carries its live
-    // shortcut like tao so both shells advertise the same keys.
+    // Order mirrors the tao frontend: Pause, Resume, Reset, Save States,
+    // Debugger. The debugger label carries its live shortcut like tao.
     let emulation_menu = gio::Menu::new();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
@@ -449,7 +522,7 @@ pub(crate) fn build_menu_model(
 
 fn ensure_window(
     app: &gtk::Application,
-    factory: &Rc<dyn GpuFactory>,
+    factory: &Rc<dyn PipelineFactory>,
     state: &Rc<RefCell<State>>,
     current_window: &Rc<RefCell<Option<Window>>>,
 ) -> Window {
@@ -462,14 +535,42 @@ fn ensure_window(
     window
 }
 
-pub fn run(ctx: FrontendContext, _options: RunOptions) {
+/// Exit status for the binary wrapper: the library never terminates the process.
+pub fn run(ctx: FrontendContext, _options: RunOptions) -> i32 {
+    // No dialog here: the event loop died with the panic, and stderr
+    // (already logged by the guard) is the UX. Match exhaustively.
+    match nerust_crash_guard::run_guarded_with(
+        || run_inner(ctx),
+        nerust_crash_guard::default_sink,
+        nerust_crash_guard::capture_backtrace,
+    ) {
+        // Rust panic convention: a crash never exits 0.
+        nerust_crash_guard::GuardOutcome::Completed(Ok(())) => 0,
+        nerust_crash_guard::GuardOutcome::Completed(Err(error)) => {
+            log::error!("{error}");
+            1
+        }
+        nerust_crash_guard::GuardOutcome::Crashed(report) => {
+            log::error!("{}", crash_note(report.message()));
+            101
+        }
+    }
+}
+
+/// Crash log line: the guard already logged the full report; this
+/// names the missing-dialog situation for stderr readers.
+fn crash_note(message: &str) -> String {
+    format!("gtk frontend crashed with no dialog available: {message}")
+}
+
+fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
     );
 
     let current_window = Rc::new(RefCell::new(None));
-    let state = Rc::new(RefCell::new(State::new(ctx)));
+    let state = Rc::new(RefCell::new(State::new(ctx)?));
     {
         let state = Rc::clone(&state);
         let gpu_factory = state.borrow().ctx.gpu_factory.clone();
@@ -496,13 +597,41 @@ pub fn run(ctx: FrontendContext, _options: RunOptions) {
         });
     }
 
+    // External destruction bypasses close-request: poll the GDK flag so the app can quit.
+    {
+        let app = app.clone();
+        let current_window = current_window.clone();
+        glib::timeout_add_seconds_local(1, move || {
+            let destroyed = current_window
+                .borrow()
+                .as_ref()
+                .and_then(|window| window.window().surface())
+                .is_some_and(|surface| surface.is_destroyed());
+            if destroyed {
+                log::warn!("gtk: native surface destroyed externally; quitting");
+                app.quit();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
+    }
+
     let _ = app.run();
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use nerust_settings_core::model::input::default_shortcut_bindings;
+
+    #[test]
+    fn crash_note_names_missing_dialog() {
+        let text = crash_note("boom");
+        assert!(text.contains("boom"), "{text}");
+        assert!(text.contains("no dialog"), "{text}");
+    }
 
     fn collect_labels(model: &gio::MenuModel, out: &mut Vec<String>) {
         use gio::prelude::MenuModelExt;
@@ -560,5 +689,35 @@ mod tests {
         assert!(labels.iter().any(|label| label == "Save Active Slot (F2)"));
         assert!(labels.iter().any(|label| label == "Open Debugger"));
         assert!(!labels.iter().any(|label| label.contains("(F4)")));
+    }
+
+    #[test]
+    fn shortcut_hint_falls_back_to_bare_label() {
+        // Unbound action advertises no key, never a stale default.
+        let unbound = vec![ShortcutBinding {
+            action: ShortcutAction::SaveActiveSlot,
+            key: None,
+        }];
+        assert_eq!(
+            shortcut_hint("Save Active Slot", &unbound, ShortcutAction::SaveActiveSlot),
+            "Save Active Slot"
+        );
+        assert_eq!(
+            shortcut_hint(
+                "Save Active Slot",
+                &default_shortcut_bindings(),
+                ShortcutAction::SaveActiveSlot
+            ),
+            "Save Active Slot (F5)"
+        );
+    }
+
+    #[test]
+    fn menu_model_covers_all_sections_in_japanese() {
+        let labels = menu_labels(AppLanguage::Japanese, &default_shortcut_bindings());
+        assert!(!labels.is_empty());
+        // Three top-level sections, none empty after i18n lookup.
+        assert!(labels.iter().all(|label| !label.is_empty()));
+        assert!(labels.len() > 10);
     }
 }

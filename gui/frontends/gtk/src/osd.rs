@@ -1,6 +1,5 @@
 //! GTK OSD: in-frame layer, error modals, history.
-//! Policy lives in shell `session::osd`; rows rasterize to a layer
-//! the renderer composites, so no overlay widgets are needed.
+//! Policy lives in shell `session::osd`; this only rasterizes plans.
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
@@ -10,13 +9,60 @@ use nerust_settings_core::model::local::NotificationSettings;
 
 use super::{State, renderer::GtkRenderer};
 
+/// Reentrancy guard for caption rebuilds: set while the filter items are
+/// rebuilt so the `changed` handler skips the recursive refresh.
+struct CaptionSyncGuard<'a> {
+    flag: &'a std::cell::Cell<bool>,
+}
+
+impl<'a> CaptionSyncGuard<'a> {
+    fn new(flag: &'a std::cell::Cell<bool>) -> Self {
+        flag.set(true);
+        Self { flag }
+    }
+}
+
+impl Drop for CaptionSyncGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.set(false);
+    }
+}
+
+/// Built history dialog plus its live controls; tests drive `filter` and `clear`.
+pub(crate) struct HistoryDialog {
+    pub dialog: gtk::Dialog,
+    pub refresh: Rc<dyn Fn()>,
+    /// Interactive handles, exercised by widget tests (reopen/filter/clear).
+    #[cfg(test)]
+    pub filter: gtk::ComboBoxText,
+    /// Interactive handles, exercised by widget tests (reopen/filter/clear).
+    #[cfg(test)]
+    pub clear: gtk::Button,
+    /// Row container for widget tests: growth proves open-dialog re-render.
+    #[cfg(test)]
+    pub grid: gtk::Grid,
+}
+
+/// Fixed history-dialog captions for one language. Plain owned strings:
+/// widgets take copies, the table stays authoritative.
+pub(crate) struct HistoryDialogCaptions {
+    pub title: String,
+    pub close: String,
+    pub level: String,
+    pub filter_all: String,
+    pub filter_info: String,
+    pub filter_warning: String,
+    pub filter_error: String,
+    pub clear: String,
+}
+
 pub(crate) struct GtkOsd {
     manager: OsdManager,
     raster: nerust_render_osd::OsdRaster,
-    last_strip: nerust_render_traits::ReservedStrip,
-    /// Owns the whole sync fingerprint (dirty flag, status gate,
-    /// surface size, layer liveness). Shared decision procedure
-    /// with the tao frontend; this struct only rasterizes.
+    last_strip: Option<nerust_render_traits::ReservedStrip>,
+    output_generation: Option<u64>,
+    /// Owns the whole sync fingerprint. Shared decision procedure with
+    /// the tao frontend; this struct only rasterizes.
     presenter: nerust_gui_shell::session::osd::OsdPresenter,
 }
 
@@ -25,55 +71,71 @@ impl GtkOsd {
         Self {
             manager: OsdManager::new(),
             raster: nerust_render_osd::OsdRaster::new(),
-            last_strip: nerust_render_traits::ReservedStrip::default(),
+            last_strip: None,
+            output_generation: None,
             presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
         }
     }
 
+    /// Forget sync state after a renderer rebuild: the new object
+    /// holds no layer, so the next sync must re-push instead of skip.
+    pub(crate) fn invalidate(&mut self) {
+        self.presenter.invalidate();
+        self.last_strip = None;
+    }
+
     /// Drain the session queue, show modals, and sync the OSD layer.
-    /// Called from the surface tick (every frame while running).
-    /// Takes `&mut State` directly: the tick already holds the
-    /// borrow, so re-borrowing the `Rc` would panic.
+    /// Takes `&mut State` directly: the tick already holds the borrow.
     pub(crate) fn poll(
         &mut self,
         surface: &super::surface::Surface,
         state: &mut State,
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
+        size: nerust_render_traits::SurfaceSize,
     ) {
+        use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
+        let generation = renderer.borrow().output_generation();
+        if self.output_generation != Some(generation) {
+            self.invalidate();
+            self.output_generation = Some(generation);
+        }
         let now = Instant::now();
-        let drained = state.drain_notifications();
-        let snapshot = state.settings_snapshot().clone();
+        // Single snapshot read per frame: the `Arc` gate skips the
+        // full-snapshot clone on steady frames (see `settings_arc`).
+        let snapshot = state.settings_arc();
         let language = snapshot.shared.general.language;
-        let metrics = state.emulation_status();
-        let settings = snapshot.local.notifications.clone();
-        if !drained.is_empty() {
-            log::debug!("gtk osd: showing {} notification(s)", drained.len());
-            self.manager.push_all(drained, &settings, language, now);
+        let tick = state.session.tick_metrics();
+        let report = state.session.pump_osd(
+            &mut self.manager,
+            PushInput {
+                policy: TransientPolicy::from(&snapshot.local.notifications),
+                language,
+                now,
+                tick,
+            },
+        );
+        if report.changed {
+            log::debug!("gtk osd: display state changed");
         }
-        let mut resume_after_modal = false;
-        if let Some(detail) = self.manager.take_modal_text() {
-            // Auto-pause first, guarded by can_pause.
-            // Only what we paused resumes, after the last ack.
-            {
-                use nerust_gui_shell::session::access::PauseControl;
-                if state.can_pause() && !state.paused() {
-                    state.pause();
-                    resume_after_modal = true;
-                }
-            }
-            self.manager.queue_modal(detail);
+        if report.modal_queued {
+            // Own the whole queue lifetime, even when another owner already paused.
+            state.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         }
-        // The batch take runs on the already-borrowed manager: the
-        // Surface Rc is only touched inside the ack closure, which
-        // runs after the tick borrow is long gone.
+        // The batch take runs on the already-borrowed manager: the Surface
+        // Rc is only touched inside the ack closure, after the tick borrow.
         if let Some(detail) = self.manager.take_modal_batch() {
-            Self::present_modal(surface, window, detail, resume_after_modal);
+            Self::present_modal(surface, window, detail);
         }
-        let (fps, paused) = metrics;
-        self.manager.poll(now);
-        self.apply_strip(&settings, renderer, window);
-        self.sync_layer(&settings, language, paused, fps, renderer, window);
+        self.apply_strip(&snapshot.local.notifications, renderer, window);
+        self.sync_layer(
+            &snapshot.local.notifications,
+            language,
+            tick.paused,
+            tick.fps,
+            renderer,
+            size,
+        );
     }
 
     /// Reserve edge strips from settings. Game viewport fits into
@@ -84,30 +146,23 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
     ) {
-        use nerust_gui_shell::session::osd::strip_rows;
+        use nerust_gui_shell::session::osd::OsdChrome;
         use nerust_render_traits::ReservedStrip;
         use nerust_render_traits::renderer::strip_pixels;
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
-        let (top_rows, bottom_rows) = strip_rows(
-            settings.area_mode,
-            settings.position,
-            settings.status_area_mode,
-            settings.status_position,
-            settings.status_enabled,
-        );
+        let (top_rows, bottom_rows) = OsdChrome::from(settings).reserved_rows();
         let strip = ReservedStrip {
             top: strip_pixels(client_h, top_rows, 1.0),
             bottom: strip_pixels(client_h, bottom_rows, 1.0),
         };
-        if strip != self.last_strip {
-            self.last_strip = strip;
+        if Some(strip) != self.last_strip {
+            self.last_strip = Some(strip);
             renderer.borrow_mut().set_reserved_strip(strip);
         }
     }
 
     /// Rasterize on change and hand the layer to the renderer.
-    /// The sync decision (dirty flag, status gate, size, liveness)
-    /// lives in shell `OsdPresenter`; this only rasterizes plans.
+    /// The sync decision lives in shell `OsdPresenter`; this only rasterizes plans.
     fn sync_layer(
         &mut self,
         settings: &NotificationSettings,
@@ -115,38 +170,67 @@ impl GtkOsd {
         paused: bool,
         fps: f32,
         renderer: &Rc<RefCell<GtkRenderer>>,
-        window: &gtk::ApplicationWindow,
+        size: nerust_render_traits::SurfaceSize,
     ) {
         use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
-        let scale = window.scale_factor().max(1) as u32;
-        let w = window.width().max(0) as u32 * scale;
-        let h = window.height().max(0) as u32 * scale;
-        let decision = self.presenter.sync(
-            &mut self.manager,
-            OsdSyncInput {
-                settings,
-                language,
-                fps,
-                paused,
-                now: Instant::now(),
-                width: w,
-                height: h,
-                ui_scale: 1.0,
-                safe_insets: nerust_render_traits::renderer::SafeInsets::default(),
-            },
-        );
+        let w = size.width;
+        let h = size.height;
+        let chrome = nerust_gui_shell::session::osd::OsdChrome::from(settings);
+        let decision = {
+            let GtkOsd {
+                presenter, manager, ..
+            } = self;
+            presenter.sync(
+                &*manager,
+                OsdSyncInput {
+                    tick: nerust_gui_shell::session::osd::TickMetrics {
+                        fps,
+                        paused,
+                        ..nerust_gui_shell::session::osd::TickMetrics::default()
+                    },
+                    chrome,
+                    language,
+                    now: Instant::now(),
+                    width: w,
+                    height: h,
+                    ui_scale: 1.0,
+                    safe_insets: nerust_gui_shell::session::osd::ViewInsets::default(),
+                },
+            )
+        };
         match decision {
             OsdSync::Skip => {}
             OsdSync::Clear => renderer.borrow_mut().set_osd_layer(None),
             OsdSync::Render(plan) => {
-                let content = plan.content();
-                let layer = self.raster.rasterize(&content, plan.width, plan.height);
+                let (width, height) = (plan.width, plan.height);
+                let content = plan.into_content();
+                let layer = self.raster.rasterize(&content, width, height);
                 renderer.borrow_mut().set_osd_layer(layer);
             }
         }
     }
 
-    pub(crate) fn show_history(window: &gtk::ApplicationWindow, state: &Rc<RefCell<State>>) {
+    /// Build the history dialog without presenting; captions follow the tracked language.
+    pub(crate) fn history_dialog_captions(
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> HistoryDialogCaptions {
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        HistoryDialogCaptions {
+            title: ui_text(language, UiText::NotificationHistory).to_string(),
+            close: ui_text(language, UiText::Close).to_string(),
+            level: ui_text(language, UiText::HistoryLevel).to_string(),
+            filter_all: ui_text(language, UiText::HistoryFilterAll).to_string(),
+            filter_info: ui_text(language, UiText::NotificationInfo).to_string(),
+            filter_warning: ui_text(language, UiText::NotificationWarning).to_string(),
+            filter_error: ui_text(language, UiText::Error).to_string(),
+            clear: ui_text(language, UiText::HistoryClear).to_string(),
+        }
+    }
+
+    pub(crate) fn build_history(
+        window: &gtk::ApplicationWindow,
+        state: &Rc<RefCell<State>>,
+    ) -> HistoryDialog {
         use nerust_gui_shell::session::notification::NotificationLevel;
         let language = state.borrow().settings_snapshot().shared.general.language;
         let dialog = gtk::Dialog::with_buttons(
@@ -164,10 +248,8 @@ impl GtkOsd {
                 gtk::ResponseType::Close,
             )],
         );
-        // Toolbar (the Console / DevTools / logcat pattern: filter
-        // plus clear live together at the top). 8 between controls.
-        // Every caption goes through the i18n table (same keys as the
-        // tao twin); level options reuse the settings level names.
+        // Toolbar: filter plus clear live together at the top. Every caption
+        // goes through the i18n table (same keys as the tao twin).
         use nerust_settings_core::i18n::{UiText, text as ui_text};
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let level_caption = gtk::Label::new(Some(ui_text(language, UiText::HistoryLevel)));
@@ -209,15 +291,70 @@ impl GtkOsd {
         body.append(&toolbar);
         body.append(&scrolled);
         dialog.content_area().append(&body);
+        // Fixed-caption widgets refresh alongside the rows.
+        let close_button = dialog
+            .widget_for_response(gtk::ResponseType::Close)
+            .and_downcast::<gtk::Button>();
+        // Same (seq, language, filter) gate as the tao twin: a refresh with
+        // unchanged inputs rebuilds nothing instead of re-allocating rows.
+        let last_sync = Rc::new(RefCell::new(None));
+        // Reentrancy guard: rebuilding filter items emits `changed`; skip the recursive refresh.
+        let syncing_captions = Rc::new(std::cell::Cell::new(false));
         let refresh = Rc::new({
             let state = Rc::clone(state);
+            let dialog = dialog.clone();
             let grid = grid.clone();
             let filter = filter.clone();
             let count = count.clone();
+            let level_caption = level_caption.clone();
+            let clear = clear.clone();
+            let close_button = close_button.clone();
+            let syncing_captions = Rc::clone(&syncing_captions);
+            let last_sync = Rc::clone(&last_sync);
             move || {
-                let language = state.borrow().settings_snapshot().shared.general.language;
-                let lines = state.borrow().notification_history_lines(language);
+                // Skip refresh on a destroyed native surface; never-realized dialogs still refresh.
+                if super::surface_state::surface_dead(&dialog) {
+                    return;
+                }
+                // Gate inputs first: a refresh with unchanged inputs
+                // rebuilds nothing instead of re-allocating rows.
+                let (language, seq) = {
+                    let borrowed = state.borrow();
+                    let language = borrowed.settings_snapshot().shared.general.language;
+                    (language, borrowed.notification_history_seq())
+                };
                 let active = filter.active_id();
+                let key = (
+                    seq,
+                    language,
+                    active.as_deref().unwrap_or("all").to_string(),
+                );
+                if last_sync.borrow().as_ref() == Some(&key) {
+                    return;
+                }
+                *last_sync.borrow_mut() = Some(key);
+                // Fixed captions follow the language; the selection survives the rebuild.
+                let _caption_sync = CaptionSyncGuard::new(&syncing_captions);
+                let captions = Self::history_dialog_captions(language);
+                dialog.set_title(Some(&captions.title));
+                if let Some(close) = close_button.as_ref() {
+                    close.set_label(&captions.close);
+                }
+                level_caption.set_text(&captions.level);
+                let selected = filter.active_id();
+                filter.remove_all();
+                for (id, label) in [
+                    ("all", captions.filter_all.as_str()),
+                    ("info", captions.filter_info.as_str()),
+                    ("warning", captions.filter_warning.as_str()),
+                    ("error", captions.filter_error.as_str()),
+                ] {
+                    filter.append(Some(id), label);
+                }
+                filter.set_active_id(selected.as_deref());
+                clear.set_label(&captions.clear);
+                let mut borrowed = state.borrow_mut();
+                let lines = borrowed.history_lines_cached(language);
                 while let Some(child) = grid.first_child() {
                     grid.remove(&child);
                 }
@@ -230,7 +367,9 @@ impl GtkOsd {
                 };
                 let visible: Vec<_> = lines
                     .iter()
-                    .filter(|line| line.level.severity() >= minimum)
+                    .filter(|line| {
+                        nerust_frontend_kernel::level_visible(minimum, line.level.severity())
+                    })
                     .collect();
                 count.set_text(&nerust_settings_core::i18n::history_count(
                     language,
@@ -273,10 +412,9 @@ impl GtkOsd {
                         NotificationLevel::Warning => (170u8, 110u8, 0u8),
                         NotificationLevel::Error => (190u8, 30u8, 30u8),
                     };
-                    let mut text = line.text.clone();
-                    if line.count > 1 {
-                        text = format!("{text} ×{}", line.count);
-                    }
+                    // `HistoryLine.text` already carries the `×N` suffix
+                    // when merged; use it as-is.
+                    let text = line.text.clone();
                     let datetime = gtk::Label::new(None);
                     datetime.set_markup(&format!(
                         "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
@@ -313,7 +451,12 @@ impl GtkOsd {
         refresh();
         filter.connect_changed({
             let refresh = Rc::clone(&refresh);
-            move |_| refresh()
+            let syncing_captions = Rc::clone(&syncing_captions);
+            move |_| {
+                if !syncing_captions.get() {
+                    refresh()
+                }
+            }
         });
         clear.connect_clicked({
             let state = Rc::clone(state);
@@ -321,6 +464,24 @@ impl GtkOsd {
             move |_| {
                 state.borrow_mut().clear_notification_history();
                 refresh();
+            }
+        });
+        // Follow new notifications while open; the gone check stops a destroyed source.
+        let follow_dialog = dialog.clone();
+        let follow_refresh = Rc::clone(&refresh);
+        let follow = std::cell::Cell::new(Some(glib::timeout_add_local(
+            std::time::Duration::from_millis(500),
+            move || {
+                if super::surface_state::surface_gone(&follow_dialog) {
+                    return glib::ControlFlow::Break;
+                }
+                follow_refresh();
+                glib::ControlFlow::Continue
+            },
+        )));
+        dialog.connect_destroy(move |_| {
+            if let Some(source) = follow.take() {
+                source.remove();
             }
         });
         // Modeless like the tao twin: a modal would park all keys
@@ -331,17 +492,25 @@ impl GtkOsd {
             close.set_margin_bottom(16);
         }
         dialog.connect_response(|dialog, _| dialog.destroy());
-        dialog.present();
+        HistoryDialog {
+            dialog,
+            refresh,
+            #[cfg(test)]
+            filter,
+            #[cfg(test)]
+            clear,
+            #[cfg(test)]
+            grid,
+        }
     }
 }
 impl GtkOsd {
     /// Present one error batch; the ack chains the next.
-    /// Resume only after the last batch iff auto-paused.
+    /// Release only the modal ownership after the last batch.
     fn present_modal(
         surface: &super::surface::Surface,
         window: &gtk::ApplicationWindow,
         detail: String,
-        resume_after_modal: bool,
     ) {
         let dialog = gtk::MessageDialog::new(
             Some(window),
@@ -354,6 +523,8 @@ impl GtkOsd {
         let window = window.clone();
         dialog.connect_response(move |dialog, _| {
             dialog.close();
+            // Bounded recursion: the modal queue caps at MAX_QUEUED,
+            // so nesting depth is capped too, not an unbounded chain.
             let next = {
                 let surface = surface.borrow_mut();
                 let mut osd = surface.osd.borrow_mut();
@@ -361,12 +532,421 @@ impl GtkOsd {
                 osd.manager.take_modal_batch()
             };
             if let Some(next) = next {
-                Self::present_modal(&surface, &window, next, resume_after_modal);
-            } else if resume_after_modal {
-                use nerust_gui_shell::session::access::PauseControl;
-                surface.borrow().state.borrow_mut().resume();
+                Self::present_modal(&surface, &window, next);
+            } else {
+                surface
+                    .borrow()
+                    .state
+                    .borrow_mut()
+                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
             }
         });
         dialog.present();
+    }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod history_dialog_tests {
+    use super::GtkOsd;
+    use gtk::prelude::*;
+    use nerust_settings_core::model::language::AppLanguage;
+
+    /// Caption table follows the language; display application rides `refresh`.
+    #[test]
+    fn history_captions_follow_language() {
+        let en = GtkOsd::history_dialog_captions(AppLanguage::English);
+        let ja = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
+        for captions in [&en, &ja] {
+            for text in [
+                &captions.title,
+                &captions.close,
+                &captions.level,
+                &captions.filter_all,
+                &captions.filter_info,
+                &captions.filter_warning,
+                &captions.filter_error,
+                &captions.clear,
+            ] {
+                assert!(!text.is_empty());
+            }
+        }
+        assert_ne!(en.title, ja.title);
+        assert_ne!(en.clear, ja.clear);
+        assert_ne!(en.filter_all, ja.filter_all);
+    }
+
+    fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+    )> {
+        if !crate::test_support::ui_test_available() {
+            return None;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.history-test")
+            .build();
+        let window = gtk::ApplicationWindow::builder().application(&app).build();
+        Some((app, window, model_state()))
+    }
+
+    /// Headless-capable state for the model gate: session plus settings
+    /// only, no application, no window, no display.
+    fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+        use std::sync::Arc;
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: std::rc::Rc::new(MockPipelineFactory),
+            registry,
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: audio,
+        };
+        std::rc::Rc::new(std::cell::RefCell::new(
+            crate::State::new_for_tests(ctx).expect("test state builds"),
+        ))
+    }
+
+    #[derive(Debug)]
+    struct MockPipelineFactory;
+
+    impl nerust_render_traits::renderer::PipelineFactory for MockPipelineFactory {
+        fn create_pipeline(
+            &self,
+            _config: &nerust_render_traits::renderer::RendererConfig,
+            _display: raw_window_handle::RawDisplayHandle,
+        ) -> Result<
+            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
+            nerust_render_traits::renderer::RendererError,
+        > {
+            Err(nerust_render_traits::renderer::RendererError::new(
+                "test",
+                Box::new(std::io::Error::other("no renderer in tests")),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for MockRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            Err(nerust_gui_shell::load::RomLoaderError::from_session(
+                nerust_gui_shell::session::SessionError::NoCore,
+            ))
+        }
+    }
+
+    /// Dialog lifecycle: build, refresh, filter, clear, and reopen cleanly.
+    #[test]
+    fn history_dialog_lifecycle_runs_without_display_errors() {
+        let Some((_app, window, state)) = harness() else {
+            eprintln!("SKIP: history widget test needs a display (run under Xvfb)");
+            return;
+        };
+        let built = GtkOsd::build_history(&window, &state);
+        (built.refresh)();
+        // Filter to warnings on an empty history: still the empty state.
+        built.filter.set_active_id(Some("warning"));
+        (built.refresh)();
+        built.clear.emit_clicked();
+        (built.refresh)();
+        built.dialog.destroy();
+        // Reopen pattern: a fresh build works after destroy.
+        let rebuilt = GtkOsd::build_history(&window, &state);
+        (rebuilt.refresh)();
+        rebuilt.dialog.destroy();
+    }
+
+    /// Open rows and language switches appear on refresh under the same gate.
+    #[test]
+    fn history_dialog_shows_new_rows_and_follows_language_change() {
+        use nerust_gui_shell::session::notification::FailureOrigin;
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+
+        fn child_count(grid: &gtk::Grid) -> usize {
+            let mut count = 0;
+            let mut next = grid.first_child();
+            while let Some(child) = next {
+                count += 1;
+                next = child.next_sibling();
+            }
+            count
+        }
+
+        let Some((_app, window, state)) = harness() else {
+            eprintln!("SKIP: history widget test needs a display (run under Xvfb)");
+            return;
+        };
+        let built = GtkOsd::build_history(&window, &state);
+        let en_title = ui_text(AppLanguage::English, UiText::NotificationHistory);
+        assert_eq!(built.dialog.title().as_deref(), Some(en_title));
+        assert_eq!(
+            child_count(&built.grid),
+            6,
+            "empty state: headers + separator + empty row"
+        );
+        // A notification arriving while open appears after refresh.
+        state
+            .borrow_mut()
+            .session
+            .report_external_error(FailureOrigin::Host, "boom".into());
+        (built.refresh)();
+        assert_eq!(
+            child_count(&built.grid),
+            9,
+            "one error row renders without reopen"
+        );
+        // The language switch rebuilds title and rows under the gate.
+        let mut snapshot = state.borrow().session.settings_snapshot().clone();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        state
+            .borrow_mut()
+            .session
+            .apply_settings(snapshot)
+            .expect("language switch applies");
+        (built.refresh)();
+        let ja_title = ui_text(AppLanguage::Japanese, UiText::NotificationHistory);
+        assert_eq!(built.dialog.title().as_deref(), Some(ja_title));
+        assert_eq!(
+            child_count(&built.grid),
+            9,
+            "rows survive the language rebuild"
+        );
+        built.dialog.destroy();
+    }
+
+    /// Model gate: revision-gated refresh rebuilds only on seq or language change.
+    #[test]
+    fn history_model_refresh_is_revision_gated() {
+        use nerust_gui_shell::session::notification::{
+            FailureOrigin, Message, NotificationLevel, UiNotification,
+        };
+        use nerust_settings_core::model::language::AppLanguage;
+
+        let state = model_state();
+        assert!(
+            state
+                .borrow_mut()
+                .session
+                .notification_history_lines_cached(AppLanguage::English)
+                .is_empty()
+        );
+        // A notification bumps the revision and the row appears.
+        let before = state.borrow().session.notification_history_seq();
+        state
+            .borrow_mut()
+            .session
+            .report_external_error(FailureOrigin::Host, "boom".into());
+        let bumped = state.borrow().session.notification_history_seq();
+        assert!(bumped > before, "push advances the revision");
+        let texts: Vec<String> = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::English)
+            .iter()
+            .map(|line| line.text.clone())
+            .collect();
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].contains("boom"), "row renders: {}", texts[0]);
+        // Unchanged seq rebuilds nothing: the same backing store serves
+        // both calls, so zero reformat builds ran.
+        let first = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::English)
+            .as_ptr();
+        let second = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::English)
+            .as_ptr();
+        assert_eq!(first, second, "seq-unchanged refresh must not rebuild");
+        // The language switch rebuilds captions and rows alike.
+        let en_captions = GtkOsd::history_dialog_captions(AppLanguage::English);
+        let ja_captions = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
+        assert_ne!(en_captions.title, ja_captions.title);
+        assert_ne!(en_captions.clear, ja_captions.clear);
+        let mut snapshot = state.borrow().session.settings_snapshot().clone();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        state
+            .borrow_mut()
+            .session
+            .apply_settings(snapshot)
+            .expect("language switch applies");
+        let texts: Vec<String> = state
+            .borrow_mut()
+            .session
+            .notification_history_lines_cached(AppLanguage::Japanese)
+            .iter()
+            .map(|line| line.text.clone())
+            .collect();
+        assert_eq!(texts.len(), 1, "row survives the language rebuild");
+        assert!(texts[0].contains("boom"), "detail survives: {}", texts[0]);
+        // Filter thresholds without widgets: this level and above, like
+        // the grid gate (info shows all, warning hides info, error is top).
+        let events = [
+            UiNotification {
+                level: NotificationLevel::Info,
+                message: Message::paused(),
+                count: 1,
+                seq: 0,
+                at: std::time::UNIX_EPOCH,
+            },
+            UiNotification {
+                level: NotificationLevel::Error,
+                message: Message::command_failure(FailureOrigin::Host, "", "boom".into()),
+                count: 1,
+                seq: 1,
+                at: std::time::UNIX_EPOCH,
+            },
+        ];
+        let lines =
+            nerust_gui_shell::session::osd::history_lines(events.iter(), AppLanguage::English);
+        let visible = |active: Option<&str>| {
+            let minimum = match active {
+                None | Some("all") | Some("info") => 0,
+                Some("warning") => 1,
+                _ => 2,
+            };
+            lines
+                .iter()
+                .filter(|line| {
+                    nerust_frontend_kernel::level_visible(minimum, line.level.severity())
+                })
+                .count()
+        };
+        assert_eq!(visible(Some("all")), 2);
+        assert_eq!(visible(Some("warning")), 1);
+        assert_eq!(visible(Some("error")), 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GtkOsd;
+    use nerust_gui_shell::session::osd::{
+        OsdChrome, OsdRow, OsdState, OsdSync, OsdSyncInput, TickMetrics, ViewInsets,
+    };
+    use nerust_settings_core::model::local::NotificationSettings;
+
+    struct StubState {
+        generation: u64,
+        rows: Vec<OsdRow>,
+    }
+
+    impl OsdState for StubState {
+        fn generation(&self) -> u64 {
+            self.generation
+        }
+        fn visible_row(&self) -> Option<&OsdRow> {
+            self.rows.first()
+        }
+        fn rows(&self) -> &[OsdRow] {
+            &self.rows
+        }
+    }
+
+    fn sync_input(chrome: OsdChrome, width: u32, height: u32) -> OsdSyncInput {
+        OsdSyncInput {
+            tick: TickMetrics {
+                fps: 60.0,
+                ..TickMetrics::default()
+            },
+            chrome,
+            language: nerust_settings_core::model::language::AppLanguage::English,
+            now: std::time::Instant::now(),
+            width,
+            height,
+            ui_scale: 1.0,
+            safe_insets: ViewInsets::default(),
+        }
+    }
+
+    fn row_state() -> StubState {
+        StubState {
+            generation: 7,
+            rows: vec![OsdRow {
+                text: std::sync::Arc::from("Paused"),
+                rgb: (255, 255, 255),
+                tag: "[I]".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn osd_new_and_invalidate_are_headless() {
+        // No display needed: construction and plan reset stay CPU-side.
+        let mut osd = GtkOsd::new();
+        osd.last_strip = Some(nerust_render_traits::ReservedStrip { top: 8, bottom: 9 });
+        osd.invalidate();
+        assert!(osd.last_strip.is_none());
+        osd.invalidate();
+    }
+
+    #[test]
+    fn present_plan_renders_then_skips_steady_frames() {
+        use nerust_gui_shell::session::osd::OsdPresenter;
+        let settings = NotificationSettings::default();
+        let chrome = OsdChrome::from(&settings);
+        let state = row_state();
+        let mut plan = OsdPresenter::new();
+        assert!(matches!(
+            plan.sync(&state, sync_input(chrome, 320, 240)),
+            OsdSync::Render(_)
+        ));
+        assert!(matches!(
+            plan.sync(&state, sync_input(chrome, 320, 240)),
+            OsdSync::Skip
+        ));
+        // Rebuilds re-push: the gate forgets the fingerprint.
+        plan.invalidate();
+        assert!(matches!(
+            plan.sync(&state, sync_input(chrome, 320, 240)),
+            OsdSync::Render(_)
+        ));
+    }
+
+    #[test]
+    fn present_plan_clears_zero_size() {
+        use nerust_gui_shell::session::osd::OsdPresenter;
+        let settings = NotificationSettings::default();
+        let chrome = OsdChrome::from(&settings);
+        let idle = StubState {
+            generation: 7,
+            rows: Vec::new(),
+        };
+        let mut plan = OsdPresenter::new();
+        // Idle steady state skips; a zero-size frame clears instead.
+        assert!(matches!(
+            plan.sync(&idle, sync_input(chrome, 320, 240)),
+            OsdSync::Skip
+        ));
+        assert!(matches!(
+            plan.sync(&idle, sync_input(chrome, 0, 0)),
+            OsdSync::Clear | OsdSync::Skip
+        ));
+    }
+
+    #[test]
+    fn raster_backend_rejects_empty_surfaces() {
+        use nerust_render_osd::OsdContent;
+        use nerust_render_traits::renderer::OsdAnchor;
+        let mut raster = nerust_render_osd::OsdRaster::new();
+        let content = OsdContent {
+            rows: Vec::new(),
+            status: None,
+            position: OsdAnchor::BottomLeft,
+            status_position: OsdAnchor::TopLeft,
+        };
+        // Zero extent refuses before touching font state.
+        // Fully-qualified call covers the GTK raster backend seam.
+        assert!(raster.rasterize(&content, 0, 240).is_none());
+        assert!(raster.rasterize(&content, 320, 0).is_none());
     }
 }

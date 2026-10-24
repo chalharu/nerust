@@ -1,6 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
-use nerust_core_traits::factory::{
+use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
+use nerust_nes_settings::{NesSettings, NesVideoFilter};
+use nerust_render_traits::filter::FilterType;
+use nerust_settings_traits::SystemSettings;
+use nerust_system_traits::factory::{
     FactoryError,
     descriptor::{
         SystemSettingsChoiceId, SystemSettingsChoiceOption, SystemSettingsFieldId,
@@ -9,10 +13,6 @@ use nerust_core_traits::factory::{
     load::{DynSystemLoadOptions, DynSystemLoadOptionsExt, ResolvedLoadRequest},
     settings::{FactorySettingsView, Language},
 };
-use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
-use nerust_nes_settings::{NesSettings, NesVideoFilter};
-use nerust_render_traits::filter::FilterType;
-use nerust_settings_traits::SystemSettings;
 
 use crate::CommandLineOptions;
 
@@ -164,14 +164,14 @@ pub(crate) fn apply_nes_settings_choice_inner(
 mod tests {
     use std::borrow::Cow;
 
-    use nerust_core_traits::factory::{
+    use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
+    use nerust_nes_settings::{NesSettings, NesVideoFilter};
+    use nerust_render_traits::filter::FilterType;
+    use nerust_system_traits::factory::{
         descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
         load::DynSystemLoadOptions,
         settings::{FactorySettingsView, Language},
     };
-    use nerust_nes_core::core_options::{CoreOptions, Mmc3IrqVariant};
-    use nerust_nes_settings::{NesSettings, NesVideoFilter};
-    use nerust_render_traits::filter::FilterType;
 
     use crate::CommandLineOptions;
 
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn presentation_swap_covers_filter_only_change() {
-        use nerust_core_traits::factory::CoreFactory;
+        use nerust_system_traits::factory::CoreFactory;
 
         let factory = crate::NesFactory;
         let before = test_view();
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn presentation_swap_refuses_core_option_change() {
-        use nerust_core_traits::factory::CoreFactory;
+        use nerust_system_traits::factory::CoreFactory;
 
         let factory = crate::NesFactory;
         let before = test_view();
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn presentation_swap_refuses_missing_or_unchanged() {
-        use nerust_core_traits::factory::CoreFactory;
+        use nerust_system_traits::factory::CoreFactory;
 
         let factory = crate::NesFactory;
         let view = test_view();

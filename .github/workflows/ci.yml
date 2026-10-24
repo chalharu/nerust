@@ -36,6 +36,15 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-test-
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check Android bridge and packaging contracts (host only)
+        run: bash packaging/android/check-contract.sh
+      - name: Shell probes and inventory fixtures (host only)
+        run: |
+          set -euo pipefail
+          bash packaging/android/test-publish-lock.sh
+          bash packaging/android/test-e2e-wait.sh
+          bash packaging/android/test-apk-contents.sh
+          python3 packaging/android/test-inventory.py
       - name: Clippy (default members)
         run: |
           cargo clippy --locked --all-targets --quiet \
@@ -107,6 +116,12 @@ jobs:
         run: |
           chmod +x packaging/android/package.sh packaging/android/gradlew
           packaging/android/package.sh
+      - name: Run Android JVM unit tests
+        run: |
+          cd packaging/android
+          rm -rf app/build/test-results/testDebugUnitTest
+          ./gradlew --no-daemon :app:testDebugUnitTest
+          python3 check-test-inventory.py jvm app/build/test-results/testDebugUnitTest
       - name: Save Cargo registry and build cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

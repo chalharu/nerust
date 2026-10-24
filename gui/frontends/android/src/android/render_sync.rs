@@ -1,0 +1,271 @@
+//! RenderSync: window/renderer ownership and frame rendering.
+//! The OSD, session, and shell are borrowed per call.
+
+use std::{rc::Rc, sync::Arc, time::Instant};
+
+use nerust_gui_runtime::shell::NativeShellState;
+use nerust_gui_shell::session::{SessionHandle, osd::TickMetrics};
+use nerust_render_traits::{
+    FrameBuffer, SurfaceSize,
+    physical::PhysicalSize,
+    renderer::{DEFAULT_OSD_UPLOAD_RETRIES, PipelineFactory, RenderPipeline, RendererConfig},
+};
+use nerust_settings_core::model::{language::AppLanguage, local::NotificationSettings};
+use winit::{
+    dpi::LogicalSize,
+    event_loop::ActiveEventLoop,
+    raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+    window::{Window, WindowId},
+};
+
+use super::osd::{AndroidOsd, OsdSyncCtx};
+
+/// Per-frame input bundle, built once per pass and passed to [`RenderSync::render`].
+/// Borrows the session buffer instead of cloning the `Vec` every frame.
+pub(super) struct FrameInput<'session> {
+    pub tick: TickMetrics,
+    pub notifications: &'session NotificationSettings,
+    pub language: AppLanguage,
+    pub profile: Option<PhysicalSize>,
+    pub fb: Option<&'session FrameBuffer>,
+}
+
+/// Window + renderer pair. Everything frame-related that used to live on
+/// `AndroidFrontend` now routes through here.
+pub(super) struct RenderSync {
+    window: Option<Arc<Window>>,
+    window_id: Option<WindowId>,
+    renderer: Option<Box<dyn RenderPipeline>>,
+}
+
+impl RenderSync {
+    pub(super) fn new() -> Self {
+        Self {
+            window: None,
+            window_id: None,
+            renderer: None,
+        }
+    }
+
+    pub(super) fn window_id_matches(&self, id: WindowId) -> bool {
+        self.window_id == Some(id)
+    }
+
+    pub(super) fn has_window(&self) -> bool {
+        self.window.is_some()
+    }
+
+    pub(super) fn window_size(&self) -> Option<(u32, u32)> {
+        self.window.as_ref().map(|window| {
+            let size = window.inner_size();
+            (size.width, size.height)
+        })
+    }
+
+    pub(super) fn cloned_window(&self) -> Option<Arc<Window>> {
+        self.window.clone()
+    }
+
+    pub(super) fn ensure_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        session: &SessionHandle,
+        gpu_factory: &Rc<dyn PipelineFactory>,
+        osd: &mut AndroidOsd,
+        shell: &mut NativeShellState,
+    ) -> Result<(), String> {
+        if let Some(window) = self.window.as_ref().cloned() {
+            if self.renderer.is_none() {
+                let size = window.inner_size();
+                log::info!(
+                    "ensure_window: reusing existing window {}x{} and rebuilding renderer",
+                    size.width,
+                    size.height
+                );
+                self.rebuild_renderer(window, session, gpu_factory, osd, shell)?;
+            }
+            return Ok(());
+        }
+
+        log::info!("ensure_window: creating Android window");
+        let window = Arc::new(
+            event_loop
+                .create_window(
+                    Window::default_attributes()
+                        .with_title(session.window_title(&session.tick_metrics()))
+                        .with_resizable(false)
+                        .with_inner_size(LogicalSize::new(360.0, 640.0)),
+                )
+                .map_err(|error| format!("failed to create Android window: {error}"))?,
+        );
+        self.window_id = Some(window.id());
+        let size = window.inner_size();
+        log::info!(
+            "ensure_window: created Android window {}x{}",
+            size.width,
+            size.height
+        );
+        self.window = Some(window.clone());
+        self.rebuild_renderer(window, session, gpu_factory, osd, shell)
+    }
+
+    pub(super) fn rebuild_renderer(
+        &mut self,
+        window: Arc<Window>,
+        session: &SessionHandle,
+        gpu_factory: &Rc<dyn PipelineFactory>,
+        osd: &mut AndroidOsd,
+        shell: &mut NativeShellState,
+    ) -> Result<(), String> {
+        let size = window.inner_size();
+        log::info!(
+            "rebuild_renderer: initializing renderer for {}x{}",
+            size.width,
+            size.height
+        );
+        drop(self.renderer.take());
+        let vsync = session.settings_snapshot().local.video.presentation.vsync;
+        let raw_window_handle = window
+            .window_handle()
+            .map_err(|error| format!("failed to get window handle: {error}"))?
+            .as_raw();
+        let raw_display_handle = window
+            .display_handle()
+            .map_err(|error| format!("failed to get display handle: {error}"))?
+            .as_raw();
+        let Some(render_profile) = session.render_profile().cloned() else {
+            log::warn!("rebuild_renderer: no emulation core active");
+            return Ok(());
+        };
+        let config = RendererConfig {
+            render_profile,
+            vsync,
+            max_osd_upload_retries: DEFAULT_OSD_UPLOAD_RETRIES,
+        };
+        let renderer_result = gpu_factory
+            .create_pipeline(&config, raw_display_handle)
+            .and_then(|mut r| {
+                let ws = SurfaceSize::new(size.width, size.height);
+                r.attach(raw_window_handle, raw_display_handle, ws)
+                    .map(|_| r)
+            });
+        self.renderer = match renderer_result {
+            Ok(renderer) => {
+                log::info!("rebuild_renderer: renderer ready");
+                // Fresh renderer with empty OSD state: force re-sync next frame.
+                // Covers the layer, the reserved strip, and the safe area.
+                osd.invalidate();
+                self.request_redraw(shell);
+                Some(renderer)
+            }
+            Err(e) => {
+                log::error!("failed to initialize Android renderer: {e}");
+                return Err(format!("failed to initialize Android renderer: {e}"));
+            }
+        };
+        Ok(())
+    }
+
+    pub(super) fn request_redraw(&mut self, shell: &mut NativeShellState) {
+        shell.needs_redraw = true;
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
+    pub(super) fn release_window_resources(&mut self) {
+        self.renderer = None;
+        self.window = None;
+        self.window_id = None;
+    }
+
+    pub(super) fn release_renderer(&mut self) {
+        self.renderer = None;
+    }
+
+    /// Mutating prologue: clear and swap, then release the exclusive borrow.
+    /// Capture runs on a shared borrow below, so settings work never waits
+    /// on the rasterize tail.
+    pub(super) fn prepare_frame(session: &mut SessionHandle) {
+        // With no loaded ROM, clear the display just before rendering.
+        // One metrics lock per pass: poll and render share this tick.
+        let tick = session.tick_metrics();
+        if !tick.loaded {
+            session.clear_display();
+        }
+        session.swap_frame_buffer();
+    }
+
+    /// Shared capture: small values copy, only the frame borrows.
+    /// Call after [`prepare_frame`](Self::prepare_frame); the exclusive
+    /// borrow is already released when render runs.
+    pub(super) fn build_frame_input(session: &SessionHandle) -> FrameInput<'_> {
+        let (tick, profile, fb) = session.live_frame_parts();
+        let profile = profile.map(|p| p.physical_size);
+        let snapshot = session.settings_snapshot();
+        let notifications = &snapshot.local.notifications;
+        let language = snapshot.shared.general.language;
+        FrameInput {
+            tick,
+            notifications,
+            language,
+            profile,
+            fb,
+        }
+    }
+
+    pub(super) fn render(
+        &mut self,
+        osd: &mut AndroidOsd,
+        shell: &mut NativeShellState,
+        now: Instant,
+        input: &FrameInput<'_>,
+    ) {
+        let Some(window) = self.window.as_ref() else {
+            shell.needs_redraw = false;
+            return;
+        };
+        let Some(renderer) = self.renderer.as_mut() else {
+            shell.needs_redraw = false;
+            return;
+        };
+        let window_size = SurfaceSize::new(window.inner_size().width, window.inner_size().height);
+        if renderer.size() != window_size {
+            renderer.resize(window_size);
+        }
+        let scale_factor = window.scale_factor() as f32;
+        let content = input.profile;
+        // UI-thread push cache: render never blocks on JNI.
+        // First frames use the default until Kotlin pushes.
+        let system = osd.system_insets(window_size, scale_factor);
+        let insets = osd.safe_insets_memoized(scale_factor, content, window_size, system);
+        let settings = input.notifications;
+        let language = input.language;
+        let Some(fb) = input.fb.as_ref() else {
+            shell.needs_redraw = false;
+            return;
+        };
+        osd.sync(OsdSyncCtx {
+            tick: input.tick,
+            settings,
+            language,
+            renderer: renderer.as_mut(),
+            size: window_size,
+            insets,
+            now,
+        });
+        match renderer.render(fb) {
+            nerust_render_traits::renderer::RenderResult::Presented => {
+                shell.on_frame_presented(input.tick.frame_counter);
+                self.request_redraw(shell);
+            }
+            nerust_render_traits::renderer::RenderResult::Skipped => {
+                shell.needs_redraw = true;
+            }
+            nerust_render_traits::renderer::RenderResult::Error => {
+                log::warn!("render: renderer reported an error");
+                shell.needs_redraw = true;
+            }
+        }
+    }
+}

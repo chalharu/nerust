@@ -42,7 +42,27 @@ impl RenderPipeline {
         presentation_options: PresentationOptions,
         device_limit_profile: DeviceLimitProfile,
     ) -> Result<Self, String> {
-        let pipeline_kind = frame_pipeline_kind(presentation, ntsc_data)?;
+        let pipeline_kind = frame_pipeline_kind(presentation, ntsc_data);
+        let input = presentation.input_size();
+        let output = presentation.logical_size();
+        let physical = presentation.physical_size();
+        if [input.width, input.height, output.width, output.height]
+            .into_iter()
+            .any(|v| v == 0 || u32::try_from(v).is_err())
+            || !physical.width.is_finite()
+            || !physical.height.is_finite()
+            || physical.width <= 0.0
+            || physical.height <= 0.0
+        {
+            return Err("invalid render profile geometry".into());
+        }
+        if let Some(data) = ntsc_data {
+            let expected =
+                NTSC_TEXTURE_WIDTH as usize * nerust_render_ntsc::NTSC_TEXTURE_HEIGHT as usize * 4;
+            if data.len() != expected {
+                return Err("invalid packed NTSC texture length".into());
+            }
+        }
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -69,6 +89,19 @@ impl RenderPipeline {
             .await
             .map_err(|err| format!("failed to request wgpu device: {err:?}"))?;
 
+        if input.width.max(input.height) > device.limits().max_texture_dimension_2d as usize {
+            return Err("frame texture exceeds device dimension limit".into());
+        }
+        let frame_upload_layout = FrameUploadLayout::for_logical_size(
+            input,
+            presentation.frame_format().bytes_per_pixel() as u32,
+        )?;
+        if frame_upload_layout.buffer_size > device.limits().max_buffer_size
+            || usize::try_from(frame_upload_layout.buffer_size).is_err()
+        {
+            return Err("frame upload exceeds device buffer limit".into());
+        }
+
         let normalized_size =
             fit_surface_size_to_limit(surface_size, device.limits().max_texture_dimension_2d);
         let mut config = surface
@@ -89,12 +122,8 @@ impl RenderPipeline {
         }
         surface.configure(&device, &config);
         let logical_size = presentation.logical_size();
-        let frame_logical_size = frame_logical_size(presentation, pipeline_kind);
+        let frame_logical_size = input;
         let content_size = presentation.physical_size();
-        let frame_upload_layout = FrameUploadLayout::for_logical_size(
-            frame_logical_size,
-            frame_bytes_per_pixel(pipeline_kind),
-        )?;
 
         let frame_texture = device.create_texture(&TextureDescriptor {
             label: Some("nerust_frame_texture"),
@@ -126,7 +155,7 @@ impl RenderPipeline {
             palette_size,
             &palette_data,
         );
-        let (ntsc_data, ntsc_size) = encode_ntsc_texture(ntsc_data);
+        let (ntsc_data, ntsc_size) = encode_ntsc_texture(ntsc_data)?;
         let ntsc_texture = create_texture_from_bytes(
             &device,
             &queue,
@@ -356,16 +385,18 @@ impl RenderPipeline {
             osd_texture: None,
             osd_bind_group: None,
             osd_visible: false,
-            osd_surface: surface_size,
+            osd_surface: normalized_size,
             osd_prev: None,
             osd_staging: Vec::new(),
             frame_logical_size,
             content_size,
             reserved: nerust_render_traits::ReservedStrip::default(),
+            image_texture: None,
+            image_staging: None,
         })
     }
 
-    fn select_present_mode(modes: &[PresentMode], vsync: bool) -> PresentMode {
+    pub(crate) fn select_present_mode(modes: &[PresentMode], vsync: bool) -> PresentMode {
         let preferred = if vsync {
             [
                 PresentMode::AutoVsync,
@@ -383,16 +414,6 @@ impl RenderPipeline {
             .into_iter()
             .find(|mode| modes.contains(mode))
             .unwrap_or(PresentMode::Fifo)
-    }
-}
-
-pub(super) fn frame_logical_size(
-    presentation: &VideoPresentation,
-    pipeline_kind: FramePipelineKind,
-) -> LogicalSize {
-    match pipeline_kind {
-        FramePipelineKind::DirectColor => presentation.logical_size(),
-        FramePipelineKind::Palette | FramePipelineKind::Ntsc => presentation.source_logical_size(),
     }
 }
 
@@ -528,11 +549,12 @@ pub(super) fn composed_shader_source() -> String {
 /// coordinates (always identity-mapped) instead of small viewports.
 pub(crate) fn set_osd_layer(
     pipeline: &mut RenderPipeline,
-    layer: Option<nerust_render_traits::renderer::OsdLayer>,
-) {
+    layer: Option<&nerust_render_traits::renderer::OsdLayer>,
+) -> bool {
     let surface = pipeline.osd_surface;
+    pipeline.osd_visible = false;
     if surface.width == 0 || surface.height == 0 {
-        return;
+        return false;
     }
     let sized = pipeline.osd_texture.as_ref().is_some_and(|texture| {
         texture.width() == surface.width && texture.height() == surface.height
@@ -572,87 +594,93 @@ pub(crate) fn set_osd_layer(
         pipeline.osd_texture = Some(texture);
         pipeline.osd_prev = None;
     }
-    let Some(texture) = pipeline.osd_texture.clone() else {
-        return;
+    let Some(texture) = pipeline.osd_texture.as_ref() else {
+        return false;
     };
-    // Clear the previous rect so moved/shrunk layers leave no ghosts.
-    let clear_rect = match (&layer, pipeline.osd_prev) {
-        (Some(next), Some(prev)) if (next.x, next.y, next.width, next.height) != prev => Some(prev),
-        (None, Some(prev)) => Some(prev),
-        _ => None,
-    };
-    if let Some((x, y, w, h)) = clear_rect {
-        upload_rect(
-            pipeline,
-            &texture,
-            x,
-            y,
-            w.min(surface.width.saturating_sub(x)),
-            h.min(surface.height.saturating_sub(y)),
+    // Clip the next layer first: repainting the same clipped rect uploads
+    // pixels once, with no zeroing pass over the region it overwrites.
+    let next = layer.and_then(|layer| {
+        if layer.width == 0 || layer.height == 0 {
+            return None;
+        }
+        let source_pitch = (layer.width as usize).checked_mul(4)?;
+        nerust_render_traits::FrameLayout::checked(
+            LogicalSize {
+                width: layer.width as usize,
+                height: layer.height as usize,
+            },
+            4,
+            source_pitch,
+            layer.rgba().len(),
+        )
+        .ok()?;
+        let w = layer.width.min(surface.width.saturating_sub(layer.x));
+        let h = layer.height.min(surface.height.saturating_sub(layer.y));
+        (w != 0 && h != 0).then_some((layer, w, h, source_pitch))
+    });
+    // Clear the previous rect unless the next upload covers it exactly, so
+    // moved/shrunk layers leave no ghosts but repaints skip the zero pass.
+    if let Some(prev) = pipeline.osd_prev
+        && Some(prev) != next.map(|(layer, w, h, _)| (layer.x, layer.y, w, h))
+        && !upload_rect(
+            &pipeline.queue,
+            &mut pipeline.osd_staging,
+            texture,
+            (
+                prev.0,
+                prev.1,
+                prev.2.min(surface.width.saturating_sub(prev.0)),
+                prev.3.min(surface.height.saturating_sub(prev.1)),
+            ),
             None,
-        );
+        )
+    {
+        return false;
     }
-    let Some(layer) = layer else {
+    let Some((layer, w, h, source_pitch)) = next else {
         pipeline.osd_visible = false;
         pipeline.osd_prev = None;
-        return;
+        return layer.is_none();
     };
-    if layer.width == 0 || layer.height == 0 {
-        return;
+    pipeline.osd_prev = None;
+    if !upload_rect(
+        &pipeline.queue,
+        &mut pipeline.osd_staging,
+        texture,
+        (layer.x, layer.y, w, h),
+        Some((layer.rgba(), source_pitch)),
+    ) {
+        return false;
     }
-    let w = layer.width.min(surface.width.saturating_sub(layer.x));
-    let h = layer.height.min(surface.height.saturating_sub(layer.y));
-    if w == 0 || h == 0 {
-        return;
-    }
-    upload_rect(
-        pipeline,
-        &texture,
-        layer.x,
-        layer.y,
-        w,
-        h,
-        Some(&layer.rgba),
-    );
     pipeline.osd_visible = true;
     pipeline.osd_prev = Some((layer.x, layer.y, w, h));
+    true
 }
 
 /// Upload RGBA rows (or zeros) into a texture subrect with 256-byte
 /// pitch padding.
 fn upload_rect(
-    pipeline: &mut RenderPipeline,
+    queue: &Queue,
+    staging: &mut Vec<u8>,
     texture: &wgpu::Texture,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-    rgba: Option<&[u8]>,
-) {
-    let row_bytes = w as usize * 4;
-    let pitch = row_bytes.next_multiple_of(256);
-    let needed = pitch * h as usize;
-    if pipeline.osd_staging.len() < needed {
-        pipeline.osd_staging.resize(needed, 0);
-    }
-    if let Some(rgba) = rgba {
-        for (index, row) in rgba.chunks_exact(row_bytes).take(h as usize).enumerate() {
-            pipeline.osd_staging[index * pitch..index * pitch + row_bytes].copy_from_slice(row);
-        }
-    } else {
-        pipeline.osd_staging[..needed].fill(0);
-    }
-    pipeline.queue.write_texture(
+    rect: (u32, u32, u32, u32),
+    rgba: Option<(&[u8], usize)>,
+) -> bool {
+    let (x, y, w, h) = rect;
+    let Some((pitch, needed)) = pack_osd_rect(staging, w, h, rgba) else {
+        return false;
+    };
+    queue.write_texture(
         TexelCopyTextureInfo {
             texture,
             mip_level: 0,
             origin: Origin3d { x, y, z: 0 },
             aspect: wgpu::TextureAspect::All,
         },
-        &pipeline.osd_staging[..needed],
+        &staging[..needed],
         TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(pitch as u32),
+            bytes_per_row: Some(pitch),
             rows_per_image: Some(h),
         },
         Extent3d {
@@ -661,25 +689,61 @@ fn upload_rect(
             depth_or_array_layers: 1,
         },
     );
+    true
+}
+
+/// Pack clipped rows using the original source pitch. Only the uploaded
+/// prefix is ever cleared: rejection uploads nothing, and `None` layers
+/// upload a zeroed prefix, so stale tail bytes stay invisible.
+pub(super) fn pack_osd_rect(
+    staging: &mut Vec<u8>,
+    w: u32,
+    h: u32,
+    rgba: Option<(&[u8], usize)>,
+) -> Option<(u32, usize)> {
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let row_bytes = (w as usize).checked_mul(4)?;
+    let pitch = row_bytes.checked_add(255)? & !255;
+    let pitch_u32 = u32::try_from(pitch).ok()?;
+    let needed = pitch.checked_mul(h as usize)?;
+    if let Some((bytes, source_pitch)) = rgba {
+        nerust_render_traits::FrameLayout::checked(
+            LogicalSize {
+                width: w as usize,
+                height: h as usize,
+            },
+            4,
+            source_pitch,
+            bytes.len(),
+        )
+        .ok()?;
+    }
+    staging.resize(needed, 0);
+    if let Some((bytes, source_pitch)) = rgba {
+        for row in 0..h as usize {
+            staging[row * pitch..row * pitch + row_bytes]
+                .copy_from_slice(&bytes[row * source_pitch..row * source_pitch + row_bytes]);
+            // Pad only: growth is already zeroed by the resize above.
+            staging[row * pitch + row_bytes..(row + 1) * pitch].fill(0);
+        }
+    } else {
+        staging[..needed].fill(0);
+    }
+    Some((pitch_u32, needed))
 }
 
 fn frame_pipeline_kind(
     presentation: &VideoPresentation,
     ntsc_data: Option<&[u8]>,
-) -> Result<FramePipelineKind, String> {
+) -> FramePipelineKind {
     match presentation.frame_format() {
-        VideoFrameFormat::Rgba => Ok(FramePipelineKind::DirectColor),
-        VideoFrameFormat::Palette => Ok(match ntsc_data {
+        VideoFrameFormat::Rgba => FramePipelineKind::DirectColor,
+        VideoFrameFormat::Palette => match ntsc_data {
             Some(_) => FramePipelineKind::Ntsc,
             None => FramePipelineKind::Palette,
-        }),
-    }
-}
-
-fn frame_bytes_per_pixel(kind: FramePipelineKind) -> u32 {
-    match kind {
-        FramePipelineKind::DirectColor => 4,
-        FramePipelineKind::Palette | FramePipelineKind::Ntsc => 1,
+        },
     }
 }
 
@@ -701,37 +765,41 @@ fn fragment_entry_point(kind: FramePipelineKind, surface_is_srgb: bool) -> &'sta
     }
 }
 
-pub(super) fn encode_ntsc_texture(packed_ntsc_rgba8: Option<&[u8]>) -> (Box<[u8]>, Extent3d) {
+pub(super) fn encode_ntsc_texture(
+    packed_ntsc_rgba8: Option<&[u8]>,
+) -> Result<(Box<[u8]>, Extent3d), String> {
     let Some(texture) = packed_ntsc_rgba8 else {
-        return (
+        return Ok((
             vec![0; 4].into_boxed_slice(),
             Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
-        );
+        ));
     };
 
     // texture 高さは実データ長から計算する (固定定数ではなく entry_stride 変更に追従)
     let width = NTSC_TEXTURE_WIDTH;
     let height = texture.len() / (width as usize * 4);
     let mut packed = Vec::with_capacity(texture.len());
-    let chunks = texture.as_chunks::<4>();
-    assert!(
-        chunks.1.is_empty(),
-        "packed NTSC texture must be a multiple of 4 bytes"
-    );
-    for chunk in chunks.0.iter() {
+    let (chunks, remainder) = texture.as_chunks::<4>();
+    if !remainder.is_empty() {
+        return Err(format!(
+            "packed NTSC texture length {} is not a multiple of 4 bytes",
+            texture.len()
+        ));
+    }
+    for chunk in chunks.iter() {
         packed.extend_from_slice(&u32::from_be_bytes(*chunk).to_le_bytes());
     }
 
-    (
+    Ok((
         packed.into_boxed_slice(),
         Extent3d {
             width,
             height: height as u32,
             depth_or_array_layers: 1,
         },
-    )
+    ))
 }

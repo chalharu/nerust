@@ -231,23 +231,17 @@ impl Cartridge for Mmc5 {
         state: CartridgeRuntimeState,
     ) -> Result<(), PersistenceError> {
         if state.extra_kind != MAPPER_KIND_MMC5 {
-            return Err(PersistenceError::Validation(
-                "unexpected MMC5 runtime kind".into(),
-            ));
+            return Err(PersistenceError::MapperRuntimeKind("MMC5"));
         }
-        self.state
-            .validate_for_import(
-                &state.mapper_state,
-                self.data_ref().prog_rom_len(),
-                self.data_ref().char_rom_len(),
-            )
-            .map_err(PersistenceError::Validation)?;
+        self.state.validate_for_import(
+            &state.mapper_state,
+            self.data_ref().prog_rom_len(),
+            self.data_ref().char_rom_len(),
+        )?;
         let runtime: Mmc5RuntimeState = decode_payload(&state.extra_body)?;
         runtime.validate()?;
         if runtime.exram.len() != self.exram.len() {
-            return Err(PersistenceError::Validation(
-                "MMC5 EXRAM length mismatch".into(),
-            ));
+            return Err(PersistenceError::Mmc5ExramLength);
         }
         self.state = state.mapper_state;
         self.prg_mode = runtime.prg_mode;

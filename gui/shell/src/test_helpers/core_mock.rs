@@ -1,5 +1,5 @@
 use nerust_core_traits::{
-    ConsoleCore, CoreCapabilities, CoreConfig, CoreError,
+    ConsoleCore, CoreCapabilities, CoreConfig, CoreError, CoreFault,
     audio::StereoSample,
     debugger::{
         DebugControl, DebugImage, Debugger, DebuggerError, DisasmLine, ImageFormat, SpaceAccess,
@@ -24,6 +24,15 @@ static MOCK_SPACES: [SpaceInfo; 1] = [SpaceInfo {
 }];
 
 static MOCK_TABLE: SpaceTable = SpaceTable::build(&MOCK_SPACES);
+
+/// Options that record every actual core load, including reconstructed runtimes.
+#[derive(Debug, Clone)]
+pub(crate) struct ObservedCoreOptions {
+    pub marker: u8,
+    pub loads: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl nerust_core_traits::CoreOptions for ObservedCoreOptions {}
 
 pub(crate) struct MockConsoleCore {
     loaded: bool,
@@ -163,7 +172,25 @@ impl ConsoleCore for MockConsoleCore {
         audio_out.clear();
         Ok(())
     }
-    fn load(&mut self, rom: &[u8], _config: &CoreConfig) -> Result<(), CoreError> {
+    fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
+        if rom.is_empty() {
+            // An empty ROM never parses: deterministic load failure for rollback
+            // tests, matching real cores.
+            return Err(CoreError::RomParse {
+                kind: CoreFault::Corrupt,
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "empty ROM",
+                )),
+            });
+        }
+        if let Some(options) = config
+            .core_options
+            .as_deref()
+            .and_then(|options| options.downcast_ref::<ObservedCoreOptions>())
+        {
+            options.loads.lock().unwrap().push(options.marker);
+        }
         self.loaded = true;
         self.paused = true;
         self.identity = Some(SystemIdentity::new(
@@ -206,8 +233,8 @@ impl ConsoleCore for MockConsoleCore {
     }
 }
 
-pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts {
-    use nerust_core_traits::factory::CoreParts;
+pub(crate) fn build_test_core_parts() -> nerust_system_traits::factory::CoreParts {
+    use nerust_system_traits::factory::CoreParts;
     let core = MockConsoleCore::new();
     let render_profile = VideoRenderProfile {
         source_logical_size: LogicalSize {
@@ -229,8 +256,8 @@ pub(crate) fn build_test_core_parts() -> nerust_core_traits::factory::CoreParts 
     CoreParts {
         core: Box::new(core),
         audio: Box::new(nerust_core_traits::audio::NullAudio),
-        gui_input,
-        field_map: std::collections::HashMap::new(),
+        gui_input: Box::new(gui_input),
+        field_map: nerust_input_traits::UnifiedFieldMap::new(),
         render_profile,
         palette: Box::new([0u32; 256]),
         host_peripherals: Default::default(),

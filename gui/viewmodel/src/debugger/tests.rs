@@ -271,7 +271,12 @@ fn display_cache_covers_all_sections() {
             target: None,
         }],
         panels: vec![],
-        images: vec![("Pattern left".to_string(), 256, 256, vec![0xFF; 4])],
+        images: vec![super::DebugImageRgba {
+            label: "Pattern left".to_string(),
+            width: 256,
+            height: 256,
+            rgba: vec![0xFF; 4],
+        }],
         images_gen: 7,
         watch_value: Some(0x42),
         paused: true,
@@ -408,12 +413,12 @@ fn rgba_image_blits_through_palette() {
     };
     assert_eq!(
         rgba_image(&image),
-        (
-            "Pattern left".to_string(),
-            2,
-            1,
-            vec![0, 0, 0, 0xFF, 0, 0, 255, 0xFF]
-        )
+        super::DebugImageRgba {
+            label: "Pattern left".to_string(),
+            width: 2,
+            height: 1,
+            rgba: vec![0, 0, 0, 0xFF, 0, 0, 255, 0xFF],
+        }
     );
 }
 
@@ -433,12 +438,12 @@ fn rgba_image_blits_4bpp_through_palette() {
     };
     assert_eq!(
         rgba_image(&image),
-        (
-            "Tiles".to_string(),
-            2,
-            1,
-            vec![0, 0, 0, 0xFF, 1, 2, 3, 0xFF]
-        )
+        super::DebugImageRgba {
+            label: "Tiles".to_string(),
+            width: 2,
+            height: 1,
+            rgba: vec![0, 0, 0, 0xFF, 1, 2, 3, 0xFF],
+        }
     );
 }
 

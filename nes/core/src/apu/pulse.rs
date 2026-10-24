@@ -174,14 +174,10 @@ impl Pulse {
 
     pub(crate) fn validate_runtime_state(&self) -> Result<(), PersistenceError> {
         if usize::from(self.duty_mode) >= DUTY_TABLE.len() {
-            return Err(PersistenceError::Validation(
-                "APU pulse duty mode overflow".into(),
-            ));
+            return Err(PersistenceError::ApuPulseDutyMode);
         }
         if usize::from(self.duty_value) >= DUTY_TABLE[0].len() {
-            return Err(PersistenceError::Validation(
-                "APU pulse duty value overflow".into(),
-            ));
+            return Err(PersistenceError::ApuPulseDutyValue);
         }
         Ok(())
     }

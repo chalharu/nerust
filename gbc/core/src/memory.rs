@@ -1,3 +1,4 @@
+use crate::persistence_error::GbcPersistenceError;
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
@@ -173,7 +174,7 @@ impl GbcMemoryBus {
         })
     }
 
-    pub(crate) fn import_state(&mut self, state: MemoryState) -> Result<(), String> {
+    pub(crate) fn import_state(&mut self, state: MemoryState) -> Result<(), GbcPersistenceError> {
         if state.wram.len() != WRAM_SIZE
             || state.hram.len() != HRAM_SIZE
             || state.joypad_select & !0x30 != 0
@@ -743,7 +744,10 @@ impl GbcMemoryBus {
         self.cartridge.sync_rtc_from(saved_at, now);
     }
 
-    pub fn export_cartridge_save(&self, now: SystemTime) -> Result<Option<Vec<u8>>, String> {
+    pub fn export_cartridge_save(
+        &self,
+        now: SystemTime,
+    ) -> Result<Option<Vec<u8>>, GbcPersistenceError> {
         self.cartridge.export_persistent_state(now)
     }
 
@@ -758,7 +762,7 @@ impl GbcMemoryBus {
         self.cartridge.rumble_state()
     }
 
-    pub fn import_cartridge_save(&mut self, data: &[u8]) -> Result<(), String> {
+    pub fn import_cartridge_save(&mut self, data: &[u8]) -> Result<(), GbcPersistenceError> {
         self.cartridge.import_persistent_state(data)
     }
 
@@ -1125,7 +1129,7 @@ mod tests {
             Vec::new()
         }
 
-        fn deserialize_state(&mut self, _data: &[u8]) -> Result<(), String> {
+        fn deserialize_state(&mut self, _data: &[u8]) -> Result<(), GbcPersistenceError> {
             Ok(())
         }
     }

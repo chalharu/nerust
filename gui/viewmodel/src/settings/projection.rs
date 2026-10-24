@@ -31,6 +31,8 @@ struct InnerProjection<T: Clone + PartialEq + 'static> {
 impl<T: Clone + PartialEq + 'static> PreparedProjection for InnerProjection<T> {
     #[allow(clippy::type_complexity)]
     fn apply(self: Box<Self>) -> Option<Box<dyn FnOnce()>> {
+        // Re-check: the publication may have moved between prepare and apply,
+        // and a double-apply must not notify twice.
         if *self.inner.value.borrow() == self.value {
             return None;
         }
@@ -64,7 +66,7 @@ struct FuncProjectionNode<T: Clone + PartialEq + 'static> {
 impl<T: Clone + PartialEq + 'static> ProjectionNode for FuncProjectionNode<T> {
     fn prepare(&self, candidate: &EditorState) -> Option<Box<dyn PreparedProjection>> {
         let new_value = (self.project)(candidate);
-        if self.inner.get() == new_value {
+        if *self.inner.value.borrow() == new_value {
             return None;
         }
         Some(Box::new(InnerProjection {

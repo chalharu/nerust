@@ -1,168 +1,61 @@
+use super::bridge;
+use crate::bridge_events::{FrontendEvent, decode_frontend_event};
+use crate::error_dialog_controller::DialogRequestId;
 use jni::objects::{JObject, JString};
-use nerust_input_traits::AbstractKey;
 
-use super::{bridge, messages::MenuAction, settings};
-
-const ACTION_EXIT: &str = "exit";
-const ACTION_LOAD_STATE: &str = "load_state";
-const ACTION_OPEN_ROM: &str = "open_rom";
-const ACTION_OPEN_SETTINGS: &str = "open_settings";
-const ACTION_ORIENTATION_CHANGED: &str = "orientation_changed";
-const ACTION_RESET: &str = "reset";
-const ACTION_SAVE_STATE: &str = "save_state";
-const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
-const ACTION_UNLOAD: &str = "unload";
-
-pub(crate) fn take_actions() -> Vec<MenuAction> {
-    bridge::with_state(|state| state.menu_actions.drain(..).collect())
-}
-
-fn decode_action(raw: &str) -> Option<MenuAction> {
-    if let Some(payload) = raw.strip_prefix("controller:") {
-        let mut parts = payload.split(':');
-        let device_id = parts.next()?.parse().ok()?;
-        let key = parts.next()?;
-        let pressed = parts.next()?;
-        if parts.next().is_some() {
-            return None;
-        }
-        let key = match key {
-            "button1" => AbstractKey::Button1,
-            "button2" => AbstractKey::Button2,
-            "button5" => AbstractKey::Button5,
-            "button6" => AbstractKey::Button6,
-            "start" => AbstractKey::Start,
-            "select" => AbstractKey::Select,
-            "up" => AbstractKey::DpadUp,
-            "down" => AbstractKey::DpadDown,
-            "left" => AbstractKey::DpadLeft,
-            "right" => AbstractKey::DpadRight,
-            _ => return None,
-        };
-        let pressed = match pressed {
-            "1" => true,
-            "0" => false,
-            _ => return None,
-        };
-        return Some(MenuAction::ControllerInput {
-            device_id,
-            key,
-            pressed,
-        });
-    }
-    match raw {
-        ACTION_EXIT => Some(MenuAction::Exit),
-        ACTION_LOAD_STATE => Some(MenuAction::LoadState),
-        ACTION_OPEN_ROM => Some(MenuAction::OpenRom),
-        ACTION_OPEN_SETTINGS => Some(MenuAction::OpenSettings),
-        ACTION_ORIENTATION_CHANGED => Some(MenuAction::OrientationChanged),
-        ACTION_RESET => Some(MenuAction::Reset),
-        ACTION_SAVE_STATE => Some(MenuAction::SaveState),
-        ACTION_TOGGLE_PAUSE => Some(MenuAction::TogglePause),
-        ACTION_UNLOAD => Some(MenuAction::Unload),
-        _ => None,
-    }
-}
-
-fn publish_action(action: MenuAction) {
-    log::info!("Android menu: published action: {:?}", action);
-    bridge::with_state(|state| state.menu_actions.push_back(action));
-    bridge::wake();
+/// Failure synthesis path: releases the gate, flag, and auto-pause.
+/// Single writer into the priority lane.
+pub(super) fn publish_dialog_dismissed(id: DialogRequestId) {
+    bridge::publish_all(core::slice::from_ref(&FrontendEvent::ErrorDialogDismissed(
+        id,
+    )));
 }
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     mut env: jni::EnvUnowned<'_>,
-    activity: JObject<'_>,
+    _activity: JObject<'_>,
     action: JString<'_>,
 ) {
-    match env
-        .with_env(|env| -> jni::errors::Result<Option<MenuAction>> {
+    match bridge::with_callback_env(
+        &mut env,
+        |env| -> jni::errors::Result<Option<FrontendEvent>> {
             if action.is_null() {
                 Ok(None)
             } else {
                 let action_str = action.try_to_string(env)?;
-                let decoded = decode_action(&action_str);
-
-                // Dialog-showing actions are handled synchronously since we
-                // already have env/activity on the Java main thread.
-                if let Some(MenuAction::OpenSettings) = decoded {
-                    match settings::show_settings_dialog_sync(env, &activity) {
-                        Ok(_) => {}
-                        Err(error) => {
-                            log::error!("sync settings dialog failed: {error}");
-                        }
-                    }
-                    return Ok(None);
-                }
+                let decoded = decode_frontend_event(&action_str);
 
                 Ok(decoded)
             }
-        })
-        .into_outcome()
-    {
-        jni::Outcome::Ok(Some(action)) => publish_action(action),
+        },
+    ) {
+        jni::Outcome::Ok(Some(event)) => bridge::publish_all(core::slice::from_ref(&event)),
         jni::Outcome::Ok(None) => {}
-        jni::Outcome::Err(error) => {
-            log::error!("failed to decode Android menu action: {error:?}");
-        }
+        jni::Outcome::Err(_) => {}
         jni::Outcome::Panic(_) => {
             log::error!("Android menu action callback panicked");
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
-        ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-        ACTION_UNLOAD, MenuAction, decode_action,
-    };
-
-    #[test]
-    fn decode_action_maps_known_ids() {
-        assert_eq!(decode_action(ACTION_OPEN_ROM), Some(MenuAction::OpenRom));
-        assert_eq!(
-            decode_action(ACTION_OPEN_SETTINGS),
-            Some(MenuAction::OpenSettings)
-        );
-        assert_eq!(
-            decode_action(ACTION_TOGGLE_PAUSE),
-            Some(MenuAction::TogglePause)
-        );
-        assert_eq!(
-            decode_action(ACTION_SAVE_STATE),
-            Some(MenuAction::SaveState)
-        );
-        assert_eq!(
-            decode_action(ACTION_LOAD_STATE),
-            Some(MenuAction::LoadState)
-        );
-        assert_eq!(decode_action(ACTION_RESET), Some(MenuAction::Reset));
-        assert_eq!(decode_action(ACTION_EXIT), Some(MenuAction::Exit));
-        assert_eq!(decode_action(ACTION_UNLOAD), Some(MenuAction::Unload));
-        assert_eq!(
-            decode_action(ACTION_ORIENTATION_CHANGED),
-            Some(MenuAction::OrientationChanged)
-        );
-    }
-
-    #[test]
-    fn decode_action_rejects_unknown_ids() {
-        assert_eq!(decode_action("mystery"), None);
-    }
-
-    #[test]
-    fn decode_action_maps_controller_input() {
-        assert_eq!(
-            decode_action("controller:7:button1:1"),
-            Some(MenuAction::ControllerInput {
-                device_id: 7,
-                key: nerust_input_traits::AbstractKey::Button1,
-                pressed: true,
-            })
-        );
-        assert_eq!(decode_action("controller:7:unknown:1"), None);
+/// Dedicated error-dialog dismiss entry point.
+/// Every Kotlin sender calls this; no menu-string fallback remains.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialogDismissed(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    request_id: jni::sys::jlong,
+) {
+    match bridge::with_callback_env(&mut env, |_env| -> jni::errors::Result<FrontendEvent> {
+        Ok(FrontendEvent::ErrorDialogDismissed(DialogRequestId(
+            request_id as u64,
+        )))
+    }) {
+        jni::Outcome::Ok(event) => bridge::publish_all(core::slice::from_ref(&event)),
+        jni::Outcome::Err(_) => {}
+        jni::Outcome::Panic(_) => {
+            log::error!("Android error-dismiss callback panicked");
+        }
     }
 }

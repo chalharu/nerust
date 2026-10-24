@@ -154,6 +154,9 @@ pub enum UiText {
     PosBottomRight,
     AreaOverlay,
     AreaStrip,
+    CrashTitle,
+    CrashBody,
+    CrashDetails,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -178,12 +181,8 @@ pub fn text(language: AppLanguage, key: UiText) -> &'static str {
     }
 }
 
-/// CJK-capable sans family for the UI language, when the platform
-/// default font cannot cover it. The iced shaper falls back per
-/// glyph through a hardcoded family list, so Japanese text under a
-/// generic family can mix serif faces on machines without Noto CJK;
-/// naming the platform CJK sans keeps it uniform. `None` means the
-/// frontend default already covers the language.
+/// CJK-capable sans family for the UI language, when the platform default cannot cover it.
+/// `None` means the frontend default already covers the language.
 pub fn font_family(language: AppLanguage) -> Option<&'static str> {
     if !matches!(resolve_language(language), AppLanguage::Japanese) {
         return None;
@@ -380,12 +379,20 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PosBottomRight => ("Bottom right", "右下"),
         UiText::AreaOverlay => ("Overlay", "重ねる"),
         UiText::AreaStrip => ("Strip", "専用帯"),
+        UiText::CrashTitle => ("nerust", "nerust"),
+        UiText::CrashBody => (
+            "The application crashed",
+            "アプリケーションがクラッシュしました",
+        ),
+        UiText::CrashDetails => (
+            "Details were written to the log (stderr).",
+            "詳細はログ（stderr）に記録されました。",
+        ),
     }
 }
 
 /// Menu label with a shortcut hint (`Save Active Slot (F5)`).
-/// One helper so every frontend advertises the same shortcuts
-/// instead of drifting copies per shell.
+/// One helper so every frontend advertises the same shortcuts.
 pub fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
     format!("{label} ({shortcut})")
 }
@@ -426,8 +433,7 @@ pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
 }
 
 /// Selected dump row (`was ??` when the old byte is unreadable).
-/// Addresses use the cross-system `0x` canon (never the NES `$`
-/// sigil): the same debugger serves NES, GBC, and GBA.
+/// Addresses use the cross-system `0x` canon (never the NES `$` sigil).
 pub fn selected_row(language: AppLanguage, addr: u32, old: Option<u8>) -> String {
     let old_text = match old {
         Some(old) => format!("{old:02X}"),
@@ -640,6 +646,8 @@ mod tests {
             PosBottomRight,
             AreaOverlay,
             AreaStrip,
+            CrashBody,
+            CrashDetails,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());

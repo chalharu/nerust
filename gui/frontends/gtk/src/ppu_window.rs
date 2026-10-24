@@ -6,7 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::DebugPanel;
-use nerust_gui_viewmodel::debugger::{format_panels, scale2x_nearest};
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, format_panels, scale2x_nearest};
 use nerust_settings_core::i18n::{UiText, text, tile_hover};
 use nerust_settings_core::model::language::AppLanguage;
 
@@ -34,7 +34,7 @@ impl PpuWindowCore {
         // true dialogs stay transient, tool windows do not.
         _main_window: &gtk::ApplicationWindow,
         _state: Rc<RefCell<State>>,
-        images: Vec<(String, u32, u32, Vec<u8>)>,
+        images: Vec<DebugImageRgba>,
         images_gen: u64,
         panels: Vec<DebugPanel>,
         language: AppLanguage,
@@ -89,7 +89,7 @@ impl PpuWindowCore {
     /// blank window. Unchanged content skips the rebuild entirely.
     pub(crate) fn sync(
         &mut self,
-        images: &[(String, u32, u32, Vec<u8>)],
+        images: &[DebugImageRgba],
         images_gen: u64,
         panels: &[DebugPanel],
     ) {
@@ -106,26 +106,26 @@ impl PpuWindowCore {
             empty.set_xalign(0.0);
             self.images_box.append(&empty);
         }
-        for (label, width, height, rgba) in images {
-            let title = gtk::Label::new(Some(label));
+        for image in images {
+            let title = gtk::Label::new(Some(&image.label));
             title.set_xalign(0.0);
             self.images_box.append(&title);
-            let scaled = scale2x_nearest(rgba, *width, *height);
-            let stride = (*width as usize) * 2 * 4;
+            let scaled = scale2x_nearest(&image.rgba, image.width, image.height);
+            let stride = (image.width as usize) * 2 * 4;
             let texture = gdk::MemoryTexture::new(
-                *width as i32 * 2,
-                *height as i32 * 2,
+                image.width as i32 * 2,
+                image.height as i32 * 2,
                 gdk::MemoryFormat::R8g8b8a8,
                 &glib::Bytes::from(&scaled),
                 stride,
             );
             let picture = gtk::Picture::for_paintable(&texture);
             picture.set_can_shrink(false);
-            picture.set_size_request(*width as i32 * 2, *height as i32 * 2);
+            picture.set_size_request(image.width as i32 * 2, image.height as i32 * 2);
             let motion = gtk::EventControllerMotion::new();
             let hover = self.hover_label.clone();
-            let label = label.clone();
-            let (width, height) = (*width, *height);
+            let label = image.label.clone();
+            let (width, height) = (image.width, image.height);
             let language = self.language;
             motion.connect_motion(move |_, x, y| {
                 hover.set_label(&tile_hover_text(language, &label, width, height, x, y));

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertArrayEquals
@@ -18,6 +19,7 @@ import org.junit.runners.MethodSorters
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -53,6 +55,48 @@ class MainActivityE2eTest {
         )
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun delayedDismissCannotAcknowledgeReplacementDialog() {
+        val activity = launchActivity()
+        val firstDismiss = AtomicReference<(() -> Unit)?>(null)
+        var oldAcks = 0
+        var newAcks = 0
+        lateinit var manager: DialogManager
+        runOnActivityThread(activity) {
+            manager = DialogManager(activity)
+            manager.show(
+                dialogTag = "audit-first",
+                contentDescription = "first",
+                presentation = DIALOG_PRESENTATION_FULL_SCREEN,
+                onDismiss = { oldAcks++ },
+            ) { dismiss -> firstDismiss.set(dismiss) }
+        }
+        try {
+            assertTrue(waitUntil(DIALOG_TIMEOUT_MS) { firstDismiss.get() != null })
+            runOnActivityThread(activity) {
+                // Dialog.dismiss queues its listener. Replace before that
+                // queued notification runs, on the very same UI turn.
+                requireNotNull(firstDismiss.get()).invoke()
+                manager.show(
+                    dialogTag = "audit-replacement",
+                    contentDescription = "replacement",
+                    presentation = DIALOG_PRESENTATION_FULL_SCREEN,
+                    onDismiss = { newAcks++ },
+                ) { _ -> }
+            }
+            // The old queued notification runs before this next UI turn.
+            runOnActivityThread(activity) {
+                assertEquals(1, oldAcks)
+                assertEquals(0, newAcks)
+                assertTrue(manager.isShowing("audit-replacement"))
+                manager.dismissForStop()
+                assertEquals(1, newAcks)
+            }
+        } finally {
+            runOnActivityThread(activity) { manager.dismissForStop() }
+        }
+    }
+
     @Suppress("DEPRECATION")
     @Test(timeout = TEST_TIMEOUT_MS)
     fun appLoadsGbcAndSupportsDrawerDialogsAndMenuActions() {
@@ -68,7 +112,7 @@ class MainActivityE2eTest {
 
         val stateFilesBefore = stateSlotFiles()
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest("save_state")
+            activity.dispatchMenuActionForTest(MenuAction.SAVE_STATE)
         }
         assertTrue(
             "GBC Save State should create a state archive",
@@ -125,11 +169,28 @@ class MainActivityE2eTest {
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
             activity.showSettingsDialogForTest(
-                arrayOf("video_filter", "touch_overlay"),
-                arrayOf("Video Filter", "Touch Overlay"),
-                arrayOf("CRT\tLCD", "On\tOff"),
-                arrayOf("1", "0"),
-                arrayOf("video", "controls"),
+                listOf(
+                    SettingsField(
+                        key = "video_filter",
+                        section = "video",
+                        sectionLabel = "Video",
+                        label = "Video Filter",
+                        kind = "choice",
+                        choices = listOf("CRT", "LCD"),
+                        value = 1,
+                        visible = true,
+                    ),
+                    SettingsField(
+                        key = "touch_overlay",
+                        section = "controls",
+                        sectionLabel = "Controls",
+                        label = "Touch Overlay",
+                        kind = "choice",
+                        choices = listOf("On", "Off"),
+                        value = 0,
+                        visible = true,
+                    ),
+                ),
             )
         }
 
@@ -165,7 +226,7 @@ class MainActivityE2eTest {
         }
         exerciseMenuAction(
             activity,
-            MENU_ACTION_OPEN_SETTINGS,
+            MenuAction.OPEN_SETTINGS,
             SETTINGS_DIALOG_TAG,
             "Settings dialog should be attached after dispatching open_settings",
         )
@@ -199,21 +260,40 @@ class MainActivityE2eTest {
     @Test(timeout = TEST_TIMEOUT_MS)
     fun backTerminatesApplicationProcess() {
         val activity = launchActivity()
+        watchStuckShutdown("back", activity)
         runOnActivityThread(activity) {
             activity.onBackPressed()
         }
-        SystemClock.sleep(STARTUP_TIMEOUT_MS)
-        fail("Back should terminate the application process")
+        // Termination itself is verified by e2e.sh (process gone): the test
+        // shares the app process, so a clean exit ends the test run here.
+        // Only a lingering process reaches the return below.
+        SystemClock.sleep(TERMINATION_GRACE_MS)
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
     fun exitTerminatesApplicationProcess() {
         val activity = launchActivity()
+        watchStuckShutdown("exit", activity)
         runOnActivityThread(activity) {
-            activity.dispatchMenuActionForTest("exit")
+            activity.dispatchMenuActionForTest(MenuAction.EXIT)
         }
-        SystemClock.sleep(STARTUP_TIMEOUT_MS)
-        fail("Exit should terminate the application process")
+        // Same contract as backTerminatesApplicationProcess above.
+        SystemClock.sleep(TERMINATION_GRACE_MS)
+    }
+
+    /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
+     * Destroy is expected within seconds. A linger without destroy — or a
+     * destroy that never completes — names the blocker, so always dump:
+     * the shared process means these stacks cover the app UI thread too. */
+    private fun watchStuckShutdown(tag: String, activity: MainActivity) {
+        thread(isDaemon = true, name = "shutdown-watchdog-$tag") {
+            SystemClock.sleep(SHUTDOWN_WATCHDOG_MS)
+            val destroyed = activity.isDestroyed
+            Log.w(TAG, "$tag: shutdown watchdog fired (destroyed=$destroyed); dumping threads")
+            for ((stuck, stack) in Thread.getAllStackTraces()) {
+                Log.w(TAG, "$tag: thread=${stuck.name} state=${stuck.state}\n\t${stack.joinToString("\n\t")}")
+            }
+        }
     }
 
     private fun launchActivity(): MainActivity {
@@ -275,48 +355,27 @@ class MainActivityE2eTest {
     }
 
     @Test
-    fun portraitControlsOverlayMatchesExpectedArrangement() {
-        val zones = controlsLayout(1080f, 1920f).associateBy { it.label }
-        val joystick = floatingJoystickLayout(1080f, 1920f)
-        val select = requireNotNull(zones["SELECT"])
-        val start = requireNotNull(zones["START"])
-        val b = requireNotNull(zones["B"])
-        val a = requireNotNull(zones["A"])
-        val l = requireNotNull(zones["L"])
-        val r = requireNotNull(zones["R"])
-
-        assertEquals(6, zones.size)
-        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
-        assertTrue(joystick.centerX - joystick.baseRadius >= 0f)
-        assertTrue(joystick.centerY + joystick.baseRadius <= 1920f)
-        assertEquals(a.y, b.y, 0.01f)
-        assertEquals(a.height, b.height, 0.01f)
-        assertTrue("B should sit to the right of the joystick", b.x > joystick.activationBounds.right)
+    fun pushedZonesParseToDrawableRects() {
+        // Geometry lives in Rust; Kotlin only parses the pushed payload.
+        val zones = parsePushedZones("B:0.70,0.60,0.10,0.10;A:0.85,0.60,0.10,0.10")
+        assertEquals(2, zones.size)
+        val byLabel = zones.associateBy { it.label }
+        val b = requireNotNull(byLabel["B"])
+        val a = requireNotNull(byLabel["A"])
+        assertEquals(a.y, b.y, 0.0001f)
+        assertEquals(a.height, b.height, 0.0001f)
         assertTrue("A should sit to the right of B", a.x > b.x + b.width)
-        assertTrue("Select should sit above the face buttons", select.y + select.height < b.y)
-        assertTrue("Start should sit above the face buttons", start.y + start.height < a.y)
-        assertTrue("Select should sit between the joystick and face buttons", select.x > joystick.centerX)
-        assertTrue("Start should sit between the D-pad and face buttons", start.x + start.width < b.x)
-        assertTrue("L should sit left of R", l.x + l.width < r.x)
-        assertTrue("Shoulders should sit above the face buttons", l.y + l.height < b.y)
-        assertTrue("Shoulders should sit above the face buttons", r.y + r.height < a.y)
+        assertTrue(parsePushedZones("B:bad;A:0.85,0.60,0.10").isEmpty())
+        assertTrue(parsePushedZones("").isEmpty())
     }
 
     @Test
-    fun landscapeControlsStayInsideSafeScreenBounds() {
-        val width = 1920f
-        val height = 1080f
-        val zones = controlsLayout(width, height)
-        val joystick = floatingJoystickLayout(width, height)
-        assertEquals(6, zones.size)
-        zones.forEach { zone ->
-            assertTrue(zone.x >= 0f && zone.y >= 0f)
-            assertTrue(zone.x + zone.width <= width)
-            assertTrue(zone.y + zone.height <= height)
-        }
-        val byLabel = zones.associateBy { it.label }
-        assertTrue(joystick.activationBounds.contains(joystick.centerX, joystick.centerY))
-        assertTrue(joystick.activationBounds.right < requireNotNull(byLabel["B"]).x)
+    fun pushedJoystickParsesHomeGeometry() {
+        val joystick = requireNotNull(parsePushedJoystick("0.20,0.70,0.12,0.06"))
+        assertTrue(joystick.baseRadius > joystick.knobRadius)
+        assertTrue(joystick.knobRadius > 0f)
+        assertNull(parsePushedJoystick("0.20,0.70,0.12"))
+        assertNull(parsePushedJoystick(""))
     }
 
     private fun assertChromeViewAvailable(
@@ -420,7 +479,6 @@ class MainActivityE2eTest {
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT =
             "Nerust\nOpen ROM\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
-        const val MENU_ACTION_OPEN_SETTINGS = "open_settings"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val LIFECYCLE_SAVE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
@@ -431,8 +489,14 @@ class MainActivityE2eTest {
                 Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+        const val SHUTDOWN_WATCHDOG_MS = 30_000L
+        const val TAG = "MainActivityE2eTest"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
         const val STARTUP_TIMEOUT_MS = 60_000L
+        // Grace for a clean exit on a loaded runner before e2e.sh verifies
+        // the process is gone. Hangs past this plus the harness wait fail
+        // with thread stacks (see expect_process_termination).
+        const val TERMINATION_GRACE_MS = 30_000L
         const val TEST_TIMEOUT_MS = 180_000L
         const val UI_THREAD_TIMEOUT_MS = 10_000L
 

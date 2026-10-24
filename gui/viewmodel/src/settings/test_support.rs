@@ -2,18 +2,16 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use nerust_core_traits::{
-    factory::{
-        CoreFactory, CoreParts, FactoryError,
-        descriptor::SystemSettingsPageModel,
-        load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{
-    AttachmentId, ControllerProfile, InputAssignments, InputPorts, InputResources,
-    InputSystemFactory, PortSet, ProfileId, SlotInfo,
+    AttachmentId, ControllerProfile, InputAssignments, InputPorts, InputSystemFactory, PortSet,
+    ProfileId, SlotInfo,
+};
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError,
+    descriptor::SystemSettingsPageModel,
+    load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest},
+    settings::FactorySettingsView,
 };
 
 use super::SettingsViewModel;
@@ -70,34 +68,27 @@ impl InputPorts for TestInputFactory {
         ];
         &SLOTS
     }
-    fn controllers(&self) -> Vec<std::rc::Rc<dyn ControllerProfile>> {
-        static P1_PORTS: [AttachmentId; 1] = [P1_SLOT];
-        static P2_PORTS: [AttachmentId; 1] = [P2_SLOT];
+    fn controllers(&self) -> Box<dyn Iterator<Item = std::rc::Rc<dyn ControllerProfile>> + '_> {
         use std::rc::Rc;
-        vec![
+        let items: Vec<Rc<dyn ControllerProfile>> = vec![
             Rc::new(TestSlotProfile {
                 id: ProfileId::new("test.ctrl.p1"),
                 label: "Test P1",
-                port_set: PortSet { ports: &P1_PORTS },
+                port_set: PortSet { ports: &[P1_SLOT] },
             }),
             Rc::new(TestSlotProfile {
                 id: ProfileId::new("test.ctrl.p2"),
                 label: "Test P2",
-                port_set: PortSet { ports: &P2_PORTS },
+                port_set: PortSet { ports: &[P2_SLOT] },
             }),
-        ]
+        ];
+        Box::new(items.into_iter())
     }
 }
 
 impl InputSystemFactory for TestInputFactory {
     fn default_assignments(&self) -> InputAssignments {
-        InputAssignments { slots: vec![] }
-    }
-    fn create_split(
-        &self,
-        _: &nerust_input_traits::ControllerCollection,
-    ) -> Result<InputResources, nerust_input_traits::CreateSplitError> {
-        unreachable!("not called in tests")
+        InputAssignments::new(vec![])
     }
 }
 
@@ -130,8 +121,8 @@ impl CoreFactory for TestCoreFactory {
     fn apply_settings_choice(
         &self,
         _: &mut FactorySettingsView,
-        _: &nerust_core_traits::factory::descriptor::SystemSettingsFieldId,
-        _: &nerust_core_traits::factory::descriptor::SystemSettingsChoiceId,
+        _: &nerust_system_traits::factory::descriptor::SystemSettingsFieldId,
+        _: &nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
     ) -> Result<(), FactoryError> {
         Ok(())
     }
@@ -150,7 +141,7 @@ impl CoreFactory for TestCoreFactory {
     }
     fn load_options_schema(
         &self,
-    ) -> Box<dyn nerust_core_traits::factory::load::DynSystemLoadOptionsSchema> {
+    ) -> Box<dyn nerust_system_traits::factory::load::DynSystemLoadOptionsSchema> {
         unreachable!("not called in tests")
     }
 }

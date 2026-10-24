@@ -71,7 +71,7 @@ fn main() {
              /// System factories available to headless drivers: one boxed\n\
              /// `dyn CoreFactory` per enabled system feature. Empty without\n\
              /// features — drivers then ignore every case instead of failing.\n\
-             pub fn system_factories() -> Vec<Box<dyn nerust_core_traits::factory::CoreFactory>> {{\n\
+             pub fn system_factories() -> Vec<Box<dyn nerust_system_traits::factory::CoreFactory>> {{\n\
              \x20   vec![\n{factory_items}\x20   ]\n\
              }}\n"
         ),

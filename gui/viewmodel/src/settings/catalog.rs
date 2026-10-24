@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
-use nerust_core_traits::{factory::CoreFactory, identity::SystemId};
+use nerust_core_traits::identity::SystemId;
+use nerust_system_traits::factory::CoreFactory;
 
 /// Errors from [`FactoryCatalog`] construction.
 #[derive(Debug, Clone)]
@@ -61,7 +62,7 @@ impl FactoryCatalog {
 mod tests {
     use std::sync::Arc;
 
-    use nerust_core_traits::factory::CoreFactory;
+    use nerust_system_traits::factory::CoreFactory;
 
     use super::FactoryCatalog;
     use crate::settings::test_support::{TestCoreFactory, TestInputFactory, TestSystemId};

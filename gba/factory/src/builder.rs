@@ -1,87 +1,35 @@
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{CoreParts, FactoryError, settings::FactorySettingsView},
-};
+use nerust_core_traits::audio::AudioBackend;
 use nerust_gba_core::console_core::GbaConsoleCore;
 use nerust_gba_settings::GbaSettings;
-use nerust_input_traits::{
-    ControllerCollection, EmuInput, GuiInput, InputAssignments, InputSystemFactory,
-};
+use nerust_input_traits::InputAssignments;
 use nerust_render_traits::{
     VideoFrameFormat, VideoRenderProfile, logical::LogicalSize, physical::PhysicalSize,
 };
-
-use crate::input_profiles::GBA_ATTACHMENT;
+use nerust_system_traits::factory::{CoreParts, FactoryError, settings::FactorySettingsView};
 
 pub(crate) fn create_core_and_adapter(
     view: &FactorySettingsView,
-    speaker: Box<dyn AudioBackend>,
+    mut speaker: Box<dyn AudioBackend>,
     assignments: &InputAssignments,
 ) -> Result<CoreParts, FactoryError> {
     view.system_config
         .as_deref()
         .and_then(|v| v.downcast_ref::<GbaSettings>())
         .ok_or(FactoryError::InvalidSettings)?;
-    if assignments.slots.len() != 1 || assignments.slots[0].0 != GBA_ATTACHMENT {
-        return Err(FactoryError::Create(
-            "GBA requires exactly one player1 assignment".to_string(),
-        ));
-    }
-    let profile = assignments.slots[0]
-        .1
-        .as_ref()
-        .ok_or_else(|| FactoryError::Create("GBA controller is not assigned".to_string()))?;
-    if profile.profile_id() != nerust_input_traits::ProfileId::new("gba.standard_pad") {
-        return Err(FactoryError::Create(format!(
-            "unsupported GBA controller: {}",
-            profile.profile_id()
-        )));
-    }
-
-    let controllers =
-        ControllerCollection::new(vec![Box::new(nerust_gba_device::StandardPad::new())]);
-    let resources =
-        <crate::GbaFactory as InputSystemFactory>::create_split(&crate::GbaFactory, &controllers)
-            .map_err(|e| FactoryError::Create(e.to_string()))?;
-    let gui_input = GuiInput::from_split(&resources.split);
-    let emu_input = EmuInput::from_split(&resources.split);
-    create_core_and_adapter_with_inputs(
-        view,
-        speaker,
-        gui_input,
-        emu_input,
-        resources.field_map,
-        controllers,
-    )
-}
-
-pub(crate) fn create_core_and_adapter_with_inputs(
-    _view: &FactorySettingsView,
-    mut speaker: Box<dyn AudioBackend>,
-    gui_input: GuiInput,
-    emu_input: EmuInput,
-    field_map: std::collections::HashMap<
-        (
-            nerust_input_traits::AttachmentId,
-            nerust_input_traits::DigitalControlId,
-        ),
-        usize,
-    >,
-    _controller_collection: ControllerCollection,
-) -> Result<CoreParts, FactoryError> {
+    let resources = crate::GbaFactory.create_split(assignments)?;
+    // Unified map travels end to end; no lossy projection.
+    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
     let logical_size = LogicalSize {
         width: 240,
         height: 160,
     };
-    // The audio backend only emits pushed samples after `start`
-    // (CPAL/cubeb hold the stream silent until then); the emu thread
-    // owns it from here (transport separation).
+    // The backend stays silent until `start`; the emu thread owns it after.
     speaker.start();
     let core = GbaConsoleCore::new(emu_input);
     Ok(CoreParts {
         core: Box::new(core),
         audio: speaker,
-        gui_input,
+        gui_input: Box::new(gui_input),
         field_map,
         render_profile: VideoRenderProfile {
             source_logical_size: logical_size,
@@ -98,9 +46,9 @@ pub(crate) fn create_core_and_adapter_with_inputs(
 #[cfg(test)]
 mod tests {
     use nerust_core_traits::audio::NullAudio;
-    use nerust_core_traits::factory::settings::Language;
     use nerust_gba_settings::GbaSettings;
     use nerust_input_traits::InputSystemFactory;
+    use nerust_system_traits::factory::settings::Language;
 
     use super::*;
 
@@ -124,9 +72,10 @@ mod tests {
             language: Language::SystemDefault,
             system_config: Some(Box::new(GbaSettings::default())),
         };
-        let assignments = nerust_input_traits::InputAssignments {
-            slots: vec![(GBA_ATTACHMENT, None)],
-        };
+        let assignments = nerust_input_traits::InputAssignments::new(vec![(
+            crate::input_profiles::GBA_ATTACHMENT,
+            None,
+        )]);
         assert!(create_core_and_adapter(&view, Box::new(NullAudio), &assignments).is_err());
     }
 

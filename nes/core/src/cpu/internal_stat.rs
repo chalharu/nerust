@@ -151,18 +151,16 @@ impl InternalStat {
 
     pub(crate) fn validate(&self) -> Result<(), PersistenceError> {
         if self.opcode >= 0x100 {
-            return Err(PersistenceError::Validation("CPU opcode overflow".into()));
+            return Err(PersistenceError::CpuOpcode);
         }
         if self.address > u16::MAX as usize {
-            return Err(PersistenceError::Validation("CPU address overflow".into()));
+            return Err(PersistenceError::CpuAddress);
         }
         if self.tempaddr > u16::MAX as usize {
-            return Err(PersistenceError::Validation(
-                "CPU temporary address overflow".into(),
-            ));
+            return Err(PersistenceError::CpuTemporaryAddress);
         }
         if self.step > 8 {
-            return Err(PersistenceError::Validation("CPU step overflow".into()));
+            return Err(PersistenceError::CpuStep);
         }
         Ok(())
     }

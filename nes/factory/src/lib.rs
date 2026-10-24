@@ -4,29 +4,25 @@ mod settings;
 
 use std::rc::Rc;
 
-use nerust_core_traits::{
-    audio::AudioBackend,
-    factory::{
-        CoreFactory, CoreParts, FactoryError, SystemDefaults,
-        descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
-        load::{
-            DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
-            SystemLoadOptions, SystemLoadOptionsSchema,
-        },
-        settings::FactorySettingsView,
-    },
-    identity::SystemId,
-};
+use nerust_core_traits::{audio::AudioBackend, identity::SystemId};
 use nerust_input_traits::ControllerProfile;
 use nerust_nes_settings::NesSettings;
+use nerust_system_traits::factory::{
+    CoreFactory, CoreParts, FactoryError, SystemDefaults,
+    descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId, SystemSettingsPageModel},
+    load::{
+        DynSystemLoadOptions, DynSystemLoadOptionsSchema, MediaObject, ResolvedLoadRequest,
+        SystemLoadOptions, SystemLoadOptionsSchema,
+    },
+    settings::FactorySettingsView,
+};
 
 #[derive(Debug)]
 pub struct NesFactory;
 
 impl NesFactory {
-    /// Boxed `dyn CoreFactory` for generic drivers. Construction
-    /// selects the system once here; everything downstream drives
-    /// through `dyn CoreFactory` without naming this type.
+    /// Boxed `dyn CoreFactory` for generic drivers. The system is
+    /// selected once here.
     pub fn boxed() -> Box<dyn CoreFactory> {
         Box::new(Self)
     }
@@ -58,10 +54,8 @@ impl CoreFactory for NesFactory {
         media.bytes.len() >= 4 && media.bytes[..4] == [0x4E, 0x45, 0x53, 0x1A]
     }
 
-    /// Filter-only deltas swap live: the core renders palette indices
-    /// identically under every filter, so only the profile + palette
-    /// (session buffers, frontend renderer) change. Anything else —
-    /// core options, missing sides — keeps the rebuild path.
+    /// Filter-only deltas swap live; anything else keeps the rebuild path.
+    /// Core options and missing sides are never live-swapped.
     fn presentation_swap_assets(
         &self,
         before: &FactorySettingsView,
@@ -178,9 +172,8 @@ struct CommandLineOptions {
     /// Override mapper 4 MMC3 IRQ behavior
     #[clap(long, value_enum)]
     mmc3_irq_variant: Option<Mmc3IrqVariant>,
-    /// Override the ROM header submapper (legacy iNES ROMs whose
-    /// headers cannot name it). Validated against the NES 2.0 4-bit
-    /// range when the cartridge resolves.
+    /// Override the ROM header submapper (legacy iNES ROMs).
+    /// Validated against the NES 2.0 4-bit range at cartridge resolve.
     #[clap(long)]
     submapper: Option<u8>,
 }
@@ -208,7 +201,7 @@ impl From<Mmc3IrqVariant> for nerust_nes_core::core_options::Mmc3IrqVariant {
     }
 }
 
-pub fn nes_device_controller_profiles() -> Vec<Rc<dyn ControllerProfile>> {
+pub fn nes_device_controller_profiles() -> impl Iterator<Item = Rc<dyn ControllerProfile>> {
     nerust_nes_device::nes_device_controller_profiles()
 }
 
@@ -222,7 +215,7 @@ pub fn create_test_core_and_adapter(
 
 #[cfg(test)]
 mod media_tests {
-    use nerust_core_traits::factory::CoreFactory;
+    use nerust_system_traits::factory::CoreFactory;
 
     use super::NesFactory;
 

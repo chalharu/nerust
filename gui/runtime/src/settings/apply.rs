@@ -4,10 +4,50 @@ use nerust_core_traits::identity::SystemId;
 use nerust_settings_core::model::shared::{DesktopSharedSettings, StoragePolicy};
 use nerust_settings_traits::SystemSettings;
 
-use super::{
-    HostBackendCapabilities, HostBackendLocalSettings, SettingsApplyPlan, SettingsError,
-    SettingsSnapshot,
-};
+use super::{HostBackendCapabilities, HostBackendLocalSettings, SettingsError, SettingsSnapshot};
+
+/// Runtime operations for a settings delta. Presentation swaps can also carry audio changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveStrategy {
+    Idle,
+    AudioSwap,
+    PresentationSwap,
+    Rebuild,
+}
+
+/// Independent change reasons; consumers must not infer visual changes from audio flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SettingsApplyPlan {
+    pub language_changed: bool,
+    pub bindings_changed: bool,
+    pub persistence_changed: bool,
+    pub audio_backend_changed: bool,
+    pub visual_changed: bool,
+    pub audio_volume_changed: bool,
+    pub renderer_rebuild_required: bool,
+    pub window_settings_changed: bool,
+    pub backend_presentation_changed: bool,
+    pub scaling_changed: bool,
+    pub vsync_changed: bool,
+    pub fullscreen_default_changed: bool,
+    pub notifications_changed: bool,
+}
+
+impl SettingsApplyPlan {
+    pub fn live_strategy(&self, assignments_changed: bool, has_core: bool) -> LiveStrategy {
+        if !has_core {
+            LiveStrategy::Idle
+        } else if assignments_changed {
+            LiveStrategy::Rebuild
+        } else if self.visual_changed {
+            LiveStrategy::PresentationSwap
+        } else if self.audio_backend_changed {
+            LiveStrategy::AudioSwap
+        } else {
+            LiveStrategy::Idle
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum DirectoryValidationError {
@@ -21,7 +61,6 @@ pub fn derive_apply_plan(
     after: &SettingsSnapshot,
     active_system_id: Option<&dyn SystemId>,
 ) -> SettingsApplyPlan {
-    let audio_changed = before.local.audio != after.local.audio;
     let visual_changed = active_system_id.is_some_and(|system_id| {
         live_system_settings_changed(&before.shared, &after.shared, system_id)
     });
@@ -39,13 +78,13 @@ pub fn derive_apply_plan(
     let window_settings_changed = (window_capabilities.supports_scaling && scaling_changed)
         || (window_capabilities.supports_fullscreen_default && fullscreen_default_changed);
 
-    let audio_volume_changed = audio_changed
-        && before.local.audio.sample_rate == after.local.audio.sample_rate
-        && before.local.audio.latency_ms == after.local.audio.latency_ms;
+    let audio_volume_changed = before.local.audio.master_volume_percent
+        != after.local.audio.master_volume_percent
+        || before.local.audio.muted != after.local.audio.muted;
     // Rate/latency changes ride the live backend swap; only the
     // session decides rebuild vs swap from here.
-    let audio_backend_changed = audio_changed && !audio_volume_changed;
-    let needs_rebuild = audio_backend_changed || visual_changed;
+    let audio_backend_changed = before.local.audio.sample_rate != after.local.audio.sample_rate
+        || before.local.audio.latency_ms != after.local.audio.latency_ms;
     // Notification presentation is frontend-only: no core rebuild.
     let notifications_changed = before.local.notifications != after.local.notifications;
 
@@ -53,10 +92,10 @@ pub fn derive_apply_plan(
         language_changed: before.shared.general != after.shared.general,
         bindings_changed: before.shared.input != after.shared.input,
         persistence_changed: before.shared.persistence != after.shared.persistence,
-        session_rebuild_required: needs_rebuild,
         audio_backend_changed,
+        visual_changed,
         audio_volume_changed,
-        renderer_rebuild_required: audio_changed || visual_changed || backend_presentation_changed,
+        renderer_rebuild_required: visual_changed || backend_presentation_changed,
         window_settings_changed,
         backend_presentation_changed,
         scaling_changed,
@@ -67,23 +106,47 @@ pub fn derive_apply_plan(
 }
 
 pub fn validate_shared_settings(settings: &DesktopSharedSettings) -> Result<(), SettingsError> {
-    if matches!(
-        settings.persistence.storage_policy,
-        StoragePolicy::CustomDirectory
-    ) {
-        if settings.persistence.storage_document_tree_uri.is_some() {
-            return Ok(());
-        }
-        let Some(path) = settings.persistence.storage_directory.as_ref() else {
-            return Err(SettingsError::MissingCustomStorageDirectory);
-        };
-        validate_directory_path(path)?;
+    if let Some(path) = custom_storage_path(settings)? {
+        validate_directory_path_typed(path).map_err(|e| match e {
+            DirectoryValidationError::NotDirectory => SettingsError::Io(std::io::Error::other(
+                "custom storage path is not a directory",
+            )),
+            DirectoryValidationError::Inaccessible(err) => err.into(),
+        })?;
     }
     Ok(())
 }
 
+/// Shared native/SAF selection rules. Platform-specific path access is validated by the caller.
+pub fn custom_storage_path(
+    settings: &DesktopSharedSettings,
+) -> Result<Option<&Path>, SettingsError> {
+    if settings.persistence.storage_policy == StoragePolicy::AppSharedData {
+        return Ok(None);
+    }
+    if let Some(uri) = settings.persistence.storage_document_tree_uri.as_deref() {
+        if nerust_persistence::sidecar::StorageLocation::document_tree(uri, "validation").is_err() {
+            return Err(SettingsError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid storage document tree URI",
+            )));
+        }
+        return Ok(None);
+    }
+    if settings.persistence.storage_policy == StoragePolicy::Sidecar {
+        return Ok(None);
+    }
+    settings
+        .persistence
+        .storage_directory
+        .as_deref()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(Some)
+        .ok_or(SettingsError::MissingCustomStorageDirectory)
+}
+
 pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<(), SettingsError> {
-    let volume = settings.local_audio_volume_percent();
+    let volume = settings.audio.master_volume_percent;
     let sample_rate = settings.audio.sample_rate;
     let latency = settings.audio.latency_ms;
     if !(0..=100).contains(&volume) {
@@ -107,8 +170,8 @@ pub fn validate_local_settings(settings: &HostBackendLocalSettings) -> Result<()
     Ok(())
 }
 
-/// Typed version of directory validation — used by both the runtime
-/// (via `validate_directory_path`) and the frontend storage validator.
+/// Typed directory validation: walks up to the nearest existing ancestor.
+/// A non-directory hit and an I/O failure map to distinct error variants.
 pub fn validate_directory_path_typed(path: &Path) -> Result<(), DirectoryValidationError> {
     let mut current = Some(path);
     while let Some(candidate) = current {
@@ -126,16 +189,6 @@ pub fn validate_directory_path_typed(path: &Path) -> Result<(), DirectoryValidat
         }
     }
     Ok(())
-}
-
-/// Wrapper for backward-compatible usage inside `validate_shared_settings`.
-pub fn validate_directory_path(path: &Path) -> Result<(), SettingsError> {
-    validate_directory_path_typed(path).map_err(|e| match e {
-        DirectoryValidationError::NotDirectory => SettingsError::Io(std::io::Error::other(
-            "custom storage path is not a directory",
-        )),
-        DirectoryValidationError::Inaccessible(err) => err.into(),
-    })
 }
 
 fn live_system_settings_changed(
@@ -160,16 +213,6 @@ fn system_live_settings_changed(
     }
 }
 
-trait LocalSettingsExt {
-    fn local_audio_volume_percent(&self) -> u16;
-}
-
-impl LocalSettingsExt for HostBackendLocalSettings {
-    fn local_audio_volume_percent(&self) -> u16 {
-        u16::from(self.audio.master_volume_percent)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -181,6 +224,19 @@ mod tests {
     };
 
     use crate::test::{DummyOtherSystemId, DummySystemId};
+
+    #[test]
+    fn custom_storage_requires_valid_saf_uri_or_nonempty_native_path() {
+        let mut shared = test_shared_defaults();
+        shared.persistence.storage_policy = StoragePolicy::CustomDirectory;
+        shared.persistence.storage_document_tree_uri = Some("content://provider/tree/saves".into());
+        assert!(validate_shared_settings(&shared).is_ok());
+        shared.persistence.storage_document_tree_uri = Some("".into());
+        assert!(validate_shared_settings(&shared).is_err());
+        shared.persistence.storage_document_tree_uri = None;
+        shared.persistence.storage_directory = Some("".into());
+        assert!(validate_shared_settings(&shared).is_err());
+    }
 
     use super::{
         super::{
@@ -210,10 +266,10 @@ mod tests {
                 language_changed: true,
                 bindings_changed: false,
                 persistence_changed: false,
-                session_rebuild_required: true,
                 audio_backend_changed: true,
+                visual_changed: false,
                 audio_volume_changed: false,
-                renderer_rebuild_required: true,
+                renderer_rebuild_required: false,
                 window_settings_changed: true,
                 backend_presentation_changed: false,
                 scaling_changed: true,
@@ -236,9 +292,62 @@ mod tests {
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
-        assert!(!plan.session_rebuild_required);
+        assert!(!plan.visual_changed);
         assert!(!plan.audio_backend_changed);
         assert!(plan.audio_volume_changed);
+        assert!(!plan.renderer_rebuild_required);
+    }
+
+    #[test]
+    fn independent_change_reasons_and_strategy_matrix() {
+        use super::LiveStrategy;
+
+        let before = SettingsSnapshot {
+            shared: test_shared_defaults(),
+            local: test_local_defaults(),
+            app_state: DesktopAppState::default(),
+        };
+        for audio in [false, true] {
+            for visual in [false, true] {
+                for volume in [false, true] {
+                    let mut after = before.clone();
+                    if audio {
+                        after.local.audio.latency_ms = 90;
+                    }
+                    if volume {
+                        after.local.audio.muted = !before.local.audio.muted;
+                    }
+                    if visual {
+                        let nes = after
+                            .shared
+                            .systems
+                            .get_mut(&DummySystemId as &dyn nerust_core_traits::identity::SystemId)
+                            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+                            .unwrap();
+                        nes.video.filter = NesVideoFilter::NtscRgb;
+                    }
+                    let plan =
+                        derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+                    assert_eq!(plan.audio_backend_changed, audio);
+                    assert_eq!(plan.visual_changed, visual);
+                    assert_eq!(plan.audio_volume_changed, volume);
+                    assert_eq!(plan.renderer_rebuild_required, visual);
+                    for assignments in [false, true] {
+                        let expected = if assignments {
+                            LiveStrategy::Rebuild
+                        } else if visual {
+                            LiveStrategy::PresentationSwap
+                        } else if audio {
+                            LiveStrategy::AudioSwap
+                        } else {
+                            LiveStrategy::Idle
+                        };
+                        assert_eq!(plan.live_strategy(assignments, true), expected);
+                        assert_eq!(plan.live_strategy(assignments, false), LiveStrategy::Idle);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -259,7 +368,7 @@ mod tests {
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
-        assert!(plan.session_rebuild_required);
+        assert!(plan.visual_changed);
     }
 
     #[test]
@@ -280,7 +389,7 @@ mod tests {
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
-        assert!(!plan.session_rebuild_required);
+        assert!(!plan.visual_changed);
     }
 
     #[test]
@@ -331,7 +440,7 @@ mod tests {
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
-        assert!(!plan.session_rebuild_required);
+        assert!(!plan.visual_changed);
         assert!(!plan.renderer_rebuild_required);
     }
 
@@ -352,7 +461,7 @@ mod tests {
 
         let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
 
-        assert!(!plan.session_rebuild_required);
+        assert!(!plan.visual_changed);
         assert!(!plan.renderer_rebuild_required);
     }
 

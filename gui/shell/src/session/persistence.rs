@@ -1,246 +1,74 @@
-use std::{
-    io::ErrorKind,
-    path::{Path, PathBuf},
+//! Slot persistence orchestration: save/load/delete plus mapper-save flushing.
+//! Ports live in [`ports`](super::ports); the filesystem backend in [`fs`](super::fs).
+
+use std::{io::ErrorKind, sync::Arc};
+
+use nerust_core_traits::{
+    identity::SystemIdentity,
+    save_state::{SaveStateHeader, save_state_with_header},
 };
-
-use std::io::Error as IoError;
-
-use crate::state::resolve_state_format;
-use nerust_core_traits::{identity::SystemIdentity, save_state::save_state_with_header};
 use nerust_persistence::{
-    error::PersistenceError,
-    model::{LoadedStateSlot, StateSlotSummary},
-    sidecar::{load_mapper_save, write_mapper_save, write_recovery_mapper_save},
-    slots::{
-        allocate_next_slot_id, autosave_state_slot_path, delete_state_slot, load_state_slot,
-        load_state_slot_for_identity, scan_state_slots_for_identity, state_slot_path,
-        write_autosave_state_slot, write_state_slot,
-    },
-    thumbnail::ThumbnailSource,
+    error::PersistenceError, model::StateSlotSummary, sidecar::StorageLocation,
     time::latest_saved_slot_id,
 };
 
-use crate::emu_core::CorePersistence;
+use super::error::SlotOpFailure;
 
-use super::commands::SlotOpFailure;
+pub use super::fs::{FailingSlotBackend, FsAutosave, FsMapper, FsSlots};
+pub use super::ports::{
+    AutoSaveBackend, MapperSaveBackend, PersistenceBackends, SlotActivation, SlotBackend,
+    StateExporter,
+};
 
-/// Classify a persistence-layer failure for user-facing messages:
-/// transport problems are `Storage`, undecodable payloads `Corrupt`.
-fn storage_or_corrupt(error: &PersistenceError) -> SlotOpFailure {
-    match error {
-        PersistenceError::Io(_) => SlotOpFailure::Storage,
-        _ => SlotOpFailure::Corrupt,
+/// Typed mapper-flush failure: the fault travels typed, detail renders once at the UI boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapperFlushError {
+    /// Classified fault for UI text and tests.
+    pub fault: SlotOpFailure,
+}
+
+impl std::fmt::Display for MapperFlushError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "mapper save export failed: {:?}", self.fault)
     }
 }
 
-/// Platform abstraction for state slot I/O (Desktop fs / Android SAF).
-pub trait SlotBackend: Send {
-    fn scan(
-        &self,
-        dir: &Path,
-        identity: &SystemIdentity,
-    ) -> Result<Vec<StateSlotSummary>, PersistenceError>;
-    fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError>;
-    fn write_slot(
-        &self,
-        dir: &Path,
-        slot_id: u64,
-        data: &[u8],
-        identity: &SystemIdentity,
-        thumbnail: Option<&ThumbnailSource>,
-    ) -> Result<StateSlotSummary, PersistenceError>;
-    fn read_slot(
-        &self,
-        dir: &Path,
-        slot_id: u64,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
-    fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError>;
-}
+impl std::error::Error for MapperFlushError {}
 
-/// Platform abstraction for autosave I/O.
-pub trait AutoSaveBackend: Send {
-    fn write_autosave(
-        &self,
-        dir: &Path,
-        data: &[u8],
-        identity: &SystemIdentity,
-    ) -> Result<StateSlotSummary, PersistenceError>;
-    fn read_autosave(
-        &self,
-        dir: &Path,
-        identity: &SystemIdentity,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
-    fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError>;
-}
-
-/// Platform abstraction for mapper save I/O.
-pub trait MapperSaveBackend: Send {
-    fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError>;
-    fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError>;
-    fn write_recovery_mapper_save(
-        &self,
-        path: &Path,
-        data: &[u8],
-    ) -> Result<PathBuf, PersistenceError>;
-}
-
-pub struct FsSlotBackend;
-
-/// A failing backend for testing error paths in persistence.
-///
-/// Always returns `Err` for all operations.
-#[derive(Debug)]
-pub struct FailingSlotBackend;
-
-impl SlotBackend for FailingSlotBackend {
-    fn scan(
-        &self,
-        _dir: &Path,
-        _identity: &SystemIdentity,
-    ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn allocate_next_id(&self, _dir: &Path) -> Result<u64, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn write_slot(
-        &self,
-        _dir: &Path,
-        _slot_id: u64,
-        _data: &[u8],
-        _identity: &SystemIdentity,
-        _thumbnail: Option<&ThumbnailSource>,
-    ) -> Result<StateSlotSummary, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn read_slot(
-        &self,
-        _dir: &Path,
-        _slot_id: u64,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn delete_slot(&self, _dir: &Path, _slot_id: u64) -> Result<(), PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-}
-impl AutoSaveBackend for FailingSlotBackend {
-    fn write_autosave(
-        &self,
-        _dir: &Path,
-        _data: &[u8],
-        _identity: &SystemIdentity,
-    ) -> Result<StateSlotSummary, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn read_autosave(
-        &self,
-        _dir: &Path,
-        _identity: &SystemIdentity,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn delete_autosave(&self, _dir: &Path) -> Result<(), PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-}
-impl MapperSaveBackend for FailingSlotBackend {
-    fn read_mapper_save(&self, _path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn write_mapper_save(&self, _path: &Path, _data: &[u8]) -> Result<(), PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-    fn write_recovery_mapper_save(
-        &self,
-        _path: &Path,
-        _data: &[u8],
-    ) -> Result<PathBuf, PersistenceError> {
-        Err(PersistenceError::Io(IoError::other("simulated failure")))
-    }
-}
-
-impl SlotBackend for FsSlotBackend {
-    fn scan(
-        &self,
-        dir: &Path,
-        identity: &SystemIdentity,
-    ) -> Result<Vec<StateSlotSummary>, PersistenceError> {
-        scan_state_slots_for_identity(dir, identity)
-    }
-    fn allocate_next_id(&self, dir: &Path) -> Result<u64, PersistenceError> {
-        allocate_next_slot_id(dir)
-    }
-    fn write_slot(
-        &self,
-        dir: &Path,
-        slot_id: u64,
-        data: &[u8],
-        identity: &SystemIdentity,
-        thumbnail: Option<&ThumbnailSource>,
-    ) -> Result<StateSlotSummary, PersistenceError> {
-        write_state_slot(dir, slot_id, data, identity, thumbnail)
-    }
-    fn read_slot(
-        &self,
-        dir: &Path,
-        slot_id: u64,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        match load_state_slot(&state_slot_path(dir, slot_id)) {
-            Ok(slot) => Ok(Some(slot)),
-            Err(PersistenceError::Io(e)) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-    fn delete_slot(&self, dir: &Path, slot_id: u64) -> Result<(), PersistenceError> {
-        delete_state_slot(&state_slot_path(dir, slot_id))
-    }
-}
-impl AutoSaveBackend for FsSlotBackend {
-    fn write_autosave(
-        &self,
-        dir: &Path,
-        data: &[u8],
-        identity: &SystemIdentity,
-    ) -> Result<StateSlotSummary, PersistenceError> {
-        write_autosave_state_slot(dir, data, identity, None)
-    }
-    fn read_autosave(
-        &self,
-        dir: &Path,
-        identity: &SystemIdentity,
-    ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
-        load_state_slot_for_identity(&autosave_state_slot_path(dir), identity)
-    }
-    fn delete_autosave(&self, dir: &Path) -> Result<(), PersistenceError> {
-        delete_state_slot(&autosave_state_slot_path(dir))
-    }
-}
-impl MapperSaveBackend for FsSlotBackend {
-    fn read_mapper_save(&self, path: &Path) -> Result<Option<Vec<u8>>, PersistenceError> {
-        load_mapper_save(path)
-    }
-    fn write_mapper_save(&self, path: &Path, data: &[u8]) -> Result<(), PersistenceError> {
-        write_mapper_save(path, data)
-    }
-    fn write_recovery_mapper_save(
-        &self,
-        path: &Path,
-        data: &[u8],
-    ) -> Result<PathBuf, PersistenceError> {
-        write_recovery_mapper_save(path, data)
-    }
+/// Outcome of a mapper-save flush: "nothing to do" vs "wrote".
+/// Callers distinguish them without re-reading manager state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapperFlush {
+    /// Battery save exported and written to the sidecar path.
+    Flushed,
+    /// Auto-load failed earlier, so the flush was degraded: the
+    /// in-core save went to a recovery file instead.
+    DegradedRecoveryWritten,
+    /// No sidecar path configured (ROM-less switch or reset state).
+    SkippedNoPath,
 }
 
 pub struct PersistenceManager {
     slot_backend: Box<dyn SlotBackend>,
     autosave_backend: Box<dyn AutoSaveBackend>,
     mapper_backend: Box<dyn MapperSaveBackend>,
-    states_dir: Option<PathBuf>,
-    mapper_save_path: Option<PathBuf>,
+    states_dir: Option<StorageLocation>,
+    mapper_save_path: Option<StorageLocation>,
     mapper_save_flush_allowed: bool,
     mapper_save_recovery_written: bool,
-    slots: Vec<StateSlotSummary>,
+    slots: Arc<[StateSlotSummary]>,
+    active_slot_id: Option<u64>,
+}
+
+/// In-memory persistence setup for load-failure rollback: backends are
+/// untouched by a system switch, so only the setup snapshot travels.
+#[derive(Debug, Clone)]
+pub(crate) struct PersistSnapshot {
+    states_dir: Option<StorageLocation>,
+    mapper_save_path: Option<StorageLocation>,
+    flush_allowed: bool,
+    recovery_written: bool,
+    slots: Arc<[StateSlotSummary]>,
     active_slot_id: Option<u64>,
 }
 
@@ -250,129 +78,130 @@ impl Default for PersistenceManager {
     }
 }
 
+/// UI-thread state budget: one envelope round-trip per slot op.
+/// Oversized exports are corrupt payloads; saves refuse them in all builds.
+pub const MAX_SLOT_BLOB_BYTES: usize = 64 << 20;
+
+/// Refuse an oversized core export before it reaches the slot backend.
+fn check_blob_budget(core_bytes: &[u8]) -> Result<(), SlotOpFailure> {
+    if core_bytes.len() > MAX_SLOT_BLOB_BYTES {
+        log::warn!(
+            "slot blob exceeds UI-thread budget: {} bytes",
+            core_bytes.len()
+        );
+        return Err(SlotOpFailure::Corrupt);
+    }
+    Ok(())
+}
+
 impl PersistenceManager {
     pub fn new() -> Self {
-        Self::with_backend(Box::new(FsSlotBackend))
-    }
-
-    pub fn with_backend(backend: Box<dyn SlotBackend>) -> Self {
         Self {
-            slot_backend: backend,
-            autosave_backend: Box::new(FsSlotBackend),
-            mapper_backend: Box::new(FsSlotBackend),
+            slot_backend: Box::new(FsSlots),
+            autosave_backend: Box::new(FsAutosave),
+            mapper_backend: Box::new(FsMapper),
             states_dir: None,
             mapper_save_path: None,
             mapper_save_flush_allowed: true,
             mapper_save_recovery_written: false,
-            slots: Vec::new(),
+            slots: Arc::from([]),
             active_slot_id: None,
         }
     }
 
-    pub fn with_all_backends(
-        slot_backend: Box<dyn SlotBackend>,
-        autosave_backend: Box<dyn AutoSaveBackend>,
-        mapper_backend: Box<dyn MapperSaveBackend>,
-    ) -> Self {
-        Self {
-            slot_backend,
-            autosave_backend,
-            mapper_backend,
-            states_dir: None,
-            mapper_save_path: None,
-            mapper_save_flush_allowed: true,
-            mapper_save_recovery_written: false,
-            slots: Vec::new(),
-            active_slot_id: None,
-        }
-    }
-
-    pub fn with_autosave_backend(&mut self, backend: Box<dyn AutoSaveBackend>) {
-        self.autosave_backend = backend;
-    }
-
-    pub fn with_mapper_backend(&mut self, backend: Box<dyn MapperSaveBackend>) {
-        self.mapper_backend = backend;
+    /// Single wiring path: construct with [`Self::new`], then wire all three legs here.
+    pub fn configure_backends(&mut self, backends: PersistenceBackends) {
+        self.slot_backend = backends.slot;
+        self.autosave_backend = backends.autosave;
+        self.mapper_backend = backends.mapper;
     }
 
     pub fn slots(&self) -> &[StateSlotSummary] {
         &self.slots
     }
 
+    pub fn slots_arc(&self) -> Arc<[StateSlotSummary]> {
+        Arc::clone(&self.slots)
+    }
+
     pub fn active_slot_id(&self) -> Option<u64> {
         self.active_slot_id
     }
 
-    #[cfg(test)]
-    pub fn states_dir(&self) -> Option<&PathBuf> {
-        self.states_dir.as_ref()
-    }
-
-    #[cfg(test)]
-    pub fn mapper_save_path(&self) -> Option<&PathBuf> {
-        self.mapper_save_path.as_ref()
+    /// Configured save locations, if setup resolved them: cloned paths for the session boundary.
+    pub(crate) fn configured_sidecars(&self) -> Option<(StorageLocation, StorageLocation)> {
+        match (&self.states_dir, &self.mapper_save_path) {
+            (Some(states), Some(mapper)) => Some((states.clone(), mapper.clone())),
+            _ => None,
+        }
     }
 
     pub fn save_slot(
         &mut self,
         slot_id: u64,
-        emu: &impl CorePersistence,
-        make_active: bool,
+        emu: &dyn StateExporter,
+        activation: SlotActivation,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("save_slot: no states_dir configured; cannot save slot {slot_id}");
             return Err(SlotOpFailure::Unavailable);
         };
-        let Some(identity) = emu.canonical_media_identity() else {
-            log::warn!("save_slot: no persistence identity available; cannot save slot {slot_id}");
+        let Some(identity) = emu.export_identity() else {
             return Err(SlotOpFailure::Unavailable);
         };
-        log::info!(
-            "save_slot: writing slot {slot_id} (make_active={make_active}) to {}",
-            dir.display()
-        );
-        match emu.save_state_raw() {
-            Ok(core_bytes) => {
-                let state_blob = save_state_with_header(core_bytes);
-                let preview = emu.generate_preview().map(|p| ThumbnailSource {
-                    width: p.width,
-                    height: p.height,
-                    rgba: p.rgba,
+
+        let core_bytes = emu.export_state()?;
+        check_blob_budget(&core_bytes)?;
+        let state_blob = save_state_with_header(&core_bytes);
+        let preview =
+            emu.export_preview()
+                .map(|frame| nerust_persistence::thumbnail::ThumbnailSource {
+                    width: frame.width,
+                    height: frame.height,
+                    rgba: frame.rgba,
                 });
-                match self.slot_backend.write_slot(
-                    dir,
-                    slot_id,
-                    &state_blob,
-                    &identity,
-                    preview.as_ref(),
-                ) {
-                    Ok(_) => {
-                        if make_active {
-                            self.active_slot_id = Some(slot_id);
-                        }
-                        self.refresh_slots_inner(Some(&identity));
-                        log::info!("save_slot: saved slot {slot_id}");
-                        Ok(())
-                    }
-                    Err(error) => {
-                        log::warn!("saving state slot failed: {error}");
-                        Err(storage_or_corrupt(&error))
-                    }
+        match self
+            .slot_backend
+            .write_slot(dir, slot_id, &state_blob, &identity, preview.as_ref())
+        {
+            Ok(summary) => {
+                if activation == SlotActivation::Activate {
+                    self.active_slot_id = Some(slot_id);
                 }
+                // Use the write summary; no re-scan on the mutation path.
+                self.upsert_summary(summary);
+                if self
+                    .active_slot_id
+                    .is_some_and(|active| !self.slots.iter().any(|slot| slot.slot_id == active))
+                {
+                    self.active_slot_id = None;
+                }
+                if self.active_slot_id.is_none() {
+                    self.active_slot_id = latest_saved_slot_id(&self.slots);
+                }
+
+                Ok(())
             }
-            Err(error) => {
-                log::warn!("state export failed: {error}");
-                Err(SlotOpFailure::Unavailable)
-            }
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
+    }
+
+    /// Publish one immutable revision after a successful write.
+    fn upsert_summary(&mut self, summary: StateSlotSummary) {
+        let mut slots = self.slots.to_vec();
+        if let Some(slot) = slots.iter_mut().find(|s| s.slot_id == summary.slot_id) {
+            *slot = summary;
+        } else {
+            slots.push(summary);
+            slots.sort_by_key(|slot| slot.slot_id);
+        }
+        self.slots = slots.into();
     }
 
     pub fn save_active_slot_or_new(
         &mut self,
-        emu: &impl CorePersistence,
+        emu: &dyn StateExporter,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("save_active_slot_or_new: no states_dir configured; cannot save state");
             return Err(SlotOpFailure::Unavailable);
         };
         let slot_id = match self.active_slot_id {
@@ -380,85 +209,76 @@ impl PersistenceManager {
             None => match self.slot_backend.allocate_next_id(dir) {
                 Ok(slot_id) => slot_id,
                 Err(error) => {
-                    log::warn!("allocating state slot failed: {error}");
-                    return Err(storage_or_corrupt(&error));
+                    return Err(SlotOpFailure::from(&error));
                 }
             },
         };
-        log::info!("save_active_slot_or_new: saving to slot {slot_id}");
-        self.save_slot(slot_id, emu, true)
+
+        self.save_slot(slot_id, emu, SlotActivation::Activate)
     }
 
-    pub fn create_slot(&mut self, emu: &impl CorePersistence) -> Result<(), SlotOpFailure> {
+    pub fn create_slot(&mut self, emu: &dyn StateExporter) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("create_slot: no states_dir configured; cannot create slot");
             return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.allocate_next_id(dir) {
-            Ok(slot_id) => self.save_slot(slot_id, emu, true),
-            Err(error) => {
-                log::warn!("allocating state slot failed: {error}");
-                Err(storage_or_corrupt(&error))
-            }
+            Ok(slot_id) => self.save_slot(slot_id, emu, SlotActivation::Activate),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
+    /// Load a slot through `emu`; the envelope decodes once at this boundary.
     pub fn load_slot(
         &mut self,
         slot_id: u64,
-        emu: &impl CorePersistence,
+        emu: &dyn StateExporter,
     ) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("load_slot: no states_dir configured; cannot load slot {slot_id}");
             return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.read_slot(dir, slot_id) {
             Ok(Some(slot)) => {
-                if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
-                    log::warn!("state import failed: {error}");
-                    Err(error.slot_failure())
+                if let Err(failure) =
+                    emu.import_state(crate::state::resolve_state_format(&slot.machine_state))
+                {
+                    Err(failure)
                 } else {
+                    // Load changes no files: point active, no re-scan.
                     self.active_slot_id = Some(slot_id);
-                    let identity = emu.canonical_media_identity();
-                    self.refresh_slots_inner(identity.as_ref());
                     Ok(())
                 }
             }
-            Ok(None) => {
-                log::warn!("load_slot: slot {slot_id} not found in {}", dir.display());
-                Err(SlotOpFailure::Missing)
-            }
-            Err(error) => {
-                log::warn!("loading state slot failed: {error}");
-                Err(storage_or_corrupt(&error))
-            }
+            Ok(None) => Err(SlotOpFailure::Missing),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
-    pub fn load_active_slot(&mut self, emu: &impl CorePersistence) -> Result<(), SlotOpFailure> {
+    pub fn load_active_slot(&mut self, emu: &dyn StateExporter) -> Result<(), SlotOpFailure> {
         match self.active_slot_id {
             Some(slot_id) => self.load_slot(slot_id, emu),
-            None => {
-                log::debug!("load_active_slot: no active slot");
-                Err(SlotOpFailure::Empty)
-            }
+            None => Err(SlotOpFailure::Empty),
         }
     }
 
-    pub fn delete_slot(&mut self, slot_id: u64, emu: &impl CorePersistence) {
+    pub fn delete_slot(&mut self, slot_id: u64) -> Result<(), SlotOpFailure> {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("delete_slot: no states_dir configured; cannot delete slot {slot_id}");
-            return;
+            return Err(SlotOpFailure::Unavailable);
         };
         match self.slot_backend.delete_slot(dir, slot_id) {
             Ok(()) => {
                 if self.active_slot_id == Some(slot_id) {
                     self.active_slot_id = None;
                 }
-                let identity = emu.canonical_media_identity();
-                self.refresh_slots_inner(identity.as_ref());
+                // Prune the cache; no re-scan on the mutation path.
+                self.slots = self
+                    .slots
+                    .iter()
+                    .filter(|slot| slot.slot_id != slot_id)
+                    .cloned()
+                    .collect();
+                Ok(())
             }
-            Err(error) => log::warn!("deleting state slot failed: {error}"),
+            Err(error) => Err(SlotOpFailure::from(&error)),
         }
     }
 
@@ -466,30 +286,15 @@ impl PersistenceManager {
         self.active_slot_id = Some(slot_id);
     }
 
-    pub fn select_adjacent_slot(&mut self, forward: bool) -> Option<u64> {
-        let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, forward)?;
+    pub fn select_adjacent_slot(&mut self, direction: SlotDirection) -> Option<u64> {
+        let next_slot_id = adjacent_slot_id(&self.slots, self.active_slot_id, direction)?;
         self.active_slot_id = Some(next_slot_id);
         Some(next_slot_id)
     }
 
-    pub fn refresh_slots(&mut self, emu: &impl CorePersistence) {
-        let identity = emu.canonical_media_identity();
-        self.refresh_slots_inner(identity.as_ref());
-    }
-
-    fn refresh_slots_inner(&mut self, identity: Option<&SystemIdentity>) {
-        self.slots = if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
-            match self.slot_backend.scan(dir, identity) {
-                Ok(slots) => slots,
-                Err(error) => {
-                    log::warn!("slot scan failed: {error}");
-                    Vec::new()
-                }
-            }
-        } else {
-            log::warn!("states_dir not configured, slot list unavailable");
-            Vec::new()
-        };
+    pub fn refresh_slots(&mut self, emu: &dyn StateExporter) -> Result<(), PersistenceError> {
+        let identity = emu.export_identity();
+        let outcome = self.refresh_slots_inner(identity.as_ref());
         if self
             .active_slot_id
             .is_some_and(|slot_id| !self.slots.iter().any(|slot| slot.slot_id == slot_id))
@@ -499,14 +304,45 @@ impl PersistenceManager {
         if self.active_slot_id.is_none() {
             self.active_slot_id = latest_saved_slot_id(&self.slots);
         }
+        outcome
     }
 
-    pub fn configure(&mut self, states_dir: PathBuf, mapper_save_path: PathBuf) {
+    /// Scan outcome for the setup notice: a failed scan keeps the previous list
+    /// but reports, so empty-looking output stays distinguishable from failure.
+    fn refresh_slots_inner(
+        &mut self,
+        identity: Option<&SystemIdentity>,
+    ) -> Result<(), PersistenceError> {
+        // A failed scan keeps the previous list: a transient backend
+        // failure must not wipe the slots.
+        if let (Some(dir), Some(identity)) = (self.states_dir.as_ref(), identity) {
+            match self.slot_backend.scan(dir, identity) {
+                Ok(slots) => {
+                    self.slots = slots.into();
+                    Ok(())
+                }
+                Err(error) => {
+                    log::warn!("slot scan failed, keeping previous list: {error:?}");
+                    Err(error)
+                }
+            }
+        } else {
+            self.slots = Vec::new().into();
+            Ok(())
+        }
+    }
+
+    pub fn configure(&mut self, states_dir: StorageLocation, mapper_save_path: StorageLocation) {
+        if self.mapper_save_path.as_ref() != Some(&mapper_save_path) {
+            self.mapper_save_flush_allowed = true;
+            self.mapper_save_recovery_written = false;
+        }
+        if self.states_dir.as_ref() != Some(&states_dir) {
+            self.active_slot_id = None;
+            self.slots = Arc::from([]);
+        }
         self.states_dir = Some(states_dir);
         self.mapper_save_path = Some(mapper_save_path);
-        self.mapper_save_flush_allowed = true;
-        self.mapper_save_recovery_written = false;
-        self.active_slot_id = None;
     }
 
     pub fn reset(&mut self) {
@@ -514,147 +350,171 @@ impl PersistenceManager {
         self.mapper_save_path = None;
         self.mapper_save_flush_allowed = true;
         self.mapper_save_recovery_written = false;
-        self.slots = Vec::new();
+        self.slots = Arc::from([]);
         self.active_slot_id = None;
+    }
+
+    /// Snapshot the in-memory setup for load-failure rollback.
+    pub(crate) fn snapshot_state(&self) -> PersistSnapshot {
+        PersistSnapshot {
+            states_dir: self.states_dir.clone(),
+            mapper_save_path: self.mapper_save_path.clone(),
+            flush_allowed: self.mapper_save_flush_allowed,
+            recovery_written: self.mapper_save_recovery_written,
+            slots: Arc::clone(&self.slots),
+            active_slot_id: self.active_slot_id,
+        }
+    }
+
+    /// Restore a snapshot verbatim, bypassing configure's path-change resets.
+    pub(crate) fn restore_state(&mut self, snapshot: PersistSnapshot) {
+        self.states_dir = snapshot.states_dir;
+        self.mapper_save_path = snapshot.mapper_save_path;
+        self.mapper_save_flush_allowed = snapshot.flush_allowed;
+        self.mapper_save_recovery_written = snapshot.recovery_written;
+        self.slots = snapshot.slots;
+        self.active_slot_id = snapshot.active_slot_id;
     }
 
     pub fn flush_mapper_save(
         &mut self,
-        emu: &impl CorePersistence,
-    ) -> Result<(), PersistenceError> {
-        // No path configured means no save location exists, not a
-        // failure: `set_active_system` resets paths before every
-        // activation, so the first load and ROM-less system switches
-        // always flush here. Returning Err would break those flows.
-        // Only a configured path with a failing export is an error.
+        emu: &dyn StateExporter,
+    ) -> Result<MapperFlush, MapperFlushError> {
+        // No path means no save location exists, not a failure: return Skipped, not an error.
         let Some(path) = self.mapper_save_path.as_ref() else {
-            return Ok(());
+            return Ok(MapperFlush::SkippedNoPath);
         };
         if !self.mapper_save_flush_allowed {
             if self.mapper_save_recovery_written {
-                return Ok(());
+                return Ok(MapperFlush::DegradedRecoveryWritten);
             }
             if let Some(bytes) = emu
-                .save_mapper_raw()
-                .map_err(|e| {
-                    log::warn!("mapper save failed: {e}");
-                    e
-                })
-                .ok()
-                .flatten()
+                .export_mapper()
+                .map_err(|fault| MapperFlushError { fault })?
             {
-                let recovery_path = self
+                let _recovery_path = self
                     .mapper_backend
-                    .write_recovery_mapper_save(path, &bytes)?;
+                    .write_recovery_mapper_save(path, &bytes)
+                    .map_err(|_| MapperFlushError {
+                        fault: SlotOpFailure::Storage,
+                    })?;
                 self.mapper_save_recovery_written = true;
-                log::warn!(
-                    "mapper save auto-load failed earlier; wrote recovery save to {}",
-                    recovery_path.display()
-                );
+
+                return Ok(MapperFlush::DegradedRecoveryWritten);
             }
-            return Ok(());
+            return Ok(MapperFlush::SkippedNoPath);
         }
-        match emu.save_mapper_raw() {
-            Ok(Some(bytes)) => self.mapper_backend.write_mapper_save(path, &bytes)?,
-            Ok(None) => {}
-            Err(error) => {
-                // Fail loudly: callers propagate this to the UI instead
-                // of silently dropping the in-core battery save.
-                let error = PersistenceError::from(error);
-                log::warn!("{error}");
-                return Err(error);
+        let flushed = match emu.export_mapper() {
+            Ok(Some(bytes)) => self
+                .mapper_backend
+                .write_mapper_save(path, &bytes)
+                .map(|_| MapperFlush::Flushed)
+                .map_err(|_| MapperFlushError {
+                    fault: SlotOpFailure::Storage,
+                })?,
+            Ok(None) => MapperFlush::Flushed,
+            Err(fault) => {
+                // Fail loudly with the typed fault: callers render it at the UI boundary.
+                return Err(MapperFlushError { fault });
             }
-        }
-        Ok(())
+        };
+        Ok(flushed)
     }
 
     pub fn load_mapper_save_if_needed(
         &mut self,
-        emu: &impl CorePersistence,
+        emu: &dyn StateExporter,
     ) -> Result<(), PersistenceError> {
         let Some(path) = self.mapper_save_path.as_ref() else {
             return Ok(());
         };
         match self.mapper_backend.read_mapper_save(path) {
-            Ok(Some(bytes)) => {
-                if let Err(e) = emu.load_mapper_raw(bytes) {
-                    log::warn!("mapper save load failed: {e}");
+            Ok(Some(bytes)) => match emu.import_mapper(bytes) {
+                Ok(()) => {
+                    // The new runtime mirrors the on-disk save: lift the write protection
+                    // a previous failed import had raised; a mere rebind keeps it.
+                    self.mapper_save_flush_allowed = true;
+                    self.mapper_save_recovery_written = false;
+                    Ok(())
                 }
+                Err(fault) => {
+                    self.mapper_save_flush_allowed = false;
+                    Err(PersistenceError::Validation(format!(
+                        "mapper import failed: {fault:?}"
+                    )))
+                }
+            },
+            Ok(None) => {
+                // Nothing on disk to diverge from: a fresh runtime is safe to flush.
+                self.mapper_save_flush_allowed = true;
+                self.mapper_save_recovery_written = false;
                 Ok(())
             }
-            Ok(None) => Ok(()),
             Err(error) => {
                 self.mapper_save_flush_allowed = false;
-                log::warn!("mapper save auto-load failed: {error}");
-                Ok(())
+                Err(error)
             }
         }
     }
 
-    pub fn save_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    pub fn save_hidden(&self, emu: &dyn StateExporter) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("save_hidden: no states_dir configured; cannot save hidden lifecycle state");
             return false;
         };
-        let Some(identity) = emu.canonical_media_identity() else {
+        let Some(identity) = emu.export_identity() else {
             return false;
         };
-        match emu.save_state_raw() {
+        match emu.export_state() {
             Ok(core_bytes) => {
-                let state_blob = save_state_with_header(core_bytes);
-                match self
-                    .autosave_backend
-                    .write_autosave(dir, &state_blob, &identity)
-                {
-                    Ok(_) => true,
-                    Err(error) => {
-                        log::warn!("saving hidden lifecycle state failed: {error}");
-                        false
-                    }
+                if check_blob_budget(&core_bytes).is_err() {
+                    return false;
                 }
+                let state_blob = save_state_with_header(&core_bytes);
+                self.autosave_backend
+                    .write_autosave(dir, &state_blob, &identity)
+                    .is_ok()
             }
-            Err(error) => {
-                log::warn!("hidden lifecycle state export failed: {error}");
-                false
-            }
+            Err(_) => false,
         }
     }
 
-    pub fn load_hidden(&mut self, emu: &impl CorePersistence) -> bool {
+    /// Load the hidden autosave through `emu`; envelope decodes here.
+    pub fn load_hidden(&self, emu: &dyn StateExporter) -> bool {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!("load_hidden: no states_dir configured; cannot load hidden lifecycle state");
             return false;
         };
-        let Some(identity) = emu.canonical_media_identity() else {
+        let Some(identity) = emu.export_identity() else {
             return false;
         };
         match self.autosave_backend.read_autosave(dir, &identity) {
             Ok(Some(slot)) => {
-                if slot.summary.emulator_version != env!("CARGO_PKG_VERSION") {
-                    log::warn!(
-                        "ignoring hidden lifecycle state from emulator version {} on {}",
-                        slot.summary.emulator_version,
-                        env!("CARGO_PKG_VERSION")
-                    );
-                    let _ = self.autosave_backend.delete_autosave(dir);
+                if state_header_version(&slot.machine_state)
+                    != Some(SaveStateHeader::new(&[]).version)
+                {
+                    let _ = self.autosave_backend.quarantine_autosave(dir);
                     return false;
                 }
-                if let Err(error) = emu.load_state_raw(resolve_state_format(&slot.machine_state)) {
-                    log::warn!("hidden lifecycle state import failed: {error}");
-                    let _ = self.autosave_backend.delete_autosave(dir);
+                if emu
+                    .import_state(crate::state::resolve_state_format(&slot.machine_state))
+                    .is_err()
+                {
+                    let _ = self.autosave_backend.quarantine_autosave(dir);
                     false
                 } else {
                     true
                 }
             }
-            Ok(None) => {
-                let _ = self.autosave_backend.delete_autosave(dir);
-                false
-            }
+            // A missing read proves nothing to delete: transient `None` must not destroy,
+            // and absence or foreign identity is a no-op the next save overwrites.
+            Ok(None) => false,
             Err(PersistenceError::Io(error)) if error.kind() == ErrorKind::NotFound => false,
-            Err(error) => {
-                eprintln!("loading hidden lifecycle state failed: {error}");
-                let _ = self.autosave_backend.delete_autosave(dir);
+            // Transport failures are retryable: deleting after a transient read
+            // would destroy good bytes.
+            Err(PersistenceError::Io(_)) => false,
+            Err(_) => {
+                // Unreadable bytes are corrupt, not missing: quarantine them aside
+                // instead of deleting.
+                let _ = self.autosave_backend.quarantine_autosave(dir);
                 false
             }
         }
@@ -662,38 +522,997 @@ impl PersistenceManager {
 
     pub fn clear_hidden(&mut self) {
         let Some(dir) = self.states_dir.as_ref() else {
-            log::warn!(
-                "clear_hidden: no states_dir configured; cannot clear hidden lifecycle state"
-            );
             return;
         };
         let _ = self.autosave_backend.delete_autosave(dir);
     }
 }
 
+/// Decode the save-state envelope version from a stored blob.
+/// `None` means pre-header (or corrupt) data, which never matches the current version.
+fn state_header_version(blob: &[u8]) -> Option<u32> {
+    // 12-byte `SaveStateHeader` (`NRST` magic + version + size).
+    let buf: &[u8; 12] = blob.get(..12)?.try_into().ok()?;
+    SaveStateHeader::decode(buf)
+        .ok()
+        .map(|header| header.version)
+}
+
+/// Slot navigation direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotDirection {
+    Next,
+    Previous,
+}
+
 pub fn adjacent_slot_id(
     slots: &[StateSlotSummary],
     active_slot_id: Option<u64>,
-    forward: bool,
+    direction: SlotDirection,
 ) -> Option<u64> {
     if slots.is_empty() {
         return None;
     }
+    // No active slot: wrap around from the far end so the first step
+    // lands on a real slot in either direction.
     let current_index = active_slot_id
         .and_then(|active| slots.iter().position(|slot| slot.slot_id == active))
-        .unwrap_or_else(|| {
-            if forward {
-                slots.len().saturating_sub(1)
-            } else {
-                0
-            }
+        .unwrap_or_else(|| match direction {
+            SlotDirection::Next => slots.len().saturating_sub(1),
+            SlotDirection::Previous => 0,
         });
-    let next_index = if forward {
-        (current_index + 1) % slots.len()
-    } else if current_index == 0 {
-        slots.len() - 1
-    } else {
-        current_index - 1
+    let next_index = match direction {
+        SlotDirection::Next => (current_index + 1) % slots.len(),
+        SlotDirection::Previous if current_index == 0 => slots.len() - 1,
+        SlotDirection::Previous => current_index - 1,
     };
     Some(slots[next_index].slot_id)
+}
+
+#[cfg(test)]
+mod persistence_cov_tests {
+    use crate::session::persistence::*;
+
+    struct OkExporter {
+        identity: Option<SystemIdentity>,
+        state: Result<Vec<u8>, SlotOpFailure>,
+        mapper: Result<Option<Vec<u8>>, SlotOpFailure>,
+    }
+
+    impl StateExporter for OkExporter {
+        fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+            self.state.clone()
+        }
+        fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+            self.state.clone().map(|_| ())
+        }
+        fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
+            None
+        }
+        fn export_identity(&self) -> Option<SystemIdentity> {
+            self.identity.clone()
+        }
+        fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+            self.mapper.clone()
+        }
+        fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+            Ok(())
+        }
+    }
+
+    fn identity() -> SystemIdentity {
+        SystemIdentity::new(Box::new(crate::test_helpers::DummySystemId), vec![9, 9])
+    }
+
+    fn failing_manager() -> PersistenceManager {
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FailingSlotBackend),
+            autosave: Box::new(FailingSlotBackend),
+            mapper: Box::new(FailingSlotBackend),
+        });
+        manager
+    }
+
+    fn exporter_ok() -> OkExporter {
+        OkExporter {
+            identity: Some(identity()),
+            state: Ok(vec![1, 2, 3]),
+            mapper: Ok(Some(vec![4])),
+        }
+    }
+
+    #[test]
+    fn unconfigured_manager_reports_unavailable() {
+        let mut manager = PersistenceManager::new();
+        let exporter = exporter_ok();
+        assert_eq!(
+            manager
+                .save_slot(1, &exporter, SlotActivation::Activate)
+                .unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.save_active_slot_or_new(&exporter).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.create_slot(&exporter).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.load_slot(1, &exporter).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.load_active_slot(&exporter).unwrap_err(),
+            SlotOpFailure::Empty
+        );
+        assert_eq!(
+            manager.delete_slot(1).unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::SkippedNoPath
+        );
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+        assert!(!manager.save_hidden(&exporter));
+        assert!(!manager.load_hidden(&exporter));
+        manager.clear_hidden();
+    }
+
+    #[test]
+    fn no_identity_reports_unavailable_when_configured() {
+        let dir = std::env::temp_dir().join("nerust-persist-cov-noid");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
+        let exporter = OkExporter {
+            identity: None,
+            state: Ok(vec![1]),
+            mapper: Ok(None),
+        };
+        assert_eq!(
+            manager
+                .save_slot(1, &exporter, SlotActivation::Leave)
+                .unwrap_err(),
+            SlotOpFailure::Unavailable
+        );
+        assert!(!manager.save_hidden(&exporter));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_failure_short_circuits_before_backend() {
+        let dir = std::env::temp_dir().join("nerust-persist-cov-export");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
+        let exporter = OkExporter {
+            identity: Some(identity()),
+            state: Err(SlotOpFailure::Corrupt),
+            mapper: Ok(None),
+        };
+        assert_eq!(
+            manager
+                .save_slot(1, &exporter, SlotActivation::Activate)
+                .unwrap_err(),
+            SlotOpFailure::Corrupt
+        );
+        assert!(!manager.save_hidden(&exporter));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mapper_flush_covers_degraded_and_skipped() {
+        use crate::session::fs::FsMapper;
+        let dir = std::env::temp_dir().join("nerust-persist-cov-mapper");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FailingSlotBackend),
+            autosave: Box::new(FailingSlotBackend),
+            mapper: Box::new(FsMapper),
+        });
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
+        manager.mapper_save_flush_allowed = false;
+        let exporter = exporter_ok();
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        let none_mapper = OkExporter {
+            identity: Some(identity()),
+            state: Ok(vec![1]),
+            mapper: Ok(None),
+        };
+        let mut fresh = failing_manager();
+        fresh.configure(dir.clone().into(), dir.join("h.sav").into());
+        fresh.mapper_save_flush_allowed = false;
+        assert_eq!(
+            fresh.flush_mapper_save(&none_mapper).unwrap(),
+            MapperFlush::SkippedNoPath
+        );
+        assert!(fresh.load_mapper_save_if_needed(&exporter).is_err());
+        assert!(!fresh.mapper_save_flush_allowed);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn adjacent_slot_id_covers_empty_wrap_and_step() {
+        use nerust_persistence::model::StateSlotSummary as S;
+        assert_eq!(adjacent_slot_id(&[], None, SlotDirection::Next), None);
+        let mk = |id: u64| S {
+            schema_version: 1,
+            slot_id: id,
+            path: std::path::PathBuf::from("/tmp/x").into(),
+            saved_at: std::time::UNIX_EPOCH,
+            has_thumbnail: false,
+            emulator_version: String::new(),
+        };
+        let slots = vec![mk(1), mk(2), mk(3)];
+        assert_eq!(adjacent_slot_id(&slots, None, SlotDirection::Next), Some(1));
+        assert_eq!(
+            adjacent_slot_id(&slots, None, SlotDirection::Previous),
+            Some(3)
+        );
+        assert_eq!(
+            adjacent_slot_id(&slots, Some(2), SlotDirection::Next),
+            Some(3)
+        );
+        assert_eq!(
+            adjacent_slot_id(&slots, Some(1), SlotDirection::Previous),
+            Some(3)
+        );
+        assert_eq!(
+            adjacent_slot_id(&slots, Some(99), SlotDirection::Next),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn save_uses_write_summary_without_rescan() {
+        use crate::session::fs::FsSlots;
+        let dir = std::env::temp_dir().join("nerust-persist-cov-upsert");
+        std::fs::create_dir_all(&dir).ok();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("g.sav").into());
+        let exporter = exporter_ok();
+        // Two saves: the cache upserts from the write summary both times.
+        manager
+            .save_slot(1, &exporter, SlotActivation::Activate)
+            .expect("save ok");
+        assert_eq!(manager.slots().len(), 1);
+        assert_eq!(manager.active_slot_id(), Some(1));
+        let first = manager.slots_arc();
+        assert!(Arc::ptr_eq(&first, &manager.slots_arc()));
+        manager
+            .save_slot(1, &exporter, SlotActivation::Leave)
+            .expect("resave ok");
+        assert_eq!(manager.slots().len(), 1);
+        assert!(!Arc::ptr_eq(&first, &manager.slots_arc()));
+        // Delete prunes the cache without a backend scan.
+        manager.delete_slot(1).expect("delete ok");
+        assert!(manager.slots().is_empty());
+        assert_eq!(first.len(), 1, "published revisions remain immutable");
+        assert_eq!(manager.active_slot_id(), None);
+        // Mapper-flush errors keep the typed fault for the UI boundary.
+        let error = crate::session::persistence::MapperFlushError {
+            fault: SlotOpFailure::Unavailable,
+        };
+        assert!(error.to_string().contains("Unavailable"));
+        // Shell envelope decodes once at the persistence boundary.
+        let resolved = crate::state::resolve_state_format(&save_state_with_header(&[1, 2, 3]));
+        assert_eq!(resolved, vec![1, 2, 3]);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = FsSlots;
+    }
+
+    #[test]
+    fn header_version_rejects_short_and_preheader_blobs() {
+        assert_eq!(state_header_version(&[]), None);
+        assert_eq!(state_header_version(&[0u8; 5]), None);
+        assert_eq!(state_header_version(&[0xFF; 12]), None);
+    }
+
+    #[test]
+    fn fresh_manager_starts_unconfigured() {
+        let manager = PersistenceManager::new();
+        assert!(manager.slots().is_empty());
+        assert_eq!(manager.active_slot_id(), None);
+        assert_eq!(manager.configured_sidecars(), None);
+    }
+
+    #[test]
+    fn refresh_and_select_prune_missing_active() {
+        let mut manager = PersistenceManager::new();
+        let exporter = exporter_ok();
+        manager.refresh_slots(&exporter).unwrap();
+        assert!(manager.slots().is_empty());
+        manager.select_active_slot(9);
+        manager.refresh_slots(&exporter).unwrap();
+        assert_eq!(manager.active_slot_id(), None);
+    }
+
+    #[test]
+    fn rejected_mapper_import_and_same_path_rebind_preserve_original() {
+        struct RejectImport;
+        impl StateExporter for RejectImport {
+            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+                Ok(vec![])
+            }
+            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
+                None
+            }
+            fn export_identity(&self) -> Option<SystemIdentity> {
+                None
+            }
+            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+                Ok(Some(b"replacement".to_vec()))
+            }
+            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Err(SlotOpFailure::Incompatible)
+            }
+        }
+        let dir = crate::test_helpers::unique_temp_dir("rejected-mapper");
+        let path = dir.join("game.sav");
+        std::fs::write(&path, b"original").unwrap();
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&RejectImport).is_err());
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert_eq!(
+            manager.flush_mapper_save(&RejectImport).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        let recoveries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".recovered."))
+            .collect();
+        assert_eq!(recoveries.len(), 1);
+        assert_eq!(std::fs::read(recoveries[0].path()).unwrap(), b"replacement");
+        manager.configure(dir.clone().into(), path.into());
+        manager.flush_mapper_save(&RejectImport).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn successful_reload_rearms_mapper_flush_after_rejection() {
+        use std::cell::Cell;
+        struct ToggleImport {
+            reject: Cell<bool>,
+        }
+        impl StateExporter for ToggleImport {
+            fn export_state(&self) -> Result<Vec<u8>, SlotOpFailure> {
+                Ok(vec![])
+            }
+            fn import_state(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                Ok(())
+            }
+            fn export_preview(&self) -> Option<crate::emu_core::PreviewRgba> {
+                None
+            }
+            fn export_identity(&self) -> Option<SystemIdentity> {
+                None
+            }
+            fn export_mapper(&self) -> Result<Option<Vec<u8>>, SlotOpFailure> {
+                Ok(Some(b"progress".to_vec()))
+            }
+            fn import_mapper(&self, _: Vec<u8>) -> Result<(), SlotOpFailure> {
+                if self.reject.get() {
+                    Err(SlotOpFailure::Incompatible)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let dir = crate::test_helpers::unique_temp_dir("rearm-mapper");
+        let path = dir.join("game.sav");
+        std::fs::write(&path, b"original").unwrap();
+        let mut manager = PersistenceManager::new();
+        let exporter = ToggleImport {
+            reject: Cell::new(true),
+        };
+        // Failed import degrades the flush and preserves the original.
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_err());
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        // A mere rebind without a successful import keeps the protection.
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::DegradedRecoveryWritten
+        );
+        // A successful import on the new runtime re-arms the normal flush.
+        exporter.reject.set(false);
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::Flushed
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"progress");
+        // A missing save re-arms a blocked manager: nothing to diverge from.
+        std::fs::remove_file(&path).unwrap();
+        manager.mapper_save_flush_allowed = false;
+        manager.configure(dir.clone().into(), path.clone().into());
+        assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+        assert_eq!(
+            manager.flush_mapper_save(&exporter).unwrap(),
+            MapperFlush::Flushed
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"progress");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A missing save re-arms a degraded manager on its own, with or without
+    /// a previously written recovery file.
+    #[test]
+    fn missing_save_rearms_degraded_manager_with_or_without_recovery() {
+        for recovery_written in [false, true] {
+            let dir = crate::test_helpers::unique_temp_dir("rearm-missing");
+            let path = dir.join("game.sav");
+            let mut manager = PersistenceManager::new();
+            let exporter = exporter_ok();
+            manager.configure(dir.clone().into(), path.clone().into());
+            manager.mapper_save_flush_allowed = false;
+            manager.mapper_save_recovery_written = recovery_written;
+            assert!(manager.load_mapper_save_if_needed(&exporter).is_ok());
+            assert_eq!(
+                manager.flush_mapper_save(&exporter).unwrap(),
+                MapperFlush::Flushed
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), vec![4]);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// The degraded latch follows the mapper path, not the runtime: rebinding a
+    /// different path resets it, while the same path preserves it.
+    #[test]
+    fn degraded_latch_follows_mapper_path_not_runtime() {
+        let dir = crate::test_helpers::unique_temp_dir("latch-path");
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("a.sav").into());
+        manager.mapper_save_flush_allowed = false;
+        manager.mapper_save_recovery_written = true;
+        manager.configure(dir.clone().into(), dir.join("b.sav").into());
+        assert!(manager.mapper_save_flush_allowed);
+        assert!(!manager.mapper_save_recovery_written);
+        manager.mapper_save_flush_allowed = false;
+        manager.configure(dir.clone().into(), dir.join("b.sav").into());
+        assert!(!manager.mapper_save_flush_allowed);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A transient autosave read failure must not delete; corrupt bytes quarantine
+    /// instead, and the retry after recovery loads the same bytes.
+    #[test]
+    fn transient_autosave_read_failure_never_deletes() {
+        use nerust_persistence::model::{LoadedStateSlot, StateSlotSummary};
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        struct FlakyAutosave {
+            reads: RefCell<VecDeque<Result<Option<LoadedStateSlot>, PersistenceError>>>,
+            deletes: Arc<AtomicUsize>,
+            quarantines: Arc<AtomicUsize>,
+        }
+        impl AutoSaveBackend for FlakyAutosave {
+            fn write_autosave(
+                &self,
+                _: &StorageLocation,
+                _: &[u8],
+                _: &SystemIdentity,
+            ) -> Result<StateSlotSummary, PersistenceError> {
+                panic!("unused");
+            }
+            fn read_autosave(
+                &self,
+                _: &StorageLocation,
+                _: &SystemIdentity,
+            ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+                self.reads.borrow_mut().pop_front().expect("scripted read")
+            }
+            fn delete_autosave(&self, _: &StorageLocation) -> Result<(), PersistenceError> {
+                self.deletes.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn quarantine_autosave(
+                &self,
+                _: &StorageLocation,
+            ) -> Result<Option<StorageLocation>, PersistenceError> {
+                self.quarantines.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }
+        }
+        fn valid_slot() -> LoadedStateSlot {
+            use nerust_core_traits::save_state::save_state_with_header;
+            LoadedStateSlot {
+                summary: StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: 0,
+                    path: std::path::PathBuf::from("autosave").into(),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: String::new(),
+                },
+                machine_state: save_state_with_header(&[7; 32]),
+                thumbnail_png: None,
+            }
+        }
+        fn transient() -> PersistenceError {
+            PersistenceError::Io(std::io::Error::other("provider unavailable"))
+        }
+        fn manager_with(
+            reads: Vec<Result<Option<LoadedStateSlot>, PersistenceError>>,
+            deletes: &Arc<AtomicUsize>,
+            quarantines: &Arc<AtomicUsize>,
+        ) -> (PersistenceManager, std::path::PathBuf) {
+            let dir = crate::test_helpers::unique_temp_dir("flaky-autosave");
+            let mut manager = PersistenceManager::new();
+            manager.configure_backends(PersistenceBackends {
+                slot: Box::new(crate::session::fs::FsSlots),
+                autosave: Box::new(FlakyAutosave {
+                    reads: RefCell::new(reads.into()),
+                    deletes: Arc::clone(deletes),
+                    quarantines: Arc::clone(quarantines),
+                }),
+                mapper: Box::new(crate::session::fs::FsMapper),
+            });
+            manager.configure(dir.clone().into(), dir.join("game.sav").into());
+            (manager, dir)
+        }
+
+        // Transient failure: no delete, then the retry loads the same bytes.
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let quarantines = Arc::new(AtomicUsize::new(0));
+        let exporter = exporter_ok();
+        let (manager, dir) = manager_with(
+            vec![Err(transient()), Ok(Some(valid_slot()))],
+            &deletes,
+            &quarantines,
+        );
+        assert!(!manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "transient read must not delete"
+        );
+        assert_eq!(quarantines.load(Ordering::SeqCst), 0);
+        assert!(manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "retry loads the same bytes"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A missing read deletes nothing either: transient `None` must not destroy
+        // bytes, and genuine absence has nothing to delete. The retry still loads.
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let quarantines = Arc::new(AtomicUsize::new(0));
+        let (manager, dir) = manager_with(
+            vec![Ok(None), Ok(Some(valid_slot()))],
+            &deletes,
+            &quarantines,
+        );
+        assert!(!manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "missing read must not delete"
+        );
+        assert_eq!(quarantines.load(Ordering::SeqCst), 0);
+        assert!(manager.load_hidden(&exporter));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Corrupt bytes: quarantined, never deleted.
+        let deletes = Arc::new(AtomicUsize::new(0));
+        let quarantines = Arc::new(AtomicUsize::new(0));
+        let (manager, dir) = manager_with(
+            vec![Err(PersistenceError::Validation("bad".into()))],
+            &deletes,
+            &quarantines,
+        );
+        assert!(!manager.load_hidden(&exporter));
+        assert_eq!(
+            deletes.load(Ordering::SeqCst),
+            0,
+            "corrupt bytes must not delete"
+        );
+        assert_eq!(quarantines.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A failed scan keeps the previous list instead of wiping it to empty.
+    #[test]
+    fn failed_scan_keeps_previous_slots() {
+        use crate::session::ports::SlotBackend;
+        use nerust_persistence::model::StateSlotSummary;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        struct FlakyScan {
+            fail: Arc<AtomicBool>,
+        }
+        impl SlotBackend for FlakyScan {
+            fn scan(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+            ) -> Result<Vec<StateSlotSummary>, nerust_persistence::error::PersistenceError>
+            {
+                if self.fail.load(Ordering::SeqCst) {
+                    return Err(nerust_persistence::error::PersistenceError::Io(
+                        std::io::Error::other("scan failed"),
+                    ));
+                }
+                Ok(vec![StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: 7,
+                    path: std::path::PathBuf::from("s").into(),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: String::new(),
+                }])
+            }
+            fn allocate_next_id(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+            ) -> Result<u64, nerust_persistence::error::PersistenceError> {
+                Ok(1)
+            }
+            #[allow(unused_variables)]
+            fn write_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+                _data: &[u8],
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+                _thumbnail: Option<&nerust_persistence::thumbnail::ThumbnailSource>,
+            ) -> Result<StateSlotSummary, nerust_persistence::error::PersistenceError> {
+                panic!("unused");
+            }
+            fn read_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<
+                Option<nerust_persistence::model::LoadedStateSlot>,
+                nerust_persistence::error::PersistenceError,
+            > {
+                Ok(None)
+            }
+            fn delete_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<(), nerust_persistence::error::PersistenceError> {
+                Ok(())
+            }
+        }
+        let fail = Arc::new(AtomicBool::new(false));
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FlakyScan {
+                fail: Arc::clone(&fail),
+            }),
+            autosave: Box::new(crate::session::fs::FsAutosave),
+            mapper: Box::new(crate::session::fs::FsMapper),
+        });
+        let dir = crate::test_helpers::unique_temp_dir("scan-keep");
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        manager.refresh_slots(&exporter).unwrap();
+        assert_eq!(manager.slots().len(), 1);
+        fail.store(true, Ordering::SeqCst);
+        assert!(manager.refresh_slots(&exporter).is_err());
+        assert_eq!(manager.slots().len(), 1, "failed scan keeps previous slots");
+        assert_eq!(manager.active_slot_id(), Some(7));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A failed scan keeps the previous list (`Err`) while a genuinely empty scan
+    /// succeeds and clears it; the setup notice keys on this `Ok`/`Err` split.
+    #[test]
+    fn failed_scan_stays_visible_but_empty_scan_clears() {
+        use crate::session::ports::SlotBackend;
+        use nerust_persistence::model::StateSlotSummary;
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        struct FlakyThenEmpty {
+            fail: Arc<AtomicBool>,
+            empty: Arc<AtomicBool>,
+        }
+        impl SlotBackend for FlakyThenEmpty {
+            fn scan(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+            ) -> Result<Vec<StateSlotSummary>, nerust_persistence::error::PersistenceError>
+            {
+                if self.fail.load(Ordering::SeqCst) {
+                    return Err(nerust_persistence::error::PersistenceError::Io(
+                        std::io::Error::other("scan failed"),
+                    ));
+                }
+                if self.empty.load(Ordering::SeqCst) {
+                    return Ok(Vec::new());
+                }
+                Ok(vec![StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: 7,
+                    path: std::path::PathBuf::from("s").into(),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: String::new(),
+                }])
+            }
+            fn allocate_next_id(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+            ) -> Result<u64, nerust_persistence::error::PersistenceError> {
+                Ok(1)
+            }
+            #[allow(unused_variables)]
+            fn write_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+                _data: &[u8],
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+                _thumbnail: Option<&nerust_persistence::thumbnail::ThumbnailSource>,
+            ) -> Result<StateSlotSummary, nerust_persistence::error::PersistenceError> {
+                panic!("unused");
+            }
+            fn read_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<
+                Option<nerust_persistence::model::LoadedStateSlot>,
+                nerust_persistence::error::PersistenceError,
+            > {
+                Ok(None)
+            }
+            fn delete_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<(), nerust_persistence::error::PersistenceError> {
+                Ok(())
+            }
+        }
+        let fail = Arc::new(AtomicBool::new(false));
+        let empty = Arc::new(AtomicBool::new(false));
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(FlakyThenEmpty {
+                fail: Arc::clone(&fail),
+                empty: Arc::clone(&empty),
+            }),
+            autosave: Box::new(crate::session::fs::FsAutosave),
+            mapper: Box::new(crate::session::fs::FsMapper),
+        });
+        let dir = crate::test_helpers::unique_temp_dir("scan-keep-vs-clear");
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        manager.refresh_slots(&exporter).unwrap();
+        assert_eq!(manager.slots().len(), 1);
+        assert_eq!(manager.active_slot_id(), Some(7));
+        fail.store(true, Ordering::SeqCst);
+        assert!(manager.refresh_slots(&exporter).is_err());
+        assert_eq!(manager.slots().len(), 1, "failed scan keeps previous slots");
+        assert_eq!(manager.active_slot_id(), Some(7));
+        fail.store(false, Ordering::SeqCst);
+        empty.store(true, Ordering::SeqCst);
+        manager.refresh_slots(&exporter).unwrap();
+        assert!(manager.slots().is_empty(), "empty scan clears the list");
+        assert_eq!(manager.active_slot_id(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A transient slot-read failure is a retryable error, never `Missing`.
+    /// Only a complete successful survey proves absence.
+    #[test]
+    fn transient_slot_read_is_error_not_missing() {
+        use crate::session::ports::SlotBackend;
+        use nerust_persistence::model::LoadedStateSlot;
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+
+        struct TransientThenMissing {
+            reads: RefCell<VecDeque<Result<Option<LoadedStateSlot>, PersistenceError>>>,
+        }
+        impl SlotBackend for TransientThenMissing {
+            fn scan(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+            ) -> Result<Vec<nerust_persistence::model::StateSlotSummary>, PersistenceError>
+            {
+                Ok(Vec::new())
+            }
+            fn allocate_next_id(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+            ) -> Result<u64, PersistenceError> {
+                Ok(1)
+            }
+            #[allow(unused_variables)]
+            fn write_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+                _data: &[u8],
+                _identity: &nerust_core_traits::identity::SystemIdentity,
+                _thumbnail: Option<&nerust_persistence::thumbnail::ThumbnailSource>,
+            ) -> Result<nerust_persistence::model::StateSlotSummary, PersistenceError> {
+                panic!("unused");
+            }
+            fn read_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<Option<LoadedStateSlot>, PersistenceError> {
+                self.reads.borrow_mut().pop_front().expect("scripted read")
+            }
+            fn delete_slot(
+                &self,
+                _dir: &nerust_persistence::sidecar::StorageLocation,
+                _slot_id: u64,
+            ) -> Result<(), PersistenceError> {
+                Ok(())
+            }
+        }
+        fn transient() -> PersistenceError {
+            PersistenceError::Io(std::io::Error::other("provider unavailable"))
+        }
+        let dir = crate::test_helpers::unique_temp_dir("transient-read");
+        let mut manager = PersistenceManager::new();
+        manager.configure_backends(PersistenceBackends {
+            slot: Box::new(TransientThenMissing {
+                reads: RefCell::new(VecDeque::from([Err(transient()), Ok(None)])),
+            }),
+            autosave: Box::new(crate::session::fs::FsAutosave),
+            mapper: Box::new(crate::session::fs::FsMapper),
+        });
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        let failure = manager.load_slot(99, &exporter).unwrap_err();
+        assert_ne!(
+            failure,
+            SlotOpFailure::Missing,
+            "transient read must surface as an error, never as missing"
+        );
+        assert_eq!(
+            manager.load_slot(99, &exporter).unwrap_err(),
+            SlotOpFailure::Missing,
+            "a complete survey proving absence reports Missing"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Quarantine is copy-then-delete: the stepped-down copy lands first, so a
+    /// later delete failure keeps the original recoverable. The error still surfaces.
+    #[test]
+    fn quarantine_by_copy_survives_delete_failure_after_copy() {
+        use nerust_persistence::slots::quarantine_by_copy;
+
+        let dir = crate::test_helpers::unique_temp_dir("quarantine-survivor");
+        let original = dir.join("slot");
+        let quarantined = dir.join("slot.quarantined");
+        std::fs::write(&original, b"bytes").unwrap();
+        let outcome = quarantine_by_copy(
+            || {
+                std::fs::read(&original)
+                    .map(Some)
+                    .map_err(PersistenceError::from)
+            },
+            |bytes| std::fs::write(&quarantined, bytes).map_err(PersistenceError::from),
+            || {
+                Err::<(), PersistenceError>(PersistenceError::Io(std::io::Error::other(
+                    "delete failed",
+                )))
+            },
+            quarantined.clone().into(),
+        );
+        assert!(outcome.is_err(), "delete failure must surface");
+        assert_eq!(
+            std::fs::read(&quarantined).unwrap(),
+            b"bytes",
+            "the copy was stored before the delete was attempted"
+        );
+        assert_eq!(
+            std::fs::read(&original).unwrap(),
+            b"bytes",
+            "the original is kept when the delete fails"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Corrupt autosave bytes quarantine aside instead of deleting, so the next
+    /// save overwrites rather than the failed load destroying evidence.
+    #[test]
+    fn corrupt_autosave_quarantines_instead_of_deleting() {
+        let dir = crate::test_helpers::unique_temp_dir("quarantine-corrupt");
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        // Garbage with no save-state envelope: unreadable, not missing.
+        std::fs::write(dir.join(".autosave_slot"), b"corrupt-bytes").unwrap();
+        let exporter = exporter_ok();
+        assert!(!manager.load_hidden(&exporter));
+        assert!(
+            dir.join(".autosave_slot.quarantined").is_file(),
+            "corrupt autosave must quarantine aside, never delete"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// One corrupt slot skips while healthy slots list; a failed whole-directory
+    /// scan instead keeps the previous list.
+    #[test]
+    fn corrupt_slot_skipped_while_healthy_slots_list() {
+        let dir = crate::test_helpers::unique_temp_dir("scan-corrupt-skip");
+        let mut manager = PersistenceManager::new();
+        manager.configure(dir.clone().into(), dir.join("game.sav").into());
+        let exporter = exporter_ok();
+        manager
+            .save_slot(3, &exporter, SlotActivation::Activate)
+            .expect("healthy save works");
+        std::fs::write(dir.join("99.state"), b"corrupt-bytes").unwrap();
+        manager.refresh_slots(&exporter).expect("scan succeeds");
+        assert_eq!(
+            manager
+                .slots()
+                .iter()
+                .map(|slot| slot.slot_id)
+                .collect::<Vec<_>>(),
+            vec![3],
+            "healthy slots list while the corrupt entry skips"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod blob_budget_tests {
+    use crate::session::error::SlotOpFailure;
+    use crate::session::persistence::{MAX_SLOT_BLOB_BYTES, check_blob_budget};
+
+    #[test]
+    fn budget_accepts_at_cap_and_rejects_above() {
+        assert!(check_blob_budget(&vec![0u8; MAX_SLOT_BLOB_BYTES]).is_ok());
+        assert!(check_blob_budget(&[]).is_ok());
+        assert_eq!(
+            check_blob_budget(&vec![0u8; MAX_SLOT_BLOB_BYTES + 1]).unwrap_err(),
+            SlotOpFailure::Corrupt
+        );
+    }
 }

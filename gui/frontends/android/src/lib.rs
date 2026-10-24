@@ -1,32 +1,106 @@
-#![cfg(target_os = "android")]
+// Root stays ungated so pure modules compile and test on host.
+// Android-bound items below stay target-gated.
+#[cfg(any(target_os = "android", test))]
+mod bridge_contract;
+#[cfg(any(target_os = "android", test))]
+mod bridge_events;
+#[cfg(any(target_os = "android", test))]
+mod density;
 
+#[cfg(any(target_os = "android", test))]
+mod error_dialog_controller;
+
+#[cfg(any(target_os = "android", test))]
+mod fetch_seq;
+
+#[cfg(any(target_os = "android", test))]
+mod picker_lane;
+
+#[cfg(any(target_os = "android", test))]
 mod import_metadata;
 
+#[cfg(any(target_os = "android", test))]
+mod lifecycle_decision;
+
+#[cfg(any(target_os = "android", test))]
+mod saf_decision;
+
+#[cfg(any(target_os = "android", test))]
+mod settings_sections;
+
+#[cfg(any(target_os = "android", test))]
+mod settings_flight;
+
+#[cfg(any(target_os = "android", test))]
+mod wake_deadline;
+
+#[cfg(any(target_os = "android", test))]
+// Initializer is already const; the lint misfires on the macro span.
+#[allow(clippy::missing_const_for_thread_local)]
+mod reentrancy;
+
+#[cfg(target_os = "android")]
 mod android;
 
-use std::{
-    any::Any,
-    backtrace::Backtrace,
-    ffi::c_void,
-    panic::{self, AssertUnwindSafe},
-    rc::Rc,
-    sync::{Arc, Once},
-};
+// Exercise the actual settings serializer/model on the host, without JNI.
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/settings_codec.rs"]
+mod settings_codec;
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/settings_model.rs"]
+mod settings_model;
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "android/settings_schema.rs"]
+mod settings_schema;
 
+#[cfg(any(target_os = "android", test))]
+use std::sync::Arc;
+
+#[cfg(target_os = "android")]
+use std::{ffi::c_void, rc::Rc};
+
+#[cfg(target_os = "android")]
 use jni::{
     JavaVM,
     sys::{JNI_VERSION_1_6, jint},
 };
+#[cfg(target_os = "android")]
 use nerust_core_traits::audio::AudioBackendRegistry;
+#[cfg(target_os = "android")]
+use nerust_crash_guard::GuardOutcome;
+#[cfg(any(target_os = "android", test))]
 use nerust_gba_factory::GbaFactory;
+#[cfg(any(target_os = "android", test))]
 use nerust_gbc_factory::GbcFactory;
+#[cfg(any(target_os = "android", test))]
 use nerust_gui_shell::registry::SystemRegistry;
+#[cfg(any(target_os = "android", test))]
 use nerust_nes_factory::NesFactory;
-use nerust_render_traits::renderer::GpuFactory;
+#[cfg(target_os = "android")]
+use nerust_render_traits::renderer::PipelineFactory;
+#[cfg(any(target_os = "android", test))]
+use nerust_system_traits::factory::CoreFactory;
+#[cfg(target_os = "android")]
 use winit::platform::android::activity::AndroidApp;
 
+#[cfg(target_os = "android")]
 const ANDROID_LOG_TAG: &str = "Nerust";
 
+/// Marker left by e2e.sh: present only when a harness drives teardown and owns delivery.
+/// The framework harness query is unreliable, so the marker file is the signal.
+#[cfg(target_os = "android")]
+const HARNESS_TEARDOWN_MARKER: &str = "/data/local/tmp/nerust-harness-teardown";
+
+/// Exit unless the destroy came from harness teardown, which owns delivery and teardown.
+/// User-initiated exit always ends the process; fail-closed without the marker.
+#[cfg(target_os = "android")]
+fn should_exit_process() -> (bool, bool, bool) {
+    let harness = std::path::Path::new(HARNESS_TEARDOWN_MARKER).exists();
+    let user = crate::android::take_user_exit_request();
+    (harness, user, !harness || user)
+}
+
+#[cfg(target_os = "android")]
 fn init_android_logging() {
     android_logger::init_once(
         android_logger::Config::default()
@@ -34,47 +108,47 @@ fn init_android_logging() {
             .with_max_level(log::LevelFilter::Info),
     );
 
-    static PANIC_HOOK: Once = Once::new();
-    PANIC_HOOK.call_once(|| {
-        let previous_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |panic_info| {
-            let thread = std::thread::current();
-            let thread_name = thread.name().unwrap_or("unnamed");
-            let backtrace = Backtrace::force_capture();
-            log::error!("panic on thread '{thread_name}': {panic_info}\nbacktrace:\n{backtrace}");
-            previous_hook(panic_info);
-        }));
-    });
+    // The leaf hook only; android_main keeps its own catch_unwind
+    // so a panicking frontend logs and returns instead of exiting.
+    static CRASH_HOOK: std::sync::OnceLock<nerust_crash_guard::HookGuard> =
+        std::sync::OnceLock::new();
+    CRASH_HOOK.get_or_init(nerust_crash_guard::install_default);
 }
 
-fn create_system_registry() -> Arc<SystemRegistry> {
-    Arc::new(SystemRegistry::new(vec![
+#[cfg(any(target_os = "android", test))]
+fn default_factories() -> Vec<Arc<dyn CoreFactory>> {
+    vec![
         Arc::new(NesFactory),
         Arc::new(GbcFactory),
         Arc::new(GbaFactory),
-    ]))
+    ]
 }
 
+#[cfg(any(target_os = "android", test))]
+fn create_system_registry() -> Arc<SystemRegistry> {
+    create_system_registry_with(default_factories())
+}
+
+/// Inject the factory set from the composition root (`android_main`).
+/// Adding a system means extending `default_factories`, not touching call sites.
+#[cfg(any(target_os = "android", test))]
+fn create_system_registry_with(factories: Vec<Arc<dyn CoreFactory>>) -> Arc<SystemRegistry> {
+    Arc::new(SystemRegistry::new(factories))
+}
+
+#[cfg(target_os = "android")]
 fn create_audio_registry() -> Arc<AudioBackendRegistry> {
     let mut reg = AudioBackendRegistry::new();
     reg.register(0, Box::new(nerust_sound_cpal::CpalFactory));
     Arc::new(reg)
 }
 
-fn create_gpu_factory() -> Rc<dyn GpuFactory> {
+#[cfg(target_os = "android")]
+fn create_gpu_factory() -> Rc<dyn PipelineFactory> {
     Rc::new(nerust_render_wgpu::WgpuFactory)
 }
 
-fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<&'static str>() {
-        (*message).to_owned()
-    } else if let Some(message) = payload.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "non-string panic payload".to_owned()
-    }
-}
-
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub fn android_main(app: AndroidApp) {
     init_android_logging();
@@ -85,33 +159,45 @@ pub fn android_main(app: AndroidApp) {
         .unwrap_or_else(|| "<unavailable>".to_owned());
     log::info!("android_main: starting (internal_data_path={internal_data_path})");
 
-    match panic::catch_unwind(AssertUnwindSafe(|| {
-        let system_registry = create_system_registry();
-        let audio_registry = create_audio_registry();
-        let gpu_factory = create_gpu_factory();
-        android::run(app, system_registry, audio_registry, gpu_factory)
-    })) {
-        Ok(Ok(())) => {
+    match nerust_crash_guard::run_guarded_with(
+        || {
+            let system_registry = create_system_registry();
+            let audio_registry = create_audio_registry();
+            let gpu_factory = create_gpu_factory();
+            android::run(app, system_registry, audio_registry, gpu_factory)
+        },
+        // The process registration already logs this same panic-site record.
+        |_| {},
+        nerust_crash_guard::capture_backtrace,
+    ) {
+        GuardOutcome::Completed(Ok(())) => {
             log::info!("android_main: exited cleanly");
-            std::process::exit(0);
+            let (harness, user_exit, exit_now) = should_exit_process();
+            log::info!(
+                "android_main: exit decision: harness={harness} user_exit={user_exit} exit={exit_now}"
+            );
+            if exit_now {
+                std::process::exit(0);
+            }
+            log::info!("android_main: process exit suppressed (test harness owns teardown)");
         }
-        Ok(Err(error)) => {
+        GuardOutcome::Completed(Err(error)) => {
+            // Init failures are already toasted and the activity finished inside `android::run`.
+            // This log is the record for post-loop failures.
             log::error!("android_main: frontend failed: {error:#}");
         }
-        Err(payload) => {
-            log::error!(
-                "android_main: frontend panicked: {}",
-                panic_payload_message(payload.as_ref())
-            );
+        // Crash path: the hook logged the panic site; the report names
+        // the caught payload for the post-loop record before returning to the JVM.
+        GuardOutcome::Crashed(report) => {
+            log::error!("android_main: crashed: {}", report.message());
         }
     }
 }
 
+#[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-/// # Safety
-///
-/// Called by the JVM when the native library is loaded.  `vm` must be a valid
-/// pointer to the `JavaVM` instance provided by the runtime.
+/// Called by the JVM when the native library is loaded.
+/// # Safety: `vm` must be a valid `JavaVM` pointer from the runtime.
 pub unsafe extern "system" fn JNI_OnLoad(
     vm: *mut jni::sys::JavaVM,
     _reserved: *mut c_void,
@@ -119,9 +205,8 @@ pub unsafe extern "system" fn JNI_OnLoad(
     init_android_logging();
     log::info!("JNI_OnLoad: registering MainActivity natives");
     let vm = unsafe { JavaVM::from_raw(vm) };
-    // Register native method bindings.  This succeeds when the library is loaded
-    // via `System.loadLibrary("main")` in the companion-object init because the
-    // app classloader is on the call stack at that point.
+    // Register native method bindings; succeeds when loaded via `System.loadLibrary("main")`.
+    // The app classloader must be on the call stack at that point.
     if let Err(error) = vm.attach_current_thread(android::register_main_activity_natives) {
         log::error!("JNI_OnLoad: native registration failed: {error:?}");
     } else {
@@ -132,7 +217,7 @@ pub unsafe extern "system" fn JNI_OnLoad(
 
 #[cfg(test)]
 mod tests {
-    use nerust_core_traits::factory::load::MediaObject;
+    use nerust_system_traits::factory::load::MediaObject;
 
     use super::*;
 
@@ -204,5 +289,17 @@ mod tests {
                 .to_string(),
             "gba"
         );
+    }
+
+    #[test]
+    fn registry_injection_builds_reduced_registry() {
+        let registry = create_system_registry_with(vec![Arc::new(NesFactory)]);
+        let ids: Vec<_> = registry
+            .all()
+            .iter()
+            .map(|factory| factory.system_id().to_string())
+            .collect();
+
+        assert_eq!(ids, ["nes"]);
     }
 }

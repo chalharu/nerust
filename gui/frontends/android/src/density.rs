@@ -1,0 +1,50 @@
+//! Display-density cache keys. Densities quantize to 0.01 so float
+//! jitter never re-queries platform insets every frame.
+
+/// Sentinel for unmeasurable (NaN) density; never a real key.
+/// `u32::MAX` stays the force-miss sentinel.
+pub(crate) const DENSITY_KEY_INVALID: u32 = 0;
+
+/// Quantized density key: `round(scale * 100)`, clamped to range.
+/// NaN maps to [`DENSITY_KEY_INVALID`]; never collides with a real key.
+pub(crate) fn density_key(scale: f32) -> u32 {
+    if scale.is_nan() {
+        return DENSITY_KEY_INVALID;
+    }
+    let key = (scale.clamp(0.25, 8.0) * 100.0).round() as u32;
+    debug_assert_ne!(key, DENSITY_KEY_INVALID);
+    debug_assert_ne!(key, u32::MAX);
+    key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantizes_to_hundredths() {
+        assert_eq!(density_key(1.0), 100);
+        assert_eq!(density_key(2.0), 200);
+        assert_eq!(density_key(2.755), 276);
+    }
+
+    #[test]
+    fn ignores_sub_hundredth_jitter() {
+        assert_eq!(density_key(1.0), density_key(1.004));
+        assert_ne!(density_key(1.0), density_key(1.006));
+    }
+
+    #[test]
+    fn clamps_and_stays_deterministic() {
+        assert_eq!(density_key(0.0), density_key(0.25));
+        assert_eq!(density_key(100.0), density_key(8.0));
+        assert_eq!(density_key(f32::NAN), 0);
+        assert_ne!(density_key(1.0), u32::MAX);
+    }
+
+    #[test]
+    fn non_finite_scales_never_panic() {
+        assert_eq!(density_key(f32::INFINITY), density_key(8.0));
+        assert_eq!(density_key(f32::NEG_INFINITY), density_key(0.25));
+    }
+}

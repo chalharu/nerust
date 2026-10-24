@@ -83,12 +83,11 @@ pub struct EditorState {
     pub(crate) catalog: FactoryCatalog,
     pub(crate) supported_sample_rates: Arc<[u32]>,
     pub(crate) storage_validator: Rc<dyn StoragePathValidator>,
-    /// Cached snapshot, invalidated when revision advances.
-    /// Stored as Arc to document intent for future copy-on-write optimization.
-    pub(crate) cached_snapshot: Arc<SettingsSnapshot>,
     /// Cache of [`conflicting_keys`] results, populated by the validator
     /// and reused by input projections to avoid double computation.
     pub(crate) conflicts_cache: ConflictsCache,
+    pub(crate) topology_cache:
+        RefCell<HashMap<Box<dyn SystemId>, Rc<nerust_input_traits::InputTopologyDescriptor>>>,
 }
 
 // Manual Clone: conflicts_cache is reset to None to avoid RefCell::clone panic.
@@ -102,8 +101,8 @@ impl Clone for EditorState {
             catalog: self.catalog.clone(),
             supported_sample_rates: Arc::clone(&self.supported_sample_rates),
             storage_validator: Rc::clone(&self.storage_validator),
-            cached_snapshot: Arc::clone(&self.cached_snapshot),
             conflicts_cache: RefCell::new(None),
+            topology_cache: RefCell::new(HashMap::new()),
         }
     }
 }

@@ -1,5 +1,6 @@
 use std::{fmt, fmt::Display};
 
+use crate::bindings as gl;
 use gl::types::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

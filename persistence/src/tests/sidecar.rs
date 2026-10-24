@@ -5,7 +5,8 @@ use std::{
 
 use super::prepare_test_dir;
 use crate::sidecar::{
-    load_mapper_save, resolve_sidecars, write_mapper_save, write_recovery_mapper_save,
+    StorageLocation, load_mapper_save, resolve_sidecars, write_mapper_save,
+    write_recovery_mapper_save,
 };
 
 #[test]
@@ -13,10 +14,16 @@ fn resolve_sidecars_appends_to_full_rom_filename() {
     let nes = resolve_sidecars(Path::new("/tmp/game.nes"));
     let fds = resolve_sidecars(Path::new("/tmp/game.fds"));
 
-    assert_eq!(nes.mapper_save_path, PathBuf::from("/tmp/game.nes.sav"));
-    assert_eq!(nes.states_dir, PathBuf::from("/tmp/game.nes.states"));
-    assert_eq!(fds.mapper_save_path, PathBuf::from("/tmp/game.fds.sav"));
-    assert_eq!(fds.states_dir, PathBuf::from("/tmp/game.fds.states"));
+    assert_eq!(
+        nes.mapper_save_path,
+        PathBuf::from("/tmp/game.nes.sav").into()
+    );
+    assert_eq!(nes.states_dir, PathBuf::from("/tmp/game.nes.states").into());
+    assert_eq!(
+        fds.mapper_save_path,
+        PathBuf::from("/tmp/game.fds.sav").into()
+    );
+    assert_eq!(fds.states_dir, PathBuf::from("/tmp/game.fds.states").into());
     assert_ne!(nes.mapper_save_path, fds.mapper_save_path);
     assert_ne!(nes.states_dir, fds.states_dir);
 }
@@ -39,4 +46,77 @@ fn mapper_save_sidecar_and_recovery_paths_preserve_bytes() {
         Some(b"primary".to_vec())
     );
     assert_eq!(fs::read(recovery).unwrap(), b"recovered");
+}
+
+#[test]
+fn storage_locations_keep_native_and_document_keys_distinct() {
+    let native = StorageLocation::from(Path::new("/tmp/saves"));
+    assert_eq!(
+        native.child("7.state").unwrap().native_path().unwrap(),
+        Path::new("/tmp/saves/7.state")
+    );
+    let uri = "content://provider/tree/primary%3A日本語";
+    let tree = StorageLocation::document_tree(uri, "nes/id/states").unwrap();
+    assert!(tree.native_path().is_err());
+    let child = tree.child("7.state").unwrap();
+    // The constructor is the only way to forge a URI: equality against a
+    // second validated build proves no literal bypass exists.
+    assert_eq!(
+        child,
+        StorageLocation::document_tree(uri, "nes/id/states/7.state").unwrap()
+    );
+}
+
+#[test]
+fn document_relative_paths_and_child_names_reject_traversal() {
+    for invalid in [
+        "",
+        "/root",
+        "../save",
+        "nes/../save",
+        "nes//save",
+        "nes/./save",
+        "nes/",
+        "nes\\save",
+        "C:/save",
+        "save\0file",
+    ] {
+        assert!(
+            StorageLocation::document_tree("content://provider/tree/saves", invalid).is_err(),
+            "{invalid:?}"
+        );
+    }
+    assert!(StorageLocation::document_tree("", "save").is_err());
+    for dir in [
+        StorageLocation::Native("/tmp/saves".into()),
+        StorageLocation::document_tree("content://provider/tree/saves", "states").unwrap(),
+    ] {
+        for invalid in [
+            "",
+            "..",
+            ".",
+            "../7.state",
+            "/7.state",
+            "sub/7.state",
+            "sub\\7.state",
+            "7.state\0",
+        ] {
+            assert!(dir.child(invalid).is_err(), "{invalid:?}");
+        }
+    }
+}
+
+#[test]
+fn infallible_conversions_only_build_native_paths() {
+    use std::path::{Path, PathBuf};
+    // Only path types convert infallibly, and only to Native: URI strings
+    // must pass document_tree()/child() validation; nothing bypasses it.
+    for location in [
+        StorageLocation::from(PathBuf::from("/tmp/saves")),
+        StorageLocation::from(Path::new("/tmp/saves")),
+        StorageLocation::Native("/tmp/saves".into()),
+    ] {
+        assert!(matches!(location, StorageLocation::Native(_)));
+    }
+    assert!(StorageLocation::document_tree("content://provider/tree/saves", "id/states").is_ok());
 }

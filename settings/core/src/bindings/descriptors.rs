@@ -67,15 +67,20 @@ pub fn keyboard_binding_descriptors(
     topology: &InputTopologyDescriptor,
     system: &dyn SystemId,
 ) -> Vec<KeyboardBindingDescriptor> {
+    // Index devices by kind once; attachments resolve through the map
+    // instead of a devices × ports × attachments scan.
+    let by_kind: std::collections::HashMap<_, _> = topology
+        .devices()
+        .iter()
+        .map(|device| (device.kind(), device))
+        .collect();
     let mut descriptors = Vec::new();
-    for device in &topology.devices {
-        for port in &topology.ports {
-            for att in &port.attachments {
-                if att.device != device.kind {
-                    continue;
-                }
-                descriptors.extend(collect_device_bindings(device, port, att, system));
-            }
+    for port in topology.ports() {
+        for att in port.attachments() {
+            let Some(device) = by_kind.get(&att.device()) else {
+                continue;
+            };
+            descriptors.extend(collect_device_bindings(device, port, att, system));
         }
     }
     descriptors
@@ -88,14 +93,14 @@ fn collect_device_bindings(
     system: &dyn SystemId,
 ) -> Vec<KeyboardBindingDescriptor> {
     let mut descriptors = Vec::new();
-    for control in &device.controls {
+    for control in device.controls() {
         if let ControlDescriptor::Digital(dc) = control {
             descriptors.push(KeyboardBindingDescriptor {
                 system: system.clone_box(),
-                attachment: att.id,
-                attachment_label: port.label,
-                control: dc.id,
-                control_label: dc.label,
+                attachment: att.id(),
+                attachment_label: port.label(),
+                control: dc.id(),
+                control_label: dc.label(),
             });
         }
     }
@@ -108,15 +113,16 @@ pub fn keyboard_binding_sections(
 ) -> Vec<KeyboardBindingSectionDescriptor> {
     let bindings = keyboard_binding_descriptors(topology, system);
     let mut sections: Vec<KeyboardBindingSectionDescriptor> = Vec::new();
+    // Index sections by attachment instead of a linear find per binding.
+    let mut index: std::collections::HashMap<nerust_input_traits::AttachmentId, usize> =
+        std::collections::HashMap::new();
     for binding in bindings {
-        if let Some(section) = sections
-            .iter_mut()
-            .find(|s| s.attachment == binding.attachment)
-        {
-            section.bindings.push(binding);
+        if let Some(&at) = index.get(&binding.attachment) {
+            sections[at].bindings.push(binding);
         } else {
             let attachment = binding.attachment;
             let attachment_label = binding.attachment_label;
+            index.insert(attachment, sections.len());
             sections.push(KeyboardBindingSectionDescriptor {
                 system: system.clone_box(),
                 attachment,
@@ -152,57 +158,57 @@ mod tests {
     const TEST_CTRL_MIC: DigitalControlId = DigitalControlId::new("test.control.mic");
 
     fn dual_port_topology() -> InputTopologyDescriptor {
-        InputTopologyDescriptor {
-            ports: vec![
-                PortDescriptor {
-                    id: PortId::new("p1"),
-                    label: "P1",
-                    attachments: vec![AttachmentSlotDescriptor {
-                        id: TEST_ATT_P1,
-                        label: "P1",
-                        device: DeviceKindId::new("nes.standard"),
-                        supported_devices: vec![DeviceKindId::new("nes.standard")],
-                    }],
-                },
-                PortDescriptor {
-                    id: PortId::new("p2"),
-                    label: "P2",
-                    attachments: vec![AttachmentSlotDescriptor {
-                        id: TEST_ATT_P2,
-                        label: "P2",
-                        device: DeviceKindId::new("nes.standard"),
-                        supported_devices: vec![DeviceKindId::new("nes.standard")],
-                    }],
-                },
+        InputTopologyDescriptor::new(
+            vec![
+                PortDescriptor::new(
+                    PortId::new("p1"),
+                    "P1",
+                    vec![AttachmentSlotDescriptor::new(
+                        TEST_ATT_P1,
+                        "P1",
+                        DeviceKindId::new("nes.standard"),
+                        vec![DeviceKindId::new("nes.standard")],
+                    )],
+                ),
+                PortDescriptor::new(
+                    PortId::new("p2"),
+                    "P2",
+                    vec![AttachmentSlotDescriptor::new(
+                        TEST_ATT_P2,
+                        "P2",
+                        DeviceKindId::new("nes.standard"),
+                        vec![DeviceKindId::new("nes.standard")],
+                    )],
+                ),
             ],
-            devices: vec![
-                DeviceDescriptor {
-                    kind: DeviceKindId::new("nes.standard"),
-                    label: "NES Standard",
-                    controls: vec![
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_A,
-                            label: "A",
-                            description: "A button",
-                        }),
-                        ControlDescriptor::Digital(DigitalControlDescriptor {
-                            id: TEST_CTRL_B,
-                            label: "B",
-                            description: "B button",
-                        }),
+            vec![
+                DeviceDescriptor::new(
+                    DeviceKindId::new("nes.standard"),
+                    "NES Standard",
+                    vec![
+                        ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                            TEST_CTRL_A,
+                            "A",
+                            "A button",
+                        )),
+                        ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                            TEST_CTRL_B,
+                            "B",
+                            "B button",
+                        )),
                     ],
-                },
-                DeviceDescriptor {
-                    kind: DeviceKindId::new("nes.famicom_p2"),
-                    label: "Famicom P2 (mic)",
-                    controls: vec![ControlDescriptor::Digital(DigitalControlDescriptor {
-                        id: TEST_CTRL_MIC,
-                        label: "Microphone",
-                        description: "Microphone",
-                    })],
-                },
+                ),
+                DeviceDescriptor::new(
+                    DeviceKindId::new("nes.famicom_p2"),
+                    "Famicom P2 (mic)",
+                    vec![ControlDescriptor::Digital(DigitalControlDescriptor::new(
+                        TEST_CTRL_MIC,
+                        "Microphone",
+                        "Microphone",
+                    ))],
+                ),
             ],
-        }
+        )
     }
 
     #[test]
