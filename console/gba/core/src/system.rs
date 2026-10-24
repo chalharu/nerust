@@ -484,7 +484,7 @@ mod tests {
     fn myst_batch_matches_per_cycle_state() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
+            "/../../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
         );
         let rom = std::fs::read(path).expect("Myst.gba not found");
         let mut batched = GbaSystem::from_test_rom(rom.clone()).unwrap();
@@ -525,7 +525,7 @@ mod tests {
     fn myst_frame_benchmark() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
+            "/../../../roms/gba/PeterLemon-GBA/Myst/Myst.gba"
         );
         let rom = std::fs::read(path).expect("Myst.gba not found");
         let mut system = GbaSystem::from_test_rom(rom).expect("invalid Myst ROM");
