@@ -23,7 +23,7 @@ fn test_config() -> CoreConfig {
 fn phase12_start_state_loads_and_runs() {
     let mut core = test_core();
     let rom =
-        std::fs::read("../../roms/gba/nba-emu_hw-test/dma/start-delay/start-delay.gba").unwrap();
+        std::fs::read("../../../roms/gba/nba-emu_hw-test/dma/start-delay/start-delay.gba").unwrap();
     core.load(&rom, &test_config()).unwrap();
     let blob = std::fs::read("tests/fixtures/phase12-start-state.bin").unwrap();
     core.load_state(&blob).unwrap();

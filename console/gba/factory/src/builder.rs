@@ -18,7 +18,8 @@ pub(crate) fn create_core_and_adapter(
         .ok_or(FactoryError::InvalidSettings)?;
     let resources = crate::GbaFactory.create_split(assignments)?;
     // Unified map travels end to end; no lossy projection.
-    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
+    let (gui_input, emu_input, field_map) =
+        nerust_console_input::InputSplit::typed_split(resources);
     let logical_size = LogicalSize {
         width: 240,
         height: 160,
