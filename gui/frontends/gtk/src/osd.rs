@@ -322,6 +322,14 @@ impl GtkOsd {
             let syncing_captions = Rc::clone(&syncing_captions);
             let last_sync = Rc::clone(&last_sync);
             move || {
+                // External destruction keeps this closure (and its strong
+                // dialog clone) alive with a dead surface: any widget
+                // touch below queries a destroyed native window (fatal X
+                // error), so skip instead. A never-realized dialog has no
+                // surface to query, so it still refreshes.
+                if super::window::surface_dead(&dialog) {
+                    return;
+                }
                 // Gate inputs first: a refresh with unchanged inputs
                 // rebuilds nothing instead of re-allocating rows.
                 let (language, seq) = {
@@ -475,11 +483,17 @@ impl GtkOsd {
             }
         });
         // Follow new notifications while open: the gate inside refresh
-        // rebuilds only on change, and destroy removes the source.
+        // rebuilds only on change, and destroy removes the source. An
+        // externally destroyed dialog keeps this source alive (no destroy
+        // signal), so the gone check stops it instead.
+        let follow_dialog = dialog.clone();
         let follow_refresh = Rc::clone(&refresh);
         let follow = std::cell::Cell::new(Some(glib::timeout_add_local(
             std::time::Duration::from_millis(500),
             move || {
+                if super::window::surface_gone(&follow_dialog) {
+                    return glib::ControlFlow::Break;
+                }
                 follow_refresh();
                 glib::ControlFlow::Continue
             },

@@ -111,6 +111,33 @@ impl WindowActions {
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
 
+/// True when the window's native surface is gone: never realized, or
+/// destroyed out from under the widget by the window manager. Widget
+/// signals never report this (external destruction skips close-request
+/// and `destroy` never fires), so every periodic touch and every reopen
+/// path must check explicitly instead of assuming a live surface.
+pub(crate) fn surface_gone(window: &impl IsA<gtk::Window>) -> bool {
+    use gtk::gdk::prelude::SurfaceExt as _;
+    window
+        .upcast_ref::<gtk::Window>()
+        .surface()
+        .is_none_or(|surface| surface.is_destroyed())
+}
+
+/// True when touching the window issues X requests on a dead surface: a
+/// surface exists and GDK reports it destroyed. A window with no surface
+/// yet (never realized) or an already-disposed widget has nothing to
+/// query, so touching it is safe; reopen paths still treat those as
+/// unusable via [`surface_gone`]. Periodic refreshes use this: they must
+/// run for never-realized dialogs and stop only for dead surfaces.
+pub(crate) fn surface_dead(window: &impl IsA<gtk::Window>) -> bool {
+    use gtk::gdk::prelude::SurfaceExt as _;
+    window
+        .upcast_ref::<gtk::Window>()
+        .surface()
+        .is_some_and(|surface| surface.is_destroyed())
+}
+
 pub(crate) trait WindowExtend {
     fn bind(
         application: gtk::Application,
@@ -401,10 +428,18 @@ impl WindowExtend for Window {
     fn open_history(&self) {
         // Parity with the debugger: an existing dialog presents
         // instead of duplicating; destroy clears the slot.
-        if let Some((existing, refresh)) = self.borrow().history_dialog.clone() {
-            existing.present();
-            refresh();
-            return;
+        // Clone out of the borrow first: clearing the slot below
+        // re-borrows mutably, and the `if let` scrutinee guard would
+        // otherwise still be alive (RefCell panic).
+        let existing = self.borrow().history_dialog.clone();
+        if let Some((existing, refresh)) = existing {
+            if surface_gone(&existing) {
+                self.borrow_mut().history_dialog = None;
+            } else {
+                existing.present();
+                refresh();
+                return;
+            }
         }
         let built = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
         {
@@ -419,11 +454,22 @@ impl WindowExtend for Window {
 
     fn open_debugger(&self) {
         // Idempotent open: an existing window refreshes and presents
-        // instead of duplicating.
-        if let Some(existing) = self.borrow().debugger_window.clone() {
-            crate::debugger::DebuggerWindowCore::refresh(&existing);
-            existing.borrow().present();
-            return;
+        // instead of duplicating. An externally destroyed window keeps
+        // its slot (no signal fires), so a gone check rebuilds instead
+        // of presenting a dead surface (fatal X error: GTK would query
+        // a destroyed native window).
+        // Clone out of the borrow first: clearing the slot below
+        // re-borrows mutably, and the `if let` scrutinee guard would
+        // otherwise still be alive (RefCell panic).
+        let existing = self.borrow().debugger_window.clone();
+        if let Some(existing) = existing {
+            if existing.borrow().is_gone() {
+                self.borrow_mut().debugger_window = None;
+            } else {
+                crate::debugger::DebuggerWindowCore::refresh(&existing);
+                existing.borrow().present();
+                return;
+            }
         }
         let debugger = crate::debugger::DebuggerWindowCore::open(
             &self.application(),
@@ -731,8 +777,117 @@ fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State
 #[cfg(test)]
 mod tests {
     use gio::prelude::ActionExt as _;
+    use gtk::prelude::GtkWindowExt as _;
 
-    use super::{KeyEventState, WindowActions, key_event_pressed, rebuild_slot_menu};
+    use super::{
+        KeyEventState, WindowActions, WindowExtend, key_event_pressed, rebuild_slot_menu,
+        surface_gone,
+    };
+
+    /// Externally destroyed dialogs keep their slot (no signal fires):
+    /// reopening must rebuild instead of panicking on the slot borrow.
+    /// Widget-only: needs a display, run under Xvfb (skips headless).
+    #[test]
+    fn open_history_rebuilds_dead_dialog_without_borrow_panic() {
+        let Some((app, window, state)) = harness() else {
+            eprintln!("SKIP: window widget test needs a display (run under Xvfb)");
+            return;
+        };
+        let win = super::Window::bind(
+            app,
+            window.clone(),
+            gtk::Picture::new(),
+            state.clone(),
+            std::rc::Rc::new(MockPipelineFactory),
+            super::StateMenus {
+                select_active_slot_menu: gio::Menu::new(),
+                save_slot_menu: gio::Menu::new(),
+                load_slot_menu: gio::Menu::new(),
+                delete_slot_menu: gio::Menu::new(),
+            },
+        );
+        // Bypass the slot wiring: a directly built dialog carries no
+        // destroy hook, like an externally destroyed one whose
+        // close-request never ran.
+        let built = crate::osd::GtkOsd::build_history(&window, &state);
+        win.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh.clone()));
+        // External destroy disposes the widget without signals; the
+        // slot keeps the dead dialog.
+        built.dialog.destroy();
+        assert!(surface_gone(&built.dialog));
+        // Must rebuild, not panic on the slot borrow.
+        win.open_history();
+        let slot = win.borrow().history_dialog.clone();
+        assert!(slot.is_some());
+        let (dialog, _) = slot.expect("rebuilt dialog");
+        assert!(!surface_gone(&dialog));
+        dialog.destroy();
+    }
+
+    /// Headless-capable state: session plus settings only, no renderer.
+    fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+    )> {
+        if !crate::test_support::ui_test_available() {
+            return None;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.window-test")
+            .build();
+        let window = gtk::ApplicationWindow::builder().application(&app).build();
+        Some((app, window, model_state()))
+    }
+
+    fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+        use std::sync::Arc;
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: std::rc::Rc::new(MockPipelineFactory),
+            registry,
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: audio,
+        };
+        std::rc::Rc::new(std::cell::RefCell::new(
+            crate::State::new_for_tests(ctx).expect("test state builds"),
+        ))
+    }
+
+    #[derive(Debug)]
+    struct MockPipelineFactory;
+
+    impl nerust_render_traits::renderer::PipelineFactory for MockPipelineFactory {
+        fn create_pipeline(
+            &self,
+            _config: &nerust_render_traits::renderer::RendererConfig,
+            _display: raw_window_handle::RawDisplayHandle,
+        ) -> Result<
+            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
+            nerust_render_traits::renderer::RendererError,
+        > {
+            Err(nerust_render_traits::renderer::RendererError::new(
+                "test",
+                Box::new(std::io::Error::other("no renderer in tests")),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for MockRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            Err(nerust_gui_shell::load::RomLoaderError::from_session(
+                nerust_gui_shell::session::SessionError::NoCore,
+            ))
+        }
+    }
 
     #[test]
     fn key_press_state_maps_to_pressed_flag() {
