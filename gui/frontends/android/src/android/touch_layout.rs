@@ -612,7 +612,11 @@ mod tests {
                 .map(|zone| zone.y * 360.0)
                 .fold(f32::INFINITY, f32::min)
         };
-        assert!(!landscape_overlay(0.0).relative_zones(800.0, 360.0).is_empty());
+        assert!(
+            !landscape_overlay(0.0)
+                .relative_zones(800.0, 360.0)
+                .is_empty()
+        );
         assert!(min_top_px(&plain) < 48.0);
         assert!(min_top_px(&inset) >= 48.0);
     }
