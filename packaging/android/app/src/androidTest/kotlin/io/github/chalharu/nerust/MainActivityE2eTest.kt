@@ -281,6 +281,33 @@ class MainActivityE2eTest {
         SystemClock.sleep(TERMINATION_GRACE_MS)
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun unloadClearsTouchOverlay() {
+        val activity = launchActivity()
+
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.ROM_URI.toString())
+        }
+        assertTrue(
+            "GBC document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+        // The load path rebuilds the overlay; the JNI push lands asynchronously.
+        val zonesBefore =
+            waitUntilValue(DIALOG_TIMEOUT_MS) {
+                activity.controlsZoneCountForTest().takeIf { it > 0 }
+            }
+        requireNotNull(zonesBefore) { "Touch overlay should carry zones while a ROM is loaded" }
+
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest(MenuAction.UNLOAD)
+        }
+        assertTrue(
+            "Unload should clear pushed touch zones",
+            waitUntil(DIALOG_TIMEOUT_MS) { activity.controlsZoneCountForTest() == 0 },
+        )
+    }
+
     /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
      * Destroy is expected within seconds. A linger without destroy — or a
      * destroy that never completes — names the blocker, so always dump:

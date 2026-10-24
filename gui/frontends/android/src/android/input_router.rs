@@ -93,8 +93,13 @@ impl InputRouter {
         let overlay_settings = &session.settings_snapshot().local.touch_overlay;
         self.overlay_revision = self.overlay_revision.wrapping_add(1);
         let model = session.touch_overlay_model(self.overlay_revision);
-        self.overlay = if overlay_settings.visibility
-            == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
+        // Unloaded frames push no zones: a stale D-Pad on a ROM-less
+        // screen is confusing, and the memo below would otherwise
+        // keep the previous ROM's zones alive across Unload.
+        let loaded = session.tick_metrics().loaded;
+        self.overlay = if !loaded
+            || overlay_settings.visibility
+                == nerust_settings_core::model::local::TouchOverlayVisibility::Hidden
         {
             None
         } else {
