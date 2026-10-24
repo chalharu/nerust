@@ -1,16 +1,10 @@
-pub mod input_port;
-
-pub use input_port::InputSplit;
-#[cfg(any(test, feature = "test-utils"))]
-pub use input_port::{EmuInput, GuiInput, InputPort};
-
 use std::{
     collections::HashMap,
     fmt,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
-        mpsc::{self, SyncSender},
+        mpsc::{self, Receiver, Sender, SyncSender},
     },
     thread::{self, JoinHandle},
 };
@@ -19,8 +13,9 @@ use nerust_core_traits::{
     ConsoleCore, EmuCommand, LoadCommand, SwapAudioCommand, SwapFrameSlotCommand,
     audio::{AudioBackend, StereoSample},
     debugger::{
-        DUMP_ROW_BYTES, DebuggerError, HexRow, InspectError, InspectRequest, InspectResult,
-        MAX_DUMP_BYTES, MemoryDump, SnapshotResult, StepUnit,
+        DUMP_ROW_BYTES, DebugImage, DebuggerError, DisasmLine, HexRow, InspectError,
+        InspectRequest, InspectResult, MAX_DUMP_BYTES, MemoryDump, MemoryWrite, SnapshotRequest,
+        SnapshotResult, SpaceInfo, StepUnit,
     },
 };
 use nerust_render_traits::FrameBuffer;
@@ -67,358 +62,534 @@ impl fmt::Debug for EmuThread {
     }
 }
 
+/// Loop state owned by the worker thread. Groups the per-frame locals
+/// so each command handler stays small enough to read in isolation.
+struct Worker {
+    core: Box<dyn ConsoleCore + Send + 'static>,
+    audio: Box<dyn AudioBackend + Send + 'static>,
+    filter: DynamicRateFilter,
+    timer: Timer,
+    frame_slot: FrameBuffer,
+    audio_scratch: Vec<StereoSample>,
+    nominal_tap: Option<Arc<Mutex<Vec<StereoSample>>>>,
+    serial_taps: HashMap<String, Arc<Mutex<Vec<u8>>>>,
+    fb: Arc<Mutex<FrameBuffer>>,
+    fr: Arc<AtomicBool>,
+    fc: Arc<AtomicU64>,
+    fps: Arc<AtomicU32>,
+    loaded: bool,
+}
+
+/// Dispatch outcome: handled (`Done`, with thread-exit flag) or
+/// passed to the next category (`Pass`).
+enum Route {
+    Done(bool),
+    Pass(EmuCommand),
+}
+
+impl Worker {
+    fn build(
+        core: Box<dyn ConsoleCore + Send + 'static>,
+        audio: Box<dyn AudioBackend + Send + 'static>,
+        frame_slot: FrameBuffer,
+        fb: Arc<Mutex<FrameBuffer>>,
+        fr: Arc<AtomicBool>,
+        fc: Arc<AtomicU64>,
+        fps: Arc<AtomicU32>,
+    ) -> Self {
+        Self {
+            core,
+            audio,
+            filter: DynamicRateFilter::new(),
+            timer: Timer::new(),
+            frame_slot,
+            audio_scratch: Vec::new(),
+            nominal_tap: None,
+            serial_taps: HashMap::new(),
+            fb,
+            fr,
+            fc,
+            fps,
+            loaded: false,
+        }
+    }
+
+    fn run(mut self, cmd_rx: Receiver<EmuCommand>) {
+        // Single parked command: lets the paused loop block in `recv`
+        // instead of spinning on `try_recv`.
+        let mut pending: Option<EmuCommand> = None;
+        loop {
+            // When idle (no ROM loaded), block on recv() to avoid busy-looping.
+            if !self.loaded {
+                match cmd_rx.recv() {
+                    Ok(cmd) => {
+                        if self.pump_idle(cmd) {
+                            return;
+                        }
+                    }
+                    Err(_) => return,
+                }
+                continue;
+            }
+            // Park while paused with nothing pending: stepped frames run
+            // flat-out with no pacing gate and no hot-spin.
+            if self.core.paused() && pending.is_none() {
+                match cmd_rx.recv() {
+                    Ok(cmd) => pending = Some(cmd),
+                    Err(_) => return,
+                }
+            }
+            while let Some(cmd) = pending.take().or_else(|| cmd_rx.try_recv().ok()) {
+                if self.pump(cmd) {
+                    return;
+                }
+            }
+            if self.loaded && !self.core.paused() {
+                self.render_free();
+            }
+        }
+    }
+
+    fn pump(&mut self, cmd: EmuCommand) -> bool {
+        let cmd = match self.pump_control(cmd) {
+            Route::Done(exit) => return exit,
+            Route::Pass(cmd) => cmd,
+        };
+        let cmd = match self.pump_data(cmd) {
+            Route::Done(exit) => return exit,
+            Route::Pass(cmd) => cmd,
+        };
+        self.pump_debug(cmd)
+    }
+
+    fn pump_control(&mut self, cmd: EmuCommand) -> Route {
+        match cmd {
+            EmuCommand::Load(cmd) => {
+                self.loaded =
+                    handle_load(&mut *self.core, &mut *self.audio, &mut self.filter, *cmd);
+                self.timer.reset();
+                Route::Done(false)
+            }
+            EmuCommand::Unload => {
+                self.core.unload();
+                self.loaded = false;
+                self.filter.reset();
+                Route::Done(false)
+            }
+            EmuCommand::Pause => {
+                self.core.set_paused(true);
+                Route::Done(false)
+            }
+            EmuCommand::Resume => {
+                self.core.set_paused(false);
+                // Parked iterations never paced: stale instants would
+                // crater fps until drained.
+                self.timer.reset();
+                Route::Done(false)
+            }
+            EmuCommand::Reset => {
+                self.core.reset();
+                self.filter.reset();
+                Route::Done(false)
+            }
+            EmuCommand::SetVolume(vol) => {
+                self.audio.set_volume(vol);
+                Route::Done(false)
+            }
+            EmuCommand::RestartAudio => {
+                self.audio.reconnect();
+                self.filter.reset();
+                Route::Done(false)
+            }
+            EmuCommand::SwapAudio(cmd) => {
+                handle_swap_audio(&mut *self.core, &mut self.audio, &mut self.filter, *cmd);
+                Route::Done(false)
+            }
+            EmuCommand::SwapFrameSlot(cmd) => {
+                handle_swap_frame_slot(&mut self.frame_slot, *cmd);
+                Route::Done(false)
+            }
+            EmuCommand::Quit => Route::Done(true),
+            cmd => Route::Pass(cmd),
+        }
+    }
+
+    fn pump_data(&mut self, cmd: EmuCommand) -> Route {
+        match cmd {
+            EmuCommand::SaveState { reply } => {
+                let result = self.core.save_state();
+                // reply send failure: receiver dropped (timeout/abort) — expected
+                let _ = reply.send(result);
+                Route::Done(false)
+            }
+            EmuCommand::LoadState(cmd) => {
+                let result = self.core.load_state(&cmd.data);
+                self.filter.reset();
+                // reply send failure: receiver dropped (timeout/abort) — expected
+                let _ = cmd.reply.send(result);
+                Route::Done(false)
+            }
+            EmuCommand::MapperSave { reply } => {
+                let result = self.core.mapper_save();
+                // reply send failure: receiver dropped (timeout/abort) — expected
+                let _ = reply.send(result);
+                Route::Done(false)
+            }
+            EmuCommand::ImportMapperSave(cmd) => {
+                let result = self.core.import_mapper_save(&cmd.data);
+                // reply send failure: receiver dropped (timeout/abort) — expected
+                let _ = cmd.reply.send(result);
+                Route::Done(false)
+            }
+            EmuCommand::Identity { reply } => {
+                let result = self.core.identity();
+                // reply send failure: receiver dropped (timeout/abort) — expected
+                let _ = reply.send(result);
+                Route::Done(false)
+            }
+            EmuCommand::TapNominalAudio { tap, reply } => {
+                self.nominal_tap = Some(tap);
+                let _ = reply.send(());
+                Route::Done(false)
+            }
+            EmuCommand::TapSerialOutput {
+                channel,
+                tap,
+                reply,
+            } => {
+                self.serial_taps.insert(channel, tap);
+                let _ = reply.send(());
+                Route::Done(false)
+            }
+            cmd => Route::Pass(cmd),
+        }
+    }
+
+    fn pump_debug(&mut self, cmd: EmuCommand) -> bool {
+        match cmd {
+            EmuCommand::Step { unit, reply } => {
+                self.exec_step(unit, reply);
+                false
+            }
+            EmuCommand::DebuggerInspect { req, reply } => {
+                self.exec_inspect(req, reply);
+                false
+            }
+            EmuCommand::DebuggerDisassemble { addr, count, reply } => {
+                self.exec_disassemble(addr, count, reply);
+                false
+            }
+            EmuCommand::DebuggerImages { reply } => {
+                self.exec_images(reply);
+                false
+            }
+            EmuCommand::DebuggerPc { reply } => {
+                self.exec_pc(reply);
+                false
+            }
+            EmuCommand::DebuggerSnapshot { req, reply } => {
+                let frame = self.fc.load(Ordering::Relaxed);
+                let result = self.build_snapshot(req, frame);
+                let _ = reply.send(result);
+                false
+            }
+            EmuCommand::WriteMemory { req, reply } => {
+                self.exec_write_memory(req, reply);
+                false
+            }
+            EmuCommand::WriteRegister { name, value, reply } => {
+                self.exec_write_register(name, value, reply);
+                false
+            }
+            EmuCommand::DebuggerSpaces { reply } => {
+                self.exec_spaces(reply);
+                false
+            }
+            EmuCommand::OutputChannels { reply } => {
+                let _ = reply.send(self.core.output_channels());
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn pump_idle(&mut self, cmd: EmuCommand) -> bool {
+        match cmd {
+            EmuCommand::Load(cmd) => {
+                self.loaded =
+                    handle_load(&mut *self.core, &mut *self.audio, &mut self.filter, *cmd);
+                self.timer.reset();
+                false
+            }
+            EmuCommand::Quit => true,
+            EmuCommand::SaveState { reply } => {
+                let _ = reply.send(self.core.save_state());
+                false
+            }
+            EmuCommand::LoadState(cmd) => {
+                let _ = cmd.reply.send(self.core.load_state(&cmd.data));
+                self.filter.reset();
+                false
+            }
+            EmuCommand::MapperSave { reply } => {
+                let _ = reply.send(self.core.mapper_save());
+                false
+            }
+            EmuCommand::ImportMapperSave(cmd) => {
+                let _ = cmd.reply.send(self.core.import_mapper_save(&cmd.data));
+                false
+            }
+            EmuCommand::Identity { reply } => {
+                let _ = reply.send(self.core.identity());
+                false
+            }
+            EmuCommand::SwapAudio(cmd) => {
+                handle_swap_audio(&mut *self.core, &mut self.audio, &mut self.filter, *cmd);
+                false
+            }
+            EmuCommand::SwapFrameSlot(cmd) => {
+                handle_swap_frame_slot(&mut self.frame_slot, *cmd);
+                false
+            }
+            EmuCommand::TapNominalAudio { tap, reply } => {
+                self.nominal_tap = Some(tap);
+                let _ = reply.send(());
+                false
+            }
+            EmuCommand::TapSerialOutput {
+                channel,
+                tap,
+                reply,
+            } => {
+                self.serial_taps.insert(channel, tap);
+                let _ = reply.send(());
+                false
+            }
+            cmd => {
+                self.reject_idle(cmd);
+                false
+            }
+        }
+    }
+
+    /// Reply-bearing commands must answer even when idle: dropping
+    /// the reply would hang the caller.
+    fn reject_idle(&self, cmd: EmuCommand) {
+        match cmd {
+            EmuCommand::Step { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::DebuggerInspect { reply, .. } => {
+                let _ = reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
+            }
+            EmuCommand::DebuggerDisassemble { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::DebuggerImages { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::DebuggerPc { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::DebuggerSnapshot { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::WriteMemory { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::WriteRegister { reply, .. } => {
+                let _ = reply.send(Err(DebuggerError::Unsupported));
+            }
+            EmuCommand::DebuggerSpaces { reply, .. } => {
+                let _ = reply.send(Vec::new());
+            }
+            EmuCommand::OutputChannels { reply, .. } => {
+                let _ = reply.send(Vec::new());
+            }
+            _ => {}
+        }
+    }
+
+    /// Barrier: one reply per executed step; callers pause first. Frame
+    /// steps render inline; instruction steps delegate.
+    fn exec_step(&mut self, unit: StepUnit, reply: Sender<Result<u64, DebuggerError>>) {
+        let result = if !self.loaded {
+            Err(DebuggerError::Unsupported)
+        } else {
+            match unit {
+                StepUnit::Frame => {
+                    render_one_frame(self.frame_ctx());
+                    Ok(self.fc.load(Ordering::Relaxed))
+                }
+                StepUnit::Instruction => match self.core.debug_control() {
+                    Some(mut control) => control.step(unit),
+                    None => Err(DebuggerError::Unsupported),
+                },
+            }
+        };
+        // reply send failure: receiver dropped (timeout/abort) — expected
+        let _ = reply.send(result);
+    }
+
+    fn exec_inspect(
+        &self,
+        req: InspectRequest,
+        reply: Sender<Result<InspectResult, InspectError>>,
+    ) {
+        let frame = self.fc.load(Ordering::Relaxed);
+        let result = inspect_memory(&*self.core, &req, frame);
+        // reply send failure: receiver dropped (timeout/abort) — expected
+        let _ = reply.send(result);
+    }
+
+    /// Cold path, ungated like WriteMemory: callers hold pause
+    /// for frame-consistent rows.
+    fn exec_disassemble(
+        &self,
+        addr: u32,
+        count: u16,
+        reply: Sender<Result<Vec<DisasmLine>, DebuggerError>>,
+    ) {
+        let result = match self.core.debugger() {
+            Some(debugger) => Ok(debugger.disassemble(addr, count)),
+            None => Err(DebuggerError::Unsupported),
+        };
+        let _ = reply.send(result);
+    }
+
+    fn exec_images(&self, reply: Sender<Result<Vec<DebugImage>, DebuggerError>>) {
+        let result = match self.core.debugger() {
+            Some(debugger) => Ok(debugger.images()),
+            None => Err(DebuggerError::Unsupported),
+        };
+        let _ = reply.send(result);
+    }
+
+    fn exec_pc(&self, reply: Sender<Result<Option<u32>, DebuggerError>>) {
+        let result = match self.core.debugger() {
+            Some(debugger) => Ok(debugger.program_counter()),
+            None => Err(DebuggerError::Unsupported),
+        };
+        let _ = reply.send(result);
+    }
+
+    /// One crossing for inspect + anchor + disassembly (see the type docs
+    /// for the preserved failure semantics): callers hold pause for frame-consistent rows.
+    fn build_snapshot(
+        &self,
+        req: SnapshotRequest,
+        frame: u64,
+    ) -> Result<SnapshotResult, DebuggerError> {
+        match inspect_memory(&*self.core, &req.inspect, frame) {
+            Err(error) => Ok(SnapshotResult {
+                inspect: Err(error),
+                anchor: None,
+                disasm: Vec::new(),
+            }),
+            Ok(inspected) => {
+                let anchor = match req.anchor {
+                    Some(addr) => Some(addr),
+                    None => match self.core.debugger() {
+                        Some(debugger) => debugger.program_counter(),
+                        None => None,
+                    },
+                };
+                let disasm = match anchor {
+                    Some(addr) => match self.core.debugger() {
+                        Some(debugger) => debugger.disassemble(addr, req.disasm_rows),
+                        None => Vec::new(),
+                    },
+                    None => Vec::new(),
+                };
+                Ok(SnapshotResult {
+                    inspect: Ok(inspected),
+                    anchor,
+                    disasm,
+                })
+            }
+        }
+    }
+
+    /// Deliberately pause-ungated (see InspectError): deterministic
+    /// callers pause first.
+    fn exec_write_memory(&mut self, req: MemoryWrite, reply: Sender<Result<(), DebuggerError>>) {
+        let result = match self.core.debug_control() {
+            Some(mut control) => control.write_memory(req.space, req.addr, req.width, req.value),
+            None => Err(DebuggerError::Unsupported),
+        };
+        // reply send failure: receiver dropped (timeout/abort) — expected
+        let _ = reply.send(result);
+    }
+
+    /// Same pause-ungated contract as WriteMemory.
+    fn exec_write_register(
+        &mut self,
+        name: &'static str,
+        value: u64,
+        reply: Sender<Result<(), DebuggerError>>,
+    ) {
+        let result = match self.core.debug_control() {
+            Some(mut control) => control.write_register(name, value),
+            None => Err(DebuggerError::Unsupported),
+        };
+        // reply send failure: receiver dropped (timeout/abort) — expected
+        let _ = reply.send(result);
+    }
+
+    fn exec_spaces(&self, reply: Sender<Vec<SpaceInfo>>) {
+        let result = match self.core.debugger() {
+            Some(debugger) => debugger.spaces().to_vec(),
+            None => Vec::new(),
+        };
+        // reply send failure: receiver dropped (timeout/abort) — expected
+        let _ = reply.send(result);
+    }
+
+    fn frame_ctx(&mut self) -> FrameCtx<'_> {
+        FrameCtx {
+            core: &mut *self.core,
+            frame_slot: &mut self.frame_slot,
+            audio_scratch: &mut self.audio_scratch,
+            filter: &mut self.filter,
+            audio: &mut *self.audio,
+            nominal_tap: &self.nominal_tap,
+            serial_taps: &self.serial_taps,
+            fb: &self.fb,
+            fr: &self.fr,
+            fc: &self.fc,
+        }
+    }
+
+    /// Free-run tail: render through the standard path, then pace.
+    /// Stepped frames park above, so they are never real-time-gated.
+    fn render_free(&mut self) {
+        render_one_frame(self.frame_ctx());
+        self.timer.wait();
+        self.fps
+            .store(self.timer.as_fps().to_bits(), Ordering::Relaxed);
+    }
+}
+
 impl EmuThread {
     /// `shared_fb` swaps with the internal buffer after each render; `frame_ready` signals
     /// ConsoleVideo. `frame_slot` (the core's render target) comes from the factory profile, never per-system constants, so all three buffers agree before the first swap. `audio` is session-owned; cores never see the backend.
     pub fn spawn(
-        mut core: Box<dyn ConsoleCore + Send + 'static>,
+        core: Box<dyn ConsoleCore + Send + 'static>,
         shared_fb: Arc<Mutex<FrameBuffer>>,
         frame_ready: Arc<AtomicBool>,
         frame_slot: FrameBuffer,
-        mut audio: Box<dyn AudioBackend + Send + 'static>,
+        audio: Box<dyn AudioBackend + Send + 'static>,
     ) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<EmuCommand>(8);
         let frame_count: Arc<std::sync::atomic::AtomicU64> =
             Arc::new(std::sync::atomic::AtomicU64::new(0));
         let fps: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
-
         let fb = Arc::clone(&shared_fb);
+        let fr = Arc::clone(&frame_ready);
         let fc = Arc::clone(&frame_count);
         let fps_c = Arc::clone(&fps);
-        let fr = Arc::clone(&frame_ready);
         let thread = thread::spawn(move || {
-            let mut frame_slot = frame_slot;
-
-            // Session-owned audio transport: core-produced nominal samples collect here, then
-            // stretch through the rate-control filter into the backend (both reused every frame, no allocation).
-            let mut filter = DynamicRateFilter::new();
-            let mut audio_scratch: Vec<nerust_core_traits::audio::StereoSample> = Vec::new();
-            let mut nominal_tap: Option<Arc<Mutex<Vec<nerust_core_traits::audio::StereoSample>>>> =
-                None;
-            let mut serial_taps: HashMap<String, Arc<Mutex<Vec<u8>>>> = HashMap::new();
-
-            let mut timer = Timer::new();
-            let mut loaded = false;
-            // Single parked command (see below): lets the paused loop
-            // block in `recv` instead of spinning on `try_recv`.
-            let mut pending: Option<EmuCommand> = None;
-            loop {
-                // When idle (no ROM loaded), block on recv() to avoid busy-looping.
-                if !loaded {
-                    match cmd_rx.recv() {
-                        Ok(cmd) => match cmd {
-                            EmuCommand::Load(cmd) => {
-                                loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
-                                timer.reset();
-                            }
-                            EmuCommand::Quit => return,
-                            EmuCommand::SaveState { reply } => {
-                                let _ = reply.send(core.save_state());
-                            }
-                            EmuCommand::LoadState(cmd) => {
-                                let _ = cmd.reply.send(core.load_state(&cmd.data));
-                                filter.reset();
-                            }
-                            EmuCommand::MapperSave { reply } => {
-                                let _ = reply.send(core.mapper_save());
-                            }
-                            EmuCommand::ImportMapperSave(cmd) => {
-                                let _ = cmd.reply.send(core.import_mapper_save(&cmd.data));
-                            }
-                            EmuCommand::Identity { reply } => {
-                                let _ = reply.send(core.identity());
-                            }
-                            // Reply-bearing commands must answer even when
-                            // idle: dropping the reply would hang the caller.
-                            EmuCommand::Step { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::DebuggerInspect { reply, .. } => {
-                                let _ =
-                                    reply.send(Err(InspectError::Core(DebuggerError::Unsupported)));
-                            }
-                            EmuCommand::DebuggerDisassemble { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::DebuggerImages { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::DebuggerPc { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::DebuggerSnapshot { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::WriteMemory { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::SwapAudio(cmd) => {
-                                handle_swap_audio(&mut *core, &mut audio, &mut filter, *cmd);
-                            }
-                            EmuCommand::SwapFrameSlot(cmd) => {
-                                handle_swap_frame_slot(&mut frame_slot, *cmd);
-                            }
-                            EmuCommand::WriteRegister { reply, .. } => {
-                                let _ = reply.send(Err(DebuggerError::Unsupported));
-                            }
-                            EmuCommand::TapNominalAudio { tap, reply } => {
-                                nominal_tap = Some(tap);
-                                let _ = reply.send(());
-                            }
-                            EmuCommand::TapSerialOutput {
-                                channel,
-                                tap,
-                                reply,
-                            } => {
-                                serial_taps.insert(channel, tap);
-                                let _ = reply.send(());
-                            }
-                            EmuCommand::DebuggerSpaces { reply, .. } => {
-                                let _ = reply.send(Vec::new());
-                            }
-                            EmuCommand::OutputChannels { reply } => {
-                                let _ = reply.send(Vec::new());
-                            }
-                            _ => {}
-                        },
-                        Err(_) => return,
-                    }
-                    continue;
-                }
-
-                // Park while paused with nothing pending: no pacing gate (stepped frames run
-                // flat-out), no hot-spin. Disconnect exits, like the idle path.
-                if core.paused() && pending.is_none() {
-                    match cmd_rx.recv() {
-                        Ok(cmd) => pending = Some(cmd),
-                        Err(_) => return,
-                    }
-                }
-
-                while let Some(cmd) = pending.take().or_else(|| cmd_rx.try_recv().ok()) {
-                    match cmd {
-                        EmuCommand::Load(cmd) => {
-                            loaded = handle_load(&mut *core, &mut *audio, &mut filter, *cmd);
-                            // Blocking IO is an unpaced gap: same
-                            // stale-instant hazard as the pause park.
-                            timer.reset();
-                        }
-                        EmuCommand::Unload => {
-                            core.unload();
-                            loaded = false;
-                            filter.reset();
-                        }
-                        EmuCommand::Pause => core.set_paused(true),
-                        EmuCommand::Resume => {
-                            core.set_paused(false);
-                            // Parked iterations never paced: stale
-                            // instants would crater fps until drained.
-                            timer.reset();
-                        }
-                        EmuCommand::Reset => {
-                            core.reset();
-                            filter.reset();
-                        }
-                        EmuCommand::SetVolume(vol) => audio.set_volume(vol),
-                        EmuCommand::RestartAudio => {
-                            audio.reconnect();
-                            filter.reset();
-                        }
-                        EmuCommand::SwapAudio(cmd) => {
-                            handle_swap_audio(&mut *core, &mut audio, &mut filter, *cmd);
-                        }
-                        EmuCommand::SwapFrameSlot(cmd) => {
-                            handle_swap_frame_slot(&mut frame_slot, *cmd);
-                        }
-                        EmuCommand::SaveState { reply } => {
-                            let result = core.save_state();
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::LoadState(cmd) => {
-                            let result = core.load_state(&cmd.data);
-                            filter.reset();
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = cmd.reply.send(result);
-                        }
-                        EmuCommand::MapperSave { reply } => {
-                            let result = core.mapper_save();
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::ImportMapperSave(cmd) => {
-                            let result = core.import_mapper_save(&cmd.data);
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = cmd.reply.send(result);
-                        }
-                        EmuCommand::Identity { reply } => {
-                            let result = core.identity();
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::Step { unit, reply } => {
-                            // Barrier: one reply per executed step; callers pause first. Frame
-                            // steps render inline; instruction steps delegate.
-                            let result = if !loaded {
-                                Err(DebuggerError::Unsupported)
-                            } else {
-                                match unit {
-                                    StepUnit::Frame => {
-                                        render_one_frame(FrameCtx {
-                                            core: &mut *core,
-                                            frame_slot: &mut frame_slot,
-                                            audio_scratch: &mut audio_scratch,
-                                            filter: &mut filter,
-                                            audio: &mut *audio,
-                                            nominal_tap: &nominal_tap,
-                                            serial_taps: &serial_taps,
-                                            fb: &fb,
-                                            fr: &fr,
-                                            fc: &fc,
-                                        });
-                                        Ok(fc.load(Ordering::Relaxed))
-                                    }
-                                    StepUnit::Instruction => match core.debug_control() {
-                                        Some(mut control) => control.step(unit),
-                                        None => Err(DebuggerError::Unsupported),
-                                    },
-                                }
-                            };
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::DebuggerInspect { req, reply } => {
-                            let frame = fc.load(Ordering::Relaxed);
-                            let result = inspect_memory(&*core, &req, frame);
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::DebuggerDisassemble { addr, count, reply } => {
-                            // Cold path, ungated like WriteMemory: callers
-                            // hold pause for frame-consistent rows.
-                            let result = match core.debugger() {
-                                Some(debugger) => Ok(debugger.disassemble(addr, count)),
-                                None => Err(DebuggerError::Unsupported),
-                            };
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::DebuggerImages { reply } => {
-                            let result = match core.debugger() {
-                                Some(debugger) => Ok(debugger.images()),
-                                None => Err(DebuggerError::Unsupported),
-                            };
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::DebuggerPc { reply } => {
-                            let result = match core.debugger() {
-                                Some(debugger) => Ok(debugger.program_counter()),
-                                None => Err(DebuggerError::Unsupported),
-                            };
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::DebuggerSnapshot { req, reply } => {
-                            // One crossing for inspect + anchor + disassembly (see the type docs
-                            // for the preserved failure semantics): callers hold pause for frame-consistent rows.
-                            let frame = fc.load(Ordering::Relaxed);
-                            let result = match inspect_memory(&*core, &req.inspect, frame) {
-                                Err(error) => Ok(SnapshotResult {
-                                    inspect: Err(error),
-                                    anchor: None,
-                                    disasm: Vec::new(),
-                                }),
-                                Ok(inspected) => {
-                                    let anchor = match req.anchor {
-                                        Some(addr) => Some(addr),
-                                        None => match core.debugger() {
-                                            Some(debugger) => debugger.program_counter(),
-                                            None => None,
-                                        },
-                                    };
-                                    let disasm = match anchor {
-                                        Some(addr) => match core.debugger() {
-                                            Some(debugger) => {
-                                                debugger.disassemble(addr, req.disasm_rows)
-                                            }
-                                            None => Vec::new(),
-                                        },
-                                        None => Vec::new(),
-                                    };
-                                    Ok(SnapshotResult {
-                                        inspect: Ok(inspected),
-                                        anchor,
-                                        disasm,
-                                    })
-                                }
-                            };
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::WriteMemory { req, reply } => {
-                            // Deliberately pause-ungated (see InspectError):
-                            // deterministic callers pause first.
-                            let result = match core.debug_control() {
-                                Some(mut control) => {
-                                    control.write_memory(req.space, req.addr, req.width, req.value)
-                                }
-                                None => Err(DebuggerError::Unsupported),
-                            };
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::WriteRegister { name, value, reply } => {
-                            // Same pause-ungated contract as WriteMemory.
-                            let result = match core.debug_control() {
-                                Some(mut control) => control.write_register(name, value),
-                                None => Err(DebuggerError::Unsupported),
-                            };
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::TapNominalAudio { tap, reply } => {
-                            nominal_tap = Some(tap);
-                            let _ = reply.send(());
-                        }
-                        EmuCommand::TapSerialOutput {
-                            channel,
-                            tap,
-                            reply,
-                        } => {
-                            serial_taps.insert(channel, tap);
-                            let _ = reply.send(());
-                        }
-                        EmuCommand::DebuggerSpaces { reply } => {
-                            let result = match core.debugger() {
-                                Some(debugger) => debugger.spaces().to_vec(),
-                                None => Vec::new(),
-                            };
-                            // reply send failure: receiver dropped (timeout/abort) — expected
-                            let _ = reply.send(result);
-                        }
-                        EmuCommand::OutputChannels { reply } => {
-                            let _ = reply.send(core.output_channels());
-                        }
-                        EmuCommand::Quit => return,
-                    }
-                }
-
-                if loaded && !core.paused() {
-                    // render_frame only fails with NoRomLoaded (guarded by loaded flag)
-                    render_one_frame(FrameCtx {
-                        core: &mut *core,
-                        frame_slot: &mut frame_slot,
-                        audio_scratch: &mut audio_scratch,
-                        filter: &mut filter,
-                        audio: &mut *audio,
-                        nominal_tap: &nominal_tap,
-                        serial_taps: &serial_taps,
-                        fb: &fb,
-                        fr: &fr,
-                        fc: &fc,
-                    });
-                    // Pacing is a free-run concern only. Paused iterations park above, so stepped
-                    // frames are never real-time-gated. fps freezes while paused (no frames render); the metrics `paused` flag is authoritative.
-                    timer.wait();
-                    fps_c.store(timer.as_fps().to_bits(), Ordering::Relaxed);
-                }
-            }
+            Worker::build(core, audio, frame_slot, fb, fr, fc, fps_c).run(cmd_rx)
         });
 
         Self {

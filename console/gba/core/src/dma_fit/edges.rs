@@ -3,7 +3,7 @@ use crate::system::GbaSystem;
 
 const ROM_128KB: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../roms/gba/nba-emu_hw-test/bus/128kb-boundary/128kb-boundary.gba"
+    "/../../../roms/gba/nba-emu_hw-test/bus/128kb-boundary/128kb-boundary.gba"
 );
 // The measured functions are IWRAM_CODE: at boot the CRT copies them from
 // ROM to IWRAM and they execute there (1-cycle fetches). Replicate that by

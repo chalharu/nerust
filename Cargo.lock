@@ -3442,6 +3442,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_console_input"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_input_traits",
+]
+
+[[package]]
 name = "nerust_core_traits"
 version = "0.1.0-dev"
 dependencies = [
@@ -3514,8 +3522,8 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "log",
+ "nerust_console_input",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_gba_core",
  "nerust_gba_device",
  "nerust_gba_settings",
@@ -3570,8 +3578,8 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "log",
+ "nerust_console_input",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_gbc_core",
  "nerust_gbc_device",
  "nerust_gbc_settings",
@@ -3662,6 +3670,7 @@ dependencies = [
  "clap",
  "dyn-clone",
  "log",
+ "nerust_console_input",
  "nerust_core_traits",
  "nerust_emu_thread",
  "nerust_gui_runtime",
@@ -3758,8 +3767,8 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "log",
+ "nerust_console_input",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_input_traits",
  "nerust_nes_core",
  "nerust_nes_device",
@@ -3877,7 +3886,6 @@ dependencies = [
  "clap",
  "crc",
  "nerust_core_traits",
- "nerust_emu_thread",
  "nerust_gba_factory",
  "nerust_gbc_factory",
  "nerust_gui_shell",

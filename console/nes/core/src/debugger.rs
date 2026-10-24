@@ -462,8 +462,8 @@ mod tests {
     #[test]
     fn nes_disasm_matches_nestest_trace() {
         use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
-        let rom: &[u8] = include_bytes!("../../../roms/nes/nes-test-roms/other/nestest.nes");
-        let log: &str = include_str!("../../../roms/nes/nes-test-roms/other/nestest.log");
+        let rom: &[u8] = include_bytes!("../../../../roms/nes/nes-test-roms/other/nestest.nes");
+        let log: &str = include_str!("../../../../roms/nes/nes-test-roms/other/nestest.log");
         assert_eq!(&rom[0..4], b"NES\x1A");
         let data = CartridgeData::new(CartridgeDataParts {
             format: RomFormat::INes,
@@ -507,8 +507,8 @@ mod tests {
     #[test]
     fn nes_disasm_target_matches_plain_operands() {
         use crate::{CartridgeData, CartridgeDataParts, MirrorMode, RomFormat};
-        let rom: &[u8] = include_bytes!("../../../roms/nes/nes-test-roms/other/nestest.nes");
-        let log: &str = include_str!("../../../roms/nes/nes-test-roms/other/nestest.log");
+        let rom: &[u8] = include_bytes!("../../../../roms/nes/nes-test-roms/other/nestest.nes");
+        let log: &str = include_str!("../../../../roms/nes/nes-test-roms/other/nestest.log");
         let data = CartridgeData::new(CartridgeDataParts {
             format: RomFormat::INes,
             prog_rom: rom[16..16 + 0x4000].to_vec(),

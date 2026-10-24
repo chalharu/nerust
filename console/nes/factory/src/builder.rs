@@ -21,7 +21,8 @@ pub(crate) fn create_core_and_adapter_with_assignments(
     let controller_collection = controllers_for_assignments(assignments, input_factory)?;
     let resources = input_factory.create_split(&controller_collection)?;
     // Unified map travels end to end; no lossy projection.
-    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
+    let (gui_input, emu_input, field_map) =
+        nerust_console_input::InputSplit::typed_split(resources);
     create_core_and_adapter(
         view,
         speaker,
