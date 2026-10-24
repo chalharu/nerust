@@ -2,6 +2,8 @@ package io.github.chalharu.nerust
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
@@ -279,6 +281,88 @@ class MainActivityE2eTest {
         }
         // Same contract as backTerminatesApplicationProcess above.
         SystemClock.sleep(TERMINATION_GRACE_MS)
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun unloadClearsTouchOverlay() {
+        val activity = launchActivity()
+
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.ROM_URI.toString())
+        }
+        assertTrue(
+            "GBC document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+        // The load path rebuilds the overlay; the JNI push lands asynchronously.
+        val zonesBefore =
+            waitUntilValue(DIALOG_TIMEOUT_MS) {
+                activity.controlsZoneCountForTest().takeIf { it > 0 }
+            }
+        requireNotNull(zonesBefore) { "Touch overlay should carry zones while a ROM is loaded" }
+
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest(MenuAction.UNLOAD)
+        }
+        assertTrue(
+            "Unload should clear pushed touch zones",
+            waitUntil(DIALOG_TIMEOUT_MS) { activity.controlsZoneCountForTest() == 0 },
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun drawerScrollsInLandscape() {
+        val activity = launchActivity()
+
+        runOnActivityThread(activity) {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
+        assertTrue(
+            "Activity should rotate to landscape",
+            waitUntil(STARTUP_TIMEOUT_MS) {
+                activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            },
+        )
+        assertDrawerHandleAvailable(activity)
+
+        try {
+            runOnActivityThread(activity) {
+                activity.openDrawerForTest()
+            }
+            assertChromeViewAvailable(
+                activity,
+                DRAWER_OVERLAY_TAG,
+                DRAWER_TIMEOUT_MS,
+                "Drawer overlay should be attached in landscape",
+            )
+            // The sheet overflows the landscape height, so the published
+            // range must be measured (finite) and non-zero (scrollable).
+            val scrollMax =
+                waitUntilValue(DRAWER_TIMEOUT_MS) {
+                    activity.drawerScrollMaxForTest()?.takeIf { it != Int.MAX_VALUE }
+                }
+            requireNotNull(scrollMax) { "Drawer sheet should publish a measured scroll range" }
+            assertTrue("Drawer sheet should scroll in landscape (max=$scrollMax)", scrollMax > 0)
+
+            runOnActivityThread(activity) {
+                val drawerOverlay =
+                    requireNotNull(activity.findChromeViewForTest(DRAWER_OVERLAY_TAG)) {
+                        "Drawer overlay should be attached in landscape"
+                    }
+                assertEquals(
+                    EXPECTED_DRAWER_CONTENT,
+                    drawerOverlay.getTag(R.id.nerust_drawer_content_probe),
+                )
+                activity.onBackPressed()
+            }
+        } finally {
+            runOnActivityThread(activity) {
+                if (!activity.isDestroyed) {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+            }
+        }
     }
 
     /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
