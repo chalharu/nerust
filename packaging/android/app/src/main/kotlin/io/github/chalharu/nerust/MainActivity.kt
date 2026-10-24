@@ -368,6 +368,8 @@ class MainActivity :
 
     fun controlsZoneCountForTest(): Int = chromeManager.controlsZoneCountForTest()
 
+    fun drawerScrollMaxForTest(): Int? = chromeManager.drawerScrollMaxForTest()
+
     /** Cached root-window safe insets in physical pixels: [top, right, bottom, left].
      * Read by Rust without JNI; refreshed on the UI thread, so the render thread never blocks. */
     fun getSafeInsetsPx(): IntArray = cachedSafeInsetsPx.clone()
