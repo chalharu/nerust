@@ -15,6 +15,7 @@ import android.widget.TextView
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -717,31 +718,28 @@ private fun NerustDrawerOverlay(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(
-                modifier =
-                    Modifier
-                        .statusBarsPadding()
-                        .verticalScroll(drawerScroll),
-            ) {
-                androidx.compose.material3.Text(
-                    text = DRAWER_TITLE,
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
-                )
-                Text(
-                    text = "Open ROMs and control the current session.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
-                )
-                DRAWER_ACTIONS.forEachIndexed { index, action ->
-                    DrawerActionItem(
-                        label = action.label,
-                        onClick = {
-                            closeAndRun(action.action)
-                        },
+            ModalDrawerSheet(modifier = Modifier.statusBarsPadding()) {
+                Column(modifier = Modifier.verticalScroll(drawerScroll)) {
+                    androidx.compose.material3.Text(
+                        text = DRAWER_TITLE,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
                     )
-                    if (index == 1) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text(
+                        text = "Open ROMs and control the current session.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
+                    )
+                    DRAWER_ACTIONS.forEachIndexed { index, action ->
+                        DrawerActionItem(
+                            label = action.label,
+                            onClick = {
+                                closeAndRun(action.action)
+                            },
+                        )
+                        if (index == 1) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        }
                     }
                 }
             }
