@@ -623,7 +623,7 @@ mod tests {
             case_id: id.to_string(),
             category: RomCategory::Cpu,
             description: format!("{id} description"),
-            rom: "nes-test-roms/blargg_suite/01.case.nes".to_string(),
+            rom: "nes/nes-test-roms/blargg_suite/01.case.nes".to_string(),
             system: "NES",
             elapsed: std::time::Duration::from_millis(850),
             frames: 10,

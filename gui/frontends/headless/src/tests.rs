@@ -15,7 +15,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     perf: true
     options: ["--mmc3-irq-variant", "nec", "--submapper", "4"]
     expected_audio:
@@ -51,7 +51,7 @@ cases:
   - id: mapper.generic_assert
     category: mapper
     description: Generic assertion parsing regression.
-    rom: nes-test-roms/mmc3_test/6-MMC6.nes
+    rom: nes/nes-test-roms/mmc3_test/6-MMC6.nes
     events:
       - { frame: 15, action: assert, kind: memory, address: "0x6000", value: "0x00", open_bus: true }
       - { frame: 15, action: assert, kind: screen, hash: "0x464033EFDAB11D8E" }
@@ -95,7 +95,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
 "#,
@@ -112,7 +112,7 @@ cases:
             .expect("path should resolve"),
         Path::new("/tmp/config")
             .join("fixtures/roms")
-            .join("nes-test-roms/other/nestest.nes")
+            .join("nes/nes-test-roms/other/nestest.nes")
     );
 }
 
@@ -168,7 +168,7 @@ fn drive_case_dispatches_frame_zero_events() {
         id: "frame-zero".to_string(),
         category: RomCategory::Cpu,
         description: "Frame-zero dispatch regression.".to_string(),
-        rom: "nes-test-roms/other/nestest.nes".to_string(),
+        rom: "nes/nes-test-roms/other/nestest.nes".to_string(),
         perf: false,
         options: Vec::new(),
         events: vec![
@@ -297,7 +297,7 @@ cases:
   - id: cpu.nestest
     category: cpu
     description: Best first-pass CPU validation ROM.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     options: ["--submapper", "16"]
     events:
       - { frame: 1, action: check_screen, hash: "0x1" }
@@ -317,7 +317,7 @@ cases:
   - id: cpu.registers
     category: cpu
     description: Register assertions and 32-bit addresses.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     events:
       - { frame: 5, action: check_registers, registers: {a: "0x00", pc: 32768} }
       - { frame: 5, action: assert, kind: registers, registers: {x: "0x01"} }
@@ -368,7 +368,7 @@ cases:
   - id: cpu.overflow
     category: cpu
     description: Address past u32 must fail loudly, never wrap.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     events:
       - { frame: 5, action: check_memory, address: "0x100000000", value: "0x00" }
 "#,
@@ -424,7 +424,7 @@ fn drive_case_dispatches_check_registers() {
         id: "regs".to_string(),
         category: RomCategory::Cpu,
         description: "Register dispatch regression.".to_string(),
-        rom: "nes-test-roms/other/nestest.nes".to_string(),
+        rom: "nes/nes-test-roms/other/nestest.nes".to_string(),
         perf: false,
         options: Vec::new(),
         events: vec![RomEvent {
@@ -458,7 +458,7 @@ cases:
   - id: cpu.serial
     category: cpu
     description: Serial-output assertions.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     events:
       - { frame: 5, action: check_serial, bytes: "0x506173736564" }
       - { frame: 5, action: assert, kind: serial, bytes: "0x506173736564" }
@@ -495,7 +495,7 @@ cases:
   - id: cpu.serial_bad
     category: cpu
     description: Odd hex digit counts must fail loudly, never pad.
-    rom: nes-test-roms/other/nestest.nes
+    rom: nes/nes-test-roms/other/nestest.nes
     events:
       - { frame: 5, action: check_serial, bytes: "0x123" }
 "#,
@@ -549,7 +549,7 @@ fn drive_case_dispatches_check_serial() {
         id: "serial".to_string(),
         category: RomCategory::Cpu,
         description: "Serial dispatch regression.".to_string(),
-        rom: "nes-test-roms/other/nestest.nes".to_string(),
+        rom: "nes/nes-test-roms/other/nestest.nes".to_string(),
         perf: false,
         options: Vec::new(),
         events: vec![RomEvent {
