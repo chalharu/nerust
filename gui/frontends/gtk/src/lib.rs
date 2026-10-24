@@ -13,10 +13,12 @@ mod window;
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gtk::{
+    gdk::prelude::SurfaceExt as _,
     gio, glib,
     prelude::{
         ActionMapExt as _, ApplicationExt as _, ApplicationExtManual as _,
         ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
+        NativeExt as _, WidgetExt as _,
     },
 };
 use nerust_gui_runtime::settings::{
@@ -375,6 +377,14 @@ fn build_window(
     app.set_menubar(Some(&menu_model));
     app.add_window(&window);
     window.set_show_menubar(true);
+    // Game viewport: a picture the renderer paints into memory, composited
+    // by GTK under the menubar. Presenting a fullscreen native surface
+    // would bury the in-window chrome, so the backends never present here.
+    let picture = gtk::Picture::new();
+    picture.set_hexpand(true);
+    picture.set_vexpand(true);
+    picture.set_can_shrink(true);
+    window.set_child(Some(&picture));
 
     let quit_action = gio::SimpleAction::new("quit", None);
     {
@@ -418,6 +428,7 @@ fn build_window(
     Window::bind(
         app.clone(),
         window,
+        picture,
         state,
         Rc::clone(factory),
         StateMenus {
@@ -585,6 +596,31 @@ fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
                 // One path for every open: failure dialog and action
                 // sync live in `Window::load_path`.
                 window.load_path(&path);
+            }
+        });
+    }
+
+    // External destruction bypasses close-request: the frame clock stops
+    // (no more ticks) and a HANDLES_OPEN app does not auto-quit, so the
+    // process would linger with no windows. Poll the GDK destruction flag
+    // from a timeout, which runs on the main context independent of the
+    // frame clock. `surface()` stays `Some` (the object is retained), so
+    // probe the flag, not presence.
+    {
+        let app = app.clone();
+        let current_window = current_window.clone();
+        glib::timeout_add_seconds_local(1, move || {
+            let destroyed = current_window
+                .borrow()
+                .as_ref()
+                .and_then(|window| window.window().surface())
+                .is_some_and(|surface| surface.is_destroyed());
+            if destroyed {
+                log::warn!("gtk: native surface destroyed externally; quitting");
+                app.quit();
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
             }
         });
     }

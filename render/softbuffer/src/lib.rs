@@ -472,10 +472,6 @@ impl SoftbufferRenderer {
     }
 
     /// Output size without exposing the field.
-    pub(crate) fn output_size(&self) -> SurfaceSize {
-        self.size
-    }
-
     /// Surface presence for the geometry gate.
     pub(crate) fn surface_attached(&self) -> bool {
         self.surface.is_some()
@@ -544,7 +540,152 @@ impl SurfaceLifecycle for SoftbufferRenderer {
     }
 }
 
+impl SoftbufferRenderer {
+    /// Rasterize into memory instead of the native surface, for frontends
+    /// that composite themselves (in-window chrome must survive presents).
+    /// Same geometry and OSD compositing as a surface present, without one.
+    pub fn render_image(
+        &mut self,
+        frame: &FrameBuffer,
+        size: SurfaceSize,
+    ) -> Option<nerust_render_traits::RenderedImage> {
+        if size.width == 0 || size.height == 0 || size.width > 8192 || size.height > 8192 {
+            return None;
+        }
+        // LUTs follow the output size exactly like the surface `resize`
+        // path; the surface itself is untouched.
+        self.size = size;
+        self.resize_lut();
+        let valid = self.validate_frame_for(frame, size)?;
+        if !self.taps_covered(
+            valid.dst_w,
+            valid.avail_h,
+            valid.src_stride,
+            valid.tap_stride,
+            valid.ntsc_writes,
+        ) {
+            warn!("softbuffer tap coverage mismatch: refusing frame");
+            return None;
+        }
+        let mut pixels = vec![0u32; valid.dst_w.saturating_mul(valid.dst_h)];
+        self.rasterize_owned(&valid, frame, &mut pixels);
+        // Buffer words are 0xAARRGGBB; the image contract is R8G8B8A8 bytes.
+        let mut bytes = Vec::with_capacity(pixels.len().saturating_mul(4));
+        for word in pixels {
+            bytes.extend_from_slice(&[
+                (word >> 16) as u8,
+                (word >> 8) as u8,
+                word as u8,
+                (word >> 24) as u8,
+            ]);
+        }
+        Some(nerust_render_traits::RenderedImage {
+            width: valid.dst_w as u32,
+            height: valid.dst_h as u32,
+            stride_bytes: valid.dst_w.saturating_mul(4),
+            pixels: bytes,
+        })
+    }
+
+    /// Rasterize into a caller-owned buffer. Mirrors the surface `render`
+    /// body (which cannot share it: the surface buffer borrows the display
+    /// while the rasterizer needs `&mut self`). Keep the two in sync.
+    fn rasterize_owned(&mut self, valid: &ValidatedFrame, frame: &FrameBuffer, buffer: &mut [u32]) {
+        let top = (self.reserved.top as usize).min(valid.dst_h);
+        let dst_w = valid.dst_w;
+        let avail_h = valid.avail_h;
+        // Strip rows keep the cleared black so OSD pills blend over black;
+        // fresh image buffers start zeroed.
+        buffer[..top.saturating_mul(dst_w)].fill(0);
+        buffer[(top.saturating_add(avail_h)).saturating_mul(dst_w)..].fill(0);
+
+        let src = frame.as_ref();
+        let game_rows = top.saturating_mul(dst_w);
+        let game_len = avail_h.saturating_mul(dst_w);
+        let dst = &mut buffer[game_rows..game_rows.saturating_add(game_len)];
+        // Monomorphic indexers: one enum replaces three closures, so the
+        // hot loop never monomorphizes. Fallible reads render opaque black.
+        match frame.format() {
+            PixelFormat::Rgba => {
+                let indexer = PixelIndexer::Rgba { src };
+                Self::rendering(
+                    dst,
+                    valid.src_stride / 4,
+                    valid.src_h,
+                    dst_w,
+                    avail_h,
+                    &indexer,
+                    &self.lut,
+                    &mut self.resize_buffer,
+                );
+            }
+            PixelFormat::PaletteIndex { palette } => {
+                if self.render_profile.ntsc_packed_rgba8.is_some() {
+                    Ntsc::simulate_gpu_ntsc_rgba(
+                        valid.src_h,
+                        valid.src_stride,
+                        src,
+                        &self.render_profile,
+                        &mut self.ntsc_buffer,
+                    );
+                    let indexer = PixelIndexer::Ntsc {
+                        buf: &self.ntsc_buffer,
+                    };
+                    Self::rendering(
+                        dst,
+                        self.render_profile.logical_size.width,
+                        valid.src_h,
+                        dst_w,
+                        avail_h,
+                        &indexer,
+                        &self.lut,
+                        &mut self.resize_buffer,
+                    );
+                } else {
+                    // Out-of-range indices render black instead of
+                    // panicking the UI thread (see mismatch guard).
+                    // Rebuild only on change; the hot loop only indexes.
+                    if self.last_palette.as_deref() != Some(palette) {
+                        self.palette_table = palette_table(palette);
+                        self.last_palette = Some(palette.clone());
+                    }
+                    let indexer = PixelIndexer::PaletteTable {
+                        src,
+                        table: &self.palette_table,
+                    };
+                    Self::rendering(
+                        dst,
+                        valid.src_stride,
+                        valid.src_h,
+                        dst_w,
+                        avail_h,
+                        &indexer,
+                        &self.lut,
+                        &mut self.resize_buffer,
+                    );
+                }
+            }
+        }
+
+        if let Some(layer) = self.osd.as_ref() {
+            let accepted = Self::blend_osd(buffer, dst_w, valid.dst_h, layer);
+            if self.osd_policy.charge(accepted) {
+                self.osd.take();
+                warn!("softbuffer: dropping OSD layer after repeated upload failures");
+            }
+        }
+    }
+}
+
 impl FrameSink for SoftbufferRenderer {
+    fn render_image(
+        &mut self,
+        frame: &FrameBuffer,
+        size: SurfaceSize,
+    ) -> Option<nerust_render_traits::RenderedImage> {
+        self.render_image(frame, size)
+    }
+
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult {
         let Some(valid) = self.validate_frame(frame) else {
             return RenderResult::Skipped;
@@ -735,6 +876,50 @@ mod tests {
     };
     use nerust_render_traits::filter::BLACK_PALETTE_INDEX;
     use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
+
+    #[test]
+    fn render_image_returns_rgba_without_a_surface() {
+        use nerust_render_traits::{
+            FrameBuffer, PixelFormat, VideoFrameFormat, logical::LogicalSize,
+            physical::PhysicalSize,
+        };
+        let profile = VideoRenderProfile {
+            source_logical_size: LogicalSize {
+                width: 2,
+                height: 2,
+            },
+            logical_size: LogicalSize {
+                width: 2,
+                height: 2,
+            },
+            physical_size: PhysicalSize {
+                width: 2.0,
+                height: 2.0,
+            },
+            frame_format: VideoFrameFormat::Rgba,
+            ntsc_packed_rgba8: None,
+        };
+        let mut renderer = SoftbufferRenderer::new(&profile, 3);
+        renderer.update_render_profile(&profile).unwrap();
+        // 2x2 opaque red frame; RGBA bytes are R8G8B8A8, no surface needed.
+        let mut frame = FrameBuffer::with_capacity(2, 2, PixelFormat::Rgba);
+        frame.resize(2, 2);
+        for pixel in frame.as_mut().as_chunks_mut::<4>().0 {
+            pixel.copy_from_slice(&[255, 0, 0, 255]);
+        }
+        let image = renderer
+            .render_image(&frame, SurfaceSize::new(4, 4))
+            .expect("headless image render");
+        assert_eq!((image.width, image.height), (4, 4));
+        assert_eq!(image.stride_bytes, 16);
+        assert_eq!(image.pixels.len(), 64);
+        assert_eq!(&image.pixels[..4], &[255, 0, 0, 255]);
+        assert!(
+            renderer
+                .render_image(&frame, SurfaceSize::new(0, 4))
+                .is_none()
+        );
+    }
 
     #[test]
     fn blend_osd_writes_argb_words() {
@@ -1089,7 +1274,7 @@ mod tests {
         let mut renderer = SoftbufferRenderer::new(&test_profile(), 3);
         renderer.size = SurfaceSize::new(8, 8);
         renderer.resize_lut();
-        assert_eq!(renderer.output_size(), SurfaceSize::new(8, 8));
+        assert_eq!(renderer.size, SurfaceSize::new(8, 8));
         assert!(!renderer.surface_attached());
         assert_eq!(
             renderer.reserved_strip(),

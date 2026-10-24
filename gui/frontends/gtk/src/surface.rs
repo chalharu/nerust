@@ -1,7 +1,4 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
 use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
@@ -10,10 +7,13 @@ use super::{State, renderer::GtkRenderer};
 
 pub(crate) struct SurfaceCore {
     window: gtk::ApplicationWindow,
+    /// Game viewport composited by GTK under the in-window menubar. The
+    /// backends render into memory; nothing ever presents a fullscreen
+    /// native surface here, so the chrome stays visible.
+    picture: gtk::Picture,
     renderer: Rc<RefCell<GtkRenderer>>,
     pub(crate) state: Rc<RefCell<State>>,
     pub(crate) osd: RefCell<super::osd::GtkOsd>,
-    last_size: Cell<SurfaceSize>,
     retry: RefCell<nerust_frontend_kernel::retry::RenderRetry>,
 }
 
@@ -22,6 +22,7 @@ pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
 pub(crate) trait SurfaceExtend {
     fn bind(
         window: &gtk::ApplicationWindow,
+        picture: &gtk::Picture,
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
     ) -> Surface;
@@ -31,6 +32,7 @@ pub(crate) trait SurfaceExtend {
 impl SurfaceExtend for Surface {
     fn bind(
         window: &gtk::ApplicationWindow,
+        picture: &gtk::Picture,
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
     ) -> Surface {
@@ -39,10 +41,10 @@ impl SurfaceExtend for Surface {
         let osd = super::osd::GtkOsd::new();
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.clone(),
+            picture: picture.clone(),
             renderer,
             state,
             osd: RefCell::new(osd),
-            last_size: Cell::new(SurfaceSize::new(0, 0)),
             retry: RefCell::new(Default::default()),
         }));
         {
@@ -56,10 +58,12 @@ impl SurfaceExtend for Surface {
 
     fn tick(&self) -> bool {
         let s = self.borrow();
-        // Clamp negatives: minimized/hidden windows report -1, and a
-        // negative `as u32` cast would explode the surface size.
-        let width = s.window.width().max(0) as u32;
-        let height = s.window.height().max(0) as u32;
+        // Game area is the picture below the menubar (layout handles the
+        // chrome, so no strip math here). Clamp negatives: hidden windows
+        // report -1, and a negative `as u32` cast would explode the size.
+        let allocation = s.picture.allocation();
+        let width = allocation.width().max(0) as u32;
+        let height = allocation.height().max(0) as u32;
         if width == 0 || height == 0 {
             return true;
         }
@@ -85,17 +89,20 @@ impl SurfaceExtend for Surface {
             }
         };
         let now = std::time::Instant::now();
-        SurfaceCore::attach_if_due(&s, swap, physical_size, now);
-        SurfaceCore::poll_osd(self, &s);
-        SurfaceCore::render_if_ready(&s, physical_size, now);
+        SurfaceCore::ensure_if_due(&s, swap, physical_size, now);
+        SurfaceCore::poll_osd(self, &s, physical_size);
+        SurfaceCore::render_image_if_ready(&s, physical_size);
         true
     }
 }
 
 impl SurfaceCore {
-    /// Realize or reattach the GPU surface when the profile or size moved.
-    /// Attach runs outside the state borrow; outcome handling re-borrows briefly.
-    fn attach_if_due(
+    /// Build (or rebuild) the pipeline when the profile moved or setup
+    /// never completed. No present ever happens here: frames leave through
+    /// [`Self::render_image_if_ready`] for the GTK picture to composite,
+    /// so the in-window menubar stays visible. Attach runs outside the
+    /// state borrow; outcome handling re-borrows briefly.
+    fn ensure_if_due(
         s: &SurfaceCore,
         swap: Option<(nerust_render_traits::VideoRenderProfile, bool)>,
         physical_size: SurfaceSize,
@@ -105,18 +112,15 @@ impl SurfaceCore {
         let Some((profile, rebuild)) = swap else {
             return;
         };
-        if !(ready && (rebuild || physical_size != s.last_size.get())) {
+        if !(ready && (rebuild || !s.renderer.borrow().attached())) {
             return;
         }
         let result = s.window.surface().and_then(|surf| {
             let display = gdk::Display::default()?;
             super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                let mut renderer = s.renderer.borrow_mut();
-                if rebuild {
-                    renderer.realize(wh, dh, physical_size, &profile)
-                } else {
-                    renderer.reattach(wh, dh, physical_size)
-                }
+                s.renderer
+                    .borrow_mut()
+                    .ensure_ready(wh, dh, &profile, physical_size)
             })
         });
         let mut state = match s.state.try_borrow_mut() {
@@ -128,7 +132,6 @@ impl SurfaceCore {
         };
         match result {
             Some(Ok(())) => {
-                s.last_size.set(physical_size);
                 state.renderer_reload_pending = false;
             }
             failure => {
@@ -147,7 +150,7 @@ impl SurfaceCore {
     }
 
     /// Poll OSD queues with a short borrow: the GPU pass never waits on queue work.
-    fn poll_osd(surface: &Surface, s: &SurfaceCore) {
+    fn poll_osd(surface: &Surface, s: &SurfaceCore, physical_size: SurfaceSize) {
         let mut state = match s.state.try_borrow_mut() {
             Ok(state) => state,
             Err(_) => {
@@ -158,36 +161,34 @@ impl SurfaceCore {
         let surface = surface.clone();
         s.osd
             .borrow_mut()
-            .poll(&surface, &mut state, &s.renderer, &s.window);
+            .poll(&surface, &mut state, &s.renderer, &s.window, physical_size);
     }
 
-    /// Present one frame when the retry gate allows; the borrow spans render only.
-    fn render_if_ready(s: &SurfaceCore, physical_size: SurfaceSize, now: std::time::Instant) {
-        if !s.retry.borrow().ready(now) {
-            return;
-        }
-        let mut state = match s.state.try_borrow_mut() {
+    /// Render one frame into memory and hand it to the GTK picture, which
+    /// composites it under the menubar. Nothing ever presents a fullscreen
+    /// native surface, so the chrome survives by construction.
+    fn render_image_if_ready(s: &SurfaceCore, physical_size: SurfaceSize) {
+        let state = match s.state.try_borrow_mut() {
             Ok(state) => state,
             Err(_) => {
                 log::warn!("gtk tick: state busy before render, skipping frame");
                 return;
             }
         };
-        if let Some(fb) = state.frame_buffer() {
-            match s.renderer.borrow_mut().render(fb, physical_size) {
-                nerust_render_traits::renderer::RenderResult::Error => {
-                    if s.retry.borrow_mut().failed(now) {
-                        state.session.report_external_error(
-                            nerust_gui_shell::session::notification::FailureOrigin::Host,
-                            "GTK rendering failed; recreating renderer with backoff".into(),
-                        );
-                    }
-                }
-                nerust_render_traits::renderer::RenderResult::Presented => {
-                    s.retry.borrow_mut().succeeded()
-                }
-                _ => {}
-            }
-        }
+        let Some(fb) = state.frame_buffer() else {
+            return;
+        };
+        let Some(image) = s.renderer.borrow_mut().render_image(fb, physical_size) else {
+            return;
+        };
+        let texture = gtk::gdk::MemoryTexture::new(
+            image.width as i32,
+            image.height as i32,
+            gtk::gdk::MemoryFormat::R8g8b8a8,
+            &gtk::glib::Bytes::from(&image.pixels),
+            image.stride_bytes,
+        );
+        s.picture.set_paintable(Some(&texture));
+        s.retry.borrow_mut().succeeded();
     }
 }

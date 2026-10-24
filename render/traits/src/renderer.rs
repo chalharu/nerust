@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::{FrameBuffer, ReservedStrip, SurfaceSize, VideoRenderProfile};
+use crate::{FrameBuffer, RenderedImage, ReservedStrip, SurfaceSize, VideoRenderProfile};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]
@@ -385,6 +385,17 @@ pub trait SurfaceLifecycle: std::fmt::Debug {
 pub trait FrameSink: std::fmt::Debug {
     /// Render a frame. attach() must have been called.
     fn render(&mut self, frame: &FrameBuffer) -> RenderResult;
+
+    /// Render a frame into memory instead of a native surface, for
+    /// frontends that composite themselves (e.g. a GTK picture under an
+    /// in-window menubar: presenting a fullscreen surface would bury the
+    /// chrome). `size` is the exact output image extent; OSD strips still
+    /// apply inside it. Default: unsupported (always skipped). `None` is a
+    /// skipped frame, never an error; backends drop and re-create cached
+    /// GPU objects on failure so the next frame can recover.
+    fn render_image(&mut self, _frame: &FrameBuffer, _size: SurfaceSize) -> Option<RenderedImage> {
+        None
+    }
 }
 
 /// Render-pipeline switch without any surface vocabulary.

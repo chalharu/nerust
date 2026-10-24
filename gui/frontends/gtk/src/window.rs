@@ -115,6 +115,7 @@ pub(crate) trait WindowExtend {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
+        picture: gtk::Picture,
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
@@ -160,6 +161,7 @@ impl WindowExtend for Window {
     fn bind(
         application: gtk::Application,
         window: gtk::ApplicationWindow,
+        picture: gtk::Picture,
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
@@ -179,7 +181,7 @@ impl WindowExtend for Window {
         let state_load_slot_action = actions.state_load_slot.clone();
         let state_delete_slot_action = actions.state_delete_slot.clone();
         let settings_action = gio::SimpleAction::new("settings", None);
-        let _ = Surface::bind(&window, state.clone(), factory);
+        let _ = Surface::bind(&window, &picture, state.clone(), factory);
         actions.add_to(&window);
         let result = Rc::new(RefCell::new(WindowCore {
             application,

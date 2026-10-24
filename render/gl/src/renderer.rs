@@ -356,6 +356,23 @@ impl GlRenderer {
             log::warn!("GlRenderer: invalid surface size, skipping frame");
             return RenderResult::Skipped;
         };
+        self.orchestrate_to(frame_buffer, surf_w, surf_h, true)
+    }
+
+    /// Same orchestration with explicit extents and optional present. The
+    /// in-memory path renders at picture size without swapping, so the
+    /// frontend's own pixels (in-window menubar) survive: nothing here ever
+    /// presents over them.
+    fn orchestrate_to(
+        &mut self,
+        frame_buffer: &FrameBuffer,
+        surf_w: i32,
+        surf_h: i32,
+        present: bool,
+    ) -> RenderResult {
+        if surf_w <= 0 || surf_h <= 0 {
+            return RenderResult::Skipped;
+        }
         let reserved = self.reserved;
         // Copy, don't borrow: the ~10KiB NTSC kernel rode along with
         // every frame before; only `update_render_profile` clones.
@@ -432,6 +449,9 @@ impl GlRenderer {
             log::warn!("GlRenderer: composite boundary failed: {e}");
             return RenderResult::Error;
         }
+        if !present {
+            return RenderResult::Presented;
+        }
         let (Some(ctx), Some(surf)) = (self.context.as_ref(), self.gl_surface.as_ref()) else {
             return RenderResult::Skipped;
         };
@@ -440,6 +460,74 @@ impl GlRenderer {
             return RenderResult::Error;
         }
         RenderResult::Presented
+    }
+
+    /// Render into memory instead of the swapchain, for frontends that
+    /// composite themselves (in-window menubar must survive presents).
+    /// Same draws as a surface present, read back instead of swapped,
+    /// so nothing here ever covers the frontend's own pixels.
+    pub(crate) fn render_image(
+        &mut self,
+        frame: &FrameBuffer,
+        size: SurfaceSize,
+    ) -> Option<nerust_render_traits::RenderedImage> {
+        // Sanity bounds: a degenerate or absurd picture skips the frame
+        // instead of allocating a giant readback.
+        if size.width == 0 || size.height == 0 || size.width > 8192 || size.height > 8192 {
+            return None;
+        }
+        let (width, height) = (size.width, size.height);
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
+            return None;
+        }
+        let (surf_w, surf_h) = (i32::try_from(width).ok()?, i32::try_from(height).ok()?);
+        if !matches!(
+            self.orchestrate_to(frame, surf_w, surf_h, false),
+            RenderResult::Presented
+        ) {
+            return None;
+        }
+        // The draws above target the (unshown) default framebuffer; read
+        // the picture rect back instead of swapping it over the window.
+        use nerust_glwrap::{bindings as gl, raw};
+        let api = self.api.as_ref()?;
+        let _dispatch = unsafe { api.enter() };
+        for (name, value) in [
+            (gl::PACK_ALIGNMENT, 1),
+            (gl::PACK_ROW_LENGTH, 0),
+            (gl::PACK_SKIP_PIXELS, 0),
+            (gl::PACK_SKIP_ROWS, 0),
+        ] {
+            raw::pixel_storei(name, value).ok()?;
+        }
+        let row_bytes = (width as usize).saturating_mul(4);
+        let mut bottom_up = vec![0u8; row_bytes.saturating_mul(height as usize)];
+        unsafe {
+            gl::ReadPixels(
+                0,
+                0,
+                width as i32,
+                height as i32,
+                gl::RGBA,
+                gl::UNSIGNED_BYTE,
+                bottom_up.as_mut_ptr().cast(),
+            );
+        }
+        nerust_glwrap::check_frame().ok()?;
+        // GL packs bottom-up; the image contract is top-down.
+        let mut pixels = vec![0u8; bottom_up.len()];
+        for (dst, src) in pixels
+            .chunks_exact_mut(row_bytes)
+            .zip(bottom_up.chunks_exact(row_bytes).rev())
+        {
+            dst.copy_from_slice(src);
+        }
+        Some(nerust_render_traits::RenderedImage {
+            width,
+            height,
+            stride_bytes: row_bytes,
+            pixels,
+        })
     }
 }
 
@@ -482,6 +570,14 @@ impl SurfaceLifecycle for GlRenderer {
 impl FrameSink for GlRenderer {
     fn render(&mut self, frame_buffer: &FrameBuffer) -> RenderResult {
         self.orchestrate_render(frame_buffer)
+    }
+
+    fn render_image(
+        &mut self,
+        frame: &FrameBuffer,
+        size: SurfaceSize,
+    ) -> Option<nerust_render_traits::RenderedImage> {
+        self.render_image(frame, size)
     }
 }
 

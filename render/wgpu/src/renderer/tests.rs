@@ -6,10 +6,19 @@ use nerust_render_traits::{
 };
 
 use super::{
-    draw::compute_viewport,
+    draw::{bgra_order, compute_viewport},
     fit_surface_size_to_limit,
     setup::{composed_shader_source, encode_ntsc_texture},
 };
+
+#[test]
+fn bgra_order_matches_swapchain_layout() {
+    use wgpu::TextureFormat;
+    assert!(bgra_order(TextureFormat::Bgra8Unorm));
+    assert!(bgra_order(TextureFormat::Bgra8UnormSrgb));
+    assert!(!bgra_order(TextureFormat::Rgba8Unorm));
+    assert!(!bgra_order(TextureFormat::Rgba8UnormSrgb));
+}
 
 #[test]
 fn viewport_preserves_aspect_ratio() {
