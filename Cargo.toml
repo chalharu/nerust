@@ -1,5 +1,10 @@
 [workspace]
-default-members = [".", "console/nes/core", "console/gbc/core", "console/gba/core"]
+default-members = [
+  ".",
+  "console/nes/core",
+  "console/gbc/core",
+  "console/gba/core",
+]
 members = [
   "console/gba/core",
   "console/gba/device",
