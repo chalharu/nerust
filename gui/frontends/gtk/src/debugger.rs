@@ -564,6 +564,12 @@ impl DebuggerWindowCore {
             let Some(win) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
+            // External destruction leaves the Rc alive but the surface
+            // dead: any touch below queries a destroyed native window
+            // (fatal X error), so stop instead.
+            if win.borrow().is_gone() {
+                return glib::ControlFlow::Break;
+            }
             // Backstop for drain flights: poll here too so a missed watcher
             // can never strand a pending display.
             Self::poll_flight(&win);
@@ -618,6 +624,9 @@ impl DebuggerWindowCore {
             let Some(win) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
+            if win.borrow().is_gone() {
+                return glib::ControlFlow::Break;
+            }
             if Self::poll_live_flight(&win) {
                 glib::ControlFlow::Continue
             } else {
@@ -685,7 +694,9 @@ impl DebuggerWindowCore {
             this.status_label
                 .set_label(&this.data.display.status.render(language));
         }
-        if let Some(ppu) = this.ppu_window.as_ref() {
+        if let Some(ppu) = this.ppu_window.as_ref()
+            && !super::window::surface_gone(&ppu.borrow().window)
+        {
             let display = &this.data.display;
             ppu.borrow_mut()
                 .sync(&display.images, display.images_gen, &display.panels);
@@ -819,6 +830,13 @@ impl DebuggerWindowCore {
     /// Present an existing window (idempotent reopen path).
     pub(crate) fn present(&self) {
         self.window.present();
+    }
+
+    /// True when the native surface is gone (external destruction skips
+    /// close-request and `destroy` never fires). Callers must check before
+    /// any touch: GTK queries on a dead surface are fatal X errors.
+    pub(crate) fn is_gone(&self) -> bool {
+        super::window::surface_gone(&self.window)
     }
 
     /// Refresh an existing window (idempotent reopen path).
@@ -961,6 +979,9 @@ impl DebuggerWindowCore {
             let Some(win) = weak.upgrade() else {
                 return glib::ControlFlow::Break;
             };
+            if win.borrow().is_gone() {
+                return glib::ControlFlow::Break;
+            }
             if Self::poll_flight(&win) {
                 glib::ControlFlow::Continue
             } else {
@@ -1031,10 +1052,19 @@ impl DebuggerWindowCore {
 
     fn open_ppu(win: &DebuggerWindow) {
         // Idempotent: a hidden viewer re-presents with focus instead
-        // of duplicating (close hides, never destroys).
-        if let Some(ppu) = win.borrow().ppu_window.clone() {
-            ppu.borrow().present();
-            return;
+        // of duplicating (close hides, never destroys). An externally
+        // destroyed viewer keeps its slot, so rebuild instead of
+        // presenting a dead surface (fatal X error). Clone out of the
+        // borrow first: clearing the slot re-borrows mutably, and the
+        // `if let` scrutinee guard would otherwise still be alive.
+        let ppu = win.borrow().ppu_window.clone();
+        if let Some(ppu) = ppu {
+            if super::window::surface_gone(&ppu.borrow().window) {
+                win.borrow_mut().ppu_window = None;
+            } else {
+                ppu.borrow().present();
+                return;
+            }
         }
         let app = win
             .borrow()
@@ -1337,7 +1367,9 @@ impl DebuggerWindowCore {
         }
 
         // The PPU viewer follows the same refresh (panels included).
-        if let Some(ppu) = this.ppu_window.as_ref() {
+        if let Some(ppu) = this.ppu_window.as_ref()
+            && !super::window::surface_gone(&ppu.borrow().window)
+        {
             let display = &this.data.display;
             ppu.borrow_mut()
                 .sync(&display.images, display.images_gen, &display.panels);
@@ -1923,6 +1955,19 @@ mod tests {
         let (app, main, state) = harness()?;
         let win = DebuggerWindowCore::open(&app, &main, state);
         Some((app, main, win))
+    }
+
+    #[test]
+    fn widget_destroyed_window_reports_gone() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        assert!(!win.borrow().is_gone());
+        // External destroy disposes the widget without signals; the
+        // helper must report it so reopen paths rebuild.
+        win.borrow().window.destroy();
+        assert!(win.borrow().is_gone());
     }
 
     #[test]
