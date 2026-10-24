@@ -1,9 +1,3 @@
-pub mod input_port;
-
-pub use input_port::InputSplit;
-#[cfg(any(test, feature = "test-utils"))]
-pub use input_port::{EmuInput, GuiInput, InputPort};
-
 use std::{
     collections::HashMap,
     fmt,

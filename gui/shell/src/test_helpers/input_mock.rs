@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use nerust_emu_thread::{GuiInput, InputPort, InputSplit};
+use nerust_console_input::{GuiInput, InputPort, InputSplit};
 use nerust_input_traits::{
     BufferError, ControlInfo, ControllerProfile, InputAssignments, InputPorts, InputStateBuffer,
     InputSystemFactory, InputValue, PortSet, ProfileId, SlotInfo,

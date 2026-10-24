@@ -22,7 +22,8 @@ pub(crate) fn create_core_and_adapter(
     // NES mirrors this: the factory validates assignments and builds entries.
     let resources = crate::GbcFactory.create_split(assignments)?;
     // Unified map travels end to end; no lossy projection.
-    let (gui_input, emu_input, field_map) = nerust_emu_thread::InputSplit::typed_split(resources);
+    let (gui_input, emu_input, field_map) =
+        nerust_console_input::InputSplit::typed_split(resources);
     speaker.start();
     let (accelerometer_handle, accelerometer_port) = accelerometer_channel();
     let (rumble_handle, rumble_port) = rumble_channel();
