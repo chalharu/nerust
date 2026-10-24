@@ -17,6 +17,7 @@ use nerust_settings_core::model::local::ScalingMode;
 use super::{
     State, TITLE_UPDATE_INTERVAL, build_menu_model,
     surface::{Surface, SurfaceExtend},
+    surface_state::surface_gone,
 };
 use crate::preferences::present_preferences_dialog;
 
@@ -110,33 +111,6 @@ impl WindowActions {
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
-
-/// True when the window's native surface is gone: never realized, or
-/// destroyed out from under the widget by the window manager. Widget
-/// signals never report this (external destruction skips close-request
-/// and `destroy` never fires), so every periodic touch and every reopen
-/// path must check explicitly instead of assuming a live surface.
-pub(crate) fn surface_gone(window: &impl IsA<gtk::Window>) -> bool {
-    use gtk::gdk::prelude::SurfaceExt as _;
-    window
-        .upcast_ref::<gtk::Window>()
-        .surface()
-        .is_none_or(|surface| surface.is_destroyed())
-}
-
-/// True when touching the window issues X requests on a dead surface: a
-/// surface exists and GDK reports it destroyed. A window with no surface
-/// yet (never realized) or an already-disposed widget has nothing to
-/// query, so touching it is safe; reopen paths still treat those as
-/// unusable via [`surface_gone`]. Periodic refreshes use this: they must
-/// run for never-realized dialogs and stop only for dead surfaces.
-pub(crate) fn surface_dead(window: &impl IsA<gtk::Window>) -> bool {
-    use gtk::gdk::prelude::SurfaceExt as _;
-    window
-        .upcast_ref::<gtk::Window>()
-        .surface()
-        .is_some_and(|surface| surface.is_destroyed())
-}
 
 pub(crate) trait WindowExtend {
     fn bind(
@@ -779,10 +753,8 @@ mod tests {
     use gio::prelude::ActionExt as _;
     use gtk::prelude::GtkWindowExt as _;
 
-    use super::{
-        KeyEventState, WindowActions, WindowExtend, key_event_pressed, rebuild_slot_menu,
-        surface_gone,
-    };
+    use super::{KeyEventState, WindowActions, WindowExtend, key_event_pressed, rebuild_slot_menu};
+    use crate::surface_state::surface_gone;
 
     /// Externally destroyed dialogs keep their slot (no signal fires):
     /// reopening must rebuild instead of panicking on the slot borrow.

@@ -695,7 +695,7 @@ impl DebuggerWindowCore {
                 .set_label(&this.data.display.status.render(language));
         }
         if let Some(ppu) = this.ppu_window.as_ref()
-            && !super::window::surface_gone(&ppu.borrow().window)
+            && !super::surface_state::surface_gone(&ppu.borrow().window)
         {
             let display = &this.data.display;
             ppu.borrow_mut()
@@ -836,7 +836,7 @@ impl DebuggerWindowCore {
     /// close-request and `destroy` never fires). Callers must check before
     /// any touch: GTK queries on a dead surface are fatal X errors.
     pub(crate) fn is_gone(&self) -> bool {
-        super::window::surface_gone(&self.window)
+        super::surface_state::surface_gone(&self.window)
     }
 
     /// Refresh an existing window (idempotent reopen path).
@@ -1059,7 +1059,7 @@ impl DebuggerWindowCore {
         // `if let` scrutinee guard would otherwise still be alive.
         let ppu = win.borrow().ppu_window.clone();
         if let Some(ppu) = ppu {
-            if super::window::surface_gone(&ppu.borrow().window) {
+            if super::surface_state::surface_gone(&ppu.borrow().window) {
                 win.borrow_mut().ppu_window = None;
             } else {
                 ppu.borrow().present();
@@ -1368,7 +1368,7 @@ impl DebuggerWindowCore {
 
         // The PPU viewer follows the same refresh (panels included).
         if let Some(ppu) = this.ppu_window.as_ref()
-            && !super::window::surface_gone(&ppu.borrow().window)
+            && !super::surface_state::surface_gone(&ppu.borrow().window)
         {
             let display = &this.data.display;
             ppu.borrow_mut()
