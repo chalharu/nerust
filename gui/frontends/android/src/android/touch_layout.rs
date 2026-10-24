@@ -133,12 +133,17 @@ pub(super) struct FloatingDpadState {
 }
 
 impl ProfileTouchOverlay {
+    /// `top_inset_px` is the status-bar/cutout height in the same physical
+    /// pixels as `width`/`height` (0 when the platform has not pushed insets
+    /// yet). Landscape pins the control band below it; portrait's band sits
+    /// far below any bar, so the inset leaves it untouched.
     pub(super) fn new(
         width: f32,
         height: f32,
         controls: Vec<TouchControl>,
         scale_percent: u8,
         vertical_offset_percent: i8,
+        top_inset_px: f32,
     ) -> Self {
         let portrait = height >= width;
         let base = width.min(height);
@@ -147,7 +152,7 @@ impl ProfileTouchOverlay {
         let control_top = if portrait {
             height * PORTRAIT_CONTROL_TOP
         } else {
-            0.0
+            top_inset_px.max(0.0)
         };
         let control_height = height - control_top;
         let dpad_size = base * DPAD_SIZE_OF_BASE * scale;
@@ -425,6 +430,10 @@ mod tests {
     }
 
     fn portrait_overlay() -> ProfileTouchOverlay {
+        portrait_overlay_with_inset(0.0)
+    }
+
+    fn portrait_overlay_with_inset(top_inset_px: f32) -> ProfileTouchOverlay {
         ProfileTouchOverlay::new(
             1080.0,
             1920.0,
@@ -443,6 +452,32 @@ mod tests {
             .collect(),
             100,
             0,
+            top_inset_px,
+        )
+    }
+
+    fn landscape_overlay(top_inset_px: f32) -> ProfileTouchOverlay {
+        ProfileTouchOverlay::new(
+            800.0,
+            360.0,
+            [
+                TouchControlRole::FaceButton1,
+                TouchControlRole::FaceButton2,
+                TouchControlRole::LeftShoulder,
+                TouchControlRole::RightShoulder,
+                TouchControlRole::Select,
+                TouchControlRole::Start,
+                TouchControlRole::DpadUp,
+                TouchControlRole::DpadDown,
+                TouchControlRole::DpadLeft,
+                TouchControlRole::DpadRight,
+            ]
+            .into_iter()
+            .map(|role| control(role, "button"))
+            .collect(),
+            100,
+            0,
+            top_inset_px,
         )
     }
 
@@ -561,6 +596,37 @@ mod tests {
         let encoded = ProfileTouchOverlay::encode_joystick(&joystick);
         let coords: Vec<f32> = encoded.split(',').map(|c| c.parse().unwrap()).collect();
         assert_eq!(coords.len(), 4);
+    }
+
+    /// Landscape pins the control band below the platform top inset so
+    /// buttons never sit under the status bar; without a push the
+    /// previous zero-based geometry is reproduced exactly.
+    #[test]
+    fn landscape_top_inset_lifts_control_band() {
+        let plain = landscape_overlay(0.0);
+        let inset = landscape_overlay(48.0);
+        let min_top_px = |overlay: &ProfileTouchOverlay| {
+            overlay
+                .relative_zones(800.0, 360.0)
+                .iter()
+                .map(|zone| zone.y * 360.0)
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert!(!landscape_overlay(0.0).relative_zones(800.0, 360.0).is_empty());
+        assert!(min_top_px(&plain) < 48.0);
+        assert!(min_top_px(&inset) >= 48.0);
+    }
+
+    /// Portrait's band sits far below any bar; insets must not move it.
+    #[test]
+    fn portrait_ignores_top_inset() {
+        let plain = portrait_overlay().relative_zones(1080.0, 1920.0);
+        let inset = portrait_overlay_with_inset(48.0).relative_zones(1080.0, 1920.0);
+        assert_eq!(plain.len(), inset.len());
+        for (got, want) in inset.iter().zip(plain.iter()) {
+            assert!((got.x - want.x).abs() < 1e-6);
+            assert!((got.y - want.y).abs() < 1e-6);
+        }
     }
 
     /// Canonical pin: every fraction in `touch_geometry.json` equals the
