@@ -9,21 +9,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-/**
- * Single bounded cleanup lane shared by SAF read and write sessions.
- * Queue memory and worker threads stay capped when a provider stalls; a
- * saturated lane spills to a bounded number of overflow threads, and a
- * fully saturated lane parks in a bounded dock that every completion and
- * every park drains. Submitters (including Activity.onDestroy) never run
- * provider I/O and ownership is never dropped. No Android dependencies:
- * JVM-testable.
- *
- * Bounds (NER-308): lane queue [MAX_PENDING], overflow threads
- * [MAX_OVERFLOW_THREADS], dock [MAX_PARKED]. A dock overflow cannot drop
- * (FD leak) or stall the submitter (ANR risk), so the excess task runs on
- * a short-lived daemon thread as a documented last resort; the submitter
- * still never runs provider I/O, and [parkedCount] exposes the pressure.
- */
+/** Single bounded cleanup lane; queue, threads, and dock stay capped. */
 internal object SafCleanup {
     const val MAX_PENDING = 64
     private const val MAX_OVERFLOW_THREADS = 4
@@ -42,8 +28,8 @@ internal object SafCleanup {
             Thread(runnable, "nerust-saf-cleanup").apply { isDaemon = true }
         },
         RejectedExecutionHandler { task, _ ->
-            // Only reachable with a stuck provider: spill instead of growing
-            // the queue or blocking the submitter on provider I/O.
+            // Spill to an overflow thread instead of growing the queue
+            // or blocking the submitter on provider I/O.
             if (overflowThreads.incrementAndGet() <= MAX_OVERFLOW_THREADS) {
                 Thread({
                     try {
@@ -55,9 +41,8 @@ internal object SafCleanup {
                 }, "nerust-saf-cleanup-overflow").apply { isDaemon = true }.start()
             } else {
                 overflowThreads.decrementAndGet()
-                // Fully saturated: park instead of running inline. The next
-                // completion resubmits the oldest parked task (chain), so the
-                // submitter never runs provider I/O and nothing is dropped.
+                // Fully saturated: park instead of running inline; the next
+                // completion resubmits the oldest parked task.
                 park(task)
             }
         },
@@ -69,21 +54,13 @@ internal object SafCleanup {
     }
 
     internal fun park(task: Runnable) {
-        // One critical section per operation. Separate acquisitions let a
-        // pump interleave between the add and the size check (or let a
-        // reader observe between a pump's remove and re-add), transiently
-        // skewing the count; under preemption that flakes exact-count
-        // assertions. Holding the guard across remove+offer+re-add keeps
-        // every observable state quiescent; offer never blocks so there is
-        // no deadlock, and the monitor is reentrant so the pump below
-        // simply re-acquires it.
+        // Single critical section keeps every observable state quiescent;
+        // the guard is reentrant so the pump below simply re-acquires it.
         synchronized(parkedGuard) {
             parked.addLast(task)
             if (parked.size > MAX_PARKED) {
-                // Bounded dock overflow: drop the just-added entry back out and
-                // run it on a short-lived daemon thread. A concurrent pump may
-                // have taken it first; then there is nothing to withdraw and the
-                // lane copy runs instead, exactly once either way.
+                // Bounded dock overflow: withdraw the entry and run it on a
+                // short-lived daemon thread, exactly once either way.
                 if (parked.peekLast() === task) {
                     parked.removeLast()
                     Thread({
@@ -93,9 +70,8 @@ internal object SafCleanup {
                 }
                 return
             }
-            // Lost-wakeup guard: completions only chain while work is in
-            // flight. A park that lands on an idle lane would otherwise wait for
-            // a completion that never comes, so resubmit one entry now (NER-308).
+            // Lost-wakeup guard: a park on an idle lane resubmits one entry
+            // now since no later completion will drain it.
             pumpParked()
         }
     }
@@ -106,10 +82,8 @@ internal object SafCleanup {
             while (true) {
                 if (parked.isEmpty()) return
                 val next = parked.removeFirst()
-                // Offer without the reject handler: a full queue means the worker
-                // is busy, so its completion chain will drain the dock. Removing
-                // from the dock before offering keeps every entry submitted at
-                // most once across concurrent pumps.
+                // Offer without the reject handler: a full queue means the
+                // worker chain will drain the dock later.
                 if (!pool.queue.offer(next)) {
                     parked.addFirst(next)
                     return

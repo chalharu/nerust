@@ -1,13 +1,10 @@
-//! Picker ownership and lane bounds as JNI-free logic (NER-306/307).
+//! Picker ownership and lane bounds as JNI-free logic.
 //! The android picker mirrors this decision table; host tests pin it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Slot ownership without JNI types: generation plus handle presence.
-/// Only the owning generation may publish; takes are exclusive.
-/// Test-only decision table: the android picker mirrors it line for line
-/// (`publish_handle`, slot takes, `release_if_ours`); host tests pin the
-/// interleaving matrix here instead of timing JNI threads.
+/// Test-only table mirrored by the android picker; host tests pin interleavings.
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct SlotState {
@@ -129,9 +126,7 @@ fn lock_recovered<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Bumper pressure gauge: counts queued cancels/closes against a cap.
-/// Overflow never drops (a dropped close leaks) and never blocks the event
-/// thread; the count plus a warning exposes the stall instead.
+/// Bumper pressure gauge: overflow never drops or blocks; the count exposes stalls.
 pub(crate) struct BumperBudget {
     pending: AtomicUsize,
     cap: usize,
@@ -164,8 +159,7 @@ impl BumperBudget {
 mod tests {
     use super::*;
 
-    /// Reset between the generation check and registration: the stale job
-    /// loses the slot and a fresh request owns it again (NER-306 AC-1/AC-3).
+    /// Reset between check and registration: the stale job loses the slot.
     #[test]
     fn stale_publish_refused_after_reset() {
         let mut slot = SlotState {
@@ -179,7 +173,7 @@ mod tests {
         assert!(slot.publish(8));
     }
 
-    /// Stale release never steals the current job's fresh handles (AC-3).
+    /// Stale release never steals the current job's fresh handles.
     #[test]
     fn stale_release_keeps_current_handles() {
         let mut slot = SlotState {
@@ -193,7 +187,7 @@ mod tests {
         assert!(!slot.signal && !slot.stream);
     }
 
-    /// Reset takes exactly once: a second take finds nothing (AC-2).
+    /// Reset takes exactly once: a second take finds nothing.
     #[test]
     fn reset_take_is_single_owner() {
         let mut slot = SlotState {
@@ -206,7 +200,7 @@ mod tests {
         assert_eq!(slot.take_all(), (false, false));
     }
 
-    /// Latest wins: a queued stale job drops instead of retaining (AC-2).
+    /// Latest wins: a queued stale job drops instead of retaining.
     #[test]
     fn latest_push_drops_stale_pending() {
         let lane = LatestLane::new();
@@ -218,7 +212,7 @@ mod tests {
         assert_eq!(lane.pending(), 0);
     }
 
-    /// Closed lane drains then refuses, so callers can report (AC-2).
+    /// Closed lane drains then refuses, so callers can report.
     #[test]
     fn closed_lane_drains_then_refuses() {
         let lane = LatestLane::new();
@@ -229,7 +223,7 @@ mod tests {
         assert!(!lane.send("late"));
     }
 
-    /// Budget exposes pressure without dropping or blocking (NER-307 AC-3).
+    /// Budget exposes pressure without dropping or blocking.
     #[test]
     fn budget_flags_overflow_keeps_count() {
         let budget = BumperBudget::new(2);

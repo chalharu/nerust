@@ -65,9 +65,7 @@ impl State {
         Self::new_inner(ctx, capabilities, None)
     }
 
-    /// Test-only construction: settings persist under a unique temp dir,
-    /// never the real user file. Widget tests must not leak writes
-    /// (e.g. language switches) into `~/.config` (NER-326).
+    /// Test-only construction: settings persist under a unique temp dir.
     #[cfg(test)]
     pub(crate) fn new_for_tests(ctx: FrontendContext) -> Result<Self, SessionError> {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -378,9 +376,7 @@ fn build_window(
     app.set_menubar(Some(&menu_model));
     app.add_window(&window);
     window.set_show_menubar(true);
-    // Game viewport: a picture the renderer paints into memory, composited
-    // by GTK under the menubar. Presenting a fullscreen native surface
-    // would bury the in-window chrome, so the backends never present here.
+    // Game viewport: a memory picture composited by GTK; backends never present here.
     let picture = gtk::Picture::new();
     picture.set_hexpand(true);
     picture.set_vexpand(true);
@@ -601,12 +597,7 @@ fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
         });
     }
 
-    // External destruction bypasses close-request: the frame clock stops
-    // (no more ticks) and a HANDLES_OPEN app does not auto-quit, so the
-    // process would linger with no windows. Poll the GDK destruction flag
-    // from a timeout, which runs on the main context independent of the
-    // frame clock. `surface()` stays `Some` (the object is retained), so
-    // probe the flag, not presence.
+    // External destruction bypasses close-request: poll the GDK flag so the app can quit.
     {
         let app = app.clone();
         let current_window = current_window.clone();

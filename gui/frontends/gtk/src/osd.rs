@@ -28,9 +28,7 @@ impl Drop for CaptionSyncGuard<'_> {
     }
 }
 
-/// Built history dialog plus its live controls. Frontends present
-/// `dialog` and re-run `refresh` on reopen; tests drive `filter` and
-/// `clear` through it instead of spelunking the widget tree.
+/// Built history dialog plus its live controls; tests drive `filter` and `clear`.
 pub(crate) struct HistoryDialog {
     pub dialog: gtk::Dialog,
     pub refresh: Rc<dyn Fn()>,
@@ -40,8 +38,7 @@ pub(crate) struct HistoryDialog {
     /// Interactive handles, exercised by widget tests (reopen/filter/clear).
     #[cfg(test)]
     pub clear: gtk::Button,
-    /// Row container, exercised by widget tests: row growth proves the
-    /// open dialog re-renders on new notifications (NER-326 AC-1).
+    /// Row container for widget tests: growth proves open-dialog re-render.
     #[cfg(test)]
     pub grid: gtk::Grid,
 }
@@ -213,12 +210,7 @@ impl GtkOsd {
         }
     }
 
-    /// Build the history dialog without presenting: the caller owns
-    /// presentation and lifetime (parity with the debugger window).
-    /// Fixed dialog captions for a language: title, close, level caption,
-    /// filter items, and clear. Pure i18n lookup so the mapping itself is
-    /// unit-testable without a display; `refresh` applies it whenever the
-    /// tracked language changes (NER-326).
+    /// Build the history dialog without presenting; captions follow the tracked language.
     pub(crate) fn history_dialog_captions(
         language: nerust_settings_core::model::language::AppLanguage,
     ) -> HistoryDialogCaptions {
@@ -306,9 +298,7 @@ impl GtkOsd {
         // Same (seq, language, filter) gate as the tao twin: a refresh with
         // unchanged inputs rebuilds nothing instead of re-allocating rows.
         let last_sync = Rc::new(RefCell::new(None));
-        // Reentrancy guard: rebuilding the filter items below emits
-        // `changed`; without this the handler would refresh recursively
-        // until the stack overflows (NER-326).
+        // Reentrancy guard: rebuilding filter items emits `changed`; skip the recursive refresh.
         let syncing_captions = Rc::new(std::cell::Cell::new(false));
         let refresh = Rc::new({
             let state = Rc::clone(state);
@@ -322,11 +312,7 @@ impl GtkOsd {
             let syncing_captions = Rc::clone(&syncing_captions);
             let last_sync = Rc::clone(&last_sync);
             move || {
-                // External destruction keeps this closure (and its strong
-                // dialog clone) alive with a dead surface: any widget
-                // touch below queries a destroyed native window (fatal X
-                // error), so skip instead. A never-realized dialog has no
-                // surface to query, so it still refreshes.
+                // Skip refresh on a destroyed native surface; never-realized dialogs still refresh.
                 if super::surface_state::surface_dead(&dialog) {
                     return;
                 }
@@ -347,9 +333,7 @@ impl GtkOsd {
                     return;
                 }
                 *last_sync.borrow_mut() = Some(key);
-                // Fixed captions follow the language like the rows do: an
-                // open dialog never keeps stale title/buttons/filters
-                // (NER-326). The selection survives the filter rebuild.
+                // Fixed captions follow the language; the selection survives the rebuild.
                 let _caption_sync = CaptionSyncGuard::new(&syncing_captions);
                 let captions = Self::history_dialog_captions(language);
                 dialog.set_title(Some(&captions.title));
@@ -482,10 +466,7 @@ impl GtkOsd {
                 refresh();
             }
         });
-        // Follow new notifications while open: the gate inside refresh
-        // rebuilds only on change, and destroy removes the source. An
-        // externally destroyed dialog keeps this source alive (no destroy
-        // signal), so the gone check stops it instead.
+        // Follow new notifications while open; the gone check stops a destroyed source.
         let follow_dialog = dialog.clone();
         let follow_refresh = Rc::clone(&refresh);
         let follow = std::cell::Cell::new(Some(glib::timeout_add_local(
@@ -571,8 +552,7 @@ mod history_dialog_tests {
     use gtk::prelude::*;
     use nerust_settings_core::model::language::AppLanguage;
 
-    /// NER-326: the caption table itself follows the language. Display
-    /// application rides `refresh`, covered by the widget test below.
+    /// Caption table follows the language; display application rides `refresh`.
     #[test]
     fn history_captions_follow_language() {
         let en = GtkOsd::history_dialog_captions(AppLanguage::English);
@@ -662,9 +642,7 @@ mod history_dialog_tests {
         }
     }
 
-    /// NER-326 AC-1/AC-3: the dialog builds, refreshes, filters, clears,
-    /// and destroys; a fresh build after destroy reopens cleanly.
-    /// Widget-only: needs a display, run under Xvfb (skips headless).
+    /// Dialog lifecycle: build, refresh, filter, clear, and reopen cleanly.
     #[test]
     fn history_dialog_lifecycle_runs_without_display_errors() {
         let Some((_app, window, state)) = harness() else {
@@ -685,11 +663,7 @@ mod history_dialog_tests {
         rebuilt.dialog.destroy();
     }
 
-    /// NER-326 AC-1/AC-2: rows entered while open appear on refresh, and a
-    /// language switch rebuilds captions and rows under the same gate.
-    /// Widget-only: needs a display, run under Xvfb (skips headless).
-    /// The revision gate itself is pinned headless by
-    /// `history_model_refresh_is_revision_gated` below.
+    /// Open rows and language switches appear on refresh under the same gate.
     #[test]
     fn history_dialog_shows_new_rows_and_follows_language_change() {
         use nerust_gui_shell::session::notification::FailureOrigin;
@@ -717,7 +691,7 @@ mod history_dialog_tests {
             6,
             "empty state: headers + separator + empty row"
         );
-        // AC-1: a notification arriving while open appears after refresh.
+        // A notification arriving while open appears after refresh.
         state
             .borrow_mut()
             .session
@@ -728,7 +702,7 @@ mod history_dialog_tests {
             9,
             "one error row renders without reopen"
         );
-        // AC-2: the language switch rebuilds title and rows under the gate.
+        // The language switch rebuilds title and rows under the gate.
         let mut snapshot = state.borrow().session.settings_snapshot().clone();
         snapshot.shared.general.language = AppLanguage::Japanese;
         state
@@ -747,12 +721,7 @@ mod history_dialog_tests {
         built.dialog.destroy();
     }
 
-    /// NER-326 model gate (always runs, no widgets, no display): the
-    /// revision-gated refresh path — new rows appear on seq bump, a
-    /// language change rebuilds captions and rows, an unchanged seq
-    /// rebuilds nothing (same backing store, i.e. zero reformat builds),
-    /// and the filter thresholds match the grid gate above.
-    /// Fail-closed: headless CI asserts this instead of silently returning.
+    /// Model gate: revision-gated refresh rebuilds only on seq or language change.
     #[test]
     fn history_model_refresh_is_revision_gated() {
         use nerust_gui_shell::session::notification::{
@@ -768,7 +737,7 @@ mod history_dialog_tests {
                 .notification_history_lines_cached(AppLanguage::English)
                 .is_empty()
         );
-        // AC-1: a notification bumps the revision and the row appears.
+        // A notification bumps the revision and the row appears.
         let before = state.borrow().session.notification_history_seq();
         state
             .borrow_mut()
@@ -798,7 +767,7 @@ mod history_dialog_tests {
             .notification_history_lines_cached(AppLanguage::English)
             .as_ptr();
         assert_eq!(first, second, "seq-unchanged refresh must not rebuild");
-        // AC-2: the language switch rebuilds captions and rows alike.
+        // The language switch rebuilds captions and rows alike.
         let en_captions = GtkOsd::history_dialog_captions(AppLanguage::English);
         let ja_captions = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
         assert_ne!(en_captions.title, ja_captions.title);

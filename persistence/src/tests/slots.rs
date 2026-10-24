@@ -246,9 +246,8 @@ fn shared_slot_codec_round_trips_native_and_document_tree_keys() {
     }
 }
 
-/// NER-309: sidecar publish order. A stale summary must never survive the
-/// state it describes: invalidate first (crash window), drop again when the
-/// sidecar write itself fails (scan falls back to the archive).
+/// Sidecar publish order: a stale summary must never survive the state
+/// it describes; invalidate first and drop again on sidecar failure.
 #[test]
 fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     use crate::{error::PersistenceError, slots::publish_state_with_sidecar};
@@ -321,8 +320,8 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     assert!(outcome.is_err());
     assert_eq!(*events.borrow(), ["invalidate", "state"]);
 
-    // Unremovable stale sidecar: the publish refuses instead of letting the
-    // scan adopt old metadata for the fresh archive (NER-309).
+    // Unremovable stale sidecar: the publish refuses instead of letting
+    // the scan adopt old metadata for the fresh archive.
     events.borrow_mut().clear();
     let outcome: Result<(), PersistenceError> = publish_state_with_sidecar(
         || {
@@ -371,9 +370,8 @@ fn sidecar_publish_invalidates_before_state_and_drops_on_sidecar_failure() {
     );
 }
 
-/// NER-312: the cap rejects decodable metadata, not just garbage. A huge
-/// but otherwise valid encoding fails only through the bound; the same
-/// layout at a small size decodes, and empty input still fails to parse.
+/// The cap rejects decodable metadata, not just garbage: oversized input
+/// fails through the bound while small and empty inputs behave normally.
 #[test]
 fn metadata_cap_rejects_valid_but_oversized_encoding() {
     use crate::metadata::{encode_metadata_bytes, encode_slot_metadata};
@@ -414,7 +412,7 @@ fn metadata_cap_rejects_valid_but_oversized_encoding() {
     );
 }
 
-/// NER-319: copy-then-delete keeps the original on every failure path.
+/// Copy-then-delete keeps the original on every failure path.
 #[test]
 fn quarantine_by_copy_never_deletes_before_the_copy_is_stored() {
     use crate::{error::PersistenceError, slots::quarantine_by_copy};

@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-# Regression probes for e2e.sh shutdown detection (NER-327). Manual run:
-#   bash packaging/android/test-e2e-wait.sh
-# Wired into CI: check-contract.sh "shell probes" phase + the lint job's
-# explicit shell-probes step in .github/workflows/ci.yml.
-# NER-327: the same has_instrumentation_output / wait_until_gone /
-# run_instrumentation gates below run against the real emulator in CI
-# (.github/workflows/ci.yml `android-e2e` matrix API 28/35, which executes
-# packaging/android/e2e.sh); the stub probes here prove the
-# runner-missing shape fails the gate without needing a device.
-# Stubs adb and drives the real wait/evidence helpers.
+# Regression probes for e2e.sh shutdown detection; also wired into CI.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,8 +10,7 @@ trap - EXIT
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 PASS=0
-# Shared stub matchers: every adb stub below matches the same
-# instrumentation call shape (Sonar S1192: no repeated literal).
+# Shared stub matchers for every adb stub below.
 INSTRUMENT_CMD="am instrument"
 PIDOF_MATCH="pidof"
 FORCE_STOP_MATCH="am force-stop"
@@ -75,8 +65,6 @@ fi
 unset -f adb
 
 # --- termination gate with stubbed adb: genuine pass still passes ---
-# Freshness sees a lingering process and force-stops it; the pre-request
-# check relaunches it; the test runs; later pidofs report gone.
 echo 0 >"${TMP}/genuine-pidof-calls"
 adb() {
     case "$*" in
@@ -133,10 +121,6 @@ fi
 unset -f adb
 
 # --- run path: runner-missing output fails, never converts to a pass ---
-# NER-327 stub-path proof: the instrumentation call emits only adb's
-# runner-missing error (no INSTRUMENTATION_* block), so the output gate
-# must fail. The same gate runs against the real emulator in CI
-# (`android-e2e` jobs), where a missing runner likewise fails e2e.sh.
 adb() {
     case "$*" in
         *"${INSTRUMENT_CMD}"*) echo "error: device '(null)' not found" >&2; return 1 ;;
@@ -204,8 +188,6 @@ fi
 unset -f adb
 
 # --- pre-dead process: a pre-existing crash plus absence proves nothing ---
-# Freshness skips force-stop when nothing runs; the relaunch fails; the
-# crash output without progress still fails the gate.
 export E2E_ENSURE_PROCESS_TIMEOUT=2
 adb() {
     case "$*" in
@@ -228,9 +210,6 @@ unset -f adb
 unset E2E_ENSURE_PROCESS_TIMEOUT
 
 # --- freshness force-stops a lingering process before the test ---
-# A dead event loop would be reused otherwise: pidof reports alive once,
-# exactly one force-stop runs, the pre-request check relaunches, the
-# test reports OK, then it is gone.
 echo 0 >"${TMP}/fresh-force-stop-calls"
 echo 0 >"${TMP}/fresh-pidof-calls"
 adb() {

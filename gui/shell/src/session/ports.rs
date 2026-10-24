@@ -96,10 +96,8 @@ pub trait AutoSaveBackend: Send {
         identity: &SystemIdentity,
     ) -> Result<Option<LoadedStateSlot>, PersistenceError>;
     fn delete_autosave(&self, dir: &StorageLocation) -> Result<(), PersistenceError>;
-    /// Quarantine the hidden autosave aside instead of deleting it.
-    /// Returns the quarantine path, or `None` when nothing was kept.
-    /// The default keeps the data in place: backends without isolation
-    /// must not silently delete on this path (NER-319).
+    /// Quarantine the hidden autosave aside; returns the path or `None`.
+    /// The default keeps data in place; backends must not silently delete.
     fn quarantine_autosave(
         &self,
         _dir: &StorageLocation,
@@ -148,7 +146,7 @@ mod ports_cov_tests {
                 Ok(None)
             }
             fn delete_autosave(&self, _: &StorageLocation) -> Result<(), PersistenceError> {
-                panic!("default quarantine must not delete (NER-319)")
+                panic!("default quarantine must not delete")
             }
         }
         let dir = std::env::temp_dir().join("nerust-ports-quarantine-probe");

@@ -475,9 +475,8 @@ impl AndroidFrontend {
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
         self.chrome.input.forget_physical_pressed();
-        // Pure decision here; the frontend executes the marker and session I/O.
-        // A fetch killed by the suspend-time reset below still owns the marker:
-        // resume refetches instead of dropping the restore.
+        // Pure decision; the frontend executes marker and session I/O.
+        // A fetch killed by the suspend reset keeps the marker for resume refetch.
         let saved_hidden = self.core.session.save_hidden_lifecycle_state();
         let fetch_outstanding = picker::has_pending_result();
         match self
@@ -600,9 +599,8 @@ impl AndroidFrontend {
                 MenuAction::Exit => {
                     self.unload_for_exit();
                     self.core.session.flush_before_exit();
-                    // User-initiated: the destroy that follows must end
-                    // the process, including under instrumentation where
-                    // the termination gate verifies it (NER-327).
+                    // User-initiated: the following destroy must end the process,
+                    // including under instrumentation teardown.
                     bridge::request_user_exit();
                     // Fire-and-forget: the activity teardown never
                     // blocks the event thread on a JNI round-trip.
@@ -906,8 +904,7 @@ impl ApplicationHandler for AndroidFrontend {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if bridge::take_exit_request() {
-            // Staged shutdown log: a linger after destroy triangulates to the
-            // step whose completion line is missing (see NER-102).
+            // Staged shutdown log: a linger triangulates to the missing completion line.
             log::info!("shutdown: exit requested, flushing before exit");
             self.core.session.flush_before_exit();
             log::info!("shutdown: flush done, releasing window resources");

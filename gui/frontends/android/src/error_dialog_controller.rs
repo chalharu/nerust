@@ -134,10 +134,8 @@ impl ErrorDialogController {
         }
         self.current_id = None;
         if matches!(screen, Screen::SettingsOpen | Screen::Suspended) {
-            // Preempted, never acked: hand the structured batch back so a
-            // later take re-renders under current settings (NER-318).
-            // requeue_showing also releases the gate; modal_closed would
-            // drop the unacked lines first.
+            // Preempted, never acked: hand the batch back so a later take re-renders.
+            // Requeue also releases the gate; modal close would drop unacked lines.
             let _ = self.current.take();
             queue.requeue_showing();
             return IDLE;
@@ -455,8 +453,7 @@ mod tests {
         assert!(showing.auto_paused());
     }
 
-    /// NER-318: an interrupted batch redelivers under the settings at
-    /// redelivery time, never the pre-rendered text from before.
+    /// An interrupted batch redelivers under the settings at redelivery time.
     #[test]
     fn interrupted_batch_applies_new_language_and_level_on_redelivery() {
         use nerust_gui_shell::session::notification::{Message, NotificationLevel, UiNotification};

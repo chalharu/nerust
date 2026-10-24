@@ -1023,8 +1023,8 @@ impl DrainFlight {
         };
         if let Some(core) = self.ctx.core.as_ref() {
             let stored = core.images_store(images, sent_generation);
-            // Always keep the served decode: a panel-only redraw must
-            // rebuild from held images, never an empty image (NER-324).
+            // Always keep the served decode: a panel-only redraw must rebuild
+            // from held images, never an empty image.
             self.images_gen = stored.generation;
             self.images = stored.images;
         }
@@ -1315,8 +1315,8 @@ impl LiveImagesFlight {
         let images = reply.ok()?;
         let core = self.core.as_ref()?;
         let stored = core.images_store(images, sent_generation);
-        // Always convert the served decode: panel-only updates must keep
-        // the held images instead of an empty image (NER-324).
+        // Always convert the served decode: panel-only updates must keep the
+        // held images instead of an empty image.
         let items = stored
             .images
             .iter()

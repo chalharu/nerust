@@ -82,9 +82,7 @@ impl super::AndroidFrontend {
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
         self.chrome.input.forget_physical_pressed();
-        // Resolve before switching: a resolve failure must leave the live
-        // session untouched. Options come from the detected factory, so a
-        // fresh session without an active system still resolves (NER-320).
+        // Resolve before switching: a failure leaves the live session untouched.
         let options = factory.default_load_options();
         let view = nerust_settings_core::factory::settings_view(
             self.core.session.settings_snapshot(),

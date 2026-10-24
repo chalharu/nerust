@@ -50,9 +50,8 @@ pub(crate) enum ModalPump {
     },
 }
 
-/// Modal error batches with sequential display pumping. Single queue gate:
-/// aggregation plus the display queue live here, so cap and overflow policy
-/// change in one place. Frontends take batches through [`OsdManager`].
+/// Modal error batches with sequential display pumping. Single queue gate holds
+/// aggregation plus the display queue, so cap and overflow policy change in one place.
 #[derive(Debug, Default)]
 pub struct ModalQueue {
     batch: Vec<ModalLine>,
@@ -86,9 +85,8 @@ impl ModalQueue {
             lines.retain(enabled);
         }
         self.queue.retain(|lines| !lines.is_empty());
-        // The taken-but-unacked batch redelivers through the same filter:
-        // an interrupt after a settings change must not resurrect lines the
-        // new policy disables (NER-318). The open gate stays until ack.
+        // The taken-but-unacked batch redelivers through the same filter: an interrupt
+        // never resurrects lines the new policy disables; the open gate stays until ack.
         if let Some(lines) = self.showing.as_mut() {
             lines.retain(enabled);
             if lines.is_empty() {
@@ -260,8 +258,8 @@ impl ModalQueue {
                 .collect();
             if !rendered.is_empty() {
                 self.open = true;
-                // Keep structured ownership until ack: an interrupt hands
-                // the lines back instead of a pre-rendered string (NER-318).
+                // Keep structured ownership until ack: an interrupt hands the lines
+                // back instead of a pre-rendered string.
                 self.showing = Some(lines);
                 return Some(rendered.join("\n"));
             }
@@ -274,10 +272,8 @@ impl ModalQueue {
         self.showing = None;
     }
 
-    /// Hand the unacked showing batch back to the front, preserving its
-    /// structure so redelivery re-renders under current settings. No-op
-    /// when nothing was taken. Same drop-oldest cap as the other requeue
-    /// leg: an interrupt storm must not grow the queue without bound.
+    /// Hand the unacked showing batch back to the front, preserving its structure
+    /// so redelivery re-renders under current settings. Same drop-oldest cap as other legs.
     pub fn requeue_showing(&mut self) -> bool {
         let Some(lines) = self.showing.take() else {
             return false;
@@ -337,9 +333,8 @@ mod tests {
         }
     }
 
-    /// NER-318: an interrupted batch hands structured lines back, so the
-    /// next take re-renders under current settings instead of replaying
-    /// the pre-rendered text.
+    /// An interrupted batch hands structured lines back, so the next take re-renders
+    /// under current settings instead of replaying the pre-rendered text.
     #[test]
     fn interrupted_batch_rerenders_under_new_settings() {
         let mut modal = ModalQueue::default();
@@ -364,9 +359,8 @@ mod tests {
         assert_eq!(modal.take_modal_batch(), None);
     }
 
-    /// NER-318: a settings change while a batch is taken refilters the
-    /// showing batch too. An interrupt afterwards redelivers nothing the
-    /// new policy disables, instead of the stale pre-change lines.
+    /// A settings change while a batch is taken refilters the showing batch too:
+    /// an interrupt afterwards redelivers nothing the new policy disables.
     #[test]
     fn set_presentation_refilters_taken_showing_batch() {
         let mut modal = ModalQueue::default();
@@ -379,16 +373,15 @@ mod tests {
         assert!(matches!(modal.pump_pending(), ModalPump::Queued { .. }));
         let first = modal.take_modal_batch().expect("batch");
         assert!(first.contains("Saves unavailable"), "{first}");
-        // Settings change lands while the dialog is still up: Japanese,
-        // warnings off. The taken batch loses its only line, so a later
-        // interrupt has nothing to hand back and redelivery stays silent.
+        // Settings change lands while the dialog is still up: with nothing left,
+        // a later interrupt has nothing to hand back and redelivery stays silent.
         modal.set_presentation(test_policy(false), AppLanguage::Japanese);
         assert!(!modal.requeue_showing());
         assert_eq!(modal.take_modal_batch(), None);
     }
 
-    /// NER-318: requeueing the showing batch past a full queue drops the
-    /// oldest waiting batch, like the other requeue leg.
+    /// Requeueing the showing batch past a full queue drops the oldest waiting
+    /// batch, like the other requeue leg.
     #[test]
     fn requeue_showing_enforces_queue_cap() {
         let mut modal = ModalQueue::default();

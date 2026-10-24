@@ -15,29 +15,16 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * Emulator abnormal-path tests against a stub speaking the DocumentsContract
- * wire protocol (NER-321/322/312). No physical device is needed: outage,
- * corrupt, and oversized modes are driven through the stub. Runs in CI
- * inside the android-e2e matrix via e2e.sh (FAULT_CLASS).
- */
+/** Emulator abnormal-path tests against a stub speaking the DocumentsContract protocol. */
 @RunWith(AndroidJUnit4::class)
 class SafAbnormalProviderTest {
     private val treeUri = FaultDocumentsProvider.TREE_URI.toString()
 
-    /**
-     * Plain-ContentProvider stub in the test package: exported with no
-     * permissions (cf. TestRomProvider), reachable through the target
-     * context's resolver. Never shipped: androidTest source set only.
-     */
+    /** Plain stub in the test package, reachable through the target resolver. */
     private fun repository(): SafRepository =
         SafRepository(ApplicationProvider.getApplicationContext())
 
-    /**
-     * Fault control plane: the stub runs in the test package process while
-     * this test runs in the app process, so statics are not shared; the
-     * outage count is driven through ContentProvider.call instead.
-     */
+    /** Fault control: the outage count is driven through ContentProvider.call. */
     private fun setOutage(count: Int) {
         val appContext = ApplicationProvider.getApplicationContext<Context>()
         appContext.contentResolver.call(
@@ -103,8 +90,7 @@ class SafAbnormalProviderTest {
             val session = repository.openSafReadSession(treeUri, "corrupt.state")
             assertTrue("corrupt session must open, got $session", session > 0)
             try {
-                // Byte fidelity: the Rust side quarantines exactly these bytes
-                // instead of deleting them (NER-319/321).
+                // Byte fidelity: the Rust side quarantines exactly these bytes.
                 assertArrayEquals(
                     FaultDocumentsProvider.getCorruptBytes(),
                     readFully(repository, session),

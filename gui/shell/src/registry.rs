@@ -117,9 +117,8 @@ impl RomLoader for RegistryRomLoader {
 
         let system_id = factory.system_id();
 
-        // Resolve before switching: a resolve failure must leave the live
-        // session untouched. The switch below publishes immediately, and a
-        // later load failure rolls back to the snapshot it takes (NER-320).
+        // Resolve before switching: a resolve failure must leave the live session
+        // untouched; the switch below publishes immediately and rolls back on load failure.
         let view = settings_view(target.settings_snapshot(), system_id.as_ref());
         let options = self
             .pending_options

@@ -9,9 +9,7 @@ import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Stuck-provider injection (NER-306/307): a transport that blocks until
- * released, modelling a stalled DocumentsProvider. Reads/writes park on
- * a latch; only the test releases them. */
+/** Stuck-provider injection: a transport that blocks until released. */
 private class StalledInputStream : InputStream() {
     val entered = CountDownLatch(1)
     private val release = CountDownLatch(1)
@@ -52,9 +50,7 @@ private fun await(latch: CountDownLatch, what: String) {
 }
 
 class SafStallInjectionTest {
-    /** NER-307 AC-1 at the session layer: tearing down while a provider
-     * read is stalled returns promptly; the parked lane reclaims the
-     * stream once the provider answers, exactly once. */
+    /** Teardown during a stalled read returns promptly; the lane reclaims later. */
     @Test fun teardownDuringStalledReadReturnsPromptly() {
         val sessions = SafReadSessions(background())
         val stream = StalledInputStream()
@@ -90,9 +86,7 @@ class SafStallInjectionTest {
         sessions.close()
     }
 
-    /** Write side of the same contract: teardown never waits for a
-     * stalled provider write; the lane discards (close plus abort)
-     * once the provider answers. */
+    /** Teardown never waits for a stalled write; the lane discards later. */
     @Test fun teardownDuringStalledWriteReturnsPromptly() {
         val sessions = SafWriteSessions(background())
         val stream = StalledOutputStream()
@@ -134,9 +128,7 @@ class SafStallInjectionTest {
         sessions.close()
     }
 
-    /** Provider-failure path (NER-319 analogue at the session layer): a
-     * throwing write marks the session failed, so finish refuses to
-     * commit and aborts instead of publishing half-written data. */
+    /** A throwing write marks the session failed, so finish aborts. */
     @Test fun failedWriteAbortsInsteadOfCommitting() {
         val sessions = SafWriteSessions(Executor { it.run() })
         var committed = false

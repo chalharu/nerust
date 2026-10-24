@@ -25,8 +25,7 @@ impl HostState {
     ) -> HostAction {
         if self.settings_open() {
             return match command {
-                // Exit intent only: the runtime drops the renderer before
-                // running host teardown in `begin_close` (NER-305).
+                // Exit intent only: the runtime drops the renderer before host teardown.
                 MenuCommand::Quit => HostAction::Exit,
                 _ => HostAction::None,
             };

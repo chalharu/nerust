@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Probes for verify_apk_contents (NER-314). Manual run:
-#   bash packaging/android/test-apk-contents.sh
-# Wired into CI: check-contract.sh "shell probes" phase + the lint job's
-# explicit shell-probes step in .github/workflows/ci.yml.
+# Probes for verify_apk_contents; also wired into CI shell probes.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=package-helpers.sh
@@ -11,9 +8,7 @@ source "${SCRIPT_DIR}/package-helpers.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 PASS=0
-# The release APK must carry the Rust cdylib (crate lib name "main",
-# loaded via System.loadLibrary("main")); the gate below fails the
-# build instead of shipping an APK without it (NER-314).
+# The release APK must carry the Rust cdylib; the gate fails the build otherwise.
 EXPECTED_LIB="libmain.so"
 pass() {
     PASS=$((PASS + 1))

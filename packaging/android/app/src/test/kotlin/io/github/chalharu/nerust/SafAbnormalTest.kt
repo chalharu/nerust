@@ -10,27 +10,11 @@ import java.util.concurrent.Executor
 import org.junit.Assert.*
 import org.junit.Test
 
-/**
- * Abnormal-path pins for the SAF bridge that run without a device.
- *
- * No `Context`/provider exists on the host, so these JVM tests pin the pure
- * decision, bound, and session logic the emulator path shares with the
- * provider-backed code: NER-321 (transient vs confirmed-absent), NER-312
- * (bounded sidecar transfer), NER-319 (a failed copy never commits; the
- * original is untouched), and NER-322 (a truncated generation is detected,
- * so the Rust scan skips that slot while healthy ones list).
- *
- * Full provider integration (real DocumentsProvider, process-death
- * generations) stays in `androidTest` and runs on the emulator CI job;
- * there is no headless provider here.
- */
+/** Abnormal-path pins for the SAF bridge that run without a device. */
 class SafAbnormalTest {
     @Test fun transientSurveyFailureIsErrorNeverAbsence() {
-        // NER-321: a name with no generation and no physical file is
-        // confirmed-absent ONLY after a complete successful survey. An
-        // incomplete survey (an unreadable commit marker) must surface as
-        // an open error so the Rust side keeps its previous state and
-        // never runs the delete/tombstone/GC path over live data.
+        // Only a complete survey confirms absence; an incomplete survey
+        // surfaces as an open error so prior state is kept.
         assertFalse(SafRepository.confirmedAbsent(surveyComplete = false, fileFound = false))
         assertTrue(SafRepository.confirmedAbsent(surveyComplete = true, fileFound = false))
         // Found files are present regardless of the survey state.
@@ -39,8 +23,8 @@ class SafAbnormalTest {
     }
 
     @Test fun oversizedSidecarRejectedWithoutFullTransfer() {
-        // NER-312: the batch sidecar path caps the transfer; the caller
-        // drops anything over the cap, so a huge summary never crosses.
+        // The batch sidecar path caps the transfer; over-cap summaries
+        // are dropped before crossing.
         val huge = ByteArray(SAF_SUMMARY_BYTES * 4) { 0x41 }
         var bulkReads = 0
         val counting = object : InputStream() {
@@ -67,9 +51,7 @@ class SafAbnormalTest {
     }
 
     @Test fun failedCopyNeverCommitsAndAborts() {
-        // NER-319 staging half: a copy that fails mid-stream must never
-        // commit a partial document; the abort runs and the previous
-        // generation (the "original") stays served.
+        // A copy that fails mid-stream never commits; the abort runs instead.
         var committed = false
         var aborted = false
         val staged = ByteArrayOutputStream()
@@ -97,9 +79,7 @@ class SafAbnormalTest {
     }
 
     @Test fun truncatedGenerationDetectedInsteadOfServingPartial() {
-        // NER-322 detection half: a short generation throws at EOF instead
-        // of serving partial bytes, so the Rust scan skips that slot while
-        // healthy ones list.
+        // A short generation throws at EOF instead of serving partial bytes.
         val short = SafVerifiedInputStream(ByteArrayInputStream(byteArrayOf(1, 2)), 10L)
         assertEquals(2, short.read(ByteArray(8), 0, 8))
         assertThrows(IOException::class.java) { short.read() }

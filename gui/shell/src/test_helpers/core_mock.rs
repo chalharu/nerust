@@ -174,8 +174,8 @@ impl ConsoleCore for MockConsoleCore {
     }
     fn load(&mut self, rom: &[u8], config: &CoreConfig) -> Result<(), CoreError> {
         if rom.is_empty() {
-            // An empty ROM never parses: deterministic load failure for
-            // rollback tests, matching real cores (NER-320).
+            // An empty ROM never parses: deterministic load failure for rollback
+            // tests, matching real cores.
             return Err(CoreError::RomParse {
                 kind: CoreFault::Corrupt,
                 source: Box::new(std::io::Error::new(

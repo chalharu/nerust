@@ -16,16 +16,12 @@ internal class SafWriteSessions(private val cleanup: Executor = SafCleanup.execu
         var failed = false
         var closed = false
     }
-    // Admission is capped (NER-308): one close occupies at most one lane
-    // slot, so open sessions match the lane depth and a full teardown storm
-    // still fits the lane plus dock budget. A refused open discards the
-    // passed transaction through the cleanup lane, so ownership is never
-    // lost or leaked.
+    // Open sessions match the lane depth so a teardown storm still fits
+    // the lane plus dock; a refused open discards the transaction via the lane.
     private companion object {
         const val MAX_OPEN_SESSIONS = 64
     }
     // Lock-free reads: per-session monitors never nest inside the registry monitor.
-    // Registry monitor guards only id minting and teardown; lookups use the map directly.
     private val sessions = ConcurrentHashMap<Long, Session>()
     private var nextId = 1L
     private var closed = false
@@ -69,7 +65,7 @@ internal class SafWriteSessions(private val cleanup: Executor = SafCleanup.execu
         }
     }
 
-    /** Idempotent stream close: reports success; the exception path reuses it without double-closing. */
+    /** Idempotent stream close: the exception path reuses it without double-closing. */
     private fun closeOnce(session: Session): Boolean {
         if (!session.closed) {
             session.closed = true

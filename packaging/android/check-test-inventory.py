@@ -36,9 +36,7 @@ def kotlin_test_methods(path):
     return re.findall(r"@Test(?:\([^)]*\))?\s+fun\s+(\w+)", text)
 
 
-#: Lines calling a test are the only inventory source: assignments,
-#: printf/echo strings, and heredoc bodies that merely mention a test never
-#: execute it (NER-315).
+#: Lines calling a test are the only inventory source; mere mentions never execute it.
 CALL_LINE_RE = re.compile(r"^\s*(run_instrumentation|expect_process_termination)\b")
 HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?(\w+)['\"]?")
 
@@ -78,11 +76,7 @@ def _live_call_lines(text):
 
 
 def selected_e2e_tests(text):
-    """TEST_CLASS selections on live shell lines. Full-line comments never
-    run, and trailing comments are cut outside double quotes, so commented
-    selections cannot pass the inventory gate. Only the two real call shapes
-    count: assignments, printf/echo strings, and heredoc bodies are ignored
-    even when they mention a test (NER-315)."""
+    """TEST_CLASS selections on live shell lines. Commented selections never pass the gate."""
     live = _live_call_lines(text)
     invoked = set()
     for chunk in re.findall(

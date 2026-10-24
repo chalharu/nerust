@@ -62,8 +62,7 @@ impl AndroidStorageBackend {
         self.read_capped(location, limit)
     }
 
-    /// Bounded variant: sidecars use the metadata cap instead of sharing the
-    /// archive budget, so a huge summary stops mid-transfer (NER-312).
+    /// Bounded variant: sidecars use the metadata cap so a huge summary stops mid-transfer.
     fn read_capped(
         &self,
         location: &StorageLocation,
@@ -299,10 +298,8 @@ impl AndroidStorageBackend {
         dir.child(&format!("{slot_id}.state"))
     }
 
-    /// Bounded sidecar lookup for one scanned archive: metadata bytes instead
-    /// of the whole zip. `None` means miss, mismatch, or corruption, and the
-    /// caller falls back to the archive read. Transfer and decode caps match
-    /// the wire pin (`SAF_SUMMARY_BYTES`); the decode layer rechecks.
+    /// Bounded sidecar lookup for one archive: metadata bytes with fallback to the archive read.
+    /// Transfer and decode caps match the wire pin; the decode layer rechecks.
     fn read_summary_sidecar(
         &self,
         dir: &StorageLocation,
@@ -320,8 +317,7 @@ impl AndroidStorageBackend {
 }
 
 /// One entry of the `listSafFilesWithSizes` batch; unknown sizes are `None`.
-/// `summary` carries the scan sidecar bytes (base64) when the provider
-/// listed one, so scans avoid a second resolution pass per slot (NER-310).
+/// `summary` carries scan sidecar bytes when the provider listed them.
 #[derive(Debug, serde::Deserialize)]
 struct SizedEntry {
     name: String,
@@ -368,9 +364,8 @@ impl SlotBackend for AndroidStorageBackend {
             if size == Some(0) || !Self::scan_candidate(size) {
                 continue;
             }
-            // Batched sidecar first: one generations pass serves the whole
-            // listing instead of re-resolving per slot. Any miss or mismatch
-            // falls back to the single sidecar read, then the archive.
+            // Batched sidecar first: one pass serves the listing, then fallback
+            // to the single sidecar read and the archive.
             let entry_id = entry
                 .name
                 .strip_suffix(".state")
@@ -390,9 +385,8 @@ impl SlotBackend for AndroidStorageBackend {
                         .ok()
                 })
                 .flatten()
-                // A sidecar names its slot: a mismatched id means a stale or
-                // misplaced entry, so fall through to the single sidecar
-                // read and then the archive instead of adopting it (NER-309).
+                // A sidecar names its slot: a mismatched id falls through to the
+                // single sidecar read and then the archive.
                 .filter(|summary| Some(summary.slot_id) == entry_id);
             if let Some(summary) = batched {
                 result.push(summary);
@@ -406,7 +400,7 @@ impl SlotBackend for AndroidStorageBackend {
             }
             let bytes = match self.read(&path) {
                 Ok(bytes) => bytes,
-                // One bad slot must not fail the whole scan (NER-322).
+                // One bad slot must not fail the whole scan.
                 Err(error) => {
                     log::warn!("SAF scan: skipping unreadable entry: {error:?}");
                     continue;
@@ -455,8 +449,7 @@ impl SlotBackend for AndroidStorageBackend {
         let path = Self::state_path(dir, slot_id)?;
         let (bytes, metadata_bytes, summary) =
             build_state_slot_bytes(path.clone(), slot_id, data, identity, thumbnail)?;
-        // Same-generation publish: the scan must never adopt a stale
-        // summary for the just-written archive (NER-309).
+        // Same-generation publish: the scan never adopts a stale summary.
         let sidecar = dir.child(&format!("{slot_id}.summary")).ok();
         publish_state_with_sidecar(
             || {
@@ -543,8 +536,7 @@ impl AutoSaveBackend for AndroidStorageBackend {
         self.delete(&dir.child(".autosave_slot")?)
     }
 
-    /// Quarantine by copy-then-delete: the original autosave is removed
-    /// only after the quarantined copy is stored (NER-319).
+    /// Quarantine by copy-then-delete: the original is removed only after the copy is stored.
     fn quarantine_autosave(
         &self,
         dir: &StorageLocation,
@@ -648,7 +640,7 @@ mod tests {
         assert_eq!(entries[1].known_size(), None);
         // Negative Kotlin lengths normalize to unknown.
         assert_eq!(entries[2].known_size(), None);
-        // Batched sidecar bytes ride the listing (NER-310).
+        // Batched sidecar bytes ride the listing.
         assert_eq!(entries[3].summary.as_deref(), Some("aGk="));
         assert!(entries[0].summary.is_none());
     }

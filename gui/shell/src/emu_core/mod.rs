@@ -72,8 +72,8 @@ pub struct TickSnapshot {
 
 /// Shared image batch: generation plus refcounted decode.
 pub type SharedDebugImages = std::sync::Arc<Vec<DebugImage>>;
-/// Pending images fetch: the reply channel plus the generation at send time,
-/// so the reply binds to its invalidation generation (NER-323).
+/// Pending images fetch: the reply channel plus the generation at send time, so the
+/// reply binds to its invalidation generation.
 pub(crate) type ImagesFetch = (
     std::sync::mpsc::Receiver<Result<Vec<DebugImage>, DebuggerError>>,
     u64,
@@ -137,7 +137,6 @@ pub trait AudioPort {
 }
 
 /// Always-live surface: playback, frame, audio, and the paused image cache.
-/// Frontends hold `&dyn LiveCore`; debug traffic uses [`LiveDebugPort`].
 /// Fakes depend on [`PlaybackPort`]/[`FramePort`]/[`AudioPort`] directly.
 pub trait LiveCore: PlaybackPort + FramePort + AudioPort + LiveDebugPort {
     /// Paused PPU-viewer cache leg.
@@ -226,8 +225,7 @@ pub(crate) struct CachedImages {
 
 impl CachedImages {
     /// Fresh-cache invalidation: stale the decode and advance the generation.
-    /// Single home for the dirty discipline; both the core and the
-    /// race-test fake mark through here.
+    /// Single home for the dirty discipline.
     fn mark_dirty(&mut self) {
         self.dirty = true;
         self.generation = self.generation.wrapping_add(1);
@@ -981,9 +979,8 @@ impl EmuCore {
             .map(|cache| (cache.generation, std::sync::Arc::clone(&cache.images)))
     }
 
-    /// Send half of the [`EmuCore::debug_images`] fetch: queues without
-    /// blocking so the async debug drain can poll on its own tick. Returns
-    /// the generation at send time so the reply binds to it (NER-323).
+    /// Send half of the [`EmuCore::debug_images`] fetch: queues without blocking so the
+    /// async debug drain can poll on its own tick; the reply binds to the send generation.
     pub(crate) fn images_send(&self) -> Result<ImagesFetch, OperationError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.emu
@@ -998,9 +995,7 @@ impl EmuCore {
     }
 
     /// Store a fetched decode and report freshness; a poisoned cache still serves.
-    /// Content-identical refetches report the *served* generation so viewers skip re-deriving.
-    /// A reply older than a newer invalidation never clears it: the cache and
-    /// the report keep the served generation instead (NER-323).
+    /// Identical content reports the served generation; a stale reply never clears newer.
     pub(crate) fn images_store(
         &self,
         images: Vec<DebugImage>,
@@ -1015,9 +1010,7 @@ impl EmuCore {
 }
 
 /// Store a fetched decode into `cache` and report generation, pixels, and freshness.
-/// Pure cache discipline (no transport, no thread): the live tick, the async
-/// drain, and the race-test fake all funnel through here, so the NER-323/324
-/// invariants hold on every path by construction.
+/// Pure cache discipline: every path funnels through here, so the invariants hold by construction.
 pub(crate) fn store_images(
     cache: &mut CachedImages,
     images: Vec<DebugImage>,
@@ -1027,9 +1020,8 @@ pub(crate) fn store_images(
     // One shared copy: the cache holds it, the report moves the input without re-cloning.
     let shared = std::sync::Arc::new(images);
     if cache.generation != sent_generation {
-        // A newer invalidation arrived after this fetch started: keep
-        // it, and hand back the held decode so a panel-only redraw
-        // never rebuilds from an empty image (NER-324).
+        // A newer invalidation arrived after this fetch started: keep it and hand
+        // back the held decode so a panel-only redraw never rebuilds from empty.
         return StoredImages {
             generation: cache.served_generation,
             images: std::sync::Arc::clone(&cache.images),
@@ -1039,24 +1031,16 @@ pub(crate) fn store_images(
     cache.images = std::sync::Arc::clone(&shared);
     cache.dirty = false;
     if cache.served_hash == Some(hash) {
-        // Identical content reports the served generation so viewers skip
-        // re-deriving instead of flapping. The cache generation itself
-        // never rewinds: rewinding would let an old sent value become
-        // current again, so a stale outstanding reply could clear a newer
-        // invalidation (ABA, NER-323). Staleness binds to the monotonic
-        // cache generation; viewer skip uses the served one.
+        // Identical content reports the served generation so viewers skip re-deriving.
+        // The cache generation never rewinds, so a stale reply cannot clear a newer invalidation.
         StoredImages {
             generation: cache.served_generation,
             images: std::sync::Arc::clone(&shared),
             fresh: false,
         }
     } else {
-        // Different pixels must not reuse any served revision: always mint
-        // a fresh generation, even when invalidations already advanced the
-        // cache past the served one. A conditional bump would report the
-        // current generation for new content that a cache hit may already
-        // have served with older pixels, and viewers skipping on the
-        // revision would keep the stale decode (NER-323).
+        // Different pixels always mint a fresh generation, never reusing a served one:
+        // viewers skipping on the revision would otherwise keep the stale decode.
         cache.generation = cache.generation.wrapping_add(1);
         cache.served_hash = Some(hash);
         cache.served_generation = cache.generation;
@@ -1633,8 +1617,7 @@ mod tests {
         assert!(changed.generation > served);
     }
 
-    /// NER-324: identical-content redelivery keeps the served pixels so a
-    /// panel-only redraw never rebuilds from an empty image.
+    /// Identical-content redelivery keeps the served pixels for panel-only redraws.
     #[test]
     fn unchanged_store_keeps_served_images_for_redelivery() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1658,9 +1641,7 @@ mod tests {
         assert!(!repeat.images.is_empty());
     }
 
-    /// NER-324: a panel-only redelivery keeps the served pixels, not just a
-    /// non-empty placeholder. Both the live and drain paths funnel through
-    /// this store, so pixel equality here is their common retention.
+    /// A panel-only redelivery keeps the served pixels through this store.
     #[test]
     fn redelivery_keeps_served_pixels_for_panel_only_batches() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1691,8 +1672,7 @@ mod tests {
         assert_eq!(pixels(&repeat.images), vec![0, 1]);
     }
 
-    /// NER-324: non-empty to truly empty clears with fresh. A genuine empty
-    /// reply is not a redelivery: viewers must drop the held decode.
+    /// A genuine empty reply clears the held decode with fresh; it is not a redelivery.
     #[test]
     fn true_empty_reply_clears_held_images() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1717,7 +1697,7 @@ mod tests {
         assert!(cleared.images.is_empty());
     }
 
-    /// NER-323: a reply older than a newer invalidation never clears it.
+    /// A reply older than a newer invalidation never clears it.
     #[test]
     fn stale_reply_keeps_newer_dirty() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1743,9 +1723,8 @@ mod tests {
         let _ = stored;
     }
 
-    /// NER-323: an old sent value never becomes current again. An
-    /// identical-content store in between must not rewind the generation, so
-    /// a stale outstanding reply still misses and keeps the newer dirty.
+    /// An old sent value never becomes current again: identical content in between
+    /// must not rewind the generation.
     #[test]
     fn stale_sent_value_never_becomes_current_again() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1784,7 +1763,7 @@ mod tests {
         assert_eq!(held, vec![0, 1], "stale pixels never publish");
     }
 
-    /// NER-323: different published images never share a revision.
+    /// Different published images never share a revision.
     #[test]
     fn different_content_never_reuses_served_generation() {
         use nerust_core_traits::debugger::ImageFormat;
@@ -1806,11 +1785,8 @@ mod tests {
         assert_ne!(second.generation, first.generation);
     }
 
-    /// Send+Sync fake core for the live-vs-drain race. `EmuCore` itself is
-    /// `!Send` (the shared thread transport is `Send`-only), so threads
-    /// cannot own one; this fake holds the same `CachedImages` discipline
-    /// and funnels every store through the real [`super::store_images`],
-    /// with the mock tiles as the scripted fetch reply.
+    /// `Send`+`Sync` fake core for the live-vs-drain race: holds the same cache
+    /// discipline and funnels every store through [`super::store_images`].
     #[derive(Debug, Clone)]
     struct RaceCore {
         cache: Arc<Mutex<CachedImages>>,
@@ -1869,9 +1845,7 @@ mod tests {
                 .map(|cache| (cache.generation, std::sync::Arc::clone(&cache.images)))
         }
 
-        /// Drain send half: binds the reply to the generation at send time (NER-323).
-        /// The payload rides the scripted reply, like the `FakePort`
-        /// transport answers queries inline.
+        /// Drain send half: binds the reply to the generation at send time.
         fn images_send_with(
             &self,
             images: Vec<DebugImage>,
@@ -1913,13 +1887,8 @@ mod tests {
         }
     }
 
-    /// NER-323/324: live tick vs drain race with pause dirtying. The live
-    /// thread serves ticks (generation N), the drain thread runs
-    /// start-batch fetches with alternating payloads concurrently, and the
-    /// owner dirties like a pause would. Afterwards no generation is shared
-    /// by two different pixel payloads (no reuse), every served payload is
-    /// one the fakes actually sent, and unchanged redelivery keeps the
-    /// served pixels through `images_send`/`images_store`.
+    /// Live tick vs drain race with pause dirtying: afterwards no generation is shared
+    /// by two pixel payloads, and unchanged redelivery keeps the served pixels.
     #[test]
     fn live_tick_vs_drain_race_keeps_generations_and_pixels() {
         use std::collections::HashMap;
@@ -1950,8 +1919,7 @@ mod tests {
             scope.spawn(move || {
                 barrier_drain.wait();
                 for i in 0..200 {
-                    // Alternating payloads force real content changes through
-                    // the store while the owner dirties, so any generation
+                    // Alternating payloads force real content changes, so any generation
                     // reuse would surface as two payloads on one revision.
                     let payload = if i % 2 == 0 { vec![0, 1] } else { vec![0, 2] };
                     let (reply_rx, sent_generation) =
@@ -1975,10 +1943,8 @@ mod tests {
                 live.mark_images_dirty();
             }
         });
-        // No generation is shared by two payloads (NER-323): a stale reply
-        // hands back the held decode with the served revision, a fresh one
-        // bumps to a unique revision, and the pre-first-store stale serves
-        // the initial empty decode under generation zero only.
+        // No generation is shared by two payloads: a stale reply hands back the held
+        // decode, a fresh one bumps to a unique revision.
         let reports = reports.lock().unwrap();
         assert_eq!(reports.len(), 400, "both threads serve under the race");
         let mut by_generation: HashMap<u64, Vec<u8>> = HashMap::new();
@@ -1999,9 +1965,8 @@ mod tests {
                 by_generation.insert(*generation, pixels.clone());
             }
         }
-        // Post-race, different pixels never reuse a generation (NER-323),
-        // and identical redelivery collapses to the served generation with
-        // the served pixels (NER-324).
+        // Post-race, different pixels never reuse a generation, and identical
+        // redelivery collapses to the served generation with the served pixels.
         let sent = live.cache.lock().unwrap().generation;
         let first = live.images_store(RaceCore::picture(vec![0, 1]), sent);
         assert!(first.fresh);

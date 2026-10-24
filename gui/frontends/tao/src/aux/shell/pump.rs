@@ -154,10 +154,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         outcome
     }
 
-    /// Runs incoming messages directly, marking the retained cache dirty.
-    /// The rebuild lands on the next pump: drawing always happens on a later
-    /// pump, so deferring never shows a stale frame. Reports whether a
-    /// rebuild (and redraw) is pending.
+    /// Runs incoming messages directly, marking the retained cache dirty for the next pump.
     pub(crate) fn process_messages(
         &mut self,
         messages: impl IntoIterator<Item = P::Message>,
@@ -167,13 +164,8 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
         if messages.peek().is_none() && !invalidated.load(Ordering::Acquire) {
             return false;
         }
-        // Run the messages against the instance and keep the warm cache:
-        // the next pump rebuilds the view once from the updated instance,
-        // diffing against the retained tree so widget state (focus, cursor,
-        // scroll) survives. Dropping the cache here would rebuild identity
-        // from scratch and strand in-progress text input (NER-304).
-        // A synchronous rebuild here would double the per-input build count
-        // for zero visual gain.
+        // Run messages against the instance and keep the warm cache for the next rebuild.
+        // A synchronous rebuild here would double the per-input build cost.
         for msg in messages {
             let _task = self.tree.instance.update(msg);
         }
@@ -487,12 +479,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    /// NER-304: typing into an aux-window address field must survive the
-    /// message batch between keystrokes. The widget emits the new value,
-    /// the batch applies it to the model without rebuilding, and the next
-    /// keystroke lands in the still-focused input with the cursor intact.
-    /// Mid-cursor edits, unrelated sync updates, and scroll events in the
-    /// same batch must not strand the input either.
+    /// Address-field typing survives the message batch between keystrokes with focus intact.
     #[test]
     fn text_input_keeps_focus_across_message_batches() {
         use iced::keyboard::{self, key::Code as KeyCode, key::Named, key::Physical};
@@ -682,10 +669,7 @@ mod tests {
         );
     }
 
-    /// NER-304 AC-2: text selections survive message batches too.
-    /// A `Shift+Left` range and a select-all are both kept across the
-    /// deferred batch, so the next keystroke overwrites the selected
-    /// text instead of inserting beside it.
+    /// Text selections survive message batches; the next keystroke overwrites the range.
     #[test]
     fn text_input_selection_survives_message_batches() {
         use iced::keyboard::{self, key::Code as KeyCode, key::Named, key::Physical};
@@ -827,9 +811,7 @@ mod tests {
             );
             assert!(shell.process_messages(std::mem::take(&mut out), &AtomicBool::new(false)));
         }
-        // Range-select the trailing "b" across a batch: the next
-        // keystroke overwrites it instead of inserting beside it.
-        // Modifier state arrives via ModifiersChanged, like the real backend.
+        // Range-select across a batch: the next keystroke overwrites the range.
         shell.pump(
             modifiers_changed(keyboard::Modifiers::SHIFT),
             over_input,
@@ -910,9 +892,7 @@ mod tests {
         );
     }
 
-    /// NER-304 AC-2: a scrollable keeps its offset across message
-    /// batches. The viewport reported after the batch builds on the
-    /// retained offset; a rebuilt tree would restart from zero.
+    /// A scrollable keeps its offset across message batches.
     #[test]
     fn scrollable_offset_survives_message_batches() {
         #[derive(Default)]

@@ -87,9 +87,7 @@ class SafCleanupTest {
     }
 
     @Test fun parkedTaskOnIdleLaneRunsWithoutWaitingForACompletion() {
-        // NER-308 lost-wakeup: a park that lands on an idle lane must run
-        // without a later completion to chain off. White-box probe of the
-        // private kick path through the internal entry point.
+        // A park on an idle lane runs without waiting for a later completion.
         val done = CountDownLatch(1)
         val ranOn = AtomicReference<Thread>()
         SafCleanup.park(Runnable {

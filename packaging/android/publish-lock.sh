@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# Publish lock with ownership for package.sh staging swaps.
-# Only the acquirer releases. The pid record is written atomically, a
-# takeover moves the whole directory aside first, and a fresh acquirer
-# verifies its directory identity after recording, so at most one process
-# ever observes itself as owner (NER-313).
-# Sourced by package.sh; the EXIT trap calls publish_lock_cleanup on normal
-# exit, errors, and caught signals. SIGKILL and power loss skip traps, so a
-# leftover lock is recovered through the stale path below, never by timeout.
+# Publish lock with ownership for staging swaps; only the acquirer releases.
 # shellcheck disable=SC2148
 PUBLISH_LOCK_OWNED=""
 # Shared unknown-owner sentinel for the scan and takeover paths below
@@ -30,11 +23,7 @@ publish_lock_dir_id() {
     return 0
 }
 
-# Acquire the publish lock dir, recording this process as owner.
-# A live owner refuses. A dead pid or a pid-less dir past the grace wait is
-# taken over through a single-winner move; concurrent recoverers converge
-# because only the rename winner proceeds. Returns 0 on ownership, 1 on
-# refusal or failure.
+# Acquire the lock dir; returns 0 on ownership, 1 on refusal.
 acquire_publish_lock() {
     PUBLISH_LOCK_DIR="$1"
     PUBLISH_LOCK_OWNED=""
@@ -103,16 +92,12 @@ acquire_publish_lock() {
             stolen="${stolen_recorded}"
         fi
         if [[ "${stolen}" != "${UNKNOWN_OWNER}" ]] && kill -0 "${stolen}" 2>/dev/null; then
-            # A live owner completed its record between our read and the
-            # move: yield the directory back and refuse instead of
-            # orphaning a process that already believes it owns the lock.
+            # Owner completed during takeover: yield back and refuse.
             if mv "${stale}" "${PUBLISH_LOCK_DIR}" 2>/dev/null; then
                 echo "publish lock owner ${stolen} completed during takeover; refusing" >&2
                 return 1
             fi
-            # A third party took the name first: leave the stale copy for
-            # forensics and refuse; our claim never started, so nothing we
-            # own is orphaned.
+            # Name taken during takeover: refuse without orphaning.
             echo "publish lock changed hands during takeover; refusing" >&2
             return 1
         fi

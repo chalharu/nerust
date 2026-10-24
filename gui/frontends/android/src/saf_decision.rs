@@ -91,8 +91,7 @@ mod capped_tests {
         );
     }
 
-    /// NER-312: unknown-size providers stay bounded too: a stream of short
-    /// chunks is data until EOF, but the cumulative total still hits the cap.
+    /// Unknown-size providers stay bounded: short chunks are data until EOF.
     #[test]
     fn capped_collect_rejects_cumulative_short_chunks_past_limit() {
         let mut chunks = std::iter::repeat_with(|| Ok(vec![1u8; 1024]))

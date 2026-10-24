@@ -218,9 +218,8 @@ fn copy_storage_contents(
     copy_storage_contents_with(source, destination, |src, dst| fs::copy(src, dst))
 }
 
-/// Migration copy with an injectable transfer: production passes
-/// `fs::copy`; tests inject a mid-stream failure to prove the mapper+states
-/// rollback (NER-325 AC-1/AC-2) without touching permissions.
+/// Migration copy with an injectable transfer: production passes `fs::copy`; tests
+/// inject a mid-stream failure to prove the mapper+states rollback.
 fn copy_storage_contents_with(
     source: &SidecarPaths,
     destination: &SidecarPaths,
@@ -239,8 +238,8 @@ fn copy_storage_contents_with(
         .states_dir
         .native_path()
         .map_err(storage_error)?;
-    // Roll back a partial migration so the next load retries from a clean
-    // state instead of freezing on a half-migrated target (NER-325).
+    // Roll back a partial migration so the next load retries from a clean state
+    // instead of freezing on a half-migrated target.
     let mut copied: Vec<std::path::PathBuf> = Vec::new();
     let result = (|| -> Result<(), SettingsError> {
         if source_mapper.is_file() {
@@ -268,9 +267,8 @@ fn copy_storage_contents_with(
     })();
     if result.is_err() {
         for path in copied {
-            // A failed cleanup must not mask the migration error, but it
-            // must not pass silently either: a leftover target would still
-            // block the retry. Already-swept targets are quiet.
+            // A failed cleanup must not mask the migration error, but a leftover target
+            // would still block the retry. Already-swept targets are quiet.
             if let Err(error) = fs::remove_file(&path)
                 && error.kind() != std::io::ErrorKind::NotFound
             {
@@ -284,9 +282,8 @@ fn copy_storage_contents_with(
     result
 }
 
-/// Copy one migration file with rollback reservation: the target joins the
-/// rollback set BEFORE the write, so a copy that fails mid-stream still has
-/// its partial target removed (NER-325).
+/// Copy one migration file with rollback reservation: the target joins the rollback
+/// set before the write, so a mid-stream failure still removes the partial target.
 fn copy_one_tracked(
     copied: &mut Vec<std::path::PathBuf>,
     source: &Path,
@@ -295,9 +292,8 @@ fn copy_one_tracked(
 ) -> Result<(), SettingsError> {
     copied.push(target.to_path_buf());
     if let Err(error) = copy(source, target) {
-        // Remove the partial target now instead of relying on the outer
-        // sweep: the reservation must hold even if the caller never
-        // reaches it. The sweep stays as the backstop for earlier files.
+        // Remove the partial target now instead of relying on the outer sweep: the
+        // reservation must hold even if the caller never reaches it.
         if let Err(cleanup) = fs::remove_file(target) {
             log::warn!(
                 "storage migration rollback could not remove {}: {cleanup}",
@@ -344,9 +340,8 @@ mod tests {
         assert!(!system_storage_key(&DummySystemId, &identity).is_empty());
     }
 
-    /// NER-325: the rollback reservation happens before the write, so a
-    /// copy that fails mid-stream still has its partial target removed and
-    /// the next load can retry from a clean state.
+    /// The rollback reservation happens before the write, so a mid-stream failure
+    /// still removes the partial target and the next load retries clean.
     #[test]
     fn tracked_copy_removes_partial_target_on_mid_stream_failure() {
         use super::copy_one_tracked;
@@ -372,13 +367,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// NER-325 AC-1/AC-2: the full mapper+states re-try. The mapper copies
-    /// fine, then a states copy fails (injected, matched by file name so
-    /// directory order cannot matter): the rollback must remove the partial
-    /// target AND keep the source, pre-existing complete target files this
-    /// run never touched must survive (the sweep only removes tracked
-    /// paths), and the re-run with a healthy transfer completes with every
-    /// slot visible.
+    /// Full mapper+states retry: the mapper copies, a states copy fails, and rollback
+    /// removes the partial targets while untracked pre-existing files survive.
     #[test]
     fn mapper_ok_then_state_copy_fails_rolls_back_and_retry_completes() {
         use super::{copy_storage_contents, copy_storage_contents_with};
@@ -469,13 +459,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// NER-325 AC-3 for privileged CI: a regular file blocking the states
-    /// directory fails the migration for ANY user. Root ignores permission
-    /// bits (see the readonly test's probe-and-skip), but no user creates a
-    /// directory through a file, so this asserts the mapper-then-states
-    /// rollback where the readonly test cannot run. The readonly test stays
-    /// as the unprivileged EACCES proof; the ENOSPC test stays as the
-    /// kernel-capacity proof.
+    /// A regular file blocking the states directory fails the migration for any user.
+    /// It covers the mapper-then-states rollback where permission tests cannot run.
     #[test]
     fn file_blocking_states_dir_fails_migration_for_any_user() {
         use super::copy_storage_contents;
@@ -793,11 +778,8 @@ mod tests {
         let _ = fs::remove_dir_all(test_root("migrate-dst"));
     }
 
-    /// NER-325 AC-3: ENOSPC mid-migration rolls back the partial target
-    /// and keeps the source; readonly destinations fail the same way.
-    /// The kernel ENOSPC kind (`/dev/full`) maps to the injected kind,
-    /// so the rollback below covers the real no-space path, not just a
-    /// synthetic error.
+    /// ENOSPC mid-migration rolls back the partial target and keeps the source.
+    /// The `/dev/full` kind maps to the injected kind, covering the real no-space path.
     #[test]
     fn no_space_mid_migration_rolls_back_and_keeps_source() {
         use super::copy_one_tracked;
@@ -829,13 +811,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// NER-325 AC-3: a readonly destination fails the migration and the
-    /// partial mapper copy rolls back instead of blocking the retry.
-    /// Root ignores permission bits, so this test probes effective access
-    /// first and skips where it runs privileged (CI as root): there the
-    /// ENOSPC test above covers rollback, and
-    /// `file_blocking_states_dir_fails_migration_for_any_user` covers the
-    /// mapper-then-states rollback without needing permissions at all.
+    /// A readonly destination fails the migration and the partial mapper copy rolls
+    /// back instead of blocking the retry; the test skips where it runs privileged.
     #[test]
     fn readonly_destination_fails_migration_and_rolls_back() {
         use super::copy_storage_contents;
@@ -862,9 +839,8 @@ mod tests {
             .unwrap()
             .to_path_buf();
         fs::create_dir_all(destination_mapper.parent().unwrap()).unwrap();
-        // Readonly destination tree: the mapper copy cannot land.
-        // Root ignores permission bits, so probe first and early-pass
-        // there like the display-gated widget tests do.
+        // Readonly destination tree: the mapper copy cannot land. Probe first and
+        // early-pass where the test runs with write privilege.
         fs::set_permissions(
             destination_mapper.parent().unwrap(),
             fs::Permissions::from_mode(0o555),

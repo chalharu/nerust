@@ -5,9 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
-/** Real file-backed documents: `fromFile` is public and JVM-safe, so the
- * resolution rule under test runs against genuine `getName` values without
- * touching an Android provider. */
+/** Real file-backed documents: resolution runs against genuine names. */
 private fun fileDoc(dir: java.io.File, name: String): DocumentFile {
     java.io.File(dir, name).createNewFile()
     return DocumentFile.fromFile(java.io.File(dir, name))
@@ -20,9 +18,8 @@ class SafBatchSidecarTest {
     private val legacy = fileDoc(dir, "legacy-sidecar")
 
     @Test fun committedGenerationWinsOverPhysicalName() {
-        // NER-310: a generation-tracked sidecar has no stable physical name,
-        // so the batch must resolve it through the committed map. The raw
-        // listing alone would always miss it and force a full rescan.
+        // The batch resolves generation-tracked sidecars through the
+        // committed map, not the raw listing.
         assertSame(
             committed,
             SafRepository.batchSidecarFile(
@@ -34,9 +31,8 @@ class SafBatchSidecarTest {
     }
 
     @Test fun tombstonedSidecarResolvesToNothing() {
-        // A tombstone (committed without data) is a deliberate deletion, not
-        // a miss: the scan falls back to the archive instead of adopting
-        // the stale physical file.
+        // A tombstone is a deliberate deletion: the scan falls back
+        // to the archive instead of adopting the stale file.
         assertNull(
             SafRepository.batchSidecarFile(
                 "7",
