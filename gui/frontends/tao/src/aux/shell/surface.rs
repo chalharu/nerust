@@ -86,17 +86,36 @@ impl core::fmt::Display for ScaffoldError {
 #[cfg(target_os = "linux")]
 const MIN_CLIENT_EDGE: i32 = 16;
 
+/// Logical-to-physical client size with buffer-scale grid snapping.
+/// Pure so the Error 71 arithmetic stays unit-tested without a display.
+#[cfg(target_os = "linux")]
+fn snap_physical(logical: (i32, i32), scale_factor: f32) -> (u32, u32) {
+    let scale = scale_factor.max(1.0);
+    let grid = scale.round().max(1.0);
+    let physical = |edge: i32| {
+        let raw = f64::from(edge) * f64::from(scale);
+        ((raw / f64::from(grid)).round() * f64::from(grid)) as u32
+    };
+    (physical(logical.0), physical(logical.1))
+}
+
 /// SPIKE NER-335: true client size from the GTK content box.
 ///
 /// tao reports the CSD-inclusive allocation as `inner_size` on Wayland CSD
 /// fallback (tao#929). The content-box allocation is the real client area;
-/// pre-map it is empty and callers fall back to the requested size.
+/// pre-map it is empty and callers fall back. NOTE: GTK allocations are in
+/// logical (unscaled) units: always multiply by the scale factor and snap
+/// to the buffer-scale grid, or the compositor kills us with Error 71 on
+/// fractional physical sizes (e.g. logical 651 at scale 2).
 #[cfg(target_os = "linux")]
-fn gtk_client_size(window: &TaoWindow) -> Option<(u32, u32)> {
+fn gtk_client_size(window: &TaoWindow, scale_factor: f32) -> Option<(u32, u32)> {
     let vbox = window.default_vbox()?;
     let alloc = vbox.allocation();
     (alloc.width() >= MIN_CLIENT_EDGE && alloc.height() >= MIN_CLIENT_EDGE)
-        .then_some((alloc.width() as u32, alloc.height() as u32))
+        .then_some(snap_physical(
+            (alloc.width(), alloc.height()),
+            scale_factor,
+        ))
 }
 
 impl AuxSurface {
@@ -143,7 +162,7 @@ impl AuxSurface {
                 (size.0 * f64::from(scale_factor)).round() as u32,
                 (size.1 * f64::from(scale_factor)).round() as u32,
             );
-            let used = gtk_client_size(&window).unwrap_or(requested);
+            let used = gtk_client_size(&window, scale_factor).unwrap_or(requested);
             log::debug!(
                 "{log_tag} open: inner_size={}x{} requested={}x{} used={}x{} scale={scale_factor}",
                 window_size.width,
@@ -217,7 +236,8 @@ impl AuxSurface {
         // Wayland CSD fallback (tao#929). Prefer the GTK content-box
         // allocation when it is laid out; pre-map it is empty.
         #[cfg(target_os = "linux")]
-        let (width, height) = gtk_client_size(&self.window).unwrap_or((width, height));
+        let (width, height) =
+            gtk_client_size(&self.window, self.scale_factor).unwrap_or((width, height));
         if self.viewport_physical == (width, height) {
             return;
         }
@@ -405,6 +425,16 @@ mod tests {
         // Zero viewports stay zero until the next pump rebuilds.
         assert_eq!(logical_bounds((0, 0), 2.0), iced::Size::new(0.0, 0.0));
         assert_eq!(logical_bounds((1, 1), 2.0), iced::Size::new(0.5, 0.5));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn snap_physical_keeps_scale_grid() {
+        // Maximized CSD content 960x651 logical at scale 2 must land on
+        // even physical pixels or the compositor kills us (Error 71).
+        assert_eq!(snap_physical((960, 651), 2.0), (1920, 1302));
+        assert_eq!(snap_physical((960, 720), 1.0), (960, 720));
+        assert_eq!(snap_physical((1012, 809), 2.0), (2024, 1618));
     }
 
     #[test]
