@@ -21,6 +21,12 @@ use tao::{
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
 
+#[cfg(target_os = "linux")]
+use gtk::prelude::WidgetExt as _;
+
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
+
 use crate::{convert::default_font, event::UserEvent};
 
 /// Light theme for OS light-theme nativeness. Every auxiliary
@@ -75,6 +81,24 @@ impl core::fmt::Display for ScaffoldError {
     }
 }
 
+/// Minimum believable client edge: tao's content box reports 1x1
+/// pre-map, which must not override the requested size.
+#[cfg(target_os = "linux")]
+const MIN_CLIENT_EDGE: i32 = 16;
+
+/// SPIKE NER-335: true client size from the GTK content box.
+///
+/// tao reports the CSD-inclusive allocation as `inner_size` on Wayland CSD
+/// fallback (tao#929). The content-box allocation is the real client area;
+/// pre-map it is empty and callers fall back to the requested size.
+#[cfg(target_os = "linux")]
+fn gtk_client_size(window: &TaoWindow) -> Option<(u32, u32)> {
+    let vbox = window.default_vbox()?;
+    let alloc = vbox.allocation();
+    (alloc.width() >= MIN_CLIENT_EDGE && alloc.height() >= MIN_CLIENT_EDGE)
+        .then_some((alloc.width() as u32, alloc.height() as u32))
+}
+
 impl AuxSurface {
     pub(crate) fn open(
         event_loop: &EventLoopWindowTarget<UserEvent>,
@@ -111,8 +135,29 @@ impl AuxSurface {
         let window_id = iced::window::Id::unique();
         let scale_factor = window.scale_factor() as f32;
         let window_size = window.inner_size();
+        #[cfg(target_os = "linux")]
+        let viewport_physical = {
+            // SPIKE NER-335: requested logical size is the true client size;
+            // tao's inner_size is CSD-inclusive on Wayland CSD fallback.
+            let requested = (
+                (size.0 * f64::from(scale_factor)).round() as u32,
+                (size.1 * f64::from(scale_factor)).round() as u32,
+            );
+            let used = gtk_client_size(&window).unwrap_or(requested);
+            log::debug!(
+                "{log_tag} open: inner_size={}x{} requested={}x{} used={}x{} scale={scale_factor}",
+                window_size.width,
+                window_size.height,
+                requested.0,
+                requested.1,
+                used.0,
+                used.1,
+            );
+            used
+        };
+        #[cfg(not(target_os = "linux"))]
         let viewport_physical = (window_size.width, window_size.height);
-        let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
+        let logical_size = logical_bounds(viewport_physical, scale_factor);
         let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
         let mut compositor = compositor::new(
             iced_tiny_skia::Settings {
@@ -122,8 +167,11 @@ impl AuxSurface {
             Arc::clone(&window),
         );
         let renderer = compositor.create_renderer();
-        let surface =
-            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
+        let surface = compositor.create_surface(
+            Arc::clone(&window),
+            viewport_physical.0,
+            viewport_physical.1,
+        );
         Ok(Self {
             window,
             window_id,
@@ -165,6 +213,11 @@ impl AuxSurface {
     /// Resize the raster and record fresh bounds (no view rebuild).
     /// The surface realloc is deferred to `render`; same-size events skip everything.
     pub(super) fn resize(&mut self, width: u32, height: u32, relayout: &mut impl FnMut(Size)) {
+        // SPIKE NER-335: tao's Resized carries the CSD-inclusive size on
+        // Wayland CSD fallback (tao#929). Prefer the GTK content-box
+        // allocation when it is laid out; pre-map it is empty.
+        #[cfg(target_os = "linux")]
+        let (width, height) = gtk_client_size(&self.window).unwrap_or((width, height));
         if self.viewport_physical == (width, height) {
             return;
         }
