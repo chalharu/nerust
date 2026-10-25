@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use iced::{Size, mouse};
+use iced::{Rectangle, Size, mouse};
 use iced_tiny_skia::{
     Renderer,
     graphics::compositor::Compositor as _,
@@ -17,6 +17,12 @@ use tao::{
     event_loop::EventLoopWindowTarget,
     window::{Window as TaoWindow, WindowBuilder},
 };
+
+#[cfg(target_os = "linux")]
+use gtk::prelude::{BoxExt as _, ImageExt as _, WidgetExt as _};
+
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
 
 #[cfg(target_os = "macos")]
 use tao::platform::macos::WindowBuilderExtMacOS;
@@ -49,6 +55,10 @@ pub(crate) struct AuxSurface {
     compositor: Compositor,
     surface: Option<Surface>,
     backend: Renderer,
+    /// SPIKE NER-335: GTK3 image blit target. `Some` once seated in
+    /// the tao vbox; then presents go through GdkPixbuf, never softbuffer.
+    #[cfg(target_os = "linux")]
+    image: Option<gtk::Image>,
     /// Last surface-configured size. Resize storms only relayout;
     /// the realloc happens in `render`, once per presented frame.
     surface_size: (u32, u32),
@@ -111,9 +121,23 @@ impl AuxSurface {
         let window_id = iced::window::Id::unique();
         let scale_factor = window.scale_factor() as f32;
         let window_size = window.inner_size();
+        // SPIKE NER-335: seat a GtkImage in the tao vbox so the iced UI
+        // composites as a GTK widget under the native frame. Softbuffer
+        // stays as fallback when the vbox is unavailable.
+        #[cfg(target_os = "linux")]
+        let image = window.default_vbox().map(|vbox| {
+            let image = gtk::Image::new();
+            image.set_hexpand(true);
+            image.set_vexpand(true);
+            vbox.pack_end(&image, true, true, 0);
+            image.show();
+            log::debug!("{log_tag} image-blit seated in vbox");
+            image
+        });
         let viewport_physical = (window_size.width, window_size.height);
         let logical_size = window_size.to_logical::<f64>(scale_factor as f64);
         let bounds = Size::new(logical_size.width as f32, logical_size.height as f32);
+        #[cfg_attr(target_os = "linux", allow(unused_mut))]
         let mut compositor = compositor::new(
             iced_tiny_skia::Settings {
                 default_font: default_font(),
@@ -122,8 +146,16 @@ impl AuxSurface {
             Arc::clone(&window),
         );
         let renderer = compositor.create_renderer();
-        let surface =
-            compositor.create_surface(Arc::clone(&window), window_size.width, window_size.height);
+        // SPIKE NER-335: the pixbuf path needs no wl_surface; skip the
+        // softbuffer surface so iced never attaches to the GDK surface.
+        #[cfg(target_os = "linux")]
+        let surface: Option<Surface> = None;
+        #[cfg(not(target_os = "linux"))]
+        let surface = Some(compositor.create_surface(
+            Arc::clone(&window),
+            window_size.width,
+            window_size.height,
+        ));
         Ok(Self {
             window,
             window_id,
@@ -132,7 +164,9 @@ impl AuxSurface {
             bounds,
             compositor,
             backend: renderer,
-            surface: Some(surface),
+            surface,
+            #[cfg(target_os = "linux")]
+            image,
             surface_size: viewport_physical,
             modifiers: iced::keyboard::Modifiers::default(),
             should_close,
@@ -232,7 +266,13 @@ impl AuxSurface {
     }
 
     /// Surface realloc, at most once per frame.
+    /// SPIKE NER-335: the pixbuf path owns no surface; skip the realloc
+    /// and let the image blit reallocate per frame instead.
     pub(super) fn configure_surface(&mut self) {
+        #[cfg(target_os = "linux")]
+        if self.image.is_some() {
+            return;
+        }
         let (width, height) = self.viewport_physical;
         if width == 0 || height == 0 {
             return;
@@ -272,6 +312,12 @@ impl AuxSurface {
         background_color: iced::Color,
         log_tag: &'static str,
     ) -> Option<String> {
+        // SPIKE NER-335: blit through the GTK image when seated;
+        // softbuffer stays as fallback when the vbox was unavailable.
+        #[cfg(target_os = "linux")]
+        if let Some(image) = self.image.clone() {
+            return self.present_pixbuf(&image, viewport, background_color, log_tag);
+        }
         if let Err(error) = self.compositor.present(
             &mut self.backend,
             self.surface.as_mut()?,
@@ -289,6 +335,75 @@ impl AuxSurface {
         } else {
             self.retry.succeeded();
         }
+        None
+    }
+
+    /// SPIKE NER-335: memory-render the iced UI and hand the bytes to
+    /// GTK as a GdkPixbuf. Mirrors `window::compositor::screenshot`:
+    /// full-damage draw into a u32 pixel map, then channel extraction
+    /// (opaque-correct; semi-transparent blends stay premultiplied).
+    #[cfg(target_os = "linux")]
+    fn present_pixbuf(
+        &mut self,
+        image: &gtk::Image,
+        viewport: &Viewport,
+        background_color: iced::Color,
+        log_tag: &'static str,
+    ) -> Option<String> {
+        use gtk::gdk_pixbuf::{Colorspace, Pixbuf};
+        let physical = viewport.physical_size();
+        let (width, height) = (physical.width, physical.height);
+        if width == 0 || height == 0 {
+            return None;
+        }
+        let mut raw = vec![0u8; width as usize * height as usize * 4];
+        let drawn =
+            tiny_skia::PixmapMut::from_bytes(&mut raw, width, height).and_then(|mut pixels| {
+                tiny_skia::Mask::new(width, height).map(|mut mask| {
+                    let damage = [Rectangle::with_size(Size::new(width as f32, height as f32))];
+                    self.backend
+                        .draw(&mut pixels, &mut mask, viewport, &damage, background_color);
+                })
+            });
+        if drawn.is_none() {
+            log::error!("{log_tag} pixbuf present: pixel map alloc failed");
+            return Some(format!("{log_tag} pixbuf pixel map alloc failed"));
+        }
+        // ARGB u32 words in little-endian memory order B, G, R, A.
+        let mut rgba = Vec::with_capacity(raw.len());
+        let (words, _) = raw.as_chunks::<4>();
+        for word in words {
+            let pixel = u32::from_le_bytes(*word);
+            rgba.push(((pixel >> 16) & 0xFF) as u8);
+            rgba.push(((pixel >> 8) & 0xFF) as u8);
+            rgba.push((pixel & 0xFF) as u8);
+            rgba.push(((pixel >> 24) & 0xFF) as u8);
+        }
+        let pixbuf = Pixbuf::from_mut_slice(
+            rgba,
+            Colorspace::Rgb,
+            true,
+            8,
+            width as i32,
+            height as i32,
+            (width * 4) as i32,
+        );
+        // GTK3 images show natural pixels: downscale physical pixbufs to
+        // logical size so HiDPI allocations match the vbox.
+        let logical = viewport.logical_size();
+        let pixbuf = if (logical.width as u32, logical.height as u32) != (width, height) {
+            pixbuf
+                .scale_simple(
+                    logical.width as i32,
+                    logical.height as i32,
+                    gtk::gdk_pixbuf::InterpType::Bilinear,
+                )
+                .unwrap_or(pixbuf)
+        } else {
+            pixbuf
+        };
+        image.set_from_pixbuf(Some(&pixbuf));
+        self.retry.succeeded();
         None
     }
 

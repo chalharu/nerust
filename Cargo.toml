@@ -266,6 +266,7 @@ strum = { features = ["derive"], version = "=0.28.0" }
 tao = { version = "=0.37.1" }
 thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
+tiny-skia = { version = "=0.11.4" }
 typetag = { version = "=0.2.23" }
 wgpu = { version = "=30.0.1" }
 winit = { version = "=0.30.13" }
