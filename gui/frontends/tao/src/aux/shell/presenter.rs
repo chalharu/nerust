@@ -42,6 +42,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxSh
         let ui_state = &mut self.ui_state;
         self.surface
             .handle_common_event(event, &mut |bounds| ui_state.relayout(bounds));
+        // SPIKE NER-335: refresh the client-rect origin after resize work.
+        let offset = self.surface.client_offset();
+        self.ui_state.set_content_offset(offset);
     }
 
     fn feed_event(&mut self, event: crate::aux::domain::AuxNativeEvent) -> Option<iced::Event> {
@@ -142,6 +145,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     ) -> bool {
         let bounds = self.surface.logical_bounds();
         self.ui_state.relayout(bounds);
+        // SPIKE NER-335: keep padded layout on the client rect.
+        let offset = self.surface.client_offset();
+        self.ui_state.set_content_offset(offset);
         let dirty = self.ui_state.process_messages(messages, invalidated);
         if dirty {
             self.surface.request_redraw();
@@ -170,6 +176,9 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         let ui_state = &mut self.ui_state;
         self.surface
             .heal_scale(log_tag, &mut |bounds| ui_state.relayout(bounds));
+        // SPIKE NER-335: keep padded layout on the client rect.
+        let offset = self.surface.client_offset();
+        self.ui_state.set_content_offset(offset);
         // Deferred surface configure: the realloc lands here, at most once per frame.
         self.surface.configure_surface();
         self.render_ui(log_tag)

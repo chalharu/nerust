@@ -81,17 +81,19 @@ impl core::fmt::Display for ScaffoldError {
     }
 }
 
-/// Minimum believable client edge: tao's content box reports 1x1
-/// pre-map, which must not override the requested size.
-#[cfg(target_os = "linux")]
-const MIN_CLIENT_EDGE: i32 = 16;
-
 /// Logical-to-physical client size with buffer-scale grid snapping.
 /// Pure so the Error 71 arithmetic stays unit-tested without a display.
+/// Snaps only on near-integer scales; fractional scales round without
+/// grid alignment (their buffer scale is compositor-managed).
 #[cfg(target_os = "linux")]
 fn snap_physical(logical: (i32, i32), scale_factor: f32) -> (u32, u32) {
     let scale = scale_factor.max(1.0);
-    let grid = scale.round().max(1.0);
+    let rounded = scale.round().max(1.0);
+    let grid = if (scale - rounded).abs() < 0.01 {
+        rounded
+    } else {
+        1.0
+    };
     let physical = |edge: i32| {
         let raw = f64::from(edge) * f64::from(scale);
         ((raw / f64::from(grid)).round() * f64::from(grid)) as u32
@@ -99,23 +101,16 @@ fn snap_physical(logical: (i32, i32), scale_factor: f32) -> (u32, u32) {
     (physical(logical.0), physical(logical.1))
 }
 
-/// SPIKE NER-335: true client size from the GTK content box.
+/// SPIKE NER-335: GTK content-box origin in logical pixels.
 ///
-/// tao reports the CSD-inclusive allocation as `inner_size` on Wayland CSD
-/// fallback (tao#929). The content-box allocation is the real client area;
-/// pre-map it is empty and callers fall back. NOTE: GTK allocations are in
-/// logical (unscaled) units: always multiply by the scale factor and snap
-/// to the buffer-scale grid, or the compositor kills us with Error 71 on
-/// fractional physical sizes (e.g. logical 651 at scale 2).
+/// The iced surface shares the tao/GDK wl_surface starting at the outer
+/// origin, so padded layout must shift content to the client rect.
+/// Pre-map the box sits at (0, 0), which pads nothing and is harmless.
 #[cfg(target_os = "linux")]
-fn gtk_client_size(window: &TaoWindow, scale_factor: f32) -> Option<(u32, u32)> {
+fn gtk_content_offset(window: &TaoWindow) -> Option<(f32, f32)> {
     let vbox = window.default_vbox()?;
     let alloc = vbox.allocation();
-    (alloc.width() >= MIN_CLIENT_EDGE && alloc.height() >= MIN_CLIENT_EDGE)
-        .then_some(snap_physical(
-            (alloc.width(), alloc.height()),
-            scale_factor,
-        ))
+    Some((alloc.x() as f32, alloc.y() as f32))
 }
 
 impl AuxSurface {
@@ -154,23 +149,23 @@ impl AuxSurface {
         let window_id = iced::window::Id::unique();
         let scale_factor = window.scale_factor() as f32;
         let window_size = window.inner_size();
+        // SPIKE NER-335: the iced surface shares the GDK wl_surface, so it
+        // spans the full decor-inclusive size; content is shifted to the
+        // client rect by padded layout (see client_offset). Sizes stay
+        // buffer-scale snapped (Error 71).
         #[cfg(target_os = "linux")]
         let viewport_physical = {
-            // SPIKE NER-335: requested logical size is the true client size;
-            // tao's inner_size is CSD-inclusive on Wayland CSD fallback.
-            let requested = (
-                (size.0 * f64::from(scale_factor)).round() as u32,
-                (size.1 * f64::from(scale_factor)).round() as u32,
+            let used = snap_physical(
+                (window_size.width as i32, window_size.height as i32),
+                scale_factor,
             );
-            let used = gtk_client_size(&window, scale_factor).unwrap_or(requested);
             log::debug!(
-                "{log_tag} open: inner_size={}x{} requested={}x{} used={}x{} scale={scale_factor}",
+                "{log_tag} open: inner_size={}x{} used={}x{} offset={:?} scale={scale_factor}",
                 window_size.width,
                 window_size.height,
-                requested.0,
-                requested.1,
                 used.0,
                 used.1,
+                gtk_content_offset(&window),
             );
             used
         };
@@ -229,21 +224,31 @@ impl AuxSurface {
         self.window.set_focus();
     }
 
+    /// SPIKE NER-335: client-rect origin in logical pixels for padded
+    /// layout. The iced buffer starts at the outer origin; content must
+    /// shift to the vbox position. `None` off-Linux (no padding).
+    pub(super) fn client_offset(&self) -> Option<(f32, f32)> {
+        #[cfg(target_os = "linux")]
+        return gtk_content_offset(&self.window);
+        #[cfg(not(target_os = "linux"))]
+        return None;
+    }
+
     /// Resize the raster and record fresh bounds (no view rebuild).
     /// The surface realloc is deferred to `render`; same-size events skip everything.
     pub(super) fn resize(&mut self, width: u32, height: u32, relayout: &mut impl FnMut(Size)) {
-        // SPIKE NER-335: tao's Resized carries the CSD-inclusive size on
-        // Wayland CSD fallback (tao#929). Prefer the GTK content-box
-        // allocation when it is laid out; pre-map it is empty.
+        // SPIKE NER-335: full decor-inclusive size (shared surface); content
+        // placement comes from client_offset padding. Snapped (Error 71).
         #[cfg(target_os = "linux")]
         let (width, height) =
-            gtk_client_size(&self.window, self.scale_factor).unwrap_or((width, height));
+            snap_physical((width as i32, height as i32), self.scale_factor);
         if self.viewport_physical == (width, height) {
             return;
         }
         self.viewport_physical = (width, height);
         log::debug!(
-            "aux resize: physical={width}x{height} scale={} bounds={:?}",
+            "aux resize: physical={width}x{height} offset={:?} scale={} bounds={:?}",
+            self.client_offset(),
             self.scale_factor,
             logical_bounds((width, height), self.scale_factor)
         );

@@ -18,6 +18,9 @@ pub(crate) struct ViewTree<P: Program<Theme = iced::Theme, Renderer = Renderer>>
     pub(super) cache: Cache,
     pub(super) window_id: iced::window::Id,
     pub(super) bounds: Size,
+    /// SPIKE NER-335: client-rect origin (logical px) for padded layout.
+    /// `None` means the surface origin is the client origin (no CSD).
+    pub(super) offset: Option<(f32, f32)>,
 }
 
 /// Program UI shell: retained tree plus reusable event-message scratch.
@@ -67,6 +70,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
                 cache: Cache::default(),
                 window_id,
                 bounds,
+                offset: None,
             },
             scratch: Vec::new(),
             deadline: None,
@@ -76,6 +80,12 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     /// Record new layout bounds. Infallible: the next pump builds against them.
     pub(crate) fn relayout(&mut self, bounds: Size) {
         self.tree.bounds = bounds;
+    }
+
+    /// Record the client-rect origin for padded layout (SPIKE NER-335).
+    /// Infallible: the next pump builds against it.
+    pub(crate) fn set_content_offset(&mut self, offset: Option<(f32, f32)>) {
+        self.tree.offset = offset;
     }
 
     /// Take the reused scratch buffer for one pump pass.
@@ -91,15 +101,33 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
 
     /// Build the transient interface for one pump pass.
     /// The returned interface borrows the instance; callers pass disjoint tree fields.
+    /// SPIKE NER-335: with a client offset, content is padded to the client
+    /// rect so the shared-surface origin stays clear for CSD chrome.
+    #[allow(clippy::too_many_arguments)]
     fn build_transient<'a>(
         instance: &'a program::Instance<P>,
         window_id: iced::window::Id,
         bounds: Size,
+        offset: Option<(f32, f32)>,
         cache: &mut Cache,
         renderer: &mut Renderer,
     ) -> UserInterface<'a, P::Message, iced::Theme, Renderer> {
         let cache = std::mem::take(cache);
-        UserInterface::build(instance.view(window_id), bounds, cache, renderer)
+        let element = instance.view(window_id);
+        let element = match offset {
+            Some((left, top)) => iced::widget::container(element)
+                .padding(iced::Padding {
+                    top,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left,
+                })
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .into(),
+            None => element,
+        };
+        UserInterface::build(element, bounds, cache, renderer)
     }
 
     /// Fold a finished pass back into the retained cache.
@@ -135,6 +163,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
             &self.tree.instance,
             self.tree.window_id,
             self.tree.bounds,
+            self.tree.offset,
             &mut self.tree.cache,
             backend,
         );
@@ -423,6 +452,20 @@ mod tests {
         // Relayout only records bounds.
         shell.relayout(iced::Size::new(640.0, 480.0));
         assert_eq!(shell.tree.bounds, iced::Size::new(640.0, 480.0));
+        // SPIKE NER-335: client offset is recorded and survives a pump.
+        shell.set_content_offset(Some((26.0, 60.0)));
+        let outcome = shell.pump(
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            iced::mouse::Cursor::default(),
+            &mut clipboard,
+            &mut backend,
+            &mut messages,
+            None,
+        );
+        assert_eq!(outcome, PumpOutcome::Idle);
+        assert_eq!(shell.tree.offset, Some((26.0, 60.0)));
     }
 
     #[test]
