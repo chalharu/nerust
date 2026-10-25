@@ -85,7 +85,9 @@ impl SettingsAppState {
         content.push(input_section_content).spacing(16).into()
     }
 
-    /// Navigation radios plus the selected binding section.
+    /// Machine navigation radios plus the selected machine binding
+    /// section, followed by the global shortcuts as a separate section
+    /// with an explicit scope note (never a machine tab).
     fn input_nav_section(
         &self,
         view: &nerust_gui_viewmodel::settings::dto::InputTabView,
@@ -114,7 +116,16 @@ impl SettingsAppState {
                 }
             }
         };
-        column![navigation, input_section_content].into()
+        let language = self.language();
+        let shortcuts_content =
+            self.binding_section(view.shortcuts.label.clone(), view.shortcuts.rows.clone());
+        column![
+            navigation,
+            input_section_content,
+            text(ui_text(language, UiText::ShortcutsScopeNote)).size(12),
+            shortcuts_content,
+        ]
+        .into()
     }
 
     fn binding_section(

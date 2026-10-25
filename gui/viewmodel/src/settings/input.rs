@@ -290,7 +290,7 @@ fn project_binding_sections(
     capture_target: &Option<CaptureTarget>,
 ) -> Vec<BindingSectionView> {
     let language = state.draft.shared.general.language;
-    let mut sections: Vec<BindingSectionView> = keyboard_binding_sections(topology, system_id)
+    keyboard_binding_sections(topology, system_id)
         .into_iter()
         .map(|section| {
             let rows: Vec<BindingRowView> = section
@@ -303,17 +303,22 @@ fn project_binding_sections(
                 rows,
             }
         })
-        .collect();
+        .collect()
+}
 
+fn project_shortcuts(
+    state: &EditorState,
+    language: AppLanguage,
+    capture_target: &Option<CaptureTarget>,
+) -> BindingSectionView {
     let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
         .iter()
         .map(|desc| project_shortcut_row(&state.draft, desc, language, capture_target))
         .collect();
-    sections.push(BindingSectionView {
+    BindingSectionView {
         label: ui_text(language, UiText::Shortcuts).to_string(),
         rows: shortcut_rows,
-    });
-    sections
+    }
 }
 
 fn project_view(
@@ -351,6 +356,8 @@ fn project_view(
         .cloned()
         .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
     let sections = project_binding_sections(state, system_id.as_ref(), &topology, capture_target);
+    let language = state.draft.shared.general.language;
+    let shortcuts = project_shortcuts(state, language, capture_target);
 
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state
@@ -370,6 +377,7 @@ fn project_view(
         label: factory.display_name().to_string(),
         slots,
         sections,
+        shortcuts,
         conflicts,
     }
 }
@@ -485,6 +493,31 @@ mod tests {
         let unknown_slot = AttachmentId::new("nonexistent.slot");
         let result = input_vm.set_controller_slot(unknown_slot, None);
         assert!(result.is_err(), "changing unknown slot should return error");
+    }
+
+    #[test]
+    fn shortcuts_live_outside_machine_sections() {
+        use nerust_settings_core::editor::CaptureTarget;
+
+        let vm = test_vm();
+        let view = vm.inputs()[0].view.get();
+        // All 8 global actions stay reachable through the dedicated section.
+        assert_eq!(view.shortcuts.rows.len(), 8);
+        assert!(
+            view.shortcuts
+                .rows
+                .iter()
+                .all(|row| matches!(row.target, CaptureTarget::Shortcut(_))),
+            "shortcuts section must hold only global shortcut targets"
+        );
+        // Machine sections hold only per-machine bindings, never shortcuts.
+        assert!(
+            view.sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .all(|row| !matches!(row.target, CaptureTarget::Shortcut(_))),
+            "machine sections must not contain global shortcuts"
+        );
     }
 
     #[test]
