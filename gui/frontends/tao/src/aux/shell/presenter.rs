@@ -3,10 +3,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use iced::{Size, advanced::renderer, theme};
+use iced::{advanced::renderer, theme};
 use iced_tiny_skia::Renderer;
 use iced_winit::{
-    graphics::Viewport,
     program::{self, Program},
 };
 
@@ -179,13 +178,13 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     fn render_ui(&mut self, log_tag: &'static str) -> Option<String> {
         // Nothing to draw into yet (minimize/dock transient):
         // presenting a zero-size surface panics in pixel-map creation.
-        let (width, height) = self.surface.viewport();
-        if width == 0 || height == 0 {
+        let viewport = self.surface.present_viewport();
+        let physical = viewport.physical_size();
+        if physical.width == 0 || physical.height == 0 {
             return None;
         }
         let theme = iced::Theme::Light;
         let style = <iced::Theme as theme::Base>::base(&theme);
-        let viewport = Viewport::with_physical_size(Size::new(width, height), self.surface.scale());
         let redraw_event = iced::Event::Window(iced::window::Event::RedrawRequested(
             std::time::Instant::now(),
         ));

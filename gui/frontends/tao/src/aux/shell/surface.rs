@@ -206,16 +206,18 @@ impl AuxSurface {
         log::debug!(
             "aux resize: physical={width}x{height} scale={} bounds={:?}",
             self.scale_factor,
-            logical_bounds((width, height), self.scale_factor)
+            self.logical_bounds()
         );
-        relayout(logical_bounds((width, height), self.scale_factor));
+        let bounds = self.logical_bounds();
+        relayout(bounds);
         self.window.request_redraw();
     }
 
     /// Scale changes move every layout bound: record like resize.
     pub(super) fn set_scale_factor(&mut self, scale_factor: f32, relayout: &mut impl FnMut(Size)) {
         self.scale_factor = scale_factor;
-        relayout(logical_bounds(self.viewport_physical, self.scale_factor));
+        let bounds = self.logical_bounds();
+        relayout(bounds);
         self.window.request_redraw();
     }
 
@@ -261,8 +263,46 @@ impl AuxSurface {
         )
     }
     /// Logical layout bounds for the current viewport and scale.
+    /// SPIKE NER-335: with the image blit seated, layout follows the
+    /// vbox client rect (tao's inner size is CSD-inclusive on Wayland).
     pub(super) fn logical_bounds(&self) -> Size {
+        #[cfg(target_os = "linux")]
+        if self.image.is_some() {
+            return self.present_viewport().logical_size();
+        }
         logical_bounds(self.viewport_physical, self.scale_factor)
+    }
+
+    /// Viewport the next present rasterizes into. With the image blit
+    /// seated this is the vbox client rect times the scale factor, so
+    /// the pixmap matches the GtkImage allocation 1:1 at scale 1 and
+    /// downscales from full physical resolution above it.
+    pub(super) fn present_viewport(&self) -> Viewport {
+        #[cfg(target_os = "linux")]
+        if self.image.is_some() {
+            let (width, height) = self.client_physical();
+            if width > 0 && height > 0 {
+                return Viewport::with_physical_size(Size::new(width, height), self.scale_factor);
+            }
+        }
+        Viewport::with_physical_size(
+            Size::new(self.viewport_physical.0, self.viewport_physical.1),
+            self.scale_factor,
+        )
+    }
+
+    /// SPIKE NER-335: raster size from the vbox client rect. Falls back
+    /// to the tao inner size pre-map or when the vbox is unavailable
+    /// (X11/SSD: identical; Wayland CSD: excludes decorations).
+    #[cfg(target_os = "linux")]
+    fn client_physical(&self) -> (u32, u32) {
+        match vbox_logical(&self.window) {
+            Some((width, height)) => (
+                (f64::from(width) * f64::from(self.scale_factor)).round() as u32,
+                (f64::from(height) * f64::from(self.scale_factor)).round() as u32,
+            ),
+            None => self.viewport_physical,
+        }
     }
 
     /// Surface realloc, at most once per frame.
@@ -302,7 +342,8 @@ impl AuxSurface {
                 live_scale
             );
             self.scale_factor = live_scale;
-            relayout(logical_bounds(self.viewport_physical, self.scale_factor));
+            let bounds = self.logical_bounds();
+            relayout(bounds);
         }
     }
 
@@ -356,11 +397,14 @@ impl AuxSurface {
         if width == 0 || height == 0 {
             return None;
         }
+        // Damage is logical: draw() scales it by the viewport factor
+        // internally (upstream present passes logical_size too).
+        let logical = viewport.logical_size();
         let mut raw = vec![0u8; width as usize * height as usize * 4];
         let drawn =
             tiny_skia::PixmapMut::from_bytes(&mut raw, width, height).and_then(|mut pixels| {
                 tiny_skia::Mask::new(width, height).map(|mut mask| {
-                    let damage = [Rectangle::with_size(Size::new(width as f32, height as f32))];
+                    let damage = [Rectangle::with_size(logical)];
                     self.backend
                         .draw(&mut pixels, &mut mask, viewport, &damage, background_color);
                 })
@@ -389,13 +433,14 @@ impl AuxSurface {
             (width * 4) as i32,
         );
         // GTK3 images show natural pixels: downscale physical pixbufs to
-        // logical size so HiDPI allocations match the vbox.
-        let logical = viewport.logical_size();
-        let pixbuf = if (logical.width as u32, logical.height as u32) != (width, height) {
+        // logical size so HiDPI allocations match the vbox. Rounded:
+        // truncation would shrink fractional-scale clients by a pixel.
+        let (target_w, target_h) = (logical.width.round() as u32, logical.height.round() as u32);
+        let pixbuf = if (target_w, target_h) != (width, height) {
             pixbuf
                 .scale_simple(
-                    logical.width as i32,
-                    logical.height as i32,
+                    target_w as i32,
+                    target_h as i32,
                     gtk::gdk_pixbuf::InterpType::Bilinear,
                 )
                 .unwrap_or(pixbuf)
@@ -441,6 +486,16 @@ impl AuxSurface {
     pub(super) fn draw_parts(&mut self) -> (&mut Renderer, mouse::Cursor, &mut Clipboard) {
         (&mut self.backend, self.cursor, &mut self.clipboard)
     }
+}
+
+/// SPIKE NER-335: true client size from the GTK content box, logical px.
+/// tao's inner size is CSD-inclusive on Wayland CSD fallback; the vbox
+/// is the real client rect. `None` pre-map or when unavailable.
+#[cfg(target_os = "linux")]
+fn vbox_logical(window: &TaoWindow) -> Option<(i32, i32)> {
+    let vbox = window.default_vbox()?;
+    let alloc = vbox.allocation();
+    (alloc.width() >= 8 && alloc.height() >= 8).then_some((alloc.width(), alloc.height()))
 }
 
 /// Logical layout bounds for a physical viewport and scale factor.
