@@ -462,17 +462,25 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
-        for factory in self.state().borrow().session.factories() {
-            let extensions = factory.supported_extensions();
-            if extensions.is_empty() {
-                continue;
-            }
+        // Unified "All ROMs" first: GTK pre-selects the first filter, so
+        // every registered system is visible in the initial view while
+        // per-factory entries stay selectable behind it.
+        let mut first_filter = None;
+        for (name, extensions) in nerust_gui_shell::registry::rom_picker_filters(
+            self.state().borrow().session.factories(),
+        ) {
             let filter = gtk::FileFilter::new();
-            filter.set_name(Some(&format!("{} ROM", factory.display_name())));
+            filter.set_name(Some(&name));
             for extension in extensions {
                 filter.add_pattern(&format!("*.{extension}"));
             }
+            if first_filter.is_none() {
+                first_filter = Some(filter.clone());
+            }
             file_chooser_native.add_filter(&filter);
+        }
+        if let Some(first) = first_filter {
+            file_chooser_native.set_filter(&first);
         }
         let result = self.clone();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {

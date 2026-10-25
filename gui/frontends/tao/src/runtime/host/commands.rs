@@ -100,21 +100,11 @@ impl HostState {
         true
     }
 
-    /// ROM-picker filters from the registered cores; cores without extensions never reach.
+    /// ROM-picker filters: unified "All ROMs" first, then per-core entries.
+    /// Extension-less cores never reach the dialog; rfd pre-selects the
+    /// first filter, so the union keeps every system visible initially.
     fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
-        registry
-            .all()
-            .iter()
-            .filter_map(|factory| {
-                let extensions = factory.supported_extensions();
-                (!extensions.is_empty()).then(|| {
-                    (
-                        format!("{} ROM", factory.display_name()),
-                        extensions.iter().map(|item| item.to_string()).collect(),
-                    )
-                })
-            })
-            .collect()
+        nerust_gui_shell::registry::rom_picker_filters(registry.all())
     }
 
     fn close_rom(&mut self) {
@@ -254,6 +244,17 @@ mod tests {
     fn rom_filters_empty_without_cores() {
         let registry = SystemRegistry::new(Vec::new());
         assert!(HostState::rom_dialog_filters(&registry).is_empty());
+    }
+
+    #[test]
+    fn rom_filters_lead_with_unified_all_roms() {
+        let registry = SystemRegistry::new(vec![nerust_nes_factory::NesFactory::boxed().into()]);
+        let filters = HostState::rom_dialog_filters(&registry);
+        assert_eq!(filters.len(), 2);
+        assert_eq!(filters[0].0, "All ROMs");
+        assert_eq!(filters[0].1, ["nes"]);
+        assert_eq!(filters[1].0, "NES ROM");
+        assert_eq!(filters[1].1, ["nes"]);
     }
 
     #[test]
