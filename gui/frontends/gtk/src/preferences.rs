@@ -538,6 +538,20 @@ impl PreferencesBinding {
             sections_notebook.set_current_page(Some(selected));
         }
         page.append(&sections_notebook);
+        // Global shortcuts live outside the per-machine notebook so they
+        // cannot be mistaken for machine-scoped input.
+        let shortcuts_label = gtk::Label::new(Some(&view.shortcuts.label));
+        shortcuts_label.set_xalign(0.0);
+        page.append(&shortcuts_label);
+        let scope_note =
+            gtk::Label::new(Some(ui_text(self.language(), UiText::ShortcutsScopeNote)));
+        scope_note.set_xalign(0.0);
+        page.append(&scope_note);
+        let shortcuts_page = input_section_page();
+        for row in &view.shortcuts.rows {
+            self.append_binding_row(&shortcuts_page, row);
+        }
+        page.append(&shortcuts_page);
         if let Some(notebook) = self.input.section_notebooks.borrow_mut().get_mut(index) {
             *notebook = Some(sections_notebook);
         }
