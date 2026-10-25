@@ -63,17 +63,27 @@ impl SettingsAppState {
     }
 
     fn input_page(&self) -> El<'_> {
-        let Some(input_tab_index) = self.input_tab_index else {
-            return column![text("No systems available").size(14)].into();
-        };
         let inputs = self.vm.inputs();
+        let language = self.language();
+        let shortcuts_label = ui_text(language, UiText::Shortcuts).to_string();
+        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
+        content = content.push(input_tab_row(inputs, self.input_tab_index, shortcuts_label));
+        let Some(input_tab_index) = self.input_tab_index else {
+            return content
+                .push(column![text("No systems available").size(14)])
+                .into();
+        };
+        // The trailing tab past the systems shows the global shortcuts,
+        // never machine-scoped input.
+        if input_tab_index == inputs.len() {
+            return content.push(self.shortcuts_tab_content()).into();
+        }
         let Some(input_vm) = inputs.get(input_tab_index) else {
-            return column![text("No systems available").size(14)].into();
+            return content
+                .push(column![text("No systems available").size(14)])
+                .into();
         };
         let view = input_vm.view.get();
-
-        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
-        content = content.push(input_tab_row(inputs, self.input_tab_index));
 
         // Conflicts
         for conflict in &view.conflicts {
@@ -85,9 +95,23 @@ impl SettingsAppState {
         content.push(input_section_content).spacing(16).into()
     }
 
-    /// Machine navigation radios plus the selected machine binding
-    /// section, followed by the global shortcuts as a separate section
-    /// with an explicit scope note (never a machine tab).
+    /// Global shortcuts tab content: an explicit scope note plus the
+    /// shared shortcuts section. Sourced from the first system view;
+    /// shortcuts are global so every system projects the same rows.
+    fn shortcuts_tab_content(&self) -> El<'_> {
+        let language = self.language();
+        let Some(input_vm) = self.vm.inputs().first() else {
+            return column![text("")].into();
+        };
+        let view = input_vm.view.get();
+        column![
+            text(ui_text(language, UiText::ShortcutsScopeNote)).size(12),
+            self.binding_section(view.shortcuts.label.clone(), view.shortcuts.rows.clone()),
+        ]
+        .into()
+    }
+
+    /// Machine navigation radios plus the selected machine binding section.
     fn input_nav_section(
         &self,
         view: &nerust_gui_viewmodel::settings::dto::InputTabView,
@@ -116,16 +140,7 @@ impl SettingsAppState {
                 }
             }
         };
-        let language = self.language();
-        let shortcuts_content =
-            self.binding_section(view.shortcuts.label.clone(), view.shortcuts.rows.clone());
-        column![
-            navigation,
-            input_section_content,
-            text(ui_text(language, UiText::ShortcutsScopeNote)).size(12),
-            shortcuts_content,
-        ]
-        .into()
+        column![navigation, input_section_content].into()
     }
 
     fn binding_section(
@@ -459,15 +474,18 @@ impl SettingsAppState {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// System tab buttons across the registered cores.
+/// System tab buttons across the registered cores, plus a trailing
+/// global-shortcuts tab that never belongs to a machine.
 fn input_tab_row(
     inputs: &[nerust_gui_viewmodel::settings::InputSettingsViewModel],
     selected: Option<usize>,
+    shortcuts_label: String,
 ) -> El<'static> {
-    let names = inputs
+    let mut names: Vec<String> = inputs
         .iter()
         .map(|vm| vm.display_name().to_string())
         .collect();
+    names.push(shortcuts_label);
     tab_row(selected, names, Message::SelectInputTab)
 }
 
@@ -711,7 +729,7 @@ mod tests {
     fn tab_and_slot_helpers_construct() {
         let state = empty_state();
         let inputs = state.vm.inputs();
-        let _ = input_tab_row(inputs, None);
+        let _ = input_tab_row(inputs, None, "Shortcuts".to_string());
         let _ = tab_row(None, vec!["A".to_string()], |_| {
             crate::aux::settings::program::Message::SelectInputTab(0)
         });
