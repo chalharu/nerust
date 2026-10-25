@@ -512,10 +512,6 @@ impl PreferencesBinding {
             return;
         };
         let view = first.view.get();
-        let scope_note =
-            gtk::Label::new(Some(ui_text(self.language(), UiText::ShortcutsScopeNote)));
-        scope_note.set_xalign(0.0);
-        page.append(&scope_note);
         let shortcuts_label = gtk::Label::new(Some(&view.shortcuts.label));
         shortcuts_label.set_xalign(0.0);
         page.append(&shortcuts_label);
