@@ -110,7 +110,8 @@ fn snap_physical(logical: (i32, i32), scale_factor: f32) -> (u32, u32) {
 fn gtk_content_offset(window: &TaoWindow) -> Option<(f32, f32)> {
     let vbox = window.default_vbox()?;
     let alloc = vbox.allocation();
-    Some((alloc.x() as f32, alloc.y() as f32))
+    // Clamp GTK internal borders: the client origin never sits outside.
+    Some((alloc.x().max(0) as f32, alloc.y().max(0) as f32))
 }
 
 impl AuxSurface {

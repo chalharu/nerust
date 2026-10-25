@@ -83,9 +83,12 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
     }
 
     /// Record the client-rect origin for padded layout (SPIKE NER-335).
-    /// Infallible: the next pump builds against it.
+    /// Infallible: the next pump builds against it. Unchanged values
+    /// skip the store so per-frame sync never rebuilds.
     pub(crate) fn set_content_offset(&mut self, offset: Option<(f32, f32)>) {
-        self.tree.offset = offset;
+        if self.tree.offset != offset {
+            self.tree.offset = offset;
+        }
     }
 
     /// Take the reused scratch buffer for one pump pass.

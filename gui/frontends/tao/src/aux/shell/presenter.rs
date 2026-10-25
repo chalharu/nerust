@@ -181,6 +181,10 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
         self.ui_state.set_content_offset(offset);
         // Deferred surface configure: the realloc lands here, at most once per frame.
         self.surface.configure_surface();
+        // SPIKE NER-335: per-frame client-origin sync; unchanged values
+        // skip the store, so transients heal on the next frame.
+        let offset = self.surface.client_offset();
+        self.ui_state.set_content_offset(offset);
         self.render_ui(log_tag)
     }
 
