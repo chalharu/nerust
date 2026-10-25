@@ -92,6 +92,50 @@ impl SystemRegistry {
     }
 }
 
+/// ROM-picker filter list: one unified entry first, then one per factory.
+/// The unified entry ("All ROMs") carries the union of all contributed
+/// extensions in registration order, deduplicated; extension-less factories
+/// contribute nothing and are skipped, as before. `None`-equivalent: when no
+/// factory contributes an extension the unified entry is absent and the caller
+/// gets only the (possibly empty) per-factory list.
+/// Both native pickers (GTK `FileFilter`, Tao/rfd) pre-select the first
+/// filter, so leading with the union makes every registered system visible
+/// in the initial view while per-factory entries stay selectable behind it.
+pub fn rom_picker_filters(factories: &[Arc<dyn CoreFactory>]) -> Vec<(String, Vec<String>)> {
+    let per_factory: Vec<(String, Vec<String>)> = factories
+        .iter()
+        .filter_map(|factory| {
+            let extensions = factory.supported_extensions();
+            (!extensions.is_empty()).then(|| {
+                (
+                    format!("{} ROM", factory.display_name()),
+                    extensions.iter().map(|item| item.to_string()).collect(),
+                )
+            })
+        })
+        .collect();
+    let mut out = Vec::with_capacity(per_factory.len() + 1);
+    if let Some(unified) = unified_rom_filter(&per_factory) {
+        out.push(unified);
+    }
+    out.extend(per_factory);
+    out
+}
+
+/// Union half of [`rom_picker_filters`], kept separate so the merge order is
+/// unit-testable without stub factories.
+fn unified_rom_filter(entries: &[(String, Vec<String>)]) -> Option<(String, Vec<String>)> {
+    let mut union: Vec<String> = Vec::new();
+    for (_, extensions) in entries {
+        for extension in extensions {
+            if !union.iter().any(|seen| seen == extension) {
+                union.push(extension.clone());
+            }
+        }
+    }
+    (!union.is_empty()).then(|| ("All ROMs".to_string(), union))
+}
+
 /// `RomLoader` that dispatches to the correct `CoreFactory` based on
 /// ROM auto-detection via `probe_media()`.
 struct RegistryRomLoader {
@@ -436,5 +480,43 @@ mod tests {
         let error = loader.load_rom(&path, &mut target).unwrap_err();
 
         assert!(matches!(error, RomLoaderError::Io(_)));
+    }
+
+    fn filter_entries(pairs: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+        pairs
+            .iter()
+            .map(|(name, extensions)| {
+                (
+                    name.to_string(),
+                    extensions.iter().map(|item| item.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unified_filter_leads_with_deduped_union_in_order() {
+        let entries = filter_entries(&[
+            ("NES ROM", &["nes"]),
+            ("Game Boy Color ROM", &["gb", "gbc"]),
+            ("Game Boy Advance ROM", &["gba", "gb"]),
+        ]);
+        let unified = super::unified_rom_filter(&entries).expect("union");
+        assert_eq!(unified.0, "All ROMs");
+        assert_eq!(unified.1, ["nes", "gb", "gbc", "gba"]);
+    }
+
+    #[test]
+    fn unified_filter_absent_without_extensions() {
+        assert!(super::unified_rom_filter(&[]).is_none());
+        let entries = filter_entries(&[("Empty ROM", &[])]);
+        assert!(super::unified_rom_filter(&entries).is_none());
+    }
+
+    #[test]
+    fn picker_filters_skip_empty_factories_but_keep_unified_first() {
+        let registry = SystemRegistry::new(vec![stub_factory()]);
+        // MatchingStubFactory contributes no extensions: nothing to pick.
+        assert!(super::rom_picker_filters(registry.all()).is_empty());
     }
 }
