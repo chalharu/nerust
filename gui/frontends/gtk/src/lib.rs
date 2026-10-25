@@ -41,7 +41,7 @@ use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
 use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
 use nerust_settings_core::model::language::AppLanguage;
 
-use self::window::{StateMenus, Window, WindowExtend};
+use self::window::{MenubarModels, StateMenus, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -348,7 +348,7 @@ fn build_window(
 ) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
-    let state_menu = gio::Menu::new();
+    let menubar = MenubarModels::new();
     let select_active_slot_menu = gio::Menu::new();
     let save_slot_menu = gio::Menu::new();
     let load_slot_menu = gio::Menu::new();
@@ -363,17 +363,17 @@ fn build_window(
         .shortcuts
         .keyboard
         .clone();
-    let menu_model = build_menu_model(
+    build_menu_model(
         language,
         &shortcuts,
-        &state_menu,
+        &menubar,
         &select_active_slot_menu,
         &save_slot_menu,
         &load_slot_menu,
         &delete_slot_menu,
     );
 
-    app.set_menubar(Some(&menu_model));
+    app.set_menubar(Some(&menubar.menu_model));
     app.add_window(&window);
     window.set_show_menubar(true);
     // Game viewport: a memory picture composited by GTK; backends never present here.
@@ -434,6 +434,7 @@ fn build_window(
             load_slot_menu,
             delete_slot_menu,
         },
+        menubar,
     )
 }
 
@@ -449,12 +450,15 @@ fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutActi
 pub(crate) fn build_menu_model(
     language: AppLanguage,
     shortcuts: &[ShortcutBinding],
-    state_menu: &gio::Menu,
+    bars: &MenubarModels,
     select_active_slot_menu: &gio::Menu,
     save_slot_menu: &gio::Menu,
     load_slot_menu: &gio::Menu,
     delete_slot_menu: &gio::Menu,
-) -> gio::Menu {
+) {
+    // In-place refill of the persistent skeleton: the same objects stay
+    // bound to the application, so runtime relabeling propagates.
+    let state_menu = &bars.state_menu;
     state_menu.remove_all();
     state_menu.append(
         Some(text(language, UiText::CreateSaveSlot)),
@@ -484,7 +488,8 @@ pub(crate) fn build_menu_model(
     state_menu.append_submenu(Some(text(language, UiText::LoadSlot)), load_slot_menu);
     state_menu.append_submenu(Some(text(language, UiText::DeleteSlot)), delete_slot_menu);
 
-    let file_menu = gio::Menu::new();
+    let file_menu = &bars.file_menu;
+    file_menu.remove_all();
     file_menu.append(Some(text(language, UiText::Open)), Some("win.open"));
     file_menu.append(Some(text(language, UiText::Close)), Some("win.close"));
     file_menu.append(Some(text(language, UiText::Settings)), Some("win.settings"));
@@ -492,7 +497,8 @@ pub(crate) fn build_menu_model(
 
     // Order mirrors the tao frontend: Pause, Resume, Reset, Save States,
     // Debugger. The debugger label carries its live shortcut like tao.
-    let emulation_menu = gio::Menu::new();
+    let emulation_menu = &bars.emulation_menu;
+    emulation_menu.remove_all();
     emulation_menu.append(Some(text(language, UiText::Pause)), Some("win.pause"));
     emulation_menu.append(Some(text(language, UiText::Resume)), Some("win.resume"));
     emulation_menu.append(Some(text(language, UiText::Reset)), Some("win.reset"));
@@ -510,14 +516,15 @@ pub(crate) fn build_menu_model(
         Some("win.history"),
     );
 
-    let help_menu = gio::Menu::new();
+    let help_menu = &bars.help_menu;
+    help_menu.remove_all();
     help_menu.append(Some(text(language, UiText::About)), Some("app.about"));
 
-    let menu = gio::Menu::new();
-    menu.append_submenu(Some(text(language, UiText::File)), &file_menu);
-    menu.append_submenu(Some(text(language, UiText::Emulation)), &emulation_menu);
-    menu.append_submenu(Some(text(language, UiText::Help)), &help_menu);
-    menu
+    let menu = &bars.menu_model;
+    menu.remove_all();
+    menu.append_submenu(Some(text(language, UiText::File)), file_menu);
+    menu.append_submenu(Some(text(language, UiText::Emulation)), emulation_menu);
+    menu.append_submenu(Some(text(language, UiText::Help)), help_menu);
 }
 
 fn ensure_window(
@@ -650,23 +657,65 @@ mod tests {
 
     fn menu_labels(language: AppLanguage, shortcuts: &[ShortcutBinding]) -> Vec<String> {
         use gio::glib::object::Cast;
-        let state_menu = gio::Menu::new();
+        let bars = MenubarModels::new();
         let select = gio::Menu::new();
         let save = gio::Menu::new();
         let load = gio::Menu::new();
         let delete = gio::Menu::new();
-        let model = build_menu_model(
-            language,
-            shortcuts,
-            &state_menu,
+        build_menu_model(language, shortcuts, &bars, &select, &save, &load, &delete);
+        let mut labels = Vec::new();
+        collect_labels(bars.menu_model.upcast_ref::<gio::MenuModel>(), &mut labels);
+        labels
+    }
+
+    #[test]
+    fn menubar_refill_relabels_same_objects_in_place() {
+        use gio::glib::object::Cast;
+        use gio::prelude::MenuModelExt;
+        let bars = MenubarModels::new();
+        let select = gio::Menu::new();
+        let save = gio::Menu::new();
+        let load = gio::Menu::new();
+        let delete = gio::Menu::new();
+        // A live slot entry: refill must not drop submenu contents.
+        select.append(Some("seed"), None);
+        let shortcuts = default_shortcut_bindings();
+        build_menu_model(
+            AppLanguage::English,
+            &shortcuts,
+            &bars,
             &select,
             &save,
             &load,
             &delete,
         );
-        let mut labels = Vec::new();
-        collect_labels(model.upcast_ref::<gio::MenuModel>(), &mut labels);
-        labels
+        let top = bars.menu_model.upcast_ref::<gio::MenuModel>().n_items();
+        assert_eq!(top, 3);
+        let before = menu_labels(AppLanguage::English, &shortcuts);
+        assert!(before.iter().any(|label| label == "File"));
+
+        // Same objects, new language: the runtime path calls no set_menubar.
+        build_menu_model(
+            AppLanguage::Japanese,
+            &shortcuts,
+            &bars,
+            &select,
+            &save,
+            &load,
+            &delete,
+        );
+        assert_eq!(
+            bars.menu_model.upcast_ref::<gio::MenuModel>().n_items(),
+            top
+        );
+        let after = {
+            let mut labels = Vec::new();
+            collect_labels(bars.menu_model.upcast_ref::<gio::MenuModel>(), &mut labels);
+            labels
+        };
+        assert!(after.iter().any(|label| label == "ファイル"), "{after:?}");
+        assert!(!after.iter().any(|label| label == "File"), "{after:?}");
+        assert!(after.iter().any(|label| label == "seed"), "{after:?}");
     }
 
     #[test]

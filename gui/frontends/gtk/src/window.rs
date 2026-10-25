@@ -28,6 +28,30 @@ pub(crate) struct StateMenus {
     pub(crate) delete_slot_menu: gio::Menu,
 }
 
+/// Persistent menubar skeleton: the top-level model plus its section menus.
+/// Built once, bound once via `set_menubar`; language switches refill these
+/// same objects in place because replacing the top-level model at runtime
+/// does not propagate to the visible menubar.
+pub(crate) struct MenubarModels {
+    pub(crate) menu_model: gio::Menu,
+    pub(crate) file_menu: gio::Menu,
+    pub(crate) state_menu: gio::Menu,
+    pub(crate) emulation_menu: gio::Menu,
+    pub(crate) help_menu: gio::Menu,
+}
+
+impl MenubarModels {
+    pub(crate) fn new() -> Self {
+        Self {
+            menu_model: gio::Menu::new(),
+            file_menu: gio::Menu::new(),
+            state_menu: gio::Menu::new(),
+            emulation_menu: gio::Menu::new(),
+            help_menu: gio::Menu::new(),
+        }
+    }
+}
+
 pub(crate) struct WindowCore {
     application: gtk::Application,
     window: gtk::ApplicationWindow,
@@ -36,6 +60,7 @@ pub(crate) struct WindowCore {
     debugger_window: Option<crate::debugger::DebuggerWindow>,
     history_dialog: Option<(gtk::Dialog, std::rc::Rc<dyn Fn()>)>,
     actions: WindowActions,
+    menubar: MenubarModels,
     select_active_slot_menu: gio::Menu,
     save_slot_menu: gio::Menu,
     load_slot_menu: gio::Menu,
@@ -120,6 +145,7 @@ pub(crate) trait WindowExtend {
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
+        menubar: MenubarModels,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
     fn application(&self) -> gtk::Application;
@@ -166,6 +192,7 @@ impl WindowExtend for Window {
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
         state_menus: StateMenus,
+        menubar: MenubarModels,
     ) -> Window {
         let actions = WindowActions::new();
         let close_action = actions.close.clone();
@@ -192,6 +219,7 @@ impl WindowExtend for Window {
             debugger_window: None,
             history_dialog: None,
             actions,
+            menubar,
             select_active_slot_menu: state_menus.select_active_slot_menu,
             save_slot_menu: state_menus.save_slot_menu,
             load_slot_menu: state_menus.load_slot_menu,
@@ -462,17 +490,25 @@ impl WindowExtend for Window {
             Some("_Open"),
             Some("_Cancel"),
         );
-        for factory in self.state().borrow().session.factories() {
-            let extensions = factory.supported_extensions();
-            if extensions.is_empty() {
-                continue;
-            }
+        // Unified "All ROMs" first: GTK pre-selects the first filter, so
+        // every registered system is visible in the initial view while
+        // per-factory entries stay selectable behind it.
+        let mut first_filter = None;
+        for (name, extensions) in nerust_gui_shell::registry::rom_picker_filters(
+            self.state().borrow().session.factories(),
+        ) {
             let filter = gtk::FileFilter::new();
-            filter.set_name(Some(&format!("{} ROM", factory.display_name())));
+            filter.set_name(Some(&name));
             for extension in extensions {
                 filter.add_pattern(&format!("*.{extension}"));
             }
+            if first_filter.is_none() {
+                first_filter = Some(filter.clone());
+            }
             file_chooser_native.add_filter(&filter);
+        }
+        if let Some(first) = first_filter {
+            file_chooser_native.set_filter(&first);
         }
         let result = self.clone();
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
@@ -612,16 +648,20 @@ impl WindowExtend for Window {
         let state = self.state();
         let guarded = state.borrow();
         let snapshot = guarded.settings_snapshot();
-        let menu_model = build_menu_model(
+        // In-place refill only, no set_menubar: replacing the top-level
+        // model at runtime leaves the visible menubar stale, while the
+        // binding set once at build propagates label updates on these same
+        // objects. Slot submenu contents are deliberately untouched here.
+        let core = self.borrow();
+        build_menu_model(
             snapshot.shared.general.language,
             &snapshot.shared.input.shortcuts.keyboard,
-            &gio::Menu::new(),
-            &self.borrow().select_active_slot_menu,
-            &self.borrow().save_slot_menu,
-            &self.borrow().load_slot_menu,
-            &self.borrow().delete_slot_menu,
+            &core.menubar,
+            &core.select_active_slot_menu,
+            &core.save_slot_menu,
+            &core.load_slot_menu,
+            &core.delete_slot_menu,
         );
-        self.application().set_menubar(Some(&menu_model));
     }
 
     fn refresh_title(&self) {
@@ -777,6 +817,7 @@ mod tests {
                 load_slot_menu: gio::Menu::new(),
                 delete_slot_menu: gio::Menu::new(),
             },
+            super::MenubarModels::new(),
         );
         // Bypass the slot wiring: a directly built dialog carries no
         // destroy hook, like an externally destroyed one whose
