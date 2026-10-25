@@ -166,7 +166,12 @@ impl PreferencesBinding {
                     let weak = weak.clone();
                     move |v| {
                         let Some(b) = weak.upgrade() else { return };
-                        b.with_refreshing(|| b.rebuild_input_page(index, v));
+                        b.with_refreshing(|| {
+                            b.rebuild_input_page(index, v);
+                            // The standalone shortcuts tab shares the input
+                            // views, so it refreshes with them.
+                            b.rebuild_shortcuts_page();
+                        });
                     }
                 }));
             }
