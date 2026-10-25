@@ -95,20 +95,16 @@ impl SettingsAppState {
         content.push(input_section_content).spacing(16).into()
     }
 
-    /// Global shortcuts tab content: an explicit scope note plus the
-    /// shared shortcuts section. Sourced from the first system view;
-    /// shortcuts are global so every system projects the same rows.
+    /// Global shortcuts tab content: the shared shortcuts section.
+    /// Sourced from the first system view; shortcuts are global so
+    /// every system projects the same rows.
     fn shortcuts_tab_content(&self) -> El<'_> {
-        let language = self.language();
         let Some(input_vm) = self.vm.inputs().first() else {
             return column![text("")].into();
         };
         let view = input_vm.view.get();
-        column![
-            text(ui_text(language, UiText::ShortcutsScopeNote)).size(12),
-            self.binding_section(view.shortcuts.label.clone(), view.shortcuts.rows.clone()),
-        ]
-        .into()
+        column![self.binding_section(view.shortcuts.label.clone(), view.shortcuts.rows.clone()),]
+            .into()
     }
 
     /// Machine navigation radios plus the selected machine binding section.
