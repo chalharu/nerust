@@ -22,7 +22,7 @@ use tao::{
 use tao::platform::macos::WindowBuilderExtMacOS;
 
 #[cfg(target_os = "linux")]
-use gtk::prelude::WidgetExt as _;
+use gtk::prelude::{GtkWindowExt as _, WidgetExt as _};
 
 #[cfg(target_os = "linux")]
 use tao::platform::unix::WindowExtUnix;
@@ -101,17 +101,39 @@ fn snap_physical(logical: (i32, i32), scale_factor: f32) -> (u32, u32) {
     (physical(logical.0), physical(logical.1))
 }
 
-/// SPIKE NER-335: GTK content-box origin in logical pixels.
+/// SPIKE NER-335: compare the three size sources on one line for
+/// CSD verification (tao inner vs GTK window vs vbox).
+#[cfg(target_os = "linux")]
+fn debug_sizes(window: &TaoWindow) -> String {
+    use tao::platform::unix::WindowExtUnix;
+    let gtk_window = window.gtk_window();
+    let win_alloc = gtk_window.allocation();
+    let (gw, gh) = gtk_window.size();
+    let vbox_rect = window.default_vbox().map(|v| {
+        let a = v.allocation();
+        (a.x(), a.y(), a.width(), a.height())
+    });
+    format!(
+        "winalloc={}x{} gtksize={}x{} vbox={vbox_rect:?}",
+        win_alloc.width(),
+        win_alloc.height(),
+        gw,
+        gh,
+    )
+}
+
+/// SPIKE NER-335: GTK content-box origin in logical window pixels.
 ///
-/// The iced surface shares the tao/GDK wl_surface starting at the outer
-/// origin, so padded layout must shift content to the client rect.
+/// translate_coordinates resolves the origin through any nesting into the
+/// toplevel's space, instead of trusting the box's parent-relative offset.
 /// Pre-map the box sits at (0, 0), which pads nothing and is harmless.
 #[cfg(target_os = "linux")]
 fn gtk_content_offset(window: &TaoWindow) -> Option<(f32, f32)> {
+    use tao::platform::unix::WindowExtUnix;
     let vbox = window.default_vbox()?;
-    let alloc = vbox.allocation();
+    let (x, y) = vbox.translate_coordinates(window.gtk_window(), 0, 0)?;
     // Clamp GTK internal borders: the client origin never sits outside.
-    Some((alloc.x().max(0) as f32, alloc.y().max(0) as f32))
+    Some((x.max(0) as f32, y.max(0) as f32))
 }
 
 impl AuxSurface {
@@ -161,12 +183,13 @@ impl AuxSurface {
                 scale_factor,
             );
             log::debug!(
-                "{log_tag} open: inner_size={}x{} used={}x{} offset={:?} scale={scale_factor}",
+                "{log_tag} open: inner_size={}x{} used={}x{} offset={:?} sizes=[{}] scale={scale_factor}",
                 window_size.width,
                 window_size.height,
                 used.0,
                 used.1,
                 gtk_content_offset(&window),
+                debug_sizes(&window),
             );
             used
         };
@@ -247,6 +270,15 @@ impl AuxSurface {
             return;
         }
         self.viewport_physical = (width, height);
+        #[cfg(target_os = "linux")]
+        log::debug!(
+            "aux resize: physical={width}x{height} offset={:?} sizes=[{}] scale={} bounds={:?}",
+            self.client_offset(),
+            debug_sizes(&self.window),
+            self.scale_factor,
+            logical_bounds((width, height), self.scale_factor)
+        );
+        #[cfg(not(target_os = "linux"))]
         log::debug!(
             "aux resize: physical={width}x{height} offset={:?} scale={} bounds={:?}",
             self.client_offset(),
