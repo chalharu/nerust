@@ -9,27 +9,69 @@ use gio::glib::{
     object::{Cast as _, IsA},
 };
 use gtk::prelude::{
-    BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, DialogExt as _,
-    EditableExt as _, GtkWindowExt as _, WidgetExt as _,
+    BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, ComboBoxExtManual as _,
+    DialogExt as _, EditableExt as _, GtkWindowExt as _, WidgetExt as _,
 };
 use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
     Subscription,
     dto::{
-        AudioView, BindingRowView, BindingValueView, ControllerSlotView, GeneralView, InputTabView,
-        NotificationView, SystemTabView, VideoView,
+        AudioView, BindingRowView, BindingValueView, ChoiceView, ControllerSlotView, GeneralView,
+        InputTabView, NotificationView, SystemTabView, VideoView,
     },
 };
+
+/// Index-based combo selection over shared choices: the position in the
+/// viewmodel choice list replaces per-enum id tables. Order is defined
+/// once by the projection; rebuilds keep it.
+fn choice_position<T: Clone + PartialEq + Eq>(
+    choices: &[ChoiceView<T>],
+    value: &T,
+) -> Option<u32> {
+    choices
+        .iter()
+        .position(|choice| &choice.value == value)
+        .map(|index| index as u32)
+}
+
+/// Rebuild a combo from shared choices and select `selected`.
+fn refill_choices<T: Clone + PartialEq + Eq>(
+    combo: &gtk::ComboBoxText,
+    choices: &[ChoiceView<T>],
+    selected: &T,
+) {
+    combo.remove_all();
+    for choice in choices {
+        combo.append_text(&choice.label);
+    }
+    combo.set_active(choice_position(choices, selected));
+}
+
+/// Read back the selected choice. `None` (no selection) is a no-op for
+/// the caller: with index selection there is no corrupt-id fallback.
+fn active_choice<T: Clone + PartialEq + Eq>(
+    combo: &gtk::ComboBoxText,
+    choices: &[ChoiceView<T>],
+) -> Option<T> {
+    combo
+        .active()
+        .and_then(|index| choices.get(index as usize))
+        .map(|choice| choice.value.clone())
+}
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, notification_group_label, text as ui_text},
 };
 use nerust_system_traits::factory::CoreFactory;
 
-use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode};
+use nerust_settings_core::model::{
+    language::AppLanguage,
+    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
+    shared::StoragePolicy,
+};
 
-use crate::{State, mapping::*};
+use crate::State;
 
 // ---------------------------------------------------------------------------
 // Widget group structs
@@ -321,24 +363,16 @@ impl PreferencesBinding {
             .latency_label
             .set_text(ui_text(lang, UiText::AudioLatency));
 
-        self.general.language_combo.remove_all();
-        for choice in &view.language_choices {
-            self.general
-                .language_combo
-                .append(Some(map_language_id(choice.value)), &choice.label);
-        }
-        self.general
-            .language_combo
-            .set_active_id(Some(map_language_id(view.language)));
-        self.general.storage_policy_combo.remove_all();
-        for choice in &view.storage_policy_choices {
-            self.general
-                .storage_policy_combo
-                .append(Some(map_storage_policy_id(choice.value)), &choice.label);
-        }
-        self.general
-            .storage_policy_combo
-            .set_active_id(Some(map_storage_policy_id(view.storage_policy)));
+        refill_choices(
+            &self.general.language_combo,
+            &view.language_choices,
+            &view.language,
+        );
+        refill_choices(
+            &self.general.storage_policy_combo,
+            &view.storage_policy_choices,
+            &view.storage_policy,
+        );
         self.general
             .storage_dir_row
             .set_visible(view.show_storage_directory);
@@ -353,15 +387,7 @@ impl PreferencesBinding {
         self.video
             .fullscreen_check
             .set_active(view.fullscreen_default);
-        self.video.scaling_combo.remove_all();
-        for choice in &view.scaling_choices {
-            self.video
-                .scaling_combo
-                .append(Some(map_scaling_id(choice.value)), &choice.label);
-        }
-        self.video
-            .scaling_combo
-            .set_active_id(Some(map_scaling_id(view.scaling)));
+        refill_choices(&self.video.scaling_combo, &view.scaling_choices, &view.scaling);
         self.video.vsync_check.set_active(view.vsync);
     }
 
@@ -370,30 +396,35 @@ impl PreferencesBinding {
         n.info_check.set_active(view.info_enabled);
         n.info_duration_spin
             .set_value(f64::from(view.info_duration_ms));
-        n.info_color_combo
-            .set_active_id(Some(map_color_id(view.info_color)));
+        refill_choices(&n.info_color_combo, &view.color_choices, &view.info_color);
         n.warning_check.set_active(view.warning_enabled);
         n.warning_duration_spin
             .set_value(f64::from(view.warning_duration_ms));
-        n.warning_color_combo
-            .set_active_id(Some(map_color_id(view.warning_color)));
+        refill_choices(
+            &n.warning_color_combo,
+            &view.color_choices,
+            &view.warning_color,
+        );
         n.error_check.set_active(view.error_enabled);
         n.error_modal_radio.set_active(view.error_modal);
         n.error_onscreen_radio.set_active(!view.error_modal);
-        n.error_color_combo
-            .set_active_id(Some(map_color_id(view.error_color)));
+        refill_choices(&n.error_color_combo, &view.color_choices, &view.error_color);
         // Color only affects the on-screen pill; a modal dialog has
         // no tinted text.
         n.error_color_combo.set_sensitive(!view.error_modal);
         n.status_check.set_active(view.status_enabled);
-        n.position_combo
-            .set_active_id(Some(map_position_id(view.position)));
-        n.status_position_combo
-            .set_active_id(Some(map_position_id(view.status_position)));
-        n.area_combo
-            .set_active_id(Some(map_area_id(view.area_mode)));
-        n.status_area_combo
-            .set_active_id(Some(map_area_id(view.status_area_mode)));
+        refill_choices(&n.position_combo, &view.position_choices, &view.position);
+        refill_choices(
+            &n.status_position_combo,
+            &view.position_choices,
+            &view.status_position,
+        );
+        refill_choices(&n.area_combo, &view.area_mode_choices, &view.area_mode);
+        refill_choices(
+            &n.status_area_combo,
+            &view.area_mode_choices,
+            &view.status_area_mode,
+        );
         // Same band: the transient area mode governs the edge, so the
         // status picker is insensitive (an overlay status would dangle
         // half inside the reserved strip).
@@ -406,9 +437,11 @@ impl PreferencesBinding {
         self.audio
             .volume_spin
             .set_value(f64::from(view.volume_percent));
-        self.audio
-            .sample_rate_combo
-            .set_active_id(Some(&view.sample_rate.to_string()));
+        refill_choices(
+            &self.audio.sample_rate_combo,
+            &view.sample_rate_choices,
+            &view.sample_rate,
+        );
         self.audio
             .latency_spin
             .set_value(f64::from(view.latency_ms));
@@ -1123,8 +1156,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.general
-                    .set_language(parse_language_id(combo.active_id().as_deref())),
+                b.vm.general.set_language(
+                    active_choice(combo, &b.vm.general.view.get().language_choices)
+                        .unwrap_or(AppLanguage::SystemDefault),
+                ),
             );
         }
     });
@@ -1138,7 +1173,10 @@ pub(crate) fn present_preferences_dialog(
             cmd(
                 &b,
                 b.vm.general
-                    .set_storage_policy(parse_storage_policy_id(combo.active_id().as_deref())),
+                    .set_storage_policy(
+                        active_choice(combo, &b.vm.general.view.get().storage_policy_choices)
+                            .unwrap_or(StoragePolicy::Sidecar),
+                    ),
             );
         }
     });
@@ -1174,7 +1212,10 @@ pub(crate) fn present_preferences_dialog(
             cmd(
                 &b,
                 b.vm.video
-                    .set_scaling(parse_scaling_id(combo.active_id().as_deref())),
+                    .set_scaling(
+                        active_choice(combo, &b.vm.video.view.get().scaling_choices)
+                            .unwrap_or(ScalingMode::FitToWindow),
+                    ),
             );
         }
     });
@@ -1215,9 +1256,7 @@ pub(crate) fn present_preferences_dialog(
             if b.refreshing.get() {
                 return;
             }
-            let rate = combo
-                .active_id()
-                .and_then(|v| v.parse::<u32>().ok())
+            let rate = active_choice(combo, &b.vm.audio.view.get().sample_rate_choices)
                 .unwrap_or(48_000);
             cmd(&b, b.vm.audio.set_sample_rate(rate));
         }
@@ -1264,8 +1303,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_info_color(parse_color_id(combo.active_id().as_deref())),
+                b.vm.notifications.set_info_color(
+                    active_choice(combo, &b.vm.notifications.view.get().color_choices)
+                        .unwrap_or(NotificationColor::White),
+                ),
             );
         }
     });
@@ -1306,7 +1347,10 @@ pub(crate) fn present_preferences_dialog(
             cmd(
                 &b,
                 b.vm.notifications
-                    .set_warning_color(parse_color_id(combo.active_id().as_deref())),
+                    .set_warning_color(
+                        active_choice(combo, &b.vm.notifications.view.get().color_choices)
+                            .unwrap_or(NotificationColor::White),
+                    ),
             );
         }
     });
@@ -1350,7 +1394,10 @@ pub(crate) fn present_preferences_dialog(
             cmd(
                 &b,
                 b.vm.notifications
-                    .set_error_color(parse_color_id(combo.active_id().as_deref())),
+                    .set_error_color(
+                        active_choice(combo, &b.vm.notifications.view.get().color_choices)
+                            .unwrap_or(NotificationColor::White),
+                    ),
             );
         }
     });
@@ -1377,7 +1424,10 @@ pub(crate) fn present_preferences_dialog(
             cmd(
                 &b,
                 b.vm.notifications
-                    .set_position(parse_position_id(combo.active_id().as_deref())),
+                    .set_position(
+                        active_choice(combo, &b.vm.notifications.view.get().position_choices)
+                            .unwrap_or(NotificationPosition::BottomLeft),
+                    ),
             );
         }
     });
@@ -1391,7 +1441,10 @@ pub(crate) fn present_preferences_dialog(
             cmd(
                 &b,
                 b.vm.notifications
-                    .set_status_position(parse_position_id(combo.active_id().as_deref())),
+                    .set_status_position(
+                        active_choice(combo, &b.vm.notifications.view.get().position_choices)
+                            .unwrap_or(NotificationPosition::BottomLeft),
+                    ),
             );
         }
     });
@@ -1404,8 +1457,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_area_mode(parse_area_id(combo.active_id().as_deref())),
+                b.vm.notifications.set_area_mode(
+                    active_choice(combo, &b.vm.notifications.view.get().area_mode_choices)
+                        .unwrap_or(NotificationAreaMode::Overlay),
+                ),
             );
         }
     });
@@ -1418,8 +1473,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_status_area_mode(parse_area_id(combo.active_id().as_deref())),
+                b.vm.notifications.set_status_area_mode(
+                    active_choice(combo, &b.vm.notifications.view.get().area_mode_choices)
+                        .unwrap_or(NotificationAreaMode::Overlay),
+                ),
             );
         }
     });
@@ -1852,8 +1909,8 @@ mod tests {
         let binding = create_test_binding();
         let gv = binding.vm.general.view.get();
         assert_eq!(
-            binding.general.language_combo.active_id().as_deref(),
-            Some(map_language_id(gv.language))
+            binding.general.language_combo.active(),
+            choice_position(&gv.language_choices, &gv.language)
         );
     });
 
