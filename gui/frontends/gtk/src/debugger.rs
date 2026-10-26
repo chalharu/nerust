@@ -1,16 +1,16 @@
 //! GTK debugger window: same semantics, shell APIs, and view-model formatters as the tao twin.
 //! Action batches run as async shell-drain flights polled on the GTK tick.
 
-use std::{cell::RefCell, ops::Deref, rc::Rc, task::Poll};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_core_traits::debugger::SpaceId;
 use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
-use nerust_frontend_host::debugger::{DebuggerEvent, DebuggerModel, DebuggerScope};
-use nerust_frontend_host::drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions};
+use nerust_frontend_host::debugger::{
+    DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope,
+};
 use nerust_frontend_host::focus::AuxKind;
-use nerust_gui_shell::debug::{DebugAction, DebugDrainInput, LiveImagesFlight};
-use nerust_gui_viewmodel::debugger::{self as vm, DebugImageRgba};
+use nerust_gui_shell::debug::DebugAction;
+use nerust_gui_viewmodel::debugger as vm;
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 
 use super::State;
@@ -20,31 +20,10 @@ type RebuildScope = DebuggerScope;
 
 pub(crate) type DebuggerWindow = Rc<RefCell<DebuggerWindowCore>>;
 
-#[derive(Clone)]
-struct DrainSnapshot {
-    scope: RebuildScope,
-    space: Option<SpaceId>,
-    mem_addr: u32,
-    dis_addr: Option<u32>,
-    watch: Option<u32>,
-    freeze: Option<(u32, u8)>,
-    reg_target: Option<&'static str>,
-    prev_rows: Vec<nerust_core_traits::debugger::HexRow>,
-    need_images: bool,
-}
-
-type DrainBatch = nerust_frontend_host::drain::DrainBatch<DrainSnapshot>;
-
 pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
-    data: DebuggerData,
-    /// In-flight async drain with its rebuild scope: `act_scoped` starts it,
-    /// the tick poller finishes it before starting the next batch.
-    drain: DrainQueue<DrainSnapshot>,
-    /// In-flight async live-images fetch, same pattern for the 250ms
-    /// PPU follow tick. At most one; a newer tick supersedes.
-    live_flight: Option<LiveImagesFlight>,
+    data: DebuggerDriver,
     viewers: AuxWindows<u64, super::ppu_window::PpuWindow>,
     widgets: DebuggerWidgets,
 }
@@ -153,7 +132,7 @@ impl DebuggerWindowCore {
         _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
     ) -> DebuggerWindow {
-        let data = DebuggerData::from_session(state.borrow().host.session());
+        let data = DebuggerDriver::from_session(state.borrow().host.session());
         let language = data.language;
         let window = gtk::ApplicationWindow::builder()
             .application(app)
@@ -211,8 +190,6 @@ impl DebuggerWindowCore {
             window: window.clone(),
             state: state.clone(),
             data,
-            drain: Default::default(),
-            live_flight: None,
             viewers: Default::default(),
             widgets: DebuggerWidgets {
                 pause_button: pause_button.clone(),
@@ -481,17 +458,7 @@ impl DebuggerWindowCore {
             // Backstop for drain flights: poll here too so a missed watcher
             // can never strand a pending display.
             Self::poll_flight(&win);
-            let live = win.borrow().window.is_visible()
-                && win.borrow().viewers.get(AuxKind::Ppu).is_some()
-                && {
-                    let state = win.borrow().state.clone();
-                    let borrowed = state.borrow();
-                    let tick = borrowed.host.session().tick_metrics();
-                    tick.loaded && !tick.paused
-                };
-            if live {
-                Self::live_tick(&win);
-            }
+            Self::live_tick(&win);
             glib::ControlFlow::Continue
         });
         #[cfg(target_os = "macos")]
@@ -503,26 +470,17 @@ impl DebuggerWindowCore {
     /// Live-tick body: settle the in-flight fetch, then start a new one when following.
     /// Patches images and pause chrome only; never rebuilds widgets (scroll survives).
     fn live_tick(win: &DebuggerWindow) {
-        if Self::poll_live_flight(win) {
-            // A fetch is still crossing: wait for its poller instead
-            // of stacking another one behind it.
-            return;
-        }
-        let live = win.borrow().window.is_visible()
-            && win.borrow().viewers.get(AuxKind::Ppu).is_some()
-            && {
-                let state = win.borrow().state.clone();
-                let borrowed = state.borrow();
-                let tick = borrowed.host.session().tick_metrics();
-                tick.loaded && !tick.paused
-            };
-        if !live {
-            return;
-        }
         let state = win.borrow().state.clone();
-        let flight = state.borrow().host.session().debug_live_images_begin(true);
-        win.borrow_mut().live_flight = Some(flight);
-        if Self::poll_live_flight(win) {
+        let visible = win.borrow().window.is_visible();
+        let need_images = win.borrow().viewers.get(AuxKind::Ppu).is_some();
+        let was_pending = win.borrow().data.live_pending();
+        let effects =
+            win.borrow_mut()
+                .data
+                .live_tick(state.borrow().host.session(), visible, need_images);
+        let pending = effects.pending;
+        Self::present_live_effects(win, effects);
+        if pending && !was_pending {
             Self::watch_live_flight(win);
         }
     }
@@ -549,62 +507,50 @@ impl DebuggerWindowCore {
     /// Poll the stored live fetch once. Returns whether one is still pending.
     /// Orphaned flights settle harmlessly: the generation guard skips stale data.
     fn poll_live_flight(win: &DebuggerWindow) -> bool {
-        let result = poll_flight(&mut win.borrow_mut().live_flight);
-        match result {
-            Poll::Ready(Some(live)) => Self::apply_live_images(win, live),
-            Poll::Ready(None) => {}
-            Poll::Pending => return true,
-        }
-        false
+        let state = win.borrow().state.clone();
+        let effects = win
+            .borrow_mut()
+            .data
+            .poll_live(state.borrow().host.session());
+        let pending = effects.pending;
+        Self::present_live_effects(win, effects);
+        pending
     }
 
-    /// Patch finished live images into the display. Images apply when newer
-    /// regardless of pause; running chrome only applies while still running.
-    fn apply_live_images(win: &DebuggerWindow, live: nerust_gui_shell::session::LiveImages) {
-        let Some(batch) = live else {
+    fn present_live_effects(win: &DebuggerWindow, effects: DebuggerLiveEffects) {
+        if !effects.changed {
             return;
-        };
-        let images = batch
-            .images
-            .into_iter()
-            .map(|image| DebugImageRgba {
-                label: image.label,
-                width: image.width,
-                height: image.height,
-                rgba: image.rgba,
-            })
-            .collect();
-        let generation = batch.generation;
-        let running = {
-            let state = win.borrow().state.clone();
-            let borrowed = state.borrow();
-            let tick = borrowed.host.session().tick_metrics();
-            tick.loaded && !tick.paused
-        };
-        Self::present_live_images(win, generation, images, running);
-    }
-
-    fn present_live_images(
-        win: &DebuggerWindow,
-        generation: u64,
-        images: Vec<DebugImageRgba>,
-        running: bool,
-    ) {
+        }
         let language = win.borrow().data.language;
-        let chrome = {
-            let mut this = win.borrow_mut();
-            if !this.data.apply_live_images(generation, images, running) {
-                return;
-            }
-            this.widgets.clone()
-        };
-        if running {
+        let chrome = win.borrow().widgets.clone();
+        if effects.running {
             // Images and chrome only: never touch the scrolling lists or inputs.
             chrome.pause_button.set_label(text(language, UiText::Pause));
             let status = win.borrow().data.display.status.render(language);
             chrome.status_label.set_label(&status);
         }
         Self::sync_ppu(win);
+    }
+
+    #[cfg(test)]
+    fn present_live_images(
+        win: &DebuggerWindow,
+        generation: u64,
+        images: Vec<vm::DebugImageRgba>,
+        running: bool,
+    ) {
+        let changed = win
+            .borrow_mut()
+            .data
+            .apply_live_images(generation, images, running);
+        Self::present_live_effects(
+            win,
+            DebuggerLiveEffects {
+                changed,
+                running,
+                pending: false,
+            },
+        );
     }
     /// One wiring helper per section: each connects a single
     /// pane's callbacks, so `open` stays construction plus calls.
@@ -792,12 +738,14 @@ impl DebuggerWindowCore {
         ];
         let clear_bookmark = matches!(event, DebuggerEvent::BookmarkAdd);
         let clear_edit = matches!(event, DebuggerEvent::ConfirmWrite);
+        let was_pending = win.borrow().data.pending();
         let update = {
             let mut this = win.borrow_mut();
-            for input in inputs {
-                this.data.dispatch(input);
-            }
-            this.data.dispatch(event)
+            let state = this.state.clone();
+            let need_images = this.viewers.get(AuxKind::Ppu).is_some();
+            let state = state.borrow();
+            this.data
+                .dispatch(state.host.session(), inputs, event, need_images)
         };
         // Consumed text is reflected immediately, not on a later worker reply
         // which could otherwise overwrite newer typing.
@@ -815,25 +763,18 @@ impl DebuggerWindowCore {
             Self::create_ppu(win);
         }
         if let Some(scope) = update.scope {
-            if update.actions.is_empty() {
-                Self::rebuild_partial(win, scope);
-            } else {
-                Self::act_scoped(win, &update.actions, scope);
-            }
+            Self::rebuild_partial(win, scope);
+        }
+        if Self::poll_flight(win) && !was_pending {
+            Self::watch_flight(win);
         }
     }
 
     fn reset_replaced_epoch(win: &DebuggerWindow) -> bool {
         let mut this = win.borrow_mut();
-        let epoch = this.state.borrow().host.session().debug_epoch();
-        if std::sync::Arc::ptr_eq(&this.data.epoch, &epoch) {
-            return false;
-        }
-        let data = DebuggerData::from_session(this.state.borrow().host.session());
-        this.data = data;
-        this.drain.clear();
-        this.live_flight = None;
-        true
+        let state = this.state.clone();
+        let state = state.borrow();
+        this.data.reset_replaced_epoch(state.host.session())
     }
 
     /// Run actions through an async drain flight, then rebuild from the new display.
@@ -845,69 +786,16 @@ impl DebuggerWindowCore {
     /// [`DebuggerWindowCore::act`] with a rebuild scope: the finished drain
     /// refreshes only the sections its data moved.
     fn act_scoped(win: &DebuggerWindow, actions: &[DebugAction], scope: RebuildScope) {
-        let replaced = Self::reset_replaced_epoch(win);
-        let mut this = win.borrow_mut();
-        let epoch = this.state.borrow().host.session().debug_epoch();
-        // The gesture was made against the old display. Refresh the replacement,
-        // but never reinterpret an old WriteConfirm/Resume against its new core.
-        let actions = if replaced {
-            &[DebugAction::Refresh][..]
-        } else {
-            actions
-        };
-        let scope = if replaced { RebuildScope::All } else { scope };
-        let snapshot = DrainSnapshot {
-            scope,
-            space: this.data.selected_space(),
-            mem_addr: this.data.nav.mem_addr(),
-            dis_addr: this.data.nav.dis_addr(),
-            watch: this.data.watch,
-            freeze: this.data.freeze,
-            reg_target: this.data.reg_target,
-            prev_rows: this.data.display.dump_rows.clone(),
-            need_images: this.viewers.get(AuxKind::Ppu).is_some(),
-        };
-        this.drain.enqueue(epoch, actions, snapshot);
-        let pending = this.drain.flight_pending();
-        drop(this);
-        if !pending && Self::poll_flight(win) {
-            Self::watch_flight(win);
+        let was_pending = win.borrow().data.pending();
+        {
+            let mut this = win.borrow_mut();
+            let state = this.state.clone();
+            let need_images = this.viewers.get(AuxKind::Ppu).is_some();
+            this.data
+                .enqueue(state.borrow().host.session(), actions, scope, need_images);
         }
-    }
-
-    fn start_batch(win: &DebuggerWindow, batch: DrainBatch) {
-        let state = win.borrow().state.clone();
-        let scope = batch.snapshot.scope;
-        let flight = batch.begin(|actions, snapshot| {
-            let mut state = state.borrow_mut();
-            use nerust_gui_shell::session::access::PauseControl;
-            prepare_pause_actions(actions, |action| {
-                match action {
-                    DebugAction::Pause => state.pause(),
-                    DebugAction::Resume => state.resume(),
-                    DebugAction::TogglePause => state.toggle_pause(),
-                    _ => unreachable!("pause actions only"),
-                }
-                state.host.session().tick_metrics().loaded
-            });
-            let input = DebugDrainInput {
-                space: snapshot.space,
-                mem_addr: snapshot.mem_addr,
-                dis_addr: snapshot.dis_addr,
-                watch: snapshot.watch,
-                freeze: snapshot.freeze,
-                reg_target: snapshot.reg_target,
-                prev_dump_rows: &snapshot.prev_rows,
-                need_images: snapshot.need_images,
-            };
-            state.host.session().debug_drain_begin(actions, &input)
-        });
-        if let Some(mut flight) = flight {
-            match flight.poll() {
-                Poll::Ready(Some(output)) => Self::apply_scoped(win, *output, scope),
-                Poll::Ready(None) => {}
-                Poll::Pending => win.borrow_mut().drain.store(flight),
-            }
+        if Self::poll_flight(win) && !was_pending {
+            Self::watch_flight(win);
         }
     }
 
@@ -933,22 +821,20 @@ impl DebuggerWindowCore {
     /// Poll the stored flight once. Returns whether one is still pending: on
     /// completion the display applies, exactly like a synchronous drain.
     fn poll_flight(win: &DebuggerWindow) -> bool {
-        loop {
-            // Release the window borrow before pause callbacks or widget rebuilds.
-            let event = win.borrow_mut().drain.poll();
-            match event {
-                DrainEvent::Idle => return false,
-                DrainEvent::Pending => return true,
-                DrainEvent::Start(batch) => Self::start_batch(win, batch),
-                DrainEvent::Done(output, snapshot) => {
-                    Self::apply_scoped(win, *output, snapshot.scope)
-                }
-            }
+        let effects = {
+            let mut this = win.borrow_mut();
+            let state = this.state.clone();
+            this.data.poll(&mut state.borrow_mut().host)
+        };
+        if let Some(scope) = effects.scope {
+            Self::rebuild_partial(win, scope);
         }
+        effects.pending
     }
 
     /// Apply a finished drain: merge running sections, store the
     /// selection, and rebuild the scoped widgets from the new display.
+    #[cfg(test)]
     fn apply_scoped(
         win: &DebuggerWindow,
         output: nerust_gui_shell::debug::DebugDrainOutput,
@@ -1113,16 +999,8 @@ impl DebuggerWindowCore {
         // presentation data before touching GTK; never clone image buffers here.
         let this = {
             let this = win.borrow();
-            let mut data = DebuggerData::new(
-                this.data.display.clone_without_images(),
-                this.data.spaces.clone(),
-                this.data.nav.mem_addr(),
-                this.data.language,
-                this.data.epoch.clone(),
-            );
-            *data = (*this.data).clone();
             DebuggerView {
-                data,
+                data: this.data.view_snapshot(),
                 widgets: this.widgets.clone(),
             }
         };
@@ -1450,7 +1328,8 @@ fn key_action(key: gdk::Key) -> Option<DebuggerKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_gui_viewmodel::debugger::{DisplayCache, StatusMessage};
+    use nerust_core_traits::debugger::SpaceId;
+    use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, StatusMessage};
     use nerust_settings_core::model::language::AppLanguage;
 
     fn validation_model() -> DebuggerModel {
@@ -1747,33 +1626,23 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        state.borrow_mut().set_pause_owner(PauseOwner::Modal, true);
+        state
+            .borrow_mut()
+            .host
+            .set_pause_owner(PauseOwner::Modal, true);
         let epoch = state.borrow().host.session().debug_epoch();
-        let batch = {
-            let this = win.borrow();
-            DrainBatch {
-                epoch: epoch.clone(),
-                actions: vec![DebugAction::StepInstr],
-                snapshot: DrainSnapshot {
-                    scope: RebuildScope::All,
-                    space: this.data.selected_space(),
-                    mem_addr: 0,
-                    dis_addr: None,
-                    watch: None,
-                    freeze: Some((0, 0xff)),
-                    reg_target: Some("a"),
-                    prev_rows: Vec::new(),
-                    need_images: false,
-                },
-            }
-        };
         // A second unstarted batch must not pause/write the replacement.
-        win.borrow_mut().drain.push_back(DrainBatch {
-            actions: vec![DebugAction::Resume, DebugAction::RegisterWrite(0xff)],
-            ..batch.clone()
-        });
-        let stale_batch = batch.clone();
-        DebuggerWindowCore::start_batch(&win, batch);
+        win.borrow_mut().data.enqueue(
+            state.borrow().host.session(),
+            &[
+                DebugAction::StepInstr,
+                DebugAction::Resume,
+                DebugAction::RegisterWrite(0xff),
+            ],
+            RebuildScope::All,
+            false,
+        );
+        DebuggerWindowCore::poll_flight(&win);
         load();
         assert!(!epoch.load(std::sync::atomic::Ordering::Acquire));
         assert!(!DebuggerWindowCore::poll_flight(&win));
@@ -1782,7 +1651,10 @@ mod tests {
         pause_button.emit_clicked();
         assert!(state.borrow().host.owns_pause(PauseOwner::User));
         assert!(state.borrow().host.session().tick_metrics().paused);
-        state.borrow_mut().set_pause_owner(PauseOwner::Modal, false);
+        state
+            .borrow_mut()
+            .host
+            .set_pause_owner(PauseOwner::Modal, false);
         assert!(state.borrow().host.session().tick_metrics().paused);
 
         // Unlike act_scoped, even a local-only gesture must first reject the
@@ -1796,8 +1668,12 @@ mod tests {
             this.data.watch = Some(0);
             this.data.freeze = Some((0, 0xff));
             this.data.reg_target = Some("a");
-            this.drain.push_back(stale_batch);
-            this.live_flight = Some(state.borrow().host.session().debug_live_images_begin(true));
+            this.data.enqueue(
+                state.borrow().host.session(),
+                &[DebugAction::RegisterWrite(0xff)],
+                RebuildScope::All,
+                false,
+            );
         }
         let add = action_button("Add");
         DebuggerWindowCore::wire_bookmarks(&win, &add, &bookmark_input);
@@ -1816,8 +1692,7 @@ mod tests {
             assert!(this.data.watch.is_none());
             assert!(this.data.freeze.is_none());
             assert!(this.data.reg_target.is_none());
-            assert!(this.live_flight.is_none());
-            assert_eq!(this.drain.queued_len(), 0);
+            assert!(!this.data.live_pending());
         }
         assert_eq!(bookmark_input.text().as_str(), "");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
@@ -2048,10 +1923,10 @@ mod tests {
         ] {
             entry.set_text(input);
             assert!(
-                !win.borrow().drain.pending(),
+                !win.borrow().data.pending(),
                 "typing must not start worker traffic"
             );
-            assert!(win.borrow().live_flight.is_none());
+            assert!(!win.borrow().data.live_pending());
         }
         assert_eq!(win.borrow().data.display.images_gen, 3);
         assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
@@ -2063,7 +1938,7 @@ mod tests {
             win.borrow().data.display.status,
             StatusMessage::Local("parse failed: zz".into())
         );
-        assert!(!win.borrow().drain.pending());
+        assert!(!win.borrow().data.pending());
         assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
         assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
         assert_eq!(adjustment.value(), 48.0);
@@ -2106,7 +1981,7 @@ mod tests {
         freeze_clear.emit_clicked();
         assert!(win.borrow().data.watch.is_none());
         assert!(win.borrow().data.freeze.is_none());
-        assert!(!win.borrow().drain.pending());
+        assert!(!win.borrow().data.pending());
 
         widgets.mem_input.set_text("100");
         let dis_row = widgets.disasm_list.first_child().unwrap();
@@ -2120,7 +1995,7 @@ mod tests {
         add.emit_clicked();
         assert_eq!(win.borrow().data.bookmarks, vec![(0x500, "native".into())]);
         assert!(widgets.bookmark_input.text().is_empty());
-        assert!(!win.borrow().drain.pending());
+        assert!(!win.borrow().data.pending());
         assert!(notifications.get() >= 8);
     }
 
@@ -2140,7 +2015,7 @@ mod tests {
         widgets.bookmark_input.set_text("PC");
         widgets.bookmark_input.emit_activate();
         assert_eq!(win.borrow().data.bookmarks, vec![(0x302, "PC".into())]);
-        assert!(!win.borrow().drain.pending());
+        assert!(!win.borrow().data.pending());
         // A pin wins even while a different PC remains visible.
         widgets.dis_input.set_text("500");
         widgets.dis_input.emit_activate();
@@ -2166,7 +2041,7 @@ mod tests {
             win.borrow().data.display.status,
             StatusMessage::Local(text(AppLanguage::English, UiText::BookmarkFull).into())
         );
-        assert!(!win.borrow().drain.pending());
+        assert!(!win.borrow().data.pending());
     }
 
     #[test]
@@ -2213,7 +2088,7 @@ mod tests {
         assert_eq!(widgets.mem_input.text().as_str(), "unfinished input");
         assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
         assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
-        assert!(!win.borrow().drain.pending());
+        assert!(!win.borrow().data.pending());
 
         DebuggerWindowCore::apply_scoped(
             &win,
