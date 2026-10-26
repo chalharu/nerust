@@ -1036,6 +1036,7 @@ mod tests {
         assert!(!action.is_enabled());
         win.state()
             .borrow_mut()
+            .host
             .set_pause_owner(PauseOwner::Modal, true);
         let current = win
             .borrow()
