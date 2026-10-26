@@ -12,10 +12,10 @@ use gtk::prelude::{
     BoxExt as _, ButtonExt as _, CheckButtonExt as _, ComboBoxExt as _, ComboBoxExtManual as _,
     DialogExt as _, EditableExt as _, GtkWindowExt as _, WidgetExt as _,
 };
+use nerust_frontend_host::settings::{SettingsController, SettingsEvent, find_duplicate_system_id};
 use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::{
-    ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
-    Subscription, ValidationBanner,
+    ReadOnlyObservableProperty, Subscription,
     dto::{
         AudioView, BindingRowView, BindingValueView, ChoiceView, ControllerSlotView, GeneralView,
         InputTabView, NotificationView, SystemTabView, VideoView,
@@ -47,25 +47,19 @@ fn refill_choices<T: Clone + PartialEq + Eq>(
 
 /// Read back the selected choice. `None` (no selection) is a no-op for
 /// the caller: with index selection there is no corrupt-id fallback.
-fn active_choice<T: Clone + PartialEq + Eq>(
+fn active_choice_view<T: Clone + PartialEq + Eq>(
     combo: &gtk::ComboBoxText,
     choices: &[ChoiceView<T>],
-) -> Option<T> {
+) -> Option<ChoiceView<T>> {
     combo
         .active()
         .and_then(|index| choices.get(index as usize))
-        .map(|choice| choice.value.clone())
+        .cloned()
 }
+use nerust_settings_core::model::{language::AppLanguage, local::ScalingMode};
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, notification_group_label, text as ui_text},
-};
-use nerust_system_traits::factory::CoreFactory;
-
-use nerust_settings_core::model::{
-    language::AppLanguage,
-    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
-    shared::StoragePolicy,
 };
 
 use crate::State;
@@ -154,7 +148,10 @@ struct PreferencesWidgets {
 
 struct PreferencesBinding {
     self_weak: std::rc::Weak<PreferencesBinding>,
-    vm: SettingsViewModel,
+    /// Single settings state machine, shared with the tao twin: widgets
+    /// emit `SettingsEvent`, the controller reduces. Page/tab position
+    /// stays native (Stack/Notebook own it); the controller copy is unused.
+    controller: RefCell<SettingsController>,
     _subscriptions: RefCell<Vec<Subscription>>,
     general: GeneralWidgets,
     video: VideoWidgets,
@@ -172,7 +169,7 @@ struct PreferencesBinding {
 }
 
 impl PreferencesBinding {
-    fn new(vm: SettingsViewModel, widgets: PreferencesWidgets) -> Rc<Self> {
+    fn new(controller: SettingsController, widgets: PreferencesWidgets) -> Rc<Self> {
         let PreferencesWidgets {
             general,
             video,
@@ -187,20 +184,28 @@ impl PreferencesBinding {
             stack,
             page_ids,
         } = widgets;
-        let gv = vm.general.view.get();
-        let vv = vm.video.view.get();
-        let av = vm.audio.view.get();
-        let nv = vm.notifications.view.get();
+        let gv = controller.vm.general.view.get();
+        let vv = controller.vm.video.view.get();
+        let av = controller.vm.audio.view.get();
+        let nv = controller.vm.notifications.view.get();
 
         let binding: Rc<Self> = Rc::new_cyclic(|weak: &std::rc::Weak<Self>| {
             // One observer per view (vec! literal, not a push chain).
+            // Fixed views carry their value in the callback; the three
+            // observers below read back state, so they defer a frame:
+            // they also fire synchronously inside `update`, when the
+            // controller is already mutably borrowed.
             let mut subs = vec![
-                Self::observe_view(weak, &vm.general.view, Self::refresh_general),
-                Self::observe_view(weak, &vm.video.view, Self::refresh_video),
-                Self::observe_view(weak, &vm.audio.view, Self::refresh_audio),
-                Self::observe_view(weak, &vm.notifications.view, Self::refresh_notifications),
+                Self::observe_view(weak, &controller.vm.general.view, Self::refresh_general),
+                Self::observe_view(weak, &controller.vm.video.view, Self::refresh_video),
+                Self::observe_view(weak, &controller.vm.audio.view, Self::refresh_audio),
+                Self::observe_view(
+                    weak,
+                    &controller.vm.notifications.view,
+                    Self::refresh_notifications,
+                ),
             ];
-            for (index, input_vm) in vm.inputs().iter().enumerate() {
+            for (index, input_vm) in controller.vm.inputs().iter().enumerate() {
                 subs.push(input_vm.view.observe({
                     let weak = weak.clone();
                     move |v| {
@@ -211,14 +216,16 @@ impl PreferencesBinding {
             }
             // The standalone shortcuts tab has its own projection, so it
             // subscribes once instead of refreshing with every system.
-            subs.push(vm.shortcuts.view.observe({
+            subs.push(controller.vm.shortcuts.view.observe({
                 let weak = weak.clone();
                 move |_| {
                     let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.rebuild_shortcuts_page());
+                    schedule_idle(&b.self_weak, move |b| {
+                        b.with_refreshing(|| b.rebuild_shortcuts_page());
+                    });
                 }
             }));
-            for (index, system_vm) in vm.systems().iter().enumerate() {
+            for (index, system_vm) in controller.vm.systems().iter().enumerate() {
                 subs.push(system_vm.view.observe({
                     let weak = weak.clone();
                     move |v| {
@@ -227,24 +234,26 @@ impl PreferencesBinding {
                     }
                 }));
             }
-            subs.push(vm.capture.view.observe({
+            subs.push(controller.vm.capture.view.observe({
                 let weak = weak.clone();
                 move |_| {
                     let Some(b) = weak.upgrade() else { return };
-                    b.with_refreshing(|| b.rebuild_all_input_pages());
+                    schedule_idle(&b.self_weak, move |b| {
+                        b.with_refreshing(|| b.rebuild_all_input_pages());
+                    });
                 }
             }));
-            subs.push(vm.revision.observe({
+            subs.push(controller.vm.revision.observe({
                 let weak = weak.clone();
                 move |_| {
                     let Some(b) = weak.upgrade() else { return };
-                    b.refresh_validation();
+                    schedule_idle(&b.self_weak, move |b| b.refresh_validation());
                 }
             }));
 
             Self {
                 self_weak: weak.clone(),
-                vm,
+                controller: RefCell::new(controller),
                 _subscriptions: RefCell::new(subs),
                 general,
                 video,
@@ -449,16 +458,8 @@ impl PreferencesBinding {
     }
 
     fn refresh_validation(&self) {
-        // Shared banner policy: first issue headlines, persistence
-        // issues surface at the storage row, submit needs clean.
-        let banner = match self.vm.finish() {
-            Ok(_) => ValidationBanner {
-                can_submit: true,
-                headline: None,
-                storage: None,
-            },
-            Err(validation) => validation.banner(),
-        };
+        // Shared banner policy, owned by the host controller.
+        let banner = self.controller.borrow().validation_banner();
         self.ok_button.set_sensitive(banner.can_submit);
         self.error_label
             .set_text(banner.headline.as_deref().unwrap_or(""));
@@ -468,7 +469,7 @@ impl PreferencesBinding {
     }
 
     fn rebuild_all_system_pages(&self) {
-        for (index, vm) in self.vm.systems().iter().enumerate() {
+        for (index, vm) in self.controller.borrow().vm.systems().iter().enumerate() {
             self.rebuild_system_page(index, &vm.view.get());
         }
     }
@@ -503,14 +504,23 @@ impl PreferencesBinding {
                 else {
                     return;
                 };
-                if let Some(vm) = binding.vm.systems().get(index)
-                    && let Err(e) = vm.set_choice(&field_id, &choice.value)
+                send(&binding, SettingsEvent::SelectSystemTab(index));
+                send(
+                    &binding,
+                    SettingsEvent::SetSystemChoice(field_id.as_str().to_string(), choice.clone()),
+                );
+                if !binding
+                    .controller
+                    .borrow()
+                    .error_message
+                    .clone()
+                    .unwrap_or_default()
+                    .is_empty()
                 {
-                    binding.error_label.set_text(&e.to_string());
                     let idx = index;
                     schedule_idle(&binding.self_weak, move |b| {
                         b.with_refreshing(|| {
-                            if let Some(vm) = b.vm.systems().get(idx) {
+                            if let Some(vm) = b.controller.borrow().vm.systems().get(idx) {
                                 b.rebuild_system_page(idx, &vm.view.get());
                             }
                         });
@@ -522,22 +532,24 @@ impl PreferencesBinding {
     }
 
     fn rebuild_all_input_pages(&self) {
-        for (index, vm) in self.vm.inputs().iter().enumerate() {
+        for (index, vm) in self.controller.borrow().vm.inputs().iter().enumerate() {
             self.rebuild_input_page(index, &vm.view.get());
         }
         self.rebuild_shortcuts_page();
     }
 
-    /// Global shortcuts tab: rows only, without an inner title. The
-    /// notebook tab already carries the shortcuts label, so rendering
-    /// `view.label` here would duplicate it.
+    /// Global shortcuts tab: standalone content outside every machine
+    /// page, sourced from the dedicated shortcuts projection.
     fn rebuild_shortcuts_page(&self) {
         let page = &self.input.shortcuts_page;
         clear_box(page);
         self.input
             .shortcuts_tab_label
             .set_text(ui_text(self.language(), UiText::Shortcuts));
-        let view = self.vm.shortcuts.view.get();
+        let view = self.controller.borrow().vm.shortcuts.view.get();
+        let shortcuts_label = gtk::Label::new(Some(&view.label));
+        shortcuts_label.set_xalign(0.0);
+        page.append(&shortcuts_label);
         let shortcuts_page = input_section_page();
         for row in &view.rows {
             self.append_binding_row(&shortcuts_page, row);
@@ -614,18 +626,17 @@ impl PreferencesBinding {
         let weak_c = self.self_weak.clone();
         let change_target_c = target.clone();
         change.connect_clicked(move |_| {
-            if let Some(binding) = weak_c.upgrade()
-                && let Err(e) = binding.vm.capture.start_capture(change_target_c.clone())
-            {
-                binding.error_label.set_text(&e.to_string());
+            if let Some(binding) = weak_c.upgrade() {
+                send(
+                    &binding,
+                    SettingsEvent::StartCapture(change_target_c.clone()),
+                );
             }
         });
         let weak_cl = self.self_weak.clone();
         clear.connect_clicked(move |_| {
-            if let Some(binding) = weak_cl.upgrade()
-                && let Err(e) = binding.vm.capture.clear_binding(&target)
-            {
-                binding.error_label.set_text(&e.to_string());
+            if let Some(binding) = weak_cl.upgrade() {
+                send(&binding, SettingsEvent::ClearCapture(target.clone()));
             }
         });
         row.append(&name);
@@ -636,28 +647,7 @@ impl PreferencesBinding {
     }
 
     fn language(&self) -> AppLanguage {
-        self.vm.general.view.get().language
-    }
-}
-
-// ---------------------------------------------------------------------------
-// GtkStoragePathValidator
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-struct GtkStoragePathValidator;
-impl StoragePathValidator for GtkStoragePathValidator {
-    fn validate(&self, path: &std::path::Path) -> Result<(), StoragePathError> {
-        let result = nerust_gui_runtime::settings::apply::validate_directory_path_typed(path);
-        match result {
-            Ok(()) => Ok(()),
-            Err(nerust_gui_runtime::settings::apply::DirectoryValidationError::NotDirectory) => {
-                Err(StoragePathError::NotDirectory)
-            }
-            Err(nerust_gui_runtime::settings::apply::DirectoryValidationError::Inaccessible(e)) => {
-                Err(StoragePathError::Inaccessible(e.to_string()))
-            }
-        }
+        self.controller.borrow().vm.general.view.get().language
     }
 }
 
@@ -680,36 +670,26 @@ pub(crate) fn present_preferences_dialog(
     };
     let lang = snapshot.shared.general.language;
 
-    let factories: Vec<Arc<dyn CoreFactory>> = registry.all().iter().map(Arc::clone).collect();
+    // Same duplicate-SystemId guard as the tao twin: refuse the window
+    // rather than failing the view model mid-construction.
+    if let Some(duplicate) = find_duplicate_system_id(&registry) {
+        let mut state = state.borrow_mut();
+        state.host.session_mut().report_external_error(
+            nerust_gui_shell::session::notification::FailureOrigin::Host,
+            format!("duplicate SystemId '{duplicate}'"),
+        );
+        drop(state);
+        on_close();
+        return None;
+    }
 
-    let supported_sample_rates: Arc<[u32]> = {
-        let rates = audio_registry.supported_rates();
-        if rates.is_empty() {
-            Arc::new([44_100, 48_000])
-        } else {
-            rates.iter().copied().collect()
-        }
-    };
-
-    let vm = match SettingsViewModel::new(
-        snapshot,
-        factories,
-        supported_sample_rates,
-        Rc::new(GtkStoragePathValidator) as Rc<dyn StoragePathValidator>,
-    ) {
-        Ok(vm) => vm,
-        Err(error) => {
-            // The owner validates the opening ticket before releasing Settings.
-            let mut state = state.borrow_mut();
-            state.host.session_mut().report_external_error(
-                nerust_gui_shell::session::notification::FailureOrigin::Host,
-                error.to_string(),
-            );
-            drop(state);
-            on_close();
-            return None;
-        }
-    };
+    // Factory dedup, sample-rate fallback, and the FS path validator all
+    // live in the shared controller; the dialog only owns widgets.
+    let controller = SettingsController::new(
+        &snapshot,
+        Arc::clone(&registry),
+        Arc::clone(&audio_registry),
+    );
 
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
@@ -858,15 +838,10 @@ pub(crate) fn present_preferences_dialog(
     audio_page.append(&vol_row);
     let sample_rate_label = gtk::Label::new(Some(ui_text(lang, UiText::SampleRate)));
     let sample_rate_combo = {
-        let rates: &[u32] = if audio_registry.supported_rates().is_empty() {
-            &[44_100, 48_000]
-        } else {
-            audio_registry.supported_rates()
-        };
+        // Initial fill only; refresh rebuilds from the shared choices.
         let combo = gtk::ComboBoxText::new();
-        for &rate in rates {
-            let id = format!("{rate}");
-            combo.append(Some(&id), &id);
+        for choice in &controller.vm.audio.view.get().sample_rate_choices {
+            combo.append_text(&choice.label);
         }
         combo
     };
@@ -1116,7 +1091,7 @@ pub(crate) fn present_preferences_dialog(
         "system",
     ];
     let _binding = PreferencesBinding::new(
-        vm,
+        controller,
         PreferencesWidgets {
             general: general_w,
             video: video_w,
@@ -1134,38 +1109,26 @@ pub(crate) fn present_preferences_dialog(
     );
 
     // ---- Signal handlers ----
-    language_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.general.set_language(
-                    active_choice(combo, &b.vm.general.view.get().language_choices)
-                        .unwrap_or(AppLanguage::SystemDefault),
-                ),
-            );
-        }
-    });
-    storage_policy_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.general.set_storage_policy(
-                    active_choice(combo, &b.vm.general.view.get().storage_policy_choices)
-                        .unwrap_or(StoragePolicy::Sidecar),
-                ),
-            );
-        }
-    });
+    connect_choice(
+        &language_combo,
+        &weak_handler(&_binding),
+        |b| b.controller.borrow().vm.general.view.get().language_choices,
+        SettingsEvent::SetLanguage,
+    );
+    connect_choice(
+        &storage_policy_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .general
+                .view
+                .get()
+                .storage_policy_choices
+        },
+        SettingsEvent::SetStoragePolicy,
+    );
     storage_dir_entry.connect_changed({
         let w = weak_handler(&_binding);
         move |entry| {
@@ -1173,181 +1136,102 @@ pub(crate) fn present_preferences_dialog(
             if b.refreshing.get() {
                 return;
             }
-            let text = entry.text();
-            let path = (!text.is_empty()).then(|| std::path::PathBuf::from(text.as_str()));
-            cmd(&b, b.vm.general.set_storage_directory(path));
-        }
-    });
-    fullscreen_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.video.set_fullscreen_default(button.is_active()));
-        }
-    });
-    scaling_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
+            send(
                 &b,
-                b.vm.video.set_scaling(
-                    active_choice(combo, &b.vm.video.view.get().scaling_choices)
-                        .unwrap_or(ScalingMode::FitToWindow),
-                ),
+                SettingsEvent::SetStorageDirectory(entry.text().to_string()),
             );
         }
     });
-    vsync_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.video.set_vsync(button.is_active()));
-        }
+    connect_toggle(
+        &fullscreen_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleFullscreenDefault,
+    );
+    connect_choice(
+        &scaling_combo,
+        &weak_handler(&_binding),
+        |b| b.controller.borrow().vm.video.view.get().scaling_choices,
+        SettingsEvent::SetScaling,
+    );
+    connect_toggle(
+        &vsync_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleVsync,
+    );
+    connect_toggle(
+        &mute_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleMute,
+    );
+    connect_spin(&volume_spin, &weak_handler(&_binding), |v| {
+        SettingsEvent::SetVolume(v as u8)
     });
-    mute_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.audio.set_mute(button.is_active()));
-        }
+    connect_choice(
+        &sample_rate_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .audio
+                .view
+                .get()
+                .sample_rate_choices
+        },
+        SettingsEvent::SetSampleRate,
+    );
+    connect_spin(&latency_spin, &weak_handler(&_binding), |v| {
+        SettingsEvent::SetLatency(v as u16)
     });
-    volume_spin.connect_value_changed({
-        let w = weak_handler(&_binding);
-        move |spin| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.audio.set_volume(spin.value() as u8));
-        }
+    connect_toggle(
+        &info_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleInfoEnabled,
+    );
+    connect_spin(&info_duration_spin, &weak_handler(&_binding), |v| {
+        SettingsEvent::SetInfoDuration(v as u32)
     });
-    sample_rate_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            let rate =
-                active_choice(combo, &b.vm.audio.view.get().sample_rate_choices).unwrap_or(48_000);
-            cmd(&b, b.vm.audio.set_sample_rate(rate));
-        }
+    connect_choice(
+        &info_color_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .color_choices
+        },
+        SettingsEvent::SetInfoColor,
+    );
+    connect_toggle(
+        &warning_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleWarningEnabled,
+    );
+    connect_spin(&warning_duration_spin, &weak_handler(&_binding), |v| {
+        SettingsEvent::SetWarningDuration(v as u32)
     });
-    latency_spin.connect_value_changed({
-        let w = weak_handler(&_binding);
-        move |spin| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.audio.set_latency(spin.value() as u16));
-        }
-    });
-    info_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.notifications.set_info_enabled(button.is_active()));
-        }
-    });
-    info_duration_spin.connect_value_changed({
-        let w = weak_handler(&_binding);
-        move |spin| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_info_duration_ms(spin.value() as u32),
-            );
-        }
-    });
-    info_color_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_info_color(
-                    active_choice(combo, &b.vm.notifications.view.get().color_choices)
-                        .unwrap_or(NotificationColor::White),
-                ),
-            );
-        }
-    });
-    warning_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_warning_enabled(button.is_active()),
-            );
-        }
-    });
-    warning_duration_spin.connect_value_changed({
-        let w = weak_handler(&_binding);
-        move |spin| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications
-                    .set_warning_duration_ms(spin.value() as u32),
-            );
-        }
-    });
-    warning_color_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_warning_color(
-                    active_choice(combo, &b.vm.notifications.view.get().color_choices)
-                        .unwrap_or(NotificationColor::White),
-                ),
-            );
-        }
-    });
-    error_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(&b, b.vm.notifications.set_error_enabled(button.is_active()));
-        }
-    });
+    connect_choice(
+        &warning_color_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .color_choices
+        },
+        SettingsEvent::SetWarningColor,
+    );
+    connect_toggle(
+        &error_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleErrorEnabled,
+    );
     error_modal_radio.connect_toggled({
         let w = weak_handler(&_binding);
         move |button| {
@@ -1355,7 +1239,7 @@ pub(crate) fn present_preferences_dialog(
             if b.refreshing.get() || !button.is_active() {
                 return;
             }
-            cmd(&b, b.vm.notifications.set_error_modal(true));
+            send(&b, SettingsEvent::ToggleErrorModal(true));
         }
     });
     error_onscreen_radio.connect_toggled({
@@ -1365,102 +1249,84 @@ pub(crate) fn present_preferences_dialog(
             if b.refreshing.get() || !button.is_active() {
                 return;
             }
-            cmd(&b, b.vm.notifications.set_error_modal(false));
+            send(&b, SettingsEvent::ToggleErrorModal(false));
         }
     });
-    error_color_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_error_color(
-                    active_choice(combo, &b.vm.notifications.view.get().color_choices)
-                        .unwrap_or(NotificationColor::White),
-                ),
-            );
-        }
-    });
-    status_check.connect_toggled({
-        let w = weak_handler(&_binding);
-        move |button| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_status_enabled(button.is_active()),
-            );
-        }
-    });
-    position_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_position(
-                    active_choice(combo, &b.vm.notifications.view.get().position_choices)
-                        .unwrap_or(NotificationPosition::BottomLeft),
-                ),
-            );
-        }
-    });
-    status_position_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_status_position(
-                    active_choice(combo, &b.vm.notifications.view.get().position_choices)
-                        .unwrap_or(NotificationPosition::BottomLeft),
-                ),
-            );
-        }
-    });
-    area_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_area_mode(
-                    active_choice(combo, &b.vm.notifications.view.get().area_mode_choices)
-                        .unwrap_or(NotificationAreaMode::Overlay),
-                ),
-            );
-        }
-    });
-    status_area_combo.connect_changed({
-        let w = weak_handler(&_binding);
-        move |combo| {
-            let Some(b) = w.upgrade() else { return };
-            if b.refreshing.get() {
-                return;
-            }
-            cmd(
-                &b,
-                b.vm.notifications.set_status_area_mode(
-                    active_choice(combo, &b.vm.notifications.view.get().area_mode_choices)
-                        .unwrap_or(NotificationAreaMode::Overlay),
-                ),
-            );
-        }
-    });
+    connect_choice(
+        &error_color_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .color_choices
+        },
+        SettingsEvent::SetErrorColor,
+    );
+    connect_toggle(
+        &status_check,
+        &weak_handler(&_binding),
+        SettingsEvent::ToggleStatusEnabled,
+    );
+    connect_choice(
+        &position_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .position_choices
+        },
+        SettingsEvent::SetPosition,
+    );
+    connect_choice(
+        &status_position_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .position_choices
+        },
+        SettingsEvent::SetStatusPosition,
+    );
+    connect_choice(
+        &area_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .area_mode_choices
+        },
+        SettingsEvent::SetAreaMode,
+    );
+    connect_choice(
+        &status_area_combo,
+        &weak_handler(&_binding),
+        |b| {
+            b.controller
+                .borrow()
+                .vm
+                .notifications
+                .view
+                .get()
+                .area_mode_choices
+        },
+        SettingsEvent::SetStatusAreaMode,
+    );
 
     let key_controller = gtk::EventControllerKey::new();
     key_controller.connect_key_pressed({
@@ -1469,13 +1335,22 @@ pub(crate) fn present_preferences_dialog(
             let Some(binding) = weak.upgrade() else {
                 return gtk::glib::Propagation::Proceed;
             };
-            if binding.vm.capture.view.get().target.is_none() {
+            if binding
+                .controller
+                .borrow()
+                .vm
+                .capture
+                .view
+                .get()
+                .target
+                .is_none()
+            {
                 return gtk::glib::Propagation::Proceed;
             }
             let Ok(mapped_key) = nerust_keyboard::Key::try_from(key) else {
                 return gtk::glib::Propagation::Stop;
             };
-            binding.vm.capture.apply_captured_key(mapped_key);
+            send(&binding, SettingsEvent::CaptureKey(mapped_key));
             gtk::glib::Propagation::Stop
         }
     });
@@ -1493,41 +1368,33 @@ pub(crate) fn present_preferences_dialog(
             finish_preferences(&finish_cb);
             return;
         }
-        match _binding_owned.vm.finish() {
-            Ok(snapshot) => {
-                let apply_result = with_mut(&state_clone, |state| state.apply_settings(snapshot));
-                match apply_result {
-                    Ok(result) => {
-                        if result.fullscreen_default_changed {
-                            parent_clone.set_fullscreened(
-                                _binding_owned
-                                    .vm
-                                    .snapshot()
-                                    .local
-                                    .video
-                                    .window
-                                    .fullscreen_default,
-                            );
-                        }
-                        if result.scaling_changed
-                            && let Some(profile) = state_clone.borrow().render_profile()
-                        {
-                            apply_scaling_to_window(
-                                &parent_clone,
-                                _binding_owned.vm.snapshot().local.video.window.scaling,
-                                &profile,
-                            );
-                        }
-                        dialog.destroy();
-                        finish_preferences(&finish_cb);
-                    }
-                    Err(e) => {
-                        _binding_owned.error_label.set_text(&e.to_string());
-                    }
+        // The controller stages the snapshot in its mailbox on success;
+        // validation failures leave the dialog open with the banner shown.
+        _binding_owned
+            .controller
+            .borrow_mut()
+            .update(SettingsEvent::Submit);
+        let Some(snapshot) = _binding_owned.controller.borrow().take_pending_apply() else {
+            return;
+        };
+        let scaling = snapshot.local.video.window.scaling;
+        let fullscreen_default = snapshot.local.video.window.fullscreen_default;
+        let apply_result = with_mut(&state_clone, |state| state.apply_settings(snapshot));
+        match apply_result {
+            Ok(result) => {
+                if result.fullscreen_default_changed {
+                    parent_clone.set_fullscreened(fullscreen_default);
                 }
+                if result.scaling_changed
+                    && let Some(profile) = state_clone.borrow().render_profile()
+                {
+                    apply_scaling_to_window(&parent_clone, scaling, &profile);
+                }
+                dialog.destroy();
+                finish_preferences(&finish_cb);
             }
-            Err(_) => {
-                // validation errors already shown via revision callback
+            Err(e) => {
+                _binding_owned.error_label.set_text(&e.to_string());
             }
         }
     });
@@ -1716,13 +1583,81 @@ where
     });
 }
 
-fn cmd<T>(
-    binding: &Rc<PreferencesBinding>,
-    result: Result<T, nerust_gui_viewmodel::settings::ViewModelError>,
+/// Route one widget gesture through the shared settings state machine.
+/// The controller records update errors and refreshes views through the
+/// existing observers; the headline is surfaced here.
+fn send(binding: &Rc<PreferencesBinding>, event: SettingsEvent) {
+    let effect = binding.controller.borrow_mut().update(event);
+    debug_assert!(effect.is_none(), "gtk has no browse-directory button");
+    binding.error_label.set_text(
+        binding
+            .controller
+            .borrow()
+            .error_message
+            .clone()
+            .unwrap_or_default()
+            .as_str(),
+    );
+}
+
+/// Wire a combo to one controller event: upgrade, guard, resolve the
+/// shared choice, send. No selection is a no-op.
+fn connect_choice<T>(
+    combo: &gtk::ComboBoxText,
+    weak: &std::rc::Weak<PreferencesBinding>,
+    choices: impl Fn(&PreferencesBinding) -> Vec<ChoiceView<T>> + 'static,
+    event: impl Fn(ChoiceView<T>) -> SettingsEvent + 'static,
+) where
+    T: Clone + PartialEq + Eq + 'static,
+{
+    combo.connect_changed({
+        let w = weak.clone();
+        move |combo| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            if let Some(choice) = active_choice_view(combo, &(choices)(&b)) {
+                send(&b, event(choice));
+            }
+        }
+    });
+}
+
+/// Wire a toggle to one controller event: upgrade, guard, send.
+fn connect_toggle(
+    button: &gtk::CheckButton,
+    weak: &std::rc::Weak<PreferencesBinding>,
+    event: impl Fn(bool) -> SettingsEvent + 'static,
 ) {
-    if let Err(e) = result {
-        binding.error_label.set_text(&e.to_string());
-    }
+    button.connect_toggled({
+        let w = weak.clone();
+        move |button| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            send(&b, event(button.is_active()));
+        }
+    });
+}
+
+/// Wire a spin to one controller event; the caller casts the raw value.
+fn connect_spin(
+    spin: &gtk::SpinButton,
+    weak: &std::rc::Weak<PreferencesBinding>,
+    event: impl Fn(f64) -> SettingsEvent + 'static,
+) {
+    spin.connect_value_changed({
+        let w = weak.clone();
+        move |spin| {
+            let Some(b) = w.upgrade() else { return };
+            if b.refreshing.get() {
+                return;
+            }
+            send(&b, event(spin.value()));
+        }
+    });
 }
 
 fn combo_box(entries: &[(&str, &str)]) -> gtk::ComboBoxText {
@@ -1770,14 +1705,26 @@ fn connect_slot_combo(
         let profile = combo
             .active_id()
             .and_then(|id| (id.as_str() != "__none__").then(|| id.to_string()));
-        if let Some(vm) = binding.vm.inputs().get(index)
-            && let Err(e) = vm.set_controller_slot(slot_id, profile.as_deref())
+        send(&binding, SettingsEvent::SelectInputTab(index));
+        send(
+            &binding,
+            SettingsEvent::SetControllerSlot {
+                slot: slot_id,
+                controller_id: profile,
+            },
+        );
+        if !binding
+            .controller
+            .borrow()
+            .error_message
+            .clone()
+            .unwrap_or_default()
+            .is_empty()
         {
-            binding.error_label.set_text(&e.to_string());
             let idx = index;
             schedule_idle(&binding.self_weak, move |b| {
                 b.with_refreshing(|| {
-                    if let Some(vm) = b.vm.inputs().get(idx) {
+                    if let Some(vm) = b.controller.borrow().vm.inputs().get(idx) {
                         b.rebuild_input_page(idx, &vm.view.get());
                     }
                 });
@@ -1876,19 +1823,22 @@ mod tests {
         );
     });
 
-    gtk_test!(cmd_helper_shows_error_on_error_label, || {
+    gtk_test!(send_helper_clears_error_on_success, || {
         let binding = create_test_binding();
-        let err = nerust_gui_viewmodel::settings::ViewModelError::UnknownSystem("test".into());
-        cmd(&binding, Err::<(), _>(err));
+        send(&binding, SettingsEvent::ToggleMute(true));
         assert!(
-            !binding.error_label.text().is_empty(),
-            "error_label should show the error"
+            binding.error_label.text().is_empty(),
+            "successful update should clear the error label"
+        );
+        assert!(
+            binding.controller.borrow().vm.audio.view.get().muted,
+            "mute toggle should reach the view model"
         );
     });
 
     gtk_test!(general_widgets_initial_values_match_viewmodel, || {
         let binding = create_test_binding();
-        let gv = binding.vm.general.view.get();
+        let gv = binding.controller.borrow().vm.general.view.get();
         assert_eq!(
             binding.general.language_combo.active(),
             choice_position(&gv.language_choices, &gv.language)
@@ -1897,7 +1847,7 @@ mod tests {
 
     gtk_test!(ok_button_sensitivity_matches_validation, || {
         let binding = create_test_binding();
-        let ok = binding.vm.finish().is_ok();
+        let ok = binding.controller.borrow().validation_banner().can_submit;
         assert_eq!(binding.ok_button.is_sensitive(), ok);
     });
 
@@ -1935,13 +1885,6 @@ mod tests {
     }
 
     fn create_test_binding() -> Rc<PreferencesBinding> {
-        #[derive(Debug)]
-        struct TestNoopValidator;
-        impl StoragePathValidator for TestNoopValidator {
-            fn validate(&self, _: &std::path::Path) -> Result<(), StoragePathError> {
-                Ok(())
-            }
-        }
         use std::sync::Arc;
 
         let snapshot = nerust_settings_core::model::snapshot::SettingsSnapshot {
@@ -1949,23 +1892,14 @@ mod tests {
             local: nerust_settings_core::model::local::HostBackendLocalSettings::default(),
             app_state: nerust_settings_core::model::app_state::DesktopAppState::default(),
         };
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio_registry = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
-        let supported_sample_rates: Arc<[u32]> = {
-            let rates = audio_registry.supported_rates();
-            if rates.is_empty() {
-                Arc::new([44_100, 48_000])
-            } else {
-                rates.iter().copied().collect()
-            }
-        };
 
-        let vm = SettingsViewModel::new(
-            snapshot,
-            vec![],
-            supported_sample_rates,
-            Rc::new(TestNoopValidator) as Rc<dyn StoragePathValidator>,
-        )
-        .unwrap();
+        let controller = SettingsController::new(
+            &snapshot,
+            Arc::clone(&registry),
+            Arc::clone(&audio_registry),
+        );
 
         let dialog = gtk::Dialog::builder().title("test").build();
         let stack = gtk::Stack::new();
@@ -1973,7 +1907,7 @@ mod tests {
         let error_label = gtk::Label::new(None);
 
         PreferencesBinding::new(
-            vm,
+            controller,
             PreferencesWidgets {
                 general: GeneralWidgets {
                     language_combo: gtk::ComboBoxText::new(),
