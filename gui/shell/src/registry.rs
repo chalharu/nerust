@@ -520,3 +520,68 @@ mod tests {
         assert!(super::rom_picker_filters(registry.all()).is_empty());
     }
 }
+
+/// Key for factory identity: the display-independent system id.
+fn system_id_key(factory: &Arc<dyn CoreFactory>) -> String {
+    factory.system_id().to_string()
+}
+
+/// First key occurring twice, in encounter order.
+fn first_duplicate_key<T>(
+    items: impl IntoIterator<Item = T>,
+    mut key: impl FnMut(&T) -> String,
+) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .map(|item| key(&item))
+        .find(|id| !seen.insert(id.clone()))
+}
+
+/// First duplicate SystemId in registration order, if any.
+pub fn find_duplicate_system_id(registry: &SystemRegistry) -> Option<String> {
+    first_duplicate_key(registry.all(), |factory| system_id_key(factory))
+}
+
+/// First-wins dedupe by key; `on_duplicate` fires per dropped item.
+fn deduped_by_key<T>(
+    items: impl IntoIterator<Item = T>,
+    mut key: impl FnMut(&T) -> String,
+    mut on_duplicate: impl FnMut(&T),
+) -> Vec<T> {
+    let mut seen = std::collections::HashSet::new();
+    items
+        .into_iter()
+        .filter(|item| {
+            if seen.insert(key(item)) {
+                true
+            } else {
+                on_duplicate(item);
+                false
+            }
+        })
+        .collect()
+}
+
+/// Factories deduped first-wins by system id; later duplicates are
+/// logged and dropped.
+pub fn deduped_factories(registry: &SystemRegistry) -> Vec<Arc<dyn CoreFactory>> {
+    deduped_by_key(registry.all().iter().cloned(), system_id_key, |factory| {
+        log::warn!(
+            "ignoring factory '{}' with duplicate SystemId",
+            factory.display_name()
+        );
+    })
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_system_id_reports_first_repeat() {
+        let registry = SystemRegistry::new(Vec::new());
+        assert_eq!(find_duplicate_system_id(&registry), None);
+        assert!(deduped_factories(&registry).is_empty());
+    }
+}

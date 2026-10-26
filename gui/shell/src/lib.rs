@@ -6,6 +6,7 @@ pub mod load;
 pub mod registry;
 pub mod session;
 pub mod settings;
+pub mod ui_ports;
 pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod test_helpers;

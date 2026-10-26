@@ -14,7 +14,7 @@ use iced::{
 use iced_winit::program::Program;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::registry::SystemRegistry;
+use nerust_gui_shell::registry::{SystemRegistry, deduped_factories};
 use nerust_settings_core::model::{
     language::AppLanguage,
     local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
@@ -177,60 +177,6 @@ pub(crate) struct SettingsAppState {
     pub(super) input_section: InputPageSection,
     pub(super) storage_directory_input: String,
     pub(super) error_message: Option<String>,
-}
-
-fn system_id_key(factory: &Arc<dyn nerust_system_traits::factory::CoreFactory>) -> String {
-    factory.system_id().to_string()
-}
-
-/// First key occurring twice, in encounter order.
-fn first_duplicate_key<T>(
-    items: impl IntoIterator<Item = T>,
-    mut key: impl FnMut(&T) -> String,
-) -> Option<String> {
-    let mut seen = std::collections::HashSet::new();
-    items
-        .into_iter()
-        .map(|item| key(&item))
-        .find(|id| !seen.insert(id.clone()))
-}
-
-/// First duplicate SystemId in registration order, if any.
-pub(crate) fn find_duplicate_system_id(registry: &SystemRegistry) -> Option<String> {
-    first_duplicate_key(registry.all(), |factory| system_id_key(factory))
-}
-
-/// First-wins dedupe by key; `on_duplicate` fires per dropped item.
-fn deduped_by_key<T>(
-    items: impl IntoIterator<Item = T>,
-    mut key: impl FnMut(&T) -> String,
-    mut on_duplicate: impl FnMut(&T),
-) -> Vec<T> {
-    let mut seen = std::collections::HashSet::new();
-    items
-        .into_iter()
-        .filter(|item| {
-            if seen.insert(key(item)) {
-                true
-            } else {
-                on_duplicate(item);
-                false
-            }
-        })
-        .collect()
-}
-
-/// Factories deduped first-wins by [`system_id_key`]; later
-/// duplicates are logged and dropped.
-fn deduped_factories(
-    registry: &SystemRegistry,
-) -> Vec<Arc<dyn nerust_system_traits::factory::CoreFactory>> {
-    deduped_by_key(registry.all().iter().cloned(), system_id_key, |factory| {
-        log::warn!(
-            "ignoring factory '{}' with duplicate SystemId",
-            factory.display_name()
-        );
-    })
 }
 
 impl SettingsAppState {
@@ -934,34 +880,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod dedupe_tests {
-    use super::{deduped_by_key, first_duplicate_key};
-
-    fn key(entry: &(&str, u32)) -> String {
-        entry.0.to_string()
-    }
-
-    #[test]
-    fn first_duplicate_reports_first_repeat_in_order() {
-        let items = vec![("a", 1), ("b", 2), ("a", 3), ("b", 4)];
-        assert_eq!(first_duplicate_key(items, key), Some("a".to_string()));
-    }
-
-    #[test]
-    fn first_duplicate_returns_none_without_repeats() {
-        let items = vec![("a", 1), ("b", 2)];
-        assert_eq!(first_duplicate_key(items, key), None);
-        let empty: Vec<(&str, u32)> = Vec::new();
-        assert_eq!(first_duplicate_key(empty, key), None);
-    }
-
-    #[test]
-    fn dedupe_keeps_first_and_reports_drops() {
-        let items = vec![("a", 1), ("b", 2), ("a", 3)];
-        let mut dropped = Vec::new();
-        let kept = deduped_by_key(items, key, |item| dropped.push(item.1));
-        assert_eq!(kept, vec![("a", 1), ("b", 2)]);
-        assert_eq!(dropped, vec![3]);
-    }
-}

@@ -6,7 +6,8 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
+use super::program::{Message, SettingsAppProgram};
+use nerust_gui_shell::registry::find_duplicate_system_id;
 use crate::aux::bridge::lock_recovered;
 use crate::aux::shell::{AuxShell, AuxSurface};
 

@@ -6,7 +6,11 @@ use std::sync::Arc;
 
 use nerust_core_traits::debugger::SpaceId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{debug::DebugAction, session::osd::HistoryLine};
+use nerust_gui_shell::debug::DebugAction;
+pub(crate) use nerust_gui_shell::session::osd::HistoryLine;
+pub(crate) use nerust_gui_shell::ui_ports::{
+    DebugDrainPort, HistorySyncPort, LiveImagesPort, SettingsClosePort,
+};
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use nerust_settings_core::model::language::AppLanguage;
 
@@ -22,42 +26,6 @@ pub(crate) struct AuxOutcome {
     /// History clear requested (history only).
     pub cleared: bool,
     pub error: Option<String>,
-}
-
-/// Debug-drain port: batch take plus apply for one drain.
-pub(crate) trait DebugDrainPort {
-    /// Debugger batch take (debug only).
-    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)>;
-
-    /// Apply a finished drain (debug only).
-    fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>);
-}
-
-/// Live-images port: finished live fetches land here.
-/// Only the debugger implements this; see `AuxController::as_live`.
-pub(crate) trait LiveImagesPort {
-    /// Apply finished live images (debug only).
-    fn apply_live(
-        &mut self,
-        _generation: u64,
-        _images: Vec<DebugImageRgba>,
-        _running: bool,
-    ) -> bool;
-}
-
-/// Settings-close port: pending apply staged for close teardown.
-/// Only settings implements this; see `AuxController::as_settings`.
-pub(crate) trait SettingsClosePort {
-    /// Take the pending settings apply on close (settings only).
-    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot>;
-}
-
-/// History-sync port: content push for the history viewer.
-pub(crate) trait HistorySyncPort {
-    /// Push fresh history content (history only).
-    fn sync_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage);
-    /// Take a history clear request; the default pump routes here.
-    fn take_history_clear(&mut self) -> bool;
 }
 
 /// Uniform aux controller: identity plus render plus capability queries.

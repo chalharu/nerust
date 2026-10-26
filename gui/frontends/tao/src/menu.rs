@@ -1,8 +1,7 @@
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::commands::SessionCommand;
+pub(crate) use nerust_gui_shell::ui_ports::MenuSync;
 use nerust_persistence::model::StateSlotSummary;
-use nerust_settings_core::model::input::ShortcutBinding;
-use nerust_settings_core::model::language::AppLanguage;
 use tao::window::Window as TaoWindow;
 
 /// Headless-testable menu surface: production `AppMenu` drives the
@@ -12,19 +11,6 @@ pub(crate) trait MenuSink {
     fn update(&mut self, sync: MenuSync<'_>);
     fn init_for_window(&self, window: &TaoWindow);
     fn clear_event_handler(&self);
-}
-
-/// One snapshot for a menu sync: a struct (not a long argument
-/// list) so adding a field never trips the arity lint. Shared by
-/// the real menu and the headless stub below.
-pub(crate) struct MenuSync<'a> {
-    pub(crate) loaded: bool,
-    pub(crate) paused: bool,
-    pub(crate) slots: &'a [StateSlotSummary],
-    pub(crate) active_slot: Option<u64>,
-    pub(crate) settings_open: bool,
-    pub(crate) language: AppLanguage,
-    pub(crate) shortcuts: &'a [ShortcutBinding],
 }
 
 #[cfg(any(

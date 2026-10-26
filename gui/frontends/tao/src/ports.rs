@@ -11,6 +11,7 @@ use tao::{
 use nerust_core_traits::{audio::AudioBackendRegistry, debugger::SpaceId};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
+pub(crate) use nerust_gui_shell::ui_ports::DialogPorts;
 use nerust_gui_viewmodel::debugger::DisplayCache;
 use nerust_settings_core::{
     i18n::{UiText, text},
@@ -25,22 +26,6 @@ use crate::event::UserEvent;
 
 /// Native file/error dialogs, seamed for headless tests. Production talks to rfd; fakes return
 /// canned picks and record errors. `Send + Sync`: error dialogs run on the modal actor so the event loop never stalls behind a modal (see `ModalFlight`).
-pub(crate) trait DialogPorts: Send + Sync {
-    fn pick_rom_file(
-        &self,
-        language: AppLanguage,
-        filters: Vec<(String, Vec<String>)>,
-    ) -> Option<PathBuf>;
-    fn show_load_error(&self, language: AppLanguage, detail: &str);
-    /// Non-blocking error dialog: spawns the modal, returns its ack channel.
-    /// A dead channel means the spawn failed; the host reaps it as a failed ack.
-    fn show_error_async(
-        &self,
-        language: AppLanguage,
-        detail: String,
-    ) -> std::sync::mpsc::Receiver<()>;
-}
-
 /// Production dialogs over rfd.
 pub(crate) struct NativeDialogs;
 
