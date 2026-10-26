@@ -33,72 +33,11 @@ impl AuxKind {
     }
 }
 
-/// Main-window focus truth plus the deferred auto-pause protocol.
-/// Pauses land only via burst-end commit; arrivals report a resume at most once.
-pub(crate) struct FocusState {
-    /// Main window holds focus.
-    main_active: bool,
-    /// Session paused by the protocol, never by the user directly.
-    auto_paused: bool,
-    /// Blur armed a pause; committed at burst end unless cancelled.
-    pending: bool,
-}
-
-impl FocusState {
-    pub(crate) fn new() -> Self {
-        Self {
-            main_active: true,
-            auto_paused: false,
-            pending: false,
-        }
-    }
-
-    pub(crate) fn main_active(&self) -> bool {
-        self.main_active
-    }
-
-    /// Aux-window focus change with the resume protocol chosen by kind.
-    /// Returns whether a system-paused session should resume.
-    pub(crate) fn on_aux(&mut self, kind: AuxKind, focused: bool) -> bool {
-        on_aux_focus(self, kind, focused)
-    }
-
-    fn arrive_main(&mut self) -> bool {
-        self.main_active = true;
-        self.arrive()
-    }
-
-    fn leave_main(&mut self) {
-        self.main_active = false;
-        self.pending = true;
-    }
-
-    fn arrive_aux(&mut self) -> bool {
-        self.arrive()
-    }
-
-    fn leave_aux(&mut self) {
-        self.pending = true;
-    }
-
-    fn cancel_pending(&mut self) {
-        self.pending = false;
-    }
-
-    fn take_armed(&mut self) -> bool {
-        std::mem::take(&mut self.pending)
-    }
-
-    fn mark_auto_paused(&mut self) {
-        self.auto_paused = true;
-    }
-
-    /// Shared arrival core: cancel pending, consume the resume flag.
-    fn arrive(&mut self) -> bool {
-        self.pending = false;
-        std::mem::replace(&mut self.auto_paused, false)
-    }
-}
+/// Shared protocol core lives in the frontend kernel; this edge only
+/// maps tao window events to it. Kind routing stays here: interactive
+/// viewers (debug/PPU) may report a resume, read-only viewers (settings,
+/// history) only cancel a pending pause.
+pub(crate) use nerust_frontend_kernel::focus::{FocusArbiter, FocusEffect};
 
 /// Focus-domain event: the only inputs the coordinator accepts.
 /// Only `WindowEvent::Focused` maps to these.
@@ -109,23 +48,16 @@ pub(crate) enum FocusEvent {
     BurstEnd,
 }
 
-/// Focus-domain effect: what the host must do after an event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FocusEffect {
-    Pause,
-    Resume,
-}
-
 /// Focus coordinator: maps [`FocusEvent`] to an optional [`FocusEffect`].
 /// Departures only arm; `BurstEnd` commits a still-armed pause.
 pub(crate) struct FocusCoordinator {
-    state: FocusState,
+    state: FocusArbiter,
 }
 
 impl FocusCoordinator {
     pub(crate) fn new() -> Self {
         Self {
-            state: FocusState::new(),
+            state: FocusArbiter::new(),
         }
     }
 
@@ -134,63 +66,20 @@ impl FocusCoordinator {
     }
 
     pub(crate) fn on(&mut self, event: FocusEvent) -> Option<FocusEffect> {
+        use nerust_frontend_kernel::focus::FocusEvent as KernelEvent;
         match event {
-            FocusEvent::Main(true) => {
-                if self.state.arrive_main() {
-                    Some(FocusEffect::Resume)
-                } else {
-                    None
-                }
-            }
-            FocusEvent::Main(false) => {
-                self.state.leave_main();
-                None
-            }
-            FocusEvent::Aux(kind, focused) => {
-                if self.state.on_aux(kind, focused) {
-                    Some(FocusEffect::Resume)
-                } else {
-                    None
-                }
-            }
-            FocusEvent::BurstEnd => {
-                if self.state.take_armed() {
-                    // Armed and uncancelled: the caller commits the pause.
-                    Some(FocusEffect::Pause)
-                } else {
-                    None
-                }
-            }
+            FocusEvent::Main(focused) => self.state.on(KernelEvent::Main(focused)),
+            FocusEvent::Aux(kind, focused) => self.state.on(KernelEvent::Remote {
+                focused,
+                resumes_on_arrival: kind.resume_on_arrival(),
+            }),
+            FocusEvent::BurstEnd => self.state.on(KernelEvent::Commit),
         }
     }
 
     /// Record a protocol-driven pause (user pauses never set this).
     pub(crate) fn note_protocol_pause(&mut self) {
-        self.state.mark_auto_paused();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn state_mut(&mut self) -> &mut FocusState {
-        &mut self.state
-    }
-}
-
-/// Shared aux-focus step with the resume protocol chosen by window
-/// kind. Returns whether a system-paused session should resume.
-/// Arrival resumes for debug/PPU; settings/history only cancel a pending pause.
-pub(crate) fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool) -> bool {
-    if focused {
-        if kind.resume_on_arrival() {
-            focus.arrive_aux()
-        } else {
-            // Cancel only: unlike `arrive_aux`, the auto-pause flag is
-            // preserved so a later main-window arrival still resumes.
-            focus.cancel_pending();
-            false
-        }
-    } else {
-        focus.leave_aux();
-        false
+        self.state.note_protocol_pause();
     }
 }
 
@@ -301,45 +190,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn coordinator_main_blur_commits_pause_at_burst_end() {
-        let mut coord = FocusCoordinator::new();
-        assert_eq!(coord.on(FocusEvent::Main(false)), None);
-        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
-        // Consumed: a second burst end without re-arm is quiet.
-        assert_eq!(coord.on(FocusEvent::BurstEnd), None);
-    }
-
-    #[test]
-    fn coordinator_same_app_arrival_cancels_pause() {
-        let mut coord = FocusCoordinator::new();
-        assert_eq!(coord.on(FocusEvent::Main(false)), None);
-        // Same-burst aux arrival cancels the armed pause.
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, true)), None);
-        assert_eq!(coord.on(FocusEvent::BurstEnd), None);
-    }
-
-    #[test]
-    fn coordinator_reports_resume_exactly_once() {
-        let mut coord = FocusCoordinator::new();
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, false)), None);
-        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
-        coord.note_protocol_pause();
-        assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
-        assert_eq!(coord.on(FocusEvent::Main(true)), None);
-    }
-
-    #[test]
-    fn coordinator_settings_arrival_preserves_resume() {
-        let mut coord = FocusCoordinator::new();
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Settings, false)), None);
-        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
-        coord.note_protocol_pause();
-        // Settings arrival cancels without resuming.
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Settings, true)), None);
-        assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
-    }
-
-    #[test]
     fn aux_kind_routes_resume_protocol() {
         for kind in [AuxKind::Debug, AuxKind::Ppu] {
             let mut coord = FocusCoordinator::new();
@@ -357,7 +207,8 @@ mod tests {
             assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
             coord.note_protocol_pause();
             assert_eq!(coord.on(FocusEvent::Aux(kind, true)), None);
-            assert!(coord.state_mut().arrive_main());
+            // Cancel preserves the resume flag: main arrival still resumes.
+            assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
         }
     }
 
@@ -489,19 +340,5 @@ mod tests {
         assert_eq!(*win.shell.seen_tag.borrow(), Some("PPU viewer"));
         win.shell.close = true;
         assert!(AuxIdentity::close_requested(&win));
-    }
-
-    #[test]
-    fn focus_state_tracks_main_and_burst_contract() {
-        let mut coord = FocusCoordinator::new();
-        assert!(coord.main_active());
-        // Aux blur arms; main arrival cancels without resume.
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Ppu, false)), None);
-        assert_eq!(coord.on(FocusEvent::Main(true)), None);
-        assert!(coord.main_active());
-        // Armed burst commits the pause exactly once.
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, false)), None);
-        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
-        assert_eq!(coord.on(FocusEvent::BurstEnd), None);
     }
 }

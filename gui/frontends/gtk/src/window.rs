@@ -59,6 +59,9 @@ pub(crate) struct WindowCore {
     open_dialog: Option<gtk::FileChooserNative>,
     debugger_window: Option<crate::debugger::DebuggerWindow>,
     history_dialog: Option<(gtk::Dialog, std::rc::Rc<dyn Fn()>)>,
+    /// Pending deferred auto-pause commit after a main-window blur.
+    /// Arrival anywhere cancels it; see `on_main_focus`.
+    focus_commit: Option<glib::SourceId>,
     actions: WindowActions,
     menubar: MenubarModels,
     select_active_slot_menu: gio::Menu,
@@ -163,6 +166,13 @@ pub(crate) trait WindowExtend {
     fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
+    /// Main-window focus change for the deferred auto-pause protocol.
+    fn on_main_focus(&self, focused: bool);
+    /// Arrival on another surface for the deferred auto-pause protocol.
+    /// Debuggers may resume; read-only viewers only cancel a pending pause.
+    fn on_remote_focus(&self, resumes_on_arrival: bool);
+    /// Commit a still-armed auto-pause. Scheduled, not inline.
+    fn commit_focus_pause(&self);
 }
 
 #[derive(Clone, Copy)]
@@ -218,6 +228,7 @@ impl WindowExtend for Window {
             open_dialog: None,
             debugger_window: None,
             history_dialog: None,
+            focus_commit: None,
             actions,
             menubar,
             select_active_slot_menu: state_menus.select_active_slot_menu,
@@ -240,6 +251,7 @@ impl WindowExtend for Window {
                 if !window.is_active() {
                     result.state().borrow_mut().clear_input();
                 }
+                result.on_main_focus(window.is_active());
             });
         }
         {
@@ -451,6 +463,13 @@ impl WindowExtend for Window {
             });
         }
         self.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh));
+        {
+            // Read-only arrival cancels a pending auto-pause without resuming.
+            let result = self.clone();
+            let focus = gtk::EventControllerFocus::new();
+            focus.connect_enter(move |_| result.on_remote_focus(false));
+            built.dialog.add_controller(focus);
+        }
         built.dialog.present();
     }
 
@@ -478,6 +497,12 @@ impl WindowExtend for Window {
             &self.window(),
             self.state(),
         );
+        {
+            let result = self.clone();
+            debugger
+                .borrow()
+                .on_focus_arrive(move || result.on_remote_focus(true));
+        }
         self.borrow_mut().debugger_window = Some(debugger);
         self.update_actions();
     }
@@ -717,6 +742,76 @@ impl WindowExtend for Window {
         }
         self.update_actions();
     }
+
+    fn on_main_focus(&self, focused: bool) {
+        use nerust_frontend_kernel::{
+            focus::{FocusEffect, FocusEvent},
+            pause::PauseOwner,
+        };
+        if focused {
+            // Arrival cancels a pending commit; a protocol pause resumes at most once.
+            if let Some(source) = self.borrow_mut().focus_commit.take() {
+                source.remove();
+            }
+            let effect = self.state().borrow_mut().focus.on(FocusEvent::Main(true));
+            if effect == Some(FocusEffect::Resume) {
+                self.state()
+                    .borrow_mut()
+                    .set_pause_owner(PauseOwner::Focus, false);
+            }
+            return;
+        }
+        // Departure arms; the commit below lands unless an arrival cancels first.
+        // Same burst shape as the tao twin (arm now, commit at pass end).
+        self.state().borrow_mut().focus.on(FocusEvent::Main(false));
+        let weak = self.clone();
+        let previous = self
+            .borrow_mut()
+            .focus_commit
+            .replace(glib::idle_add_local(move || {
+                weak.commit_focus_pause();
+                glib::ControlFlow::Break
+            }));
+        if let Some(source) = previous {
+            source.remove();
+        }
+    }
+
+    fn on_remote_focus(&self, resumes_on_arrival: bool) {
+        use nerust_frontend_kernel::{
+            focus::{FocusEffect, FocusEvent},
+            pause::PauseOwner,
+        };
+        if let Some(source) = self.borrow_mut().focus_commit.take() {
+            source.remove();
+        }
+        let effect = self.state().borrow_mut().focus.on(FocusEvent::Remote {
+            focused: true,
+            resumes_on_arrival,
+        });
+        if effect == Some(FocusEffect::Resume) {
+            self.state()
+                .borrow_mut()
+                .set_pause_owner(PauseOwner::Focus, false);
+        }
+    }
+
+    fn commit_focus_pause(&self) {
+        use nerust_frontend_kernel::{
+            focus::{FocusEffect, FocusEvent},
+            pause::PauseOwner,
+        };
+        self.borrow_mut().focus_commit = None;
+        let commit = self.state().borrow_mut().focus.on(FocusEvent::Commit);
+        // tao parity: the pause lands only with a loaded core.
+        if commit == Some(FocusEffect::Pause) && self.state().borrow().session.tick_metrics().loaded
+        {
+            self.state()
+                .borrow_mut()
+                .set_pause_owner(PauseOwner::Focus, true);
+            self.state().borrow_mut().focus.note_protocol_pause();
+        }
+    }
 }
 
 fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
@@ -837,8 +932,56 @@ mod tests {
         dialog.destroy();
     }
 
+    /// Window focus change for the deferred auto-pause protocol.
+    /// Widget-only: needs a display, run under Xvfb (skips headless).
+    #[test]
+    fn focus_blur_arms_and_arrival_resolves_without_owner_change() {
+        let Some((app, window, state)) = harness_with_id("org.nerust.focus-test") else {
+            eprintln!("SKIP: focus test needs a display (run under Xvfb)");
+            return;
+        };
+        let win = super::Window::bind(
+            app,
+            window,
+            gtk::Picture::new(),
+            state,
+            std::rc::Rc::new(MockPipelineFactory),
+            super::StateMenus {
+                select_active_slot_menu: gio::Menu::new(),
+                save_slot_menu: gio::Menu::new(),
+                load_slot_menu: gio::Menu::new(),
+                delete_slot_menu: gio::Menu::new(),
+            },
+            super::MenubarModels::new(),
+        );
+        // Coreless: commit runs the protocol but lands nothing.
+        win.on_main_focus(false);
+        assert!(win.borrow().focus_commit.is_some());
+        win.commit_focus_pause();
+        assert!(!win.state().borrow().paused());
+        // Arrival clears the pending commit without side effects.
+        win.on_main_focus(false);
+        win.on_remote_focus(true);
+        assert!(win.borrow().focus_commit.is_none());
+        win.on_main_focus(true);
+        assert!(!win.state().borrow().paused());
+    }
+
     /// Headless-capable state: session plus settings only, no renderer.
     fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+    )> {
+        harness_with_id("org.nerust.window-test")
+    }
+
+    /// Parallel widget tests must not share an application id: Gio
+    /// registration is process-global and a duplicate breaks later
+    /// windows in the same run.
+    fn harness_with_id(
+        app_id: &str,
+    ) -> Option<(
         gtk::Application,
         gtk::ApplicationWindow,
         std::rc::Rc<std::cell::RefCell<crate::State>>,
@@ -846,9 +989,7 @@ mod tests {
         if !crate::test_support::ui_test_available() {
             return None;
         }
-        let app = gtk::Application::builder()
-            .application_id("org.nerust.window-test")
-            .build();
+        let app = gtk::Application::builder().application_id(app_id).build();
         let window = gtk::ApplicationWindow::builder().application(&app).build();
         Some((app, window, model_state()))
     }

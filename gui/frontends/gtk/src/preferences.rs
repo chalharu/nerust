@@ -15,21 +15,17 @@ use gtk::prelude::{
 use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
-    Subscription,
+    Subscription, ValidationBanner,
     dto::{
         AudioView, BindingRowView, BindingValueView, ChoiceView, ControllerSlotView, GeneralView,
         InputTabView, NotificationView, SystemTabView, VideoView,
     },
-    ValidationBanner,
 };
 
 /// Index-based combo selection over shared choices: the position in the
 /// viewmodel choice list replaces per-enum id tables. Order is defined
 /// once by the projection; rebuilds keep it.
-fn choice_position<T: Clone + PartialEq + Eq>(
-    choices: &[ChoiceView<T>],
-    value: &T,
-) -> Option<u32> {
+fn choice_position<T: Clone + PartialEq + Eq>(choices: &[ChoiceView<T>], value: &T) -> Option<u32> {
     choices
         .iter()
         .position(|choice| &choice.value == value)
@@ -377,7 +373,11 @@ impl PreferencesBinding {
         self.video
             .fullscreen_check
             .set_active(view.fullscreen_default);
-        refill_choices(&self.video.scaling_combo, &view.scaling_choices, &view.scaling);
+        refill_choices(
+            &self.video.scaling_combo,
+            &view.scaling_choices,
+            &view.scaling,
+        );
         self.video.vsync_check.set_active(view.vsync);
     }
 
@@ -449,7 +449,8 @@ impl PreferencesBinding {
             Err(validation) => validation.banner(),
         };
         self.ok_button.set_sensitive(banner.can_submit);
-        self.error_label.set_text(banner.headline.as_deref().unwrap_or(""));
+        self.error_label
+            .set_text(banner.headline.as_deref().unwrap_or(""));
         self.general
             .storage_error_label
             .set_text(banner.storage.as_deref().unwrap_or(""));
@@ -1105,11 +1106,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.general
-                    .set_storage_policy(
-                        active_choice(combo, &b.vm.general.view.get().storage_policy_choices)
-                            .unwrap_or(StoragePolicy::Sidecar),
-                    ),
+                b.vm.general.set_storage_policy(
+                    active_choice(combo, &b.vm.general.view.get().storage_policy_choices)
+                        .unwrap_or(StoragePolicy::Sidecar),
+                ),
             );
         }
     });
@@ -1144,11 +1144,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.video
-                    .set_scaling(
-                        active_choice(combo, &b.vm.video.view.get().scaling_choices)
-                            .unwrap_or(ScalingMode::FitToWindow),
-                    ),
+                b.vm.video.set_scaling(
+                    active_choice(combo, &b.vm.video.view.get().scaling_choices)
+                        .unwrap_or(ScalingMode::FitToWindow),
+                ),
             );
         }
     });
@@ -1189,8 +1188,8 @@ pub(crate) fn present_preferences_dialog(
             if b.refreshing.get() {
                 return;
             }
-            let rate = active_choice(combo, &b.vm.audio.view.get().sample_rate_choices)
-                .unwrap_or(48_000);
+            let rate =
+                active_choice(combo, &b.vm.audio.view.get().sample_rate_choices).unwrap_or(48_000);
             cmd(&b, b.vm.audio.set_sample_rate(rate));
         }
     });
@@ -1279,11 +1278,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_warning_color(
-                        active_choice(combo, &b.vm.notifications.view.get().color_choices)
-                            .unwrap_or(NotificationColor::White),
-                    ),
+                b.vm.notifications.set_warning_color(
+                    active_choice(combo, &b.vm.notifications.view.get().color_choices)
+                        .unwrap_or(NotificationColor::White),
+                ),
             );
         }
     });
@@ -1326,11 +1324,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_error_color(
-                        active_choice(combo, &b.vm.notifications.view.get().color_choices)
-                            .unwrap_or(NotificationColor::White),
-                    ),
+                b.vm.notifications.set_error_color(
+                    active_choice(combo, &b.vm.notifications.view.get().color_choices)
+                        .unwrap_or(NotificationColor::White),
+                ),
             );
         }
     });
@@ -1356,11 +1353,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_position(
-                        active_choice(combo, &b.vm.notifications.view.get().position_choices)
-                            .unwrap_or(NotificationPosition::BottomLeft),
-                    ),
+                b.vm.notifications.set_position(
+                    active_choice(combo, &b.vm.notifications.view.get().position_choices)
+                        .unwrap_or(NotificationPosition::BottomLeft),
+                ),
             );
         }
     });
@@ -1373,11 +1369,10 @@ pub(crate) fn present_preferences_dialog(
             }
             cmd(
                 &b,
-                b.vm.notifications
-                    .set_status_position(
-                        active_choice(combo, &b.vm.notifications.view.get().position_choices)
-                            .unwrap_or(NotificationPosition::BottomLeft),
-                    ),
+                b.vm.notifications.set_status_position(
+                    active_choice(combo, &b.vm.notifications.view.get().position_choices)
+                        .unwrap_or(NotificationPosition::BottomLeft),
+                ),
             );
         }
     });

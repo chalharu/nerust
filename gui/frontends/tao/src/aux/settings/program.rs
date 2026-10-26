@@ -288,9 +288,7 @@ impl SettingsAppState {
     /// Shared validation banner: headline is the first issue, storage
     /// shows the first persistence-scope issue. Replaces the former
     /// hardcoded storage message with the localized validator output.
-    pub(super) fn validation_banner(
-        &self,
-    ) -> nerust_gui_viewmodel::settings::ValidationBanner {
+    pub(super) fn validation_banner(&self) -> nerust_gui_viewmodel::settings::ValidationBanner {
         use nerust_gui_viewmodel::settings::ValidationBanner;
         match self.vm.finish() {
             Ok(_) => ValidationBanner {
@@ -879,4 +877,3 @@ mod tests {
         assert!(banner.storage.is_none());
     }
 }
-

@@ -47,10 +47,7 @@ fn resolve_write_input(
     input: &str,
 ) -> Result<(u32, u64), String> {
     let input = input.trim().to_string();
-    match (
-        selected,
-        vm::parse_byte_value(&input),
-    ) {
+    match (selected, vm::parse_byte_value(&input)) {
         (Some((addr, _)), Some(value)) => Ok((addr, value as u64)),
         (None, _) => Err(text(language, UiText::WriteNeedsSelection).to_string()),
         _ => Err(ui_msg::parse_failed(language, &input)),
@@ -64,10 +61,7 @@ fn resolve_freeze_input(
     input: &str,
 ) -> Result<(u32, u8), String> {
     let input = input.trim().to_string();
-    match (
-        selected,
-        vm::parse_byte_value(&input),
-    ) {
+    match (selected, vm::parse_byte_value(&input)) {
         (Some((addr, _)), Some(value)) => Ok((addr, value as u8)),
         _ => Err(text(language, UiText::FreezeNeedsSelection).to_string()),
     }
@@ -827,6 +821,14 @@ impl DebuggerWindowCore {
         self.window.present();
     }
 
+    /// Arrival hook for the host deferred auto-pause protocol: focusing
+    /// the debugger cancels a pending pause and may resume.
+    pub(crate) fn on_focus_arrive(&self, arrive: impl Fn() + 'static) {
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_enter(move |_| arrive());
+        self.window.add_controller(focus);
+    }
+
     /// True when the native surface is gone (external destruction skips
     /// close-request and `destroy` never fires). Callers must check before
     /// any touch: GTK queries on a dead surface are fatal X errors.
@@ -1478,11 +1480,7 @@ impl DebuggerWindowCore {
         for hex_row in &display.dump_rows {
             let selected_addr = this.data.selected.map(|(a, _)| a);
             // Containing-row match: a mid-row pick still lights its row.
-            let row_hit = vm::row_hit(
-                selected_addr,
-                hex_row.addr,
-                usize::from(hex_row.valid),
-            );
+            let row_hit = vm::row_hit(selected_addr, hex_row.addr, usize::from(hex_row.valid));
             let changed = display.diff.contains(&hex_row.addr);
             let marker = vm::dump_marker(row_hit, changed);
             let row = gtk::ListBoxRow::new();

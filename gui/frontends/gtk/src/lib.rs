@@ -49,6 +49,9 @@ pub(crate) struct State {
     ctx: FrontendContext,
     renderer_reload_pending: bool,
     pause_policy: nerust_frontend_kernel::pause::PausePolicy,
+    /// Deferred auto-pause protocol shared with tao: blur arms,
+    /// arrival cancels-or-resumes, commit lands the pause.
+    pub(crate) focus: nerust_frontend_kernel::focus::FocusArbiter,
 }
 
 impl State {
@@ -120,6 +123,7 @@ impl State {
             ctx,
             renderer_reload_pending: false,
             pause_policy: Default::default(),
+            focus: nerust_frontend_kernel::focus::FocusArbiter::new(),
         })
     }
 

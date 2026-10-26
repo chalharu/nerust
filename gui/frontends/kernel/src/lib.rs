@@ -2,6 +2,7 @@
 //! Toolkit-free so tao, gtk, and headless all depend downward on it.
 
 pub mod cache;
+pub mod focus;
 pub mod hash;
 pub mod history;
 /// Pause reasons compose: releasing one owner never releases another.

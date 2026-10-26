@@ -255,10 +255,7 @@ impl GtkOsd {
         level_caption.set_xalign(0.0);
         let filter = gtk::ComboBoxText::new();
         for filter_kind in nerust_gui_shell::session::osd::HistoryFilter::all() {
-            filter.append(
-                Some(filter_kind.id()),
-                filter_kind.label(language),
-            );
+            filter.append(Some(filter_kind.id()), filter_kind.label(language));
         }
         filter.set_active_id(Some("all"));
         toolbar.append(&level_caption);
@@ -356,10 +353,9 @@ impl GtkOsd {
                     grid.remove(&child);
                 }
                 // Shared threshold: this level and above.
-                let minimum = nerust_gui_shell::session::osd::HistoryFilter::from_id(
-                    active.as_deref(),
-                )
-                .minimum();
+                let minimum =
+                    nerust_gui_shell::session::osd::HistoryFilter::from_id(active.as_deref())
+                        .minimum();
                 let visible: Vec<_> = lines
                     .iter()
                     .filter(|line| {
@@ -402,8 +398,7 @@ impl GtkOsd {
                     return;
                 }
                 for line in visible {
-                    let (r, g, b) =
-                        nerust_gui_shell::session::osd::level_rgb(line.level);
+                    let (r, g, b) = nerust_gui_shell::session::osd::level_rgb(line.level);
                     // `HistoryLine.text` already carries the `×N` suffix
                     // when merged; use it as-is.
                     let text = line.text.clone();
@@ -422,9 +417,9 @@ impl GtkOsd {
                     let module = gtk::Label::new(None);
                     module.set_markup(&format!(
                         "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
-                        glib::markup_escape_text(
-                            nerust_gui_shell::session::osd::short_module(line.module)
-                        ),
+                        glib::markup_escape_text(nerust_gui_shell::session::osd::short_module(
+                            line.module
+                        )),
                     ));
                     module.set_xalign(0.0);
                     module.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
