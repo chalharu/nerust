@@ -16,7 +16,10 @@ use windows::{
     core::*,
 };
 
-use super::app::{close_settings, wide, with_settings};
+use super::{
+    app::{close_settings, wide, with_settings},
+    fluent,
+};
 
 const IDC_FULLSCREEN: u32 = 203;
 const IDC_ERROR: u32 = 204;
@@ -46,7 +49,7 @@ impl SettingsDlg {
                 lpfnWndProc: Some(settings_proc),
                 hInstance: instance,
                 hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
-                hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
+                hbrBackground: fluent::dark_brush(),
                 lpszClassName: class,
                 ..Default::default()
             };
@@ -70,6 +73,7 @@ impl SettingsDlg {
                 let _ = host.close_settings(&controller);
                 return None;
             }
+            fluent::apply_chrome(hwnd);
             let label = |y: i32, text: PCWSTR| {
                 CreateWindowExW(
                     WINDOW_EX_STYLE::default(),
@@ -86,8 +90,8 @@ impl SettingsDlg {
                     None,
                 )
             };
-            let _ = label(14, w!("Language:"));
-            let _ = label(48, w!("Sample rate:"));
+            let lang_label = label(14, w!("Language:"));
+            let rate_label = label(48, w!("Sample rate:"));
             let lang_combo = combo(hwnd, instance, 140, 12);
             let rate_combo = combo(hwnd, instance, 140, 46);
             let fs_check = CreateWindowExW(
@@ -134,8 +138,15 @@ impl SettingsDlg {
                     None,
                 )
             };
-            let _ = button(1, 200, w!("OK"));
-            let _ = button(2, 300, w!("Cancel"));
+            let ok_btn = button(1, 200, w!("OK"));
+            let cancel_btn = button(2, 300, w!("Cancel"));
+            // Fluent body type on every child control.
+            for child in [
+                lang_label, rate_label, lang_combo, rate_combo, fs_check, err_label, ok_btn,
+                cancel_btn,
+            ] {
+                fluent::apply_font(child);
+            }
 
             let gv = controller.vm.general.view.get();
             let av = controller.vm.audio.view.get();
@@ -335,6 +346,11 @@ pub unsafe extern "system" fn settings_proc(
         WM_DESTROY => {
             close_settings(hwnd);
             LRESULT(0)
+        }
+        // Fluent dark labels/combo fields: light text on the dark card.
+        WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            let brush = fluent::paint_dark_control(HDC(wparam.0 as isize));
+            LRESULT(brush.0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }

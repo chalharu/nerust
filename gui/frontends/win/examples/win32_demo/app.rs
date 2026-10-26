@@ -9,6 +9,7 @@
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Instant};
 
+use super::fluent;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_shell::{context::FrontendContext, registry::SystemRegistry};
 use nerust_win::{WinHost, WinSurface, keys::menu};
@@ -61,10 +62,7 @@ fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
                 return None;
             }
         };
-        match borrow.as_mut() {
-            Some(app) => Some(f(app)),
-            None => None,
-        }
+        borrow.as_mut().map(f)
     })
 }
 
@@ -83,10 +81,7 @@ pub fn with_dbg<R>(f: impl FnOnce(&mut super::dbg::DbgWin, &mut WinHost) -> R) -
             None => return None,
         };
         let (dbg, host) = (&mut app.dbg, &mut app.host);
-        match dbg.as_mut() {
-            Some(dbg) => Some(f(dbg, host)),
-            None => None,
-        }
+        dbg.as_mut().map(|dbg| f(dbg, host))
     })
 }
 
@@ -116,10 +111,7 @@ pub fn with_ppu<R>(f: impl FnOnce(&mut super::ppu::PpuWin, &mut WinHost) -> R) -
             None => return None,
         };
         let (ppu, host) = (&mut app.ppu, &mut app.host);
-        match ppu.as_mut() {
-            Some(ppu) => Some(f(ppu, host)),
-            None => None,
-        }
+        ppu.as_mut().map(|ppu| f(ppu, host))
     })
 }
 
@@ -151,10 +143,7 @@ pub fn with_settings<R>(
             None => return None,
         };
         let (settings, host) = (&mut app.settings, &mut app.host);
-        match settings.as_mut() {
-            Some(settings) => Some(f(settings, host)),
-            None => None,
-        }
+        settings.as_mut().map(|settings| f(settings, host))
     })
 }
 
@@ -308,6 +297,7 @@ pub fn run() {
         assert!(hwnd != HWND::default(), "main window");
 
         build_menu(hwnd);
+        fluent::apply_chrome(hwnd);
         SetTimer(hwnd, TIMER_FRAME, 16, None);
 
         APP.with(|cell| {
@@ -504,9 +494,13 @@ impl App {
                 .unwrap_or_else(|| "-".to_string());
             let line = format!("{} fps | {state} | {geom}", self.fps);
             SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, COLORREF(0x00FF_FFFF));
+            SetTextColor(hdc, COLORREF(fluent::FLUENT_TEXT));
+            // Fluent body type for the status line; restored after drawing.
+            let font = fluent::ui_font();
+            let prev = SelectObject(hdc, font);
             let wide = wide(&line);
             let _ = TextOutW(hdc, 8, 8, &wide[..wide.len() - 1]);
+            let _ = SelectObject(hdc, prev);
         }
     }
 
@@ -673,7 +667,6 @@ fn build_menu(hwnd: HWND) {
         let _ = AppendMenuW(view, MF_STRING, menu::DEBUGGER as usize, w!("&Debugger"));
         let _ = AppendMenuW(view, MF_STRING, menu::PPU as usize, w!("&PPU viewer"));
         let _ = AppendMenuW(view, MF_STRING, menu::SETTINGS as usize, w!("&Settings..."));
-        let _ = AppendMenuW(view, MF_STRING, menu::PPU as usize, w!("&PPU viewer"));
         let _ = AppendMenuW(bar, MF_POPUP, view.0 as usize, w!("&View"));
 
         let _ = SetMenu(hwnd, bar);

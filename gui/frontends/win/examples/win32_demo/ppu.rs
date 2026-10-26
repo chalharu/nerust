@@ -13,6 +13,7 @@ use windows::{
 };
 
 use super::app::{close_ppu, rgba_to_bgrx, wide, with_ppu};
+use super::fluent;
 
 pub const TIMER_PPU: usize = 12;
 
@@ -42,7 +43,7 @@ impl PpuWin {
                 lpfnWndProc: Some(ppu_proc),
                 hInstance: instance,
                 hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
-                hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
+                hbrBackground: fluent::dark_brush(),
                 lpszClassName: class,
                 ..Default::default()
             };
@@ -64,6 +65,7 @@ impl PpuWin {
             if hwnd == HWND::default() {
                 return None;
             }
+            fluent::apply_chrome(hwnd);
             SetTimer(hwnd, TIMER_PPU, 500, None);
             Some(Self {
                 hwnd,

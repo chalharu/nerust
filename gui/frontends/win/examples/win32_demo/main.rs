@@ -9,6 +9,8 @@ mod app;
 #[cfg(windows)]
 mod dbg;
 #[cfg(windows)]
+mod fluent;
+#[cfg(windows)]
 mod ppu;
 #[cfg(windows)]
 mod settings;

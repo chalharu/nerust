@@ -17,7 +17,10 @@ use windows::{
     core::*,
 };
 
-use super::app::{close_dbg, wide, with_dbg};
+use super::{
+    app::{close_dbg, wide, with_dbg},
+    fluent,
+};
 
 pub const IDC_LIST: u32 = 101;
 pub const IDC_PAUSE: u32 = 102;
@@ -46,7 +49,7 @@ impl DbgWin {
                 lpfnWndProc: Some(dbg_proc),
                 hInstance: instance,
                 hCursor: LoadCursorW(None, IDC_ARROW).unwrap(),
-                hbrBackground: HBRUSH(GetStockObject(BLACK_BRUSH).0),
+                hbrBackground: fluent::dark_brush(),
                 lpszClassName: class,
                 ..Default::default()
             };
@@ -69,6 +72,7 @@ impl DbgWin {
             if hwnd == HWND::default() {
                 return None;
             }
+            fluent::apply_chrome(hwnd);
             let list = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("LISTBOX"),
@@ -113,9 +117,13 @@ impl DbgWin {
                     None,
                 )
             };
-            let _ = btn(IDC_PAUSE, 8, w!("Pause"));
-            let _ = btn(IDC_RESUME, 104, w!("Resume"));
-            let _ = btn(IDC_STEP, 200, w!("Step"));
+            let pause = btn(IDC_PAUSE, 8, w!("Pause"));
+            let resume = btn(IDC_RESUME, 104, w!("Resume"));
+            let step = btn(IDC_STEP, 200, w!("Step"));
+            // Fluent body type on every child control.
+            for child in [list, status, pause, resume, step] {
+                fluent::apply_font(child);
+            }
             SetTimer(hwnd, TIMER_DBG, 500, None);
             let model = DebuggerModel::from_session(host.session());
             let win = Self {
@@ -268,6 +276,11 @@ pub unsafe extern "system" fn dbg_proc(
         WM_DESTROY => {
             close_dbg(hwnd);
             LRESULT(0)
+        }
+        // Fluent dark statics/listbox: light text on the dark card.
+        WM_CTLCOLORSTATIC | WM_CTLCOLORLISTBOX => {
+            let brush = fluent::paint_dark_control(HDC(wparam.0 as isize));
+            LRESULT(brush.0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }

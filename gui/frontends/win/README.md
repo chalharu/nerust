@@ -22,6 +22,14 @@ under Wine 10. All below confirmed with screenshots and logs:
   applied (`settings-apply applied=true` in the log)
 - Fullscreen borderless toggle; File→Open common dialog with typed path
   loading a ROM end to end
+- Menus driven by real clicks under Xvfb+Wine: View opens, Settings
+  applies through OK (`submit done error=None`, dialog closes, emulation
+  resumes), Debugger opens with PC-following disassembly
+- Fluent chrome via plain windows-rs (no WinUI dependency, Wine-safe):
+  dark title bar, rounded corners, Mica backdrop (`DWMWA_*`), dark
+  Explorer theming, Segoe UI body type, dark card backgrounds with light
+  control text (`WM_CTLCOLOR*`); comctl32-v6 / UTF-8 / PerMonitorV2 app
+  manifest embedded at link time (`build.rs` + `windres`, examples only)
 - Full accelerator table (all letters/digits/numpad/F1–F24/media keys):
   15 headless unit tests green
 
