@@ -11,6 +11,7 @@ mod projection;
 mod projection_test;
 pub mod property;
 mod settings_viewmodel;
+mod shortcuts;
 pub(crate) mod state;
 mod system;
 #[cfg(test)]
@@ -32,6 +33,7 @@ pub use capture::CaptureViewModel;
 pub use general::GeneralSettingsViewModel;
 pub use input::InputSettingsViewModel;
 pub use notification::NotificationSettingsViewModel;
+pub use shortcuts::ShortcutsViewModel;
 pub use system::SystemSettingsViewModel;
 pub use topology_adapter::build_topology;
 pub use video::VideoSettingsViewModel;
