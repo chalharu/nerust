@@ -1,5 +1,6 @@
 pub mod debug_transaction;
 pub mod debugger;
+pub mod menu_labels;
 pub mod rom;
 pub mod rom_library;
 pub mod settings;
