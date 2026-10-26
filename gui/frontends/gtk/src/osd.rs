@@ -231,7 +231,6 @@ impl GtkOsd {
         window: &gtk::ApplicationWindow,
         state: &Rc<RefCell<State>>,
     ) -> HistoryDialog {
-        use nerust_gui_shell::session::notification::NotificationLevel;
         let language = state.borrow().settings_snapshot().shared.general.language;
         let dialog = gtk::Dialog::with_buttons(
             Some(nerust_settings_core::i18n::text(
