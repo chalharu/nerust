@@ -33,44 +33,7 @@ pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
 /// Right state column width.
 const STATE_COLUMN_WIDTH: f32 = 340.0;
 
-/// In-window debugger message. Pure: update touches the bridge only.
-#[derive(Debug, Clone)]
-pub(crate) enum DebugMessage {
-    RefreshPressed,
-    SpacePrev,
-    SpaceNext,
-    TogglePausePressed,
-    StepFramePressed,
-    StepInstrPressed,
-    PpuOpenPressed,
-    MemInputChanged(String),
-    MemGo,
-    MemPage(i32),
-    DisInputChanged(String),
-    DisGo,
-    FollowPcToggle,
-    DisLineClicked(u32),
-    FollowTarget(u32),
-    DisBack,
-    BookmarkInputChanged(String),
-    BookmarkAdd,
-    BookmarkJump(u32),
-    BookmarkDelete(u32),
-    WatchSet,
-    WatchClear,
-    FreezeInputChanged(String),
-    FreezeSet,
-    EditFreezeSet,
-    FreezeClear,
-    RowSelected(u32),
-    EditInputChanged(String),
-    EditWrite,
-    ConfirmWrite,
-    CancelWrite,
-    RegSelected(&'static str),
-    RegInputChanged(String),
-    RegSet,
-}
+pub(crate) use nerust_frontend_host::debugger::DebuggerEvent as DebugMessage;
 
 pub(crate) struct DebugState {
     bridge: Arc<DebugBridge>,

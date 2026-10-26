@@ -6,9 +6,16 @@ Tao／GTK の**実際の実行経路**で、イベント配送、ループの1�
 OSD 結線、settings の寿命管理を toolkit 非依存にできた。
 さらに補助窓の存在・開閉予約・経路・世代IDと、focus／保留要求／live周期の
 **状態所有権も共通ホストへ移した**。
-ただし、**フロントエンド全体の大幅削減にはまだ達していない**。
-ループの処理順序を共有するだけでは、補助ウィンドウや View 内の制御状態まで消えない。
-これは最終アーキテクチャではなく、次の設計を判断するための動作する縦断プロトタイプ。
+追加検証ではdebuggerのnavigation／入力／watch／freeze／bookmarkの状態とreducerも
+共有し、GTKの共通期限をGLibの起床に接続した。
+
+**設計判断は「共通ホストが状態とevent/effect・ターン・期限を所有し、nativeは
+OS pump・配置・binding・副作用の実行を担当する」を採用する。**
+単一のOSメッセージポンプや汎用widget treeへの統合は採用しない。
+ただし、**この方式だけではフロントエンド全体の大幅削減にはならない**。
+全Rust物理行数はnative側合計5.3%減、共通側込みでは13.9%増となった。
+制御の重複排除と「総保守コード量の削減」は別の評価であり、後者の成功とは判定しない。
+これは採用境界と限界を確認した動作するプロトタイプで、完成済みの全画面移行ではない。
 
 ## 境界
 
@@ -29,6 +36,7 @@ OS 固有の起動・終了、UI スレッド制約を無理に共通 loop に�
 | `aux` | `AuxWindows<N,H>` の開閉予約、存在、世代ID、native routing、handle格納、重複／古い完了の拒否 | 窓の生成／再表示／破棄、native surface の生存確認、signal変換 |
 | `focus` | `FocusCoordinator` のmain-active／pending／protocol-pause状態とburst-end判定 | native focus通知の変換、pause effectの適用 |
 | `debug_schedule` | open要求の集約、最後のdrain pause、記憶座標、live周期・起床関心・thread登録 | timer／event送信、native窓の配置 |
+| `debugger` | navigation／入力／bookmark／watch／freeze／選択の状態、共通reducer、action batch／再構築範囲、owned model／split-lock bridge | widget配置／binding、入力文字列のcapture、窓生成、drain transportと描画 |
 | `session` | `SessionEvent` 配送、shortcut 解釈、pause 所有権との結線、settings 開始／失敗／終了、設定適用時の再調停 | キーコード変換、fullscreen／debugger open の実行、menu／title 反映 |
 | `loop_driver` | `drive_turn` の処理順序、wake 集約、30ms の flight backstop、更新後の tick による repaint 判定 | OS loop、wake 予約、native redraw |
 | `drain` | FIFO、pause 境界での batch 分割、同時 flight 1件、epoch 無効化、非ブロッキング poll | debugger 入力 snapshot の生成、pause port、表示結果適用、native timer |
@@ -47,8 +55,9 @@ fullscreen／debugger open は `SessionEffect` として返し、native 側が�
 Settings のキー capture と各 widget の値編集は既存 `SettingsViewModel` に渡す。
 
 すべての UI イベントを単一の enum に統合したわけではない。
-ROM picker、history、補助ウィンドウの navigation、native resize／destroy などは
-従来の窓口が残っている。`SessionEvent` をアプリ全イベントの完成形と見なさない。
+debuggerは別の`DebuggerEvent`を共通reducerへ渡す。
+ROM picker、historyの一部操作、native resize／destroy などは従来の窓口が残っている。
+意味の異なるイベントを巨大な単一enumへ入れること自体は目的にしない。
 
 ### 補助窓の状態所有権（追加試作）
 
@@ -78,6 +87,31 @@ Taoの`runtime/debug_windows.rs`は互換re-exportのみとなった。
 focus通知順序や250ms live周期は維持し、GTKに新たなauto-pause動作は追加していない。
 これは全frontendの振る舞いを強制的に同一化する変更ではない。
 
+### Debugger の表示状態と入力判断（最終試作）
+
+Taoのbridge／updateとGTKの`DebuggerData`／個別handlerに分散していた判断を、
+共通の`DebuggerState::reduce`へ移した。更新結果はactionの順序付きbatch、
+`DebuggerScope`、PPU open effectで、native側がtransport／部分再構築／窓生成を実行する。
+Taoの`aux/bridge.rs`は5行のre-export、`aux/debug/update.rs`は8行の配送adapterとなった。
+GTKではwidget配置・signal接続は残すが、アドレス／byte入力の検証や操作判断を持たない。
+
+- GTKは単一所有の`DebuggerModel`、Taoは共通`DebugBridge`のsplit-lock storageを使う。
+   reducerは同じで、別々の状態遷移実装は持たない。
+- 入力echoはdrainもlist再構築も発生させない。画像をsmall stateから分離し、
+   typing時は画像バッファをcloneしない。bridgeは変更のあるdisplay patchのみCOWする。
+- `SelectRow`＋`EditStage`は同じoutbox lock内にまとめ、consumerやepoch再bindで分割しない。
+- 無効epochの操作はlocal-onlyな入力／bookmark／選択も含めて拒否する。
+   GTKはwidget入力のcapture前に置換を検出し、古い操作を実行せずRefreshだけを送る。
+   workerがすでに受理した操作の巻き戻しまでは保証しない。
+- GTKの部分再構築は画像を除くowned snapshotで行い、widget通知中にcontrollerを借用しない。
+   live image更新やheader-onlyの入力エラーではlist／scrollを作り直さない。
+- Freeze解除はlocal状態と状態ラベルを更新する。既に書き込んだbyteのundoではない。
+
+従来の差異は明示的に整合した。bookmarkはアドレス重複なし・上限8件・空labelはBM番号。
+上限到達後の重複追加もno-op。follow中はPC行、なければ先頭可視行、pin中は常にpinを使う。
+旧Taoの重複許容／pinより可視PC優先は維持せず、共通／nativeテストで新しい契約を固定した。
+入力前後の空白も許容する。振る舞いが元から完全一致していたとは扱わない。
+
 ### 共通ターンの順序
 
 1. burst 終了時の focus effect を確定。
@@ -91,6 +125,14 @@ focus通知順序や250ms live周期は維持し、GTKに新たなauto-pause動�
 最後の再読が重要。modal ACK や drain で再開した core に対して、capture 時の
 paused 状態を使って待機すると更新が止まる。
 flight backstop 用の現在時刻も pump 後に読み、時間のかかった poll の影響を避ける。
+
+Taoは共通期限を`ControlFlow::WaitUntil`へ、GTKは単一のGLib one-shotへ渡す。
+GTKでは早い予約を後続frameで延期せず、期限なしで取消、発火前にSourceIdを外す。
+timeoutは弱参照、窓からのframe callbackは所有参照、Surfaceから窓は弱参照として寿命を閉じる。
+非表示／ゼロサイズでもturnは進めるが、rendererのattach／renderは行わない。
+借用競合は30ms内に再試行する。描画自体はnative frame clockが担当する。
+modalはpump中に取り出し、State／OSD／Surfaceの借用解放後に表示する。
+ACKは次batchの表示へつなぎ、最後だけModal所有権を解除する。
 
 ### Settings の寿命
 
@@ -117,46 +159,55 @@ Tao の native 作成失敗も同じ共通終了規約に戻す。
 - 描画先交換時は `OsdLayerSync::invalidate`。settings 世代とは独立した寿命であり、
   settings の変更がなくても新しい描画先へ layer／strip を送り直す。
 
-## 残る制限と次段階
+## 最終判断と適用限界
 
 **今回共通化したのは OS loop そのものではなく、その上の turn／policy**。
-Tao は共通 deadline を `ControlFlow::WaitUntil` に反映する。
-GTK は既存 frame clock を維持し、deadline の GLib timer 化はまだ行わない。
 GTK の debugger は別窓の timer で共通 `DrainQueue` を進めるため、main turn の
-debug port は no-op。menu／title の周期、focus／aux lifetime も完全には揃えていない。
+debug port は no-op。250ms live timer、menu／title の周期は完全には揃えていない。
 focus調停の実装は共通化したがGTKには従来どおりauto-pauseを適用しない。
-File picker・About・debuggerのnavigation／入力状態、modalのnative flight格納は未統合。
-最小化・非表示時の通知配送／wake 遅延の改善を検証できたとは主張しない。
+File picker・About・modalのnative resource格納は未統合。
+Tao bridgeのspaces／language metadataは不変で、異なるspacesへの変更は窓の再作成が必要。
+全native callbackの共通化、全frontendの振る舞い統一を完了したとは扱わない。
+GTKの非表示中の**既知の期限**の実行は検証したが、期限がない状態へ新着通知を届ける
+worker→UI-thread postの全経路は統合していない。通知遅延／消費電力の性能保証は含まない。
 
-大幅削減に進むなら、次の順序を推奨する。
+判断をまとめると、次のとおり。
 
-1. **共通 application event/effect**: open／close／history／debugger／settings／focus／
-   native lifetime を含め、native callback が共通 dispatcher に配送するだけの形へ。
-   toolkit の raw event や widget を enum に混ぜず、意味と geometry のみ渡す。
-2. **残る実行・表示状態の所有権を共通化**: 補助窓のkind・存在・開閉予約は実施済み。
-   次はdebugger navigation／入力検証・File picker／About・modal flight格納を対象にする。
-   native handleの表現と配置はadapterに残し、bridge／UI依存は共通側へ持ち込まない。
-3. **wake adapter**: `wake_at(Option<Instant>)` と UI-thread `post(event)` の小さな port を作り、
-   GTK の main／debugger／live follow を共通期限で動かす。native thread からは enqueue のみ。
-   idle 時の起床数と非表示時の ACK／通知遅延を計測する。
-4. **View の最終境界**: 共通の表示 snapshot と差分反映の契約を定める。
-   settings は既存 observable VM を維持し、各 widget の配置と binding だけ native に残す。
-   画面全体の仮想 widget tree を新設することは、この検証からは正当化できない。
+1. **状態所有権＋意味イベント＋effectを採用する。** helper移動だけではなく、
+   補助窓・調停・debuggerの状態機械を新frontendで再実装しない境界を作れる。
+   owned／split-lockのどちらも同じreducerで動くことを確認できた。
+2. **OS pumpの一本化を削減の前提にしない。** 共通turn／期限決定とnativeのwake／postを
+   分ければ接続できる。GTKのUI thread／frame clockをTaoのloopへ従属させる必要はない。
+3. **「極薄」を業務判断がないViewという意味で目指す。** settingsは既存observable VM、
+   debuggerは今回の共通modelを使い、nativeはsnapshot反映・signal変換・配置を担当する。
+   この意味の薄さは成立するが、nativeコードが小さくなることと同義ではない。
+4. **大幅な行数削減の仮説は、この試作では不成立。** 残る大量のwidget配置・binding・
+   renderer／native lifetime glueは、event loop共有では消えない。
+   さらに物理量を削るなら画面別bindingの生成や宣言的schema等を別途評価する必要があるが、
+   汎用virtual widget frameworkの新設を本試作から正当化はしない。
 
-単に関数を共通ファイルへ移すだけでは、Tao/GTK が保持する調停状態は消えない。
-次の合格条件は行数だけでなく「新しい frontend に drain／modal／settings の状態機械を
-再実装させない」「View が起床順序を決めない」「同じ event trace が同じ effect を返す」。
+したがって、このプロトタイプは**制御境界の検証として採用、総量削減の達成例としては不採用**。
+ネイティブ化ではこの契約を土台に画面単位で移行し、配置コードを無理に共通化しない。
+合格条件は「同じevent traceが同じeffect」「新frontendが調停を再実装しない」も含め、
+物理行数とは独立して追跡する。追加の切り出しだけで大幅削減できると期待し続けない。
 
 ## 検証
 
-Linux／Xvfb で実施。共通ホスト57件、Tao286件、GTK64件、**合計407件が成功**。
+Linux／Xvfb で実施。共通ホスト102件、Tao257件、GTK74件、**合計433件が成功**。
 共通ホストには Tao から移した既存 frame／focus／debug scheduleテストを含む。
-GTK は初期化スレッド制約に合わせ、64件を各1プロセスで実行し、display skip は0件。
+debuggerの純粋ロジック／bridgeテストも共通側へ移しており、Taoの件数減は回帰削除ではない。
+GTK は初期化スレッド制約に合わせ、74件を各1プロセスで実行し、display skip は0件。
+既存harnessにはGApplication startup前の窓生成に伴うGtk-CRITICAL診断が残る。
 設定の重複終了／失敗 rollback、実 NES の差し替え、古い drain の破棄、順序保証、
 layer 再送、modal ACK、最新 tick による wake 判断を検証している。
 追加試作では、native生成中の再入抑制、失敗後の再試行、native ID衝突、
 古い完了／closeの拒否、非表示PPUの再利用、native破棄後の再作成、
 Settings終了時のModal所有権維持も検証した。
+最終試作では、owned／bridgeのevent trace一致、入力時の無通信／画像非clone、
+順序付きwrite batchとepoch再bindの競合、GTKのlocal-only操作の置換拒否、
+list／scroll維持、freeze解除ラベルも検証した。
+GLibの早い期限の保持／差替え／取消／Drop、非表示中の実OSD期限の消化、
+借用競合後の再起床、modal map通知中の再入と連続ACKは実native contextで検証した。
 
 - `cargo test --offline -p nerust_frontend_host -p nerust_tao --lib`
 - `cargo test --offline -p nerust_gtk --lib --no-run` の artifact を Xvfb 上で各 test ごとに
@@ -179,17 +230,14 @@ Settings終了時のModal所有権維持も検証した。
 
 | 対象 | 変更前 | 変更後 | 増減 | 削減率 |
 | --- | ---: | ---: | ---: | ---: |
-| Tao | 17,835 | 16,964 | -871 | 4.9% |
-| GTK | 8,081 | 8,348 | +267 | **3.3%増** |
-| 新規共通 host | 0 | 3,156 | +3,156 | — |
-| 合計 | 25,916 | 28,468 | +2,552 | **9.8%増** |
+| Tao | 17,835 | 15,567 | -2,268 | 12.7% |
+| GTK | 8,081 | 8,982 | +901 | **11.1%増** |
+| 新規共通 host | 0 | 4,970 | +4,970 | — |
+| 合計 | 25,916 | 29,519 | +3,603 | **13.9%増** |
 
-native frontendからは合計604行（2.3%）減ったが、回帰テストと新しいadapter／契約を
+native frontendからは合計1,367行（5.3%）減ったが、回帰テストと新しいadapter／契約を
 加えたため、**共通側を含めた総ソースは増えている**。
-初回試作はnative側614行減／合計1,667行増だった。今回の状態移管では、
-Taoがさらに332行減り、GTKはadapterと回帰テストで342行増え、共通側は875行増えた。
-したがって状態所有権の統合は前進したが、この追加試作を行数削減の成功とは評価しない。
-この時点で「保守対象の総量が減った」「大幅に薄くできた」とは結論しない。
-残る大きな領域はsettings／debuggerのwidget構築・bindingと入力変換、native lifecycle／
-renderer結線。次は共通表示状態とevent/effect境界を詰め、既存adapterも本当に消せるかを
-同じ方法で再計測する。
+前段の状態所有権移管commit時点はnative側604行減／合計2,552行増だった。
+最終試作ではTaoがさらに1,397行減、GTKは起床adapterと回帰テスト等で634行増、
+共通側は1,814行増となった。テストの移動／追加も含むため、production-only削減率ではない。
+テストを除いた率をこの表から推定せず、所有する責務の統合とは分けて評価する。
