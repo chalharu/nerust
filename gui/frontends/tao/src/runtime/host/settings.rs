@@ -17,7 +17,7 @@ impl HostState {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let result = SessionControl::apply_settings(self, settings)?;
+        let result = SessionControl::apply_settings(&mut self.core, settings)?;
         if result.fullscreen_default_changed {
             self.sync_fullscreen_from_settings();
         }
@@ -31,7 +31,8 @@ impl HostState {
 
     pub(crate) fn on_settings_closed(&mut self) {
         let changed = self
-            .dispatch_session(SessionEvent::SettingsClosed)
+            .core
+            .dispatch(SessionEvent::SettingsClosed)
             .is_ok_and(|out| out.settings_changed);
         if !changed {
             return;
@@ -45,7 +46,8 @@ impl HostState {
             return;
         }
         if !self
-            .dispatch_session(SessionEvent::SettingsOpened)
+            .core
+            .dispatch(SessionEvent::SettingsOpened)
             .is_ok_and(|out| out.settings_changed)
         {
             return;
@@ -61,7 +63,7 @@ impl HostState {
             .create_aux(
                 crate::aux::focus::AuxKind::Settings,
                 crate::ports::AuxOpenParams::Settings {
-                    snapshot: self.session.settings_snapshot().clone(),
+                    snapshot: self.core.settings_snapshot().clone(),
                     registry: self.ctx.registry.clone(),
                     audio: self.ctx.audio_registry.clone(),
                 },
@@ -70,7 +72,7 @@ impl HostState {
         if !opened {
             self.aux.cancel_open(id);
             log::error!("failed to open settings window");
-            let _ = self.dispatch_session(SessionEvent::SettingsOpenFailed);
+            let _ = self.core.dispatch(SessionEvent::SettingsOpenFailed);
             let ctx = self.frame_ctx();
             self.sync_chrome(&ctx, false);
         }
@@ -114,12 +116,12 @@ mod tests {
         host.open_settings_window(&opener);
         assert!(opener.calls().is_empty());
         assert_eq!(host.aux.route_id(AuxKind::Settings), Some(id));
-        assert!(!host.pause_policy.paused());
+        assert!(!host.pause_held());
         assert!(host.aux.cancel_open(id));
         host.open_settings_window(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
         assert!(!host.settings_open());
-        assert!(!host.pause_policy.paused());
+        assert!(!host.pause_held());
     }
 
     #[test]
@@ -169,7 +171,7 @@ mod tests {
         host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
         host.on_settings_closed();
         assert!(!host.settings_open());
-        assert!(!host.pause_policy.paused());
+        assert!(!host.pause_held());
     }
 
     #[test]
@@ -184,7 +186,7 @@ mod tests {
         // releases its pause owner and syncs chrome while still open.
         host.on_settings_closed();
         assert!(host.settings_open());
-        assert!(!host.pause_policy.paused());
+        assert!(!host.pause_held());
         assert_eq!(support.menu.updates().len(), 1);
     }
 
@@ -198,15 +200,8 @@ mod tests {
         host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         host.on_settings_closed();
         assert!(host.settings_open());
-        assert!(
-            host.pause_policy
-                .owns(nerust_frontend_kernel::pause::PauseOwner::Modal)
-        );
-        assert!(
-            !host
-                .pause_policy
-                .owns(nerust_frontend_kernel::pause::PauseOwner::Settings)
-        );
+        assert!(host.owns_pause(nerust_frontend_kernel::pause::PauseOwner::Modal));
+        assert!(!host.owns_pause(nerust_frontend_kernel::pause::PauseOwner::Settings));
     }
 
     #[test]

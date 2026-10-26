@@ -3,7 +3,7 @@
 
 use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
 use crate::aux::shell::AuxShellOps;
-pub(crate) use nerust_frontend_host::focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent};
+pub(crate) use nerust_frontend_host::focus::{AuxKind, FocusEvent};
 
 /// Identity half: routing, liveness, and redraw requests.
 pub(crate) trait AuxIdentity {

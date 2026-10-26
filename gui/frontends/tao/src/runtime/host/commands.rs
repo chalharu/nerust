@@ -7,20 +7,12 @@ use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
 use nerust_frontend_host::session::{SessionEffect, SessionEvent, SessionOutcome};
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::session::{SessionError, access::SessionControl, access::SettingsResult};
+use nerust_gui_shell::session::access::SessionControl;
 
 use crate::event::MenuCommand;
 use crate::ports::WindowOpener;
 
 impl HostState {
-    pub(super) fn dispatch_session(
-        &mut self,
-        event: SessionEvent,
-    ) -> Result<SessionOutcome, SessionError> {
-        nerust_frontend_host::session::dispatch(&mut self.session, &mut self.pause_policy, event)
-    }
-
     pub(crate) fn on_menu_command(
         &mut self,
         command: MenuCommand,
@@ -58,7 +50,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                let _ = self.dispatch_session(SessionEvent::Command(command));
+                let _ = self.core.dispatch(SessionEvent::Command(command));
                 let ctx = self.frame_ctx();
                 self.sync_chrome(&ctx, false);
                 HostAction::None
@@ -74,7 +66,7 @@ impl HostState {
         if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(key) = crate::convert::keycode_to_key(input.physical_key)
         {
-            match self.dispatch_session(SessionEvent::Keyboard { key, pressed }) {
+            match self.core.dispatch(SessionEvent::Keyboard { key, pressed }) {
                 Ok(outcome) => self.apply_session_outcome(outcome),
                 Err(_) => {
                     let ctx = self.frame_ctx();
@@ -84,12 +76,8 @@ impl HostState {
         }
     }
 
-    pub(crate) fn clear_keys(&mut self) {
-        let _ = self.dispatch_session(SessionEvent::ClearInput);
-    }
-
     fn open_rom_dialog(&mut self) -> bool {
-        let language = self.session.settings_snapshot().shared.general.language;
+        let language = self.core.settings_snapshot().shared.general.language;
         let filters = Self::rom_dialog_filters(&self.ctx.registry);
         let Some(path) = self.dialogs.pick_rom_file(language, filters) else {
             return false;
@@ -109,14 +97,14 @@ impl HostState {
     }
 
     fn close_rom(&mut self) {
-        SessionControl::unload(self);
+        self.core.unload();
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, true);
     }
 
     #[cfg(test)]
     fn apply_keyboard_shortcut(&mut self, shortcut: nerust_gui_shell::session::KeyboardShortcut) {
-        match self.dispatch_session(SessionEvent::Shortcut(shortcut)) {
+        match self.core.dispatch(SessionEvent::Shortcut(shortcut)) {
             Ok(outcome) => self.apply_session_outcome(outcome),
             Err(_) => {
                 let ctx = self.frame_ctx();
@@ -138,34 +126,6 @@ impl HostState {
         }
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, false);
-    }
-}
-
-nerust_frontend_host::impl_session_controls!(HostState);
-
-impl SessionControl for HostState {
-    fn unload(&mut self) {
-        if let Err(error) = self.session.unload() {
-            log::warn!("ROM unload failed: {error}");
-        }
-    }
-    fn apply_settings(
-        &mut self,
-        settings: SettingsSnapshot,
-    ) -> Result<SettingsResult, SessionError> {
-        nerust_frontend_host::session::apply_settings(
-            &mut self.session,
-            &self.pause_policy,
-            settings,
-        )
-    }
-    fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.set_fullscreen_default(fullscreen)?;
-        Ok(SettingsResult {
-            renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
-            fullscreen_default_changed: plan.fullscreen_default_changed,
-            scaling_changed: false,
-        })
     }
 }
 
@@ -422,11 +382,11 @@ mod tests {
         };
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.session.tick_metrics().paused);
+        assert!(!host.tick().paused);
         host.pause();
         host.resume();
         host.toggle_pause();
-        assert!(!host.session.tick_metrics().paused);
+        assert!(!host.tick().paused);
         assert!(!host.save_active_slot());
         assert!(!host.load_active_slot());
         host.select_next_slot();
@@ -438,17 +398,14 @@ mod tests {
         host.create_slot();
         host.reset();
         host.unload();
-        assert!(!host.session.tick_metrics().loaded);
+        assert!(!host.tick().loaded);
     }
 
     #[test]
     fn error_modal_returns_without_blocking() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.session.report_external_error(
-            nerust_gui_shell::session::notification::FailureOrigin::Host,
-            "test error".into(),
-        );
+        host.report_host_error("test error".into());
         let ctx = host.frame_ctx();
         host.poll_notifications(&ctx);
         // Bounded wait for the background ack; FakeDialogs answers instantly.
@@ -495,7 +452,7 @@ mod tests {
         host.poll_notifications(&ctx);
         assert!(support.dialogs.errors().is_empty());
         assert_eq!(host.osd.modal_pending(), 0);
-        assert!(host.osd.history_key().is_none());
+        assert!(host.history_key().is_none());
     }
 
     #[test]
@@ -520,11 +477,11 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.resume_session();
-        PauseControl::pause(&mut host);
+        PauseControl::pause(&mut host.core);
         host.clear_keys();
         host.sync_fullscreen_from_settings();
         let _ = host.persist_fullscreen_default(false);
-        assert!(!host.session.tick_metrics().loaded);
+        assert!(!host.tick().loaded);
     }
 
     #[test]
@@ -532,9 +489,9 @@ mod tests {
         use nerust_gui_shell::session::access::SessionControl;
         let support = TestHost::new();
         let mut host = support.host;
-        let snapshot = host.session.settings_snapshot().clone();
+        let snapshot = host.settings_snapshot().clone();
         let _ = host.apply_settings(snapshot);
         let _ = host.set_fullscreen_default(true);
-        assert!(!host.session.tick_metrics().loaded);
+        assert!(!host.tick().loaded);
     }
 }
