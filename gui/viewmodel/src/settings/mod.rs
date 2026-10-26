@@ -25,7 +25,7 @@ pub use settings_viewmodel::SettingsViewModel;
 #[cfg(test)]
 pub use state::NoopStoragePathValidator;
 pub use state::{EditorState, StoragePathError, StoragePathValidator, ViewModelError};
-pub use validation::{ValidationIssue, ValidationScope, ValidationState};
+pub use validation::{ValidationBanner, ValidationIssue, ValidationScope, ValidationState};
 
 pub use audio::AudioSettingsViewModel;
 pub use capture::CaptureViewModel;

@@ -339,20 +339,20 @@ impl SettingsAppState {
         self.vm.general.view.get().language
     }
 
-    pub(super) fn validation_errors(&self) -> Vec<String> {
-        self.vm
-            .finish()
-            .err()
-            .map(|v| v.issues.into_iter().map(|i| i.message).collect())
-            .unwrap_or_default()
-    }
-
-    pub(super) fn storage_error(&self) -> Option<String> {
-        let general = self.vm.general.view.get();
-        if general.show_storage_directory && general.storage_directory.is_empty() {
-            Some("Custom storage directory required".into())
-        } else {
-            None
+    /// Shared validation banner: headline is the first issue, storage
+    /// shows the first persistence-scope issue. Replaces the former
+    /// hardcoded storage message with the localized validator output.
+    pub(super) fn validation_banner(
+        &self,
+    ) -> nerust_gui_viewmodel::settings::ValidationBanner {
+        use nerust_gui_viewmodel::settings::ValidationBanner;
+        match self.vm.finish() {
+            Ok(_) => ValidationBanner {
+                can_submit: true,
+                headline: None,
+                storage: None,
+            },
+            Err(validation) => validation.banner(),
         }
     }
 
@@ -521,8 +521,8 @@ impl SettingsAppState {
 
     fn view(&self) -> El<'_> {
         let language = self.language();
-        let validation_errors = self.validation_errors();
-        let can_submit = validation_errors.is_empty();
+        let banner = self.validation_banner();
+        let can_submit = banner.can_submit;
 
         let sidebar = column![
             super::views::page_radio(language, UiText::General, SettingsPage::General, self.page),
@@ -563,8 +563,8 @@ impl SettingsAppState {
 
         if let Some(error_message) = self.error_message.as_ref() {
             root = root.push(text(error_message.clone()));
-        } else if let Some(first_error) = validation_errors.first() {
-            root = root.push(text(first_error.clone()));
+        } else if let Some(headline) = banner.headline.as_ref() {
+            root = root.push(text(headline.clone()));
         }
 
         let buttons = row![
@@ -664,8 +664,8 @@ mod tests {
         dispatch(&mut state, Message::SelectPage(SettingsPage::Audio));
         assert_eq!(state.page, SettingsPage::Audio);
         let _ = program.update(&mut state, Message::SelectPage(SettingsPage::General));
-        // Storage error reads the live ViewModel projection.
-        let _ = state.storage_error();
+        // Storage banner reads the live ViewModel projection.
+        let _ = state.validation_banner();
         // Error banner renders above the buttons when set.
         state.error_message = Some("boom".to_string());
         let _ = program.view(&state, iced::window::Id::unique());
@@ -922,13 +922,15 @@ mod tests {
     }
 
     #[test]
-    fn validation_errors_empty_with_default_settings() {
+    fn validation_banner_clean_with_default_settings() {
         let state = empty_state();
-        let errors = state.validation_errors();
+        let banner = state.validation_banner();
         assert!(
-            errors.is_empty(),
+            banner.can_submit,
             "default settings should have no validation errors"
         );
+        assert!(banner.headline.is_none());
+        assert!(banner.storage.is_none());
     }
 }
 

@@ -20,6 +20,7 @@ use nerust_gui_viewmodel::settings::{
         AudioView, BindingRowView, BindingValueView, ChoiceView, ControllerSlotView, GeneralView,
         InputTabView, NotificationView, SystemTabView, VideoView,
     },
+    ValidationBanner,
 };
 
 /// Index-based combo selection over shared choices: the position in the
@@ -437,36 +438,21 @@ impl PreferencesBinding {
     }
 
     fn refresh_validation(&self) {
-        match self.vm.finish() {
-            Ok(_) => {
-                self.ok_button.set_sensitive(true);
-                self.error_label.set_text("");
-                self.general.storage_error_label.set_text("");
-            }
-            Err(validation) => {
-                self.ok_button.set_sensitive(false);
-                self.error_label.set_text(
-                    validation
-                        .issues
-                        .first()
-                        .map(|issue| issue.message.as_str())
-                        .unwrap_or(""),
-                );
-                self.general.storage_error_label.set_text(
-                    validation
-                        .issues
-                        .iter()
-                        .find(|issue| {
-                            matches!(
-                                issue.scope,
-                                nerust_gui_viewmodel::settings::ValidationScope::Persistence
-                            )
-                        })
-                        .map(|issue| issue.message.as_str())
-                        .unwrap_or(""),
-                );
-            }
-        }
+        // Shared banner policy: first issue headlines, persistence
+        // issues surface at the storage row, submit needs clean.
+        let banner = match self.vm.finish() {
+            Ok(_) => ValidationBanner {
+                can_submit: true,
+                headline: None,
+                storage: None,
+            },
+            Err(validation) => validation.banner(),
+        };
+        self.ok_button.set_sensitive(banner.can_submit);
+        self.error_label.set_text(banner.headline.as_deref().unwrap_or(""));
+        self.general
+            .storage_error_label
+            .set_text(banner.storage.as_deref().unwrap_or(""));
     }
 
     fn rebuild_all_system_pages(&self) {
