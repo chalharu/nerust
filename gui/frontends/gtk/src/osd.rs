@@ -287,7 +287,7 @@ impl GtkOsd {
                 // Shared threshold: this level and above.
                 let filter_kind =
                     nerust_gui_shell::session::osd::HistoryFilter::from_id(active.as_deref());
-                let visible = nerust_gui_shell::session::osd::visible_history(&lines, filter_kind);
+                let visible = nerust_gui_shell::session::osd::visible_history(lines, filter_kind);
                 count.set_text(&nerust_settings_core::i18n::history_count(
                     language,
                     visible.len(),
