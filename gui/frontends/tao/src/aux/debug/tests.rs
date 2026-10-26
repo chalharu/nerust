@@ -361,14 +361,14 @@ fn disasm_marker_never_double_marks_pc() {
     // it, the view prefix contributes blanks.
     let composed = format!(
         "{}{}",
-        disasm_marker(pc_line.is_pc, true),
+        vm::disasm_marker(pc_line.is_pc, true),
         vm::format_disasm_line(&pc_line)
     );
     assert!(composed.starts_with("  >0x"), "got {composed:?}");
     // Pinned non-PC rows keep the `@` in the same column.
-    assert_eq!(disasm_marker(false, true), "@ ");
-    assert_eq!(disasm_marker(false, false), "  ");
-    assert_eq!(disasm_marker(true, false), "  ");
+    assert_eq!(vm::disasm_marker(false, true), "@ ");
+    assert_eq!(vm::disasm_marker(false, false), "  ");
+    assert_eq!(vm::disasm_marker(true, false), "  ");
 }
 
 #[test]

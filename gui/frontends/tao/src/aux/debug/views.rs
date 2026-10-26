@@ -10,12 +10,6 @@ use nerust_settings_core::model::language::AppLanguage;
 use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
 
-/// Two-char marker prefix for a disassembly row, kept out of the view so the width contract stays
-/// unit-tested. The PC `>` itself lives in [`vm::format_disasm_line`]; this only adds the pinned `@` (or blanks), so composing both never double-marks.
-pub(super) fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
-    if !is_pc && is_pinned { "@ " } else { "  " }
-}
-
 /// Owned per-rebuild snapshot: widgets read locals, never the live bridge. Locks are sequential, so
 /// it is one consistent read in practice, strictly more coherent than per-widget locking.
 pub(super) struct ViewSnapshot {
@@ -441,7 +435,7 @@ pub(super) fn view_dis_col(
         // Marker column is two chars wide for every row. The PC `>` already comes from
         // `format_disasm_line`, so the PC row contributes blanks here; the pinned anchor row carries `@`. (Prepending another `"> "` double-marked the PC row.)
         let is_pinned = pinned == Some(line.addr);
-        let marker = disasm_marker(line.is_pc, is_pinned);
+        let marker = vm::disasm_marker(line.is_pc, is_pinned);
         let line_button = button(
             text(format!("{marker}{}", vm::format_disasm_line(line)))
                 .size(14)
