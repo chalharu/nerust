@@ -3745,6 +3745,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nerust_mac"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_core_traits",
+ "nerust_frontend_host",
+ "nerust_frontend_kernel",
+ "nerust_gui_runtime",
+ "nerust_gui_shell",
+ "nerust_gui_viewmodel",
+ "nerust_input_traits",
+ "nerust_keyboard",
+ "nerust_render_traits",
+ "nerust_settings_core",
+ "nerust_system_traits",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "nerust_nes_controller"
 version = "0.1.0-dev"
 dependencies = [
@@ -4044,6 +4063,25 @@ dependencies = [
 [[package]]
 name = "nerust_timer"
 version = "0.1.0-dev"
+
+[[package]]
+name = "nerust_win"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_core_traits",
+ "nerust_frontend_host",
+ "nerust_frontend_kernel",
+ "nerust_gui_runtime",
+ "nerust_gui_shell",
+ "nerust_gui_viewmodel",
+ "nerust_input_traits",
+ "nerust_keyboard",
+ "nerust_render_traits",
+ "nerust_settings_core",
+ "nerust_system_traits",
+ "raw-window-handle",
+]
 
 [[package]]
 name = "new_debug_unreachable"

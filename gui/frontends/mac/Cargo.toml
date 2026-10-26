@@ -1,0 +1,23 @@
+[package]
+authors.workspace = true
+description = "Prototype AppKit-native frontend over the shared frontend host"
+edition.workspace = true
+license.workspace = true
+name = "nerust_mac"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+log.workspace = true
+nerust_core_traits.workspace = true
+nerust_frontend_host.workspace = true
+nerust_frontend_kernel.workspace = true
+nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true
+nerust_gui_viewmodel.workspace = true
+nerust_input_traits.workspace = true
+nerust_keyboard.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
+nerust_settings_core.workspace = true
+nerust_system_traits.workspace = true
+raw-window-handle.workspace = true
