@@ -1,6 +1,8 @@
 //! Settings dialog lifecycle: open/close plus applying snapshots.
 //! Owned by `HostState`; the iced side lives in `crate::aux::settings`.
 use super::HostState;
+use nerust_frontend_host::aux::OpenRequest;
+use nerust_frontend_host::session::SessionEvent;
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
@@ -28,13 +30,12 @@ impl HostState {
     }
 
     pub(crate) fn on_settings_closed(&mut self) {
-        if !self
-            .pause_policy
-            .owns(nerust_frontend_kernel::pause::PauseOwner::Settings)
-        {
+        let changed = self
+            .dispatch_session(SessionEvent::SettingsClosed)
+            .is_ok_and(|out| out.settings_changed);
+        if !changed {
             return;
         }
-        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, false);
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, false);
     }
@@ -43,29 +44,35 @@ impl HostState {
         if self.settings_open() {
             return;
         }
-        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+        if !self
+            .dispatch_session(SessionEvent::SettingsOpened)
+            .is_ok_and(|out| out.settings_changed)
+        {
+            return;
+        }
         let ctx = self.frame_ctx();
         self.sync_menu_state(&ctx);
 
-        match opener.create_aux(
-            crate::aux::focus::AuxKind::Settings,
-            crate::ports::AuxOpenParams::Settings {
-                snapshot: self.session.settings_snapshot().clone(),
-                registry: self.ctx.registry.clone(),
-                audio: self.ctx.audio_registry.clone(),
-            },
-        ) {
-            Some(handle) => {
-                let id = self.aux.insert(handle);
-                debug_assert_eq!(
-                    self.aux.route_id(crate::aux::focus::AuxKind::Settings),
-                    Some(id)
-                );
-            }
-            None => {
-                log::error!("failed to open settings window");
-                self.on_settings_closed();
-            }
+        let OpenRequest::Create(id) = self.aux.request_open(crate::aux::focus::AuxKind::Settings)
+        else {
+            return;
+        };
+        let opened = opener
+            .create_aux(
+                crate::aux::focus::AuxKind::Settings,
+                crate::ports::AuxOpenParams::Settings {
+                    snapshot: self.session.settings_snapshot().clone(),
+                    registry: self.ctx.registry.clone(),
+                    audio: self.ctx.audio_registry.clone(),
+                },
+            )
+            .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+        if !opened {
+            self.aux.cancel_open(id);
+            log::error!("failed to open settings window");
+            let _ = self.dispatch_session(SessionEvent::SettingsOpenFailed);
+            let ctx = self.frame_ctx();
+            self.sync_chrome(&ctx, false);
         }
     }
 
@@ -91,9 +98,29 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
+    use super::OpenRequest;
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::testkit::StubAux;
+
+    #[test]
+    fn pending_settings_open_skips_native_creation_and_pause_acquisition() {
+        use crate::aux::focus::AuxKind;
+        let mut host = TestHost::new().host;
+        let OpenRequest::Create(id) = host.aux.request_open(AuxKind::Settings) else {
+            panic!("expected reservation");
+        };
+        let opener = FakeOpener::failing("no display");
+        host.open_settings_window(&opener);
+        assert!(opener.calls().is_empty());
+        assert_eq!(host.aux.route_id(AuxKind::Settings), Some(id));
+        assert!(!host.pause_policy.paused());
+        assert!(host.aux.cancel_open(id));
+        host.open_settings_window(&opener);
+        assert_eq!(opener.calls(), [OpenerCall::Settings]);
+        assert!(!host.settings_open());
+        assert!(!host.pause_policy.paused());
+    }
 
     #[test]
     fn open_settings_attempt_records_request_and_stays_closed() {

@@ -651,7 +651,7 @@ pub(crate) fn present_preferences_dialog(
     parent: &gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     on_close: impl FnOnce() + 'static,
-) {
+) -> Option<gtk::Dialog> {
     let (snapshot, registry, audio_registry) = {
         let s = state.borrow();
         (
@@ -673,17 +673,30 @@ pub(crate) fn present_preferences_dialog(
         }
     };
 
-    let vm = SettingsViewModel::new(
+    let vm = match SettingsViewModel::new(
         snapshot,
         factories,
         supported_sample_rates,
         Rc::new(GtkStoragePathValidator) as Rc<dyn StoragePathValidator>,
-    )
-    .expect("duplicate SystemId in factory catalog");
+    ) {
+        Ok(vm) => vm,
+        Err(error) => {
+            // The owner validates the opening ticket before releasing Settings.
+            let mut state = state.borrow_mut();
+            state.session.report_external_error(
+                nerust_gui_shell::session::notification::FailureOrigin::Host,
+                error.to_string(),
+            );
+            drop(state);
+            on_close();
+            return None;
+        }
+    };
 
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
         .modal(true)
+        .destroy_with_parent(true)
         .title(ui_text(lang, UiText::Preferences))
         .default_width(900)
         .default_height(560)
@@ -1436,13 +1449,12 @@ pub(crate) fn present_preferences_dialog(
     let parent_clone = parent.clone();
     let state_clone = state.clone();
     let finish_cb = Rc::new(RefCell::new(Some(Box::new(on_close) as Box<dyn FnOnce()>)));
+    connect_preferences_finish(&dialog, &finish_cb);
     let _binding_owned = Rc::clone(&_binding);
     dialog.connect_response(move |dialog, response| {
         if response != gtk::ResponseType::Ok {
-            dialog.close();
-            if let Some(cb) = finish_cb.borrow_mut().take() {
-                cb();
-            }
+            dialog.destroy();
+            finish_preferences(&finish_cb);
             return;
         }
         match _binding_owned.vm.finish() {
@@ -1470,10 +1482,8 @@ pub(crate) fn present_preferences_dialog(
                                 profile,
                             );
                         }
-                        dialog.close();
-                        if let Some(cb) = finish_cb.borrow_mut().take() {
-                            cb();
-                        }
+                        dialog.destroy();
+                        finish_preferences(&finish_cb);
                     }
                     Err(e) => {
                         _binding_owned.error_label.set_text(&e.to_string());
@@ -1487,11 +1497,37 @@ pub(crate) fn present_preferences_dialog(
     });
 
     dialog.present();
+    Some(dialog)
 }
 
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
+
+type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
+
+fn connect_preferences_finish(dialog: &gtk::Dialog, callback: &FinishCallback) {
+    // Native destruction bypasses response. In GTK4, strong references can
+    // delay disposal/destroy, so unrealize also releases the native lifetime.
+    let on_destroy = callback.clone();
+    dialog.connect_destroy(move |_| finish_preferences(&on_destroy));
+    let on_unrealize = callback.clone();
+    dialog.connect_unrealize(move |_| finish_preferences(&on_unrealize));
+    let on_close = callback.clone();
+    dialog.connect_close_request(move |_| {
+        finish_preferences(&on_close);
+        glib::Propagation::Proceed
+    });
+}
+
+fn finish_preferences(callback: &FinishCallback) {
+    // Release the RefCell borrow before invoking native/user callbacks, which
+    // can synchronously trigger another close or destruction signal.
+    let finish = callback.borrow_mut().take();
+    if let Some(finish) = finish {
+        finish();
+    }
+}
 
 /// Titled settings group header: bold, larger than items, glued to
 /// its group (2 below) with the gap above carried by the page.
@@ -1727,6 +1763,21 @@ mod tests {
     use crate::test_support::ui_test_available;
 
     #[test]
+    fn preferences_finish_runs_once_even_when_close_reenters() {
+        let count = Rc::new(Cell::new(0));
+        let callback: FinishCallback = Rc::new(RefCell::new(None));
+        let callback_weak = Rc::downgrade(&callback);
+        let count_on_close = count.clone();
+        *callback.borrow_mut() = Some(Box::new(move || {
+            count_on_close.set(count_on_close.get() + 1);
+            finish_preferences(&callback_weak.upgrade().unwrap());
+        }));
+        finish_preferences(&callback);
+        finish_preferences(&callback);
+        assert_eq!(count.get(), 1);
+    }
+
+    #[test]
     fn with_mut_releases_borrow_before_follow_up_work() {
         let value = RefCell::new(0);
         with_mut(&value, |current| *current = 1);
@@ -1746,6 +1797,36 @@ mod tests {
             }
         };
     }
+
+    gtk_test!(preferences_native_close_and_destroy_finish_once, || {
+        for destroy in [false, true] {
+            let dialog = gtk::Dialog::builder().title("lifetime test").build();
+            let count = Rc::new(Cell::new(0));
+            let count_on_close = count.clone();
+            let callback: FinishCallback = Rc::new(RefCell::new(Some(Box::new(move || {
+                count_on_close.set(count_on_close.get() + 1);
+            }))));
+            connect_preferences_finish(&dialog, &callback);
+            dialog.present();
+            if destroy {
+                dialog.destroy();
+            } else {
+                dialog.close();
+            }
+            assert_eq!(
+                count.get(),
+                1,
+                "native close/destroy must release while references remain"
+            );
+            dialog.destroy();
+            finish_preferences(&callback);
+            assert_eq!(
+                count.get(),
+                1,
+                "overlapping terminal signals never double release"
+            );
+        }
+    });
 
     gtk_test!(refreshing_guard_prevents_reentrant_signal, || {
         let binding = create_test_binding();
