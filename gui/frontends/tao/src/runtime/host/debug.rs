@@ -1,31 +1,24 @@
 //! Debug orchestrator: owns the aux-window cluster plus in-flight async flights.
-//! `drain.rs` routes through these narrow methods, never through `host.debug` fields.
+//! Native windows stay here; FIFO and epoch-bound polling live in the shared host.
 
 use super::super::debug_windows::DebugWindows;
 
-pub(crate) struct DrainBatch {
-    pub epoch: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    pub actions: Vec<nerust_gui_shell::debug::DebugAction>,
-    pub snapshot: crate::aux::bridge::DrainSnapshot,
-}
+pub(crate) type DrainBatch =
+    nerust_frontend_host::drain::DrainBatch<crate::aux::bridge::DrainSnapshot>;
 
 /// Debug orchestrator: aux-window cluster plus the in-flight async flights.
 pub(crate) struct DebugOrchestrator {
     windows: DebugWindows,
-    drain_flight: Option<nerust_gui_shell::debug::DrainFlight>,
-    live_flight: Option<nerust_gui_shell::debug::LiveImagesFlight>,
-    pub(crate) queue: std::collections::VecDeque<DrainBatch>,
-    pub(crate) drain_epoch: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pub(crate) drain: nerust_frontend_host::drain::DrainQueue<crate::aux::bridge::DrainSnapshot>,
+    pub(crate) live_flight: Option<nerust_gui_shell::debug::LiveImagesFlight>,
 }
 
 impl DebugOrchestrator {
     pub(super) fn new() -> Self {
         Self {
             windows: DebugWindows::new(),
-            drain_flight: None,
+            drain: Default::default(),
             live_flight: None,
-            queue: Default::default(),
-            drain_epoch: None,
         }
     }
 
@@ -37,24 +30,10 @@ impl DebugOrchestrator {
         &mut self.windows
     }
 
-    /// Take the stored drain flight for polling.
-    pub(crate) fn take_drain_flight(&mut self) -> Option<nerust_gui_shell::debug::DrainFlight> {
-        self.drain_flight.take()
-    }
-
-    /// Store a still-pending drain flight (supersedes any older one).
-    pub(crate) fn store_drain_flight(&mut self, flight: nerust_gui_shell::debug::DrainFlight) {
-        self.drain_flight = Some(flight);
-    }
-
     /// Take the stored live-images flight for polling.
+    #[cfg(test)]
     pub(crate) fn take_live_flight(&mut self) -> Option<nerust_gui_shell::debug::LiveImagesFlight> {
         self.live_flight.take()
-    }
-
-    /// Store a still-pending live-images flight.
-    pub(crate) fn store_live_flight(&mut self, flight: nerust_gui_shell::debug::LiveImagesFlight) {
-        self.live_flight = Some(flight);
     }
 
     pub(crate) fn live_flight_pending(&self) -> bool {
@@ -62,15 +41,13 @@ impl DebugOrchestrator {
     }
 
     pub(crate) fn drain_pending(&self) -> bool {
-        self.drain_flight.is_some() || !self.queue.is_empty()
+        self.drain.pending()
     }
 
     /// Drop in-flight async fetches (close teardown; handles live in the registry).
     pub(crate) fn close_flights(&mut self) {
-        self.drain_flight.take();
+        self.drain.clear();
         self.live_flight.take();
-        self.queue.clear();
-        self.drain_epoch = None;
     }
 }
 
@@ -96,7 +73,7 @@ mod tests {
     fn debug_orchestrator_flights_start_empty_and_close_clean() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(host.orchestrator_mut().take_drain_flight().is_none());
+        assert!(!host.debug.drain.flight_pending());
         assert!(host.orchestrator_mut().take_live_flight().is_none());
         assert!(!host.live_flight_pending());
         host.orchestrator_mut().close_flights();

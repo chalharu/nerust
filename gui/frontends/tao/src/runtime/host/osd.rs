@@ -3,16 +3,18 @@
 
 use std::time::Instant;
 
+use nerust_frontend_host::{
+    aux::OpenRequest,
+    frame::{FrameCtx, FrameSnapshot},
+    osd::ModalAdvance,
+};
 use nerust_render_traits::renderer::RenderPipeline;
 use tao::event::WindowEvent;
 
 use super::HostState;
-use super::frame::{FrameCtx, FrameSnapshot};
 use super::window::WakeNeed;
 use crate::aux::focus::AuxKind;
 use crate::ports::WindowOpener;
-use nerust_render_traits::ReservedStrip;
-use nerust_render_traits::renderer::strip_pixels;
 
 /// In-flight error dialog: blocking `show_error` runs on a thread.
 /// Pause ownership lives in the host arbiter for the entire queue lifetime.
@@ -20,38 +22,31 @@ pub(crate) struct ModalFlight {
     pub(super) done: std::sync::mpsc::Receiver<()>,
 }
 
-/// Shell-side OSD sync gate, calling only public presenter/manager APIs.
-/// The live-layer memo is deliberately not an input: a live but steady layer must Skip.
-fn osd_layer_due(
-    presenter: &nerust_gui_shell::session::osd::OsdPresenter,
-    manager: &nerust_gui_shell::session::osd::OsdManager,
-    status_enabled: bool,
-    geometry_changed: bool,
-) -> bool {
-    manager.generation() != presenter.last_seen()
-        || manager.has_visible()
-        || status_enabled
-        || geometry_changed
-}
-
 impl HostState {
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
         let ctx = self.frame_ctx();
-        if self.aux.contains(AuxKind::History) {
-            self.sync_history_window(ctx.frame());
-            return;
-        }
-        if let Some(handle) = opener.create_aux(
-            AuxKind::History,
-            crate::ports::AuxOpenParams::History {
-                language: ctx.frame().language(),
-            },
-        ) {
-            let id = self.aux.insert(handle);
-            debug_assert_eq!(self.aux.route_id(AuxKind::History), Some(id));
+        let id = match self.aux.request_open(AuxKind::History) {
+            OpenRequest::Create(id) => id,
+            OpenRequest::Present(_) => {
+                self.sync_history_window(ctx.frame());
+                return;
+            }
+            OpenRequest::Pending(_) => return,
+        };
+        let opened = opener
+            .create_aux(
+                AuxKind::History,
+                crate::ports::AuxOpenParams::History {
+                    language: ctx.frame().language(),
+                },
+            )
+            .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+        if opened {
             // Fresh window needs full content regardless of cache.
             self.osd.history.sync_key.clear();
             self.sync_history_window(ctx.frame());
+        } else {
+            self.aux.cancel_open(id);
         }
     }
 
@@ -96,21 +91,7 @@ impl HostState {
 
     /// A fresh destination has neither the layer nor the reserved strip.
     pub(crate) fn note_renderer_replaced(&mut self) {
-        self.osd.layer.presenter.invalidate();
-        self.osd.layer.last_strip.clear();
-        self.osd.layer.last_sync_geometry.clear();
-        self.osd.layer.layer_live = false;
-    }
-
-    /// Reserved edge strips in physical pixels; static per settings, not per frame.
-    fn reserved_strip_with(&self, frame: &FrameSnapshot) -> ReservedStrip {
-        let chrome = *frame.chrome();
-        let client_h = self.windows.client_height();
-        let (top_rows, bottom_rows) = chrome.reserved_rows();
-        ReservedStrip {
-            top: strip_pixels(client_h, top_rows, 1.0),
-            bottom: strip_pixels(client_h, bottom_rows, 1.0),
-        }
+        self.osd.layer.invalidate();
     }
 
     /// Present one error batch without blocking the loop.
@@ -124,7 +105,7 @@ impl HostState {
     }
 
     /// Reap a finished dialog, chain the next batch, and resume once the queue drains.
-    fn reap_modal(&mut self) {
+    fn reap_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
         let finished =
             self.osd
                 .modal
@@ -139,10 +120,14 @@ impl HostState {
                 log::error!("error dialog thread died before ack");
             }
             self.osd.modal.flight = None;
-            self.osd.modal_closed();
-            if self.osd.modal_queue_len() == 0 {
-                self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
-                self.request_redraw();
+            match self.osd.modal_closed() {
+                ModalAdvance::Present(detail) => {
+                    self.spawn_modal(detail, language);
+                }
+                ModalAdvance::Drained => {
+                    self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
+                    self.request_redraw();
+                }
             }
         }
     }
@@ -158,23 +143,16 @@ impl HostState {
     /// Drain shell notifications into display state, show error modals, refresh the overlay.
     /// Cheap when idle; safe to call every loop pass.
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
-        use nerust_gui_shell::session::osd::PushInput;
-        let now = Instant::now();
         let language = ctx.frame().language();
-        let tick = ctx.tick();
-        let report = self.session.pump_osd(
-            &mut self.osd.modal.manager,
-            PushInput {
-                policy: *ctx.frame().policy(),
-                language,
-                now,
-                tick,
-            },
-        );
+        let report = self
+            .osd
+            .modal
+            .notifications
+            .pump(&mut self.session, ctx, Instant::now());
         if report.modal_queued {
             self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         }
-        self.reap_modal();
+        self.reap_modal(language);
         self.present_modal(language);
         if report.changed {
             // Paint even idle: no main redraw is scheduled while
@@ -210,73 +188,37 @@ impl HostState {
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
     ) {
-        let strip = self.reserved_strip_with(ctx.frame());
-        if self.osd.layer.last_strip.check(&strip) {
-            renderer.set_reserved_strip(strip);
-        }
-        self.sync_osd_layer(renderer, size, ctx);
+        self.osd.layer.render(
+            self.osd.modal.notifications.manager(),
+            renderer,
+            size,
+            self.windows.client_height(),
+            ctx,
+            Instant::now(),
+        );
     }
 
     /// Rasterize the OSD layer on change and hand it to the renderer.
     /// Coordinates are renderer surface pixels, not the full window.
+    #[cfg(test)]
     fn sync_osd_layer(
         &mut self,
         renderer: &mut dyn RenderPipeline,
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
     ) {
-        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
-        let language = ctx.frame().language();
-        let chrome = *ctx.frame().chrome();
-        // Cheap shell-side pre-gate before running the presenter.
-        let geometry = (size.width, size.height, chrome);
-        // Single-op memo: records and reports change atomically, so a
-        // repeated geometry never re-arms the presenter below.
-        let geometry_changed = self.osd.layer.last_sync_geometry.check(&geometry);
-        if !osd_layer_due(
-            &self.osd.layer.presenter,
-            &self.osd.modal.manager,
-            chrome.status_enabled,
-            geometry_changed,
-        ) {
-            return;
-        }
-        let tick = ctx.tick();
-        let decision = self.osd.layer.presenter.sync(
-            &self.osd.modal.manager,
-            OsdSyncInput {
-                tick,
-                chrome,
-                language,
-                now: Instant::now(),
-                width: geometry.0,
-                height: geometry.1,
-                ui_scale: 1.0,
-                safe_insets: nerust_gui_shell::session::osd::ViewInsets::default(),
-            },
+        self.osd.layer.sync_layer(
+            self.osd.modal.notifications.manager(),
+            renderer,
+            size,
+            ctx,
+            Instant::now(),
         );
-        log::trace!(
-            "osd sync geometry v{}",
-            self.osd.layer.last_sync_geometry.version()
-        );
-        match decision {
-            OsdSync::Skip => {}
-            OsdSync::Clear => {
-                self.osd.layer.layer_live = false;
-                renderer.set_osd_layer(None);
-            }
-            OsdSync::Render(plan) => {
-                self.osd.layer.layer_live = true;
-                let (width, height) = (plan.width, plan.height);
-                let content = plan.into_content();
-                renderer.set_osd_layer(self.osd.layer.raster.rasterize(&content, width, height));
-            }
-        }
     }
 
     /// Wake the loop for OSD expiry while labels are visible.
     pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.osd.modal.manager.wakeup_deadline(Instant::now())
+        self.osd.modal.notifications.wakeup_deadline(Instant::now())
     }
 }
 
@@ -285,7 +227,7 @@ mod tests {
     use super::*;
     use crate::runtime::host::TestHost;
     use nerust_render_traits::{
-        FrameBuffer, SurfaceSize,
+        FrameBuffer, ReservedStrip, SurfaceSize,
         renderer::{
             FrameSink, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererError, StripSink,
             SurfaceLifecycle,
@@ -310,7 +252,7 @@ mod tests {
             "ACK must wake a paused, unfocused loop"
         );
         ack.send(()).unwrap();
-        host.reap_modal();
+        host.reap_modal(ctx.frame().language());
         assert!(host.session().tick_metrics().paused, "focus still holds");
         assert!(!host.pause_policy.owns(PauseOwner::Modal));
         host.release_focus_pause();
@@ -381,25 +323,23 @@ mod tests {
         assert!(!chrome.status_enabled);
         // Idle: same generation, nothing visible, status off, no
         // geometry move -- the presenter stays untouched.
-        assert!(!osd_layer_due(
-            &host.osd.layer.presenter,
-            &host.osd.modal.manager,
-            false,
-            false
-        ));
+        assert!(
+            !host
+                .osd
+                .layer
+                .is_due(host.osd.modal.notifications.manager(), false, false)
+        );
         // Status liveness and geometry moves each pass alone.
-        assert!(osd_layer_due(
-            &host.osd.layer.presenter,
-            &host.osd.modal.manager,
-            true,
-            false
-        ));
-        assert!(osd_layer_due(
-            &host.osd.layer.presenter,
-            &host.osd.modal.manager,
-            false,
-            true
-        ));
+        assert!(
+            host.osd
+                .layer
+                .is_due(host.osd.modal.notifications.manager(), true, false)
+        );
+        assert!(
+            host.osd
+                .layer
+                .is_due(host.osd.modal.notifications.manager(), false, true)
+        );
     }
 
     #[test]
@@ -414,7 +354,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert!(renderer.layers.is_empty());
-        assert!(!host.osd.layer.layer_live);
+        assert!(!host.osd.layer.layer_live());
     }
 
     #[test]
@@ -428,7 +368,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert_eq!(renderer.layers, [true]);
-        assert!(host.osd.layer.layer_live);
+        assert!(host.osd.layer.layer_live());
         // Steady second frame reuses the layer: no re-push.
         let ctx = host.frame_ctx();
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
@@ -440,7 +380,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert_eq!(renderer.layers, [true, false]);
-        assert!(!host.osd.layer.layer_live);
+        assert!(!host.osd.layer.layer_live());
         let ctx = host.frame_ctx();
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert_eq!(renderer.layers, [true, false]);
@@ -457,6 +397,20 @@ mod tests {
         host.open_history(&opener);
         assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
         assert!(!host.aux.contains(AuxKind::History));
+        assert!(host.osd.history_key().is_none());
+    }
+
+    #[test]
+    fn pending_history_open_skips_creation_and_content_cache_updates() {
+        use crate::test_opener::FakeOpener;
+        let mut host = TestHost::new().host;
+        let OpenRequest::Create(id) = host.aux.request_open(AuxKind::History) else {
+            panic!("expected reservation");
+        };
+        let opener = FakeOpener::failing("no display");
+        host.open_history(&opener);
+        assert!(opener.calls().is_empty());
+        assert_eq!(host.aux.route_id(AuxKind::History), Some(id));
         assert!(host.osd.history_key().is_none());
     }
 
@@ -483,7 +437,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert!(renderer.layers.is_empty());
-        assert!(!host.osd.layer.layer_live);
+        assert!(!host.osd.layer.layer_live());
     }
 
     #[test]
@@ -527,7 +481,7 @@ mod tests {
         assert_eq!(old.strips.len(), 1);
 
         host.note_renderer_replaced();
-        assert!(!host.osd.layer.layer_live);
+        assert!(!host.osd.layer.layer_live());
         let mut fresh = StubRenderer::default();
         host.render_osd_frame(&mut fresh, surface(), &ctx);
         assert_eq!(fresh.strips, old.strips);

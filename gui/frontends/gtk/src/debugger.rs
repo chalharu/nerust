@@ -1,13 +1,14 @@
 //! GTK debugger window: same semantics, shell APIs, and view-model formatters as the tao twin.
 //! Action batches run as async shell-drain flights polled on the GTK tick.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, task::Poll};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::{DEBUG_DUMP_PAGE_ROWS, DUMP_ROW_BYTES, SpaceId};
-use nerust_gui_shell::debug::{
-    DebugAction, DebugDrainInput, DrainFlight, DrainPoll, LiveImagesFlight, LiveImagesPoll,
-};
+use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
+use nerust_frontend_host::drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions};
+use nerust_frontend_host::focus::AuxKind;
+use nerust_gui_shell::debug::{DebugAction, DebugDrainInput, LiveImagesFlight};
 use nerust_gui_viewmodel::debugger::{
     self as vm, DebugImageRgba, DisplayCache, NavState, StatusMessage,
 };
@@ -142,9 +143,7 @@ impl DebuggerData {
 pub(crate) type DebuggerWindow = Rc<RefCell<DebuggerWindowCore>>;
 
 #[derive(Clone)]
-struct DrainBatch {
-    epoch: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    actions: Vec<DebugAction>,
+struct DrainSnapshot {
     scope: RebuildScope,
     space: Option<SpaceId>,
     mem_addr: u32,
@@ -156,22 +155,19 @@ struct DrainBatch {
     need_images: bool,
 }
 
+type DrainBatch = nerust_frontend_host::drain::DrainBatch<DrainSnapshot>;
+
 pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     data: DebuggerData,
     /// In-flight async drain with its rebuild scope: `act_scoped` starts it,
     /// the tick poller finishes it before starting the next batch.
-    flight: Option<(
-        DrainFlight,
-        RebuildScope,
-        std::sync::Arc<std::sync::atomic::AtomicBool>,
-    )>,
-    queue: std::collections::VecDeque<DrainBatch>,
+    drain: DrainQueue<DrainSnapshot>,
     /// In-flight async live-images fetch, same pattern for the 250ms
     /// PPU follow tick. At most one; a newer tick supersedes.
     live_flight: Option<LiveImagesFlight>,
-    ppu_window: Option<super::ppu_window::PpuWindow>,
+    viewers: AuxWindows<u64, super::ppu_window::PpuWindow>,
     pause_button: gtk::Button,
     write_button: gtk::Button,
     regs_left: gtk::ListBox,
@@ -310,10 +306,9 @@ impl DebuggerWindowCore {
             window: window.clone(),
             state: state.clone(),
             data,
-            flight: None,
-            queue: Default::default(),
+            drain: Default::default(),
             live_flight: None,
-            ppu_window: None,
+            viewers: Default::default(),
             pause_button: pause_button.clone(),
             status_label: status_label.clone(),
             disasm_title: disasm_title.clone(),
@@ -573,11 +568,13 @@ impl DebuggerWindowCore {
             // Backstop for drain flights: poll here too so a missed watcher
             // can never strand a pending display.
             Self::poll_flight(&win);
-            let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
-                let state = win.borrow().state.clone();
-                let session = &state.borrow().session;
-                session.tick_metrics().loaded && !session.tick_metrics().paused
-            };
+            let live = win.borrow().window.is_visible()
+                && win.borrow().viewers.get(AuxKind::Ppu).is_some()
+                && {
+                    let state = win.borrow().state.clone();
+                    let session = &state.borrow().session;
+                    session.tick_metrics().loaded && !session.tick_metrics().paused
+                };
             if live {
                 Self::live_tick(&win);
             }
@@ -597,22 +594,21 @@ impl DebuggerWindowCore {
             // of stacking another one behind it.
             return;
         }
-        let live = win.borrow().window.is_visible() && win.borrow().ppu_window.is_some() && {
-            let state = win.borrow().state.clone();
-            let session = &state.borrow().session;
-            session.tick_metrics().loaded && !session.tick_metrics().paused
-        };
+        let live = win.borrow().window.is_visible()
+            && win.borrow().viewers.get(AuxKind::Ppu).is_some()
+            && {
+                let state = win.borrow().state.clone();
+                let session = &state.borrow().session;
+                session.tick_metrics().loaded && !session.tick_metrics().paused
+            };
         if !live {
             return;
         }
         let state = win.borrow().state.clone();
-        let mut flight = state.borrow().session.debug_live_images_begin(true);
-        match flight.poll() {
-            LiveImagesPoll::Done(live) => Self::apply_live_images(win, live),
-            LiveImagesPoll::Pending => {
-                win.borrow_mut().live_flight = Some(flight);
-                Self::watch_live_flight(win);
-            }
+        let flight = state.borrow().session.debug_live_images_begin(true);
+        win.borrow_mut().live_flight = Some(flight);
+        if Self::poll_live_flight(win) {
+            Self::watch_live_flight(win);
         }
     }
 
@@ -638,20 +634,13 @@ impl DebuggerWindowCore {
     /// Poll the stored live fetch once. Returns whether one is still pending.
     /// Orphaned flights settle harmlessly: the generation guard skips stale data.
     fn poll_live_flight(win: &DebuggerWindow) -> bool {
-        let mut flight = match win.borrow_mut().live_flight.take() {
-            Some(flight) => flight,
-            None => return false,
-        };
-        match flight.poll() {
-            LiveImagesPoll::Done(live) => {
-                Self::apply_live_images(win, live);
-                false
-            }
-            LiveImagesPoll::Pending => {
-                win.borrow_mut().live_flight = Some(flight);
-                true
-            }
+        let result = poll_flight(&mut win.borrow_mut().live_flight);
+        match result {
+            Poll::Ready(Some(live)) => Self::apply_live_images(win, live),
+            Poll::Ready(None) => {}
+            Poll::Pending => return true,
         }
+        false
     }
 
     /// Patch finished live images into the display. Images apply when newer
@@ -694,7 +683,7 @@ impl DebuggerWindowCore {
             this.status_label
                 .set_label(&this.data.display.status.render(language));
         }
-        if let Some(ppu) = this.ppu_window.as_ref()
+        if let Some(ppu) = this.viewers.get(AuxKind::Ppu)
             && !super::surface_state::surface_gone(&ppu.borrow().window)
         {
             let display = &this.data.display;
@@ -832,6 +821,15 @@ impl DebuggerWindowCore {
         self.window.present();
     }
 
+    /// Clone the native handle without invoking GTK presentation or lifecycle calls.
+    pub(crate) fn native_window(&self) -> gtk::ApplicationWindow {
+        self.window.clone()
+    }
+
+    fn ppu_window(&self) -> Option<super::ppu_window::PpuWindow> {
+        self.viewers.get(AuxKind::Ppu).cloned()
+    }
+
     /// True when the native surface is gone (external destruction skips
     /// close-request and `destroy` never fires). Callers must check before
     /// any touch: GTK queries on a dead surface are fatal X errors.
@@ -859,8 +857,7 @@ impl DebuggerWindowCore {
         if replaced {
             let data = DebuggerData::new(&this.state.borrow().session);
             this.data = data;
-            this.flight = None;
-            this.queue.clear();
+            this.drain.clear();
             this.live_flight = None;
         }
         // The gesture was made against the old display. Refresh the replacement,
@@ -871,9 +868,7 @@ impl DebuggerWindowCore {
             actions
         };
         let scope = if replaced { RebuildScope::All } else { scope };
-        let batch = DrainBatch {
-            epoch,
-            actions: actions.to_vec(),
+        let snapshot = DrainSnapshot {
             scope,
             space: this.data.selected_space(),
             mem_addr: this.data.nav.mem_addr(),
@@ -882,29 +877,10 @@ impl DebuggerWindowCore {
             freeze: this.data.freeze,
             reg_target: this.data.reg_target,
             prev_rows: this.data.display.dump_rows.clone(),
-            need_images: this.ppu_window.is_some(),
+            need_images: this.viewers.get(AuxKind::Ppu).is_some(),
         };
-        // Frontend pause ownership must not run ahead of preceding side effects.
-        let mut start = 0;
-        for (index, action) in actions.iter().enumerate() {
-            if index > start
-                && matches!(
-                    action,
-                    DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause
-                )
-            {
-                this.queue.push_back(DrainBatch {
-                    actions: actions[start..index].to_vec(),
-                    ..batch.clone()
-                });
-                start = index;
-            }
-        }
-        this.queue.push_back(DrainBatch {
-            actions: actions[start..].to_vec(),
-            ..batch
-        });
-        let pending = this.flight.is_some();
+        this.drain.enqueue(epoch, actions, snapshot);
+        let pending = this.drain.flight_pending();
         drop(this);
         if !pending && Self::poll_flight(win) {
             Self::watch_flight(win);
@@ -913,60 +889,36 @@ impl DebuggerWindowCore {
 
     fn start_batch(win: &DebuggerWindow, batch: DrainBatch) {
         let state = win.borrow().state.clone();
-        let DrainBatch {
-            epoch,
-            actions,
-            scope,
-            space,
-            mem_addr,
-            dis_addr,
-            watch,
-            freeze,
-            reg_target,
-            prev_rows: prev_dump_rows,
-            need_images,
-        } = batch;
-        if !epoch.load(std::sync::atomic::Ordering::Acquire) {
-            return;
-        }
-        let mut state = state.borrow_mut();
-        use nerust_gui_shell::session::access::PauseControl;
-        for action in &actions {
-            match action {
-                DebugAction::Pause => state.pause(),
-                DebugAction::Resume => state.resume(),
-                DebugAction::TogglePause => state.toggle_pause(),
-                _ => {}
-            }
-        }
-        let loaded = state.session.tick_metrics().loaded;
-        let actions: Vec<_> = actions
-            .into_iter()
-            .map(|action| match action {
-                DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause if loaded => {
-                    DebugAction::Refresh
+        let scope = batch.snapshot.scope;
+        let flight = batch.begin(|actions, snapshot| {
+            let mut state = state.borrow_mut();
+            use nerust_gui_shell::session::access::PauseControl;
+            prepare_pause_actions(actions, |action| {
+                match action {
+                    DebugAction::Pause => state.pause(),
+                    DebugAction::Resume => state.resume(),
+                    DebugAction::TogglePause => state.toggle_pause(),
+                    _ => unreachable!("pause actions only"),
                 }
-                action => action,
-            })
-            .collect();
-        let input = DebugDrainInput {
-            space,
-            mem_addr,
-            dis_addr,
-            watch,
-            freeze,
-            reg_target,
-            prev_dump_rows: &prev_dump_rows,
-            need_images,
-        };
-        let mut flight = state.session.debug_drain_begin(&actions, &input);
-        drop(state);
-        match flight.poll() {
-            DrainPoll::Done(output) => {
-                Self::apply_scoped(win, *output, scope);
-            }
-            DrainPoll::Pending => {
-                win.borrow_mut().flight = Some((flight, scope, epoch));
+                state.session.tick_metrics().loaded
+            });
+            let input = DebugDrainInput {
+                space: snapshot.space,
+                mem_addr: snapshot.mem_addr,
+                dis_addr: snapshot.dis_addr,
+                watch: snapshot.watch,
+                freeze: snapshot.freeze,
+                reg_target: snapshot.reg_target,
+                prev_dump_rows: &snapshot.prev_rows,
+                need_images: snapshot.need_images,
+            };
+            state.session.debug_drain_begin(actions, &input)
+        });
+        if let Some(mut flight) = flight {
+            match flight.poll() {
+                Poll::Ready(Some(output)) => Self::apply_scoped(win, *output, scope),
+                Poll::Ready(None) => {}
+                Poll::Pending => win.borrow_mut().drain.store(flight),
             }
         }
     }
@@ -994,28 +946,14 @@ impl DebuggerWindowCore {
     /// completion the display applies, exactly like a synchronous drain.
     fn poll_flight(win: &DebuggerWindow) -> bool {
         loop {
-            let stored = win.borrow_mut().flight.take();
-            let (mut flight, scope, epoch) = match stored {
-                Some(stored) => stored,
-                None => {
-                    let batch = win.borrow_mut().queue.pop_front();
-                    let Some(batch) = batch else {
-                        return false;
-                    };
-                    Self::start_batch(win, batch);
-                    continue;
-                }
-            };
-            if !epoch.load(std::sync::atomic::Ordering::Acquire) {
-                continue;
-            }
-            match flight.poll() {
-                DrainPoll::Done(output) => {
-                    Self::apply_scoped(win, *output, scope);
-                }
-                DrainPoll::Pending => {
-                    win.borrow_mut().flight = Some((flight, scope, epoch));
-                    return true;
+            // Release the window borrow before pause callbacks or widget rebuilds.
+            let event = win.borrow_mut().drain.poll();
+            match event {
+                DrainEvent::Idle => return false,
+                DrainEvent::Pending => return true,
+                DrainEvent::Start(batch) => Self::start_batch(win, batch),
+                DrainEvent::Done(output, snapshot) => {
+                    Self::apply_scoped(win, *output, snapshot.scope)
                 }
             }
         }
@@ -1051,21 +989,31 @@ impl DebuggerWindowCore {
     }
 
     fn open_ppu(win: &DebuggerWindow) {
-        // Idempotent: a hidden viewer re-presents with focus instead
-        // of duplicating (close hides, never destroys). An externally
-        // destroyed viewer keeps its slot, so rebuild instead of
-        // presenting a dead surface (fatal X error). Clone out of the
-        // borrow first: clearing the slot re-borrows mutably, and the
-        // `if let` scrutinee guard would otherwise still be alive.
-        let ppu = win.borrow().ppu_window.clone();
-        if let Some(ppu) = ppu {
-            if super::surface_state::surface_gone(&ppu.borrow().window) {
-                win.borrow_mut().ppu_window = None;
-            } else {
-                ppu.borrow().present();
+        // Close hides, so keep its ticket. External destruction can skip
+        // lifecycle signals: retire the dead ticket before reserving again.
+        let existing = {
+            let this = win.borrow();
+            this.viewers.route_id(AuxKind::Ppu).zip(this.ppu_window())
+        };
+        if let Some((id, ppu)) = existing
+            && super::surface_state::surface_gone(&ppu.borrow().window)
+        {
+            let removed = win.borrow_mut().viewers.remove_id(id);
+            drop(removed);
+        }
+        // Reserve before native construction/presentation can reenter us.
+        let request = win.borrow_mut().viewers.request_open(AuxKind::Ppu);
+        let id = match request {
+            OpenRequest::Create(id) => id,
+            OpenRequest::Present(_) => {
+                let ppu = win.borrow().ppu_window();
+                if let Some(ppu) = ppu {
+                    ppu.borrow().present();
+                }
                 return;
             }
-        }
+            OpenRequest::Pending(_) => return,
+        };
         let app = win
             .borrow()
             .window
@@ -1080,7 +1028,13 @@ impl DebuggerWindowCore {
         let ppu = super::ppu_window::PpuWindowCore::open(
             &app, &main, state, images, images_gen, panels, language,
         );
-        win.borrow_mut().ppu_window = Some(ppu);
+        let completed = win.borrow_mut().viewers.complete_open(id, None, ppu);
+        if let Err(ppu) = completed {
+            // Destruction can emit callbacks: never retain the registry borrow.
+            let native = ppu.borrow().window.clone();
+            native.destroy();
+            return;
+        }
         // The PPU opens with whatever the last drain fetched, so refresh once
         // with the viewer present: images and panels populate immediately.
         Self::act(win, &[DebugAction::Refresh]);
@@ -1367,7 +1321,7 @@ impl DebuggerWindowCore {
         }
 
         // The PPU viewer follows the same refresh (panels included).
-        if let Some(ppu) = this.ppu_window.as_ref()
+        if let Some(ppu) = this.viewers.get(AuxKind::Ppu)
             && !super::surface_state::surface_gone(&ppu.borrow().window)
         {
             let display = &this.data.display;
@@ -1921,19 +1875,21 @@ mod tests {
             DrainBatch {
                 epoch: epoch.clone(),
                 actions: vec![DebugAction::StepInstr],
-                scope: RebuildScope::All,
-                space: this.data.selected_space(),
-                mem_addr: 0,
-                dis_addr: None,
-                watch: None,
-                freeze: Some((0, 0xff)),
-                reg_target: Some("a"),
-                prev_rows: Vec::new(),
-                need_images: false,
+                snapshot: DrainSnapshot {
+                    scope: RebuildScope::All,
+                    space: this.data.selected_space(),
+                    mem_addr: 0,
+                    dis_addr: None,
+                    watch: None,
+                    freeze: Some((0, 0xff)),
+                    reg_target: Some("a"),
+                    prev_rows: Vec::new(),
+                    need_images: false,
+                },
             }
         };
         // A second unstarted batch must not pause/write the replacement.
-        win.borrow_mut().queue.push_back(DrainBatch {
+        win.borrow_mut().drain.push_back(DrainBatch {
             actions: vec![DebugAction::Resume, DebugAction::RegisterWrite(0xff)],
             ..batch.clone()
         });
@@ -2119,13 +2075,112 @@ mod tests {
             return;
         };
         // The viewer opens once, then re-presents with focus.
-        assert!(win.borrow().ppu_window.is_none());
+        assert!(win.borrow().ppu_window().is_none());
         DebuggerWindowCore::open_ppu(&win);
-        assert!(win.borrow().ppu_window.is_some());
+        assert!(win.borrow().ppu_window().is_some());
         DebuggerWindowCore::open_ppu(&win);
         // Same independence as the debugger above.
-        let ppu = win.borrow().ppu_window.clone().expect("ppu open");
+        let ppu = win.borrow().ppu_window().expect("ppu open");
         assert!(ppu.borrow().window.transient_for().is_none());
+    }
+
+    #[test]
+    fn widget_ppu_hidden_reuses_ticket_and_dead_reopen_rejects_stale_removal() {
+        let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        assert_eq!(win.borrow().native_window(), win.borrow().window);
+        DebuggerWindowCore::open_ppu(&win);
+        let old = win.borrow().viewers.route_id(AuxKind::Ppu).unwrap();
+        let ppu = win.borrow().ppu_window().unwrap();
+        let native = ppu.borrow().window.clone();
+        native.close();
+        assert!(!native.is_visible());
+        assert!(!super::super::surface_state::surface_gone(&native));
+        DebuggerWindowCore::open_ppu(&win);
+        assert_eq!(win.borrow().viewers.route_id(AuxKind::Ppu), Some(old));
+        assert!(Rc::ptr_eq(&ppu, &win.borrow().ppu_window().unwrap()));
+        assert!(native.is_visible());
+
+        native.destroy();
+        assert!(super::super::surface_state::surface_gone(&native));
+        DebuggerWindowCore::open_ppu(&win);
+        let current = win.borrow().viewers.route_id(AuxKind::Ppu).unwrap();
+        let replacement = win.borrow().ppu_window().unwrap();
+        assert_ne!(current, old);
+        assert!(!Rc::ptr_eq(&ppu, &replacement));
+        let removed = win.borrow_mut().viewers.remove_id(old);
+        assert!(removed.is_none());
+        assert_eq!(win.borrow().viewers.route_id(AuxKind::Ppu), Some(current));
+        assert!(Rc::ptr_eq(
+            &replacement,
+            &win.borrow().ppu_window().unwrap()
+        ));
+        assert!(replacement.borrow().window.is_visible());
+    }
+
+    #[test]
+    fn widget_ppu_native_open_reentry_is_pending() {
+        let Some((app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        // Application membership signals require startup, unlike the other
+        // widget-only tests which can present unregistered windows.
+        app.register(None::<&gio::Cancellable>)
+            .expect("test application registers");
+        let added = Rc::new(std::cell::Cell::new(0));
+        let count = added.clone();
+        let opening = win.clone();
+        let signal = app.connect_window_added(move |_, _| {
+            count.set(count.get() + 1);
+            let id = opening.borrow().viewers.route_id(AuxKind::Ppu).unwrap();
+            assert_eq!(
+                opening.borrow_mut().viewers.request_open(AuxKind::Ppu),
+                OpenRequest::Pending(id)
+            );
+            DebuggerWindowCore::open_ppu(&opening);
+        });
+        DebuggerWindowCore::open_ppu(&win);
+        app.disconnect(signal);
+        assert_eq!(added.get(), 1);
+        assert!(win.borrow().ppu_window().is_some());
+    }
+
+    #[test]
+    fn widget_ppu_stale_native_open_is_destroyed_outside_registry_borrow() {
+        let Some((app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
+            return;
+        };
+        app.register(None::<&gio::Cancellable>)
+            .expect("test application registers");
+        let stale_native = Rc::new(RefCell::new(None));
+        let captured = stale_native.clone();
+        let opening = win.clone();
+        let signal = app.connect_window_added(move |_, native| {
+            if captured.borrow().is_some() {
+                return;
+            }
+            *captured.borrow_mut() = Some(native.clone());
+            let id = opening.borrow().viewers.route_id(AuxKind::Ppu).unwrap();
+            assert!(opening.borrow_mut().viewers.cancel_open(id));
+            DebuggerWindowCore::open_ppu(&opening);
+        });
+        // Removing the rejected native window must permit reentrant mutation.
+        let removing = win.clone();
+        let removed = app.connect_window_removed(move |_, _| {
+            assert!(removing.try_borrow_mut().is_ok());
+        });
+        DebuggerWindowCore::open_ppu(&win);
+        app.disconnect(signal);
+        app.disconnect(removed);
+        let stale = stale_native.borrow().clone().unwrap();
+        assert!(super::super::surface_state::surface_gone(&stale));
+        let current = win.borrow().ppu_window().unwrap();
+        assert!(current.borrow().window.is_visible());
+        assert_ne!(current.borrow().window.upcast_ref::<gtk::Window>(), &stale);
     }
 
     #[test]
@@ -2160,7 +2215,7 @@ mod tests {
         assert!(win.borrow().select_label.label().contains("0x00000102"));
         // The viewer follows the rebuild with images and panels.
         DebuggerWindowCore::open_ppu(&win);
-        assert!(win.borrow().ppu_window.is_some());
+        assert!(win.borrow().ppu_window().is_some());
     }
 
     #[test]

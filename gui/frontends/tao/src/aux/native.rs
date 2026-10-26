@@ -90,7 +90,7 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aux::domain::{AuxButton, AuxId, AuxModifiers};
+    use crate::aux::domain::{AuxButton, AuxModifiers};
 
     #[test]
     fn native_id_mapping_is_stable_and_toolkit_free() {
@@ -100,8 +100,13 @@ mod tests {
 
     #[test]
     fn aux_ids_compare_by_value() {
-        assert_eq!(AuxId::new(1), AuxId::new(1));
-        assert_ne!(AuxId::new(1), AuxId::new(2));
+        use crate::aux::focus::AuxKind;
+        use crate::aux::registry::{AuxRegistry, test_double::StubAux};
+        let mut registry = AuxRegistry::new();
+        let first = registry.insert(Box::new(StubAux::new(AuxKind::Debug)));
+        assert_eq!(registry.route_id(AuxKind::Debug), Some(first));
+        let second = registry.insert(Box::new(StubAux::new(AuxKind::Debug)));
+        assert_ne!(first, second);
     }
 
     #[test]
