@@ -8,8 +8,9 @@ use nerust_settings_core::model::language::AppLanguage;
 use super::notification::UiNotification;
 
 pub use super::osd_history::{
-    HistoryFilter, HistoryLine, format_datetime, format_datetime_with_offset, format_time,
-    history_lines, level_label, level_name, level_rgb, level_tag, short_module,
+    HistoryFilter, HistoryLine, HistoryRowView, format_datetime, format_datetime_with_offset,
+    format_time, history_lines, history_row_view, level_label, level_name, level_rgb, level_tag,
+    short_module, visible_history,
 };
 
 pub use crate::session::osd_modal::ModalQueue;
