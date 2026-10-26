@@ -159,10 +159,7 @@ fn tile_hover_text(
     x: f64,
     y: f64,
 ) -> String {
-    let sx = (x / 2.0).floor().clamp(0.0, width as f64 - 1.0) as u32;
-    let sy = (y / 2.0).floor().clamp(0.0, height as f64 - 1.0) as u32;
-    let cols = (width / 8).max(1);
-    let idx = (sy / 8) * cols + (sx / 8);
+    let (idx, sx, sy) = nerust_gui_viewmodel::debugger::tile_hover_geometry(width, height, x, y);
     tile_hover(language, label, idx, sx, sy, idx * 16)
 }
 
