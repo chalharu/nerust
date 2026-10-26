@@ -1246,13 +1246,7 @@ impl DebuggerWindowCore {
             // The PC row carries a `>` marker like the dump
             // selection: the current position reads at a glance.
             let is_pinned = pinned == Some(line.addr);
-            let marker = if line.is_pc {
-                "> "
-            } else if is_pinned {
-                "@ "
-            } else {
-                "  "
-            };
+            let marker = vm::disasm_marker(line.is_pc, is_pinned);
             let button =
                 gtk::Button::with_label(&format!("{marker}{}", vm::format_disasm_line(line)));
             button.add_css_class("monospace");
