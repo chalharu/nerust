@@ -344,32 +344,6 @@ fn view_assembles_follow_and_fixed_modes() {
 }
 
 #[test]
-fn disasm_marker_never_double_marks_pc() {
-    use nerust_core_traits::debugger::DisasmLine;
-
-    let pc_line = DisasmLine {
-        addr: 0xC293,
-        bytes: [0x60, 0, 0, 0],
-        len: 1,
-        text: "RTS".to_string(),
-        is_pc: true,
-        target: None,
-    };
-    // The composed row carries exactly one `>`: the format owns
-    // it, the view prefix contributes blanks.
-    let composed = format!(
-        "{}{}",
-        disasm_marker(pc_line.is_pc, true),
-        vm::format_disasm_line(&pc_line)
-    );
-    assert!(composed.starts_with("  >0x"), "got {composed:?}");
-    // Pinned non-PC rows keep the `@` in the same column.
-    assert_eq!(disasm_marker(false, true), "@ ");
-    assert_eq!(disasm_marker(false, false), "  ");
-    assert_eq!(disasm_marker(true, false), "  ");
-}
-
-#[test]
 fn shortcut_and_cursor_keys_map_physical_codes() {
     use iced::keyboard::key::{Code, Physical};
     assert!(matches!(

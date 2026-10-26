@@ -326,17 +326,14 @@ impl DebugBridge {
     pub(crate) fn anchor(&self) -> u32 {
         let core = lock_core(&self.core);
         let follow = core.nav.follow_pc();
-        let pin = core.nav.dis_addr().unwrap_or(0);
+        let pin = core.nav.dis_addr();
         drop(core);
-        if follow {
-            self.display_snapshot()
-                .disasm_lines
-                .first()
-                .map(|line| line.addr)
-                .unwrap_or(0)
-        } else {
-            pin
-        }
+        let first = self
+            .display_snapshot()
+            .disasm_lines
+            .first()
+            .map(|line| line.addr);
+        nerust_gui_viewmodel::debugger::anchor(follow, first, pin)
     }
 
     /// First PC-marked disassembly row, for bookmark anchoring.
@@ -561,12 +558,16 @@ impl DebugBridge {
     }
 
     /// Push a bookmark; true when the table is full (nothing pushed).
+    /// Duplicate addresses are ignored instead of doubling entries.
     pub(crate) fn push_bookmark(&self, addr: u32, label: String, cap: usize) -> bool {
+        use nerust_gui_viewmodel::debugger::bookmark_contains;
         let mut core = lock_core(&self.core);
         if core.bookmarks.len() >= cap {
             return true;
         }
-        core.bookmarks.push((addr, label));
+        if !bookmark_contains(&core.bookmarks, addr) {
+            core.bookmarks.push((addr, label));
+        }
         core.bm_input.clear();
         false
     }

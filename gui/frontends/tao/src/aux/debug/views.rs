@@ -10,12 +10,6 @@ use nerust_settings_core::model::language::AppLanguage;
 use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
 
-/// Two-char marker prefix for a disassembly row, kept out of the view so the width contract stays
-/// unit-tested. The PC `>` itself lives in [`vm::format_disasm_line`]; this only adds the pinned `@` (or blanks), so composing both never double-marks.
-pub(super) fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
-    if !is_pc && is_pinned { "@ " } else { "  " }
-}
-
 /// Owned per-rebuild snapshot: widgets read locals, never the live bridge. Locks are sequential, so
 /// it is one consistent read in practice, strictly more coherent than per-widget locking.
 pub(super) struct ViewSnapshot {
@@ -78,11 +72,11 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     };
     // Same rule as `anchor()`, computed from the snapshot above
     // instead of re-locking nav and display for a second time.
-    let anchor = if follow_pc {
-        disasm_lines.first().map(|line| line.addr).unwrap_or(0)
-    } else {
-        nav.dis_addr().unwrap_or(0)
-    };
+    let anchor = vm::anchor(
+        follow_pc,
+        disasm_lines.first().map(|line| line.addr),
+        nav.dis_addr(),
+    );
     let reg_target = view.reg_target;
     let reg_input = view.reg_input;
     ViewSnapshot {
@@ -208,15 +202,9 @@ pub(super) fn view_dump_col(
     for hex_row in dump_rows {
         let selected_addr = selected.map(|(a, _)| a);
         // Containing-row match: a mid-row pick still lights its row.
-        let row_hit = selected_addr
-            .is_some_and(|a| a >= hex_row.addr && a < hex_row.addr + u32::from(hex_row.valid));
+        let row_hit = vm::row_hit(selected_addr, hex_row.addr, hex_row.valid as usize);
         let changed = diff.contains(&hex_row.addr);
-        let marker = match (row_hit, changed) {
-            (true, true) => ">*",
-            (true, false) => "> ",
-            (false, true) => " *",
-            (false, false) => "  ",
-        };
+        let marker = vm::dump_marker(row_hit, changed);
         let mut line_row = row![
             button(
                 text(format!("{marker}0x{:08X}:", hex_row.addr))
@@ -441,7 +429,7 @@ pub(super) fn view_dis_col(
         // Marker column is two chars wide for every row. The PC `>` already comes from
         // `format_disasm_line`, so the PC row contributes blanks here; the pinned anchor row carries `@`. (Prepending another `"> "` double-marked the PC row.)
         let is_pinned = pinned == Some(line.addr);
-        let marker = disasm_marker(line.is_pc, is_pinned);
+        let marker = vm::disasm_marker(line.is_pc, is_pinned);
         let line_button = button(
             text(format!("{marker}{}", vm::format_disasm_line(line)))
                 .size(14)

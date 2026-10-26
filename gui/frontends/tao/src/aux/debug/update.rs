@@ -12,7 +12,6 @@ use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
 
 /// Bookmark cap (window-local, no file yet).
-const BOOKMARK_CAP: usize = 8;
 
 /// First handler wins; the chain only routes. Messages travel by value so payloads move without
 /// cloning; an unhandled variant is a programmer error (every family ends in `Err`), surfaced as a warning instead of a silent drop.
@@ -188,7 +187,7 @@ fn update_registers(bridge: &DebugBridge, message: DebugMessage) -> Result<(), D
 fn apply_freeze(bridge: &DebugBridge, input: &str) {
     let language = bridge.language();
     let selected = bridge.selected_addr();
-    match (selected, vm::parse_hex_addr(input).filter(|v| *v <= 0xFF)) {
+    match (selected, vm::parse_byte_value(input)) {
         (Some(addr), Some(value)) => {
             bridge.set_freeze(addr, value as u8);
             bridge.set_status(ui_msg::frozen(language, addr, value as u8));
@@ -259,11 +258,11 @@ fn bookmark_add(bridge: &DebugBridge) {
     let full = bridge.push_bookmark(
         addr,
         if label.is_empty() {
-            format!("BM{numbered}")
+            vm::default_bookmark_label(numbered)
         } else {
             label
         },
-        BOOKMARK_CAP,
+        vm::BOOKMARK_CAP,
     );
     if full {
         bridge.set_status(ui_text(bridge.language(), UiText::BookmarkFull).to_string());
@@ -289,10 +288,7 @@ fn watch_set(bridge: &DebugBridge) {
 fn edit_write(bridge: &DebugBridge) {
     let input = bridge.edit_input();
     let selected = bridge.selected();
-    match (
-        selected,
-        vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
-    ) {
+    match (selected, vm::parse_byte_value(&input)) {
         (Some((addr, _)), Some(value)) => {
             // Re-select first: the drain stages fresh state, so Write also works after a cancel
             // empties the transaction. The confirm row comes back from the drain, never optimistically from here.

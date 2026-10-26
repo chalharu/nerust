@@ -17,7 +17,6 @@ use nerust_settings_core::model::language::AppLanguage;
 use super::State;
 
 /// Bookmark cap (window-local, no file yet).
-const BOOKMARK_CAP: usize = 8;
 
 /// Rebuild granularity for [`DebuggerWindowCore::rebuild_partial`].
 /// Handlers pick the smallest scope covering their data change.
@@ -50,7 +49,7 @@ fn resolve_write_input(
     let input = input.trim().to_string();
     match (
         selected,
-        vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
+        vm::parse_byte_value(&input),
     ) {
         (Some((addr, _)), Some(value)) => Ok((addr, value as u64)),
         (None, _) => Err(text(language, UiText::WriteNeedsSelection).to_string()),
@@ -67,7 +66,7 @@ fn resolve_freeze_input(
     let input = input.trim().to_string();
     match (
         selected,
-        vm::parse_hex_addr(&input).filter(|value| *value <= 0xFF),
+        vm::parse_byte_value(&input),
     ) {
         (Some((addr, _)), Some(value)) => Ok((addr, value as u8)),
         _ => Err(text(language, UiText::FreezeNeedsSelection).to_string()),
@@ -127,15 +126,11 @@ impl DebuggerData {
     /// Displayed disassembly anchor: first visible line in follow-PC
     /// mode (the stored pin is stale there), the pin otherwise.
     fn anchor(&self) -> u32 {
-        if self.nav.follow_pc() {
-            self.display
-                .disasm_lines
-                .first()
-                .map(|line| line.addr)
-                .unwrap_or(0)
-        } else {
-            self.nav.dis_addr().unwrap_or(0)
-        }
+        vm::anchor(
+            self.nav.follow_pc(),
+            self.display.disasm_lines.first().map(|line| line.addr),
+            self.nav.dis_addr(),
+        )
     }
 }
 
@@ -1154,7 +1149,7 @@ impl DebuggerWindowCore {
 
     fn bookmark_add(win: &DebuggerWindow) {
         let input = win.borrow().bookmark_input.text().trim().to_string();
-        if win.borrow().data.bookmarks.len() >= BOOKMARK_CAP {
+        if win.borrow().data.bookmarks.len() >= vm::BOOKMARK_CAP {
             let language = win.borrow().data.language;
             Self::set_status(win, text(language, UiText::BookmarkFull).to_string());
             return;
@@ -1163,14 +1158,14 @@ impl DebuggerWindowCore {
         // always does something visible.
         let n = win.borrow().data.bookmarks.len() + 1;
         let label = if input.is_empty() {
-            format!("BM{n}")
+            vm::default_bookmark_label(n)
         } else {
             input
         };
         let addr = win.borrow().data.anchor();
         {
             let mut this = win.borrow_mut();
-            if !this.data.bookmarks.iter().any(|(a, _)| *a == addr) {
+            if !vm::bookmark_contains(&this.data.bookmarks, addr) {
                 this.data.bookmarks.push((addr, label));
             }
             this.bookmark_input.set_text("");
@@ -1443,13 +1438,9 @@ impl DebuggerWindowCore {
             // The PC row carries a `>` marker like the dump
             // selection: the current position reads at a glance.
             let is_pinned = pinned == Some(line.addr);
-            let marker = if line.is_pc {
-                "> "
-            } else if is_pinned {
-                "@ "
-            } else {
-                "  "
-            };
+            // The PC `>` already comes from `format_disasm_line`;
+            // prepending another one double-marked the row.
+            let marker = vm::disasm_marker(line.is_pc, is_pinned);
             let button =
                 gtk::Button::with_label(&format!("{marker}{}", vm::format_disasm_line(line)));
             button.add_css_class("monospace");
@@ -1487,15 +1478,13 @@ impl DebuggerWindowCore {
         for hex_row in &display.dump_rows {
             let selected_addr = this.data.selected.map(|(a, _)| a);
             // Containing-row match: a mid-row pick still lights its row.
-            let row_hit = selected_addr
-                .is_some_and(|a| a >= hex_row.addr && a < hex_row.addr + u32::from(hex_row.valid));
+            let row_hit = vm::row_hit(
+                selected_addr,
+                hex_row.addr,
+                usize::from(hex_row.valid),
+            );
             let changed = display.diff.contains(&hex_row.addr);
-            let marker = match (row_hit, changed) {
-                (true, true) => ">*",
-                (true, false) => "> ",
-                (false, true) => " *",
-                (false, false) => "  ",
-            };
+            let marker = vm::dump_marker(row_hit, changed);
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 2);

@@ -6,6 +6,7 @@
 
 pub mod format;
 pub mod images;
+pub mod interact;
 pub mod nav;
 pub mod status;
 /// Compatibility module; runtime owns the write protocol.
@@ -21,6 +22,10 @@ pub use format::{
     panels_visible,
 };
 pub use images::{DebugImageRgba, PPU_HOVER_HINT, rgba_image, scale2x_nearest, tile_hover_geometry};
+pub use interact::{
+    BOOKMARK_CAP, anchor, bookmark_contains, default_bookmark_label, disasm_marker, dump_marker,
+    parse_byte_value, row_hit,
+};
 pub use nav::{DISASM_BACK_CAP, NavState, parse_hex_addr};
 pub use nerust_gui_runtime::debugger::{DebugSnapshot, DisplayCache, diff_rows};
 pub use status::{PendingWrite, StatusMessage, space_key};
