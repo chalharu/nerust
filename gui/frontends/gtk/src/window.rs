@@ -768,10 +768,13 @@ impl WindowExtend for Window {
         let previous = self
             .borrow_mut()
             .focus_commit
-            .replace(glib::idle_add_local(move || {
-                weak.commit_focus_pause();
-                glib::ControlFlow::Break
-            }));
+            .replace(glib::timeout_add_local(
+                std::time::Duration::ZERO,
+                move || {
+                    weak.commit_focus_pause();
+                    glib::ControlFlow::Break
+                },
+            ));
         if let Some(source) = previous {
             source.remove();
         }
