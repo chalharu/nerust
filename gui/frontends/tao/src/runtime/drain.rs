@@ -1,8 +1,10 @@
 //! Debugger and live-follow orchestration for `HostState`.
 //! Drains, flights, aux-window management, and live PPU follow.
 
-use std::time::Instant;
+use std::{task::Poll, time::Instant};
 
+use nerust_frontend_host::aux::OpenRequest;
+use nerust_frontend_host::drain::{DrainEvent, poll_flight, prepare_pause_actions};
 use nerust_gui_shell::{debug::DebugDrainOutput, session::LiveImages};
 use nerust_gui_viewmodel::debugger as debug_vm;
 
@@ -51,14 +53,8 @@ impl HostState {
     /// Live PPU follow while the core runs: images-only refresh each interval.
     pub(crate) fn maybe_live_ppu(&mut self) {
         // Settle any in-flight fetch first (non-blocking).
-        if let Some(mut flight) = self.orchestrator_mut().take_live_flight() {
-            match flight.poll() {
-                LiveImagesPoll::Done(live) => self.apply_live_images(live),
-                LiveImagesPoll::Pending => {
-                    self.orchestrator_mut().store_live_flight(flight);
-                    return;
-                }
-            }
+        if self.poll_live_images() {
+            return;
         }
         if !self.live_follow_active() {
             return;
@@ -66,13 +62,17 @@ impl HostState {
         if !self.live_due(Instant::now()) {
             return;
         }
-        let mut flight = self.debug_live_images_begin(true);
-        match flight.poll() {
-            LiveImagesPoll::Done(live) => self.apply_live_images(live),
-            LiveImagesPoll::Pending => {
-                self.orchestrator_mut().store_live_flight(flight);
-            }
+        self.debug.live_flight = Some(self.debug_live_images_begin(true));
+        self.poll_live_images();
+    }
+
+    fn poll_live_images(&mut self) -> bool {
+        match poll_flight(&mut self.debug.live_flight) {
+            Poll::Ready(Some(live)) => self.apply_live_images(live),
+            Poll::Ready(None) => {}
+            Poll::Pending => return true,
         }
+        false
     }
 
     /// Patch a finished live fetch into the viewer: images land when newer.
@@ -101,7 +101,7 @@ impl HostState {
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
-        if !self.is_debug_open() {
+        if let OpenRequest::Create(id) = self.aux.request_open(AuxKind::Debug) {
             let spaces = self.debug_spaces();
             if spaces.is_empty() {
                 log::warn!("debugger: no spaces (no core)");
@@ -109,41 +109,46 @@ impl HostState {
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos();
             let language = self.settings_snapshot().shared.general.language;
-            match opener.create_aux(
-                AuxKind::Debug,
-                crate::ports::AuxOpenParams::Debug {
-                    display: debug_vm::DisplayCache::default(),
-                    spaces,
-                    mem_addr,
-                    language,
-                    position,
-                },
-            ) {
-                Some(handle) => {
-                    let id = self.aux.insert(handle);
-                    debug_assert_eq!(self.aux.route_id(AuxKind::Debug), Some(id));
-                    self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
-                }
-                None => log::error!("failed to open debugger window"),
+            let opened = opener
+                .create_aux(
+                    AuxKind::Debug,
+                    crate::ports::AuxOpenParams::Debug {
+                        display: debug_vm::DisplayCache::default(),
+                        spaces,
+                        mem_addr,
+                        language,
+                        position,
+                    },
+                )
+                .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+            if opened {
+                self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
+            } else {
+                self.aux.cancel_open(id);
+                log::error!("failed to open debugger window");
             }
         }
         if focus_ppu && !self.is_ppu_open() {
             if let Some(bridge) = self.debug_bridge_for_ppu() {
+                let OpenRequest::Create(id) = self.aux.request_open(AuxKind::Ppu) else {
+                    return;
+                };
                 let position = self.ppu_window_pos();
-                match opener.create_aux(
-                    AuxKind::Ppu,
-                    crate::ports::AuxOpenParams::Ppu { bridge, position },
-                ) {
-                    Some(handle) => {
-                        let id = self.aux.insert(handle);
-                        debug_assert_eq!(self.aux.route_id(AuxKind::Ppu), Some(id));
-                        // Populate the image cache immediately: the viewer derives on Sync.
-                        self.aux.ppu_sync();
-                        // The viewer is open now, so re-read with images:
-                        // the opening drain ran imageless.
-                        self.run_debug_drain(&[]);
-                    }
-                    None => log::error!("failed to open PPU viewer window"),
+                let opened = opener
+                    .create_aux(
+                        AuxKind::Ppu,
+                        crate::ports::AuxOpenParams::Ppu { bridge, position },
+                    )
+                    .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+                if opened {
+                    // Populate the image cache immediately: the viewer derives on Sync.
+                    self.aux.ppu_sync();
+                    // The viewer is open now, so re-read with images:
+                    // the opening drain ran imageless.
+                    self.run_debug_drain(&[]);
+                } else {
+                    self.aux.cancel_open(id);
+                    log::error!("failed to open PPU viewer window");
                 }
             }
         } else if focus_ppu {
@@ -191,97 +196,49 @@ impl HostState {
         // all critical sections are short field copies.
         debug_assert!(self.aux.debug_locks_free());
         let epoch = self.debug_epoch();
-        // Split before pause transitions: ownership changes must not run ahead
-        // of an earlier step/write still waiting for its worker reply.
-        let mut start = 0;
-        for (index, action) in requests.iter().enumerate() {
-            if index > start
-                && matches!(
-                    action,
-                    nerust_gui_shell::debug::DebugAction::Pause
-                        | nerust_gui_shell::debug::DebugAction::Resume
-                        | nerust_gui_shell::debug::DebugAction::TogglePause
-                )
-            {
-                self.debug.queue.push_back(super::host::debug::DrainBatch {
-                    epoch: epoch.clone(),
-                    actions: requests[start..index].to_vec(),
-                    snapshot: snapshot.clone(),
-                });
-                start = index;
-            }
-        }
-        self.debug.queue.push_back(super::host::debug::DrainBatch {
-            epoch,
-            actions: requests[start..].to_vec(),
-            snapshot,
-        });
+        self.debug.drain.enqueue(epoch, requests, snapshot);
         self.poll_debug_flight();
     }
 
     fn start_debug_batch(&mut self, batch: super::host::debug::DrainBatch) {
         use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
         use nerust_gui_shell::session::access::PauseControl;
-        if !batch.epoch.load(std::sync::atomic::Ordering::Acquire) {
-            return;
+        let flight = batch.begin(|actions, snapshot| {
+            prepare_pause_actions(actions, |action| {
+                match action {
+                    DebugAction::Pause => self.pause(),
+                    DebugAction::Resume => self.resume(),
+                    DebugAction::TogglePause => self.toggle_pause(),
+                    _ => unreachable!("pause actions only"),
+                }
+                self.tick().loaded
+            });
+            let input = DebugDrainInput {
+                space: snapshot.space,
+                mem_addr: snapshot.mem_addr,
+                dis_addr: snapshot.dis_addr,
+                watch: snapshot.watch,
+                freeze: snapshot.freeze,
+                reg_target: snapshot.reg_target,
+                prev_dump_rows: &snapshot.prev_rows,
+                need_images: snapshot.ppu_open,
+            };
+            self.debug_drain_begin(actions, &input)
+        });
+        if let Some(flight) = flight {
+            self.debug.drain.store(flight);
         }
-        let mut actions = batch.actions;
-        for action in &mut actions {
-            match action {
-                DebugAction::Pause => self.pause(),
-                DebugAction::Resume => self.resume(),
-                DebugAction::TogglePause => self.toggle_pause(),
-                _ => continue,
-            }
-            if self.tick().loaded {
-                *action = DebugAction::Refresh;
-            }
-        }
-        let snapshot = batch.snapshot;
-        let input = DebugDrainInput {
-            space: snapshot.space,
-            mem_addr: snapshot.mem_addr,
-            dis_addr: snapshot.dis_addr,
-            watch: snapshot.watch,
-            freeze: snapshot.freeze,
-            reg_target: snapshot.reg_target,
-            prev_dump_rows: &snapshot.prev_rows,
-            need_images: snapshot.ppu_open,
-        };
-        let flight = self.debug_drain_begin(&actions, &input);
-        self.debug.drain_epoch = Some(batch.epoch);
-        self.orchestrator_mut().store_drain_flight(flight);
     }
 
     /// Poll the stored drain flight once; applies on completion.
     /// Returns whether a flight is still pending.
     pub(crate) fn poll_debug_flight(&mut self) -> bool {
         loop {
-            if self
-                .debug
-                .drain_epoch
-                .as_ref()
-                .is_some_and(|epoch| !epoch.load(std::sync::atomic::Ordering::Acquire))
-            {
-                self.orchestrator_mut().take_drain_flight();
-                self.debug.drain_epoch = None;
-            }
-            let Some(mut flight) = self.orchestrator_mut().take_drain_flight() else {
-                let Some(batch) = self.debug.queue.pop_front() else {
-                    return false;
-                };
-                self.start_debug_batch(batch);
-                continue;
-            };
-            match flight.poll() {
-                DrainPoll::Done(output) => {
-                    self.debug.drain_epoch = None;
-                    self.apply_drain_output(*output);
-                }
-                DrainPoll::Pending => {
-                    self.orchestrator_mut().store_drain_flight(flight);
-                    return true;
-                }
+            match self.debug.drain.poll() {
+                DrainEvent::Idle => return false,
+                DrainEvent::Pending => return true,
+                DrainEvent::Start(batch) => self.start_debug_batch(batch),
+                DrainEvent::Done(output, _) => self.apply_drain_output(*output),
             }
         }
     }
@@ -312,8 +269,6 @@ impl HostState {
         }
     }
 }
-
-use nerust_gui_shell::debug::{DrainPoll, LiveImagesPoll};
 
 fn chrome_drain_due(debug_open: bool, last_drain_paused: Option<bool>, paused: bool) -> bool {
     debug_open && last_drain_paused != Some(paused)
@@ -350,7 +305,7 @@ mod tests {
             actions: vec![DebugAction::StepInstr, DebugAction::RegisterWrite(0xff)],
             snapshot: snapshot.clone(),
         });
-        host.debug.queue.push_back(DrainBatch {
+        host.debug.drain.push_back(DrainBatch {
             epoch: epoch.clone(),
             actions: vec![DebugAction::Pause, DebugAction::RegisterWrite(0xaa)],
             snapshot,
@@ -399,7 +354,7 @@ mod tests {
             actions: vec![DebugAction::StepInstr, DebugAction::RegisterWrite(0x45)],
             snapshot: snapshot.clone(),
         });
-        host.debug.queue.push_back(DrainBatch {
+        host.debug.drain.push_back(DrainBatch {
             epoch,
             actions: vec![DebugAction::Resume],
             snapshot,
@@ -411,7 +366,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.sync_debug_chrome(&ctx);
         assert_eq!(
-            host.debug.queue.len(),
+            host.debug.drain.queued_len(),
             1,
             "chrome may not replace a pending drain"
         );
@@ -514,6 +469,22 @@ mod tests {
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         assert!(!host.is_debug_open());
         // Failed open runs no drain, so the focus gate stays unset.
+        assert_eq!(host.last_drain_paused(), None);
+    }
+
+    #[test]
+    fn pending_debugger_open_skips_native_creation_and_drain() {
+        use super::{AuxKind, OpenRequest};
+        use crate::test_opener::FakeOpener;
+        let mut host = TestHost::new().host;
+        let OpenRequest::Create(id) = host.aux.request_open(AuxKind::Debug) else {
+            panic!("expected reservation");
+        };
+        let opener = FakeOpener::failing("no display");
+        host.open_debug_windows(&opener, true);
+        assert!(opener.calls().is_empty());
+        assert_eq!(host.aux.route_id(AuxKind::Debug), Some(id));
+        assert!(!host.is_ppu_open());
         assert_eq!(host.last_drain_paused(), None);
     }
 
