@@ -3748,6 +3748,7 @@ dependencies = [
 name = "nerust_mac"
 version = "0.1.0-dev"
 dependencies = [
+ "block2 0.6.2",
  "log",
  "nerust_core_traits",
  "nerust_frontend_host",
@@ -4087,6 +4088,32 @@ dependencies = [
  "nerust_system_traits",
  "raw-window-handle",
  "windows 0.52.0",
+]
+
+[[package]]
+name = "nerust_winui"
+version = "0.1.0-dev"
+dependencies = [
+ "log",
+ "nerust_core_traits",
+ "nerust_frontend_host",
+ "nerust_frontend_kernel",
+ "nerust_gui_runtime",
+ "nerust_gui_shell",
+ "nerust_gui_viewmodel",
+ "nerust_input_traits",
+ "nerust_keyboard",
+ "nerust_nes_factory",
+ "nerust_render_traits",
+ "nerust_settings_core",
+ "nerust_system_traits",
+ "nerust_win",
+ "raw-window-handle",
+ "windows-collections",
+ "windows-core 0.62.2",
+ "windows-future",
+ "windows-link",
+ "windows-numerics",
 ]
 
 [[package]]

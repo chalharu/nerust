@@ -29,6 +29,7 @@ members = [
   "gui/frontends/rom_tool",
   "gui/frontends/tao",
   "gui/frontends/win",
+  "gui/frontends/winui",
   "gui/run-options",
   "gui/runtime",
   "gui/shell",
@@ -232,6 +233,7 @@ nerust_sound_filter = { path = "sound/filter" }
 nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_tao = { path = "gui/frontends/tao" }
 nerust_timer = { path = "timer" }
+nerust_win = { path = "gui/frontends/win" }
 objc2 = { default-features = false, version = "=0.6.5" }
 objc2-foundation = { default-features = false, version = "=0.3.2" }
 objc2-app-kit = { default-features = false, features = [
