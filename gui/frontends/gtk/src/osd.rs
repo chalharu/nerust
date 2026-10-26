@@ -75,6 +75,7 @@ pub(crate) struct GtkOsd {
     notifications: OsdNotifications,
     layer: OsdLayerSync,
     output_generation: Option<u64>,
+    pending_modal: Option<String>,
 }
 
 impl GtkOsd {
@@ -83,6 +84,7 @@ impl GtkOsd {
             notifications: OsdNotifications::new(),
             layer: OsdLayerSync::new(),
             output_generation: None,
+            pending_modal: None,
         }
     }
 
@@ -92,11 +94,10 @@ impl GtkOsd {
         self.layer.invalidate();
     }
 
-    /// Drain the session queue, show modals, and sync the OSD layer.
+    /// Drain the session queue, extract modal effects, and sync the OSD layer.
     /// Takes `&mut State` directly: the tick already holds the borrow.
     pub(crate) fn poll(
         &mut self,
-        surface: &super::surface::Surface,
         state: &mut State,
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
@@ -117,10 +118,10 @@ impl GtkOsd {
             // Own the whole queue lifetime, even when another owner already paused.
             state.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
         }
-        // The batch take runs on the already-borrowed manager: the Surface
-        // Rc is only touched inside the ack closure, after the tick borrow.
-        if let Some(detail) = self.notifications.take_modal_batch() {
-            Self::present_modal(surface, window, detail);
+        // Native presentation can synchronously emit focus/map callbacks.
+        // Acquire Modal above, but defer presentation until every turn borrow ends.
+        if self.pending_modal.is_none() {
+            self.pending_modal = self.notifications.take_modal_batch();
         }
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
         self.layer.render(
@@ -135,6 +136,10 @@ impl GtkOsd {
             osd_deadline: self.notifications.wakeup_deadline(Instant::now()),
             ..WakeNeed::default()
         }
+    }
+
+    pub(crate) fn take_modal(&mut self) -> Option<String> {
+        self.pending_modal.take()
     }
 
     /// Build the history dialog without presenting; captions follow the tracked language.
@@ -434,7 +439,7 @@ impl GtkOsd {
 impl GtkOsd {
     /// Present one error batch; the ack chains the next.
     /// Release only the modal ownership after the last batch.
-    fn present_modal(
+    pub(crate) fn present_modal(
         surface: &super::surface::Surface,
         window: &gtk::ApplicationWindow,
         detail: String,
@@ -449,7 +454,8 @@ impl GtkOsd {
         let surface = surface.clone();
         let window = window.clone();
         dialog.connect_response(move |dialog, _| {
-            dialog.close();
+            // close() can emit a second (DeleteEvent) response and ACK twice.
+            dialog.destroy();
             // Bounded recursion: the modal queue caps at MAX_QUEUED,
             // so nesting depth is capped too, not an unbounded chain.
             let next = {
@@ -460,9 +466,8 @@ impl GtkOsd {
             match next {
                 ModalAdvance::Present(next) => Self::present_modal(&surface, &window, next),
                 ModalAdvance::Drained => {
-                    surface
-                        .borrow()
-                        .state
+                    let state = surface.borrow().state.clone();
+                    state
                         .borrow_mut()
                         .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
                 }
@@ -474,7 +479,7 @@ impl GtkOsd {
 
 #[cfg(test)]
 #[cfg(test)]
-mod history_dialog_tests {
+pub(super) mod history_dialog_tests {
     use super::GtkOsd;
     use gtk::prelude::*;
     use nerust_settings_core::model::language::AppLanguage;
@@ -520,7 +525,7 @@ mod history_dialog_tests {
 
     /// Headless-capable state for the model gate: session plus settings
     /// only, no application, no window, no display.
-    pub(super) fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+    pub(crate) fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
         use std::sync::Arc;
         let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());

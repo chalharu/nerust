@@ -202,8 +202,10 @@ fn update_drives_bookmarks_watch_and_freeze() {
     assert!(bridge.bookmarks().is_empty());
     // A full list refuses loudly.
     for i in 0..8 {
-        bridge.push_bookmark(0x100 + i, format!("BM{i}"), usize::MAX);
+        drive(&bridge, DebugMessage::DisLineClicked(0x100 + i));
+        drive(&bridge, DebugMessage::BookmarkAdd);
     }
+    drive(&bridge, DebugMessage::DisLineClicked(0x999));
     drive(&bridge, DebugMessage::BookmarkAdd);
     assert_eq!(
         bridge.display_snapshot().status,
