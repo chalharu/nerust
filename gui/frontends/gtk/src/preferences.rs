@@ -85,6 +85,8 @@ struct InputTabWidgets {
     _notebook: gtk::Notebook,
     pages: Vec<gtk::Box>,
     section_notebooks: RefCell<Vec<Option<gtk::Notebook>>>,
+    shortcuts_page: gtk::Box,
+    shortcuts_tab_label: gtk::Label,
 }
 
 struct SystemTabWidgets {
@@ -168,6 +170,15 @@ impl PreferencesBinding {
                     }
                 }));
             }
+            // The standalone shortcuts tab has its own projection, so it
+            // subscribes once instead of refreshing with every system.
+            subs.push(vm.shortcuts.view.observe({
+                let weak = weak.clone();
+                move |_| {
+                    let Some(b) = weak.upgrade() else { return };
+                    b.with_refreshing(|| b.rebuild_shortcuts_page());
+                }
+            }));
             for (index, system_vm) in vm.systems().iter().enumerate() {
                 subs.push(system_vm.view.observe({
                     let weak = weak.clone();
@@ -494,6 +505,24 @@ impl PreferencesBinding {
         for (index, vm) in self.vm.inputs().iter().enumerate() {
             self.rebuild_input_page(index, &vm.view.get());
         }
+        self.rebuild_shortcuts_page();
+    }
+
+    /// Global shortcuts tab: rows only, without an inner title. The
+    /// notebook tab already carries the shortcuts label, so rendering
+    /// `view.label` here would duplicate it.
+    fn rebuild_shortcuts_page(&self) {
+        let page = &self.input.shortcuts_page;
+        clear_box(page);
+        self.input
+            .shortcuts_tab_label
+            .set_text(ui_text(self.language(), UiText::Shortcuts));
+        let view = self.vm.shortcuts.view.get();
+        let shortcuts_page = input_section_page();
+        for row in &view.rows {
+            self.append_binding_row(&shortcuts_page, row);
+        }
+        page.append(&shortcuts_page);
     }
 
     fn build_section_notebook(&self, view: &InputTabView) -> gtk::Notebook {
@@ -963,6 +992,15 @@ pub(crate) fn present_preferences_dialog(
         input_notebook.append_page(&tab_page, Some(&tab_label));
         input_pages.push(tab_page);
     }
+    // Trailing global-shortcuts tab: same row as the systems, never a
+    // machine page.
+    let shortcuts_tab_label = gtk::Label::new(Some(ui_text(lang, UiText::Shortcuts)));
+    let shortcuts_tab_page = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    shortcuts_tab_page.set_margin_start(6);
+    shortcuts_tab_page.set_margin_end(6);
+    shortcuts_tab_page.set_margin_top(6);
+    shortcuts_tab_page.set_margin_bottom(6);
+    input_notebook.append_page(&shortcuts_tab_page, Some(&shortcuts_tab_label));
 
     // ---- System page (tabs) ----
     let system_notebook = gtk::Notebook::new();
@@ -1028,6 +1066,8 @@ pub(crate) fn present_preferences_dialog(
         _notebook: input_notebook,
         section_notebooks: RefCell::new(vec![None; input_pages.len()]),
         pages: input_pages,
+        shortcuts_page: shortcuts_tab_page,
+        shortcuts_tab_label,
     };
     let system_w = SystemTabWidgets {
         _notebook: system_notebook,
@@ -1862,6 +1902,8 @@ mod tests {
                     _notebook: gtk::Notebook::new(),
                     pages: vec![],
                     section_notebooks: RefCell::new(vec![]),
+                    shortcuts_page: gtk::Box::new(gtk::Orientation::Vertical, 6),
+                    shortcuts_tab_label: gtk::Label::new(None),
                 },
                 system: SystemTabWidgets {
                     _notebook: gtk::Notebook::new(),

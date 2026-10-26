@@ -120,6 +120,7 @@ pub struct InputTabView {
     pub system_id: Box<dyn SystemId>,
     pub label: String,
     pub slots: Vec<ControllerSlotView>,
+    /// Per-machine binding sections (controller attachments).
     pub sections: Vec<BindingSectionView>,
     pub conflicts: Vec<InputConflictView>,
 }
