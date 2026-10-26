@@ -409,10 +409,7 @@ mod filter_rule_tests {
                 );
             }
         }
-        assert_eq!(
-            HistoryFilter::from_label("???", AppLanguage::English),
-            None
-        );
+        assert_eq!(HistoryFilter::from_label("???", AppLanguage::English), None);
     }
 
     #[test]

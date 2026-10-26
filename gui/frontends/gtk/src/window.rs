@@ -371,8 +371,17 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = window.connect_is_active_notify(move |window| {
-                if !window.is_active() {
+                if window.is_active() {
+                    result
+                        .state()
+                        .borrow_mut()
+                        .focus_event(nerust_frontend_host::focus::FocusEvent::Main(true));
+                } else {
                     result.state().borrow_mut().clear_input();
+                    result
+                        .state()
+                        .borrow_mut()
+                        .focus_event(nerust_frontend_host::focus::FocusEvent::Main(false));
                 }
             });
         }
@@ -537,7 +546,7 @@ impl WindowExtend for Window {
         // per-factory entries stay selectable behind it.
         let mut first_filter = None;
         for (name, extensions) in nerust_gui_shell::registry::rom_picker_filters(
-            self.state().borrow().session.factories(),
+            self.state().borrow().host.session().factories(),
         ) {
             let filter = gtk::FileFilter::new();
             filter.set_name(Some(&name));
@@ -600,7 +609,8 @@ impl WindowExtend for Window {
             let state = self.state();
             let _ = state
                 .borrow_mut()
-                .session
+                .host
+                .session_mut()
                 .update_window_size(w as u32, h as u32);
         }
         self.application().quit();
@@ -618,7 +628,7 @@ impl WindowExtend for Window {
     fn update_actions(&self) {
         let state = self.state();
         let state = state.borrow();
-        let tick = state.session.tick_metrics();
+        let tick = state.host.session().tick_metrics();
         self.borrow().actions.close.set_enabled(tick.loaded);
         self.borrow().actions.pause.set_enabled(tick.can_pause());
         self.borrow().actions.resume.set_enabled(tick.can_resume());
@@ -839,7 +849,7 @@ fn rebuild_slot_menu(
 
 /// Use the single modal queue, including its pause ownership and acknowledgement path.
 fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
-    state.borrow_mut().session.report_external_error(
+    state.borrow_mut().host.session_mut().report_external_error(
         nerust_gui_shell::session::notification::FailureOrigin::Host,
         detail.to_owned(),
     );
@@ -995,13 +1005,13 @@ mod tests {
         old.response(gtk::ResponseType::Cancel);
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(AuxKind::Settings));
-        assert!(!win.state().borrow().pause_policy.owns(PauseOwner::Settings));
+        assert!(!win.state().borrow().host.owns_pause(PauseOwner::Settings));
         super::open_settings(&win, &action);
         let new_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
         assert_ne!(old_id, new_id);
         assert!(!super::close_aux(&win, old_id));
         old.destroy();
-        assert!(win.state().borrow().pause_policy.owns(PauseOwner::Settings));
+        assert!(win.state().borrow().host.owns_pause(PauseOwner::Settings));
         assert!(!action.is_enabled());
         win.state()
             .borrow_mut()
@@ -1015,8 +1025,8 @@ mod tests {
         current.destroy();
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(AuxKind::Settings));
-        assert!(!win.state().borrow().pause_policy.owns(PauseOwner::Settings));
-        assert!(win.state().borrow().pause_policy.owns(PauseOwner::Modal));
+        assert!(!win.state().borrow().host.owns_pause(PauseOwner::Settings));
+        assert!(win.state().borrow().host.owns_pause(PauseOwner::Modal));
     }
 
     /// Headless-capable state: session plus settings only, no renderer.

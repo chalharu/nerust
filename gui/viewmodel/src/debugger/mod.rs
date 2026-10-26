@@ -20,7 +20,9 @@ pub use format::{
     EMPTY_PANELS_TEXT, format_cell, format_disasm_line, format_panels, format_register,
     panels_visible,
 };
-pub use images::{DebugImageRgba, PPU_HOVER_HINT, rgba_image, scale2x_nearest, tile_hover_geometry};
+pub use images::{
+    DebugImageRgba, PPU_HOVER_HINT, rgba_image, scale2x_nearest, tile_hover_geometry,
+};
 pub use nav::{DISASM_BACK_CAP, NavState, parse_hex_addr};
 pub use nerust_gui_runtime::debugger::{DebugSnapshot, DisplayCache, diff_rows};
 pub use status::{PendingWrite, StatusMessage, space_key};
