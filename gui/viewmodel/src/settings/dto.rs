@@ -23,6 +23,28 @@ impl<T: Clone + Eq> fmt::Display for ChoiceView<T> {
     }
 }
 
+/// Index of `value` in a shared choice list. Viewmodel order is the
+/// contract; frontends must not re-derive it per toolkit.
+pub fn choice_position<T: Clone + PartialEq + Eq>(
+    choices: &[ChoiceView<T>],
+    value: &T,
+) -> Option<u32> {
+    choices
+        .iter()
+        .position(|choice| &choice.value == value)
+        .map(|index| index as u32)
+}
+
+/// Owned lookup of the selected choice. Same predicate as
+/// `choice_position`; tao pick-lists and gtk combos share it so
+/// profile-id matching cannot drift per toolkit.
+pub fn find_choice<T: Clone + PartialEq + Eq>(
+    choices: &[ChoiceView<T>],
+    value: &T,
+) -> Option<ChoiceView<T>> {
+    choices.iter().find(|c| &c.value == value).cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,6 +56,27 @@ mod tests {
             label: "Answer".into(),
         };
         assert_eq!(c.to_string(), "Answer");
+    }
+
+    #[test]
+    fn choice_lookup_shares_index_and_value() {
+        let choices = vec![
+            ChoiceView {
+                value: 1u32,
+                label: "One".into(),
+            },
+            ChoiceView {
+                value: 2u32,
+                label: "Two".into(),
+            },
+        ];
+        assert_eq!(choice_position(&choices, &2), Some(1));
+        assert_eq!(choice_position(&choices, &9), None);
+        assert_eq!(
+            find_choice(&choices, &2).map(|c| c.label),
+            Some("Two".into())
+        );
+        assert_eq!(find_choice(&choices, &9), None);
     }
 }
 
