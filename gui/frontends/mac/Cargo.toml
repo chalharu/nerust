@@ -23,6 +23,7 @@ nerust_system_traits.workspace = true
 raw-window-handle.workspace = true
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+block2 = { version = "=0.6.2" }
 objc2 = { workspace = true, features = ["std"] }
 objc2-app-kit = { workspace = true, features = [
     "NSAlert",
@@ -38,16 +39,22 @@ objc2-app-kit = { workspace = true, features = [
     "NSImageView",
     "NSMenu",
     "NSMenuItem",
+    "NSEvent",
     "NSOpenPanel",
     "NSResponder",
     "NSSavePanel",
+    "NSScrollView",
     "NSPanel",
     "NSRunningApplication",
+    "NSSlider",
+    "NSTabView",
+    "NSTabViewItem",
     "NSText",
     "NSTextField",
     "NSTextView",
     "NSView",
     "NSWindow",
+    "block2",
 ] }
 objc2-foundation = { workspace = true, features = [
     "NSArray",

@@ -247,6 +247,10 @@ impl WinHost {
         self.host.session()
     }
 
+    pub fn session_mut(&mut self) -> &mut nerust_gui_shell::session::SessionHandle {
+        self.host.session_mut()
+    }
+
     /// Present the latest core frame. Call once per frame before reading it.
     pub fn swap_frame_buffer(&mut self) {
         self.host.swap_frame_buffer();
@@ -255,6 +259,11 @@ impl WinHost {
     /// Pause ownership query for native gates (menus, dialogs).
     pub fn owns_pause(&self, owner: nerust_frontend_kernel::pause::PauseOwner) -> bool {
         self.host.owns_pause(owner)
+    }
+
+    /// Drop the notification history (History window Clear button).
+    pub fn clear_history(&mut self) {
+        self.host.clear_history();
     }
 
     /// Latest tick for native chrome (fps line, pause badge).

@@ -9,6 +9,8 @@ mod app;
 #[cfg(target_os = "macos")]
 mod dbg;
 #[cfg(target_os = "macos")]
+mod history;
+#[cfg(target_os = "macos")]
 mod ppu;
 #[cfg(target_os = "macos")]
 mod settings;
