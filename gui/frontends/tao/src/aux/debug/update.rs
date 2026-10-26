@@ -11,8 +11,6 @@ use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
 use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
 
-/// Bookmark cap (window-local, no file yet).
-
 /// First handler wins; the chain only routes. Messages travel by value so payloads move without
 /// cloning; an unhandled variant is a programmer error (every family ends in `Err`), surfaced as a warning instead of a silent drop.
 pub(super) fn update_message(bridge: &DebugBridge, message: DebugMessage) {
@@ -189,8 +187,8 @@ fn apply_freeze(bridge: &DebugBridge, input: &str) {
     let selected = bridge.selected_addr();
     match (selected, vm::parse_byte_value(input)) {
         (Some(addr), Some(value)) => {
-            bridge.set_freeze(addr, value as u8);
-            bridge.set_status(ui_msg::frozen(language, addr, value as u8));
+            bridge.set_freeze(addr, value);
+            bridge.set_status(ui_msg::frozen(language, addr, value));
             bridge.push(DebugAction::Refresh);
         }
         _ => bridge.set_status(ui_text(language, UiText::FreezeNeedsSelection).to_string()),

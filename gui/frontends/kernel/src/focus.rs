@@ -34,6 +34,12 @@ pub struct FocusArbiter {
     pending: bool,
 }
 
+impl Default for FocusArbiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FocusArbiter {
     pub fn new() -> Self {
         Self {

@@ -16,8 +16,6 @@ use nerust_settings_core::model::language::AppLanguage;
 
 use super::State;
 
-/// Bookmark cap (window-local, no file yet).
-
 /// Rebuild granularity for [`DebuggerWindowCore::rebuild_partial`].
 /// Handlers pick the smallest scope covering their data change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,7 +60,7 @@ fn resolve_freeze_input(
 ) -> Result<(u32, u8), String> {
     let input = input.trim().to_string();
     match (selected, vm::parse_byte_value(&input)) {
-        (Some((addr, _)), Some(value)) => Ok((addr, value as u8)),
+        (Some((addr, _)), Some(value)) => Ok((addr, value)),
         _ => Err(text(language, UiText::FreezeNeedsSelection).to_string()),
     }
 }
