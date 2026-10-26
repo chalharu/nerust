@@ -6,7 +6,7 @@ use std::time::Instant;
 use nerust_frontend_host::{
     aux::OpenRequest,
     frame::{FrameCtx, FrameSnapshot},
-    osd::ModalAdvance,
+    osd::{ModalAdvance, ModalPresentation},
 };
 use nerust_render_traits::renderer::RenderPipeline;
 use tao::event::WindowEvent;
@@ -15,12 +15,6 @@ use super::HostState;
 use super::window::WakeNeed;
 use crate::aux::focus::AuxKind;
 use crate::ports::WindowOpener;
-
-/// In-flight error dialog: blocking `show_error` runs on a thread.
-/// Pause ownership lives in the host arbiter for the entire queue lifetime.
-pub(crate) struct ModalFlight {
-    pub(super) done: std::sync::mpsc::Receiver<()>,
-}
 
 impl HostState {
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
@@ -91,46 +85,29 @@ impl HostState {
     /// Present one error batch without blocking the loop.
     fn spawn_modal(
         &mut self,
-        detail: String,
+        presentation: ModalPresentation,
         language: nerust_settings_core::model::language::AppLanguage,
     ) {
-        let ack = self.dialogs.show_error_async(language, detail);
-        self.osd.modal.flight = Some(ModalFlight { done: ack });
+        let ack = self.dialogs.show_error_async(language, presentation.detail);
+        self.osd
+            .modal
+            .attach_modal_receiver(presentation.token, ack);
     }
 
     /// Reap a finished dialog, chain the next batch, and resume once the queue drains.
     fn reap_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
-        let finished =
-            self.osd
-                .modal
-                .flight
-                .as_ref()
-                .and_then(|flight| match flight.done.try_recv() {
-                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
-                    done => Some(done.is_ok()),
-                });
-        if let Some(normal) = finished {
-            if !normal {
-                log::error!("error dialog thread died before ack");
-            }
-            self.osd.modal.flight = None;
-            match self.osd.modal_closed() {
-                ModalAdvance::Present(detail) => {
-                    self.spawn_modal(detail, language);
-                }
-                ModalAdvance::Drained => {
-                    self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
-                    self.request_redraw();
-                }
-            }
+        if let Some(ModalAdvance::Present(presentation)) =
+            self.core.poll_modal_ack(&mut self.osd.modal)
+        {
+            self.spawn_modal(presentation, language);
         }
     }
 
     /// Present one error batch without blocking the loop, via the
     /// [`OsdService`] modal ports (never the manager fields directly).
     fn present_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
-        if let Some(detail) = self.osd.take_modal_batch() {
-            self.spawn_modal(detail, language);
+        if let Some(presentation) = self.osd.modal.take_modal() {
+            self.spawn_modal(presentation, language);
         }
     }
 
@@ -138,9 +115,9 @@ impl HostState {
     /// Cheap when idle; safe to call every loop pass.
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
         let language = ctx.frame().language();
-        let report =
-            self.core
-                .pump_notifications(&mut self.osd.modal.notifications, ctx, Instant::now());
+        let report = self
+            .core
+            .pump_notifications(&mut self.osd.modal, ctx, Instant::now());
         self.reap_modal(language);
         self.present_modal(language);
         if report.changed {
@@ -164,7 +141,7 @@ impl HostState {
         }
         WakeNeed {
             osd_deadline,
-            flight_pending: self.osd.modal.flight.is_some(),
+            flight_pending: self.osd.modal.flight_pending(),
             ..WakeNeed::default()
         }
     }
@@ -178,7 +155,7 @@ impl HostState {
         ctx: &FrameCtx,
     ) {
         self.osd.layer.render(
-            self.osd.modal.notifications.manager(),
+            self.osd.modal.manager(),
             renderer,
             size,
             self.windows.client_height(),
@@ -197,7 +174,7 @@ impl HostState {
         ctx: &FrameCtx,
     ) {
         self.osd.layer.sync_layer(
-            self.osd.modal.notifications.manager(),
+            self.osd.modal.manager(),
             renderer,
             size,
             ctx,
@@ -207,7 +184,7 @@ impl HostState {
 
     /// Wake the loop for OSD expiry while labels are visible.
     pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.osd.modal.notifications.wakeup_deadline(Instant::now())
+        self.osd.modal.wakeup_deadline(Instant::now())
     }
 }
 
@@ -229,12 +206,19 @@ mod tests {
         use nerust_frontend_kernel::pause::PauseOwner;
         let mut host = TestHost::with_nes().host;
         host.load_test_rom();
-        host.set_pause_owner(PauseOwner::Modal, true);
+        host.report_host_error("parked modal".into());
         host.note_main_departure();
         host.tick_focus_sync();
         let (ack, done) = std::sync::mpsc::channel();
-        host.osd.inject_modal_flight_for_test(ModalFlight { done });
         let ctx = host.frame_ctx();
+        host.core
+            .pump_notifications(&mut host.osd.modal, &ctx, Instant::now());
+        let presentation = host.osd.modal.take_modal().unwrap();
+        assert!(
+            host.osd
+                .modal
+                .attach_modal_receiver(presentation.token, done)
+        );
         let wake = host.tick_osd_pump(&ctx);
         assert!(
             wake.flight_pending,
@@ -316,19 +300,11 @@ mod tests {
             !host
                 .osd
                 .layer
-                .is_due(host.osd.modal.notifications.manager(), false, false)
+                .is_due(host.osd.modal.manager(), false, false)
         );
         // Status liveness and geometry moves each pass alone.
-        assert!(
-            host.osd
-                .layer
-                .is_due(host.osd.modal.notifications.manager(), true, false)
-        );
-        assert!(
-            host.osd
-                .layer
-                .is_due(host.osd.modal.notifications.manager(), false, true)
-        );
+        assert!(host.osd.layer.is_due(host.osd.modal.manager(), true, false));
+        assert!(host.osd.layer.is_due(host.osd.modal.manager(), false, true));
     }
 
     #[test]

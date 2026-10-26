@@ -7,7 +7,7 @@ use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
     frame::FrameCtx,
     loop_driver::WakeNeed,
-    osd::{ModalAdvance, OsdLayerSync, OsdNotifications},
+    osd::{ModalAdvance, ModalPresentation, OsdLayerSync, OsdNotifications},
 };
 
 use super::{State, renderer::GtkRenderer};
@@ -75,7 +75,6 @@ pub(crate) struct GtkOsd {
     notifications: OsdNotifications,
     layer: OsdLayerSync,
     output_generation: Option<u64>,
-    pending_modal: Option<String>,
 }
 
 impl GtkOsd {
@@ -84,7 +83,6 @@ impl GtkOsd {
             notifications: OsdNotifications::new(),
             layer: OsdLayerSync::new(),
             output_generation: None,
-            pending_modal: None,
         }
     }
 
@@ -110,18 +108,11 @@ impl GtkOsd {
             self.output_generation = Some(generation);
         }
         let now = Instant::now();
-        let report = self.notifications.pump(state.host.session_mut(), ctx, now);
+        let report = state
+            .host
+            .pump_notifications(&mut self.notifications, ctx, now);
         if report.changed {
             log::debug!("gtk osd: display state changed");
-        }
-        if report.modal_queued {
-            // Own the whole queue lifetime, even when another owner already paused.
-            state.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
-        }
-        // Native presentation can synchronously emit focus/map callbacks.
-        // Acquire Modal above, but defer presentation until every turn borrow ends.
-        if self.pending_modal.is_none() {
-            self.pending_modal = self.notifications.take_modal_batch();
         }
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
         self.layer.render(
@@ -138,8 +129,8 @@ impl GtkOsd {
         }
     }
 
-    pub(crate) fn take_modal(&mut self) -> Option<String> {
-        self.pending_modal.take()
+    pub(crate) fn take_modal(&mut self) -> Option<ModalPresentation> {
+        self.notifications.take_modal()
     }
 
     /// Build the history dialog without presenting; captions follow the tracked language.
@@ -424,14 +415,14 @@ impl GtkOsd {
     pub(crate) fn present_modal(
         surface: &super::surface::Surface,
         window: &gtk::ApplicationWindow,
-        detail: String,
+        presentation: ModalPresentation,
     ) {
         let dialog = gtk::MessageDialog::new(
             Some(window),
             gtk::DialogFlags::MODAL,
             gtk::MessageType::Error,
             gtk::ButtonsType::Ok,
-            &detail,
+            &presentation.detail,
         );
         let surface = surface.clone();
         let window = window.clone();
@@ -441,18 +432,16 @@ impl GtkOsd {
             // Bounded recursion: the modal queue caps at MAX_QUEUED,
             // so nesting depth is capped too, not an unbounded chain.
             let next = {
-                let surface = surface.borrow_mut();
+                let surface = surface.borrow();
                 let mut osd = surface.osd.borrow_mut();
-                osd.notifications.acknowledge_modal()
+                let mut state = surface.state.borrow_mut();
+                state
+                    .host
+                    .acknowledge_modal(&mut osd.notifications, presentation.token)
             };
             match next {
                 ModalAdvance::Present(next) => Self::present_modal(&surface, &window, next),
-                ModalAdvance::Drained => {
-                    let state = surface.borrow().state.clone();
-                    state
-                        .borrow_mut()
-                        .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
-                }
+                ModalAdvance::Ignored | ModalAdvance::Drained => {}
             }
         });
         dialog.present();

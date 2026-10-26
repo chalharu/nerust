@@ -1,7 +1,13 @@
 //! Toolkit-independent OSD orchestration from notification pump to renderer sinks.
-//! Native hosts own dialogs and pause arbitration; neither belongs to the raster path.
+//! Native hosts own dialogs; application pause arbitration stays outside the raster path.
 
-use std::time::Instant;
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::{Receiver, TryRecvError},
+    },
+    time::Instant,
+};
 
 use nerust_frontend_kernel::Versioned;
 use nerust_gui_shell::session::{
@@ -15,19 +21,42 @@ use nerust_render_traits::{
 
 use crate::frame::FrameCtx;
 
+/// Process-unique dialog identity, including across runtime replacement/close.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModalToken(u64);
+
+/// Owned native effect. Take it under the host borrow, present only after release.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ModalPresentation {
+    pub token: ModalToken,
+    pub detail: String,
+}
+
 /// ACK outcome shared by threaded dialogs and native widget callbacks.
-/// `Drained` releases only the host's Modal pause owner, never resumes directly.
-/// Adapters handle this on the UI thread: release Modal on `Drained`, or
-/// present the next dialog on `Present` without releasing the hold in between.
+/// ApplicationHost commits pause release before returning this owned effect.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ModalAdvance {
-    Present(String),
+    Ignored,
+    Present(ModalPresentation),
     Drained,
+}
+
+#[derive(Default)]
+enum ModalState {
+    #[default]
+    Idle,
+    // Keep structured content in OsdManager until actual delivery.
+    Deferred,
+    Active {
+        token: ModalToken,
+        receiver: Option<Receiver<()>>,
+    },
 }
 
 #[derive(Default)]
 pub struct OsdNotifications {
     manager: OsdManager,
+    modal: ModalState,
 }
 
 impl OsdNotifications {
@@ -43,7 +72,7 @@ impl OsdNotifications {
         ctx: &FrameCtx,
         now: Instant,
     ) -> PumpReport {
-        session.pump_osd(
+        let report = session.pump_osd(
             &mut self.manager,
             PushInput {
                 policy: *ctx.frame().policy(),
@@ -51,7 +80,9 @@ impl OsdNotifications {
                 now,
                 tick: ctx.tick(),
             },
-        )
+        );
+        self.defer_modal();
+        report
     }
 
     pub fn manager(&self) -> &OsdManager {
@@ -62,19 +93,114 @@ impl OsdNotifications {
         self.manager.modal_pending()
     }
 
-    /// The shell's open gate prevents a second dialog while an ACK is outstanding.
-    pub fn take_modal_batch(&mut self) -> Option<String> {
-        self.manager.take_modal_batch()
+    fn defer_modal(&mut self) {
+        if !matches!(self.modal, ModalState::Active { .. }) {
+            self.modal = if self.pending() > 0 {
+                ModalState::Deferred
+            } else {
+                ModalState::Idle
+            };
+        }
+    }
+
+    /// Includes deferred delivery and the whole ACK chain, not just queued batches.
+    pub fn modal_pending(&self) -> bool {
+        !matches!(self.modal, ModalState::Idle) || self.pending() > 0
+    }
+
+    /// Only receiver-backed flights need a periodic parked-loop ACK backstop.
+    /// Native callback dialogs wake their UI loop themselves.
+    pub fn flight_pending(&self) -> bool {
+        matches!(
+            self.modal,
+            ModalState::Active {
+                receiver: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Commit the flight before returning: synchronous presentation/ACK may reenter.
+    pub fn take_modal(&mut self) -> Option<ModalPresentation> {
+        if !matches!(self.modal, ModalState::Deferred) {
+            return None;
+        }
+        let Some(detail) = self.manager.take_modal_batch() else {
+            self.modal = ModalState::Idle;
+            return None;
+        };
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let token = loop {
+            let id = NEXT.load(Ordering::Relaxed);
+            let next = id.checked_add(1).expect("modal token exhausted");
+            if NEXT
+                .compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                break ModalToken(id);
+            }
+        };
+        self.modal = ModalState::Active {
+            token,
+            receiver: None,
+        };
+        Some(ModalPresentation { token, detail })
+    }
+
+    /// Attach after starting a native worker. A synchronous ACK or stale completion
+    /// cannot attach a receiver to the next dialog, nor replace its receiver.
+    pub fn attach_modal_receiver(&mut self, token: ModalToken, done: Receiver<()>) -> bool {
+        match &mut self.modal {
+            ModalState::Active {
+                token: active,
+                receiver,
+            } if *active == token && receiver.is_none() => {
+                *receiver = Some(done);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Consume an ACK (including a disconnected native dialog thread) and chain
-    /// the next batch before allowing the native host to release pause ownership.
-    pub fn acknowledge_modal(&mut self) -> ModalAdvance {
+    /// the next batch before ApplicationHost releases pause ownership.
+    pub(crate) fn acknowledge_modal(&mut self, token: ModalToken) -> ModalAdvance {
+        if !matches!(self.modal, ModalState::Active { token: active, .. } if active == token) {
+            return ModalAdvance::Ignored;
+        }
+        self.modal = ModalState::Idle;
         self.manager.modal_closed();
-        match self.take_modal_batch() {
-            Some(detail) => ModalAdvance::Present(detail),
+        self.defer_modal();
+        match self.take_modal() {
+            Some(presentation) => ModalAdvance::Present(presentation),
             None => ModalAdvance::Drained,
         }
+    }
+
+    pub(crate) fn poll_modal_ack(&mut self) -> Option<ModalAdvance> {
+        let ModalState::Active {
+            token,
+            receiver: Some(receiver),
+        } = &self.modal
+        else {
+            return None;
+        };
+        match receiver.try_recv() {
+            Err(TryRecvError::Empty) => None,
+            result => {
+                if result.is_err() {
+                    log::error!("error dialog thread died before ack");
+                }
+                let token = *token;
+                Some(self.acknowledge_modal(token))
+            }
+        }
+    }
+
+    /// Retire callbacks/receivers and queued content during ordered host teardown.
+    /// ApplicationHost owns teardown's pause reset; old tokens never match again.
+    pub fn close(&mut self) {
+        *self = Self::new();
     }
 
     pub fn wakeup_deadline(&self, now: Instant) -> Option<Instant> {
@@ -214,7 +340,7 @@ mod tests {
     };
 
     use nerust_core_traits::audio::AudioBackendRegistry;
-    use nerust_frontend_kernel::pause::{PauseOwner, PausePolicy};
+    use nerust_frontend_kernel::pause::PauseOwner;
     use nerust_gui_runtime::settings::{
         HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
     };
@@ -232,15 +358,21 @@ mod tests {
     };
 
     use super::*;
-    use crate::frame::FrameCache;
+    use crate::{application::ApplicationHost, frame::FrameCache};
 
     struct Fixture {
         session: SessionHandle,
-        root: PathBuf,
+        root: TestRoot,
     }
+
+    struct TestRoot(PathBuf);
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_nes(false)
+        }
+
+        fn with_nes(nes: bool) -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
                 "nerust-host-osd-{}-{}",
@@ -256,12 +388,19 @@ mod tests {
                     },
                     presentation: None,
                 },
-                Arc::new(SystemRegistry::new(Vec::new())),
+                Arc::new(SystemRegistry::new(if nes {
+                    vec![nerust_nes_factory::NesFactory::boxed().into()]
+                } else {
+                    Vec::new()
+                })),
                 Arc::new(AudioBackendRegistry::new()),
                 SettingsPaths::from_root(root.clone()),
             )
             .expect("independent OSD session");
-            Self { session, root }
+            Self {
+                session,
+                root: TestRoot(root),
+            }
         }
 
         fn settings(
@@ -276,9 +415,9 @@ mod tests {
         }
     }
 
-    impl Drop for Fixture {
+    impl Drop for TestRoot {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
+            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
@@ -408,42 +547,115 @@ mod tests {
 
     #[test]
     fn modal_pump_chains_ack_without_releasing_other_pause_owners() {
-        let mut fixture = Fixture::new();
-        let mut frames = FrameCache::new();
+        let fixture = Fixture::new();
+        let mut host = ApplicationHost::new(fixture.session);
+        let _root = fixture.root;
         let mut notifications = OsdNotifications::new();
-        let now = Instant::now();
-        let mut pause = PausePolicy::default();
-        pause.set(PauseOwner::Focus, true, false);
-        for detail in ["first", "second"] {
-            fixture
-                .session
-                .report_external_error(FailureOrigin::Host, detail.into());
-            let ctx = frames.frame_ctx(&fixture.session);
-            let report = notifications.pump(&mut fixture.session, &ctx, now);
-            assert!(report.modal_queued);
-            pause.set(PauseOwner::Modal, report.modal_queued, true);
-            if detail == "first" {
-                assert!(notifications.take_modal_batch().unwrap().contains(detail));
-            }
+        let owners = [PauseOwner::Focus, PauseOwner::Settings, PauseOwner::User];
+        for owner in owners {
+            host.set_pause_owner(owner, true);
         }
+        pump_error(&mut host, &mut notifications, "first");
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(
+            !notifications.flight_pending(),
+            "callback delivery needs no polling"
+        );
+        let first = notifications.take_modal().unwrap();
+        assert!(first.detail.contains("first"));
+        pump_error(&mut host, &mut notifications, "second");
         assert_eq!(notifications.pending(), 1);
         assert!(
-            notifications.take_modal_batch().is_none(),
+            notifications.take_modal().is_none(),
             "no overlapping dialogs"
         );
-        let ModalAdvance::Present(next) = notifications.acknowledge_modal() else {
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, ModalToken(0)),
+            ModalAdvance::Ignored
+        );
+        let ModalAdvance::Present(next) = host.acknowledge_modal(&mut notifications, first.token)
+        else {
             panic!("ACK must chain the queued batch before releasing Modal");
         };
-        assert!(next.contains("second"));
-        assert!(pause.owns(PauseOwner::Modal));
-        assert!(notifications.take_modal_batch().is_none());
-        assert_eq!(notifications.acknowledge_modal(), ModalAdvance::Drained);
-        assert!(
-            pause.set(PauseOwner::Modal, false, true),
-            "Focus still owns pause"
+        assert!(next.detail.contains("second"));
+        assert_ne!(first.token, next.token);
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, first.token),
+            ModalAdvance::Ignored
         );
-        assert!(!pause.owns(PauseOwner::Modal));
-        assert!(pause.owns(PauseOwner::Focus));
+        assert!(notifications.take_modal().is_none());
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, next.token),
+            ModalAdvance::Drained
+        );
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, next.token),
+            ModalAdvance::Ignored
+        );
+        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(host.redraw_needed());
+        assert!(!notifications.modal_pending());
+        for owner in owners {
+            assert!(host.owns_pause(owner));
+        }
+        assert!(host.pause_held());
+    }
+
+    fn pump_error(host: &mut ApplicationHost, notifications: &mut OsdNotifications, detail: &str) {
+        host.report_host_error(detail.into());
+        let ctx = host.frame_ctx();
+        assert!(
+            host.pump_notifications(notifications, &ctx, Instant::now())
+                .modal_queued
+        );
+    }
+
+    #[test]
+    fn idle_pump_does_not_resume_independent_pause_and_modal_adopts_it() {
+        use nerust_gui_shell::session::commands::SessionCommand;
+        let fixture = Fixture::with_nes(true);
+        let mut host = ApplicationHost::new(fixture.session);
+        let root = fixture.root;
+        let registry = SystemRegistry::new(vec![nerust_nes_factory::NesFactory::boxed().into()]);
+        let mut loader = Arc::new(registry)
+            .create_loader(Default::default())
+            .unwrap();
+        let mut rom = vec![0u8; 16 + 16384 + 8192];
+        rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
+        rom[16..19].copy_from_slice(&[0x4c, 0, 0x80]);
+        for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
+            rom[16 + vector..18 + vector].copy_from_slice(&[0, 0x80]);
+        }
+        let path = root.0.join("loop.nes");
+        std::fs::create_dir_all(&root.0).unwrap();
+        std::fs::write(&path, rom).unwrap();
+        host.load_path(loader.as_mut(), &path).unwrap();
+        host.session_mut()
+            .run_command(SessionCommand::Pause)
+            .unwrap();
+        assert!(host.tick().paused);
+        assert!(!host.pause_held());
+        let mut notifications = OsdNotifications::new();
+        let ctx = host.frame_ctx();
+        host.pump_notifications(&mut notifications, &ctx, Instant::now());
+        assert!(
+            host.tick().paused,
+            "idle OSD cannot resume an independent stop"
+        );
+        assert!(!host.pause_held(), "idle pump cannot adopt a pause either");
+        pump_error(&mut host, &mut notifications, "adopt stopped core");
+        let presentation = notifications.take_modal().unwrap();
+        assert!(host.owns_pause(PauseOwner::User));
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, presentation.token),
+            ModalAdvance::Drained
+        );
+        assert!(
+            host.tick().paused,
+            "Modal release preserves adopted explicit pause"
+        );
+        host.session_mut().unload().unwrap();
     }
 
     #[test]
@@ -452,6 +664,7 @@ mod tests {
         let mut frames = FrameCache::new();
         let mut notifications = OsdNotifications::new();
         let now = Instant::now();
+        let mut token = None;
         for detail in ["first", "second"] {
             fixture
                 .session
@@ -459,16 +672,19 @@ mod tests {
             let ctx = frames.frame_ctx(&fixture.session);
             notifications.pump(&mut fixture.session, &ctx, now);
             if detail == "first" {
-                notifications.take_modal_batch().unwrap();
+                token = Some(notifications.take_modal().unwrap().token);
             }
         }
         fixture.settings(|settings| settings.shared.general.language = AppLanguage::Japanese);
         let ctx = frames.frame_ctx(&fixture.session);
         notifications.pump(&mut fixture.session, &ctx, now);
-        let ModalAdvance::Present(next) = notifications.acknowledge_modal() else {
+        let ModalAdvance::Present(next) = notifications.acknowledge_modal(token.unwrap()) else {
             panic!("queued batch must survive language switch");
         };
-        assert!(next.contains("選択"), "queued batch relocalizes: {next}");
+        assert!(
+            next.detail.contains("選択"),
+            "queued batch relocalizes: {next:?}"
+        );
         fixture
             .session
             .report_external_error(FailureOrigin::Host, "third".into());
@@ -478,7 +694,179 @@ mod tests {
         let off = frames.frame_ctx(&fixture.session);
         notifications.pump(&mut fixture.session, &off, now);
         assert_eq!(notifications.pending(), 0);
-        assert_eq!(notifications.acknowledge_modal(), ModalAdvance::Drained);
+        assert_eq!(
+            notifications.acknowledge_modal(next.token),
+            ModalAdvance::Drained
+        );
+    }
+
+    #[test]
+    fn deferred_delivery_refilters_and_relocalizes_without_a_duplicate_queue() {
+        let fixture = Fixture::new();
+        let mut host = ApplicationHost::new(fixture.session);
+        let _root = fixture.root;
+        let mut notifications = OsdNotifications::new();
+        pump_error(&mut host, &mut notifications, "deferred");
+        assert_eq!(
+            notifications.pending(),
+            1,
+            "structured batch stays in shell"
+        );
+        let mut settings = host.settings_snapshot().clone();
+        settings.shared.general.language = AppLanguage::Japanese;
+        host.apply_settings(settings).unwrap();
+        let ctx = host.frame_ctx();
+        host.pump_notifications(&mut notifications, &ctx, Instant::now());
+        let presentation = notifications.take_modal().unwrap();
+        assert!(presentation.detail.contains("通知"), "{presentation:?}");
+        host.acknowledge_modal(&mut notifications, presentation.token);
+        pump_error(
+            &mut host,
+            &mut notifications,
+            "filtered before presentation",
+        );
+        let mut settings = host.settings_snapshot().clone();
+        settings.local.notifications.error_enabled = false;
+        host.apply_settings(settings).unwrap();
+        let ctx = host.frame_ctx();
+        host.pump_notifications(&mut notifications, &ctx, Instant::now());
+        assert!(notifications.take_modal().is_none());
+        assert!(!notifications.modal_pending());
+        assert!(!host.owns_pause(PauseOwner::Modal));
+    }
+
+    #[test]
+    fn receiver_ack_and_disconnect_chain_once_and_reject_late_attachment() {
+        let fixture = Fixture::new();
+        let mut host = ApplicationHost::new(fixture.session);
+        let _root = fixture.root;
+        let mut notifications = OsdNotifications::new();
+        host.set_pause_owner(PauseOwner::Settings, true);
+        pump_error(&mut host, &mut notifications, "worker first");
+        let first = notifications.take_modal().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        assert!(notifications.attach_modal_receiver(first.token, receiver));
+        assert!(notifications.flight_pending());
+        assert!(
+            host.poll_modal_ack(&mut notifications).is_none(),
+            "empty receiver keeps flight"
+        );
+        let (_duplicate_sender, duplicate_receiver) = std::sync::mpsc::channel();
+        assert!(!notifications.attach_modal_receiver(first.token, duplicate_receiver));
+        pump_error(&mut host, &mut notifications, "worker second");
+        sender.send(()).unwrap();
+        sender.send(()).unwrap();
+        let Some(ModalAdvance::Present(second)) = host.poll_modal_ack(&mut notifications) else {
+            panic!("worker ACK must chain");
+        };
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(
+            host.poll_modal_ack(&mut notifications).is_none(),
+            "duplicate message retired with receiver"
+        );
+        let (dead_sender, dead_receiver) = std::sync::mpsc::channel();
+        drop(dead_sender);
+        assert!(!notifications.attach_modal_receiver(first.token, dead_receiver));
+        let (dead_sender, dead_receiver) = std::sync::mpsc::channel();
+        drop(dead_sender);
+        assert!(notifications.attach_modal_receiver(second.token, dead_receiver));
+        assert_eq!(
+            host.poll_modal_ack(&mut notifications),
+            Some(ModalAdvance::Drained)
+        );
+        assert!(host.poll_modal_ack(&mut notifications).is_none());
+        assert!(!notifications.flight_pending());
+        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(PauseOwner::Settings));
+    }
+
+    #[test]
+    fn synchronous_callback_can_reborrow_and_ack_before_receiver_attachment() {
+        use std::{cell::RefCell, rc::Rc};
+        let fixture = Fixture::new();
+        let mut host = ApplicationHost::new(fixture.session);
+        let _root = fixture.root;
+        let mut notifications = OsdNotifications::new();
+        pump_error(&mut host, &mut notifications, "callback");
+        let shared = Rc::new(RefCell::new((host, notifications)));
+        let presentation = shared.borrow_mut().1.take_modal().unwrap();
+        // Fake native present synchronously calls map/response, outside all borrows.
+        let present = |presentation: ModalPresentation| {
+            let mut borrowed = shared.borrow_mut();
+            let (host, notifications) = &mut *borrowed;
+            assert!(host.owns_pause(PauseOwner::Modal));
+            assert!(notifications.take_modal().is_none());
+            host.acknowledge_modal(notifications, presentation.token)
+        };
+        let token = presentation.token;
+        assert_eq!(present(presentation), ModalAdvance::Drained);
+        let mut borrowed = shared.borrow_mut();
+        let (host, notifications) = &mut *borrowed;
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        assert!(!notifications.attach_modal_receiver(token, receiver));
+        assert_eq!(
+            host.acknowledge_modal(notifications, token),
+            ModalAdvance::Ignored
+        );
+        assert!(!host.owns_pause(PauseOwner::Modal));
+    }
+
+    #[test]
+    fn disconnected_receiver_chains_before_releasing_modal() {
+        let fixture = Fixture::new();
+        let mut host = ApplicationHost::new(fixture.session);
+        let _root = fixture.root;
+        let mut notifications = OsdNotifications::new();
+        pump_error(&mut host, &mut notifications, "dead worker");
+        let first = notifications.take_modal().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        notifications.attach_modal_receiver(first.token, receiver);
+        pump_error(&mut host, &mut notifications, "after disconnect");
+        drop(sender);
+        let Some(ModalAdvance::Present(next)) = host.poll_modal_ack(&mut notifications) else {
+            panic!("disconnect must chain just like ACK");
+        };
+        assert!(next.detail.contains("after disconnect"));
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, next.token),
+            ModalAdvance::Drained
+        );
+        assert!(!host.pause_held());
+    }
+
+    #[test]
+    fn close_retires_deferred_flights_receivers_and_old_runtime_tokens() {
+        let fixture = Fixture::new();
+        let mut host = ApplicationHost::new(fixture.session);
+        let _root = fixture.root;
+        let mut notifications = OsdNotifications::new();
+        pump_error(&mut host, &mut notifications, "old runtime");
+        let old = notifications.take_modal().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        notifications.attach_modal_receiver(old.token, receiver);
+        pump_error(&mut host, &mut notifications, "queued on close");
+        notifications.close();
+        assert!(sender.send(()).is_err());
+        assert!(!notifications.modal_pending());
+        assert!(notifications.take_modal().is_none());
+        pump_error(&mut host, &mut notifications, "new runtime");
+        let new = notifications.take_modal().unwrap();
+        assert_ne!(new.token, old.token);
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, old.token),
+            ModalAdvance::Ignored
+        );
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert_eq!(
+            host.acknowledge_modal(&mut notifications, new.token),
+            ModalAdvance::Drained
+        );
+        pump_error(&mut host, &mut notifications, "deferred on close");
+        notifications.close();
+        assert!(notifications.take_modal().is_none());
+        host.begin_close();
+        assert!(!host.pause_held());
     }
 
     #[test]

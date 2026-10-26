@@ -30,14 +30,14 @@ use nerust_gui_shell::{
 use crate::{
     focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent},
     frame::{FrameCache, FrameCtx},
-    osd::OsdNotifications,
+    osd::{ModalAdvance, ModalToken, OsdNotifications},
     session::{SessionEvent, SessionOutcome},
 };
 
 /// One session and one source of truth for its application-level policies.
-/// There is deliberately no mutable session/pause/debug-field escape hatch.
-/// The shared-reference shell probe still exposes its existing internally
-/// mutable debugger operations; callers must not bypass these pause policies.
+/// Native adapters should use policy-aware host methods for commands and pause
+/// transitions. Raw session access remains available for shell integration, but
+/// must not bypass pause ownership or debugger epoch guards.
 pub struct ApplicationHost {
     session: SessionHandle,
     pause_policy: PausePolicy,
@@ -223,11 +223,38 @@ impl ApplicationHost {
         now: Instant,
     ) -> nerust_gui_shell::session::osd::PumpReport {
         let report = notifications.pump(&mut self.session, ctx, now);
-        if report.modal_queued {
-            self.set_pause_owner(PauseOwner::Modal, true);
+        let pending = notifications.modal_pending();
+        if self.owns_pause(PauseOwner::Modal) != pending {
+            self.set_pause_owner(PauseOwner::Modal, pending);
         }
         report
     }
+
+    /// Validate callback identity and commit pause changes before native presentation.
+    pub fn acknowledge_modal(
+        &mut self,
+        notifications: &mut OsdNotifications,
+        token: ModalToken,
+    ) -> ModalAdvance {
+        let advance = notifications.acknowledge_modal(token);
+        self.commit_modal_advance(&advance);
+        advance
+    }
+
+    /// Thread ACK/disconnection uses the same policy path as widget callbacks.
+    pub fn poll_modal_ack(&mut self, notifications: &mut OsdNotifications) -> Option<ModalAdvance> {
+        let advance = notifications.poll_modal_ack()?;
+        self.commit_modal_advance(&advance);
+        Some(advance)
+    }
+
+    fn commit_modal_advance(&mut self, advance: &ModalAdvance) {
+        if matches!(advance, ModalAdvance::Drained) {
+            self.set_pause_owner(PauseOwner::Modal, false);
+            self.note_redraw();
+        }
+    }
+
     pub fn history_update(
         &mut self,
         language: nerust_settings_core::model::language::AppLanguage,

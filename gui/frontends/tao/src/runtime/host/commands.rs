@@ -424,16 +424,18 @@ mod tests {
 
     #[test]
     fn dead_dialog_thread_unwedges_the_queue() {
-        use super::super::osd::ModalFlight;
         let support = TestHost::new();
         let mut host = support.host;
         // Simulate a dialog thread that died before acking: the
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
-        host.osd
-            .inject_modal_flight_for_test(ModalFlight { done: rx });
         let ctx = host.frame_ctx();
+        host.report_host_error("disconnected dialog".into());
+        host.core
+            .pump_notifications(&mut host.osd.modal, &ctx, std::time::Instant::now());
+        let presentation = host.osd.modal.take_modal().unwrap();
+        assert!(host.osd.modal.attach_modal_receiver(presentation.token, rx));
         host.poll_notifications(&ctx);
         // Reaped as a failed ack: flight gone, queue unblocked.
         assert!(!host.osd.modal_showing());
