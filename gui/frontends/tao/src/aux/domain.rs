@@ -20,15 +20,7 @@ impl NativeWindowId {
     }
 }
 
-/// Registry-assigned aux entry handle. Routing keys on this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct AuxId(u64);
-
-impl AuxId {
-    pub(crate) fn new(raw: u64) -> Self {
-        Self(raw)
-    }
-}
+pub(crate) use nerust_frontend_host::aux::AuxId;
 
 /// Domain mouse button: only mapped buttons cross the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -11,7 +11,7 @@ mod surface_state;
 pub(crate) mod test_support;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
 
 use gtk::{
     gdk::prelude::SurfaceExt as _,
@@ -22,18 +22,17 @@ use gtk::{
         NativeExt as _, WidgetExt as _,
     },
 };
+use nerust_frontend_host::session::{SessionEvent, SessionOutcome};
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
 use nerust_gui_shell::{
     context::FrontendContext,
     session::{
-        KeyboardShortcut, SessionError, SessionHandle,
-        access::{PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav},
-        commands::SessionCommand,
+        SessionError, SessionHandle,
+        access::{SessionControl, SettingsResult},
     },
 };
-use nerust_keyboard::Key;
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
 use nerust_run_options::RunOptions;
@@ -150,10 +149,6 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn paused(&self) -> bool {
-        self.session.tick_metrics().paused
-    }
-
     pub(crate) fn title_cached(&mut self) -> String {
         let tick = self.session.tick_metrics();
         self.session.window_title_cached(&tick).to_owned()
@@ -181,28 +176,18 @@ impl State {
     }
 }
 
-impl PauseControl for State {
-    fn pause(&mut self) {
-        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
-    }
-    fn resume(&mut self) {
-        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
-    }
-    fn toggle_pause(&mut self) {
-        self.set_pause_owner(
-            nerust_frontend_kernel::pause::PauseOwner::User,
-            !self.paused(),
-        );
-    }
-}
+nerust_frontend_host::impl_session_controls!(State);
 
 impl State {
+    pub(crate) fn dispatch_session(
+        &mut self,
+        event: SessionEvent,
+    ) -> Result<SessionOutcome, SessionError> {
+        nerust_frontend_host::session::dispatch(&mut self.session, &mut self.pause_policy, event)
+    }
+
     fn reconcile_pause(&mut self) {
-        let tick = self.session.tick_metrics();
-        self.session.set_execution_held(self.pause_policy.paused());
-        if self.pause_policy.paused() && tick.loaded && !tick.paused {
-            let _ = self.session.run_command(SessionCommand::Pause);
-        }
+        nerust_frontend_host::session::reconcile_pause(&mut self.session, &self.pause_policy);
     }
 
     pub(crate) fn set_pause_owner(
@@ -210,68 +195,12 @@ impl State {
         owner: nerust_frontend_kernel::pause::PauseOwner,
         active: bool,
     ) {
-        let tick = self.session.tick_metrics();
-        let paused = self.pause_policy.set(owner, active, tick.paused);
-        self.session.set_execution_held(paused);
-        if tick.loaded && tick.paused != paused {
-            let _ = self.session.run_command(if paused {
-                SessionCommand::Pause
-            } else {
-                SessionCommand::Resume
-            });
-        }
-    }
-}
-
-impl SlotIo for State {
-    fn save_active_slot(&mut self) -> bool {
-        self.session
-            .run_command(SessionCommand::SaveActiveSlotOrNew)
-            .unwrap_or_default()
-            .executed
-    }
-    fn load_active_slot(&mut self) -> bool {
-        self.session
-            .run_command(SessionCommand::LoadActiveSlot)
-            .unwrap_or_default()
-            .executed
-    }
-    fn load_slot(&mut self, slot_id: u64) -> bool {
-        self.session
-            .run_command(SessionCommand::LoadSlot(slot_id))
-            .unwrap_or_default()
-            .executed
-    }
-    fn save_slot(&mut self, slot_id: u64) {
-        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
-    }
-    fn delete_slot(&mut self, slot_id: u64) {
-        let _ = self
-            .session
-            .run_command(SessionCommand::DeleteSlot(slot_id));
-    }
-}
-
-impl SlotNav for State {
-    fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
-    }
-    fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
-    }
-    fn select_slot(&mut self, slot_id: u64) {
-        let _ = self
-            .session
-            .run_command(SessionCommand::SelectActiveSlot(slot_id));
-    }
-    fn create_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::CreateSlot);
-    }
-}
-
-impl ResetControl for State {
-    fn reset(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Reset);
+        nerust_frontend_host::session::set_pause_owner(
+            &mut self.session,
+            &mut self.pause_policy,
+            owner,
+            active,
+        );
     }
 }
 
@@ -285,10 +214,12 @@ impl SessionControl for State {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.apply_settings(settings);
-        self.reconcile_pause();
-        let plan = plan?;
-        if plan.renderer_rebuild_required || plan.window_settings_changed {
+        let plan = nerust_frontend_host::session::apply_settings(
+            &mut self.session,
+            &self.pause_policy,
+            settings,
+        )?;
+        if plan.renderer_needs_rebuild {
             self.renderer_reload_pending = true;
         }
         Ok(SettingsResult {
@@ -311,16 +242,8 @@ impl SessionControl for State {
 }
 
 impl State {
-    pub(crate) fn handle_keyboard_key(
-        &mut self,
-        key: Key,
-        pressed: bool,
-    ) -> Option<KeyboardShortcut> {
-        self.session.handle_keyboard_key(key, pressed)
-    }
-
     pub(crate) fn clear_input(&mut self) {
-        self.session.clear_input();
+        let _ = self.dispatch_session(SessionEvent::ClearInput);
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {
@@ -333,11 +256,6 @@ impl State {
 
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
-    }
-
-    /// Share the authoritative session allocation without structural comparison.
-    pub(crate) fn settings_arc(&self) -> Arc<SettingsSnapshot> {
-        self.session.settings_arc()
     }
 }
 

@@ -1,6 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
+use nerust_frontend_host::{
+    frame::{FrameCache, FrameCtx},
+    loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn},
+};
 use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 
 use super::{State, renderer::GtkRenderer};
@@ -14,10 +18,78 @@ pub(crate) struct SurfaceCore {
     renderer: Rc<RefCell<GtkRenderer>>,
     pub(crate) state: Rc<RefCell<State>>,
     pub(crate) osd: RefCell<super::osd::GtkOsd>,
+    frames: RefCell<FrameCache>,
     retry: RefCell<nerust_frontend_kernel::retry::RenderRetry>,
 }
 
 pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
+
+/// Main-window ports only. GTK debugger flights live in separate native
+/// windows (using the shared DrainQueue), so this turn's debug port is a no-op.
+/// Native focus callbacks and window chrome timers retain their own cadence.
+struct GtkTurn<'a> {
+    surface: &'a Surface,
+    core: &'a SurfaceCore,
+    state: &'a mut State,
+    physical_size: SurfaceSize,
+}
+
+impl LoopHost for GtkTurn<'_> {
+    type Frame = FrameCtx;
+
+    fn before_turn(&mut self) {
+        // GTK focus/pause ownership is settled by native signal callbacks.
+    }
+
+    fn frame_ctx(&mut self) -> FrameCtx {
+        self.core.frames.borrow_mut().frame_ctx(&self.state.session)
+    }
+
+    fn chrome(&mut self, _ctx: &FrameCtx) {
+        // Existing native window callbacks own title/menu synchronization.
+    }
+
+    fn pump_debug(&mut self) -> WakeNeed {
+        WakeNeed::default()
+    }
+
+    fn pump_osd(&mut self, ctx: &FrameCtx) -> WakeNeed {
+        self.core.osd.borrow_mut().poll(
+            self.surface,
+            self.state,
+            &self.core.renderer,
+            &self.core.window,
+            self.physical_size,
+            ctx,
+        )
+    }
+
+    fn pump_aux(&mut self) -> WakeNeed {
+        let mut retry = self.core.retry.borrow_mut();
+        if retry.take_due(std::time::Instant::now()) {
+            self.core.picture.queue_draw();
+        }
+        WakeNeed {
+            osd_deadline: retry.deadline(),
+            ..WakeNeed::default()
+        }
+    }
+
+    fn late_liveness(&mut self) -> TurnLiveness {
+        let tick = self.state.session.tick_metrics();
+        TurnLiveness {
+            loaded: tick.loaded,
+            paused: tick.paused,
+            main_active: self.core.window.is_active(),
+            // Follow belongs to the separate debugger/PPU native window.
+            live_follow: false,
+        }
+    }
+
+    fn request_redraw(&mut self) {
+        self.core.picture.queue_draw();
+    }
+}
 
 pub(crate) trait SurfaceExtend {
     fn bind(
@@ -45,6 +117,7 @@ impl SurfaceExtend for Surface {
             renderer,
             state,
             osd: RefCell::new(osd),
+            frames: RefCell::new(FrameCache::new()),
             retry: RefCell::new(Default::default()),
         }));
         {
@@ -149,7 +222,9 @@ impl SurfaceCore {
         }
     }
 
-    /// Poll OSD queues with a short borrow: the GPU pass never waits on queue work.
+    /// Run the shared turn with a short borrow, outside the GPU pass. Prototype
+    /// limitation: deadlines are observed but not translated to GLib timers;
+    /// the existing GTK frame clock remains the drawing/polling driver.
     fn poll_osd(surface: &Surface, s: &SurfaceCore, physical_size: SurfaceSize) {
         let mut state = match s.state.try_borrow_mut() {
             Ok(state) => state,
@@ -158,10 +233,17 @@ impl SurfaceCore {
                 return;
             }
         };
-        let surface = surface.clone();
-        s.osd
-            .borrow_mut()
-            .poll(&surface, &mut state, &s.renderer, &s.window, physical_size);
+        let outcome = drive_turn(&mut GtkTurn {
+            surface,
+            core: s,
+            state: &mut state,
+            physical_size,
+        });
+        // Redraw was delivered through the port. A future GLib wake adapter
+        // can consume this deadline without changing the shared turn policy.
+        if let Some(deadline) = outcome.deadline {
+            log::trace!("gtk turn: frame clock owns wakeup; deadline {deadline:?}");
+        }
     }
 
     /// Render one frame into memory and hand it to the GTK picture, which

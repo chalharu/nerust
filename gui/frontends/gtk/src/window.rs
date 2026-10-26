@@ -5,10 +5,14 @@ use gtk::{
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
+use nerust_frontend_host::{
+    aux::{AuxId, AuxWindows, OpenRequest},
+    focus::AuxKind,
+    session::{SessionEffect, SessionEvent, SessionOutcome},
+};
 use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError,
-    access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
+    KeyboardShortcut, SessionError, access::SessionControl, commands::SessionCommand,
 };
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::PipelineFactory;
@@ -57,14 +61,149 @@ pub(crate) struct WindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
-    debugger_window: Option<crate::debugger::DebuggerWindow>,
-    history_dialog: Option<(gtk::Dialog, std::rc::Rc<dyn Fn()>)>,
+    aux: AuxWindows<u64, NativeAux>,
     actions: WindowActions,
     menubar: MenubarModels,
     select_active_slot_menu: gio::Menu,
     save_slot_menu: gio::Menu,
     load_slot_menu: gio::Menu,
     delete_slot_menu: gio::Menu,
+}
+
+/// Native resources only. Opening, presence, identity and routing belong to host.
+#[derive(Clone)]
+enum NativeAux {
+    Debug(crate::debugger::DebuggerWindow),
+    History(gtk::Dialog, Rc<dyn Fn()>),
+    Settings(gtk::Dialog),
+}
+
+impl NativeAux {
+    fn is_gone(&self) -> bool {
+        match self {
+            Self::Debug(debugger) => debugger.borrow().is_gone(),
+            Self::History(dialog, _) | Self::Settings(dialog) => surface_gone(dialog),
+        }
+    }
+
+    fn present(&self) {
+        match self {
+            Self::Debug(debugger) => {
+                crate::debugger::DebuggerWindowCore::refresh(debugger);
+                debugger.borrow().present();
+            }
+            Self::History(dialog, refresh) => {
+                dialog.present();
+                refresh();
+            }
+            Self::Settings(dialog) => dialog.present(),
+        }
+    }
+
+    fn native_window(&self) -> gtk::Window {
+        match self {
+            Self::Debug(debugger) => debugger.borrow().native_window().upcast(),
+            Self::History(dialog, _) | Self::Settings(dialog) => dialog.clone().upcast(),
+        }
+    }
+}
+
+/// Native liveness is an input; the shared registry decides create/present/pending.
+fn request_aux(window: &Window, kind: AuxKind) -> Option<AuxId> {
+    let existing = {
+        let window = window.borrow();
+        window.aux.route_id(kind).zip(window.aux.get(kind).cloned())
+    };
+    if let Some((id, handle)) = existing
+        && handle.is_gone()
+    {
+        close_aux(window, id);
+    }
+    let request = window.borrow_mut().aux.request_open(kind);
+    match request {
+        OpenRequest::Create(id) => Some(id),
+        OpenRequest::Present(_) => {
+            let existing = window.borrow().aux.get(kind).cloned();
+            if let Some(existing) = existing {
+                existing.present();
+            }
+            None
+        }
+        OpenRequest::Pending(_) => None,
+    }
+}
+
+fn complete_aux(window: &Window, id: AuxId, handle: NativeAux) -> bool {
+    let native = handle.native_window();
+    let history = matches!(&handle, NativeAux::History(_, _));
+    let result = window.borrow_mut().aux.complete_open(id, None, handle);
+    if let Err(rejected) = result {
+        rejected.native_window().destroy();
+        close_aux(window, id);
+        return false;
+    }
+    let weak = Rc::downgrade(window);
+    native.connect_destroy(move |_| {
+        if let Some(window) = weak.upgrade() {
+            close_aux(&window, id);
+        }
+    });
+    if history {
+        let weak = Rc::downgrade(window);
+        native.connect_unrealize(move |_| {
+            if let Some(window) = weak.upgrade() {
+                close_aux(&window, id);
+            }
+        });
+    }
+    true
+}
+
+/// Remove before any native drop or session callback: both can synchronously reenter.
+fn close_aux(window: &Window, id: AuxId) -> bool {
+    let (kind, handle) = {
+        let mut window = window.borrow_mut();
+        let kind = window.aux.kind_of_id(id);
+        (kind, window.aux.remove_id(id))
+    };
+    if kind == Some(AuxKind::Settings) {
+        let _ = window
+            .state()
+            .borrow_mut()
+            .dispatch_session(SessionEvent::SettingsClosed);
+    }
+    drop(handle);
+    kind.is_some()
+}
+
+fn open_settings(window: &Window, action: &gio::SimpleAction) {
+    let Some(id) = request_aux(window, AuxKind::Settings) else {
+        return;
+    };
+    if !window
+        .state()
+        .borrow_mut()
+        .dispatch_session(SessionEvent::SettingsOpened)
+        .is_ok_and(|out| out.settings_changed)
+    {
+        window.borrow_mut().aux.cancel_open(id);
+        return;
+    }
+    action.set_enabled(false);
+    let action = action.clone();
+    let weak = Rc::downgrade(window);
+    let dialog = present_preferences_dialog(&window.window(), window.state(), move || {
+        if let Some(window) = weak.upgrade()
+            && close_aux(&window, id)
+        {
+            action.set_enabled(true);
+            window.rebuild_menubar();
+            window.update_actions();
+        }
+    });
+    if let Some(dialog) = dialog {
+        complete_aux(window, id, NativeAux::Settings(dialog));
+    }
 }
 
 /// Window action cluster: every menu/toolbar command in one place.
@@ -163,6 +302,7 @@ pub(crate) trait WindowExtend {
     fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
+    fn apply_session_outcome(&self, outcome: SessionOutcome);
 }
 
 #[derive(Clone, Copy)]
@@ -173,11 +313,6 @@ pub(crate) enum KeyEventState {
 
 fn key_event_pressed(event: KeyEventState) -> bool {
     matches!(event, KeyEventState::Press)
-}
-
-fn load_active_slot(state: &RefCell<State>) -> bool {
-    let active_slot_id = state.borrow().active_slot_id();
-    active_slot_id.is_some_and(|slot_id| SlotIo::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {
@@ -216,8 +351,7 @@ impl WindowExtend for Window {
             window: window.clone(),
             state,
             open_dialog: None,
-            debugger_window: None,
-            history_dialog: None,
+            aux: AuxWindows::new(),
             actions,
             menubar,
             select_active_slot_menu: state_menus.select_active_slot_menu,
@@ -281,26 +415,24 @@ impl WindowExtend for Window {
             });
         }
 
-        {
+        // Menu and keyboard use the same command vocabulary and pause arbiter.
+        for (action, command) in [
+            (pause_action, SessionCommand::Pause),
+            (resume_action, SessionCommand::Resume),
+            (reset_action, SessionCommand::Reset),
+            (state_create_action, SessionCommand::CreateSlot),
+            (
+                state_save_active_action,
+                SessionCommand::SaveActiveSlotOrNew,
+            ),
+            (state_load_active_action, SessionCommand::LoadActiveSlot),
+        ] {
             let result = result.clone();
-            let _ = pause_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().pause();
-                result.update_actions();
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = resume_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().resume();
-                result.update_actions();
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = reset_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().reset();
+            let _ = action.connect_activate(move |_, _| {
+                let _ = result
+                    .state()
+                    .borrow_mut()
+                    .dispatch_session(SessionEvent::Command(command));
                 result.update_actions();
             });
         }
@@ -308,7 +440,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = debugger_action.connect_activate(move |_, _| {
-                result.open_debugger();
+                result.apply_keyboard_shortcut(KeyboardShortcut::OpenDebugger);
             });
         }
 
@@ -319,67 +451,22 @@ impl WindowExtend for Window {
             });
         }
 
-        {
+        for (action, command) in [
+            (
+                state_select_slot_action,
+                SessionCommand::SelectActiveSlot as fn(u64) -> SessionCommand,
+            ),
+            (state_save_slot_action, SessionCommand::SaveSlot),
+            (state_load_slot_action, SessionCommand::LoadSlot),
+            (state_delete_slot_action, SessionCommand::DeleteSlot),
+        ] {
             let result = result.clone();
-            let _ = state_create_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().create_slot();
-                result.update_actions();
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = state_save_active_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().save_active_slot();
-                result.update_actions();
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = state_load_active_action.connect_activate(move |_, _| {
-                let state = result.state();
-                if load_active_slot(state.as_ref()) {
-                    result.update_actions();
-                }
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = state_select_slot_action.connect_activate(move |_, parameter| {
+            let _ = action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    result.state().borrow_mut().select_slot(slot_id);
-                    result.update_actions();
-                }
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = state_save_slot_action.connect_activate(move |_, parameter| {
-                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    result.state().borrow_mut().save_slot(slot_id);
-                    result.update_actions();
-                }
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = state_load_slot_action.connect_activate(move |_, parameter| {
-                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result.state().borrow_mut().load_slot(slot_id);
-                    result.update_actions();
-                }
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = state_delete_slot_action.connect_activate(move |_, parameter| {
-                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    result.state().borrow_mut().delete_slot(slot_id);
+                    let _ = result
+                        .state()
+                        .borrow_mut()
+                        .dispatch_session(SessionEvent::Command(command(slot_id)));
                     result.update_actions();
                 }
             });
@@ -388,24 +475,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = settings_action.connect_activate(move |action, _| {
-                action.set_enabled(false);
-                let action = action.clone();
-                result
-                    .state()
-                    .borrow_mut()
-                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
-                let state = result.state();
-                let window = result.window();
-                let result_for_close = result.clone();
-                present_preferences_dialog(&window, state, move || {
-                    result_for_close.state().borrow_mut().set_pause_owner(
-                        nerust_frontend_kernel::pause::PauseOwner::Settings,
-                        false,
-                    );
-                    action.set_enabled(true);
-                    result_for_close.rebuild_menubar();
-                    result_for_close.update_actions();
-                });
+                open_settings(&result, action);
             });
         }
         window.add_action(&settings_action);
@@ -428,57 +498,29 @@ impl WindowExtend for Window {
     }
 
     fn open_history(&self) {
-        // Parity with the debugger: an existing dialog presents
-        // instead of duplicating; destroy clears the slot.
-        // Clone out of the borrow first: clearing the slot below
-        // re-borrows mutably, and the `if let` scrutinee guard would
-        // otherwise still be alive (RefCell panic).
-        let existing = self.borrow().history_dialog.clone();
-        if let Some((existing, refresh)) = existing {
-            if surface_gone(&existing) {
-                self.borrow_mut().history_dialog = None;
-            } else {
-                existing.present();
-                refresh();
-                return;
-            }
-        }
+        let Some(id) = request_aux(self, AuxKind::History) else {
+            return;
+        };
         let built = crate::osd::GtkOsd::build_history(&self.window(), &self.state());
-        {
-            let result = self.clone();
-            built.dialog.connect_destroy(move |_| {
-                result.borrow_mut().history_dialog = None;
-            });
+        if complete_aux(
+            self,
+            id,
+            NativeAux::History(built.dialog.clone(), built.refresh),
+        ) {
+            built.dialog.present();
         }
-        self.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh));
-        built.dialog.present();
     }
 
     fn open_debugger(&self) {
-        // Idempotent open: an existing window refreshes and presents
-        // instead of duplicating. An externally destroyed window keeps
-        // its slot (no signal fires), so a gone check rebuilds instead
-        // of presenting a dead surface (fatal X error: GTK would query
-        // a destroyed native window).
-        // Clone out of the borrow first: clearing the slot below
-        // re-borrows mutably, and the `if let` scrutinee guard would
-        // otherwise still be alive (RefCell panic).
-        let existing = self.borrow().debugger_window.clone();
-        if let Some(existing) = existing {
-            if existing.borrow().is_gone() {
-                self.borrow_mut().debugger_window = None;
-            } else {
-                crate::debugger::DebuggerWindowCore::refresh(&existing);
-                existing.borrow().present();
-                return;
-            }
-        }
+        let Some(id) = request_aux(self, AuxKind::Debug) else {
+            return;
+        };
         let debugger = crate::debugger::DebuggerWindowCore::open(
             &self.application(),
             &self.window(),
             self.state(),
         );
-        self.borrow_mut().debugger_window = Some(debugger);
+        complete_aux(self, id, NativeAux::Debug(debugger));
         self.update_actions();
     }
 
@@ -691,29 +733,44 @@ impl WindowExtend for Window {
         // No hardcoded F-keys: the debugger open rides the shortcut schema
         // (default F4, rebindable in Settings), so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
-            let shortcut = self
+            let outcome = self
                 .state()
                 .borrow_mut()
-                .handle_keyboard_key(controller_input, key_event_pressed(event));
-            if let Some(shortcut) = shortcut {
-                self.apply_keyboard_shortcut(shortcut);
+                .dispatch_session(SessionEvent::Keyboard {
+                    key: controller_input,
+                    pressed: key_event_pressed(event),
+                });
+            match outcome {
+                Ok(outcome) if outcome.command.is_some() || outcome.effect.is_some() => {
+                    self.apply_session_outcome(outcome);
+                }
+                Err(_) => self.update_actions(),
+                _ => (),
             }
         }
         false
     }
 
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut) {
-        use nerust_gui_shell::session::access::dispatch_session_action;
-        match shortcut {
-            KeyboardShortcut::Session(action) => {
-                let _ = dispatch_session_action(&mut *self.state().borrow_mut(), action);
-            }
-            KeyboardShortcut::ToggleFullscreen => {
+        let outcome = self
+            .state()
+            .borrow_mut()
+            .dispatch_session(SessionEvent::Shortcut(shortcut));
+        match outcome {
+            Ok(outcome) => self.apply_session_outcome(outcome),
+            Err(_) => self.update_actions(),
+        }
+    }
+
+    fn apply_session_outcome(&self, outcome: SessionOutcome) {
+        match outcome.effect {
+            Some(SessionEffect::ToggleFullscreen) => {
                 toggle_window_fullscreen(self);
             }
-            KeyboardShortcut::OpenDebugger => {
+            Some(SessionEffect::NativeOpenDebugger) => {
                 self.open_debugger();
             }
+            None => (),
         }
         self.update_actions();
     }
@@ -791,7 +848,7 @@ fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State
 #[cfg(test)]
 mod tests {
     use gio::prelude::ActionExt as _;
-    use gtk::prelude::GtkWindowExt as _;
+    use gtk::prelude::{DialogExt as _, GtkWindowExt as _};
 
     use super::{KeyEventState, WindowActions, WindowExtend, key_event_pressed, rebuild_slot_menu};
     use crate::surface_state::surface_gone;
@@ -801,15 +858,52 @@ mod tests {
     /// Widget-only: needs a display, run under Xvfb (skips headless).
     #[test]
     fn open_history_rebuilds_dead_dialog_without_borrow_panic() {
-        let Some((app, window, state)) = harness() else {
+        let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display (run under Xvfb)");
             return;
         };
-        let win = super::Window::bind(
+        let window = win.window();
+        let state = win.state();
+        // Bypass the slot wiring: a directly built dialog carries no
+        // destroy hook, like an externally destroyed one whose
+        // close-request never ran.
+        let built = crate::osd::GtkOsd::build_history(&window, &state);
+        let super::OpenRequest::Create(id) =
+            win.borrow_mut().aux.request_open(super::AuxKind::History)
+        else {
+            panic!("expected reservation");
+        };
+        assert!(
+            win.borrow_mut()
+                .aux
+                .complete_open(
+                    id,
+                    None,
+                    super::NativeAux::History(built.dialog.clone(), built.refresh.clone()),
+                )
+                .is_ok()
+        );
+        // External destroy disposes the widget without signals; the
+        // slot keeps the dead dialog.
+        built.dialog.destroy();
+        assert!(surface_gone(&built.dialog));
+        // Must rebuild, not panic on the slot borrow.
+        win.open_history();
+        let slot = win.borrow().aux.get(super::AuxKind::History).cloned();
+        let Some(super::NativeAux::History(dialog, _)) = slot else {
+            panic!("rebuilt dialog");
+        };
+        assert!(!surface_gone(&dialog));
+        dialog.destroy();
+    }
+
+    fn bound_window() -> Option<super::Window> {
+        let (app, window, state) = harness()?;
+        Some(super::Window::bind(
             app,
-            window.clone(),
+            window,
             gtk::Picture::new(),
-            state.clone(),
+            state,
             std::rc::Rc::new(MockPipelineFactory),
             super::StateMenus {
                 select_active_slot_menu: gio::Menu::new(),
@@ -818,23 +912,111 @@ mod tests {
                 delete_slot_menu: gio::Menu::new(),
             },
             super::MenubarModels::new(),
-        );
-        // Bypass the slot wiring: a directly built dialog carries no
-        // destroy hook, like an externally destroyed one whose
-        // close-request never ran.
-        let built = crate::osd::GtkOsd::build_history(&window, &state);
-        win.borrow_mut().history_dialog = Some((built.dialog.clone(), built.refresh.clone()));
-        // External destroy disposes the widget without signals; the
-        // slot keeps the dead dialog.
-        built.dialog.destroy();
-        assert!(surface_gone(&built.dialog));
-        // Must rebuild, not panic on the slot borrow.
+        ))
+    }
+
+    #[test]
+    fn auxiliary_open_reservations_block_reentrant_native_creation() {
+        use super::{AuxKind, OpenRequest};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        for kind in [AuxKind::Debug, AuxKind::History, AuxKind::Settings] {
+            let OpenRequest::Create(id) = win.borrow_mut().aux.request_open(kind) else {
+                panic!("expected reservation");
+            };
+            match kind {
+                AuxKind::Debug => win.open_debugger(),
+                AuxKind::History => win.open_history(),
+                AuxKind::Settings => {
+                    let action = gio::SimpleAction::new("settings-test", None);
+                    super::open_settings(&win, &action);
+                    assert!(action.is_enabled());
+                }
+                AuxKind::Ppu => unreachable!(),
+            }
+            assert_eq!(win.borrow().aux.route_id(kind), Some(id));
+            assert!(win.borrow().aux.get(kind).is_none());
+            assert!(win.borrow_mut().aux.cancel_open(id));
+        }
+    }
+
+    #[test]
+    fn history_reuses_identity_and_old_destroy_cannot_close_replacement() {
+        use super::{AuxKind, NativeAux};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
         win.open_history();
-        let slot = win.borrow().history_dialog.clone();
-        assert!(slot.is_some());
-        let (dialog, _) = slot.expect("rebuilt dialog");
-        assert!(!surface_gone(&dialog));
-        dialog.destroy();
+        let old_id = win.borrow().aux.route_id(AuxKind::History).unwrap();
+        let Some(NativeAux::History(old, _)) = win.borrow().aux.get(AuxKind::History).cloned()
+        else {
+            panic!("history dialog");
+        };
+        win.open_history();
+        assert_eq!(win.borrow().aux.route_id(AuxKind::History), Some(old_id));
+        assert!(super::close_aux(&win, old_id));
+        win.open_history();
+        let new_id = win.borrow().aux.route_id(AuxKind::History).unwrap();
+        assert_ne!(old_id, new_id);
+        old.destroy();
+        assert!(!super::close_aux(&win, old_id));
+        assert_eq!(win.borrow().aux.route_id(AuxKind::History), Some(new_id));
+        let current = win
+            .borrow()
+            .aux
+            .get(AuxKind::History)
+            .unwrap()
+            .native_window();
+        current.destroy();
+        assert!(!win.borrow().aux.contains(AuxKind::History));
+    }
+
+    #[test]
+    fn settings_identity_guards_pause_owner_and_native_finish() {
+        use super::{AuxKind, NativeAux};
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let action = gio::SimpleAction::new("settings-test", None);
+        super::open_settings(&win, &action);
+        let old_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
+        let Some(NativeAux::Settings(old)) = win.borrow().aux.get(AuxKind::Settings).cloned()
+        else {
+            panic!("settings dialog");
+        };
+        super::open_settings(&win, &action);
+        assert_eq!(win.borrow().aux.route_id(AuxKind::Settings), Some(old_id));
+        assert!(!action.is_enabled());
+        old.response(gtk::ResponseType::Cancel);
+        assert!(action.is_enabled());
+        assert!(!win.borrow().aux.contains(AuxKind::Settings));
+        assert!(!win.state().borrow().pause_policy.owns(PauseOwner::Settings));
+        super::open_settings(&win, &action);
+        let new_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
+        assert_ne!(old_id, new_id);
+        assert!(!super::close_aux(&win, old_id));
+        old.destroy();
+        assert!(win.state().borrow().pause_policy.owns(PauseOwner::Settings));
+        assert!(!action.is_enabled());
+        win.state()
+            .borrow_mut()
+            .set_pause_owner(PauseOwner::Modal, true);
+        let current = win
+            .borrow()
+            .aux
+            .get(AuxKind::Settings)
+            .unwrap()
+            .native_window();
+        current.destroy();
+        assert!(action.is_enabled());
+        assert!(!win.borrow().aux.contains(AuxKind::Settings));
+        assert!(!win.state().borrow().pause_policy.owns(PauseOwner::Settings));
+        assert!(win.state().borrow().pause_policy.owns(PauseOwner::Modal));
     }
 
     /// Headless-capable state: session plus settings only, no renderer.
