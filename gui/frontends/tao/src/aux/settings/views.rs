@@ -54,7 +54,7 @@ impl SettingsAppState {
             .spacing(12)
             .align_y(Alignment::Center);
             content = content.push(storage_row);
-            if let Some(error) = self.storage_error() {
+            if let Some(error) = self.validation_banner().storage {
                 content = content.push(text(error));
             }
         }

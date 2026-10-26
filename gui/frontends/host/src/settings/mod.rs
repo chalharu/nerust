@@ -301,13 +301,23 @@ impl SettingsController {
             .unwrap_or_default()
     }
 
-    pub fn storage_error(&self) -> Option<String> {
-        let general = self.vm.general.view.get();
-        if general.show_storage_directory && general.storage_directory.is_empty() {
-            Some("Custom storage directory required".into())
-        } else {
-            None
+    /// Shared validation banner: headline is the first issue, storage
+    /// shows the first persistence-scope issue. Replaces the former
+    /// hardcoded storage message with the localized validator output.
+    pub fn validation_banner(&self) -> nerust_gui_viewmodel::settings::ValidationBanner {
+        use nerust_gui_viewmodel::settings::ValidationBanner;
+        match self.vm.finish() {
+            Ok(_) => ValidationBanner {
+                can_submit: true,
+                headline: None,
+                storage: None,
+            },
+            Err(validation) => validation.banner(),
         }
+    }
+
+    pub fn storage_error(&self) -> Option<String> {
+        self.validation_banner().storage
     }
 
     /// Selection indices deliberately retain the original adapter's permissive
@@ -454,58 +464,6 @@ impl SettingsController {
             && let Some(vm) = self.vm.inputs().get(index)
         {
             self.err(vm.set_controller_slot(slot, controller_id.as_deref()));
-        }
-    }
-}
-
-/// Localized choice catalogs, independent of the widgets used to render them.
-pub struct NotificationChoices {
-    pub colors: Vec<ChoiceView<NotificationColor>>,
-    pub positions: Vec<ChoiceView<NotificationPosition>>,
-    pub areas: Vec<ChoiceView<NotificationAreaMode>>,
-}
-
-impl NotificationChoices {
-    pub fn new(language: AppLanguage) -> Self {
-        fn choices<T: Clone + Eq>(
-            language: AppLanguage,
-            entries: impl IntoIterator<Item = (T, UiText)>,
-        ) -> Vec<ChoiceView<T>> {
-            entries
-                .into_iter()
-                .map(|(value, label)| ChoiceView {
-                    value,
-                    label: ui_text(language, label).into(),
-                })
-                .collect()
-        }
-        Self {
-            colors: choices(
-                language,
-                [
-                    (NotificationColor::White, UiText::ColorWhite),
-                    (NotificationColor::Yellow, UiText::ColorYellow),
-                    (NotificationColor::Red, UiText::ColorRed),
-                    (NotificationColor::Green, UiText::ColorGreen),
-                    (NotificationColor::Cyan, UiText::ColorCyan),
-                ],
-            ),
-            positions: choices(
-                language,
-                [
-                    (NotificationPosition::TopLeft, UiText::PosTopLeft),
-                    (NotificationPosition::TopRight, UiText::PosTopRight),
-                    (NotificationPosition::BottomLeft, UiText::PosBottomLeft),
-                    (NotificationPosition::BottomRight, UiText::PosBottomRight),
-                ],
-            ),
-            areas: choices(
-                language,
-                [
-                    (NotificationAreaMode::Overlay, UiText::AreaOverlay),
-                    (NotificationAreaMode::Strip, UiText::AreaStrip),
-                ],
-            ),
         }
     }
 }
