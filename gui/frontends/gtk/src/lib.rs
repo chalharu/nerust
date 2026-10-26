@@ -1,6 +1,5 @@
 mod debugger;
 mod gdk_raw;
-pub mod mapping;
 mod osd;
 mod ppu_window;
 mod preferences;
