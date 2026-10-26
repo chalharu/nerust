@@ -44,10 +44,9 @@ use self::window::{MenubarModels, StateMenus, Window, WindowExtend};
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
-    session: SessionHandle,
+    pub(crate) host: nerust_frontend_host::application::ApplicationHost,
     ctx: FrontendContext,
     renderer_reload_pending: bool,
-    pause_policy: nerust_frontend_kernel::pause::PausePolicy,
 }
 
 impl State {
@@ -115,63 +114,64 @@ impl State {
         })?;
 
         Ok(Self {
-            session,
+            host: nerust_frontend_host::application::ApplicationHost::new(session),
             ctx,
             renderer_reload_pending: false,
-            pause_policy: Default::default(),
         })
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
-        self.session.swap_frame_buffer();
+        self.host.swap_frame_buffer();
     }
 
     pub(crate) fn frame_buffer(&self) -> Option<&FrameBuffer> {
-        self.session.frame_buffer()
+        self.host.frame_buffer()
     }
 
-    pub(crate) fn render_profile(&self) -> Option<&VideoRenderProfile> {
-        self.session.render_profile()
+    pub(crate) fn render_profile(&self) -> Option<VideoRenderProfile> {
+        self.host.render_profile()
     }
 
     /// Load a ROM, flagging a renderer rebuild on success.
     /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        if let Err(error) = self.ctx.rom_loader.load_rom(path, &mut self.session) {
+        let Self { host, ctx, .. } = self;
+        if let Err(error) = host.load_path(&mut *ctx.rom_loader, path) {
             log::warn!("ROM load failed: {error}");
             return Err(error.to_string());
         }
-        if self.session.tick_metrics().loaded {
+        if host.tick().loaded {
             self.renderer_reload_pending = true;
         }
-        self.reconcile_pause();
         Ok(())
     }
 
     pub(crate) fn title_cached(&mut self) -> String {
-        let tick = self.session.tick_metrics();
-        self.session.window_title_cached(&tick).to_owned()
+        let tick = self.host.tick();
+        self.host.cached_title(&tick)
     }
 
     pub(crate) fn flush_before_exit(&mut self) {
-        self.session.flush_before_exit();
+        self.host.session_mut().flush_before_exit();
     }
 
     pub(crate) fn history_lines_cached(
         &mut self,
         language: nerust_settings_core::model::language::AppLanguage,
     ) -> &[nerust_gui_shell::session::osd::HistoryLine] {
-        self.session.notification_history_lines_cached(language)
+        self.host
+            .session_mut()
+            .notification_history_lines_cached(language)
     }
 
     /// History generation for the refresh gate: unchanged content
     /// skips the full row rebuild (same contract as the tao twin).
     pub(crate) fn notification_history_seq(&self) -> u64 {
-        self.session.notification_history_seq()
+        self.host.session().notification_history_seq()
     }
 
     pub(crate) fn clear_notification_history(&mut self) {
-        self.session.clear_notification_history();
+        self.host.clear_history();
     }
 }
 
@@ -182,11 +182,7 @@ impl State {
         &mut self,
         event: SessionEvent,
     ) -> Result<SessionOutcome, SessionError> {
-        nerust_frontend_host::session::dispatch(&mut self.session, &mut self.pause_policy, event)
-    }
-
-    fn reconcile_pause(&mut self) {
-        nerust_frontend_host::session::reconcile_pause(&mut self.session, &self.pause_policy);
+        self.host.dispatch(event)
     }
 
     pub(crate) fn set_pause_owner(
@@ -194,18 +190,24 @@ impl State {
         owner: nerust_frontend_kernel::pause::PauseOwner,
         active: bool,
     ) {
-        nerust_frontend_host::session::set_pause_owner(
-            &mut self.session,
-            &mut self.pause_policy,
-            owner,
-            active,
-        );
+        self.host.set_pause_owner(owner, active);
+    }
+
+    pub(crate) fn focus_event(
+        &mut self,
+        event: nerust_frontend_host::focus::FocusEvent,
+    ) -> Option<nerust_frontend_host::focus::FocusEffect> {
+        self.host.focus_event(event)
+    }
+
+    pub(crate) fn tick_focus_sync(&mut self) {
+        self.host.tick_focus_sync();
     }
 }
 
 impl SessionControl for State {
     fn unload(&mut self) {
-        if let Err(error) = self.session.unload() {
+        if let Err(error) = self.host.session_mut().unload() {
             log::warn!("ROM unload failed: {error}");
         }
     }
@@ -213,11 +215,7 @@ impl SessionControl for State {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = nerust_frontend_host::session::apply_settings(
-            &mut self.session,
-            &self.pause_policy,
-            settings,
-        )?;
+        let plan = self.host.apply_settings(settings)?;
         if plan.renderer_needs_rebuild {
             self.renderer_reload_pending = true;
         }
@@ -228,7 +226,7 @@ impl SessionControl for State {
         })
     }
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        let plan = self.host.session_mut().set_fullscreen_default(fullscreen)?;
         if plan.renderer_rebuild_required || plan.window_settings_changed {
             self.renderer_reload_pending = true;
         }
@@ -246,15 +244,15 @@ impl State {
     }
 
     pub(crate) fn slots(&self) -> &[StateSlotSummary] {
-        self.session.slots()
+        self.host.session().slots()
     }
 
     pub(crate) fn active_slot_id(&self) -> Option<u64> {
-        self.session.active_slot_id()
+        self.host.session().active_slot_id()
     }
 
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
-        self.session.settings_snapshot()
+        self.host.settings_snapshot()
     }
 }
 

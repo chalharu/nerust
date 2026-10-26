@@ -98,7 +98,10 @@ impl LoopHost for GtkTurn<'_> {
     }
 
     fn frame_ctx(&mut self) -> FrameCtx {
-        self.core.frames.borrow_mut().frame_ctx(&self.state.session)
+        self.core
+            .frames
+            .borrow_mut()
+            .frame_ctx(self.state.host.session())
     }
 
     fn chrome(&mut self, _ctx: &FrameCtx) {
@@ -131,7 +134,7 @@ impl LoopHost for GtkTurn<'_> {
     }
 
     fn late_liveness(&mut self) -> TurnLiveness {
-        let tick = self.state.session.tick_metrics();
+        let tick = self.state.host.session().tick_metrics();
         TurnLiveness {
             loaded: tick.loaded,
             paused: tick.paused,
@@ -227,9 +230,12 @@ impl SurfaceCore {
         // retry on contention instead of dropping the expired wake.
         let swap = match s.state.try_borrow_mut() {
             Ok(mut state) => {
+                // Commit an armed auto-pause once per frame, mirroring the
+                // tao burst-end commit. Arrival cancels via focus events.
+                state.tick_focus_sync();
                 if render_frame {
                     state.swap_frame_buffer();
-                    state.render_profile().cloned().map(|profile| {
+                    state.render_profile().map(|profile| {
                         (
                             profile,
                             state.renderer_reload_pending || !s.renderer.borrow().attached(),
@@ -310,7 +316,7 @@ impl SurfaceCore {
                         Some(Err(error)) => error.to_string(),
                         _ => "native surface/display handles unavailable".into(),
                     };
-                    state.session.report_external_error(
+                    state.host.session_mut().report_external_error(
                         nerust_gui_shell::session::notification::FailureOrigin::Host,
                         format!("GTK renderer attach failed: {detail}"),
                     );
@@ -580,7 +586,7 @@ mod wake_tests {
         let root = paths.settings_file.parent().unwrap().to_path_buf();
         {
             let mut state = h.state.borrow_mut();
-            state.session = SessionHandle::new_with_settings_paths(
+            *state.host.session_mut() = SessionHandle::new_with_settings_paths(
                 nerust_gui_runtime::settings::HostBackendCapabilities {
                     window: nerust_gui_runtime::settings::HostWindowCapabilities {
                         remembers_window_size: false,
@@ -596,12 +602,16 @@ mod wake_tests {
                 paths,
             )
             .unwrap();
-            let mut settings = state.session.settings_snapshot().clone();
+            let mut settings = state.host.session().settings_snapshot().clone();
             settings.local.notifications.info_enabled = false;
             settings.local.notifications.warning_enabled = false;
             settings.local.notifications.error_modal = false;
-            state.session.apply_settings(settings).unwrap();
-            state.session.set_active_system(system_id.as_ref()).unwrap();
+            state.host.session_mut().apply_settings(settings).unwrap();
+            state
+                .host
+                .session_mut()
+                .set_active_system(system_id.as_ref())
+                .unwrap();
             let mut rom = vec![0u8; 16 + 16384 + 8192];
             rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
             rom[16..19].copy_from_slice(&[0x4c, 0, 0x80]);
@@ -609,13 +619,15 @@ mod wake_tests {
                 rom[16 + vector..18 + vector].copy_from_slice(&[0, 0x80]);
             }
             state
-                .session
+                .host
+                .session_mut()
                 .load_resolved(MediaObject::new(None, rom), request)
                 .unwrap();
-            assert!(state.session.tick_metrics().loaded);
+            assert!(state.host.session().tick_metrics().loaded);
             assert!(state.render_profile().is_some());
             state
-                .session
+                .host
+                .session_mut()
                 .report_external_error(FailureOrigin::Host, "expires hidden".into());
         }
         assert!(h.surface.tick());
@@ -647,7 +659,7 @@ mod wake_tests {
         assert!(!s.renderer.borrow().attached());
         assert!(s.picture.paintable().is_none());
         drop(s);
-        h.state.borrow_mut().session.unload().unwrap();
+        h.state.borrow_mut().host.session_mut().unload().unwrap();
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -683,7 +695,7 @@ mod wake_tests {
                             assert!(s.osd.try_borrow_mut().is_ok());
                             assert!(s.renderer.try_borrow_mut().is_ok());
                             let state = state.borrow_mut();
-                            assert!(state.pause_policy.owns(PauseOwner::Modal));
+                            assert!(state.host.owns_pause(PauseOwner::Modal));
                             // The firing source was cleared before entering GTK.
                             assert!(s.wake.borrow().source.is_none());
                             mapped.set(mapped.get() + 1);
@@ -695,13 +707,15 @@ mod wake_tests {
         });
         h.state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .report_external_error(FailureOrigin::Host, "first".into());
         h.schedule(Some(Instant::now()));
         dispatch_until(|| mapped.get() == 1);
         h.state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .report_external_error(FailureOrigin::Host, "second".into());
         assert!(h.surface.tick());
         assert_eq!(mapped.get(), 1, "only one dialog until ACK");
@@ -712,11 +726,11 @@ mod wake_tests {
             2,
             "ACK presents the next batch without turn borrows"
         );
-        assert!(h.state.borrow().pause_policy.owns(PauseOwner::Modal));
+        assert!(h.state.borrow().host.owns_pause(PauseOwner::Modal));
         let second = dialogs.borrow()[1].clone();
         second.response(gtk::ResponseType::Ok);
-        assert!(!h.state.borrow().pause_policy.owns(PauseOwner::Modal));
-        assert!(h.state.borrow().pause_policy.owns(PauseOwner::Focus));
+        assert!(!h.state.borrow().host.owns_pause(PauseOwner::Modal));
+        assert!(h.state.borrow().host.owns_pause(PauseOwner::Focus));
         toplevels.disconnect(signal);
     }
 }
