@@ -80,6 +80,10 @@ impl ApplicationHost {
         &self.session
     }
 
+    pub fn session_mut(&mut self) -> &mut SessionHandle {
+        &mut self.session
+    }
+
     pub fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
     }
@@ -148,6 +152,13 @@ impl ApplicationHost {
     }
     pub fn reconcile_pause(&mut self) {
         crate::session::reconcile_pause(&mut self.session, &self.pause_policy);
+    }
+
+    pub fn apply_settings(
+        &mut self,
+        settings: SettingsSnapshot,
+    ) -> Result<nerust_gui_shell::session::access::SettingsResult, SessionError> {
+        crate::session::apply_settings(&mut self.session, &self.pause_policy, settings)
     }
     pub fn release_focus_pause(&mut self) {
         self.set_pause_owner(PauseOwner::Focus, false);
