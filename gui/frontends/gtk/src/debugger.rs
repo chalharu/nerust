@@ -885,25 +885,12 @@ impl DebuggerWindowCore {
             need_images: this.ppu_window.is_some(),
         };
         // Frontend pause ownership must not run ahead of preceding side effects.
-        let mut start = 0;
-        for (index, action) in actions.iter().enumerate() {
-            if index > start
-                && matches!(
-                    action,
-                    DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause
-                )
-            {
-                this.queue.push_back(DrainBatch {
-                    actions: actions[start..index].to_vec(),
-                    ..batch.clone()
-                });
-                start = index;
-            }
+        for segment in nerust_gui_shell::debug::split_pause_segments(actions) {
+            this.queue.push_back(DrainBatch {
+                actions: segment.to_vec(),
+                ..batch.clone()
+            });
         }
-        this.queue.push_back(DrainBatch {
-            actions: actions[start..].to_vec(),
-            ..batch
-        });
         let pending = this.flight.is_some();
         drop(this);
         if !pending && Self::poll_flight(win) {
@@ -930,25 +917,9 @@ impl DebuggerWindowCore {
             return;
         }
         let mut state = state.borrow_mut();
-        use nerust_gui_shell::session::access::PauseControl;
-        for action in &actions {
-            match action {
-                DebugAction::Pause => state.pause(),
-                DebugAction::Resume => state.resume(),
-                DebugAction::TogglePause => state.toggle_pause(),
-                _ => {}
-            }
-        }
         let loaded = state.session.tick_metrics().loaded;
-        let actions: Vec<_> = actions
-            .into_iter()
-            .map(|action| match action {
-                DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause if loaded => {
-                    DebugAction::Refresh
-                }
-                action => action,
-            })
-            .collect();
+        let actions =
+            nerust_gui_shell::debug::resolve_pause_transitions(&mut *state, &actions, loaded);
         let input = DebugDrainInput {
             space,
             mem_addr,

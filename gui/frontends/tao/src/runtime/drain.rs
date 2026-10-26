@@ -193,50 +193,24 @@ impl HostState {
         let epoch = self.debug_epoch();
         // Split before pause transitions: ownership changes must not run ahead
         // of an earlier step/write still waiting for its worker reply.
-        let mut start = 0;
-        for (index, action) in requests.iter().enumerate() {
-            if index > start
-                && matches!(
-                    action,
-                    nerust_gui_shell::debug::DebugAction::Pause
-                        | nerust_gui_shell::debug::DebugAction::Resume
-                        | nerust_gui_shell::debug::DebugAction::TogglePause
-                )
-            {
-                self.debug.queue.push_back(super::host::debug::DrainBatch {
-                    epoch: epoch.clone(),
-                    actions: requests[start..index].to_vec(),
-                    snapshot: snapshot.clone(),
-                });
-                start = index;
-            }
+        for segment in nerust_gui_shell::debug::split_pause_segments(requests) {
+            self.debug.queue.push_back(super::host::debug::DrainBatch {
+                epoch: epoch.clone(),
+                actions: segment.to_vec(),
+                snapshot: snapshot.clone(),
+            });
         }
-        self.debug.queue.push_back(super::host::debug::DrainBatch {
-            epoch,
-            actions: requests[start..].to_vec(),
-            snapshot,
-        });
         self.poll_debug_flight();
     }
 
     fn start_debug_batch(&mut self, batch: super::host::debug::DrainBatch) {
-        use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
-        use nerust_gui_shell::session::access::PauseControl;
+        use nerust_gui_shell::debug::DebugDrainInput;
         if !batch.epoch.load(std::sync::atomic::Ordering::Acquire) {
             return;
         }
-        let mut actions = batch.actions;
-        for action in &mut actions {
-            match action {
-                DebugAction::Pause => self.pause(),
-                DebugAction::Resume => self.resume(),
-                DebugAction::TogglePause => self.toggle_pause(),
-                _ => continue,
-            }
-            if self.tick().loaded {
-                *action = DebugAction::Refresh;
-            }
-        }
+        let loaded = self.tick().loaded;
+        let actions =
+            nerust_gui_shell::debug::resolve_pause_transitions(self, &batch.actions, loaded);
         let snapshot = batch.snapshot;
         let input = DebugDrainInput {
             space: snapshot.space,

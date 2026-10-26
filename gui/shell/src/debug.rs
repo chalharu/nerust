@@ -16,10 +16,11 @@ use nerust_gui_runtime::debugger as debug_vm;
 use nerust_gui_runtime::debugger::{self as vm, DisplayCache};
 
 use crate::emu_core::{LiveCore, LiveDebugPort};
+use crate::session::access::PauseControl;
 
 /// One debugger action batch. Same variants as the former per-frontend
 /// request enums; frontends only translate widgets into these.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugAction {
     Refresh,
     Pause,
@@ -36,6 +37,61 @@ pub enum DebugAction {
     /// Write a parsed value into the selected register
     /// ([`DebugDrainInput::reg_target`]).
     RegisterWrite(u64),
+}
+
+/// Split an action batch at pause-ownership boundaries so a pause, resume,
+/// or toggle never runs ahead of an earlier step or write still waiting
+/// for its worker reply. A leading transition starts the first segment
+/// instead of opening an empty one; every frontend drains identically.
+pub fn split_pause_segments(actions: &[DebugAction]) -> Vec<&[DebugAction]> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    for (index, action) in actions.iter().enumerate() {
+        if index > start
+            && matches!(
+                action,
+                DebugAction::Pause | DebugAction::Resume | DebugAction::TogglePause
+            )
+        {
+            segments.push(&actions[start..index]);
+            start = index;
+        }
+    }
+    segments.push(&actions[start..]);
+    segments
+}
+
+/// Execute pause-ownership transitions locally, then rewrite them to
+/// Refresh when a core is loaded: the pause already happened, so the
+/// drain only needs fresh data. Splitting (see [`split_pause_segments`])
+/// must run first so ownership changes never overtake pending replies.
+pub fn resolve_pause_transitions(
+    control: &mut dyn PauseControl,
+    actions: &[DebugAction],
+    loaded: bool,
+) -> Vec<DebugAction> {
+    actions
+        .iter()
+        .map(|action| match action {
+            DebugAction::Pause => {
+                control.pause();
+                then_refresh(*action, loaded)
+            }
+            DebugAction::Resume => {
+                control.resume();
+                then_refresh(*action, loaded)
+            }
+            DebugAction::TogglePause => {
+                control.toggle_pause();
+                then_refresh(*action, loaded)
+            }
+            _ => *action,
+        })
+        .collect()
+}
+
+fn then_refresh(action: DebugAction, loaded: bool) -> DebugAction {
+    if loaded { DebugAction::Refresh } else { action }
 }
 
 /// Frontend-owned state the drain reads but never stores.
@@ -1677,5 +1733,65 @@ mod debug_cov_tests {
         ] {
             let _ = CoreFailure::from(error).thread_status();
         }
+    }
+}
+
+#[cfg(test)]
+mod pause_rule_tests {
+    use super::*;
+    use crate::session::access::PauseControl;
+
+    struct Recorder {
+        log: Vec<&'static str>,
+    }
+
+    impl PauseControl for Recorder {
+        fn pause(&mut self) {
+            self.log.push("pause");
+        }
+        fn resume(&mut self) {
+            self.log.push("resume");
+        }
+        fn toggle_pause(&mut self) {
+            self.log.push("toggle");
+        }
+    }
+
+    #[test]
+    fn split_segments_cut_before_pause_transitions_only() {
+        use DebugAction::*;
+        let actions = vec![Refresh, Pause, Refresh, TogglePause, StepFrame];
+        let segments = split_pause_segments(&actions);
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0], &[Refresh]);
+        assert_eq!(segments[1], &[Pause, Refresh]);
+        assert_eq!(segments[2], &[TogglePause, StepFrame]);
+    }
+
+    #[test]
+    fn split_segments_keep_leading_transition_without_empty_head() {
+        use DebugAction::*;
+        let actions = vec![Pause, Refresh];
+        let segments = split_pause_segments(&actions);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0], &[Pause, Refresh]);
+    }
+
+    #[test]
+    fn resolve_executes_pause_then_refreshes_when_loaded() {
+        use DebugAction::*;
+        let mut control = Recorder { log: Vec::new() };
+        let out = resolve_pause_transitions(&mut control, &[Pause, Refresh], true);
+        assert_eq!(control.log, vec!["pause"]);
+        assert_eq!(out, vec![Refresh, Refresh]);
+    }
+
+    #[test]
+    fn resolve_keeps_transitions_when_coreless() {
+        use DebugAction::*;
+        let mut control = Recorder { log: Vec::new() };
+        let out = resolve_pause_transitions(&mut control, &[TogglePause], false);
+        assert_eq!(control.log, vec!["toggle"]);
+        assert_eq!(out, vec![TogglePause]);
     }
 }
