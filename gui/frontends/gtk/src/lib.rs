@@ -206,14 +206,6 @@ impl State {
         self.host.dispatch(event)
     }
 
-    pub(crate) fn set_pause_owner(
-        &mut self,
-        owner: nerust_frontend_kernel::pause::PauseOwner,
-        active: bool,
-    ) {
-        self.host.set_pause_owner(owner, active);
-    }
-
     pub(crate) fn focus_event(
         &mut self,
         event: nerust_frontend_host::focus::FocusEvent,

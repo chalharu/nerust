@@ -330,7 +330,10 @@ impl SurfaceCore {
         s: &SurfaceCore,
         window: &gtk::ApplicationWindow,
         physical_size: SurfaceSize,
-    ) -> Option<(TurnOutcome, Option<String>)> {
+    ) -> Option<(
+        TurnOutcome,
+        Option<nerust_frontend_host::osd::ModalPresentation>,
+    )> {
         let mut state = match s.state.try_borrow_mut() {
             Ok(state) => state,
             Err(_) => {
@@ -671,6 +674,7 @@ mod wake_tests {
         let Some(h) = Harness::new() else { return };
         h.state
             .borrow_mut()
+            .host
             .set_pause_owner(PauseOwner::Focus, true);
         let mapped = Rc::new(Cell::new(0));
         let dialogs = Rc::new(RefCell::new(Vec::<gtk::MessageDialog>::new()));
@@ -727,7 +731,16 @@ mod wake_tests {
             "ACK presents the next batch without turn borrows"
         );
         assert!(h.state.borrow().host.owns_pause(PauseOwner::Modal));
+        first.response(gtk::ResponseType::Ok);
+        assert_eq!(
+            mapped.get(),
+            2,
+            "stale response cannot advance the active dialog"
+        );
+        assert!(h.state.borrow().host.owns_pause(PauseOwner::Modal));
         let second = dialogs.borrow()[1].clone();
+        second.response(gtk::ResponseType::Ok);
+        assert!(!h.state.borrow().host.owns_pause(PauseOwner::Modal));
         second.response(gtk::ResponseType::Ok);
         assert!(!h.state.borrow().host.owns_pause(PauseOwner::Modal));
         assert!(h.state.borrow().host.owns_pause(PauseOwner::Focus));

@@ -1,9 +1,11 @@
 //! Toolkit-free debugger intents, owned state, and split-lock storage.
 
 mod bridge;
+mod driver;
 mod model;
 
 pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot, lock_recovered};
+pub use driver::{DebuggerDriver, DebuggerEffects, DebuggerLiveEffects};
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 
 use nerust_gui_shell::debug::DebugAction;
