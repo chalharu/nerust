@@ -3,6 +3,7 @@
 
 pub mod aux;
 pub mod debug_schedule;
+pub mod debugger;
 pub mod drain;
 pub mod focus;
 pub mod frame;
