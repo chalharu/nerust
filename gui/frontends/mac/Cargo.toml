@@ -21,3 +21,39 @@ nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_settings_core.workspace = true
 nerust_system_traits.workspace = true
 raw-window-handle.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2 = { workspace = true, features = ["std"] }
+objc2-app-kit = { workspace = true, features = [
+    "NSAlert",
+    "NSApplication",
+    "NSBitmapImageRep",
+    "NSButton",
+    "NSCell",
+    "NSComboBox",
+    "NSControl",
+    "NSGraphics",
+    "NSImage",
+    "NSImageRep",
+    "NSImageView",
+    "NSMenu",
+    "NSMenuItem",
+    "NSOpenPanel",
+    "NSResponder",
+    "NSSavePanel",
+    "NSPanel",
+    "NSRunningApplication",
+    "NSText",
+    "NSTextField",
+    "NSTextView",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSArray",
+    "NSGeometry",
+    "NSString",
+    "NSTimer",
+    "NSURL",
+] }
+nerust_nes_factory.workspace = true

@@ -233,6 +233,7 @@ nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_tao = { path = "gui/frontends/tao" }
 nerust_timer = { path = "timer" }
 objc2 = { default-features = false, version = "=0.6.5" }
+objc2-foundation = { default-features = false, version = "=0.3.2" }
 objc2-app-kit = { default-features = false, features = [
   "NSResponder",
   "NSView",

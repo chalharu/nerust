@@ -3757,9 +3757,13 @@ dependencies = [
  "nerust_gui_viewmodel",
  "nerust_input_traits",
  "nerust_keyboard",
+ "nerust_nes_factory",
  "nerust_render_traits",
  "nerust_settings_core",
  "nerust_system_traits",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "raw-window-handle",
 ]
 
