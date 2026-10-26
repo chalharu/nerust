@@ -254,11 +254,9 @@ impl SettingsAppState {
     fn notifications_page(&self) -> El<'_> {
         let view = self.vm.notifications.view.get();
         let language = self.language();
-        let nerust_frontend_host::settings::NotificationChoices {
-            colors,
-            positions,
-            areas,
-        } = nerust_frontend_host::settings::NotificationChoices::new(language);
+        let colors = view.color_choices.clone();
+        let positions = view.position_choices.clone();
+        let areas = view.area_mode_choices.clone();
         // One section per level plus display/status groups, so each
         // control's scope reads off its header (Apple HIG grouping).
         // Error presentation is an exclusive pair: modal dialog XOR

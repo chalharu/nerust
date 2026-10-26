@@ -77,6 +77,7 @@ pub struct NotificationView {
     pub info_enabled: bool,
     pub info_duration_ms: u32,
     pub info_color: NotificationColor,
+    pub color_choices: Vec<ChoiceView<NotificationColor>>,
     pub warning_enabled: bool,
     pub warning_duration_ms: u32,
     pub warning_color: NotificationColor,
@@ -86,8 +87,10 @@ pub struct NotificationView {
     pub status_enabled: bool,
     pub position: NotificationPosition,
     pub status_position: NotificationPosition,
+    pub position_choices: Vec<ChoiceView<NotificationPosition>>,
     pub area_mode: NotificationAreaMode,
     pub status_area_mode: NotificationAreaMode,
+    pub area_mode_choices: Vec<ChoiceView<NotificationAreaMode>>,
 }
 
 // ── System tab ───────────────────────────────────────────────────────
