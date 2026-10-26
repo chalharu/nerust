@@ -3494,12 +3494,14 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
+ "nerust_input_traits",
  "nerust_keyboard",
  "nerust_nes_factory",
  "nerust_persistence",
  "nerust_render_osd",
  "nerust_render_traits",
  "nerust_settings_core",
+ "nerust_system_traits",
 ]
 
 [[package]]

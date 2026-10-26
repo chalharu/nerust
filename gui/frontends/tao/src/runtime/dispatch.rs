@@ -6,7 +6,7 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent};
+use crate::aux::focus::{AuxKind, FocusEvent};
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -25,9 +25,7 @@ impl WindowRuntime {
             WindowEvent::Focused(true) => {
                 // Focus truth plus resume only; chrome sync and drains
                 // stay deferred to the tick burst (one pass, one capture).
-                if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
-                    self.host.release_focus_pause();
-                }
+                self.host.core.focus_event(FocusEvent::Main(true));
                 self.host.request_redraw();
             }
             WindowEvent::Focused(false) => {

@@ -1,4 +1,3 @@
-mod debug_windows;
 mod dispatch;
 mod drain;
 pub(crate) mod host;
@@ -155,7 +154,7 @@ impl WindowRuntime {
             .expect("WindowRuntime::run() called more than once");
 
         if let Some(thread) =
-            Self::spawn_tick_thread(event_loop.create_proxy(), self.host.live_tick_armed())
+            Self::spawn_tick_thread(event_loop.create_proxy(), self.host.live_armed())
         {
             self.host.register_tick_thread(thread);
         }
