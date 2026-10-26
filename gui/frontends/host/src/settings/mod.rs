@@ -207,7 +207,7 @@ fn deduped_factories(registry: &SystemRegistry) -> Vec<Arc<dyn CoreFactory>> {
 }
 
 #[derive(Debug)]
-struct FsStoragePathValidator;
+pub struct FsStoragePathValidator;
 
 impl StoragePathValidator for FsStoragePathValidator {
     fn validate(&self, path: &std::path::Path) -> Result<(), StoragePathError> {
