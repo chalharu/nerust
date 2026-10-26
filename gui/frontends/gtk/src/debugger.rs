@@ -153,7 +153,7 @@ impl DebuggerWindowCore {
         _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
     ) -> DebuggerWindow {
-        let data = DebuggerData::from_session(&state.borrow().session);
+        let data = DebuggerData::from_session(state.borrow().host.session());
         let language = data.language;
         let window = gtk::ApplicationWindow::builder()
             .application(app)
@@ -485,8 +485,9 @@ impl DebuggerWindowCore {
                 && win.borrow().viewers.get(AuxKind::Ppu).is_some()
                 && {
                     let state = win.borrow().state.clone();
-                    let session = &state.borrow().session;
-                    session.tick_metrics().loaded && !session.tick_metrics().paused
+                    let borrowed = state.borrow();
+                    let tick = borrowed.host.session().tick_metrics();
+                    tick.loaded && !tick.paused
                 };
             if live {
                 Self::live_tick(&win);
@@ -511,14 +512,15 @@ impl DebuggerWindowCore {
             && win.borrow().viewers.get(AuxKind::Ppu).is_some()
             && {
                 let state = win.borrow().state.clone();
-                let session = &state.borrow().session;
-                session.tick_metrics().loaded && !session.tick_metrics().paused
+                let borrowed = state.borrow();
+                let tick = borrowed.host.session().tick_metrics();
+                tick.loaded && !tick.paused
             };
         if !live {
             return;
         }
         let state = win.borrow().state.clone();
-        let flight = state.borrow().session.debug_live_images_begin(true);
+        let flight = state.borrow().host.session().debug_live_images_begin(true);
         win.borrow_mut().live_flight = Some(flight);
         if Self::poll_live_flight(win) {
             Self::watch_live_flight(win);
@@ -575,8 +577,9 @@ impl DebuggerWindowCore {
         let generation = batch.generation;
         let running = {
             let state = win.borrow().state.clone();
-            let session = &state.borrow().session;
-            session.tick_metrics().loaded && !session.tick_metrics().paused
+            let borrowed = state.borrow();
+            let tick = borrowed.host.session().tick_metrics();
+            tick.loaded && !tick.paused
         };
         Self::present_live_images(win, generation, images, running);
     }
@@ -822,11 +825,11 @@ impl DebuggerWindowCore {
 
     fn reset_replaced_epoch(win: &DebuggerWindow) -> bool {
         let mut this = win.borrow_mut();
-        let epoch = this.state.borrow().session.debug_epoch();
+        let epoch = this.state.borrow().host.session().debug_epoch();
         if std::sync::Arc::ptr_eq(&this.data.epoch, &epoch) {
             return false;
         }
-        let data = DebuggerData::from_session(&this.state.borrow().session);
+        let data = DebuggerData::from_session(this.state.borrow().host.session());
         this.data = data;
         this.drain.clear();
         this.live_flight = None;
@@ -844,7 +847,7 @@ impl DebuggerWindowCore {
     fn act_scoped(win: &DebuggerWindow, actions: &[DebugAction], scope: RebuildScope) {
         let replaced = Self::reset_replaced_epoch(win);
         let mut this = win.borrow_mut();
-        let epoch = this.state.borrow().session.debug_epoch();
+        let epoch = this.state.borrow().host.session().debug_epoch();
         // The gesture was made against the old display. Refresh the replacement,
         // but never reinterpret an old WriteConfirm/Resume against its new core.
         let actions = if replaced {
@@ -885,7 +888,7 @@ impl DebuggerWindowCore {
                     DebugAction::TogglePause => state.toggle_pause(),
                     _ => unreachable!("pause actions only"),
                 }
-                state.session.tick_metrics().loaded
+                state.host.session().tick_metrics().loaded
             });
             let input = DebugDrainInput {
                 space: snapshot.space,
@@ -897,7 +900,7 @@ impl DebuggerWindowCore {
                 prev_dump_rows: &snapshot.prev_rows,
                 need_images: snapshot.need_images,
             };
-            state.session.debug_drain_begin(actions, &input)
+            state.host.session().debug_drain_begin(actions, &input)
         });
         if let Some(mut flight) = flight {
             match flight.poll() {
@@ -1710,7 +1713,7 @@ mod tests {
             },
         )
         .unwrap();
-        state.borrow_mut().session = session;
+        *state.borrow_mut().host.session_mut() = session;
         let load = || {
             let factory = nerust_nes_factory::NesFactory::boxed();
             // Resolve before switching so a bad request never touches live state.
@@ -1726,7 +1729,8 @@ mod tests {
                 .unwrap();
             state
                 .borrow_mut()
-                .session
+                .host
+                .session_mut()
                 .set_active_system(factory.system_id().as_ref())
                 .expect("NES system activates");
             let mut rom = vec![0; 16 + 16384 + 8192];
@@ -1737,7 +1741,8 @@ mod tests {
             }
             state
                 .borrow_mut()
-                .session
+                .host
+                .session_mut()
                 .load_resolved(MediaObject::new(None, rom), request)
                 .unwrap();
         };
@@ -1749,7 +1754,7 @@ mod tests {
             std::thread::yield_now();
         }
         state.borrow_mut().set_pause_owner(PauseOwner::Modal, true);
-        let epoch = state.borrow().session.debug_epoch();
+        let epoch = state.borrow().host.session().debug_epoch();
         let batch = {
             let this = win.borrow();
             DrainBatch {
@@ -1781,10 +1786,10 @@ mod tests {
         // The gesture still references the old displayed state: accept only refresh.
         let pause_button = win.borrow().pause_button.clone();
         pause_button.emit_clicked();
-        assert!(state.borrow().pause_policy.owns(PauseOwner::User));
-        assert!(state.borrow().session.tick_metrics().paused);
+        assert!(state.borrow().host.owns_pause(PauseOwner::User));
+        assert!(state.borrow().host.session().tick_metrics().paused);
         state.borrow_mut().set_pause_owner(PauseOwner::Modal, false);
-        assert!(state.borrow().session.tick_metrics().paused);
+        assert!(state.borrow().host.session().tick_metrics().paused);
 
         // Unlike act_scoped, even a local-only gesture must first reject the
         // old display. It may neither add an old bookmark nor echo old inputs.
@@ -1798,7 +1803,7 @@ mod tests {
             this.data.freeze = Some((0, 0xff));
             this.data.reg_target = Some("a");
             this.drain.push_back(stale_batch);
-            this.live_flight = Some(state.borrow().session.debug_live_images_begin(true));
+            this.live_flight = Some(state.borrow().host.session().debug_live_images_begin(true));
         }
         let add = action_button("Add");
         DebuggerWindowCore::wire_bookmarks(&win, &add, &bookmark_input);
@@ -1808,7 +1813,7 @@ mod tests {
             let this = win.borrow();
             assert!(std::sync::Arc::ptr_eq(
                 &this.data.epoch,
-                &state.borrow().session.debug_epoch()
+                &state.borrow().host.session().debug_epoch()
             ));
             assert!(this.data.bookmarks.is_empty());
             assert!(this.data.bm_input.is_empty());
@@ -1826,7 +1831,7 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        assert!(state.borrow().session.tick_metrics().paused);
+        assert!(state.borrow().host.session().tick_metrics().paused);
 
         // Register selection is another local-only operation: the old target
         // must not be installed into the replacement model before refresh.

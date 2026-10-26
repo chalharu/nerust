@@ -110,7 +110,7 @@ impl GtkOsd {
             self.output_generation = Some(generation);
         }
         let now = Instant::now();
-        let report = self.notifications.pump(&mut state.session, ctx, now);
+        let report = self.notifications.pump(state.host.session_mut(), ctx, now);
         if report.changed {
             log::debug!("gtk osd: display state changed");
         }
@@ -187,10 +187,7 @@ impl GtkOsd {
         level_caption.set_xalign(0.0);
         let filter = gtk::ComboBoxText::new();
         for filter_kind in nerust_gui_shell::session::osd::HistoryFilter::all() {
-            filter.append(
-                Some(filter_kind.id()),
-                filter_kind.label(language),
-            );
+            filter.append(Some(filter_kind.id()), filter_kind.label(language));
         }
         filter.set_active_id(Some("all"));
         toolbar.append(&level_caption);
@@ -288,10 +285,9 @@ impl GtkOsd {
                     grid.remove(&child);
                 }
                 // Shared threshold: this level and above.
-                let minimum = nerust_gui_shell::session::osd::HistoryFilter::from_id(
-                    active.as_deref(),
-                )
-                .minimum();
+                let minimum =
+                    nerust_gui_shell::session::osd::HistoryFilter::from_id(active.as_deref())
+                        .minimum();
                 let visible: Vec<_> = lines
                     .iter()
                     .filter(|line| {
@@ -334,8 +330,7 @@ impl GtkOsd {
                     return;
                 }
                 for line in visible {
-                    let (r, g, b) =
-                        nerust_gui_shell::session::osd::level_rgb(line.level);
+                    let (r, g, b) = nerust_gui_shell::session::osd::level_rgb(line.level);
                     // `HistoryLine.text` already carries the `×N` suffix
                     // when merged; use it as-is.
                     let text = line.text.clone();
@@ -354,9 +349,9 @@ impl GtkOsd {
                     let module = gtk::Label::new(None);
                     module.set_markup(&format!(
                         "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
-                        glib::markup_escape_text(
-                            nerust_gui_shell::session::osd::short_module(line.module)
-                        ),
+                        glib::markup_escape_text(nerust_gui_shell::session::osd::short_module(
+                            line.module
+                        )),
                     ));
                     module.set_xalign(0.0);
                     module.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
@@ -620,7 +615,8 @@ pub(super) mod history_dialog_tests {
         // A notification arriving while open appears after refresh.
         state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .report_external_error(FailureOrigin::Host, "boom".into());
         (built.refresh)();
         assert_eq!(
@@ -629,11 +625,12 @@ pub(super) mod history_dialog_tests {
             "one error row renders without reopen"
         );
         // The language switch rebuilds title and rows under the gate.
-        let mut snapshot = state.borrow().session.settings_snapshot().clone();
+        let mut snapshot = state.borrow().host.session().settings_snapshot().clone();
         snapshot.shared.general.language = AppLanguage::Japanese;
         state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .apply_settings(snapshot)
             .expect("language switch applies");
         (built.refresh)();
@@ -659,21 +656,24 @@ pub(super) mod history_dialog_tests {
         assert!(
             state
                 .borrow_mut()
-                .session
+                .host
+                .session_mut()
                 .notification_history_lines_cached(AppLanguage::English)
                 .is_empty()
         );
         // A notification bumps the revision and the row appears.
-        let before = state.borrow().session.notification_history_seq();
+        let before = state.borrow().host.session().notification_history_seq();
         state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .report_external_error(FailureOrigin::Host, "boom".into());
-        let bumped = state.borrow().session.notification_history_seq();
+        let bumped = state.borrow().host.session().notification_history_seq();
         assert!(bumped > before, "push advances the revision");
         let texts: Vec<String> = state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .notification_history_lines_cached(AppLanguage::English)
             .iter()
             .map(|line| line.text.clone())
@@ -684,12 +684,14 @@ pub(super) mod history_dialog_tests {
         // both calls, so zero reformat builds ran.
         let first = state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .notification_history_lines_cached(AppLanguage::English)
             .as_ptr();
         let second = state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .notification_history_lines_cached(AppLanguage::English)
             .as_ptr();
         assert_eq!(first, second, "seq-unchanged refresh must not rebuild");
@@ -698,16 +700,18 @@ pub(super) mod history_dialog_tests {
         let ja_captions = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
         assert_ne!(en_captions.title, ja_captions.title);
         assert_ne!(en_captions.clear, ja_captions.clear);
-        let mut snapshot = state.borrow().session.settings_snapshot().clone();
+        let mut snapshot = state.borrow().host.session().settings_snapshot().clone();
         snapshot.shared.general.language = AppLanguage::Japanese;
         state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .apply_settings(snapshot)
             .expect("language switch applies");
         let texts: Vec<String> = state
             .borrow_mut()
-            .session
+            .host
+            .session_mut()
             .notification_history_lines_cached(AppLanguage::Japanese)
             .iter()
             .map(|line| line.text.clone())
@@ -820,7 +824,8 @@ mod tests {
             }
         }
         let state = super::history_dialog_tests::model_state();
-        let ctx = nerust_frontend_host::frame::FrameCache::new().frame_ctx(&state.borrow().session);
+        let ctx = nerust_frontend_host::frame::FrameCache::new()
+            .frame_ctx(state.borrow().host.session());
         let mut sink = Sink::default();
         let size = nerust_render_traits::SurfaceSize::new(320, 240);
         let now = std::time::Instant::now();
