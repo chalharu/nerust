@@ -48,8 +48,9 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
-    use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
-    use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
+    use nerust_gui_runtime::menu_labels::shortcut_hint;
+    use nerust_settings_core::i18n::{UiText, text};
+    use nerust_settings_core::model::input::ShortcutBinding;
     use nerust_settings_core::model::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
@@ -426,17 +427,6 @@ pub(crate) mod imp {
         }
     }
 
-    /// Menu label with the action's *current* shortcut hint
-    /// (`Save Active Slot (F5)`), or the bare label when unbound.
-    /// Binding-driven so Settings rebinding never leaves a stale
-    /// hardcoded key in the menu.
-    fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
-        match shortcut_key_label(shortcuts, action) {
-            Some(key) => menu_label_with_shortcut(base, key),
-            None => base.to_string(),
-        }
-    }
-
     fn clear_submenu(menu: &Submenu) {
         // Bounded: remove_at can fail (leaving the item in place),
         // so a while-is-not-empty loop could spin forever.
@@ -448,47 +438,12 @@ pub(crate) mod imp {
     #[cfg(test)]
     mod tests {
         use super::try_append;
-        use nerust_keyboard::Key;
-        use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
-
-        use super::shortcut_hint;
-
-        fn binding(action: ShortcutAction, key: Option<Key>) -> ShortcutBinding {
-            ShortcutBinding { action, key }
-        }
 
         #[test]
         fn try_append_tolerates_failure() {
             // A failing append logs and continues instead of panicking.
             try_append(|| Err(muda::Error::NotAChildOfThisMenu));
             try_append(|| Ok(()));
-        }
-
-        #[test]
-        fn shortcut_hint_appends_bound_key() {
-            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
-            assert_eq!(
-                shortcut_hint("Pause", &bindings, ShortcutAction::TogglePause),
-                "Pause (F5)"
-            );
-        }
-
-        #[test]
-        fn shortcut_hint_bare_when_unbound() {
-            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
-            assert_eq!(
-                shortcut_hint("Pause", &[], ShortcutAction::TogglePause),
-                "Pause"
-            );
-            let unbound = [binding(ShortcutAction::TogglePause, None)];
-            assert_eq!(
-                shortcut_hint("Pause", &unbound, ShortcutAction::TogglePause),
-                "Pause"
-            );
-            assert_eq!(
-                shortcut_hint("Pause", &bindings, ShortcutAction::Reset),
-                "Pause"
-            );
         }
     }
 }
