@@ -492,7 +492,13 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = glib::timeout_add_local(TITLE_UPDATE_INTERVAL, move || {
-                result.refresh_title();
+                let due = result
+                    .state()
+                    .borrow_mut()
+                    .title_refresh_due(std::time::Instant::now());
+                if due {
+                    result.refresh_title();
+                }
                 glib::ControlFlow::Continue
             });
         }
@@ -602,7 +608,9 @@ impl WindowExtend for Window {
     fn realize(&self) {}
 
     fn close_request(&self) -> bool {
-        self.state().borrow_mut().flush_before_exit();
+        if !self.state().borrow_mut().begin_close() {
+            return true;
+        }
         let w = self.window().width();
         let h = self.window().height();
         if w > 0 && h > 0 {
@@ -613,6 +621,7 @@ impl WindowExtend for Window {
                 .session_mut()
                 .update_window_size(w as u32, h as u32);
         }
+        self.state().borrow_mut().finish_close();
         self.application().quit();
         false
     }
@@ -717,26 +726,35 @@ impl WindowExtend for Window {
     }
 
     fn refresh_title(&self) {
-        let title = self.state().borrow_mut().title_cached();
-        self.window().set_title(Some(title.as_str()));
+        if let Some(title) = self.state().borrow_mut().title_update() {
+            self.window().set_title(Some(title.as_str()));
+        }
     }
 
     fn sync_fullscreen_from_settings(&self) {
-        let state = self.state();
-        let borrowed = state.borrow();
-        let snapshot = borrowed.settings_snapshot();
-        let fullscreen = snapshot.local.video.window.fullscreen_default;
+        let fullscreen = {
+            let state = self.state();
+            let mut borrowed = state.borrow_mut();
+            let native = self.window().is_fullscreen();
+            let Some(fullscreen) = borrowed.fullscreen_request(native) else {
+                return;
+            };
+            let snapshot = borrowed.settings_snapshot();
+            let scaling = snapshot.local.video.window.scaling;
+            let size = snapshot.app_state.window_size("main");
+            (fullscreen, scaling, size)
+        };
 
         // Restore remembered window size when not in fullscreen or scaling mode.
-        if !fullscreen
-            && snapshot.local.video.window.scaling == ScalingMode::FitToWindow
-            && let Some(size) = snapshot.app_state.window_size("main")
+        if !fullscreen.0
+            && fullscreen.1 == ScalingMode::FitToWindow
+            && let Some(size) = fullscreen.2
         {
             self.window()
                 .set_default_size(size.width as i32, size.height as i32);
         }
 
-        set_window_fullscreen(&self.window(), fullscreen);
+        set_window_fullscreen(&self.window(), fullscreen.0);
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
@@ -802,6 +820,9 @@ fn persist_window_fullscreen_default(
 }
 
 fn sync_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
+    if !window.state().borrow_mut().observe_fullscreen(fullscreen) {
+        return;
+    }
     match persist_window_fullscreen_default(window, fullscreen) {
         Ok(true) => window.update_actions(),
         Ok(false) => (),

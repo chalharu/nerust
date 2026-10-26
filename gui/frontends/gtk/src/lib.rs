@@ -37,7 +37,7 @@ use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
 use nerust_run_options::RunOptions;
 use nerust_settings_core::i18n::{UiText, text};
-use nerust_settings_core::model::input::ShortcutBinding;
+use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
 use nerust_settings_core::model::language::AppLanguage;
 
 use self::window::{MenubarModels, StateMenus, Window, WindowExtend};
@@ -147,13 +147,33 @@ impl State {
         Ok(())
     }
 
-    pub(crate) fn title_cached(&mut self) -> String {
+    pub(crate) fn title_update(&mut self) -> Option<String> {
         let tick = self.host.tick();
-        self.host.cached_title(&tick)
+        self.host.title_update(&tick)
     }
 
-    pub(crate) fn flush_before_exit(&mut self) {
-        self.host.session_mut().flush_before_exit();
+    pub(crate) fn title_refresh_due(&mut self, now: std::time::Instant) -> bool {
+        self.host.title_refresh_due(now)
+    }
+
+    /// Native request only when the persisted target differs from
+    /// the current window state (transients suppressed in host).
+    pub(crate) fn fullscreen_request(&mut self, native: bool) -> Option<bool> {
+        self.host.fullscreen_request(native)
+    }
+
+    /// Ignore intermediate native observations while awaiting the target.
+    pub(crate) fn observe_fullscreen(&mut self, native: bool) -> bool {
+        self.host.observe_fullscreen(native)
+    }
+
+    /// Ordered teardown entry: false when a close is already in flight.
+    pub(crate) fn begin_close(&mut self) -> bool {
+        self.host.begin_close()
+    }
+
+    pub(crate) fn finish_close(&mut self) {
+        self.host.finish_close();
     }
 
     pub(crate) fn history_lines_cached(
