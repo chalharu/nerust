@@ -508,8 +508,9 @@ impl PreferencesBinding {
         self.rebuild_shortcuts_page();
     }
 
-    /// Global shortcuts tab: standalone content outside every machine
-    /// page, sourced from the dedicated shortcuts projection.
+    /// Global shortcuts tab: rows only, without an inner title. The
+    /// notebook tab already carries the shortcuts label, so rendering
+    /// `view.label` here would duplicate it.
     fn rebuild_shortcuts_page(&self) {
         let page = &self.input.shortcuts_page;
         clear_box(page);
@@ -517,9 +518,6 @@ impl PreferencesBinding {
             .shortcuts_tab_label
             .set_text(ui_text(self.language(), UiText::Shortcuts));
         let view = self.vm.shortcuts.view.get();
-        let shortcuts_label = gtk::Label::new(Some(&view.label));
-        shortcuts_label.set_xalign(0.0);
-        page.append(&shortcuts_label);
         let shortcuts_page = input_section_page();
         for row in &view.rows {
             self.append_binding_row(&shortcuts_page, row);

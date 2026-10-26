@@ -101,11 +101,12 @@ impl SettingsAppState {
         content.push(input_section_content).spacing(16).into()
     }
 
-    /// Global shortcuts tab content: the shared shortcuts section,
-    /// sourced from the dedicated shortcuts projection.
+    /// Global shortcuts tab content: only the rows, without an inner
+    /// title. The tab itself already carries the shortcuts label, so
+    /// rendering `view.label` here would duplicate it.
     fn shortcuts_tab_content(&self) -> El<'_> {
         let view = self.vm.shortcuts.view.get();
-        column![self.binding_section(view.label.clone(), view.rows.clone()),].into()
+        column![self.binding_rows(view.rows.clone()),].into()
     }
 
     /// Machine navigation radios plus the selected machine binding section.
@@ -147,6 +148,27 @@ impl SettingsAppState {
     ) -> El<'_> {
         let language = self.language();
         let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![text(title)];
+        content = self.push_binding_rows(content, &rows, language);
+        content.spacing(8).into()
+    }
+
+    fn binding_rows(
+        &self,
+        rows: Vec<nerust_gui_viewmodel::settings::dto::BindingRowView>,
+    ) -> El<'_> {
+        let language = self.language();
+        let content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
+        self.push_binding_rows(content, &rows, language)
+            .spacing(8)
+            .into()
+    }
+
+    fn push_binding_rows<'a>(
+        &self,
+        mut content: Column<'a, Message, Theme, iced_tiny_skia::Renderer>,
+        rows: &[nerust_gui_viewmodel::settings::dto::BindingRowView],
+        language: AppLanguage,
+    ) -> Column<'a, Message, Theme, iced_tiny_skia::Renderer> {
         for row in rows {
             let binding_label = match &row.value {
                 nerust_gui_viewmodel::settings::dto::BindingValueView::Bound(l) => l.clone(),
@@ -168,7 +190,7 @@ impl SettingsAppState {
                 .align_y(Alignment::Center),
             );
         }
-        content.spacing(8).into()
+        content
     }
 
     fn video_page(&self) -> El<'_> {
