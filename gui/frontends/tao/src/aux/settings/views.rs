@@ -6,7 +6,7 @@ use iced::{
     Alignment, Length, Theme,
     widget::{Column, button, checkbox, column, pick_list, radio, row, slider, text, text_input},
 };
-use nerust_gui_viewmodel::settings::dto::ChoiceView;
+use nerust_gui_viewmodel::settings::dto::{ChoiceView, find_choice};
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 
@@ -401,7 +401,7 @@ impl SettingsAppState {
                     nerust_system_traits::factory::descriptor::SystemSettingsChoiceId,
                 >,
             > = field.choices.clone();
-            let selected = choices.iter().find(|c| c.value == field.selected).cloned();
+            let selected = find_choice(&field.choices, &field.selected);
             let label = field.label.clone();
             let field_id_str = field.id.0.to_string();
             content = content.push(labeled_pick_list(
@@ -466,12 +466,10 @@ fn push_controller_slots<'a>(
             content = content.push(text(format!("{} — (occupied)", slot.label)));
             continue;
         }
-        let current = slot.selected_profile_id.as_ref().and_then(|id| {
-            slot.choices
-                .iter()
-                .find(|c| c.value.as_deref() == Some(id.as_str()))
-                .cloned()
-        });
+        let current = slot
+            .selected_profile_id
+            .clone()
+            .and_then(|id| find_choice(&slot.choices, &Some(id)));
         let slot_id = slot.slot_id;
         let pick = pick_list(
             slot.choices.clone(),
@@ -608,7 +606,7 @@ fn pick_selected<T: Clone + PartialEq + Eq>(
     options: &[ChoiceView<T>],
     value: &T,
 ) -> Option<ChoiceView<T>> {
-    options.iter().find(|c| &c.value == value).cloned()
+    find_choice(options, value)
 }
 
 #[cfg(test)]
