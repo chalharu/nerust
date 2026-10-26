@@ -3,9 +3,9 @@
 
 use iced::Task;
 use iced_winit::program::{self, Program};
-use nerust_frontend_kernel::level_visible;
-
-use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine, level_rgb, short_module};
+use nerust_gui_shell::session::osd::{
+    HistoryFilter, HistoryLine, history_row_view, visible_history,
+};
 use nerust_settings_core::{
     i18n::{UiText, history_count, text as ui_text},
     model::language::AppLanguage,
@@ -112,13 +112,9 @@ impl Program for HistoryProgram {
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::Length;
         use iced::widget::{button, column, pick_list, row, rule, scrollable, text};
-        use nerust_gui_shell::session::osd::level_label;
         let language = state.language;
-        let shown = state
-            .lines
-            .iter()
-            .filter(|line| level_visible(state.filter.minimum(), line.level.severity()));
-        let shown_count = shown.clone().count();
+        let shown = visible_history(&state.lines, state.filter);
+        let shown_count = shown.len();
         // Toolbar: filter plus clear on top; count trails right.
         let toolbar: iced::Element<'_, HistoryMessage> = row![
             text(ui_text(language, UiText::HistoryLevel)).size(12),
@@ -162,27 +158,29 @@ impl Program for HistoryProgram {
             items = items.push(text(ui_text(language, UiText::HistoryEmpty)).size(13));
         }
         for line in shown {
-            let (r, g, b) = level_rgb(line.level);
+            let row = history_row_view(line, language);
+            let (r, g, b) = row.rgb;
             let level_color = iced::Color::from_rgb8(r, g, b);
             // Cells wrap inside their column; no clip containers.
+            // Owned strings: the row is local, state borrows cannot outlive it.
             items = items.push(
                 row![
-                    text(line.datetime.as_str())
+                    text(row.datetime)
                         .size(12)
                         .font(iced::Font::MONOSPACE)
                         .width(Length::Fixed(150.0)),
-                    text(level_label(line.level, language))
+                    text(row.level)
                         .size(12)
                         .color(level_color)
                         .width(Length::Fixed(70.0)),
-                    text(short_module(line.module))
+                    text(row.module)
                         .size(11)
                         .font(iced::Font::MONOSPACE)
                         .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
                         .width(Length::Fixed(220.0)),
                     // `HistoryLine.text` already carries the `×N`
                     // suffix when merged; use it as-is.
-                    text(line.text.as_str())
+                    text(row.message)
                         .size(13)
                         .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
                         .width(Length::Fill),
