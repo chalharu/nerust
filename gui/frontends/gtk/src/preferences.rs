@@ -18,19 +18,9 @@ use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, Subscription,
     dto::{
         AudioView, BindingRowView, BindingValueView, ChoiceView, ControllerSlotView, GeneralView,
-        InputTabView, NotificationView, SystemTabView, VideoView,
+        InputTabView, NotificationView, SystemTabView, VideoView, choice_position, find_choice,
     },
 };
-
-/// Index-based combo selection over shared choices: the position in the
-/// viewmodel choice list replaces per-enum id tables. Order is defined
-/// once by the projection; rebuilds keep it.
-fn choice_position<T: Clone + PartialEq + Eq>(choices: &[ChoiceView<T>], value: &T) -> Option<u32> {
-    choices
-        .iter()
-        .position(|choice| &choice.value == value)
-        .map(|index| index as u32)
-}
 
 /// Rebuild a combo from shared choices and select `selected`.
 fn refill_choices<T: Clone + PartialEq + Eq>(
