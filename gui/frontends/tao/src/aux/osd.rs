@@ -5,7 +5,7 @@ use iced::Task;
 use iced_winit::program::{self, Program};
 use nerust_frontend_kernel::level_visible;
 
-use nerust_gui_shell::session::{notification::NotificationLevel, osd::HistoryLine};
+use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine, level_rgb, short_module};
 use nerust_settings_core::{
     i18n::{UiText, history_count, text as ui_text},
     model::language::AppLanguage,
@@ -24,75 +24,13 @@ pub(crate) enum HistoryMessage {
     Clear,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum HistoryFilter {
-    #[default]
-    All,
-    Info,
-    Warning,
-    Error,
-}
-
-/// Short module for the grid: last two segments keep the informative tail.
-fn short_module(module: &str) -> &str {
-    let mut parts = module.rsplit("::");
-    let (last, prev) = (parts.next(), parts.next());
-    match (prev, last) {
-        (Some(prev), Some(last)) => {
-            let cut = module.len() - prev.len() - last.len() - 2;
-            &module[cut..]
-        }
-        _ => module,
-    }
-}
-
-impl HistoryFilter {
-    /// Threshold match: this level and above. Info shows all.
-    fn matches(self, level: NotificationLevel) -> bool {
-        let minimum = match self {
-            HistoryFilter::All | HistoryFilter::Info => 0,
-            HistoryFilter::Warning => 1,
-            HistoryFilter::Error => 2,
-        };
-        level_visible(minimum, level.severity())
-    }
-
-    /// Localized dropdown label. Levels reuse the settings table;
-    /// only "All" needs its own key.
-    fn label(self, language: AppLanguage) -> &'static str {
-        match self {
-            HistoryFilter::All => ui_text(language, UiText::HistoryFilterAll),
-            HistoryFilter::Info => ui_text(language, UiText::NotificationInfo),
-            HistoryFilter::Warning => ui_text(language, UiText::NotificationWarning),
-            HistoryFilter::Error => ui_text(language, UiText::Error),
-        }
-    }
-
-    /// Inverse of [`HistoryFilter::label`]: localized strings mapped back on select.
-    fn from_label(label: &str, language: AppLanguage) -> Option<HistoryFilter> {
-        [
-            HistoryFilter::All,
-            HistoryFilter::Info,
-            HistoryFilter::Warning,
-            HistoryFilter::Error,
-        ]
-        .into_iter()
-        .find(|filter| filter.label(language) == label)
-    }
-}
-
 /// Localized filter labels for the toolbar dropdown.
 /// Built on Sync only; the view borrows them.
 fn filter_options(language: AppLanguage) -> Vec<String> {
-    [
-        HistoryFilter::All,
-        HistoryFilter::Info,
-        HistoryFilter::Warning,
-        HistoryFilter::Error,
-    ]
-    .iter()
-    .map(|filter| filter.label(language).to_string())
-    .collect()
+    HistoryFilter::all()
+        .iter()
+        .map(|filter| filter.label(language).to_string())
+        .collect()
 }
 
 pub(crate) struct HistoryState {
@@ -179,7 +117,7 @@ impl Program for HistoryProgram {
         let shown = state
             .lines
             .iter()
-            .filter(|line| state.filter.matches(line.level));
+            .filter(|line| level_visible(state.filter.minimum(), line.level.severity()));
         let shown_count = shown.clone().count();
         // Toolbar: filter plus clear on top; count trails right.
         let toolbar: iced::Element<'_, HistoryMessage> = row![
@@ -224,11 +162,8 @@ impl Program for HistoryProgram {
             items = items.push(text(ui_text(language, UiText::HistoryEmpty)).size(13));
         }
         for line in shown {
-            let level_color = match line.level {
-                NotificationLevel::Info => iced::Color::from_rgb8(70, 70, 70),
-                NotificationLevel::Warning => iced::Color::from_rgb8(170, 110, 0),
-                NotificationLevel::Error => iced::Color::from_rgb8(190, 30, 30),
-            };
+            let (r, g, b) = level_rgb(line.level);
+            let level_color = iced::Color::from_rgb8(r, g, b);
             // Cells wrap inside their column; no clip containers.
             items = items.push(
                 row![
@@ -362,6 +297,7 @@ impl super::focus::AuxEvents for HistoryWindowHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nerust_gui_shell::session::notification::NotificationLevel;
 
     fn en() -> AppLanguage {
         AppLanguage::English
@@ -379,75 +315,6 @@ mod tests {
             text: text.to_string(),
             count: 1,
         }
-    }
-
-    #[test]
-    fn filter_labels_cover_both_languages() {
-        assert_eq!(HistoryFilter::All.label(en()), "All");
-        assert_eq!(HistoryFilter::All.label(ja()), "すべて");
-        assert_eq!(HistoryFilter::Info.label(en()), "Info");
-        assert_eq!(HistoryFilter::Info.label(ja()), "情報");
-        assert_eq!(HistoryFilter::Warning.label(en()), "Warning");
-        assert_eq!(HistoryFilter::Warning.label(ja()), "警告");
-        assert_eq!(HistoryFilter::Error.label(en()), "Error");
-        assert_eq!(HistoryFilter::Error.label(ja()), "エラー");
-    }
-
-    #[test]
-    fn filter_label_round_trips_in_both_languages() {
-        for language in [en(), ja()] {
-            for filter in [
-                HistoryFilter::All,
-                HistoryFilter::Info,
-                HistoryFilter::Warning,
-                HistoryFilter::Error,
-            ] {
-                assert_eq!(
-                    HistoryFilter::from_label(filter.label(language), language),
-                    Some(filter)
-                );
-            }
-        }
-        assert_eq!(HistoryFilter::from_label("???", en()), None);
-        assert_eq!(HistoryFilter::from_label("", ja()), None);
-    }
-
-    #[test]
-    fn filter_matches_that_level_and_above() {
-        assert!(HistoryFilter::All.matches(NotificationLevel::Error));
-        // No level below Info exists, so Info shows everything.
-        assert!(HistoryFilter::Info.matches(NotificationLevel::Error));
-        assert!(HistoryFilter::Warning.matches(NotificationLevel::Warning));
-        assert!(HistoryFilter::Warning.matches(NotificationLevel::Error));
-        assert!(!HistoryFilter::Warning.matches(NotificationLevel::Info));
-        assert!(HistoryFilter::Error.matches(NotificationLevel::Error));
-        assert!(!HistoryFilter::Error.matches(NotificationLevel::Info));
-    }
-
-    #[test]
-    fn short_module_keeps_the_tail() {
-        assert_eq!(
-            short_module("nerust_gui_shell::session::notification"),
-            "session::notification"
-        );
-        assert_eq!(short_module("single"), "single");
-    }
-
-    #[test]
-    fn filter_defaults_to_all_and_rejects_foreign_labels() {
-        assert_eq!(HistoryFilter::default(), HistoryFilter::All);
-        // English labels never resolve in Japanese and vice versa.
-        assert_eq!(HistoryFilter::from_label("All", ja()), None);
-        assert_eq!(HistoryFilter::from_label("すべて", en()), None);
-        // Warning threshold still admits errors only.
-        assert!(HistoryFilter::Warning.matches(NotificationLevel::Error));
-        assert!(!HistoryFilter::Warning.matches(NotificationLevel::Info));
-    }
-
-    #[test]
-    fn short_module_keeps_two_segment_paths_whole() {
-        assert_eq!(short_module("crate::module"), "crate::module");
-        assert_eq!(short_module(""), "");
     }
 
     #[test]

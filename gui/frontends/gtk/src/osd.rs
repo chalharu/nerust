@@ -187,13 +187,11 @@ impl GtkOsd {
         let level_caption = gtk::Label::new(Some(ui_text(language, UiText::HistoryLevel)));
         level_caption.set_xalign(0.0);
         let filter = gtk::ComboBoxText::new();
-        for (id, label) in [
-            ("all", ui_text(language, UiText::HistoryFilterAll)),
-            ("info", ui_text(language, UiText::NotificationInfo)),
-            ("warning", ui_text(language, UiText::NotificationWarning)),
-            ("error", ui_text(language, UiText::Error)),
-        ] {
-            filter.append(Some(id), label);
+        for filter_kind in nerust_gui_shell::session::osd::HistoryFilter::all() {
+            filter.append(
+                Some(filter_kind.id()),
+                filter_kind.label(language),
+            );
         }
         filter.set_active_id(Some("all"));
         toolbar.append(&level_caption);
@@ -290,13 +288,11 @@ impl GtkOsd {
                 while let Some(child) = grid.first_child() {
                     grid.remove(&child);
                 }
-                // Threshold match like the tao twin: this level and
-                // above, so Info shows all (no lower level exists).
-                let minimum = match active.as_deref() {
-                    None | Some("all") | Some("info") => 0,
-                    Some("warning") => 1,
-                    _ => 2,
-                };
+                // Shared threshold: this level and above.
+                let minimum = nerust_gui_shell::session::osd::HistoryFilter::from_id(
+                    active.as_deref(),
+                )
+                .minimum();
                 let visible: Vec<_> = lines
                     .iter()
                     .filter(|line| {
@@ -339,11 +335,8 @@ impl GtkOsd {
                     return;
                 }
                 for line in visible {
-                    let (r, g, b) = match line.level {
-                        NotificationLevel::Info => (70u8, 70u8, 70u8),
-                        NotificationLevel::Warning => (170u8, 110u8, 0u8),
-                        NotificationLevel::Error => (190u8, 30u8, 30u8),
-                    };
+                    let (r, g, b) =
+                        nerust_gui_shell::session::osd::level_rgb(line.level);
                     // `HistoryLine.text` already carries the `×N` suffix
                     // when merged; use it as-is.
                     let text = line.text.clone();
@@ -362,7 +355,9 @@ impl GtkOsd {
                     let module = gtk::Label::new(None);
                     module.set_markup(&format!(
                         "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
-                        glib::markup_escape_text(line.module),
+                        glib::markup_escape_text(
+                            nerust_gui_shell::session::osd::short_module(line.module)
+                        ),
                     ));
                     module.set_xalign(0.0);
                     module.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
