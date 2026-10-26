@@ -10,7 +10,7 @@ use nerust_gui_viewmodel::settings::dto::ChoiceView;
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 
-use super::program::{El, InputPageSection, Message, SettingsAppState, SettingsPage};
+use super::program::{El, InputPageSection, InputTab, Message, SettingsAppState, SettingsPage};
 
 impl SettingsAppState {
     pub(super) fn page_content(&self) -> El<'_> {
@@ -63,17 +63,40 @@ impl SettingsAppState {
     }
 
     fn input_page(&self) -> El<'_> {
-        let Some(input_tab_index) = self.input_tab_index else {
-            return column![text("No systems available").size(14)].into();
-        };
         let inputs = self.vm.inputs();
-        let Some(input_vm) = inputs.get(input_tab_index) else {
-            return column![text("No systems available").size(14)].into();
+        let language = self.language();
+        let shortcuts_label = ui_text(language, UiText::Shortcuts).to_string();
+        let selected = match self.input_tab {
+            Some(InputTab::System(index)) => Some(index),
+            Some(InputTab::Shortcuts) => Some(inputs.len()),
+            None => None,
+        };
+        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
+        content = content.push(input_tab_row(inputs, selected, shortcuts_label));
+        let Some(input_tab) = self.input_tab else {
+            return content
+                .push(column![text("No systems available").size(14)])
+                .spacing(16)
+                .into();
+        };
+        // The trailing tab past the systems shows the global shortcuts,
+        // never machine-scoped input.
+        let index = match input_tab {
+            InputTab::Shortcuts => {
+                return content
+                    .push(self.shortcuts_tab_content())
+                    .spacing(16)
+                    .into();
+            }
+            InputTab::System(index) => index,
+        };
+        let Some(input_vm) = inputs.get(index) else {
+            return content
+                .push(column![text("No systems available").size(14)])
+                .spacing(16)
+                .into();
         };
         let view = input_vm.view.get();
-
-        let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
-        content = content.push(input_tab_row(inputs, self.input_tab_index));
 
         // Conflicts
         for conflict in &view.conflicts {
@@ -85,7 +108,15 @@ impl SettingsAppState {
         content.push(input_section_content).spacing(16).into()
     }
 
-    /// Navigation radios plus the selected binding section.
+    /// Global shortcuts tab content: only the rows, without an inner
+    /// title. The tab itself already carries the shortcuts label, so
+    /// rendering `view.label` here would duplicate it.
+    fn shortcuts_tab_content(&self) -> El<'_> {
+        let view = self.vm.shortcuts.view.get();
+        column![self.binding_rows(view.rows.clone()),].into()
+    }
+
+    /// Machine navigation radios plus the selected machine binding section.
     fn input_nav_section(
         &self,
         view: &nerust_gui_viewmodel::settings::dto::InputTabView,
@@ -114,7 +145,9 @@ impl SettingsAppState {
                 }
             }
         };
-        column![navigation, input_section_content].into()
+        column![navigation, input_section_content]
+            .spacing(16)
+            .into()
     }
 
     fn binding_section(
@@ -124,6 +157,27 @@ impl SettingsAppState {
     ) -> El<'_> {
         let language = self.language();
         let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![text(title)];
+        content = self.push_binding_rows(content, &rows, language);
+        content.spacing(8).into()
+    }
+
+    fn binding_rows(
+        &self,
+        rows: Vec<nerust_gui_viewmodel::settings::dto::BindingRowView>,
+    ) -> El<'_> {
+        let language = self.language();
+        let content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
+        self.push_binding_rows(content, &rows, language)
+            .spacing(8)
+            .into()
+    }
+
+    fn push_binding_rows<'a>(
+        &self,
+        mut content: Column<'a, Message, Theme, iced_tiny_skia::Renderer>,
+        rows: &[nerust_gui_viewmodel::settings::dto::BindingRowView],
+        language: AppLanguage,
+    ) -> Column<'a, Message, Theme, iced_tiny_skia::Renderer> {
         for row in rows {
             let binding_label = match &row.value {
                 nerust_gui_viewmodel::settings::dto::BindingValueView::Bound(l) => l.clone(),
@@ -145,7 +199,7 @@ impl SettingsAppState {
                 .align_y(Alignment::Center),
             );
         }
-        content.spacing(8).into()
+        content
     }
 
     fn video_page(&self) -> El<'_> {
@@ -448,15 +502,18 @@ impl SettingsAppState {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-/// System tab buttons across the registered cores.
+/// System tab buttons across the registered cores, plus a trailing
+/// global-shortcuts tab that never belongs to a machine.
 fn input_tab_row(
     inputs: &[nerust_gui_viewmodel::settings::InputSettingsViewModel],
     selected: Option<usize>,
+    shortcuts_label: String,
 ) -> El<'static> {
-    let names = inputs
+    let mut names: Vec<String> = inputs
         .iter()
         .map(|vm| vm.display_name().to_string())
         .collect();
+    names.push(shortcuts_label);
     tab_row(selected, names, Message::SelectInputTab)
 }
 
@@ -700,7 +757,7 @@ mod tests {
     fn tab_and_slot_helpers_construct() {
         let state = empty_state();
         let inputs = state.vm.inputs();
-        let _ = input_tab_row(inputs, None);
+        let _ = input_tab_row(inputs, None, "Shortcuts".to_string());
         let _ = tab_row(None, vec!["A".to_string()], |_| {
             crate::aux::settings::program::Message::SelectInputTab(0)
         });

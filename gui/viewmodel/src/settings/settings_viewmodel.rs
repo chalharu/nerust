@@ -15,6 +15,7 @@ use super::{
     input::InputSettingsViewModel,
     notification::NotificationSettingsViewModel,
     property::ReadOnlyObservableProperty,
+    shortcuts::ShortcutsViewModel,
     system::SystemSettingsViewModel,
     video::VideoSettingsViewModel,
 };
@@ -29,6 +30,7 @@ pub struct SettingsViewModel {
     pub audio: AudioSettingsViewModel,
     pub notifications: NotificationSettingsViewModel,
     pub capture: CaptureViewModel,
+    pub shortcuts: ShortcutsViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
 }
@@ -58,6 +60,7 @@ impl SettingsViewModel {
         let audio = AudioSettingsViewModel::new(&editor);
         let notifications = NotificationSettingsViewModel::new(&editor);
         let capture = CaptureViewModel::new(&editor);
+        let shortcuts = ShortcutsViewModel::new(&editor);
         let systems: Vec<SystemSettingsViewModel> = factories
             .iter()
             .map(|f| SystemSettingsViewModel::new(&editor, f))
@@ -76,6 +79,7 @@ impl SettingsViewModel {
             audio,
             notifications,
             capture,
+            shortcuts,
             systems,
             inputs,
             editor,
