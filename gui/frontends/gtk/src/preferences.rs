@@ -166,15 +166,19 @@ impl PreferencesBinding {
                     let weak = weak.clone();
                     move |v| {
                         let Some(b) = weak.upgrade() else { return };
-                        b.with_refreshing(|| {
-                            b.rebuild_input_page(index, v);
-                            // The standalone shortcuts tab shares the input
-                            // views, so it refreshes with them.
-                            b.rebuild_shortcuts_page();
-                        });
+                        b.with_refreshing(|| b.rebuild_input_page(index, v));
                     }
                 }));
             }
+            // The standalone shortcuts tab has its own projection, so it
+            // subscribes once instead of refreshing with every system.
+            subs.push(vm.shortcuts.view.observe({
+                let weak = weak.clone();
+                move |_| {
+                    let Some(b) = weak.upgrade() else { return };
+                    b.with_refreshing(|| b.rebuild_shortcuts_page());
+                }
+            }));
             for (index, system_vm) in vm.systems().iter().enumerate() {
                 subs.push(system_vm.view.observe({
                     let weak = weak.clone();
@@ -505,23 +509,19 @@ impl PreferencesBinding {
     }
 
     /// Global shortcuts tab: standalone content outside every machine
-    /// page, with an explicit scope note. Sourced from the first system
-    /// view; shortcuts are global so all systems project the same rows.
+    /// page, sourced from the dedicated shortcuts projection.
     fn rebuild_shortcuts_page(&self) {
         let page = &self.input.shortcuts_page;
         clear_box(page);
         self.input
             .shortcuts_tab_label
             .set_text(ui_text(self.language(), UiText::Shortcuts));
-        let Some(first) = self.vm.inputs().first() else {
-            return;
-        };
-        let view = first.view.get();
-        let shortcuts_label = gtk::Label::new(Some(&view.shortcuts.label));
+        let view = self.vm.shortcuts.view.get();
+        let shortcuts_label = gtk::Label::new(Some(&view.label));
         shortcuts_label.set_xalign(0.0);
         page.append(&shortcuts_label);
         let shortcuts_page = input_section_page();
-        for row in &view.shortcuts.rows {
+        for row in &view.rows {
             self.append_binding_row(&shortcuts_page, row);
         }
         page.append(&shortcuts_page);

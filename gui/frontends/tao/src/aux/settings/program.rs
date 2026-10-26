@@ -58,6 +58,14 @@ pub(crate) enum InputPageSection {
     Attachment(usize),
 }
 
+/// Selected tab of the Input page: one per registered system, plus a
+/// trailing tab for the global shortcuts that belongs to no machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputTab {
+    System(usize),
+    Shortcuts,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     SelectPage(SettingsPage),
@@ -173,7 +181,7 @@ pub(crate) struct SettingsAppState {
     _revision_subscription: nerust_gui_viewmodel::settings::Subscription,
     pub(super) page: SettingsPage,
     pub(super) system_tab_index: Option<usize>,
-    pub(super) input_tab_index: Option<usize>,
+    pub(super) input_tab: Option<InputTab>,
     pub(super) input_section: InputPageSection,
     pub(super) storage_directory_input: String,
     pub(super) error_message: Option<String>,
@@ -307,7 +315,11 @@ impl SettingsAppState {
             _revision_subscription,
             page: SettingsPage::General,
             system_tab_index: if has_systems { Some(0) } else { None },
-            input_tab_index: if has_systems { Some(0) } else { None },
+            input_tab: if has_systems {
+                Some(InputTab::System(0))
+            } else {
+                None
+            },
             input_section: InputPageSection::Attachment(0),
             storage_directory_input: snapshot
                 .shared
@@ -456,7 +468,11 @@ impl SettingsAppState {
     }
 
     fn select_input_tab(&mut self, index: usize) {
-        self.input_tab_index = Some(index);
+        self.input_tab = Some(if index == self.vm.inputs().len() {
+            InputTab::Shortcuts
+        } else {
+            InputTab::System(index)
+        });
         self.input_section = InputPageSection::Attachment(0);
         self.view_invalidated.store(true, Ordering::Release);
     }
@@ -499,8 +515,7 @@ impl SettingsAppState {
     }
 
     fn set_controller_slot(&mut self, slot: AttachmentId, controller_id: Option<String>) {
-        let input_tab_index = self.input_tab_index;
-        if let Some(idx) = input_tab_index
+        if let Some(InputTab::System(idx)) = self.input_tab
             && let Some(input_vm) = self.vm.inputs().get(idx)
             && let Err(e) = input_vm.set_controller_slot(slot, controller_id.as_deref())
         {
@@ -794,7 +809,7 @@ mod tests {
 
         assert_eq!(state.page, SettingsPage::Audio);
         assert_eq!(state.system_tab_index, Some(2));
-        assert_eq!(state.input_tab_index, Some(3));
+        assert_eq!(state.input_tab, Some(InputTab::System(3)));
 
         // Read from ViewModel projection
         let general = state.vm.general.view.get();
@@ -887,6 +902,16 @@ mod tests {
             Message::SelectInputSection(InputPageSection::Attachment(2)),
         );
         assert_eq!(state.input_section, InputPageSection::Attachment(2));
+    }
+
+    #[test]
+    fn select_input_tab_maps_trailing_index_to_shortcuts() {
+        // empty_state registers no systems, so index 0 is the shortcuts tab.
+        let mut state = empty_state();
+        dispatch(&mut state, Message::SelectInputTab(0));
+        assert_eq!(state.input_tab, Some(InputTab::Shortcuts));
+        dispatch(&mut state, Message::SelectInputTab(2));
+        assert_eq!(state.input_tab, Some(InputTab::System(2)));
     }
 
     #[test]

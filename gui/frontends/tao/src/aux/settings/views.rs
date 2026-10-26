@@ -10,7 +10,7 @@ use nerust_gui_viewmodel::settings::dto::ChoiceView;
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 
-use super::program::{El, InputPageSection, Message, SettingsAppState, SettingsPage};
+use super::program::{El, InputPageSection, InputTab, Message, SettingsAppState, SettingsPage};
 
 impl SettingsAppState {
     pub(super) fn page_content(&self) -> El<'_> {
@@ -66,19 +66,25 @@ impl SettingsAppState {
         let inputs = self.vm.inputs();
         let language = self.language();
         let shortcuts_label = ui_text(language, UiText::Shortcuts).to_string();
+        let selected = match self.input_tab {
+            Some(InputTab::System(index)) => Some(index),
+            Some(InputTab::Shortcuts) => Some(inputs.len()),
+            None => None,
+        };
         let mut content: Column<Message, Theme, iced_tiny_skia::Renderer> = column![];
-        content = content.push(input_tab_row(inputs, self.input_tab_index, shortcuts_label));
-        let Some(input_tab_index) = self.input_tab_index else {
+        content = content.push(input_tab_row(inputs, selected, shortcuts_label));
+        let Some(input_tab) = self.input_tab else {
             return content
                 .push(column![text("No systems available").size(14)])
                 .into();
         };
         // The trailing tab past the systems shows the global shortcuts,
         // never machine-scoped input.
-        if input_tab_index == inputs.len() {
-            return content.push(self.shortcuts_tab_content()).into();
-        }
-        let Some(input_vm) = inputs.get(input_tab_index) else {
+        let index = match input_tab {
+            InputTab::Shortcuts => return content.push(self.shortcuts_tab_content()).into(),
+            InputTab::System(index) => index,
+        };
+        let Some(input_vm) = inputs.get(index) else {
             return content
                 .push(column![text("No systems available").size(14)])
                 .into();
@@ -95,16 +101,11 @@ impl SettingsAppState {
         content.push(input_section_content).spacing(16).into()
     }
 
-    /// Global shortcuts tab content: the shared shortcuts section.
-    /// Sourced from the first system view; shortcuts are global so
-    /// every system projects the same rows.
+    /// Global shortcuts tab content: the shared shortcuts section,
+    /// sourced from the dedicated shortcuts projection.
     fn shortcuts_tab_content(&self) -> El<'_> {
-        let Some(input_vm) = self.vm.inputs().first() else {
-            return column![text("")].into();
-        };
-        let view = input_vm.view.get();
-        column![self.binding_section(view.shortcuts.label.clone(), view.shortcuts.rows.clone()),]
-            .into()
+        let view = self.vm.shortcuts.view.get();
+        column![self.binding_section(view.label.clone(), view.rows.clone()),].into()
     }
 
     /// Machine navigation radios plus the selected machine binding section.
