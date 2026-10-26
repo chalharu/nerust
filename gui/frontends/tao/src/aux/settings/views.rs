@@ -76,17 +76,24 @@ impl SettingsAppState {
         let Some(input_tab) = self.input_tab else {
             return content
                 .push(column![text("No systems available").size(14)])
+                .spacing(16)
                 .into();
         };
         // The trailing tab past the systems shows the global shortcuts,
         // never machine-scoped input.
         let index = match input_tab {
-            InputTab::Shortcuts => return content.push(self.shortcuts_tab_content()).into(),
+            InputTab::Shortcuts => {
+                return content
+                    .push(self.shortcuts_tab_content())
+                    .spacing(16)
+                    .into();
+            }
             InputTab::System(index) => index,
         };
         let Some(input_vm) = inputs.get(index) else {
             return content
                 .push(column![text("No systems available").size(14)])
+                .spacing(16)
                 .into();
         };
         let view = input_vm.view.get();
@@ -138,7 +145,9 @@ impl SettingsAppState {
                 }
             }
         };
-        column![navigation, input_section_content].into()
+        column![navigation, input_section_content]
+            .spacing(16)
+            .into()
     }
 
     fn binding_section(
