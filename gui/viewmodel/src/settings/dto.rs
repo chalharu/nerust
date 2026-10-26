@@ -122,9 +122,6 @@ pub struct InputTabView {
     pub slots: Vec<ControllerSlotView>,
     /// Per-machine binding sections (controller attachments).
     pub sections: Vec<BindingSectionView>,
-    /// Global shortcuts, separate from per-machine sections so the
-    /// settings UI cannot present them as machine-scoped input.
-    pub shortcuts: BindingSectionView,
     pub conflicts: Vec<InputConflictView>,
 }
 

@@ -4,7 +4,7 @@ use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
 use nerust_settings_core::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_settings_core::{
-    bindings::descriptors::{KeyboardBindingDescriptor, ShortcutDescriptor, shortcut_descriptors},
+    bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     editor::{CaptureTarget, current_binding_label},
     i18n::{UiText, text as ui_text},
@@ -188,7 +188,7 @@ fn occupied_slots(
     occupied
 }
 
-fn binding_value(
+pub(super) fn binding_value(
     draft: &SettingsSnapshot,
     target: &CaptureTarget,
     capture_target: &Option<CaptureTarget>,
@@ -268,21 +268,6 @@ fn project_binding_row(
     }
 }
 
-fn project_shortcut_row(
-    draft: &SettingsSnapshot,
-    desc: &ShortcutDescriptor,
-    language: AppLanguage,
-    capture_target: &Option<CaptureTarget>,
-) -> BindingRowView {
-    let target = CaptureTarget::Shortcut(desc.action);
-    let value = binding_value(draft, &target, capture_target, language);
-    BindingRowView {
-        target,
-        label: desc.label.to_string(),
-        value,
-    }
-}
-
 fn project_binding_sections(
     state: &EditorState,
     system_id: &dyn SystemId,
@@ -304,21 +289,6 @@ fn project_binding_sections(
             }
         })
         .collect()
-}
-
-fn project_shortcuts(
-    state: &EditorState,
-    language: AppLanguage,
-    capture_target: &Option<CaptureTarget>,
-) -> BindingSectionView {
-    let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
-        .iter()
-        .map(|desc| project_shortcut_row(&state.draft, desc, language, capture_target))
-        .collect();
-    BindingSectionView {
-        label: ui_text(language, UiText::Shortcuts).to_string(),
-        rows: shortcut_rows,
-    }
 }
 
 fn project_view(
@@ -356,8 +326,6 @@ fn project_view(
         .cloned()
         .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
     let sections = project_binding_sections(state, system_id.as_ref(), &topology, capture_target);
-    let language = state.draft.shared.general.language;
-    let shortcuts = project_shortcuts(state, language, capture_target);
 
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state
@@ -377,7 +345,6 @@ fn project_view(
         label: factory.display_name().to_string(),
         slots,
         sections,
-        shortcuts,
         conflicts,
     }
 }
@@ -496,28 +463,20 @@ mod tests {
     }
 
     #[test]
-    fn shortcuts_live_outside_machine_sections() {
+    fn machine_sections_hold_no_global_shortcuts() {
         use nerust_settings_core::editor::CaptureTarget;
 
         let vm = test_vm();
-        let view = vm.inputs()[0].view.get();
-        // All 8 global actions stay reachable through the dedicated section.
-        assert_eq!(view.shortcuts.rows.len(), 8);
-        assert!(
-            view.shortcuts
-                .rows
-                .iter()
-                .all(|row| matches!(row.target, CaptureTarget::Shortcut(_))),
-            "shortcuts section must hold only global shortcut targets"
-        );
-        // Machine sections hold only per-machine bindings, never shortcuts.
-        assert!(
-            view.sections
-                .iter()
-                .flat_map(|section| &section.rows)
-                .all(|row| !matches!(row.target, CaptureTarget::Shortcut(_))),
-            "machine sections must not contain global shortcuts"
-        );
+        for input_vm in vm.inputs() {
+            let view = input_vm.view.get();
+            assert!(
+                view.sections
+                    .iter()
+                    .flat_map(|section| &section.rows)
+                    .all(|row| !matches!(row.target, CaptureTarget::Shortcut(_))),
+                "machine sections must not contain global shortcuts"
+            );
+        }
     }
 
     #[test]
