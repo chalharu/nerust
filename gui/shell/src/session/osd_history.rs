@@ -381,6 +381,40 @@ pub fn short_module(module: &str) -> &str {
     }
 }
 
+/// Display-ready history row: colour, shortened module and level text
+/// resolved once in shell so gtk/tao render the same values. Only the
+/// widget construction (pango span vs iced colour) stays per frontend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRowView {
+    pub datetime: String,
+    pub level: &'static str,
+    pub rgb: (u8, u8, u8),
+    pub module: String,
+    /// `HistoryLine.text` already carries the `×N` merge suffix.
+    pub message: String,
+}
+
+/// Single-row projection for the history grid.
+pub fn history_row_view(line: &HistoryLine, language: AppLanguage) -> HistoryRowView {
+    HistoryRowView {
+        datetime: line.datetime.clone(),
+        level: level_label(line.level, language),
+        rgb: level_rgb(line.level),
+        module: short_module(line.module).to_string(),
+        message: line.text.clone(),
+    }
+}
+
+/// Threshold-filtered history: this level and above. Shared so the gtk
+/// dialog and the tao panel cannot disagree on visibility.
+pub fn visible_history(lines: &[HistoryLine], filter: HistoryFilter) -> Vec<&HistoryLine> {
+    let minimum = filter.minimum();
+    lines
+        .iter()
+        .filter(|line| line.level.severity() >= minimum)
+        .collect()
+}
+
 #[cfg(test)]
 mod filter_rule_tests {
     use super::*;
@@ -410,6 +444,24 @@ mod filter_rule_tests {
             }
         }
         assert_eq!(HistoryFilter::from_label("???", AppLanguage::English), None);
+    }
+
+    #[test]
+    fn row_view_projects_display_columns() {
+        let line = HistoryLine {
+            datetime: "2026-01-01 00:00:00".to_string(),
+            level: NotificationLevel::Warning,
+            module: "nerust_gui_shell::session::notification",
+            text: "hello".to_string(),
+            count: 1,
+        };
+        let row = history_row_view(&line, AppLanguage::English);
+        assert_eq!(row.rgb, (170, 110, 0));
+        assert_eq!(row.module, "session::notification");
+        assert_eq!(row.message, "hello");
+        let lines = vec![line];
+        assert_eq!(visible_history(&lines, HistoryFilter::Warning).len(), 1);
+        assert_eq!(visible_history(&lines, HistoryFilter::Error).len(), 0);
     }
 
     #[test]
