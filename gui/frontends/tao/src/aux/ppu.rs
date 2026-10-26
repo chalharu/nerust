@@ -44,8 +44,8 @@ use super::registry::AuxController;
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
 use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
-/// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
-/// tile start (+16 per tile). Generic geometry, no per-system branch.
+/// Tile hover delegates to the shared viewmodel line; tao only
+/// converts the iced point to raw coordinates at the boundary.
 fn tile_hover_text(
     language: nerust_settings_core::model::language::AppLanguage,
     label: &str,
@@ -53,13 +53,14 @@ fn tile_hover_text(
     height: u32,
     point: Point,
 ) -> String {
-    let (idx, sx, sy) = nerust_gui_viewmodel::debugger::tile_hover_geometry(
+    nerust_gui_viewmodel::debugger::tile_hover_text(
+        language,
+        label,
         width,
         height,
         f64::from(point.x),
         f64::from(point.y),
-    );
-    nerust_settings_core::i18n::tile_hover(language, label, idx, sx, sy, idx * 16)
+    )
 }
 
 #[derive(Debug, Clone)]

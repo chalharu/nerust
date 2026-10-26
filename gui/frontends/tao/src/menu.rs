@@ -50,7 +50,7 @@ pub(crate) mod imp {
     use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
     use nerust_gui_runtime::menu_labels::shortcut_hint;
     use nerust_settings_core::i18n::{UiText, text};
-    use nerust_settings_core::model::input::ShortcutBinding;
+    use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
     use nerust_settings_core::model::language::AppLanguage;
     use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
