@@ -23,58 +23,35 @@ impl HostState {
         command: MenuCommand,
         opener: &dyn WindowOpener,
     ) -> HostAction {
-        if self.settings_open() {
-            return match command {
-                // Exit intent only: the runtime drops the renderer before host teardown.
-                MenuCommand::Quit => HostAction::Exit,
-                _ => HostAction::None,
-            };
-        }
-        match command {
-            MenuCommand::Open => {
-                if self.open_rom_dialog() {
-                    HostAction::RomLoaded
-                } else {
-                    HostAction::None
-                }
-            }
-            MenuCommand::Close => {
-                self.close_rom();
-                HostAction::None
-            }
-            MenuCommand::Settings => {
-                self.open_settings_window(opener);
-                HostAction::None
-            }
-            MenuCommand::Debugger => {
-                self.open_debug_windows(opener, false);
-                HostAction::None
-            }
-            MenuCommand::NotificationHistory => {
-                self.open_history(opener);
-                HostAction::None
-            }
-            MenuCommand::Session(command) => {
-                match command {
-                    SessionCommand::Pause => self.pause(),
-                    SessionCommand::Resume => self.resume(),
-                    SessionCommand::TogglePause => self.toggle_pause(),
-                    command => {
-                        let _ = self.session.run_command(command);
-                    }
-                }
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, false);
-                HostAction::None
-            }
-            MenuCommand::Quit => HostAction::Exit,
+        use nerust_gui_shell::session::app_dispatch::{
+            AppCommand, DispatchOutcome, dispatch_app_command,
+        };
+        // Native menu selections stay a tao-edge type; the policy they
+        // drive is shared. Window openings need the loop-owned opener,
+        // so the adapter carries it (keyboard dispatch passes none and
+        // defers the debugger open to the loop arm, as before).
+        let command = match command {
+            MenuCommand::Open => AppCommand::OpenRom,
+            MenuCommand::Close => AppCommand::CloseRom,
+            MenuCommand::Settings => AppCommand::OpenSettings,
+            MenuCommand::Debugger => AppCommand::OpenDebugger,
+            MenuCommand::NotificationHistory => AppCommand::OpenHistory,
+            MenuCommand::Session(command) => AppCommand::Session(command),
+            MenuCommand::Quit => AppCommand::Quit,
+        };
+        let mut dispatch = HostDispatch {
+            host: self,
+            opener: Some(opener),
+        };
+        match dispatch_app_command(&mut dispatch, command) {
+            DispatchOutcome::None => HostAction::None,
+            DispatchOutcome::RomLoaded => HostAction::RomLoaded,
+            DispatchOutcome::Exit => HostAction::Exit,
         }
     }
 
     pub(crate) fn on_keyboard_input(&mut self, input: KeyEvent) {
-        if self.settings_open() {
-            return;
-        }
+        // The settings-open gate lives in shared dispatch now.
         if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(key) = crate::convert::keycode_to_key(input.physical_key)
             && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
@@ -114,20 +91,14 @@ impl HostState {
     }
 
     fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
-        use nerust_gui_shell::session::access::dispatch_session_action;
-        match shortcut {
-            // Only sets the flag here; opening needs the event loop the runtime arm owns.
-            KeyboardShortcut::OpenDebugger => {
-                self.request_debug_open();
-                return;
-            }
-            KeyboardShortcut::Session(action) => {
-                let _ = dispatch_session_action(self, action);
-            }
-            KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
-        }
-        let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, false);
+        use nerust_gui_shell::session::app_dispatch::dispatch_keyboard_shortcut;
+        // Keyboard dispatch carries no opener: the debugger open defers
+        // to the loop arm via request, exactly as before.
+        let mut dispatch = HostDispatch {
+            host: self,
+            opener: None,
+        };
+        dispatch_keyboard_shortcut(&mut dispatch, shortcut);
     }
 }
 
@@ -195,6 +166,101 @@ impl SlotNav for HostState {
 impl ResetControl for HostState {
     fn reset(&mut self) {
         let _ = self.session.run_command(SessionCommand::Reset);
+    }
+}
+
+/// Adapter from loop-owned resources to shared dispatch: the opener
+/// lives with the runtime arm, so menu dispatch carries it while
+/// keyboard dispatch leaves it empty (debugger open defers to the
+/// loop arm, as before).
+struct HostDispatch<'a> {
+    host: &'a mut HostState,
+    opener: Option<&'a dyn WindowOpener>,
+}
+
+impl PauseControl for HostDispatch<'_> {
+    fn pause(&mut self) {
+        self.host.pause();
+    }
+    fn resume(&mut self) {
+        self.host.resume();
+    }
+    fn toggle_pause(&mut self) {
+        self.host.toggle_pause();
+    }
+}
+
+impl SlotIo for HostDispatch<'_> {
+    fn save_active_slot(&mut self) -> bool {
+        self.host.save_active_slot()
+    }
+    fn load_active_slot(&mut self) -> bool {
+        self.host.load_active_slot()
+    }
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.host.load_slot(slot_id)
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        self.host.save_slot(slot_id);
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        self.host.delete_slot(slot_id);
+    }
+}
+
+impl SlotNav for HostDispatch<'_> {
+    fn select_next_slot(&mut self) {
+        self.host.select_next_slot();
+    }
+    fn select_previous_slot(&mut self) {
+        self.host.select_previous_slot();
+    }
+    fn select_slot(&mut self, slot_id: u64) {
+        self.host.select_slot(slot_id);
+    }
+    fn create_slot(&mut self) {
+        self.host.create_slot();
+    }
+}
+
+impl ResetControl for HostDispatch<'_> {
+    fn reset(&mut self) {
+        self.host.reset();
+    }
+}
+
+impl nerust_gui_shell::session::app_dispatch::DispatchHost for HostDispatch<'_> {
+    fn settings_open(&self) -> bool {
+        self.host.settings_open()
+    }
+    fn open_settings(&mut self) {
+        if let Some(opener) = self.opener {
+            self.host.open_settings_window(opener);
+        }
+    }
+    fn open_debugger(&mut self) {
+        match self.opener {
+            Some(opener) => self.host.open_debug_windows(opener, false),
+            None => self.host.request_debug_open(),
+        }
+    }
+    fn open_history(&mut self) {
+        if let Some(opener) = self.opener {
+            self.host.open_history(opener);
+        }
+    }
+    fn open_rom_dialog(&mut self) -> bool {
+        self.host.open_rom_dialog()
+    }
+    fn close_rom(&mut self) {
+        self.host.close_rom();
+    }
+    fn toggle_fullscreen(&mut self) {
+        self.host.toggle_fullscreen();
+    }
+    fn sync_chrome(&mut self) {
+        let ctx = self.host.frame_ctx();
+        self.host.sync_chrome(&ctx, false);
     }
 }
 
@@ -565,11 +631,14 @@ mod tests {
         let mut host = support.host;
         host.apply_keyboard_shortcut(KeyboardShortcut::OpenDebugger);
         assert!(host.take_debug_open_request());
-        assert!(support.menu.updates().is_empty());
+        // Unified dispatch syncs chrome after every keyboard shortcut,
+        // including the deferred debugger open (previously skipped).
+        assert_eq!(support.menu.updates().len(), 1);
         host.apply_keyboard_shortcut(KeyboardShortcut::Session(ShortcutAction::TogglePause));
         host.apply_keyboard_shortcut(KeyboardShortcut::ToggleFullscreen);
-        // dirty gate: the pause sync pushes once (headless toggle
-        // without a window adds no second change).
+        // dirty gate: the initial sync pushes once; the coreless
+        // pause toggle changes no menu scalars, and the headless
+        // fullscreen toggle without a window adds no second change.
         assert_eq!(support.menu.updates().len(), 1);
     }
 

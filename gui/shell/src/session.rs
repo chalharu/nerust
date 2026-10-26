@@ -1,4 +1,5 @@
 pub mod access;
+pub mod app_dispatch;
 pub(crate) mod command_exec;
 pub mod commands;
 pub(crate) mod debug_ops;

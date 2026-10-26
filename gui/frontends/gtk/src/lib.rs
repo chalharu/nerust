@@ -50,6 +50,10 @@ pub(crate) struct State {
     ctx: FrontendContext,
     renderer_reload_pending: bool,
     pause_policy: nerust_frontend_kernel::pause::PausePolicy,
+    /// Mirror of the tao settings-open gate: while the preferences
+    /// dialog is up, main-window menu/key input is not processed.
+    /// Owned by shared dispatch; the dialog is also modal.
+    settings_open: bool,
 }
 
 impl State {
@@ -121,7 +125,16 @@ impl State {
             ctx,
             renderer_reload_pending: false,
             pause_policy: Default::default(),
+            settings_open: false,
         })
+    }
+
+    pub(crate) fn settings_open(&self) -> bool {
+        self.settings_open
+    }
+
+    pub(crate) fn set_settings_open(&mut self, open: bool) {
+        self.settings_open = open;
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {

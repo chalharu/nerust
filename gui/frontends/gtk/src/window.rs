@@ -9,6 +9,8 @@ use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
     access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
+    app_dispatch::{AppCommand, DispatchHost, dispatch_app_command, dispatch_keyboard_shortcut},
+    commands::SessionCommand,
 };
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::PipelineFactory;
@@ -83,6 +85,7 @@ pub(crate) struct WindowActions {
     pub state_save_slot: gio::SimpleAction,
     pub state_load_slot: gio::SimpleAction,
     pub state_delete_slot: gio::SimpleAction,
+    pub settings: gio::SimpleAction,
 }
 
 impl WindowActions {
@@ -114,6 +117,7 @@ impl WindowActions {
                 "state-delete-slot",
                 Some(&u64::static_variant_type()),
             ),
+            settings: gio::SimpleAction::new("settings", None),
         }
     }
 
@@ -132,6 +136,7 @@ impl WindowActions {
         window.add_action(&self.state_save_slot);
         window.add_action(&self.state_load_slot);
         window.add_action(&self.state_delete_slot);
+        window.add_action(&self.settings);
     }
 }
 
@@ -163,6 +168,7 @@ pub(crate) trait WindowExtend {
     fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
+    fn open_settings(&self);
 }
 
 #[derive(Clone, Copy)]
@@ -173,11 +179,6 @@ pub(crate) enum KeyEventState {
 
 fn key_event_pressed(event: KeyEventState) -> bool {
     matches!(event, KeyEventState::Press)
-}
-
-fn load_active_slot(state: &RefCell<State>) -> bool {
-    let active_slot_id = state.borrow().active_slot_id();
-    active_slot_id.is_some_and(|slot_id| SlotIo::load_slot(&mut *state.borrow_mut(), slot_id))
 }
 
 impl WindowExtend for Window {
@@ -208,7 +209,7 @@ impl WindowExtend for Window {
         let state_save_slot_action = actions.state_save_slot.clone();
         let state_load_slot_action = actions.state_load_slot.clone();
         let state_delete_slot_action = actions.state_delete_slot.clone();
-        let settings_action = gio::SimpleAction::new("settings", None);
+        let settings_action = actions.settings.clone();
         let _ = Surface::bind(&window, &picture, state.clone(), factory);
         actions.add_to(&window);
         let result = Rc::new(RefCell::new(WindowCore {
@@ -269,7 +270,7 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = open_action.connect_activate(move |_, _| {
-                result.open();
+                dispatch_window_command(&result, AppCommand::OpenRom);
             });
         }
         window.add_action(&open_action);
@@ -277,71 +278,69 @@ impl WindowExtend for Window {
         {
             let result = result.clone();
             let _ = close_action.connect_activate(move |_, _| {
-                result.close();
+                dispatch_window_command(&result, AppCommand::CloseRom);
             });
         }
 
         {
             let result = result.clone();
             let _ = pause_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().pause();
-                result.update_actions();
+                dispatch_window_command(&result, AppCommand::Session(SessionCommand::Pause));
             });
         }
 
         {
             let result = result.clone();
             let _ = resume_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().resume();
-                result.update_actions();
+                dispatch_window_command(&result, AppCommand::Session(SessionCommand::Resume));
             });
         }
 
         {
             let result = result.clone();
             let _ = reset_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().reset();
-                result.update_actions();
+                dispatch_window_command(&result, AppCommand::Session(SessionCommand::Reset));
             });
         }
 
         {
             let result = result.clone();
             let _ = debugger_action.connect_activate(move |_, _| {
-                result.open_debugger();
+                dispatch_window_command(&result, AppCommand::OpenDebugger);
             });
         }
 
         {
             let result = result.clone();
             let _ = history_action.connect_activate(move |_, _| {
-                result.open_history();
+                dispatch_window_command(&result, AppCommand::OpenHistory);
             });
         }
 
         {
             let result = result.clone();
             let _ = state_create_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().create_slot();
-                result.update_actions();
+                dispatch_window_command(&result, AppCommand::Session(SessionCommand::CreateSlot));
             });
         }
 
         {
             let result = result.clone();
             let _ = state_save_active_action.connect_activate(move |_, _| {
-                result.state().borrow_mut().save_active_slot();
-                result.update_actions();
+                dispatch_window_command(
+                    &result,
+                    AppCommand::Session(SessionCommand::SaveActiveSlotOrNew),
+                );
             });
         }
 
         {
             let result = result.clone();
             let _ = state_load_active_action.connect_activate(move |_, _| {
-                let state = result.state();
-                if load_active_slot(state.as_ref()) {
-                    result.update_actions();
-                }
+                dispatch_window_command(
+                    &result,
+                    AppCommand::Session(SessionCommand::LoadActiveSlot),
+                );
             });
         }
 
@@ -349,8 +348,10 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_select_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    result.state().borrow_mut().select_slot(slot_id);
-                    result.update_actions();
+                    dispatch_window_command(
+                        &result,
+                        AppCommand::Session(SessionCommand::SelectActiveSlot(slot_id)),
+                    );
                 }
             });
         }
@@ -359,8 +360,10 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_save_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    result.state().borrow_mut().save_slot(slot_id);
-                    result.update_actions();
+                    dispatch_window_command(
+                        &result,
+                        AppCommand::Session(SessionCommand::SaveSlot(slot_id)),
+                    );
                 }
             });
         }
@@ -369,8 +372,10 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_load_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result.state().borrow_mut().load_slot(slot_id);
-                    result.update_actions();
+                    dispatch_window_command(
+                        &result,
+                        AppCommand::Session(SessionCommand::LoadSlot(slot_id)),
+                    );
                 }
             });
         }
@@ -379,36 +384,20 @@ impl WindowExtend for Window {
             let result = result.clone();
             let _ = state_delete_slot_action.connect_activate(move |_, parameter| {
                 if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    result.state().borrow_mut().delete_slot(slot_id);
-                    result.update_actions();
+                    dispatch_window_command(
+                        &result,
+                        AppCommand::Session(SessionCommand::DeleteSlot(slot_id)),
+                    );
                 }
             });
         }
 
         {
             let result = result.clone();
-            let _ = settings_action.connect_activate(move |action, _| {
-                action.set_enabled(false);
-                let action = action.clone();
-                result
-                    .state()
-                    .borrow_mut()
-                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
-                let state = result.state();
-                let window = result.window();
-                let result_for_close = result.clone();
-                present_preferences_dialog(&window, state, move || {
-                    result_for_close.state().borrow_mut().set_pause_owner(
-                        nerust_frontend_kernel::pause::PauseOwner::Settings,
-                        false,
-                    );
-                    action.set_enabled(true);
-                    result_for_close.rebuild_menubar();
-                    result_for_close.update_actions();
-                });
+            let _ = settings_action.connect_activate(move |_, _| {
+                result.open_settings();
             });
         }
-        window.add_action(&settings_action);
 
         {
             let result = result.clone();
@@ -703,19 +692,127 @@ impl WindowExtend for Window {
     }
 
     fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut) {
-        use nerust_gui_shell::session::access::dispatch_session_action;
-        match shortcut {
-            KeyboardShortcut::Session(action) => {
-                let _ = dispatch_session_action(&mut *self.state().borrow_mut(), action);
-            }
-            KeyboardShortcut::ToggleFullscreen => {
-                toggle_window_fullscreen(self);
-            }
-            KeyboardShortcut::OpenDebugger => {
-                self.open_debugger();
-            }
-        }
-        self.update_actions();
+        // Policy (gate, arms, chrome sync) is shared; translation from
+        // gdk::Key already happened in key_event.
+        let mut host = GtkDispatch(self);
+        dispatch_keyboard_shortcut(&mut host, shortcut);
+    }
+
+    fn open_settings(&self) {
+        let action = self.borrow().actions.settings.clone();
+        action.set_enabled(false);
+        self.state()
+            .borrow_mut()
+            .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+        self.state().borrow_mut().set_settings_open(true);
+        let state = self.state();
+        let window = self.window();
+        let result_for_close = self.clone();
+        present_preferences_dialog(&window, state, move || {
+            result_for_close
+                .state()
+                .borrow_mut()
+                .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, false);
+            result_for_close
+                .state()
+                .borrow_mut()
+                .set_settings_open(false);
+            action.set_enabled(true);
+            result_for_close.rebuild_menubar();
+            result_for_close.update_actions();
+        });
+    }
+}
+
+/// One-line menu callbacks: the shared dispatcher owns the gate,
+/// the arms, and the chrome sync.
+fn dispatch_window_command(window: &Window, command: AppCommand) {
+    let mut host = GtkDispatch(window);
+    let _ = dispatch_app_command(&mut host, command);
+}
+
+/// Adapter from the shared `Rc` window handle to shared dispatch.
+/// All policy lives in the dispatcher; this only forwards.
+struct GtkDispatch<'a>(&'a Window);
+
+impl PauseControl for GtkDispatch<'_> {
+    fn pause(&mut self) {
+        self.0.state().borrow_mut().pause();
+    }
+    fn resume(&mut self) {
+        self.0.state().borrow_mut().resume();
+    }
+    fn toggle_pause(&mut self) {
+        self.0.state().borrow_mut().toggle_pause();
+    }
+}
+
+impl SlotIo for GtkDispatch<'_> {
+    fn save_active_slot(&mut self) -> bool {
+        self.0.state().borrow_mut().save_active_slot()
+    }
+    fn load_active_slot(&mut self) -> bool {
+        self.0.state().borrow_mut().load_active_slot()
+    }
+    fn load_slot(&mut self, slot_id: u64) -> bool {
+        self.0.state().borrow_mut().load_slot(slot_id)
+    }
+    fn save_slot(&mut self, slot_id: u64) {
+        self.0.state().borrow_mut().save_slot(slot_id);
+    }
+    fn delete_slot(&mut self, slot_id: u64) {
+        self.0.state().borrow_mut().delete_slot(slot_id);
+    }
+}
+
+impl SlotNav for GtkDispatch<'_> {
+    fn select_next_slot(&mut self) {
+        self.0.state().borrow_mut().select_next_slot();
+    }
+    fn select_previous_slot(&mut self) {
+        self.0.state().borrow_mut().select_previous_slot();
+    }
+    fn select_slot(&mut self, slot_id: u64) {
+        self.0.state().borrow_mut().select_slot(slot_id);
+    }
+    fn create_slot(&mut self) {
+        self.0.state().borrow_mut().create_slot();
+    }
+}
+
+impl ResetControl for GtkDispatch<'_> {
+    fn reset(&mut self) {
+        self.0.state().borrow_mut().reset();
+    }
+}
+
+impl DispatchHost for GtkDispatch<'_> {
+    fn settings_open(&self) -> bool {
+        self.0.state().borrow().settings_open()
+    }
+    fn open_settings(&mut self) {
+        <Window as WindowExtend>::open_settings(self.0);
+    }
+    fn open_debugger(&mut self) {
+        self.0.open_debugger();
+    }
+    fn open_history(&mut self) {
+        self.0.open_history();
+    }
+    fn open_rom_dialog(&mut self) -> bool {
+        // Async native chooser: loading completes in its response
+        // callback, so no synchronous outcome is reported.
+        self.0.open();
+        false
+    }
+    fn close_rom(&mut self) {
+        self.0.close();
+    }
+    fn toggle_fullscreen(&mut self) {
+        toggle_window_fullscreen(self.0);
+    }
+    fn sync_chrome(&mut self) {
+        self.0.update_actions();
     }
 }
 
