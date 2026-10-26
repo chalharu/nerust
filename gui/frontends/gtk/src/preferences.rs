@@ -359,6 +359,28 @@ impl PreferencesBinding {
         n.info_check.set_active(view.info_enabled);
         n.info_duration_spin
             .set_value(f64::from(view.info_duration_ms));
+        for combo in [
+            &n.info_color_combo,
+            &n.warning_color_combo,
+            &n.error_color_combo,
+        ] {
+            combo.remove_all();
+            for choice in &view.color_choices {
+                combo.append(Some(map_color_id(choice.value)), &choice.label);
+            }
+        }
+        for combo in [&n.position_combo, &n.status_position_combo] {
+            combo.remove_all();
+            for choice in &view.position_choices {
+                combo.append(Some(map_position_id(choice.value)), &choice.label);
+            }
+        }
+        for combo in [&n.area_combo, &n.status_area_combo] {
+            combo.remove_all();
+            for choice in &view.area_mode_choices {
+                combo.append(Some(map_area_id(choice.value)), &choice.label);
+            }
+        }
         n.info_color_combo
             .set_active_id(Some(map_color_id(view.info_color)));
         n.warning_check.set_active(view.warning_enabled);
