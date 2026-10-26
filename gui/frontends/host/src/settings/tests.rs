@@ -418,21 +418,15 @@ fn catalog_dedupes_system_ids_before_registry_construction() {
 
 #[test]
 fn notification_catalogs_preserve_order_and_localize() {
-    let english = NotificationChoices::new(AppLanguage::English);
-    let japanese = NotificationChoices::new(AppLanguage::Japanese);
-    assert_eq!(english.colors.len(), 5);
-    assert_eq!(english.positions.len(), 4);
-    assert_eq!(english.areas.len(), 2);
-    assert_eq!(english.colors[0].value, NotificationColor::White);
-    assert_eq!(english.colors[4].value, NotificationColor::Cyan);
-    assert_eq!(english.positions[0].value, NotificationPosition::TopLeft);
-    assert_eq!(
-        english.positions[3].value,
-        NotificationPosition::BottomRight
-    );
-    assert_eq!(english.areas[0].value, NotificationAreaMode::Overlay);
-    assert_eq!(english.areas[1].value, NotificationAreaMode::Strip);
-    assert_ne!(english.colors[0].label, japanese.colors[0].label);
+    // Choices now live in the viewmodel DTO; the host renders them.
+    // Order and localization are covered by viewmodel choices_tests.
+    let state = empty_state();
+    let view = state.vm.notifications.view.get();
+    assert_eq!(view.color_choices.len(), 5);
+    assert_eq!(view.position_choices.len(), 4);
+    assert_eq!(view.area_mode_choices.len(), 2);
+    assert_eq!(view.color_choices[0].value, NotificationColor::White);
+    assert_eq!(view.color_choices[4].value, NotificationColor::Cyan);
 }
 
 #[test]
