@@ -1,14 +1,8 @@
-//! OSD service cluster: layer sync plus history plus modal queue.
+//! Native OSD service: layer sync, notification queue, and dialog flight.
 //! Owned by `HostState`; the drain router uses only the narrow ports below.
 
 use super::osd::ModalFlight;
 use nerust_frontend_host::osd::{ModalAdvance, OsdLayerSync, OsdNotifications};
-use nerust_frontend_kernel::Versioned;
-
-/// History viewer sync: content key only. The window lives in the registry.
-pub(super) struct HistoryViewer {
-    pub(super) sync_key: Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
-}
 
 /// Modal queue: error batches plus the in-flight dialog.
 pub(super) struct ModalFlightQueue {
@@ -16,10 +10,9 @@ pub(super) struct ModalFlightQueue {
     pub(super) flight: Option<ModalFlight>,
 }
 
-/// OSD service: layer sync plus history plus modal queue.
+/// Native presentation state; history and pause ownership live in ApplicationHost.
 pub(super) struct OsdService {
     pub(super) layer: OsdLayerSync,
-    pub(super) history: HistoryViewer,
     pub(super) modal: ModalFlightQueue,
 }
 
@@ -27,9 +20,6 @@ impl OsdService {
     pub(super) fn new() -> Self {
         Self {
             layer: OsdLayerSync::new(),
-            history: HistoryViewer {
-                sync_key: Versioned::new(),
-            },
             modal: ModalFlightQueue {
                 notifications: OsdNotifications::new(),
                 flight: None,
@@ -37,9 +27,8 @@ impl OsdService {
         }
     }
 
-    /// Close teardown: sync memos, dialog, and resume flag.
+    /// Drop the native dialog receiver; common close retires pause ownership.
     pub(super) fn close_all(&mut self) {
-        self.history.sync_key.clear();
         self.modal.flight.take();
     }
 
@@ -59,14 +48,6 @@ impl OsdService {
     #[cfg(test)]
     pub(super) fn modal_showing(&self) -> bool {
         self.modal.flight.is_some()
-    }
-
-    /// Last synced history content key (test read).
-    #[cfg(test)]
-    pub(super) fn history_key(
-        &self,
-    ) -> Option<(u64, nerust_settings_core::model::language::AppLanguage)> {
-        self.history.sync_key.get().copied()
     }
 
     /// Port for the modal drain: next queued error batch, if any and no dialog is showing.
@@ -102,7 +83,7 @@ mod tests {
         assert!(host.osd.take_modal_batch().is_none());
         host.osd.modal_closed();
         assert!(!host.osd.modal_showing());
-        assert!(host.osd.history_key().is_none());
+        assert!(host.history_key().is_none());
         host.osd.close_all();
         assert_eq!(host.osd.modal_pending(), 0);
     }

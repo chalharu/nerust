@@ -43,7 +43,7 @@ impl HostState {
             .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
         if opened {
             // Fresh window needs full content regardless of cache.
-            self.osd.history.sync_key.clear();
+            self.core.invalidate_history();
             self.sync_history_window(ctx.frame());
         } else {
             self.aux.cancel_open(id);
@@ -52,15 +52,9 @@ impl HostState {
 
     fn sync_history_window(&mut self, frame: &FrameSnapshot) {
         let language = frame.language();
-        let key = (self.session.notification_history_seq(), language);
-        // Versioned gate: row building is skipped unless content or language changed.
-        if !self.osd.history.sync_key.check(&key) {
+        let Some(lines) = self.core.history_update(language) else {
             return;
-        }
-        let lines: std::sync::Arc<[nerust_gui_shell::session::osd::HistoryLine]> = self
-            .session
-            .notification_history_lines_cached(language)
-            .into();
+        };
         self.aux.history_sync(lines, language);
     }
 
@@ -83,7 +77,7 @@ impl HostState {
             return;
         }
         if outcome.cleared {
-            self.session.clear_notification_history();
+            self.core.clear_history();
             let ctx = self.frame_ctx();
             self.sync_history_window(ctx.frame());
         }
@@ -144,14 +138,9 @@ impl HostState {
     /// Cheap when idle; safe to call every loop pass.
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
         let language = ctx.frame().language();
-        let report = self
-            .osd
-            .modal
-            .notifications
-            .pump(&mut self.session, ctx, Instant::now());
-        if report.modal_queued {
-            self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
-        }
+        let report =
+            self.core
+                .pump_notifications(&mut self.osd.modal.notifications, ctx, Instant::now());
         self.reap_modal(language);
         self.present_modal(language);
         if report.changed {
@@ -254,7 +243,7 @@ mod tests {
         ack.send(()).unwrap();
         host.reap_modal(ctx.frame().language());
         assert!(host.session().tick_metrics().paused, "focus still holds");
-        assert!(!host.pause_policy.owns(PauseOwner::Modal));
+        assert!(!host.owns_pause(PauseOwner::Modal));
         host.release_focus_pause();
         assert!(!host.session().tick_metrics().paused);
     }
@@ -361,7 +350,7 @@ mod tests {
     fn status_toggle_renders_then_clears() {
         let support = TestHost::new();
         let mut host = support.host;
-        let mut on = host.session.settings_snapshot().clone();
+        let mut on = host.settings_snapshot().clone();
         on.local.notifications.status_enabled = true;
         host.apply_settings(on).expect("headless settings apply");
         let mut renderer = StubRenderer::default();
@@ -374,7 +363,7 @@ mod tests {
         host.sync_osd_layer(&mut renderer, surface(), &ctx);
         assert_eq!(renderer.layers, [true]);
         // Toggle off: one Clear lands, then idle skips again.
-        let mut off = host.session.settings_snapshot().clone();
+        let mut off = host.settings_snapshot().clone();
         off.local.notifications.status_enabled = false;
         host.apply_settings(off).expect("headless settings apply");
         let ctx = host.frame_ctx();
@@ -397,7 +386,7 @@ mod tests {
         host.open_history(&opener);
         assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
         assert!(!host.aux.contains(AuxKind::History));
-        assert!(host.osd.history_key().is_none());
+        assert!(host.history_key().is_none());
     }
 
     #[test]
@@ -411,7 +400,7 @@ mod tests {
         host.open_history(&opener);
         assert!(opener.calls().is_empty());
         assert_eq!(host.aux.route_id(AuxKind::History), Some(id));
-        assert!(host.osd.history_key().is_none());
+        assert!(host.history_key().is_none());
     }
 
     #[test]
@@ -422,7 +411,7 @@ mod tests {
         host.on_history_event(WindowEvent::Destroyed);
         host.on_history_event(WindowEvent::Focused(true));
         host.on_history_event(WindowEvent::Focused(false));
-        assert!(host.osd.history_key().is_none());
+        assert!(host.history_key().is_none());
         assert!(support.menu.updates().is_empty());
     }
 
@@ -470,7 +459,7 @@ mod tests {
     fn renderer_replacement_repushes_strip_and_visible_layer() {
         let support = TestHost::new();
         let mut host = support.host;
-        let mut settings = host.session.settings_snapshot().clone();
+        let mut settings = host.settings_snapshot().clone();
         settings.local.notifications.status_enabled = true;
         host.apply_settings(settings)
             .expect("headless settings apply");
