@@ -9,7 +9,9 @@ use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError,
     access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
-    app_dispatch::{AppCommand, DispatchHost, dispatch_app_command, dispatch_keyboard_shortcut},
+    app_dispatch::{
+        AppCommand, DispatchHost, DispatchOutcome, dispatch_app_command, dispatch_keyboard_shortcut,
+    },
     commands::SessionCommand,
 };
 use nerust_persistence::model::StateSlotSummary;
@@ -159,6 +161,7 @@ pub(crate) trait WindowExtend {
     fn open_history(&self);
     fn realize(&self);
     fn close_request(&self) -> bool;
+    fn quit_application(&self);
     fn open(&self);
     fn load_path(&self, path: &Path);
     fn close(&self);
@@ -540,6 +543,14 @@ impl WindowExtend for Window {
     fn realize(&self) {}
 
     fn close_request(&self) -> bool {
+        self.quit_application();
+        false
+    }
+
+    fn quit_application(&self) {
+        // Ordered teardown shared with menu Quit: flush persistence,
+        // remember the window size, then leave the main loop. tao parity:
+        // Quit exits the app in both frontends (it never unloads).
         self.state().borrow_mut().flush_before_exit();
         let w = self.window().width();
         let h = self.window().height();
@@ -551,7 +562,6 @@ impl WindowExtend for Window {
                 .update_window_size(w as u32, h as u32);
         }
         self.application().quit();
-        false
     }
 
     fn window(&self) -> gtk::ApplicationWindow {
@@ -729,6 +739,16 @@ impl WindowExtend for Window {
 fn dispatch_window_command(window: &Window, command: AppCommand) {
     let mut host = GtkDispatch(window);
     let _ = dispatch_app_command(&mut host, command);
+}
+
+/// Menu Quit: unified contract (tao parity) — Quit always exits the app,
+/// even while settings are open. Previously this unloaded the ROM,
+/// duplicating Close; it now tears down through the shared dispatcher.
+pub(crate) fn dispatch_quit(window: &Window) {
+    let mut host = GtkDispatch(window);
+    if dispatch_app_command(&mut host, AppCommand::Quit) == DispatchOutcome::Exit {
+        window.quit_application();
+    }
 }
 
 /// Adapter from the shared `Rc` window handle to shared dispatch.
@@ -934,8 +954,61 @@ mod tests {
         dialog.destroy();
     }
 
+    /// Shared dispatch wiring: the settings-open gate swallows window
+    /// commands but lets Quit through as Exit. Widget-only: needs a
+    /// display, run under Xvfb (skips headless). Policy itself is covered
+    /// by shell app_dispatch tests; this covers the adapter wiring.
+    #[test]
+    fn dispatch_gate_swallows_window_commands_while_settings_open() {
+        use nerust_gui_shell::session::app_dispatch::{AppCommand, DispatchOutcome};
+        let Some((app, window, state)) = harness_with_id("org.nerust.dispatch-gate-test") else {
+            eprintln!("SKIP: dispatch gate test needs a display (run under Xvfb)");
+            return;
+        };
+        let win = super::Window::bind(
+            app,
+            window,
+            gtk::Picture::new(),
+            state,
+            std::rc::Rc::new(MockPipelineFactory),
+            super::StateMenus {
+                select_active_slot_menu: gio::Menu::new(),
+                save_slot_menu: gio::Menu::new(),
+                load_slot_menu: gio::Menu::new(),
+                delete_slot_menu: gio::Menu::new(),
+            },
+            super::MenubarModels::new(),
+        );
+        win.state().borrow_mut().set_settings_open(true);
+        let mut host = super::GtkDispatch(&win);
+        assert_eq!(
+            super::dispatch_app_command(&mut host, AppCommand::OpenDebugger),
+            DispatchOutcome::None
+        );
+        assert!(win.borrow().debugger_window.is_none());
+        // Quit passes the gate as an exit intent; the caller tears down.
+        assert_eq!(
+            super::dispatch_app_command(&mut host, AppCommand::Quit),
+            DispatchOutcome::Exit
+        );
+        assert!(win.borrow().debugger_window.is_none());
+    }
+
     /// Headless-capable state: session plus settings only, no renderer.
     fn harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        std::rc::Rc<std::cell::RefCell<crate::State>>,
+    )> {
+        harness_with_id("org.nerust.window-test")
+    }
+
+    /// Parallel widget tests must not share an application id: Gio
+    /// registration is process-global and a duplicate breaks later
+    /// windows in the same run.
+    fn harness_with_id(
+        app_id: &str,
+    ) -> Option<(
         gtk::Application,
         gtk::ApplicationWindow,
         std::rc::Rc<std::cell::RefCell<crate::State>>,
@@ -943,9 +1016,7 @@ mod tests {
         if !crate::test_support::ui_test_available() {
             return None;
         }
-        let app = gtk::Application::builder()
-            .application_id("org.nerust.window-test")
-            .build();
+        let app = gtk::Application::builder().application_id(app_id).build();
         let window = gtk::ApplicationWindow::builder().application(&app).build();
         Some((app, window, model_state()))
     }

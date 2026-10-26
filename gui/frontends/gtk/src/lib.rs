@@ -397,12 +397,6 @@ fn build_window(
     window.set_child(Some(&picture));
 
     let quit_action = gio::SimpleAction::new("quit", None);
-    {
-        let window = window.clone();
-        let _ = quit_action.connect_activate(move |_, _| {
-            window.close();
-        });
-    }
     app.add_action(&quit_action);
 
     fn create_about_dialog() -> gtk::AboutDialog {
@@ -435,7 +429,7 @@ fn build_window(
     }
     app.add_action(&about_action);
 
-    Window::bind(
+    let result = Window::bind(
         app.clone(),
         window,
         picture,
@@ -448,7 +442,16 @@ fn build_window(
             delete_slot_menu,
         },
         menubar,
-    )
+    );
+    // Unified Quit (tao parity): exits the app through shared dispatch.
+    // Close unloads the ROM; Quit never did, despite sharing that body.
+    {
+        let quit_window = result.clone();
+        let _ = quit_action.connect_activate(move |_, _| {
+            crate::window::dispatch_quit(&quit_window);
+        });
+    }
+    result
 }
 
 /// Menu label with the action's *current* shortcut hint, or the bare label.
