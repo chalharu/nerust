@@ -55,6 +55,14 @@ pub fn format_panels(panels: &[DebugPanel]) -> String {
     out
 }
 
+/// Disassembly marker column: pinned-but-not-PC shows `@`,
+/// everything else is blank. The PC row already carries its `>`
+/// mark inside `format_disasm_line`, so marking it again here
+/// would double-mark (`> @`).
+pub fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
+    if !is_pc && is_pinned { "@ " } else { "  " }
+}
+
 /// Format one disassembly row (`>0xaddr: bytes  text`) for line
 /// buttons. The PC row carries the `>` mark (Mesen canon); the byte
 /// field pads to 4 bytes so mnemonics align across rows.

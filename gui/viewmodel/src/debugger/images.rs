@@ -19,6 +19,21 @@ pub fn tile_hover_geometry(width: u32, height: u32, x: f64, y: f64) -> (u32, u32
     (idx, sx, sy)
 }
 
+/// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
+/// tile start (+16 per tile). Shared by gtk/tao PPU viewers so both
+/// agree pixel-for-pixel.
+pub fn tile_hover_text(
+    language: nerust_settings_core::model::language::AppLanguage,
+    label: &str,
+    width: u32,
+    height: u32,
+    x: f64,
+    y: f64,
+) -> String {
+    let (idx, sx, sy) = tile_hover_geometry(width, height, x, y);
+    nerust_settings_core::i18n::tile_hover(language, label, idx, sx, sy, idx * 16)
+}
+
 /// Nearest-neighbor 2x scale of blitted RGBA bytes. Pure; frontends
 /// share it so the PPU viewer shows identical pixels everywhere.
 pub fn scale2x_nearest(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
