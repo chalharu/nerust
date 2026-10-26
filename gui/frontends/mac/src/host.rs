@@ -33,6 +33,7 @@ use nerust_gui_shell::{
     session::{
         KeyboardShortcut, SessionError,
         access::{SessionControl, SettingsResult},
+        commands::SessionCommand,
     },
 };
 use nerust_keyboard::Key;
@@ -151,6 +152,11 @@ impl MacHost {
         self.dispatch_key_event(key, pressed)
     }
 
+    /// Raw session command for chrome that owns no menu id (debugger buttons).
+    pub fn dispatch_cmd(&mut self, command: SessionCommand) -> bool {
+        self.host.dispatch(SessionEvent::Command(command)).is_ok()
+    }
+
     fn dispatch_key_event(&mut self, key: Key, pressed: bool) -> bool {
         self.host
             .dispatch(SessionEvent::Keyboard { key, pressed })
@@ -239,6 +245,26 @@ impl MacHost {
         };
         let _ = self.host.dispatch(SessionEvent::SettingsClosed);
         Ok(applied)
+    }
+
+    /// Shared session read for native pumps (frame capture, OSD text).
+    pub fn session(&self) -> &nerust_gui_shell::session::SessionHandle {
+        self.host.session()
+    }
+
+    /// Present the latest core frame. Call once per frame before reading it.
+    pub fn swap_frame_buffer(&mut self) {
+        self.host.swap_frame_buffer();
+    }
+
+    /// Pause ownership query for native gates (menus, dialogs).
+    pub fn owns_pause(&self, owner: nerust_frontend_kernel::pause::PauseOwner) -> bool {
+        self.host.owns_pause(owner)
+    }
+
+    /// Latest tick for native chrome (fps line, pause badge).
+    pub fn tick(&self) -> nerust_gui_shell::session::osd::TickMetrics {
+        self.host.tick()
     }
 
     pub fn load_path(&mut self, path: &Path) -> Result<(), String> {
