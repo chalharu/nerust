@@ -22,6 +22,7 @@ use gtk::{
     },
 };
 use nerust_frontend_host::session::{SessionEvent, SessionOutcome};
+use nerust_gui_runtime::menu_labels::shortcut_hint;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
 };
@@ -35,8 +36,8 @@ use nerust_gui_shell::{
 use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
 use nerust_run_options::RunOptions;
-use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
-use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
+use nerust_settings_core::i18n::{UiText, text};
+use nerust_settings_core::model::input::ShortcutBinding;
 use nerust_settings_core::model::language::AppLanguage;
 
 use self::window::{MenubarModels, StateMenus, Window, WindowExtend};
@@ -353,15 +354,6 @@ fn build_window(
     )
 }
 
-/// Menu label with the action's *current* shortcut hint, or the bare label.
-/// Binding-driven, so Settings rebinding never leaves a stale hardcoded key.
-fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
-    match shortcut_key_label(shortcuts, action) {
-        Some(key) => menu_label_with_shortcut(base, key),
-        None => base.to_string(),
-    }
-}
-
 pub(crate) fn build_menu_model(
     language: AppLanguage,
     shortcuts: &[ShortcutBinding],
@@ -653,27 +645,6 @@ mod tests {
         assert!(labels.iter().any(|label| label == "Save Active Slot (F2)"));
         assert!(labels.iter().any(|label| label == "Open Debugger"));
         assert!(!labels.iter().any(|label| label.contains("(F4)")));
-    }
-
-    #[test]
-    fn shortcut_hint_falls_back_to_bare_label() {
-        // Unbound action advertises no key, never a stale default.
-        let unbound = vec![ShortcutBinding {
-            action: ShortcutAction::SaveActiveSlot,
-            key: None,
-        }];
-        assert_eq!(
-            shortcut_hint("Save Active Slot", &unbound, ShortcutAction::SaveActiveSlot),
-            "Save Active Slot"
-        );
-        assert_eq!(
-            shortcut_hint(
-                "Save Active Slot",
-                &default_shortcut_bindings(),
-                ShortcutAction::SaveActiveSlot
-            ),
-            "Save Active Slot (F5)"
-        );
     }
 
     #[test]
