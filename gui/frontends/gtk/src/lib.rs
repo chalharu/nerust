@@ -50,6 +50,11 @@ pub(crate) struct State {
     ctx: FrontendContext,
     renderer_reload_pending: bool,
     pause_policy: nerust_frontend_kernel::pause::PausePolicy,
+    /// Explicit mirror of the tao settings-open gate: while the preferences
+    /// dialog is up, main-window menu/key input is not processed (Quit and
+    /// window-close excepted). The dialog is also modal, so this is the
+    /// testable half of a defense already enforced by the toolkit.
+    settings_open: bool,
 }
 
 impl State {
@@ -121,7 +126,22 @@ impl State {
             ctx,
             renderer_reload_pending: false,
             pause_policy: Default::default(),
+            settings_open: false,
         })
+    }
+
+    pub(crate) fn settings_open(&self) -> bool {
+        self.settings_open
+    }
+
+    pub(crate) fn set_settings_open(&mut self, open: bool) {
+        self.settings_open = open;
+    }
+
+    /// Unified dispatch contract (tao `on_menu_command` parity): no
+    /// main-window command runs while settings are open.
+    fn main_input_allowed(&self) -> bool {
+        !self.settings_open
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
@@ -183,12 +203,21 @@ impl State {
 
 impl PauseControl for State {
     fn pause(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
     }
     fn resume(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
     }
     fn toggle_pause(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         self.set_pause_owner(
             nerust_frontend_kernel::pause::PauseOwner::User,
             !self.paused(),
@@ -225,27 +254,42 @@ impl State {
 
 impl SlotIo for State {
     fn save_active_slot(&mut self) -> bool {
+        if !self.main_input_allowed() {
+            return false;
+        }
         self.session
             .run_command(SessionCommand::SaveActiveSlotOrNew)
             .unwrap_or_default()
             .executed
     }
     fn load_active_slot(&mut self) -> bool {
+        if !self.main_input_allowed() {
+            return false;
+        }
         self.session
             .run_command(SessionCommand::LoadActiveSlot)
             .unwrap_or_default()
             .executed
     }
     fn load_slot(&mut self, slot_id: u64) -> bool {
+        if !self.main_input_allowed() {
+            return false;
+        }
         self.session
             .run_command(SessionCommand::LoadSlot(slot_id))
             .unwrap_or_default()
             .executed
     }
     fn save_slot(&mut self, slot_id: u64) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
     }
     fn delete_slot(&mut self, slot_id: u64) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self
             .session
             .run_command(SessionCommand::DeleteSlot(slot_id));
@@ -254,29 +298,48 @@ impl SlotIo for State {
 
 impl SlotNav for State {
     fn select_next_slot(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self.session.run_command(SessionCommand::SelectNextSlot);
     }
     fn select_previous_slot(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
     }
     fn select_slot(&mut self, slot_id: u64) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self
             .session
             .run_command(SessionCommand::SelectActiveSlot(slot_id));
     }
     fn create_slot(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self.session.run_command(SessionCommand::CreateSlot);
     }
 }
 
 impl ResetControl for State {
     fn reset(&mut self) {
+        if !self.main_input_allowed() {
+            return;
+        }
         let _ = self.session.run_command(SessionCommand::Reset);
     }
 }
 
 impl SessionControl for State {
     fn unload(&mut self) {
+        // tao parity: Close is not processed while settings are open.
+        if !self.main_input_allowed() {
+            return;
+        }
         if let Err(error) = self.session.unload() {
             log::warn!("ROM unload failed: {error}");
         }
@@ -768,5 +831,81 @@ mod tests {
         // Three top-level sections, none empty after i18n lookup.
         assert!(labels.iter().all(|label| !label.is_empty()));
         assert!(labels.len() > 10);
+    }
+}
+
+#[cfg(test)]
+mod settings_gate_tests {
+    use super::*;
+    use nerust_gui_shell::session::access::{PauseControl, ResetControl, SlotIo};
+
+    struct MockPipelineFactory;
+
+    impl std::fmt::Debug for MockPipelineFactory {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("MockPipelineFactory")
+        }
+    }
+
+    impl PipelineFactory for MockPipelineFactory {
+        fn create_pipeline(
+            &self,
+            _config: &nerust_render_traits::renderer::RendererConfig,
+            _display: raw_window_handle::RawDisplayHandle,
+        ) -> Result<
+            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
+            nerust_render_traits::renderer::RendererError,
+        > {
+            Err(nerust_render_traits::renderer::RendererError::new(
+                "test",
+                Box::new(std::io::Error::other("no renderer in tests")),
+            ))
+        }
+    }
+
+    struct MockRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for MockRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            _target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            Err(nerust_gui_shell::load::RomLoaderError::from_session(
+                nerust_gui_shell::session::SessionError::NoCore,
+            ))
+        }
+    }
+
+    fn test_state() -> State {
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: Rc::new(MockPipelineFactory),
+            registry: Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new())),
+            rom_loader: Box::new(MockRomLoader),
+            audio_registry: Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+        };
+        State::new_for_tests(ctx).expect("test state builds")
+    }
+
+    #[test]
+    fn settings_open_gate_blocks_user_commands() {
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let mut state = test_state();
+        assert!(!state.settings_open());
+        state.set_settings_open(true);
+        state.pause();
+        state.toggle_pause();
+        state.reset();
+        assert!(
+            !state.pause_policy.paused(),
+            "gated commands take no pause ownership"
+        );
+        assert!(!state.save_active_slot());
+        state.set_settings_open(false);
+        state.pause();
+        assert!(
+            state.pause_policy.owns(PauseOwner::User),
+            "pause works once settings close"
+        );
     }
 }

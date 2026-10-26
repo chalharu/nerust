@@ -394,6 +394,7 @@ impl WindowExtend for Window {
                     .state()
                     .borrow_mut()
                     .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+                result.state().borrow_mut().set_settings_open(true);
                 let state = result.state();
                 let window = result.window();
                 let result_for_close = result.clone();
@@ -402,6 +403,10 @@ impl WindowExtend for Window {
                         nerust_frontend_kernel::pause::PauseOwner::Settings,
                         false,
                     );
+                    result_for_close
+                        .state()
+                        .borrow_mut()
+                        .set_settings_open(false);
                     action.set_enabled(true);
                     result_for_close.rebuild_menubar();
                     result_for_close.update_actions();
@@ -428,6 +433,11 @@ impl WindowExtend for Window {
     }
 
     fn open_history(&self) {
+        // Unified dispatch contract (tao parity): no main-window command
+        // runs while settings are open.
+        if self.state().borrow().settings_open() {
+            return;
+        }
         // Parity with the debugger: an existing dialog presents
         // instead of duplicating; destroy clears the slot.
         // Clone out of the borrow first: clearing the slot below
@@ -455,6 +465,9 @@ impl WindowExtend for Window {
     }
 
     fn open_debugger(&self) {
+        if self.state().borrow().settings_open() {
+            return;
+        }
         // Idempotent open: an existing window refreshes and presents
         // instead of duplicating. An externally destroyed window keeps
         // its slot (no signal fires), so a gone check rebuilds instead
@@ -483,6 +496,9 @@ impl WindowExtend for Window {
     }
 
     fn open(&self) {
+        if self.state().borrow().settings_open() {
+            return;
+        }
         let file_chooser_native = gtk::FileChooserNative::new(
             Some("Open File"),
             Some(&self.window()),
@@ -688,6 +704,9 @@ impl WindowExtend for Window {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
+        if self.state().borrow().settings_open() {
+            return false;
+        }
         // No hardcoded F-keys: the debugger open rides the shortcut schema
         // (default F4, rebindable in Settings), so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
@@ -753,6 +772,10 @@ fn apply_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
 }
 
 fn toggle_window_fullscreen(window: &Window) {
+    // tao parity: fullscreen toggle is not processed while settings open.
+    if window.state().borrow().settings_open() {
+        return;
+    }
     let fullscreen = !window.window().is_fullscreen();
     apply_persisted_window_fullscreen(window, fullscreen);
 }
