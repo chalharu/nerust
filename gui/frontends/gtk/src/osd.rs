@@ -1,13 +1,28 @@
 //! GTK OSD: in-frame layer, error modals, history.
-//! Policy lives in shell `session::osd`; this only rasterizes plans.
+//! Native dialogs stay here; pump and renderer wiring live in frontend_host.
 
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use gtk::{glib, prelude::*};
-use nerust_gui_shell::session::osd::OsdManager;
-use nerust_settings_core::model::local::NotificationSettings;
+use nerust_frontend_host::{
+    frame::FrameCtx,
+    loop_driver::WakeNeed,
+    osd::{ModalAdvance, OsdLayerSync, OsdNotifications},
+};
 
 use super::{State, renderer::GtkRenderer};
+
+impl nerust_render_traits::renderer::OsdSink for GtkRenderer {
+    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        GtkRenderer::set_osd_layer(self, layer);
+    }
+}
+
+impl nerust_render_traits::renderer::StripSink for GtkRenderer {
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        GtkRenderer::set_reserved_strip(self, strip);
+    }
+}
 
 /// Reentrancy guard for caption rebuilds: set while the filter items are
 /// rebuilt so the `changed` handler skips the recursive refresh.
@@ -57,31 +72,24 @@ pub(crate) struct HistoryDialogCaptions {
 }
 
 pub(crate) struct GtkOsd {
-    manager: OsdManager,
-    raster: nerust_render_osd::OsdRaster,
-    last_strip: Option<nerust_render_traits::ReservedStrip>,
+    notifications: OsdNotifications,
+    layer: OsdLayerSync,
     output_generation: Option<u64>,
-    /// Owns the whole sync fingerprint. Shared decision procedure with
-    /// the tao frontend; this struct only rasterizes.
-    presenter: nerust_gui_shell::session::osd::OsdPresenter,
 }
 
 impl GtkOsd {
     pub(crate) fn new() -> Self {
         Self {
-            manager: OsdManager::new(),
-            raster: nerust_render_osd::OsdRaster::new(),
-            last_strip: None,
+            notifications: OsdNotifications::new(),
+            layer: OsdLayerSync::new(),
             output_generation: None,
-            presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
         }
     }
 
     /// Forget sync state after a renderer rebuild: the new object
     /// holds no layer, so the next sync must re-push instead of skip.
     pub(crate) fn invalidate(&mut self) {
-        self.presenter.invalidate();
-        self.last_strip = None;
+        self.layer.invalidate();
     }
 
     /// Drain the session queue, show modals, and sync the OSD layer.
@@ -93,28 +101,15 @@ impl GtkOsd {
         renderer: &Rc<RefCell<GtkRenderer>>,
         window: &gtk::ApplicationWindow,
         size: nerust_render_traits::SurfaceSize,
-    ) {
-        use nerust_gui_shell::session::osd::{PushInput, TransientPolicy};
+        ctx: &FrameCtx,
+    ) -> WakeNeed {
         let generation = renderer.borrow().output_generation();
         if self.output_generation != Some(generation) {
             self.invalidate();
             self.output_generation = Some(generation);
         }
         let now = Instant::now();
-        // Single snapshot read per frame: the `Arc` gate skips the
-        // full-snapshot clone on steady frames (see `settings_arc`).
-        let snapshot = state.settings_arc();
-        let language = snapshot.shared.general.language;
-        let tick = state.session.tick_metrics();
-        let report = state.session.pump_osd(
-            &mut self.manager,
-            PushInput {
-                policy: TransientPolicy::from(&snapshot.local.notifications),
-                language,
-                now,
-                tick,
-            },
-        );
+        let report = self.notifications.pump(&mut state.session, ctx, now);
         if report.changed {
             log::debug!("gtk osd: display state changed");
         }
@@ -124,89 +119,21 @@ impl GtkOsd {
         }
         // The batch take runs on the already-borrowed manager: the Surface
         // Rc is only touched inside the ack closure, after the tick borrow.
-        if let Some(detail) = self.manager.take_modal_batch() {
+        if let Some(detail) = self.notifications.take_modal_batch() {
             Self::present_modal(surface, window, detail);
         }
-        self.apply_strip(&snapshot.local.notifications, renderer, window);
-        self.sync_layer(
-            &snapshot.local.notifications,
-            language,
-            tick.paused,
-            tick.fps,
-            renderer,
-            size,
-        );
-    }
-
-    /// Reserve edge strips from settings. Game viewport fits into
-    /// the remaining rect; strips stay clear for the OSD layer.
-    fn apply_strip(
-        &mut self,
-        settings: &NotificationSettings,
-        renderer: &Rc<RefCell<GtkRenderer>>,
-        window: &gtk::ApplicationWindow,
-    ) {
-        use nerust_gui_shell::session::osd::OsdChrome;
-        use nerust_render_traits::ReservedStrip;
-        use nerust_render_traits::renderer::strip_pixels;
         let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
-        let (top_rows, bottom_rows) = OsdChrome::from(settings).reserved_rows();
-        let strip = ReservedStrip {
-            top: strip_pixels(client_h, top_rows, 1.0),
-            bottom: strip_pixels(client_h, bottom_rows, 1.0),
-        };
-        if Some(strip) != self.last_strip {
-            self.last_strip = Some(strip);
-            renderer.borrow_mut().set_reserved_strip(strip);
-        }
-    }
-
-    /// Rasterize on change and hand the layer to the renderer.
-    /// The sync decision lives in shell `OsdPresenter`; this only rasterizes plans.
-    fn sync_layer(
-        &mut self,
-        settings: &NotificationSettings,
-        language: nerust_settings_core::model::language::AppLanguage,
-        paused: bool,
-        fps: f32,
-        renderer: &Rc<RefCell<GtkRenderer>>,
-        size: nerust_render_traits::SurfaceSize,
-    ) {
-        use nerust_gui_shell::session::osd::{OsdSync, OsdSyncInput};
-        let w = size.width;
-        let h = size.height;
-        let chrome = nerust_gui_shell::session::osd::OsdChrome::from(settings);
-        let decision = {
-            let GtkOsd {
-                presenter, manager, ..
-            } = self;
-            presenter.sync(
-                &*manager,
-                OsdSyncInput {
-                    tick: nerust_gui_shell::session::osd::TickMetrics {
-                        fps,
-                        paused,
-                        ..nerust_gui_shell::session::osd::TickMetrics::default()
-                    },
-                    chrome,
-                    language,
-                    now: Instant::now(),
-                    width: w,
-                    height: h,
-                    ui_scale: 1.0,
-                    safe_insets: nerust_gui_shell::session::osd::ViewInsets::default(),
-                },
-            )
-        };
-        match decision {
-            OsdSync::Skip => {}
-            OsdSync::Clear => renderer.borrow_mut().set_osd_layer(None),
-            OsdSync::Render(plan) => {
-                let (width, height) = (plan.width, plan.height);
-                let content = plan.into_content();
-                let layer = self.raster.rasterize(&content, width, height);
-                renderer.borrow_mut().set_osd_layer(layer);
-            }
+        self.layer.render(
+            self.notifications.manager(),
+            &mut *renderer.borrow_mut(),
+            size,
+            client_h,
+            ctx,
+            now,
+        );
+        WakeNeed {
+            osd_deadline: self.notifications.wakeup_deadline(Instant::now()),
+            ..WakeNeed::default()
         }
     }
 
@@ -528,17 +455,17 @@ impl GtkOsd {
             let next = {
                 let surface = surface.borrow_mut();
                 let mut osd = surface.osd.borrow_mut();
-                osd.manager.modal_closed();
-                osd.manager.take_modal_batch()
+                osd.notifications.acknowledge_modal()
             };
-            if let Some(next) = next {
-                Self::present_modal(&surface, &window, next);
-            } else {
-                surface
-                    .borrow()
-                    .state
-                    .borrow_mut()
-                    .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
+            match next {
+                ModalAdvance::Present(next) => Self::present_modal(&surface, &window, next),
+                ModalAdvance::Drained => {
+                    surface
+                        .borrow()
+                        .state
+                        .borrow_mut()
+                        .set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, false);
+                }
             }
         });
         dialog.present();
@@ -593,7 +520,7 @@ mod history_dialog_tests {
 
     /// Headless-capable state for the model gate: session plus settings
     /// only, no application, no window, no display.
-    fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+    pub(super) fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
         use std::sync::Arc;
         let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
@@ -883,9 +810,31 @@ mod tests {
     fn osd_new_and_invalidate_are_headless() {
         // No display needed: construction and plan reset stay CPU-side.
         let mut osd = GtkOsd::new();
-        osd.last_strip = Some(nerust_render_traits::ReservedStrip { top: 8, bottom: 9 });
+        #[derive(Debug, Default)]
+        struct Sink(usize);
+        impl nerust_render_traits::renderer::OsdSink for Sink {
+            fn set_osd_layer(&mut self, _: Option<nerust_render_traits::renderer::OsdLayer>) {}
+        }
+        impl nerust_render_traits::renderer::StripSink for Sink {
+            fn set_reserved_strip(&mut self, _: nerust_render_traits::ReservedStrip) {
+                self.0 += 1;
+            }
+        }
+        let state = super::history_dialog_tests::model_state();
+        let ctx = nerust_frontend_host::frame::FrameCache::new().frame_ctx(&state.borrow().session);
+        let mut sink = Sink::default();
+        let size = nerust_render_traits::SurfaceSize::new(320, 240);
+        let now = std::time::Instant::now();
+        osd.layer
+            .render(osd.notifications.manager(), &mut sink, size, 240, &ctx, now);
+        osd.layer
+            .render(osd.notifications.manager(), &mut sink, size, 240, &ctx, now);
+        assert_eq!(sink.0, 1);
         osd.invalidate();
-        assert!(osd.last_strip.is_none());
+        assert!(!osd.layer.layer_live());
+        osd.layer
+            .render(osd.notifications.manager(), &mut sink, size, 240, &ctx, now);
+        assert_eq!(sink.0, 2, "renderer replacement re-pushes the strip");
         osd.invalidate();
     }
 

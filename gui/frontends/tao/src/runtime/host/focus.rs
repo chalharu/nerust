@@ -8,26 +8,16 @@ use nerust_gui_shell::session::access::PauseControl;
 
 impl HostState {
     pub(crate) fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
-        let tick = self.session.tick_metrics();
-        let paused = self.pause_policy.set(owner, active, tick.paused);
-        self.session.set_execution_held(paused);
-        if tick.loaded && tick.paused != paused {
-            let _ = self.session.run_command(if paused {
-                nerust_gui_shell::session::commands::SessionCommand::Pause
-            } else {
-                nerust_gui_shell::session::commands::SessionCommand::Resume
-            });
-        }
+        nerust_frontend_host::session::set_pause_owner(
+            &mut self.session,
+            &mut self.pause_policy,
+            owner,
+            active,
+        );
     }
 
     pub(super) fn reconcile_pause(&mut self) {
-        let tick = self.session.tick_metrics();
-        self.session.set_execution_held(self.pause_policy.paused());
-        if tick.loaded && !tick.paused && self.pause_policy.paused() {
-            let _ = self
-                .session
-                .run_command(nerust_gui_shell::session::commands::SessionCommand::Pause);
-        }
+        nerust_frontend_host::session::reconcile_pause(&mut self.session, &self.pause_policy);
     }
 
     pub(crate) fn release_focus_pause(&mut self) {

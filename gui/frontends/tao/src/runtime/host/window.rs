@@ -18,6 +18,11 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
 
+pub(crate) use nerust_frontend_host::loop_driver::WakeNeed;
+use nerust_frontend_host::loop_driver::{LoopHost, TurnLiveness, drive_turn};
+#[cfg(test)]
+pub(crate) use nerust_frontend_host::loop_driver::{earliest_wake, flight_backstop, update_flow};
+
 /// Main window cluster: handle, liveness, surface target, fullscreen sync.
 /// All primary-window state lives here; `HostState` dispatches to it.
 pub(crate) struct WindowCluster {
@@ -202,67 +207,59 @@ impl WindowCluster {
     }
 }
 
-/// Per-pump wake contribution. Each `tick_*` pump returns one;
-/// `update_control_flow` folds them into a single [`WakeNeed`].
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct WakeNeed {
-    pub live_tick: Option<Instant>,
-    pub flight_pending: bool,
-    pub osd_deadline: Option<Instant>,
-}
+/// Native Tao ports for the shared end-of-burst driver.
+impl LoopHost for HostState {
+    type Frame = super::FrameCtx;
 
-impl WakeNeed {
-    pub(crate) fn fold(self, other: Self) -> Self {
-        Self {
-            live_tick: match (self.live_tick, other.live_tick) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) => Some(a),
-                (None, b) => b,
-            },
-            flight_pending: self.flight_pending || other.flight_pending,
-            osd_deadline: match (self.osd_deadline, other.osd_deadline) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) => Some(a),
-                (None, b) => b,
-            },
+    fn before_turn(&mut self) {
+        self.tick_focus_sync();
+    }
+
+    fn frame_ctx(&mut self) -> Self::Frame {
+        HostState::frame_ctx(self)
+    }
+
+    fn chrome(&mut self, ctx: &Self::Frame) {
+        self.tick_chrome_sync(ctx);
+        self.sync_debug_chrome(ctx);
+    }
+
+    fn pump_debug(&mut self) -> WakeNeed {
+        self.tick_debug_pump()
+    }
+
+    fn pump_osd(&mut self, ctx: &Self::Frame) -> WakeNeed {
+        self.tick_osd_pump(ctx)
+    }
+
+    fn pump_aux(&mut self) -> WakeNeed {
+        if self.render_retry.take_due(Instant::now()) {
+            self.request_redraw();
+        }
+        WakeNeed {
+            osd_deadline: self
+                .aux
+                .pump_deadlines(Instant::now())
+                .into_iter()
+                .chain(self.render_retry.deadline())
+                .min(),
+            ..WakeNeed::default()
         }
     }
-}
 
-/// Poll latency for an in-flight drain/live fetch: the backstop that
-/// bounds reply latency when the loop would otherwise sleep.
-pub(crate) fn flight_backstop(now: Instant) -> Instant {
-    now + std::time::Duration::from_millis(30)
-}
+    fn late_liveness(&mut self) -> TurnLiveness {
+        let tick = self.session.tick_metrics();
+        TurnLiveness {
+            loaded: tick.loaded,
+            paused: tick.paused,
+            main_active: self.main_active(),
+            live_follow: self.live_follow_active(),
+        }
+    }
 
-/// Earliest deadline wins; no deadline sleeps. Pure (no tao import);
-/// the runtime maps the result to `ControlFlow`.
-pub(crate) fn earliest_wake(input: WakeNeed, now: Instant) -> Option<Instant> {
-    [
-        input.live_tick,
-        input.flight_pending.then(|| flight_backstop(now)),
-        input.osd_deadline,
-    ]
-    .into_iter()
-    .flatten()
-    .min()
-}
-
-/// Pure control-flow decision with injected clock: wake deadline plus repaint flag.
-/// Repaint while focused, while the PPU follows a running core, or while the session runs.
-pub(crate) fn update_flow(
-    now: Instant,
-    tick_loaded: bool,
-    tick_paused: bool,
-    main_active: bool,
-    live_follow: bool,
-    input: WakeNeed,
-) -> (Option<Instant>, bool) {
-    let running = tick_loaded && !tick_paused;
-    (
-        earliest_wake(input, now),
-        main_active || live_follow || running,
-    )
+    fn request_redraw(&mut self) {
+        HostState::request_redraw(self);
+    }
 }
 
 impl HostState {
@@ -340,48 +337,10 @@ impl HostState {
             *control_flow = ControlFlow::Exit;
             return;
         }
-        // End-of-burst auto-pause first: pause state settles before
-        // the title/live/drain logic below reads it.
-        self.tick_focus_sync();
-        // One capture for the whole pass: chrome, debug, and OSD pumps share it.
-        let ctx = self.frame_ctx();
-        self.tick_chrome_sync(&ctx);
-        // Deferred focus effects land here: one gated sync covers menu,
-        // title, and drain-due instead of per-event round-trips.
-        self.sync_debug_chrome(&ctx);
-        if self.render_retry.take_due(Instant::now()) {
-            self.request_redraw();
-        }
-        let wake = self
-            .tick_debug_pump()
-            .fold(self.tick_osd_pump(&ctx))
-            .fold(WakeNeed {
-                osd_deadline: self
-                    .aux
-                    .pump_deadlines(Instant::now())
-                    .into_iter()
-                    .chain(self.render_retry.deadline())
-                    .min(),
-                ..WakeNeed::default()
-            });
-        // Drain completion or modal ACK may have changed pause state after the
-        // frame capture. Never park using the pre-ACK paused snapshot.
-        let tick = self.session.tick_metrics();
-        let now = Instant::now();
-        let (deadline, wants_redraw) = update_flow(
-            now,
-            tick.loaded,
-            tick.paused,
-            self.main_active(),
-            self.live_follow_active(),
-            wake,
-        );
-        *control_flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
-
-        // Inactive loop sleeps; a running session repaints even unfocused.
-        if wants_redraw {
-            self.request_redraw();
-        }
+        let outcome = drive_turn(self);
+        *control_flow = outcome
+            .deadline
+            .map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
     }
 
     pub(crate) fn on_render_result(&mut self, result: RenderResult, frame_counter: u64) {

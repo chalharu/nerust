@@ -6,18 +6,21 @@ use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
+use nerust_frontend_host::session::{SessionEffect, SessionEvent, SessionOutcome};
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError,
-    access::SettingsResult,
-    access::{PauseControl, ResetControl, SessionControl, SlotIo, SlotNav},
-    commands::SessionCommand,
-};
+use nerust_gui_shell::session::{SessionError, access::SessionControl, access::SettingsResult};
 
 use crate::event::MenuCommand;
 use crate::ports::WindowOpener;
 
 impl HostState {
+    pub(super) fn dispatch_session(
+        &mut self,
+        event: SessionEvent,
+    ) -> Result<SessionOutcome, SessionError> {
+        nerust_frontend_host::session::dispatch(&mut self.session, &mut self.pause_policy, event)
+    }
+
     pub(crate) fn on_menu_command(
         &mut self,
         command: MenuCommand,
@@ -55,14 +58,7 @@ impl HostState {
                 HostAction::None
             }
             MenuCommand::Session(command) => {
-                match command {
-                    SessionCommand::Pause => self.pause(),
-                    SessionCommand::Resume => self.resume(),
-                    SessionCommand::TogglePause => self.toggle_pause(),
-                    command => {
-                        let _ = self.session.run_command(command);
-                    }
-                }
+                let _ = self.dispatch_session(SessionEvent::Command(command));
                 let ctx = self.frame_ctx();
                 self.sync_chrome(&ctx, false);
                 HostAction::None
@@ -77,14 +73,19 @@ impl HostState {
         }
         if let Some(pressed) = element_state_to_pressed(input.state)
             && let Some(key) = crate::convert::keycode_to_key(input.physical_key)
-            && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
         {
-            self.apply_keyboard_shortcut(shortcut);
+            match self.dispatch_session(SessionEvent::Keyboard { key, pressed }) {
+                Ok(outcome) => self.apply_session_outcome(outcome),
+                Err(_) => {
+                    let ctx = self.frame_ctx();
+                    self.sync_chrome(&ctx, false);
+                }
+            }
         }
     }
 
     pub(crate) fn clear_keys(&mut self) {
-        self.session.clear_input();
+        let _ = self.dispatch_session(SessionEvent::ClearInput);
     }
 
     fn open_rom_dialog(&mut self) -> bool {
@@ -113,90 +114,34 @@ impl HostState {
         self.sync_chrome(&ctx, true);
     }
 
-    fn apply_keyboard_shortcut(&mut self, shortcut: KeyboardShortcut) {
-        use nerust_gui_shell::session::access::dispatch_session_action;
-        match shortcut {
+    #[cfg(test)]
+    fn apply_keyboard_shortcut(&mut self, shortcut: nerust_gui_shell::session::KeyboardShortcut) {
+        match self.dispatch_session(SessionEvent::Shortcut(shortcut)) {
+            Ok(outcome) => self.apply_session_outcome(outcome),
+            Err(_) => {
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, false);
+            }
+        }
+    }
+
+    fn apply_session_outcome(&mut self, outcome: SessionOutcome) {
+        match outcome.effect {
             // Only sets the flag here; opening needs the event loop the runtime arm owns.
-            KeyboardShortcut::OpenDebugger => {
+            Some(SessionEffect::NativeOpenDebugger) => {
                 self.request_debug_open();
                 return;
             }
-            KeyboardShortcut::Session(action) => {
-                let _ = dispatch_session_action(self, action);
-            }
-            KeyboardShortcut::ToggleFullscreen => self.toggle_fullscreen(),
+            Some(SessionEffect::ToggleFullscreen) => self.toggle_fullscreen(),
+            None if outcome.command.is_none() => return,
+            None => (),
         }
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, false);
     }
 }
 
-impl PauseControl for HostState {
-    fn pause(&mut self) {
-        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, true);
-    }
-    fn resume(&mut self) {
-        self.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::User, false);
-    }
-    fn toggle_pause(&mut self) {
-        self.set_pause_owner(
-            nerust_frontend_kernel::pause::PauseOwner::User,
-            !self.session.tick_metrics().paused,
-        );
-    }
-}
-
-impl SlotIo for HostState {
-    fn save_active_slot(&mut self) -> bool {
-        self.session
-            .run_command(SessionCommand::SaveActiveSlotOrNew)
-            .unwrap_or_default()
-            .executed
-    }
-    fn load_active_slot(&mut self) -> bool {
-        self.session
-            .run_command(SessionCommand::LoadActiveSlot)
-            .unwrap_or_default()
-            .executed
-    }
-    fn load_slot(&mut self, slot_id: u64) -> bool {
-        self.session
-            .run_command(SessionCommand::LoadSlot(slot_id))
-            .unwrap_or_default()
-            .executed
-    }
-    fn save_slot(&mut self, slot_id: u64) {
-        let _ = self.session.run_command(SessionCommand::SaveSlot(slot_id));
-    }
-    fn delete_slot(&mut self, slot_id: u64) {
-        let _ = self
-            .session
-            .run_command(SessionCommand::DeleteSlot(slot_id));
-    }
-}
-
-impl SlotNav for HostState {
-    fn select_next_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectNextSlot);
-    }
-    fn select_previous_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::SelectPreviousSlot);
-    }
-    fn select_slot(&mut self, slot_id: u64) {
-        let _ = self
-            .session
-            .run_command(SessionCommand::SelectActiveSlot(slot_id));
-    }
-    fn create_slot(&mut self) {
-        let _ = self.session.run_command(SessionCommand::CreateSlot);
-    }
-}
-
-impl ResetControl for HostState {
-    fn reset(&mut self) {
-        let _ = self.session.run_command(SessionCommand::Reset);
-    }
-}
+nerust_frontend_host::impl_session_controls!(HostState);
 
 impl SessionControl for HostState {
     fn unload(&mut self) {
@@ -208,15 +153,11 @@ impl SessionControl for HostState {
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.apply_settings(settings);
-        self.reconcile_pause();
-        let plan = plan?;
-        Ok(SettingsResult {
-            // The renderer follows presentation, not the session.
-            renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
-            fullscreen_default_changed: plan.fullscreen_default_changed,
-            scaling_changed: plan.scaling_changed,
-        })
+        nerust_frontend_host::session::apply_settings(
+            &mut self.session,
+            &self.pause_policy,
+            settings,
+        )
     }
     fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
         let plan = self.session.set_fullscreen_default(fullscreen)?;
@@ -575,10 +516,11 @@ mod tests {
 
     #[test]
     fn session_verbs_stay_total_without_core() {
+        use nerust_gui_shell::session::access::PauseControl;
         let support = TestHost::new();
         let mut host = support.host;
         host.resume_session();
-        super::PauseControl::pause(&mut host);
+        PauseControl::pause(&mut host);
         host.clear_keys();
         host.sync_fullscreen_from_settings();
         let _ = host.persist_fullscreen_default(false);

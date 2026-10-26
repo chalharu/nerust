@@ -2,16 +2,8 @@
 //! Owned by `HostState`; the drain router uses only the narrow ports below.
 
 use super::osd::ModalFlight;
+use nerust_frontend_host::osd::{ModalAdvance, OsdLayerSync, OsdNotifications};
 use nerust_frontend_kernel::Versioned;
-
-/// OSD layer sync: rasterizer, presenter, and live-layer state.
-pub(super) struct OsdLayerSync {
-    pub(super) raster: nerust_render_osd::OsdRaster,
-    pub(super) presenter: nerust_gui_shell::session::osd::OsdPresenter,
-    pub(super) layer_live: bool,
-    pub(super) last_strip: Versioned<nerust_render_traits::ReservedStrip>,
-    pub(super) last_sync_geometry: Versioned<(u32, u32, nerust_gui_shell::session::osd::OsdChrome)>,
-}
 
 /// History viewer sync: content key only. The window lives in the registry.
 pub(super) struct HistoryViewer {
@@ -20,7 +12,7 @@ pub(super) struct HistoryViewer {
 
 /// Modal queue: error batches plus the in-flight dialog.
 pub(super) struct ModalFlightQueue {
-    pub(super) manager: nerust_gui_shell::session::osd::OsdManager,
+    pub(super) notifications: OsdNotifications,
     pub(super) flight: Option<ModalFlight>,
 }
 
@@ -34,18 +26,12 @@ pub(super) struct OsdService {
 impl OsdService {
     pub(super) fn new() -> Self {
         Self {
-            layer: OsdLayerSync {
-                raster: nerust_render_osd::OsdRaster::new(),
-                presenter: nerust_gui_shell::session::osd::OsdPresenter::new(),
-                layer_live: false,
-                last_strip: Versioned::new(),
-                last_sync_geometry: Versioned::new(),
-            },
+            layer: OsdLayerSync::new(),
             history: HistoryViewer {
                 sync_key: Versioned::new(),
             },
             modal: ModalFlightQueue {
-                manager: nerust_gui_shell::session::osd::OsdManager::new(),
+                notifications: OsdNotifications::new(),
                 flight: None,
             },
         }
@@ -60,7 +46,7 @@ impl OsdService {
     /// Queued error batches awaiting a dialog (test read).
     #[cfg(test)]
     pub(super) fn modal_pending(&self) -> usize {
-        self.modal.manager.modal_pending()
+        self.modal.notifications.pending()
     }
 
     /// Test seam: simulate a dialog thread that died before acking.
@@ -88,17 +74,18 @@ impl OsdService {
         if self.modal.flight.is_some() {
             return None;
         }
-        self.modal.manager.take_modal_batch()
+        self.modal.notifications.take_modal_batch()
     }
 
     /// Port for the modal drain: close the acked batch.
-    pub(super) fn modal_closed(&mut self) {
-        self.modal.manager.modal_closed();
+    pub(super) fn modal_closed(&mut self) -> ModalAdvance {
+        self.modal.notifications.acknowledge_modal()
     }
 
     /// Port for the modal drain: queued batch count.
+    #[cfg(test)]
     pub(super) fn modal_queue_len(&self) -> usize {
-        self.modal.manager.modal_pending()
+        self.modal.notifications.pending()
     }
 }
 
