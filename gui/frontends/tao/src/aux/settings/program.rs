@@ -133,8 +133,8 @@ impl SettingsAppState {
 
     fn view(&self) -> El<'_> {
         let language = self.language();
-        let validation_errors = self.validation_errors();
-        let can_submit = validation_errors.is_empty();
+        let banner = self.validation_banner();
+        let can_submit = banner.can_submit;
 
         let sidebar = column![
             super::views::page_radio(language, UiText::General, SettingsPage::General, self.page),
@@ -175,8 +175,8 @@ impl SettingsAppState {
 
         if let Some(error_message) = self.error_message.as_ref() {
             root = root.push(text(error_message.clone()));
-        } else if let Some(first_error) = validation_errors.first() {
-            root = root.push(text(first_error.clone()));
+        } else if let Some(headline) = banner.headline.as_ref() {
+            root = root.push(text(headline.clone()));
         }
 
         let buttons = row![
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(state.page, SettingsPage::Audio);
         let _ = program.update(&mut state, Message::SelectPage(SettingsPage::General));
         // Storage error reads the live ViewModel projection.
-        let _ = state.storage_error();
+        let _ = state.validation_banner();
         // Error banner renders above the buttons when set.
         state.error_message = Some("boom".to_string());
         let _ = program.view(&state, iced::window::Id::unique());
