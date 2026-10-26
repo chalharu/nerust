@@ -1,21 +1,20 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::sync::Arc;
 
 use iced_winit::program;
 use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_frontend_host::settings::SettingsMailbox;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
-use crate::aux::bridge::lock_recovered;
 use crate::aux::shell::{AuxShell, AuxSurface};
 
 /// Settings dialog: shared [`AuxShell`] host plus pending-apply staging.
 /// Matches the debugger/PPU shape.
 pub(crate) struct SettingsWindowHandle {
     shell: AuxShell<SettingsAppProgram>,
-    view_invalidated: Arc<AtomicBool>,
-    pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    mailbox: SettingsMailbox,
 }
 
 impl SettingsWindowHandle {
@@ -29,17 +28,15 @@ impl SettingsWindowHandle {
             log::error!("refusing settings window: duplicate SystemId '{duplicate}'");
             return None;
         }
-        let should_close = Arc::new(AtomicBool::new(false));
-        let pending_apply = Arc::new(Mutex::new(None));
-        let view_invalidated = Arc::new(AtomicBool::new(false));
+        let mailbox = SettingsMailbox::default();
 
         let program = SettingsAppProgram {
             snapshot,
             registry,
             audio_registry,
-            should_close: Arc::clone(&should_close),
-            pending_apply: Arc::clone(&pending_apply),
-            view_invalidated: Arc::clone(&view_invalidated),
+            should_close: Arc::clone(&mailbox.should_close),
+            pending_apply: Arc::clone(&mailbox.pending_apply),
+            view_invalidated: Arc::clone(&mailbox.view_invalidated),
         };
         let (instance, _task) = program::Instance::new(program);
         let surface = AuxSurface::open(
@@ -49,7 +46,7 @@ impl SettingsWindowHandle {
             None,
             None,
             "settings window",
-            Arc::clone(&should_close),
+            Arc::clone(&mailbox.should_close),
         )
         .map_err(|error| {
             // Typed scaffold failure: surface the tagged native detail here.
@@ -66,15 +63,11 @@ impl SettingsWindowHandle {
             surface.bounds(),
         );
         let shell = AuxShell::assemble(surface, instance);
-        Some(Self {
-            shell,
-            view_invalidated,
-            pending_apply,
-        })
+        Some(Self { shell, mailbox })
     }
 
     pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
-        lock_recovered(&self.pending_apply).take()
+        self.mailbox.take_pending_apply()
     }
 }
 
@@ -118,15 +111,15 @@ impl crate::aux::focus::AuxEvents for SettingsWindowHandle {
             None
         };
         self.shell
-            .pump_finish(mapped, capture, &self.view_invalidated)
+            .pump_finish(mapped, capture, &self.mailbox.view_invalidated)
     }
 }
 #[cfg(test)]
 mod tests {
     use iced::{Event, Point, keyboard, mouse};
+    use std::sync::atomic::AtomicBool;
     use tao::{dpi::PhysicalPosition, event::WindowEvent};
 
-    use super::*;
     use crate::aux::native::adapt_event;
     use crate::convert::{FeedContext, feed_domain_event};
 

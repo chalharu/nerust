@@ -1,6 +1,6 @@
 //! Settings page builders: one function per dialog page plus
 //! the small widget helpers they share. State manipulation stays in
-//! [`super::program`]; this module only reads state and builds widgets.
+//! the shared settings controller; this module only reads state and builds widgets.
 
 use iced::{
     Alignment, Length, Theme,
@@ -252,61 +252,13 @@ impl SettingsAppState {
     }
 
     fn notifications_page(&self) -> El<'_> {
-        use nerust_settings_core::model::local::{
-            NotificationAreaMode, NotificationColor, NotificationPosition,
-        };
         let view = self.vm.notifications.view.get();
         let language = self.language();
-        let colors = vec![
-            ChoiceView {
-                value: NotificationColor::White,
-                label: ui_text(language, UiText::ColorWhite).to_string(),
-            },
-            ChoiceView {
-                value: NotificationColor::Yellow,
-                label: ui_text(language, UiText::ColorYellow).to_string(),
-            },
-            ChoiceView {
-                value: NotificationColor::Red,
-                label: ui_text(language, UiText::ColorRed).to_string(),
-            },
-            ChoiceView {
-                value: NotificationColor::Green,
-                label: ui_text(language, UiText::ColorGreen).to_string(),
-            },
-            ChoiceView {
-                value: NotificationColor::Cyan,
-                label: ui_text(language, UiText::ColorCyan).to_string(),
-            },
-        ];
-        let positions = vec![
-            ChoiceView {
-                value: NotificationPosition::TopLeft,
-                label: ui_text(language, UiText::PosTopLeft).to_string(),
-            },
-            ChoiceView {
-                value: NotificationPosition::TopRight,
-                label: ui_text(language, UiText::PosTopRight).to_string(),
-            },
-            ChoiceView {
-                value: NotificationPosition::BottomLeft,
-                label: ui_text(language, UiText::PosBottomLeft).to_string(),
-            },
-            ChoiceView {
-                value: NotificationPosition::BottomRight,
-                label: ui_text(language, UiText::PosBottomRight).to_string(),
-            },
-        ];
-        let areas = vec![
-            ChoiceView {
-                value: NotificationAreaMode::Overlay,
-                label: ui_text(language, UiText::AreaOverlay).to_string(),
-            },
-            ChoiceView {
-                value: NotificationAreaMode::Strip,
-                label: ui_text(language, UiText::AreaStrip).to_string(),
-            },
-        ];
+        let nerust_frontend_host::settings::NotificationChoices {
+            colors,
+            positions,
+            areas,
+        } = nerust_frontend_host::settings::NotificationChoices::new(language);
         // One section per level plus display/status groups, so each
         // control's scope reads off its header (Apple HIG grouping).
         // Error presentation is an exclusive pair: modal dialog XOR

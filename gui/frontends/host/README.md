@@ -8,12 +8,15 @@ OSD 結線、settings の寿命管理を toolkit 非依存にできた。
 **状態所有権も共通ホストへ移した**。
 追加検証ではdebuggerのnavigation／入力／watch／freeze／bookmarkの状態とreducerも
 共有し、GTKの共通期限をGLibの起床に接続した。
+さらにTaoに残っていたsession／pause／focus／flight／同期gateを所有する
+`ApplicationHost`と、設定画面の全操作状態を所有する`SettingsController`へ移管した。
 
 **設計判断は「共通ホストが状態とevent/effect・ターン・期限を所有し、nativeは
 OS pump・配置・binding・副作用の実行を担当する」を採用する。**
 単一のOSメッセージポンプや汎用widget treeへの統合は採用しない。
-ただし、**この方式だけではフロントエンド全体の大幅削減にはならない**。
-全Rust物理行数はnative側合計5.3%減、共通側込みでは13.9%増となった。
+**部品を共通化するだけでなく、その所有者と遷移も移せばTaoはさらに削減できる**。
+Taoは前回commitから1,823行減、試作開始前から4,091行（22.9%）減となった。
+全Rust物理行数はnative側合計12.3%減、共通側込みでは16.0%増となった。
 制御の重複排除と「総保守コード量の削減」は別の評価であり、後者の成功とは判定しない。
 これは採用境界と限界を確認した動作するプロトタイプで、完成済みの全画面移行ではない。
 
@@ -33,6 +36,8 @@ OS 固有の起動・終了、UI スレッド制約を無理に共通 loop に�
 
 | モジュール | 共通側が所有するもの | native adapter に残すもの |
 | --- | --- | --- |
+| `application` | session、pause所有権、focus効果適用、frame/retry、debug flightとscheduleの実行、menu/title/history同期gate、fullscreen遷移、close/flush/redraw状態 | OS資源、ROM loaderの実装、表示結果の反映、teardown資源操作 |
+| `settings` | VM、ページ／タブ／入力セクション、保存先入力、エラー、capture、submit/cancel、共通mailboxとrevision購読、選択肢catalog | widget配置／signal変換、folder picker effectの実行 |
 | `aux` | `AuxWindows<N,H>` の開閉予約、存在、世代ID、native routing、handle格納、重複／古い完了の拒否 | 窓の生成／再表示／破棄、native surface の生存確認、signal変換 |
 | `focus` | `FocusCoordinator` のmain-active／pending／protocol-pause状態とburst-end判定 | native focus通知の変換、pause effectの適用 |
 | `debug_schedule` | open要求の集約、最後のdrain pause、記憶座標、live周期・起床関心・thread登録 | timer／event送信、native窓の配置 |
@@ -43,8 +48,8 @@ OS 固有の起動・終了、UI スレッド制約を無理に共通 loop に�
 | `frame` | settings／slots の Arc 寿命、変更時のみの chrome 再構築、OSD 派生設定、毎回新しい tick | native geometry の取得 |
 | `osd` | 通知 pump、modal ACK 後の継続判断、strip 計算、presenter／raster／renderer sink 結線、描画先無効化 | 実ダイアログ、ACK 通知、modal pause effect の適用 |
 
-`SessionDriver` は既存の `SessionHandle`／`PausePolicy` を借用する。
-prototype のために全セッションを二重所有する巨大な application object は作らない。
+Taoでは`ApplicationHost`が唯一の`SessionHandle`／`PausePolicy`を所有する。
+借用型`SessionDriver`は既存GTK経路でも使用でき、全セッションを二重所有しない。
 `impl_session_controls!` は既存 shell の narrow trait に対する互換配線で、業務判断は
 `SessionEvent` に集約している。
 
@@ -62,7 +67,7 @@ ROM picker、historyの一部操作、native resize／destroy などは従来の
 ### 補助窓の状態所有権（追加試作）
 
 初回はTaoのroute tableとGTKの個別`Option`が存在の真実だった。
-今回はその重複をなくし、両者が共通の`AuxWindows<N,H>`を使用する。
+その重複をなくし、両者が共通の`AuxWindows<N,H>`を使用する。
 `N`はnative identity、`H`はadapterの窓controller／GTK resource。
 共通側が格納と寿命の判断を所有するが、`H`のnative操作はadapterのみが行う。
 
@@ -86,6 +91,46 @@ GTKはDebugger／History／Settingsをメイン窓の同じregistryへ、PPUをd
 Taoの`runtime/debug_windows.rs`は互換re-exportのみとなった。
 focus通知順序や250ms live周期は維持し、GTKに新たなauto-pause動作は追加していない。
 これは全frontendの振る舞いを強制的に同一化する変更ではない。
+
+### Taoに残っていた状態所有者の移管（追加検証）
+
+前段では共通の状態部品をTaoが個別に所有し、その結線と遷移処理もTaoに残していた。
+したがって「状態部品を切り出せば、残りは配置だけ」という前段の評価は不十分だった。
+今回は所有者そのものを共通化して、nativeの転送メソッド群も削除した。
+
+| 対象 | 以前 | 現在 |
+| --- | --- | --- |
+| Tao `HostState` | 14フィールドでsession／pause／focus／debug／cache等を個別所有 | 7フィールド。`ApplicationHost`とnative資源・OSD adapter |
+| Tao `WindowCluster` | native windowにclose状態／pending fullscreenを併置 | native window／content areaのみ |
+| Tao `SettingsAppState` | 11フィールドでVM／選択／入力／エラー／完了状態を所有 | `SettingsController`一つのみ |
+| debug flight | Taoがqueue／live flightを直接poll・開始・完了調停 | 共通`DebugRuntime`が実行、nativeは`DebugView`で結果を表示 |
+| settings update | Tao内の編集・検証・capture・submit分岐 | 共通`SettingsEvent`。nativeはfolder picker effectを実行して結果eventを返す |
+
+`ApplicationHost`は次を**状態と処理をまとめて**所有する。
+
+- SessionHandle／PausePolicy／FocusCoordinator。focus効果のpause適用、load前後の
+   pause再調停、settings／modal／userの合成を同じ境界で実行する。
+- DebugSchedule／DrainQueue／live flight。開始時のpause action処理、epoch、FIFO、
+   完了時のpause truth、live周期・起床関心まで共通側が進める。
+   Taoはflightを個別に取り出したりqueueへ直接書き込んだりしない。
+- FrameCache／RenderRetry／redraw、menu/title/historyの変更gate、fullscreenのtarget待ち、
+   main liveness、closeの一回限りentryとflush guard。
+   native teardownはrenderer→OSD/aux→flight→main window→flushの順序を維持する。
+
+privateな制御fieldをTaoへ再公開せず、操作メソッドを通す。`session()`は既存shellへの
+共有参照であり、内部可変のdebug操作も含むため、厳密な読み取り専用capabilityではない。
+通常のapplication操作は共通ホストのpolicy-awareメソッドを使う契約とする。
+
+`SettingsController`は既存VMを唯一のdraftとし、独自snapshotの二重編集はしない。
+close/apply/repaintのmailboxも共通所有し、native側のcloneは同じ格納先を参照する。
+VM revisionだけでなく、ページ／入力／エラー等のlocal変更でもinvalidationする。
+検証失敗ではcloseもapply公開もせず、picker取消では既存値を維持する。
+Iced固有のviewメソッドは一つのcontrollerを包む薄い型へ残した。
+
+`host/{chrome,close,debug,focus}.rs`と`runtime/debug_windows.rs`の旧実装ファイルは削除した。
+共通側へ移した純粋テストは残し、native接続テストも維持する。
+この追加検証はTaoへの適用であり、GTKは新しいApplicationHost／SettingsControllerには
+まだ移行していない。共通側はTao／GTK／Iced／rfdへ依存しない。
 
 ### Debugger の表示状態と入力判断（最終試作）
 
@@ -166,6 +211,8 @@ GTK の debugger は別窓の timer で共通 `DrainQueue` を進めるため、
 debug port は no-op。250ms live timer、menu／title の周期は完全には揃えていない。
 focus調停の実装は共通化したがGTKには従来どおりauto-pauseを適用しない。
 File picker・About・modalのnative resource格納は未統合。
+TaoにもOSDの通知／layer部品を結ぶサービスとnative ACK receiver、PPUのIced image cache、
+widget／renderer／OS入力状態は残る。すべての状態がnativeから消えたとは扱わない。
 Tao bridgeのspaces／language metadataは不変で、異なるspacesへの変更は窓の再作成が必要。
 全native callbackの共通化、全frontendの振る舞い統一を完了したとは扱わない。
 GTKの非表示中の**既知の期限**の実行は検証したが、期限がない状態へ新着通知を届ける
@@ -178,24 +225,25 @@ worker→UI-thread postの全経路は統合していない。通知遅延／消
    owned／split-lockのどちらも同じreducerで動くことを確認できた。
 2. **OS pumpの一本化を削減の前提にしない。** 共通turn／期限決定とnativeのwake／postを
    分ければ接続できる。GTKのUI thread／frame clockをTaoのloopへ従属させる必要はない。
-3. **「極薄」を業務判断がないViewという意味で目指す。** settingsは既存observable VM、
-   debuggerは今回の共通modelを使い、nativeはsnapshot反映・signal変換・配置を担当する。
+3. **「極薄」を業務判断がないViewという意味で目指す。** settingsは共通controllerと
+   既存observable VM、debuggerは共通modelを使い、nativeはsnapshot反映・signal変換・配置を担当する。
    この意味の薄さは成立するが、nativeコードが小さくなることと同義ではない。
-4. **大幅な行数削減の仮説は、この試作では不成立。** 残る大量のwidget配置・binding・
-   renderer／native lifetime glueは、event loop共有では消えない。
+4. **Taoは状態所有者の共通化で追加削減できた。** 前段からさらに11.7%減り、初期比22.9%減。
+   ただし残る大量のwidget配置・binding・renderer／native lifetime glueはevent loop共有では消えない。
    さらに物理量を削るなら画面別bindingの生成や宣言的schema等を別途評価する必要があるが、
    汎用virtual widget frameworkの新設を本試作から正当化はしない。
 
 したがって、このプロトタイプは**制御境界の検証として採用、総量削減の達成例としては不採用**。
 ネイティブ化ではこの契約を土台に画面単位で移行し、配置コードを無理に共通化しない。
 合格条件は「同じevent traceが同じeffect」「新frontendが調停を再実装しない」も含め、
-物理行数とは独立して追跡する。追加の切り出しだけで大幅削減できると期待し続けない。
+物理行数とは独立して追跡する。制御状態がnativeに残るかを点検せずに、
+「残りは配置だから削れない」と早期に結論しない。一方、総量削減とは混同しない。
 
 ## 検証
 
-Linux／Xvfb で実施。共通ホスト102件、Tao257件、GTK74件、**合計433件が成功**。
+Linux／Xvfb で実施。共通ホスト147件、Tao223件、GTK74件、**合計444件が成功**。
 共通ホストには Tao から移した既存 frame／focus／debug scheduleテストを含む。
-debuggerの純粋ロジック／bridgeテストも共通側へ移しており、Taoの件数減は回帰削除ではない。
+debugger／application／settingsの純粋ロジックも共通側へ移しており、Taoの件数減は回帰削除ではない。
 GTK は初期化スレッド制約に合わせ、74件を各1プロセスで実行し、display skip は0件。
 既存harnessにはGApplication startup前の窓生成に伴うGtk-CRITICAL診断が残る。
 設定の重複終了／失敗 rollback、実 NES の差し替え、古い drain の破棄、順序保証、
@@ -208,6 +256,9 @@ Settings終了時のModal所有権維持も検証した。
 list／scroll維持、freeze解除ラベルも検証した。
 GLibの早い期限の保持／差替え／取消／Drop、非表示中の実OSD期限の消化、
 借用競合後の再起床、modal map通知中の再入と連続ACKは実native contextで検証した。
+追加移管では、common-ownedなfocus/modal/settingsの合成と実ROM置換、flight取消と
+古いqueue破棄、drain後のlive起床関心、fullscreenの過渡状態、終了時のflush一回限り、
+履歴gateの言語／sequence／再open、settingsの検証失敗・picker取消・capture・local invalidationも確認した。
 
 - `cargo test --offline -p nerust_frontend_host -p nerust_tao --lib`
 - `cargo test --offline -p nerust_gtk --lib --no-run` の artifact を Xvfb 上で各 test ごとに
@@ -230,14 +281,22 @@ GLibの早い期限の保持／差替え／取消／Drop、非表示中の実OSD
 
 | 対象 | 変更前 | 変更後 | 増減 | 削減率 |
 | --- | ---: | ---: | ---: | ---: |
-| Tao | 17,835 | 15,567 | -2,268 | 12.7% |
+| Tao | 17,835 | 13,744 | -4,091 | 22.9% |
 | GTK | 8,081 | 8,982 | +901 | **11.1%増** |
-| 新規共通 host | 0 | 4,970 | +4,970 | — |
-| 合計 | 25,916 | 29,519 | +3,603 | **13.9%増** |
+| 新規共通 host | 0 | 7,346 | +7,346 | — |
+| 合計 | 25,916 | 30,072 | +4,156 | **16.0%増** |
 
-native frontendからは合計1,367行（5.3%）減ったが、回帰テストと新しいadapter／契約を
+native frontendからは合計3,190行（12.3%）減ったが、回帰テストと新しいadapter／契約を
 加えたため、**共通側を含めた総ソースは増えている**。
-前段の状態所有権移管commit時点はnative側604行減／合計2,552行増だった。
-最終試作ではTaoがさらに1,397行減、GTKは起床adapterと回帰テスト等で634行増、
-共通側は1,814行増となった。テストの移動／追加も含むため、production-only削減率ではない。
+前回commit `49d568ae`との比較は`--base 49d568ae`で再現できる。
+
+| 対象 | 前回 | 今回 | 増減 |
+| --- | ---: | ---: | ---: |
+| Tao | 15,567 | 13,744 | -1,823（11.7%減） |
+| GTK | 8,982 | 8,982 | 0 |
+| 共通 host | 4,970 | 7,346 | +2,376 |
+| 合計 | 29,519 | 30,072 | +553（1.9%増） |
+
+Tao単体の追加削減は実際に得られた一方、共通側を含む合計は553行増。
+テストの移動／追加も含むため、production-only削減率ではない。
 テストを除いた率をこの表から推定せず、所有する責務の統合とは分けて評価する。
