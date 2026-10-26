@@ -279,5 +279,18 @@ mod choices_tests {
         assert_eq!(view.color_choices.len(), 5);
         assert_eq!(view.position_choices.len(), 4);
         assert_eq!(view.area_mode_choices.len(), 2);
+        // Order is the toolbar contract: index selection depends on it.
+        assert_eq!(
+            view.color_choices[0].value,
+            nerust_settings_core::model::local::NotificationColor::White
+        );
+        assert_eq!(
+            view.position_choices[0].value,
+            nerust_settings_core::model::local::NotificationPosition::TopLeft
+        );
+        assert_eq!(
+            view.area_mode_choices[0].value,
+            nerust_settings_core::model::local::NotificationAreaMode::Overlay
+        );
     }
 }
