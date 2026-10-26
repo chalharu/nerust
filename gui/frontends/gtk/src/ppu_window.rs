@@ -6,8 +6,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::DebugPanel;
+use nerust_gui_viewmodel::debugger::tile_hover_text;
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, format_panels, scale2x_nearest};
-use nerust_settings_core::i18n::{UiText, text, tile_hover};
+use nerust_settings_core::i18n::{UiText, text};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::State;
@@ -149,20 +150,7 @@ impl PpuWindowCore {
     }
 }
 
-/// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
-/// tile start (+16 per tile). Same geometry as the tao viewer.
-fn tile_hover_text(
-    language: AppLanguage,
-    label: &str,
-    width: u32,
-    height: u32,
-    x: f64,
-    y: f64,
-) -> String {
-    let (idx, sx, sy) = nerust_gui_viewmodel::debugger::tile_hover_geometry(width, height, x, y);
-    tile_hover(language, label, idx, sx, sy, idx * 16)
-}
-
+/// Tile hover line shared via viewmodel (`tile_hover_text`).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,7 +158,14 @@ mod tests {
     #[test]
     fn tile_hover_matches_tao_geometry() {
         assert_eq!(
-            tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
+            nerust_gui_viewmodel::debugger::tile_hover_text(
+                AppLanguage::English,
+                "Pattern left",
+                128,
+                128,
+                88.0,
+                26.0
+            ),
             "Pattern left tile #21 (px 44,13, +0x0150)"
         );
     }
