@@ -18,7 +18,7 @@ use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, Subscription,
     dto::{
         AudioView, BindingRowView, BindingValueView, ChoiceView, ControllerSlotView, GeneralView,
-        InputTabView, NotificationView, SystemTabView, VideoView, choice_position, find_choice,
+        InputTabView, NotificationView, SystemTabView, VideoView, choice_position,
     },
 };
 
