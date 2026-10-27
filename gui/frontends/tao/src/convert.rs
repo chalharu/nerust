@@ -111,7 +111,9 @@ pub(crate) fn feed_domain_event(
             Some(iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key: logical.clone(),
                 modified_key: logical,
-                physical_key: iced::keyboard::key::Physical::Code(key.into()),
+                physical_key: iced::keyboard::key::Physical::Code(crate::keyboard::code_from_key(
+                    key,
+                )),
                 modifiers: *modifiers,
                 location: iced::keyboard::Location::Standard,
                 text: produced,
@@ -123,7 +125,9 @@ pub(crate) fn feed_domain_event(
             Some(iced::Event::Keyboard(iced::keyboard::Event::KeyReleased {
                 key: logical.clone(),
                 modified_key: logical,
-                physical_key: iced::keyboard::key::Physical::Code(key.into()),
+                physical_key: iced::keyboard::key::Physical::Code(crate::keyboard::code_from_key(
+                    key,
+                )),
                 modifiers: *modifiers,
                 location: iced::keyboard::Location::Standard,
             }))
@@ -485,9 +489,9 @@ mod tests {
         // The exhaustive physical table lives on `Key`: iced codes
         // convert back without loss (except the known Plus gap).
         for key in [Key::KeyA, Key::Enter, Key::F4, Key::Numpad9, Key::Hiragana] {
-            let code: iced::keyboard::key::Code = key.into();
+            let code = crate::keyboard::code_from_key(key);
             let physical = iced::keyboard::key::Physical::Code(code);
-            let round_trip: Key = physical.try_into().expect("round trip");
+            let round_trip: Key = crate::keyboard::key_from_physical(physical).expect("round trip");
             assert_eq!(key, round_trip);
         }
     }

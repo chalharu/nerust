@@ -3503,6 +3503,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_settings_core",
  "nerust_system_traits",
+ "wakui",
 ]
 
 [[package]]
@@ -3743,11 +3744,7 @@ dependencies = [
 name = "nerust_keyboard"
 version = "0.1.0-dev"
 dependencies = [
- "gdk4",
- "iced",
- "serde",
- "strum",
- "thiserror 2.0.21",
+ "wakui",
 ]
 
 [[package]]
@@ -6457,6 +6454,14 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wakui"
+version = "0.1.0-dev"
+dependencies = [
+ "serde",
+ "strum",
+]
 
 [[package]]
 name = "walkdir"
