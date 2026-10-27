@@ -39,9 +39,10 @@ impl SettingsWindowHandle {
             view_invalidated: Arc::clone(&mailbox.view_invalidated),
         };
         let (instance, _task) = program::Instance::new(program);
+        let title = instance.title(iced::window::Id::unique());
         let surface = AuxSurface::open(
             event_loop,
-            "Preferences",
+            &title,
             (960.0, 720.0),
             None,
             None,
