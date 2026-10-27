@@ -4037,7 +4037,6 @@ dependencies = [
  "nerust_keyboard",
  "nerust_nes_factory",
  "nerust_persistence",
- "nerust_render_osd",
  "nerust_render_traits",
  "nerust_run_options",
  "nerust_settings_core",

@@ -20,24 +20,23 @@ use nerust_frontend_host::{
     frame::FrameCtx,
     loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn},
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
-    osd::{ModalAdvance, ModalPresentation, ModalToken, OsdNotifications},
+    osd::{ModalAdvance, ModalPresentation, ModalPresenter, OsdVisitor},
     widgets::MenuPresenter,
 };
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
 };
 use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
+use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
 
 struct Common {
     app: ApplicationHost,
-    osd: OsdNotifications,
     debugger: DebuggerDriver,
 }
 
 impl Drop for Common {
     fn drop(&mut self) {
         self.app.begin_close();
-        self.osd.close();
         self.app.close_debug_flights();
         self.app.finish_close();
     }
@@ -101,36 +100,69 @@ impl EventSink for NativeEvents {
     }
 }
 
-// A real adapter creates a dialog and wires its response callback here. This
-// deliberately responds synchronously: no controller borrow may span this call.
-fn present_modal(
-    effect: ModalPresentation,
-    on_response: impl FnOnce(ModalToken) -> ModalAdvance,
-) -> ModalAdvance {
-    println!("native modal: {}", effect.detail);
-    on_response(effect.token)
+struct NativeOsd(Rc<RefCell<Common>>);
+
+impl OsdVisitor for NativeOsd {
+    fn reserved_strip(&mut self, _strip: ReservedStrip) {
+        assert!(self.0.try_borrow_mut().is_ok());
+    }
+    fn layer(&mut self, _layer: Option<OsdLayer>) {
+        assert!(self.0.try_borrow_mut().is_ok());
+    }
 }
 
-impl NativeAdapter {
-    fn deliver_modals(&mut self, mut next: Option<ModalPresentation>) {
+// Real adapters create a dialog and wire its response callback here. Deliberate
+// synchronous responses prove no controller borrow spans native presentation.
+struct NativeModals {
+    common: Rc<RefCell<Common>>,
+    presented: std::cell::Cell<usize>,
+}
+
+impl ModalPresenter for NativeModals {
+    fn present_modal(
+        &self,
+        presentation: ModalPresentation,
+    ) -> Option<std::sync::mpsc::Receiver<()>> {
+        let mut next = Some(presentation);
         while let Some(effect) = next {
-            let common = Rc::clone(&self.common);
-            let advance = present_modal(effect, move |token| {
-                // Reenter the same Rc<RefCell> from the native response callback.
-                let mut state = common.borrow_mut();
-                let Common { app, osd, .. } = &mut *state;
-                assert!(app.pause_held());
-                assert!(osd.take_modal().is_none(), "no overlapping dialogs");
-                let advance = app.acknowledge_modal(osd, token);
-                assert_eq!(app.acknowledge_modal(osd, token), ModalAdvance::Ignored);
+            println!("native modal: {}", effect.detail);
+            self.presented.set(self.presented.get() + 1);
+            let advance = {
+                let mut state = self.common.borrow_mut();
+                assert!(state.app.pause_held());
+                assert!(state.app.osd_modal_pending());
+                let advance = state.app.acknowledge_osd_modal(effect.token);
+                assert_eq!(
+                    state.app.acknowledge_osd_modal(effect.token),
+                    ModalAdvance::Ignored
+                );
                 advance
-            });
-            self.modals += 1;
-            // The callback borrow has ended before another dialog can be shown.
+            };
             next = match advance {
                 ModalAdvance::Present(effect) => Some(effect),
                 ModalAdvance::Drained | ModalAdvance::Ignored => None,
             };
+        }
+        None // GTK-style callback delivery; workers return Some(receiver).
+    }
+}
+
+impl NativeAdapter {
+    fn deliver_modals(&mut self, effect: Option<ModalPresentation>) {
+        if let Some(effect) = effect {
+            let native = NativeModals {
+                common: self.common.clone(),
+                presented: std::cell::Cell::new(0),
+            };
+            let token = effect.token;
+            let port: &dyn ModalPresenter = &native;
+            if let Some(receiver) = port.present_modal(effect) {
+                self.common
+                    .borrow_mut()
+                    .app
+                    .attach_osd_modal_receiver(token, receiver);
+            }
+            self.modals += native.presented.get();
         }
     }
 }
@@ -196,16 +228,21 @@ impl LoopHost for NativeAdapter {
         }
     }
     fn pump_osd(&mut self, ctx: &FrameCtx) -> WakeNeed {
-        let effect = {
-            let mut state = self.common.borrow_mut();
-            let Common { app, osd, .. } = &mut *state;
-            app.pump_notifications(osd, ctx, Instant::now());
-            osd.take_modal()
-        };
-        self.deliver_modals(effect);
+        let now = Instant::now();
+        let turn = self.common.borrow_mut().app.pump_osd(ctx, now);
+        self.deliver_modals(turn.modal);
+        let update =
+            self.common
+                .borrow_mut()
+                .app
+                .prepare_osd(SurfaceSize::new(320, 240), 480, ctx, now);
+        let mut native = NativeOsd(self.common.clone());
+        let port: &mut dyn OsdVisitor = &mut native;
+        update.visit(port);
         let state = self.common.borrow();
         WakeNeed {
-            osd_deadline: state.osd.wakeup_deadline(Instant::now()),
+            osd_deadline: state.app.osd_wakeup(Instant::now()),
+            flight_pending: state.app.osd_flight_pending(),
             ..Default::default()
         }
     }
@@ -270,7 +307,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut native = NativeAdapter {
         common: Rc::new(RefCell::new(Common {
             app: ApplicationHost::new(session),
-            osd: OsdNotifications::new(),
             debugger,
         })),
         redraws: 0,
@@ -310,7 +346,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = native.common.borrow();
         assert!(!state.debugger.pending());
         assert!(!state.app.tick().loaded);
-        assert!(!state.osd.modal_pending());
+        assert!(!state.app.osd_modal_pending());
         assert!(!state.app.pause_held());
     }
     native.common.borrow_mut().app.note_main_arrival();
