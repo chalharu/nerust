@@ -7,9 +7,12 @@ use iced::{
         text_input,
     },
 };
-use nerust_frontend_host::control::{
-    Control, ControlDisplay, ControlInput, ControlKind, ControlMetadata, ControlScreen,
-    ControlVisitor, Layout, LayoutKind, Page, Tab, Tabs,
+use nerust_frontend_host::{
+    control::{
+        Control, ControlDisplay, ControlInput, ControlKind, ControlMetadata, ControlScreen,
+        ControlVisitor, Layout, LayoutKind, Page, Tab, Tabs,
+    },
+    mapper::{PropertyUpdate, map_updates},
 };
 
 use super::bindings::{El, Message};
@@ -316,17 +319,32 @@ impl ControlVisitor for IcedControlVisitor {
     }
 }
 
+/// Framework-mapper chrome snapshot: enabled, label, display.
+/// Kind drives construction; accessibility/help stay unread (no hover).
+fn chrome(control: &Control) -> (bool, String, ControlDisplay) {
+    let mut enabled = true;
+    let mut label = control.label.clone();
+    let mut display = control.display;
+    for update in map_updates(None, control) {
+        match update {
+            PropertyUpdate::SetEnabled(v) => enabled = v,
+            PropertyUpdate::SetLabel(t) => label = t.to_owned(),
+            PropertyUpdate::SetDisplay(d) => display = d,
+            _ => {}
+        }
+    }
+    (enabled, label, display)
+}
+
 /// Page selector: radio group, one dot per page. Master parity;
 /// page selects are always enabled, so the radio is unconditional
 /// and re-selecting the current page stays a harmless no-op.
 fn page_radio(control: &Control, selected: bool) -> El<'static> {
     let id = control.id;
-    radio(
-        control.label.clone(),
-        id,
-        selected.then_some(id),
-        move |id| Message::new(id, ControlInput::Activate),
-    )
+    let (_, label, _) = chrome(control);
+    radio(label.to_owned(), id, selected.then_some(id), move |id| {
+        Message::new(id, ControlInput::Activate)
+    })
     .into()
 }
 
@@ -334,14 +352,15 @@ fn page_radio(control: &Control, selected: bool) -> El<'static> {
 /// fill when selected. Deliberately not master blue pills; the track
 /// reads as one segmented control instead of scattered buttons.
 fn tab_segment(control: &Control, selected: bool, enabled: bool) -> El<'static> {
-    button(text(control.label.clone()))
+    let (own_enabled, label, _) = chrome(control);
+    button(text(label.to_owned()))
         .style(if selected {
             button::primary
         } else {
             button::text
         })
         .on_press_maybe(
-            (enabled && control.metadata.enabled && !selected)
+            (enabled && own_enabled && !selected)
                 .then(|| Message::new(control.id, ControlInput::Activate)),
         )
         .into()
@@ -360,17 +379,18 @@ impl std::fmt::Display for Choice {
 }
 
 fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) -> El<'static> {
-    let enabled = parent_enabled && control.metadata.enabled;
+    // All chrome decisions flow through the framework mapper; the kind
+    // drives construction. Immediate mode has no patch step, so the full
+    // list is folded here. Accessibility/help stay unread: Tao has no hover
+    // affordance (GTK parity: tooltip only).
+    let (own_enabled, label, display) = chrome(control);
+    let enabled = parent_enabled && own_enabled;
     let id = control.id;
     let input = move |value| Message::new(id, value);
-    let label = || {
-        text(control.label.clone())
-            .font(font)
-            .width(Length::Fixed(220.0))
-    };
+    let label_text = || text(label.clone()).font(font).width(Length::Fixed(220.0));
     let element: El<'static> = match &control.kind {
         ControlKind::Toggle { value } => checkbox(*value)
-            .label(control.label.clone())
+            .label(label.to_owned())
             .on_toggle_maybe(enabled.then_some(move |v| input(ControlInput::Bool(v))))
             .into(),
         ControlKind::Choice { choices, selected } => {
@@ -403,7 +423,7 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
                 }
                 style
             });
-            row![label(), super::disabled::gate(pick.into(), enabled)]
+            row![label_text(), super::disabled::gate(pick.into(), enabled)]
                 .spacing(12)
                 .into()
         }
@@ -434,7 +454,7 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
                     style
                 });
             row![
-                label(),
+                label_text(),
                 super::disabled::gate(native.into(), enabled),
                 text(formatted.clone()).font(font)
             ]
@@ -454,7 +474,7 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
                 .on_input_maybe(
                     enabled.then_some(move |v| Message::new(edit_id, ControlInput::Text(v))),
                 );
-            let mut items = row![label(), super::disabled::gate(edit.into(), enabled)]
+            let mut items = row![label_text(), super::disabled::gate(edit.into(), enabled)]
                 .spacing(12)
                 .align_y(Alignment::Center);
             if let Some(browse) = browse_label {
@@ -471,7 +491,7 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
             clear_label,
             ..
         } => row![
-            label(),
+            label_text(),
             text(value.clone()).font(font).width(Length::Fill),
             button(text(change_label.clone()).font(font))
                 .on_press_maybe(enabled.then(|| input(ControlInput::Activate))),
@@ -481,8 +501,8 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
         .spacing(12)
         .align_y(Alignment::Center)
         .into(),
-        ControlKind::Action => button(text(control.label.clone()).font(font))
-            .style(if control.display == ControlDisplay::Primary {
+        ControlKind::Action => button(text(label.to_owned()).font(font))
+            .style(if display == ControlDisplay::Primary {
                 button::primary
             } else {
                 button::secondary
@@ -490,17 +510,17 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
             .on_press_maybe(enabled.then(|| input(ControlInput::Activate)))
             .into(),
         ControlKind::Note { text: value } => {
-            let note = text(value.clone()).font(font).size(
-                if control.display == ControlDisplay::Heading {
+            let note = text(value.clone())
+                .font(font)
+                .size(if display == ControlDisplay::Heading {
                     16
                 } else {
                     13
-                },
-            );
-            if control.label.is_empty() {
+                });
+            if label.is_empty() {
                 note.into()
             } else {
-                row![label(), note].spacing(12).into()
+                row![label_text(), note].spacing(12).into()
             }
         }
     };

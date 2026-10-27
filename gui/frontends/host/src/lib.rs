@@ -59,6 +59,7 @@ pub mod focus;
 pub mod frame;
 pub mod history;
 pub mod loop_driver;
+pub mod mapper;
 pub mod menu;
 pub mod osd;
 pub mod session;
