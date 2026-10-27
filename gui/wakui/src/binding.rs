@@ -1,5 +1,9 @@
 //! Generic view/binder contracts shared by every domain.
-//! Phase 1: host-internal. Phase 2: move to the `wakui` framework crate.
+//! Implemented by view definitions (`SettingsScreen`, `HistoryModel`),
+//! bound instances (`SettingsController`, `HistorySession`) and native
+//! picker sinks. See the `wakui` separation design for the full picture.
+
+use crate::control::{ControlId, Id};
 
 /// Pure view side: input validation and domain-event mapping.
 /// Native code and controller ownership never appear here.
@@ -25,4 +29,11 @@ pub trait BindingTarget {
 pub trait Invalidatable {
     fn invalidate(&self);
     fn take_invalidated(&self) -> bool;
+}
+
+/// File-picker result delivery. The framework owns request correlation,
+/// but never names filesystem paths: the payload type stays generic so
+/// platform adapters depend only on `wakui`, not on view definitions.
+pub trait PickerSink<Payload> {
+    fn submit(&mut self, target: ControlId, request: Id, payload: Option<Payload>);
 }

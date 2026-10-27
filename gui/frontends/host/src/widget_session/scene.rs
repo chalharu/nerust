@@ -504,7 +504,6 @@ pub(super) fn settings_input(
         I::Activate => O::Activate,
         I::CaptureClear => O::CaptureClear,
         I::CaptureKey(v) => O::CaptureKey(v),
-        I::DirectorySelected { .. } => return None,
     })
 }
 
