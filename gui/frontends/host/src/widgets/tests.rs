@@ -3,6 +3,10 @@ use crate::menu::{MenuCommand, MenuEntry, MenuId, MenuItem, Submenu};
 
 fn model(label: &str) -> MenuModel {
     MenuModel {
+        commands: crate::commands::CommandModel {
+            definitions: Vec::new(),
+        },
+        application_menu: None,
         menus: vec![Submenu {
             id: MenuId::File,
             label: label.into(),
@@ -19,7 +23,7 @@ struct Reentrant<'a> {
 }
 
 impl MenuVisitor for Reentrant<'_> {
-    fn begin_model(&mut self, _: bool) {}
+    fn begin_menubar(&mut self, _: &MenuModel, _: bool) {}
     fn begin_menu(&mut self, menu: &Submenu, _: bool) {
         self.labels.push(menu.label.clone());
         if self.reenter {
@@ -30,7 +34,11 @@ impl MenuVisitor for Reentrant<'_> {
     }
     fn item(&mut self, _: &MenuItem) {}
     fn end_menu(&mut self, _: MenuId) {}
-    fn end_model(&mut self) {}
+    fn end_menubar(&mut self) {}
+}
+
+impl crate::commands::CommandVisitor for Reentrant<'_> {
+    fn command(&mut self, _: &crate::commands::CommandDescriptor) {}
 }
 
 #[test]

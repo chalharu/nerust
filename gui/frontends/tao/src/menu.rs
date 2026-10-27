@@ -1,11 +1,17 @@
-use nerust_frontend_host::application::MenuSig;
+use nerust_frontend_host::{application::MenubarUpdate, menu::MenuCapabilities};
 use tao::window::Window as TaoWindow;
+
+pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
+    about: false,
+    dialog_ellipsis: true,
+    application_menu: cfg!(target_os = "macos"),
+};
 
 /// Headless-testable menu surface: production `AppMenu` drives the
 /// native menubar, test recorders observe the syncs. Object-safe so
 /// `HostState` holds it behind `Box<dyn MenuSink>`.
 pub(crate) trait MenuSink {
-    fn update(&mut self, menu: MenuSig);
+    fn update(&mut self, menu: MenubarUpdate);
     fn init_for_window(&self, window: &TaoWindow);
     fn clear_event_handler(&self);
 }
@@ -36,14 +42,15 @@ pub(crate) mod imp {
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuItem, Submenu};
     use nerust_frontend_host::{
-        application::MenuSig,
+        application::MenubarUpdate,
+        commands::{CommandDescriptor, CommandVisitor},
+        event::EventSink,
         menu::{
-            MenuCapabilities, MenuCommand, MenuEntry, MenuId, MenuItem as HostItem, MenuModel,
-            MenuVisitor, NativeRole, Submenu as HostMenu,
+            MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
+            NativeApplicationRole, Submenu as HostMenu,
         },
         widgets::MenuPresenter,
     };
-    use tao::event_loop::EventLoopProxy;
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
     #[cfg(any(
@@ -58,8 +65,7 @@ pub(crate) mod imp {
     use tao::platform::windows::WindowExtWindows;
 
     use super::TaoWindow;
-    use crate::event::MenuCommand as EventCommand;
-    use crate::event::UserEvent;
+    use crate::event::{MenuCommand, UserEvent};
 
     /// Best-effort menu construction: a failed append (torn-down
     /// native menu) logs and leaves a partial menu instead of
@@ -76,30 +82,12 @@ pub(crate) mod imp {
         items: Vec<(MenuId, Option<MenuCommand>, MenuItem)>,
         commands: Arc<RwLock<Vec<(muda::MenuId, MenuCommand)>>>,
         presenter: Rc<MenuPresenter>,
+        application_menu: Option<(Submenu, Vec<NativeApplicationEntry>)>,
     }
 
     impl AppMenu {
-        pub(crate) fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+        pub(crate) fn new(sink: Arc<dyn EventSink + Send + Sync>) -> Self {
             let menu_bar = Menu::new();
-
-            #[cfg(target_os = "macos")]
-            {
-                let app_menu = Submenu::new("App", true);
-                try_append(|| {
-                    app_menu.append_items(&[
-                        &muda::PredefinedMenuItem::about(None, None),
-                        &muda::PredefinedMenuItem::separator(),
-                        &muda::PredefinedMenuItem::services(None),
-                        &muda::PredefinedMenuItem::separator(),
-                        &muda::PredefinedMenuItem::hide(None),
-                        &muda::PredefinedMenuItem::hide_others(None),
-                        &muda::PredefinedMenuItem::show_all(None),
-                        &muda::PredefinedMenuItem::separator(),
-                        &muda::PredefinedMenuItem::quit(None),
-                    ])
-                });
-                try_append(|| menu_bar.append(&app_menu));
-            }
 
             let commands = Arc::new(RwLock::new(Vec::<(muda::MenuId, MenuCommand)>::new()));
             let handler = commands.clone();
@@ -110,10 +98,10 @@ pub(crate) mod imp {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .iter()
                     .find_map(|(id, command)| (event.id() == id).then_some(*command));
-                if let Some(command) = command.and_then(event_command)
-                    && let Err(error) = proxy.send_event(UserEvent::Menu(command))
+                if let Some(command) = command
+                    && !sink.send(UserEvent::Menu(command))
                 {
-                    log::debug!("menu event dropped after loop exit: {error}");
+                    log::debug!("menu event dropped after loop exit");
                 }
             }));
 
@@ -123,6 +111,7 @@ pub(crate) mod imp {
                 items: Vec::new(),
                 commands,
                 presenter: Rc::default(),
+                application_menu: None,
             }
         }
 
@@ -158,20 +147,16 @@ pub(crate) mod imp {
             }
         }
 
-        pub(crate) fn update(&mut self, menu: MenuSig) {
+        pub(crate) fn update(&mut self, update: MenubarUpdate) {
             let presenter = self.presenter.clone();
-            let mut next = presenter.submit(MenuModel::build(
-                &menu,
-                MenuCapabilities {
-                    about: false,
-                    dialog_ellipsis: true,
-                },
-            ));
+            let mut next = presenter.submit(update.menubar);
             while let Some(plan) = next {
                 plan.visit(&mut NativeVisitor {
                     native: self,
                     stack: Vec::new(),
                     root_rebuild: false,
+                    declarations: Vec::new(),
+                    visited_menus: Vec::new(),
                 });
                 next = presenter.complete(plan);
             }
@@ -182,38 +167,70 @@ pub(crate) mod imp {
         }
     }
 
-    fn event_command(command: MenuCommand) -> Option<EventCommand> {
-        Some(match command {
-            MenuCommand::Open => EventCommand::Open,
-            MenuCommand::Close => EventCommand::Close,
-            MenuCommand::Settings => EventCommand::Settings,
-            MenuCommand::Debugger => EventCommand::Debugger,
-            MenuCommand::NotificationHistory => EventCommand::NotificationHistory,
-            MenuCommand::Session(command) => EventCommand::Session(command),
-            MenuCommand::Native(NativeRole::Quit) => EventCommand::Quit,
-            MenuCommand::Native(NativeRole::About) => return None,
-        })
+    fn predefined(entry: NativeApplicationEntry) -> muda::PredefinedMenuItem {
+        use NativeApplicationEntry::{Role, Separator};
+        use NativeApplicationRole as R;
+        use muda::PredefinedMenuItem as P;
+        match entry {
+            Separator => P::separator(),
+            Role(R::About) => P::about(None, None),
+            Role(R::Services) => P::services(None),
+            Role(R::Hide) => P::hide(None),
+            Role(R::HideOthers) => P::hide_others(None),
+            Role(R::ShowAll) => P::show_all(None),
+            Role(R::Quit) => P::quit(None),
+        }
     }
 
     struct NativeVisitor<'a> {
         native: &'a mut AppMenu,
         stack: Vec<(MenuId, bool)>,
         root_rebuild: bool,
+        declarations: Vec<CommandDescriptor>,
+        visited_menus: Vec<MenuId>,
+    }
+
+    impl CommandVisitor for NativeVisitor<'_> {
+        fn command(&mut self, command: &CommandDescriptor) {
+            // Muda routes native IDs directly, not a named action registry.
+            // Declarations still validate each binding and supply enablement.
+            self.declarations.push(*command);
+        }
     }
 
     impl MenuVisitor for NativeVisitor<'_> {
-        fn begin_model(&mut self, rebuild: bool) {
+        fn begin_menubar(&mut self, menubar: &Menubar, rebuild: bool) {
             self.root_rebuild = rebuild;
             if rebuild {
-                // Keep the native standard App submenu on macOS.
-                let start = usize::from(cfg!(target_os = "macos"));
-                for _ in start..self.native.menu_bar.items().len() {
-                    let _ = self.native.menu_bar.remove_at(start);
+                for _ in 0..self.native.menu_bar.items().len() {
+                    let _ = self.native.menu_bar.remove_at(0);
                 }
+            }
+            if let Some(app) = &menubar.application_menu {
+                let (native, entries) = self
+                    .native
+                    .application_menu
+                    .get_or_insert_with(|| (Submenu::new(&app.label, true), Vec::new()));
+                if native.text() != app.label {
+                    native.set_text(&app.label);
+                }
+                if *entries != app.entries {
+                    clear_submenu(native);
+                    for entry in &app.entries {
+                        try_append(|| native.append(&predefined(*entry)));
+                    }
+                    *entries = app.entries.clone();
+                }
+                if rebuild {
+                    try_append(|| self.native.menu_bar.append(native));
+                }
+            } else {
+                self.native.application_menu = None;
             }
         }
 
         fn begin_menu(&mut self, menu: &HostMenu, rebuild: bool) {
+            self.visited_menus.push(menu.id);
             let native = self
                 .native
                 .menus
@@ -243,6 +260,14 @@ pub(crate) mod imp {
         }
 
         fn item(&mut self, item: &HostItem) {
+            let declaration = item.command.and_then(|command| {
+                let (id, argument) = command.binding();
+                self.declarations
+                    .iter()
+                    .find(|d| d.id == id)
+                    .filter(|d| d.bind(argument) == Some(command))
+            });
+            let enabled = item.enabled && declaration.is_some_and(|d| d.enabled);
             let (parent, rebuild) = *self.stack.last().expect("host item parent");
             let native = if let Some((_, _, native)) = self
                 .native
@@ -261,7 +286,7 @@ pub(crate) mod imp {
             if native.text() != item.label {
                 native.set_text(&item.label);
             }
-            native.set_enabled(item.enabled);
+            native.set_enabled(enabled);
             if rebuild {
                 try_append(|| self.native.menus[&parent].append(&native));
             }
@@ -272,7 +297,13 @@ pub(crate) mod imp {
             debug_assert_eq!(ended, Some(id));
         }
 
-        fn end_model(&mut self) {
+        fn end_menubar(&mut self) {
+            self.native
+                .menus
+                .retain(|id, _| self.visited_menus.contains(id));
+            self.native
+                .items
+                .retain(|(id, _, _)| self.visited_menus.contains(id));
             *self
                 .native
                 .commands
@@ -289,7 +320,7 @@ pub(crate) mod imp {
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, menu: MenuSig) {
+        fn update(&mut self, menu: MenubarUpdate) {
             AppMenu::update(self, menu);
         }
 
@@ -312,15 +343,16 @@ pub(crate) mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::{EventCommand, MenuCommand, NativeRole, event_command, try_append};
+        use super::{MenuCommand, try_append};
+        use nerust_frontend_host::commands::MenuCommand as EventCommand;
+        use nerust_frontend_host::commands::NativeRole;
 
         #[test]
-        fn native_roles_route_only_supported_commands() {
-            assert_eq!(
-                event_command(MenuCommand::Native(NativeRole::Quit)),
-                Some(EventCommand::Quit)
-            );
-            assert_eq!(event_command(MenuCommand::Native(NativeRole::About)), None);
+        fn native_commands_are_host_commands_without_conversion() {
+            let command: crate::event::MenuCommand = MenuCommand::Native(NativeRole::Quit);
+            assert_eq!(command, EventCommand::Native(NativeRole::Quit));
+            let about: crate::event::MenuCommand = MenuCommand::Native(NativeRole::About);
+            assert_eq!(about, EventCommand::Native(NativeRole::About));
         }
 
         #[test]
@@ -336,15 +368,18 @@ pub(crate) mod imp {
         fn gtk3_native_visitor_preserves_identity_and_current_routing() {
             use std::{
                 collections::HashSet,
-                rc::Rc,
-                sync::{Arc, RwLock},
+                sync::{Arc, Mutex},
             };
 
             use gtk::prelude::*;
-            use muda::{Menu, MenuItem, MenuItemKind};
-            use nerust_frontend_host::{application::MenuSig, menu::MenuId};
+            use muda::{MenuItem, MenuItemKind};
+            use nerust_frontend_host::commands::SessionCommand as S;
+            use nerust_frontend_host::{
+                application::{MenuSig, MenubarUpdate},
+                event::{EventCommand as HostEvent, EventSink},
+                menu::{MenuId, Menubar},
+            };
             use nerust_gui_runtime::slots::slot_label;
-            use nerust_gui_shell::session::commands::SessionCommand as S;
             use nerust_keyboard::Key;
             use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
             use nerust_settings_core::{
@@ -446,7 +481,7 @@ pub(crate) mod imp {
                         .collect::<Vec<_>>();
                     let slots = sig.slots.to_vec();
                     let shortcuts = sig.shortcuts.to_vec();
-                    menu.update(MenuSig {
+                    let signature = MenuSig {
                         loaded: sig.loaded,
                         paused: sig.paused,
                         slots: slots.clone().into(),
@@ -454,6 +489,10 @@ pub(crate) mod imp {
                         settings_open: sig.settings_open,
                         language: sig.language,
                         shortcuts: shortcuts.into(),
+                    };
+                    menu.update(MenubarUpdate {
+                        menubar: Menubar::build(&signature, crate::menu::TAO_MENU_CAPABILITIES),
+                        signature,
                     });
                     let roots = menu.menu_bar.items();
                     assert_eq!(roots.len(), 2);
@@ -483,7 +522,10 @@ pub(crate) mod imp {
                         (C::Open, EventCommand::Open),
                         (C::Close, EventCommand::Close),
                         (C::Settings, EventCommand::Settings),
-                        (C::Native(NativeRole::Quit), EventCommand::Quit),
+                        (
+                            C::Native(NativeRole::Quit),
+                            EventCommand::Native(NativeRole::Quit),
+                        ),
                         (C::Debugger, EventCommand::Debugger),
                         (C::NotificationHistory, EventCommand::NotificationHistory),
                     ];
@@ -574,7 +616,8 @@ pub(crate) mod imp {
                         let native = item(menu, command);
                         let routed = routes.iter().find(|(id, _)| id == native.id()).unwrap().1;
                         assert_eq!(routed, command);
-                        assert_eq!(event_command(routed), Some(event));
+                        let transported: crate::event::MenuCommand = routed;
+                        assert_eq!(transported, event);
                     }
                     for (parent, command, id) in old_items {
                         if let Some((_, _, current)) = menu
@@ -600,18 +643,18 @@ pub(crate) mod imp {
                 }
             }
 
-            if let Err(error) = gtk::init() {
-                eprintln!("SKIP: native menu test needs a display (run under Xvfb): {error}");
-                return;
+            gtk::init().expect("native menu test requires Xvfb/display");
+            #[derive(Default)]
+            struct RecordingSink(Mutex<Vec<HostEvent>>);
+            impl EventSink for RecordingSink {
+                fn send(&self, event: HostEvent) -> bool {
+                    self.0.lock().unwrap().push(event);
+                    true
+                }
             }
-            // Do not create a Tao event loop/proxy or install a global handler.
-            let mut menu = AppMenu {
-                menu_bar: Menu::new(),
-                menus: Default::default(),
-                items: Vec::new(),
-                commands: Arc::new(RwLock::new(Vec::new())),
-                presenter: Rc::default(),
-            };
+            let recording = Arc::new(RecordingSink::default());
+            let transport: Arc<dyn EventSink + Send + Sync> = recording.clone();
+            let mut menu = AppMenu::new(transport);
             let window = gtk::Window::new(gtk::WindowType::Toplevel);
             let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
             window.add(&container);
@@ -633,6 +676,22 @@ pub(crate) mod imp {
                 shortcuts: default_shortcut_bindings().into(),
             };
             sync_and_check(&mut menu, &sig, &bar);
+            // Activate the actual GTK leaf: muda's callback must transport the
+            // canonical Host command through the production dyn sink path.
+            let file = bar.children()[0]
+                .clone()
+                .downcast::<gtk::MenuItem>()
+                .unwrap();
+            let file_menu = file.submenu().unwrap().downcast::<gtk::Menu>().unwrap();
+            let old_open = file_menu.children()[0]
+                .clone()
+                .downcast::<gtk::MenuItem>()
+                .unwrap();
+            old_open.activate();
+            assert!(matches!(
+                recording.0.lock().unwrap().as_slice(),
+                [HostEvent::Menu(MenuCommand::Open)]
+            ));
             assert_eq!(menu.menus[&MenuId::File].text(), "File");
             assert_eq!(
                 item(&menu, MenuCommand::Debugger).text(),
@@ -695,7 +754,68 @@ pub(crate) mod imp {
             sync_and_check(&mut menu, &sig, &bar);
             sig.loaded = false;
             sync_and_check(&mut menu, &sig, &bar);
+
+            // Root structure comes from Host, even when exercising a standard
+            // application menu on this test platform rather than macOS.
+            use nerust_frontend_host::menu::{
+                NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
+            };
+            let mut root = Menubar::build(&sig, crate::menu::TAO_MENU_CAPABILITIES);
+            root.application_menu = Some(NativeApplicationMenu {
+                label: "Host App".into(),
+                entries: vec![A::Role(R::About), A::Separator, A::Role(R::Quit)],
+            });
+            menu.update(MenubarUpdate {
+                signature: sig.clone(),
+                menubar: root.clone(),
+            });
+            let app = menu.application_menu.as_ref().unwrap().0.clone();
+            let app_id = app.id().clone();
+            let native_ids = app
+                .items()
+                .iter()
+                .map(|item| item.id().clone())
+                .collect::<Vec<_>>();
+            assert_eq!(native_ids.len(), 3);
+            assert_eq!(menu.menu_bar.items()[0].id(), &app_id);
+            assert_eq!(
+                menu.menu_bar.items()[1].id(),
+                menu.menus[&MenuId::File].id()
+            );
+            root.application_menu.as_mut().unwrap().label = "Relabeled App".into();
+            menu.update(MenubarUpdate {
+                signature: sig.clone(),
+                menubar: root.clone(),
+            });
+            let app = &menu.application_menu.as_ref().unwrap().0;
+            assert_eq!(app.id(), &app_id);
+            assert_eq!(app.text(), "Relabeled App");
+            assert_eq!(
+                app.items()
+                    .iter()
+                    .map(|item| item.id().clone())
+                    .collect::<Vec<_>>(),
+                native_ids
+            );
+
+            // Removing roots retires every command route, including callbacks
+            // from previously retained native widgets.
+            root.application_menu = None;
+            root.menus.clear();
+            menu.update(MenubarUpdate {
+                signature: sig.clone(),
+                menubar: root,
+            });
+            assert!(menu.menu_bar.items().is_empty());
+            assert!(menu.application_menu.is_none());
+            assert!(menu.menus.is_empty());
+            assert!(menu.items.is_empty());
+            assert!(menu.commands.read().unwrap().is_empty());
+            let delivered = recording.0.lock().unwrap().len();
+            old_open.activate();
+            assert_eq!(recording.0.lock().unwrap().len(), delivered);
             menu.menu_bar.remove_for_gtk_window(&window).unwrap();
+            menu.clear_event_handler();
             unsafe { window.destroy() };
         }
     }
@@ -711,27 +831,26 @@ pub(crate) mod imp {
     target_os = "windows"
 )))]
 pub(crate) mod imp {
-    use tao::event_loop::EventLoopProxy;
-
-    use super::{MenuSig, TaoWindow};
-    use crate::event::UserEvent;
+    use super::{MenubarUpdate, TaoWindow};
+    use nerust_frontend_host::event::EventSink;
+    use std::sync::Arc;
 
     pub(crate) struct AppMenu;
 
     impl AppMenu {
-        pub(crate) fn new(_proxy: EventLoopProxy<UserEvent>) -> Self {
+        pub(crate) fn new(_sink: Arc<dyn EventSink + Send + Sync>) -> Self {
             Self
         }
 
         pub(crate) fn init_for_window(&self, _window: &TaoWindow) {}
 
-        pub(crate) fn update(&mut self, _menu: MenuSig) {}
+        pub(crate) fn update(&mut self, _menu: MenubarUpdate) {}
 
         pub(crate) fn clear_event_handler(&self) {}
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, menu: MenuSig) {
+        fn update(&mut self, menu: MenubarUpdate) {
             AppMenu::update(self, menu);
         }
 

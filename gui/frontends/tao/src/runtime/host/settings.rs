@@ -52,9 +52,6 @@ impl HostState {
         {
             return;
         }
-        let ctx = self.frame_ctx();
-        self.sync_menu_state(&ctx);
-
         let OpenRequest::Create(id) = self.aux.request_open(crate::aux::focus::AuxKind::Settings)
         else {
             return;
@@ -75,6 +72,11 @@ impl HostState {
             let _ = self.core.dispatch(SessionEvent::SettingsOpenFailed);
             let ctx = self.frame_ctx();
             self.sync_chrome(&ctx, false);
+        } else {
+            // Publish only the settled native lifecycle state. A failed open
+            // must not flash a guarded menu before its immediate rollback.
+            let ctx = self.frame_ctx();
+            self.sync_menu_state(&ctx);
         }
     }
 

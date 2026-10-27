@@ -95,7 +95,7 @@ fn run_slot_command(
     command: SessionCommand,
     tick: &TickMetrics,
 ) -> Result<SessionCommandOutcome, SessionError> {
-    match command.as_slot_op() {
+    match command.into_slot_op() {
         Some(SlotOp::Save(op)) => Ok(session.run_save_op(op)),
         Some(SlotOp::Load(op)) => Ok(session.run_load_op(op, tick)),
         None => Ok(unreachable_outcome()),
@@ -112,10 +112,14 @@ fn unreachable_outcome() -> SessionCommandOutcome {
     }
 }
 
-impl SessionCommand {
+trait CommandSlotOp {
+    fn into_slot_op(self) -> Option<SlotOp>;
+}
+
+impl CommandSlotOp for SessionCommand {
     /// Slot half behind this command: the single classification site. Explicit
     /// arms (no wildcard) so a new command fails to compile until classified.
-    fn as_slot_op(self) -> Option<SlotOp> {
+    fn into_slot_op(self) -> Option<SlotOp> {
         match self {
             SessionCommand::CreateSlot => Some(SlotOp::Save(SaveOp::CreateSlot)),
             SessionCommand::SaveActiveSlotOrNew => Some(SlotOp::Save(SaveOp::SaveActiveSlotOrNew)),
@@ -170,7 +174,7 @@ impl SessionHandle {
         tick: &TickMetrics,
     ) -> Result<SessionCommandOutcome, SessionError> {
         // Exhaustive dispatch: a new command fails to compile until routed
-        // here and classified in `as_slot_op`. TogglePause never arrives:
+        // here and classified in `into_slot_op`. TogglePause never arrives:
         // the entry resolves it once for execution and notification alike.
         match command {
             SessionCommand::Pause => run_pause(self, command, tick),

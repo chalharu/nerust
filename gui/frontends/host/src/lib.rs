@@ -16,7 +16,14 @@
 //! - Use [`settings::SettingsController`] and its apply mailbox; native controls
 //!   may bind directly to its view model. Track auxiliary lifetimes with
 //!   [`aux::AuxWindows`], reserving before native creation can reenter.
-//! - Build owned [`menu::MenuModel`] trees and implement [`menu::MenuVisitor`].
+//! - Translate callbacks through [`event::EventSink`] / [`event::EventHandler`]
+//!   (both support dyn). Take owned [`event::CommandEffect`] results and release
+//!   all controller borrows before native presentation can reenter.
+//! - Get owned [`menu::Menubar`] snapshots from
+//!   [`application::ApplicationHost::menubar_update`]. Implement
+//!   [`commands::CommandVisitor`] declarations using [`commands::CommandId::name`]
+//!   and [`commands::CommandDescriptor::bind`], never a native action-name match.
+//!   Implement [`menu::MenuVisitor`], including the application root menu.
 //!   Submit through [`widgets::MenuPresenter`], release controller borrows, then
 //!   drain presentation plans so synchronous reentry always renders newest last.
 //! - Retire application liveness, tear down auxiliary/native resources and
@@ -31,9 +38,11 @@
 
 pub mod application;
 pub mod aux;
+pub mod commands;
 pub mod debug_schedule;
 pub mod debugger;
 pub mod drain;
+pub mod event;
 pub mod focus;
 pub mod frame;
 pub mod loop_driver;
