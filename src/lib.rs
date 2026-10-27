@@ -133,9 +133,9 @@ pub fn run() -> i32 {
     };
 
     #[cfg(all(feature = "gtk", not(clippy)))]
-    return nerust_gtk::run(ctx, options);
+    return run_gtk_guarded(ctx, options.rom_path);
     #[cfg(all(feature = "tao", not(clippy)))]
-    return nerust_tao::run(ctx, options);
+    return run_tao_guarded(ctx, options.rom_path);
     #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
     compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
     #[cfg(clippy)]
@@ -144,6 +144,72 @@ pub fn run() -> i32 {
         let _ = options;
         0
     }
+}
+
+/// Crash containment lives here, in the composition root: a crash must
+/// never look like a clean exit. Frontend `run` functions stay unguarded.
+#[cfg(all(feature = "gtk", not(clippy)))]
+fn run_gtk_guarded(ctx: FrontendContext, rom_path: Option<PathBuf>) -> i32 {
+    // No dialog here: the event loop died with the panic, and stderr
+    // (already logged by the guard) is the UX. Match exhaustively.
+    match nerust_crash_guard::run_guarded_with(
+        || nerust_gtk::run(ctx, rom_path),
+        nerust_crash_guard::default_sink,
+        nerust_crash_guard::capture_backtrace,
+    ) {
+        // Rust panic convention: a crash never exits 0.
+        nerust_crash_guard::GuardOutcome::Completed(code) => code,
+        nerust_crash_guard::GuardOutcome::Crashed(report) => {
+            log::error!("{}", crash_note(report.message()));
+            101
+        }
+    }
+}
+
+/// Crash log line: the guard already logged the full report; this
+/// names the missing-dialog situation for stderr readers.
+#[cfg(all(feature = "gtk", not(clippy)))]
+fn crash_note(message: &str) -> String {
+    format!("gtk frontend crashed with no dialog available: {message}")
+}
+
+#[cfg(all(feature = "tao", not(clippy)))]
+fn run_tao_guarded(ctx: FrontendContext, rom_path: Option<PathBuf>) -> i32 {
+    // A crash must never look like a clean exit; the dialog runs first.
+    // Exhaustive: a future outcome must not silently pass through.
+    // Rust panic convention: a crash never exits 0.
+    match nerust_crash_guard::run_guarded_with(
+        || nerust_tao::run(ctx, rom_path),
+        nerust_crash_guard::default_sink,
+        nerust_crash_guard::capture_backtrace,
+    ) {
+        nerust_crash_guard::GuardOutcome::Completed(code) => code,
+        nerust_crash_guard::GuardOutcome::Crashed(report) => {
+            // Always English: crash copy must not depend on the settings
+            // stack that may have just died. Stderr stays the log home.
+            let dialog = crash_dialog_text(report.message());
+            eprintln!("{dialog}");
+            rfd::MessageDialog::new()
+                .set_title(crash_title())
+                .set_description(&dialog)
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            101
+        }
+    }
+}
+
+/// Crash dialog copy: inline literals, never the catalog.
+#[cfg(all(feature = "tao", not(clippy)))]
+fn crash_title() -> &'static str {
+    "nerust"
+}
+
+/// Always English: crash copy must not depend on the settings stack.
+#[cfg(all(feature = "tao", not(clippy)))]
+fn crash_dialog_text(message: &str) -> String {
+    format!("The application crashed: {message}\n\nDetails were written to the log (stderr).")
 }
 
 #[cfg(test)]
@@ -378,6 +444,49 @@ mod tests {
         assert_eq!(
             registry.detect(&gba_media).unwrap().unwrap().system_id(),
             gba_id
+        );
+    }
+
+    #[test]
+    #[cfg(all(feature = "gtk", not(clippy)))]
+    fn crash_note_names_missing_dialog() {
+        let text = super::crash_note("boom");
+        assert!(text.contains("boom"), "{text}");
+        assert!(text.contains("no dialog"), "{text}");
+    }
+
+    #[test]
+    #[cfg(all(feature = "tao", not(clippy)))]
+    fn crash_dialog_points_at_stderr_in_english() {
+        use nerust_settings_core::{
+            i18n::{UiText, text},
+            model::language::AppLanguage,
+        };
+        let dialog = super::crash_dialog_text("boom");
+        assert!(dialog.contains("boom"), "{dialog}");
+        assert!(dialog.contains("The application crashed"), "{dialog}");
+        assert!(dialog.contains("stderr"), "{dialog}");
+        assert_eq!(super::crash_title(), "nerust");
+        assert_eq!(
+            text(AppLanguage::English, UiText::CrashTitle),
+            super::crash_title()
+        );
+    }
+
+    #[test]
+    #[cfg(all(feature = "tao", not(clippy)))]
+    fn crash_dialog_is_english_without_language_input() {
+        use nerust_settings_core::{
+            i18n::{UiText, text},
+            model::language::AppLanguage,
+        };
+        // No language param: the settings stack may have just died.
+        let dialog = super::crash_dialog_text("boom");
+        assert!(!dialog.contains("クラッシュ"), "{dialog}");
+        assert!(dialog.contains("stderr"), "{dialog}");
+        assert_eq!(
+            text(AppLanguage::Japanese, UiText::CrashTitle),
+            super::crash_title()
         );
     }
 }
