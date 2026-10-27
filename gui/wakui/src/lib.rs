@@ -5,10 +5,12 @@
 //! platform backends generate native controls. No intra-repository
 //! dependencies; only `std` plus toolkit-independent externals.
 
+pub mod backend;
 pub mod binding;
 pub mod control;
 pub mod key;
 pub mod loop_driver;
 pub mod mapper;
+pub mod viewport;
 
 pub use key::Key;
