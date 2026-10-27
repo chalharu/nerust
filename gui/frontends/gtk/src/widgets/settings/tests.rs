@@ -1,13 +1,15 @@
-use super::retained::{NativeControl, NativeKind, NodeId};
+use super::controls::{NativeControl, NativeKind, NodeId};
 use super::*;
+use crate::native::dialog::{connect_finish, finish};
 use nerust_frontend_host::settings::{
     InputPageSection, InputTab, SettingsControlKind, SettingsPage, SettingsTabsId,
 };
 use nerust_gui_viewmodel::settings::dto::ChoiceView;
 use nerust_settings_core::model::{language::AppLanguage, shared::StoragePolicy};
+use std::sync::Arc;
 
 struct Harness {
-    binding: Rc<PreferencesBinding>,
+    binding: Rc<SettingsBinding>,
     dialog: gtk::Dialog,
 }
 
@@ -40,7 +42,7 @@ impl Harness {
             .default_width(900)
             .default_height(560)
             .build();
-        let binding = PreferencesBinding::new(controller, &dialog);
+        let binding = SettingsBinding::new(controller, &dialog);
         Self { binding, dialog }
     }
 
@@ -197,6 +199,148 @@ fn exercise_note_refreshes(h: &Harness, id: SettingsControlId, labelled: bool) {
         assert_eq!(assert_note_name(h, &id, labelled), japanese);
     }
     assert!(Rc::ptr_eq(&native, &h.control(&id)));
+}
+
+#[test]
+fn common_renderer_uses_supplied_draft_not_state_or_window_id() {
+    use nerust_frontend_host::window::WindowId;
+    assert!(crate::test_support::ui_test_available());
+    let state = crate::widgets::history::history_dialog_tests::model_state();
+    let mut controller = SettingsController::new(
+        state.borrow().settings_snapshot(),
+        state.borrow().ctx.registry.clone(),
+        state.borrow().ctx.audio_registry.clone(),
+    );
+    controller.update(SettingsEvent::ToggleMute(true));
+    controller.update(SettingsEvent::SetVolume(19));
+    let mut model = controller.window();
+    model.id = WindowId::Main;
+    model.title = "supplied outer chrome".into();
+    let app = gtk::Application::builder().build();
+    app.register(None::<&gtk::gio::Cancellable>).unwrap();
+    let parent = gtk::ApplicationWindow::new(&app);
+    parent.present();
+    let Some(crate::window::RenderedDialog::Settings(dialog)) =
+        crate::window::render_dialog(&model, &parent, state.clone(), Some(controller), || {})
+    else {
+        panic!("Settings contents must dispatch independently of WindowId")
+    };
+    assert_eq!(dialog.title().as_deref(), Some("supplied outer chrome"));
+    fn find<W: IsA<gtk::Widget> + glib::object::IsClass>(widget: &gtk::Widget) -> Option<W> {
+        if let Ok(found) = widget.clone().downcast::<W>() {
+            return Some(found);
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if let Some(found) = find::<W>(&current) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    let widgets = dialog.content_area();
+    // Applying the supplied draft, rather than recreating it from State, must
+    // persist the edited values through the actual native response path.
+    assert!(find::<gtk::CheckButton>(widgets.upcast_ref()).is_some());
+    dialog.present();
+    pump();
+    dialog.response(gtk::ResponseType::Ok);
+    assert!(state.borrow().settings_snapshot().local.audio.muted);
+    assert_eq!(
+        state
+            .borrow()
+            .settings_snapshot()
+            .local
+            .audio
+            .master_volume_percent,
+        19
+    );
+    assert!(crate::surface_state::surface_gone(&dialog));
+    parent.destroy();
+}
+
+#[test]
+fn owned_outer_window_interprets_chrome_and_nested_settings_without_controller_borrow() {
+    use nerust_frontend_host::window::WidgetContents;
+    let h = Harness::new(false);
+    h.binding.send([SettingsEvent::ToggleMute(true)]);
+    let mut owned = h.binding.controller.borrow().window();
+    owned.title = "outer settings chrome".into();
+    let WidgetContents::Settings(screen) = &mut owned.contents.contents else {
+        panic!("controller.window must supply real settings, not PendingSettings");
+    };
+    screen.title = "nested screen must not overwrite chrome".into();
+    let native = h.control(&SettingsControlId::Mute);
+    let NativeKind::Toggle(check) = &native.kind else {
+        panic!("toggle")
+    };
+    let called = Rc::new(Cell::new(0));
+    let signal = h.dialog.connect_title_notify({
+        let weak = Rc::downgrade(&h.binding);
+        let called = called.clone();
+        move |_| {
+            let binding = weak.upgrade().unwrap();
+            assert!(binding.controller.try_borrow_mut().is_ok());
+            assert!(binding.registry.try_borrow_mut().is_ok());
+            called.set(called.get() + 1);
+        }
+    });
+    {
+        let _signals = FlagGuard::enter(&h.binding.refreshing);
+        owned.visit(&mut crate::window::GtkWindowRenderer::Settings(&h.binding));
+    }
+    assert_eq!(called.get(), 1);
+    assert_eq!(h.dialog.title().as_deref(), Some("outer settings chrome"));
+    assert!(check.is_active());
+    assert!(Rc::ptr_eq(&native, &h.control(&SettingsControlId::Mute)));
+    h.dialog.disconnect(signal);
+    h.binding.send([SettingsEvent::ToggleMute(false)]);
+    let latest = h.binding.controller.borrow().window();
+    assert_eq!(h.dialog.title().as_deref(), Some(latest.title.as_str()));
+    assert!(
+        !check.is_active(),
+        "production refresh must use the latest owned tree"
+    );
+}
+
+#[test]
+fn outer_window_title_reentry_refreshes_latest_controller_tree() {
+    let h = Harness::new(false);
+    let called = Rc::new(Cell::new(false));
+    h.dialog.connect_title_notify({
+        let weak = Rc::downgrade(&h.binding);
+        let called = called.clone();
+        move |_| {
+            let binding = weak.upgrade().unwrap();
+            assert!(binding.controller.try_borrow_mut().is_ok());
+            assert!(binding.registry.try_borrow_mut().is_ok());
+            if !called.replace(true) {
+                binding.send([
+                    SettingsEvent::SetLanguage(ChoiceView {
+                        value: AppLanguage::English,
+                        label: String::new(),
+                    }),
+                    SettingsEvent::ToggleMute(true),
+                ]);
+            }
+        }
+    });
+    h.binding.send([SettingsEvent::SetLanguage(ChoiceView {
+        value: AppLanguage::Japanese,
+        label: String::new(),
+    })]);
+    assert!(called.get());
+    let latest = h.binding.controller.borrow().window();
+    assert_eq!(h.dialog.title().as_deref(), Some(latest.title.as_str()));
+    let NativeKind::Toggle(check) = &h.control(&SettingsControlId::Mute).kind else {
+        panic!("toggle")
+    };
+    assert!(check.is_active());
+    assert_eq!(
+        h.binding.controller.borrow().language(),
+        AppLanguage::English
+    );
 }
 
 #[test]
@@ -664,7 +808,7 @@ fn retained_revision_observer_defers_and_weak_idle_does_not_retain_binding() {
 }
 
 #[test]
-fn preferences_production_response_save_failure_edit_retry_closes_once() {
+fn settings_production_response_save_failure_edit_retry_closes_once() {
     use nerust_gui_runtime::settings::{
         HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
     };
@@ -768,7 +912,16 @@ fn preferences_production_response_save_failure_edit_retry_closes_once() {
     parent.present();
     pump();
     let closes = Rc::new(Cell::new(0));
-    let dialog = present_preferences_dialog(&parent, state.clone(), {
+    let controller = {
+        let state = state.borrow();
+        SettingsController::new(
+            state.settings_snapshot(),
+            state.ctx.registry.clone(),
+            state.ctx.audio_registry.clone(),
+        )
+    };
+    let model = controller.window();
+    let built = crate::window::render_dialog(&model, &parent, state.clone(), Some(controller), {
         let closes = closes.clone();
         let weak = Rc::downgrade(&state);
         move || {
@@ -776,7 +929,11 @@ fn preferences_production_response_save_failure_edit_retry_closes_once() {
             closes.set(closes.get() + 1);
         }
     })
-    .expect("production preferences dialog");
+    .expect("production settings group");
+    let crate::window::RenderedDialog::Settings(dialog) = built else {
+        panic!("settings contents");
+    };
+    dialog.present();
     let widgets = descendants(dialog.upcast_ref());
     let mute = widgets
         .iter()
@@ -860,7 +1017,7 @@ fn preferences_production_response_save_failure_edit_retry_closes_once() {
 }
 
 #[test]
-fn preferences_finish_runs_once_even_when_close_reenters() {
+fn native_finish_runs_once_even_when_close_reenters() {
     let count = Rc::new(Cell::new(0));
     let callback: FinishCallback = Rc::new(RefCell::new(None));
     *callback.borrow_mut() = Some(Box::new({
@@ -868,16 +1025,16 @@ fn preferences_finish_runs_once_even_when_close_reenters() {
         let count = count.clone();
         move || {
             count.set(count.get() + 1);
-            finish_preferences(&weak.upgrade().unwrap());
+            finish(&weak.upgrade().unwrap());
         }
     }));
-    finish_preferences(&callback);
-    finish_preferences(&callback);
+    finish(&callback);
+    finish(&callback);
     assert_eq!(count.get(), 1);
 }
 
 #[test]
-fn preferences_native_close_and_destroy_finish_once() {
+fn native_close_and_destroy_finish_once() {
     assert!(
         crate::test_support::ui_test_available(),
         "real GTK display required"
@@ -895,7 +1052,7 @@ fn preferences_native_close_and_destroy_finish_once() {
                 }
             }
         }))));
-        connect_preferences_finish(&dialog, &callback);
+        connect_finish(&dialog, &callback);
         dialog.present();
         if destroy {
             dialog.destroy();
@@ -904,7 +1061,7 @@ fn preferences_native_close_and_destroy_finish_once() {
         }
         assert_eq!(count.get(), 1);
         dialog.destroy();
-        finish_preferences(&callback);
+        finish(&callback);
         assert_eq!(count.get(), 1);
     }
 }

@@ -1,7 +1,0 @@
-//! Settings dialog: [`program`] is the iced `Program` (state +
-//! views), [`window`] is the tao handle hosting it on [`crate::aux::shell`].
-
-mod disabled;
-pub(crate) mod program;
-pub(crate) mod views;
-pub(crate) mod window;

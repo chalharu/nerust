@@ -60,3 +60,4 @@ pub mod osd;
 pub mod session;
 pub mod settings;
 pub mod widgets;
+pub mod window;

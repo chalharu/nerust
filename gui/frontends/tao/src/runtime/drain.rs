@@ -84,7 +84,7 @@ impl HostState {
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
-        if let OpenRequest::Create(id) = self.aux.request_open(AuxKind::Debug) {
+        if let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Debug) {
             let spaces = self.debug_spaces();
             if spaces.is_empty() {
                 log::warn!("debugger: no spaces (no core)");
@@ -92,37 +92,46 @@ impl HostState {
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos();
             let language = self.settings_snapshot().shared.general.language;
-            let opened = opener
-                .create_aux(
-                    AuxKind::Debug,
-                    crate::ports::AuxOpenParams::Debug {
-                        display: debug_vm::DisplayCache::default(),
-                        spaces,
-                        mem_addr,
-                        language,
-                        position,
-                    },
+            self.aux.window_mut(id).expect("debug reservation").title =
+                nerust_settings_core::i18n::text(
+                    language,
+                    nerust_settings_core::i18n::UiText::Debugger,
                 )
-                .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+                .into();
+            let opened = self.create_aux_window(
+                id,
+                opener,
+                crate::ports::AuxOpenParams::Debug {
+                    display: Box::default(),
+                    spaces,
+                    mem_addr,
+                    language,
+                    position,
+                },
+            );
             if opened {
                 self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
             } else {
-                self.aux.cancel_open(id);
                 log::error!("failed to open debugger window");
             }
         }
         if focus_ppu && !self.is_ppu_open() {
             if let Some(bridge) = self.debug_bridge_for_ppu() {
-                let OpenRequest::Create(id) = self.aux.request_open(AuxKind::Ppu) else {
+                let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Ppu) else {
                     return;
                 };
                 let position = self.ppu_window_pos();
-                let opened = opener
-                    .create_aux(
-                        AuxKind::Ppu,
-                        crate::ports::AuxOpenParams::Ppu { bridge, position },
+                self.aux.window_mut(id).expect("PPU reservation").title =
+                    nerust_settings_core::i18n::text(
+                        bridge.language(),
+                        nerust_settings_core::i18n::UiText::PpuViewer,
                     )
-                    .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+                    .into();
+                let opened = self.create_aux_window(
+                    id,
+                    opener,
+                    crate::ports::AuxOpenParams::Ppu { bridge, position },
+                );
                 if opened {
                     // Populate the image cache immediately: the viewer derives on Sync.
                     self.aux.ppu_sync();
@@ -130,7 +139,6 @@ impl HostState {
                     // the opening drain ran imageless.
                     self.run_debug_drain(&[]);
                 } else {
-                    self.aux.cancel_open(id);
                     log::error!("failed to open PPU viewer window");
                 }
             }
@@ -201,6 +209,179 @@ impl HostState {
 #[cfg(test)]
 mod tests {
     use crate::runtime::host::TestHost;
+
+    /// Run separately under Xvfb: Tao/GTK3 initialization belongs to this thread.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_common_windows_menu_effect_reservation_and_grouped_creation() {
+        // libtest uses a new thread for every test, even with one test thread.
+        // Isolate from the existing muda/GTK3 test's initialization thread.
+        const CHILD: &str = "NERUST_TAO_WINDOW_NATIVE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "runtime::drain::tests::native_common_windows_menu_effect_reservation_and_grouped_creation",
+                    "--exact", "--nocapture", "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .env("GDK_BACKEND", "x11")
+                .env_remove("WAYLAND_DISPLAY")
+                .output()
+                .expect("isolated native window test");
+            assert!(
+                output.status.success(),
+                "native child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use crate::{
+            aux::focus::AuxKind,
+            ports::{TaoWindowOpener, WindowOpener},
+        };
+        use gtk::prelude::*;
+        use nerust_frontend_host::{
+            commands::MenuCommand,
+            menu::{MenuItem, MenuVisitor},
+            window::{WidgetContents, WindowVisitor},
+        };
+        use tao::{event_loop::EventLoopBuilder, platform::unix::EventLoopBuilderExtUnix};
+
+        struct FindDebugger(Option<MenuCommand>);
+        impl nerust_frontend_host::commands::CommandVisitor for FindDebugger {
+            fn command(&mut self, _: &nerust_frontend_host::commands::CommandDescriptor) {}
+        }
+        impl MenuVisitor for FindDebugger {
+            fn begin_menubar(&mut self, _: &nerust_frontend_host::menu::Menubar, _: bool) {}
+            fn begin_menu(&mut self, _: &nerust_frontend_host::menu::Submenu, _: bool) {}
+            fn end_menu(&mut self, _: nerust_frontend_host::menu::MenuId) {}
+            fn end_menubar(&mut self) {}
+            fn item(&mut self, item: &MenuItem) {
+                if item.command == Some(MenuCommand::Debugger) && item.enabled {
+                    self.0 = item.command;
+                }
+            }
+        }
+        struct MainMenu(FindDebugger);
+        impl WindowVisitor for MainMenu {
+            fn visit_menu(&mut self, menu: &nerust_frontend_host::menu::Menubar) {
+                menu.visit(None, &mut self.0);
+            }
+        }
+        let event_loop = EventLoopBuilder::<crate::event::UserEvent>::with_user_event()
+            .with_any_thread(true)
+            .build();
+        let opener = TaoWindowOpener::new(&event_loop);
+        let mut host = TestHost::with_nes().host;
+        host.ensure_window(&opener);
+        assert!(host.window().is_some());
+        let main_title = host.main_window().title.clone();
+        assert!(gtk::Window::list_toplevels().iter().any(|widget| {
+            widget
+                .downcast_ref::<gtk::Window>()
+                .and_then(|native| native.title())
+                .as_deref()
+                == Some(main_title.as_str())
+        }));
+        let ctx = host.frame_ctx();
+        host.sync_menu_state(&ctx);
+        let main = host.main_window().clone();
+        let mut menu = MainMenu(FindDebugger(None));
+        main.visit(&mut menu);
+        let command = menu.0.0.expect("main_window.menu declares Debugger");
+        host.on_menu_command(command, &opener);
+        assert!(host.is_debug_open());
+        let debug_id = host.aux.route_id(AuxKind::Debug).unwrap();
+        let debug_window = host.aux.window(debug_id).unwrap().clone();
+        assert!(matches!(
+            debug_window.contents.contents,
+            WidgetContents::Debug(_)
+        ));
+        assert_eq!(
+            host.aux.request_open(AuxKind::Debug),
+            nerust_frontend_host::aux::OpenRequest::Present(debug_id)
+        );
+        assert!(!host.aux.render_kind(AuxKind::Debug).unwrap().close);
+
+        // The same native selection must use Window contents and title, even
+        // when they are intentionally distinct from the original kind blueprint.
+        for kind in [AuxKind::Ppu, AuxKind::History] {
+            let nerust_frontend_host::aux::OpenRequest::Create(id) = host.aux.request_open(kind)
+            else {
+                panic!("expected reservation");
+            };
+            host.aux.window_mut(id).unwrap().title = format!("host-owned {kind:?}");
+            let window = host.aux.window(id).unwrap().clone();
+            if kind == AuxKind::History {
+                let mut mismatched = window.clone();
+                mismatched.contents =
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug).contents;
+                assert!(
+                    opener
+                        .create_aux(
+                            mismatched,
+                            crate::ports::AuxOpenParams::History {
+                                language: host.settings_snapshot().shared.general.language,
+                            },
+                        )
+                        .is_none(),
+                    "contents, not WindowId, must select the native path"
+                );
+            }
+            let params = match kind {
+                AuxKind::Ppu => crate::ports::AuxOpenParams::Ppu {
+                    bridge: host.debug_bridge_for_ppu().unwrap(),
+                    position: None,
+                },
+                AuxKind::History => crate::ports::AuxOpenParams::History {
+                    language: host.settings_snapshot().shared.general.language,
+                },
+                _ => unreachable!(),
+            };
+            let handle = opener
+                .create_aux(window.clone(), params)
+                .expect("native contents path");
+            assert_eq!(handle.kind(), kind);
+            assert!(host.aux.complete_open(id, handle).is_ok());
+            assert!(!host.aux.render_kind(kind).unwrap().close);
+            assert!(gtk::Window::list_toplevels().iter().any(|widget| {
+                widget
+                    .downcast_ref::<gtk::Window>()
+                    .and_then(|native| native.title())
+                    .as_deref()
+                    == Some(window.title.as_str())
+            }));
+        }
+        // Settings reserves a real screen before native creation, then reuses
+        // that same single controller for iced boot, save staging and close.
+        host.on_menu_command(MenuCommand::Settings, &opener);
+        let settings_id = host.aux.route_id(AuxKind::Settings).unwrap();
+        let settings = host.aux.window(settings_id).unwrap().clone();
+        assert!(matches!(
+            settings.contents.contents,
+            WidgetContents::Settings(_)
+        ));
+        assert!(!host.aux.render_kind(AuxKind::Settings).unwrap().close);
+        assert!(gtk::Window::list_toplevels().iter().any(|widget| {
+            widget
+                .downcast_ref::<gtk::Window>()
+                .and_then(|native| native.title())
+                .as_deref()
+                == Some(settings.title.as_str())
+        }));
+        assert!(!host.close_settings_and_maybe_rebuild());
+        assert!(host.aux.window(settings_id).is_none());
+        host.on_menu_command(MenuCommand::Settings, &opener);
+        let reopened = host.aux.route_id(AuxKind::Settings).unwrap();
+        assert_ne!(settings_id, reopened);
+        assert!(matches!(
+            host.aux.window(reopened).unwrap().contents.contents,
+            WidgetContents::Settings(_)
+        ));
+        assert!(!host.aux.render_kind(AuxKind::Settings).unwrap().close);
+        host.prepare_close();
+    }
 
     #[test]
     fn apply_drain_output_without_windows_syncs_chrome() {

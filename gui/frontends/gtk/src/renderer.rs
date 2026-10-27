@@ -144,6 +144,18 @@ impl GtkRenderer {
     }
 }
 
+impl nerust_render_traits::renderer::OsdSink for GtkRenderer {
+    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        GtkRenderer::set_osd_layer(self, layer);
+    }
+}
+
+impl nerust_render_traits::renderer::StripSink for GtkRenderer {
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        GtkRenderer::set_reserved_strip(self, strip);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::GtkRenderer;

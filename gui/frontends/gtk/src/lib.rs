@@ -1,13 +1,13 @@
 mod debugger;
 mod gdk_raw;
-mod osd;
+mod native;
 mod ppu_window;
-mod preferences;
 mod renderer;
 mod surface;
 mod surface_state;
 #[cfg(test)]
 pub(crate) mod test_support;
+mod widgets;
 mod window;
 
 use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
@@ -249,7 +249,6 @@ fn build_window(
     picture.set_hexpand(true);
     picture.set_vexpand(true);
     picture.set_can_shrink(true);
-    window.set_child(Some(&picture));
 
     Window::bind(
         app.clone(),

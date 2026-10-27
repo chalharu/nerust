@@ -1,14 +1,17 @@
-//! Notification history viewer (iced aux window).
+//! Grouped notification history widget for the common Window program.
 //! Host owns the history model; this module owns native layout and style.
 
+use crate::aux::window::WidgetBinding;
+#[cfg(test)]
+use crate::aux::window::WindowProgram;
 use iced::Task;
-use iced_winit::program::{self, Program};
+#[cfg(test)]
+use iced_winit::program::Program;
 use nerust_frontend_host::history::{HistoryModel, HistoryVisitor};
 use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine, HistoryRowView};
 use nerust_settings_core::model::language::AppLanguage;
-use tao::event_loop::EventLoopWindowTarget;
 
-use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
+use crate::aux::shell::{aux_settings, aux_theme};
 
 #[derive(Debug, Clone)]
 pub(crate) enum HistoryMessage {
@@ -26,21 +29,31 @@ pub(crate) struct HistoryState {
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-pub(crate) struct HistoryProgram {
+pub(crate) struct HistoryBinding {
     language: AppLanguage,
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-impl Program for HistoryProgram {
+impl HistoryBinding {
+    pub(crate) fn new(
+        language: AppLanguage,
+        clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        Self {
+            language,
+            clear_requested,
+        }
+    }
+}
+
+impl WidgetBinding for HistoryBinding {
     type State = HistoryState;
     type Message = HistoryMessage;
     type Theme = iced::Theme;
     type Renderer = iced_tiny_skia::Renderer;
     type Executor = iced_winit::futures::backend::default::Executor;
 
-    fn name() -> &'static str {
-        "nerust_notification_history"
-    }
+    const KIND: crate::aux::focus::AuxKind = crate::aux::focus::AuxKind::History;
 
     fn theme(&self, _state: &Self::State, _window: iced::window::Id) -> Option<Self::Theme> {
         aux_theme()
@@ -48,10 +61,6 @@ impl Program for HistoryProgram {
 
     fn settings(&self) -> iced::Settings {
         aux_settings()
-    }
-
-    fn window(&self) -> Option<iced::window::Settings> {
-        None
     }
 
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
@@ -218,106 +227,38 @@ fn history_view(model: &HistoryModel) -> iced::Element<'static, HistoryMessage> 
     visitor.view.expect("history traversal must finish")
 }
 
-pub(crate) struct HistoryWindowHandle {
-    shell: crate::aux::shell::AuxShell<HistoryProgram>,
-    clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// View-refresh flag, separate from the shell close flag (like
-    /// the debug/PPU twins): `sync` must never consume a close.
-    view_invalidated: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl HistoryWindowHandle {
-    pub(crate) fn new(
-        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
-        language: AppLanguage,
-    ) -> Option<Self> {
-        let model = HistoryModel::build(&[], language, HistoryFilter::All);
-        let surface = AuxSurface::open(
-            event_loop,
-            &model.captions.title,
-            (720.0, 360.0),
-            None,
-            None,
-            "history window",
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        )
-        .map_err(|error| {
-            // Typed scaffold failure: surface the tagged native detail here.
-            log::error!("{error}");
-            error
-        })
-        .ok()?;
-        let clear_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let view_invalidated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let (instance, _task) = program::Instance::new(HistoryProgram {
-            language,
-            clear_requested: std::sync::Arc::clone(&clear_requested),
-        });
-        let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
-        Some(Self {
-            shell,
-            clear_requested,
-            view_invalidated,
-        })
-    }
-
-    pub(crate) fn take_clear_request(&self) -> bool {
-        self.clear_requested
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
-    }
-
-    pub(crate) fn sync(&mut self, lines: std::sync::Arc<[HistoryLine]>, language: AppLanguage) {
-        self.shell.process(
-            vec![HistoryMessage::Sync { lines, language }],
-            &self.view_invalidated,
-        );
-    }
-}
-
-impl super::focus::AuxShellRef for HistoryWindowHandle {
-    fn kind(&self) -> super::focus::AuxKind {
-        super::focus::AuxKind::History
-    }
-
-    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
-        &self.shell
-    }
-
-    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
-        &mut self.shell
-    }
-}
-
-impl super::registry::AuxController for HistoryWindowHandle {
-    fn sync_view(&mut self) {
-        // History rebuilds from pushed content, not from the bridge.
-    }
-
-    fn as_history(&mut self) -> Option<&mut dyn super::registry::HistorySyncPort> {
-        Some(self)
-    }
-}
-
-impl super::registry::HistorySyncPort for HistoryWindowHandle {
-    fn sync_history(&mut self, lines: std::sync::Arc<[HistoryLine]>, language: AppLanguage) {
-        self.sync(lines, language);
-    }
-
-    fn take_history_clear(&mut self) -> bool {
-        self.take_clear_request()
-    }
-}
-
-impl super::focus::AuxEvents for HistoryWindowHandle {
-    fn handle(&mut self, mapped: iced::Event) -> bool {
-        self.shell.pump_finish(mapped, None, &self.view_invalidated)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::HistoryBinding as HistoryProgram;
     use super::*;
     use nerust_gui_shell::session::notification::NotificationLevel;
+
+    #[test]
+    fn outer_history_window_uses_common_title_and_existing_grouped_pipeline() {
+        use nerust_frontend_host::{focus::AuxKind, window::Window};
+
+        let mut window = Window::auxiliary(AuxKind::History);
+        window.title = "owned history title".into();
+        let program = WindowProgram {
+            window,
+            program: HistoryProgram {
+                language: en(),
+                clear_requested: Default::default(),
+            },
+        };
+        let (mut state, _) = program.boot();
+        let id = iced::window::Id::unique();
+        assert_eq!(program.title(&state, id), "owned history title");
+        drop(program.update(
+            &mut state,
+            HistoryMessage::Sync {
+                lines: std::sync::Arc::from([line(NotificationLevel::Warning, "grouped history")]),
+                language: ja(),
+            },
+        ));
+        assert_eq!(state.model.rows[0].message, "grouped history");
+        drop(program.view(&state, id));
+    }
 
     fn en() -> AppLanguage {
         AppLanguage::English
@@ -439,9 +380,14 @@ mod tests {
         };
         // Regression: `sync` passed `should_close` as the refresh
         // invalidation flag, so a pending close was consumed by a sync.
-        let instance = iced_winit::program::Instance::new(HistoryProgram {
-            language: en(),
-            clear_requested: Arc::new(AtomicBool::new(false)),
+        let instance = iced_winit::program::Instance::new(WindowProgram {
+            window: nerust_frontend_host::window::Window::auxiliary(
+                crate::aux::focus::AuxKind::History,
+            ),
+            program: HistoryBinding {
+                language: en(),
+                clear_requested: Arc::new(AtomicBool::new(false)),
+            },
         })
         .0;
         let mut ui = crate::aux::shell::UiShell::new(

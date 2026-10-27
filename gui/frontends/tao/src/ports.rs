@@ -8,9 +8,10 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use nerust_core_traits::{audio::AudioBackendRegistry, debugger::SpaceId};
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::registry::SystemRegistry;
+use nerust_core_traits::debugger::SpaceId;
+use nerust_frontend_host::window::{
+    DebugContents, HistoryContents, PpuContents, Window, WindowVisitor,
+};
 use nerust_gui_viewmodel::debugger::DisplayCache;
 use nerust_settings_core::{
     i18n::{UiText, text},
@@ -19,6 +20,7 @@ use nerust_settings_core::{
 use rfd::FileDialog;
 
 use crate::aux::bridge::DebugBridge;
+#[cfg(test)]
 use crate::aux::focus::AuxKind;
 use crate::aux::registry::AuxController;
 use crate::event::UserEvent;
@@ -160,12 +162,10 @@ pub(crate) fn show_rom_load_error(language: AppLanguage, detail: &str) {
 /// Aux-window open parameters: one variant per capability.
 pub(crate) enum AuxOpenParams {
     Settings {
-        snapshot: SettingsSnapshot,
-        registry: Arc<SystemRegistry>,
-        audio: Arc<AudioBackendRegistry>,
+        program: crate::aux::widgets::bindings::SettingsBinding,
     },
     Debug {
-        display: DisplayCache,
+        display: Box<DisplayCache>,
         spaces: Vec<(SpaceId, String, u32)>,
         mem_addr: u32,
         language: AppLanguage,
@@ -184,8 +184,8 @@ pub(crate) enum AuxOpenParams {
 /// Every method fails closed (`None`/`Err`) on headless fakes.
 pub(crate) trait WindowOpener {
     fn create_main(&self, builder: WindowBuilder) -> Result<Arc<TaoWindow>, String>;
-    /// Capability-routed aux creation: kind selects the port, params carry the inputs.
-    fn create_aux(&self, kind: AuxKind, params: AuxOpenParams) -> Option<Box<dyn AuxController>>;
+    /// The reserved common window selects the native program, not a second kind registry.
+    fn create_aux(&self, window: Window, params: AuxOpenParams) -> Option<Box<dyn AuxController>>;
 }
 
 /// Production opener: real tao windows on the live event loop.
@@ -207,42 +207,84 @@ impl WindowOpener for TaoWindowOpener<'_> {
             .map_err(|e| e.to_string())
     }
 
-    fn create_aux(&self, kind: AuxKind, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
-        create_aux_window(self.target, kind, params)
+    fn create_aux(&self, window: Window, params: AuxOpenParams) -> Option<Box<dyn AuxController>> {
+        let mut visitor = CreateAux {
+            target: self.target,
+            window: &window,
+            params: Some(params),
+            output: None,
+        };
+        window.visit(&mut visitor);
+        visitor.output
     }
 }
 
-/// Direct kind dispatch: the closed `AuxKind` needs no table, and a
-/// foreign variant fails closed in the splitter below.
-fn create_aux_window(
-    target: &EventLoopWindowTarget<UserEvent>,
-    kind: AuxKind,
-    params: AuxOpenParams,
-) -> Option<Box<dyn AuxController>> {
-    match kind {
-        AuxKind::Settings => {
-            let (snapshot, registry, audio) = settings_parts(params)?;
-            crate::aux::settings::window::SettingsWindowHandle::new(
-                snapshot, registry, audio, target,
-            )
-            .map(aux_box)
-        }
-        AuxKind::Debug => {
-            let (display, spaces, mem_addr, language, position) = debug_parts(params)?;
-            crate::aux::debug::DebugWindowHandle::new(
-                display, spaces, mem_addr, language, target, position,
-            )
-            .map(aux_box)
-        }
-        AuxKind::Ppu => {
-            let (bridge, position) = ppu_parts(params)?;
-            crate::aux::ppu::PpuWindowHandle::new(Arc::clone(&bridge), target, position)
+struct CreateAux<'a> {
+    target: &'a EventLoopWindowTarget<UserEvent>,
+    window: &'a Window,
+    params: Option<AuxOpenParams>,
+    output: Option<Box<dyn AuxController>>,
+}
+
+impl WindowVisitor for CreateAux<'_> {
+    fn visit_settings(&mut self, _: &nerust_frontend_host::settings::SettingsScreen) {
+        self.output = self
+            .params
+            .take()
+            .and_then(settings_parts)
+            .and_then(|program| {
+                crate::aux::widgets::native::SettingsWindowHandle::new(
+                    self.window.clone(),
+                    program,
+                    self.target,
+                )
                 .map(aux_box)
-        }
-        AuxKind::History => {
-            let language = history_parts(params)?;
-            crate::aux::osd::HistoryWindowHandle::new(target, language).map(aux_box)
-        }
+            });
+    }
+    fn visit_debug(&mut self, _: &DebugContents) {
+        self.output = self.params.take().and_then(debug_parts).and_then(
+            |(display, spaces, mem_addr, language, position)| {
+                crate::aux::debug::DebugWindowHandle::new(
+                    self.window.clone(),
+                    display,
+                    spaces,
+                    mem_addr,
+                    language,
+                    self.target,
+                    position,
+                )
+                .map(aux_box)
+            },
+        );
+    }
+    fn visit_ppu(&mut self, _: &PpuContents) {
+        self.output = self
+            .params
+            .take()
+            .and_then(ppu_parts)
+            .and_then(|(bridge, position)| {
+                crate::aux::ppu::PpuWindowHandle::new(
+                    self.window.clone(),
+                    bridge,
+                    self.target,
+                    position,
+                )
+                .map(aux_box)
+            });
+    }
+    fn visit_history(&mut self, _: &HistoryContents) {
+        self.output = self
+            .params
+            .take()
+            .and_then(history_parts)
+            .and_then(|language| {
+                crate::aux::widgets::native::HistoryWindowHandle::new(
+                    self.window.clone(),
+                    self.target,
+                    language,
+                )
+                .map(aux_box)
+            });
     }
 }
 
@@ -251,25 +293,16 @@ fn aux_box<T: AuxController + 'static>(handle: T) -> Box<dyn AuxController> {
     Box::new(handle)
 }
 
-/// Split settings inputs: snapshot, registry, and audio backend.
-type SettingsParts = (
-    SettingsSnapshot,
-    Arc<SystemRegistry>,
-    Arc<AudioBackendRegistry>,
-);
+/// Single prepared controller, moved into the native iced instance.
+type SettingsParts = crate::aux::widgets::bindings::SettingsBinding;
 
 /// Split one settings open: the variant check is pure, so tests cover
 /// foreign-variant rejection without a display.
 fn settings_parts(params: AuxOpenParams) -> Option<SettingsParts> {
-    let AuxOpenParams::Settings {
-        snapshot,
-        registry,
-        audio,
-    } = params
-    else {
+    let AuxOpenParams::Settings { program } = params else {
         return None;
     };
-    Some((snapshot, registry, audio))
+    Some(program)
 }
 
 /// Split one debugger open: pure variant check, display-free tests.
@@ -293,7 +326,7 @@ fn debug_parts(params: AuxOpenParams) -> Option<DebugParts> {
     else {
         return None;
     };
-    Some((display, spaces, mem_addr, language, position))
+    Some((*display, spaces, mem_addr, language, position))
 }
 
 /// Split one viewer open: pure variant check, display-free tests.
@@ -391,13 +424,18 @@ mod tests {
         assert_eq!(history_parts(history_params()), Some(AppLanguage::English));
         // Own variants split cleanly.
         let settings = AuxOpenParams::Settings {
-            snapshot: SettingsSnapshot {
-                shared: Default::default(),
-                local: Default::default(),
-                app_state: Default::default(),
-            },
-            registry: std::sync::Arc::new(SystemRegistry::new(Vec::new())),
-            audio: std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+            program: crate::aux::widgets::bindings::SettingsBinding::new(
+                nerust_gui_runtime::settings::SettingsSnapshot {
+                    shared: Default::default(),
+                    local: Default::default(),
+                    app_state: Default::default(),
+                },
+                Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new())),
+                Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+                Default::default(),
+                Default::default(),
+                Default::default(),
+            ),
         };
         assert!(settings_parts(settings).is_some());
         let debug = AuxOpenParams::Debug {

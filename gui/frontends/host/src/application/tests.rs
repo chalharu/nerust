@@ -235,6 +235,7 @@ fn chrome_gates_skip_repeat_pushes_and_retain_source_allocations() {
     assert!(!Arc::ptr_eq(&replacement, &sig.shortcuts));
     assert!(!fixture.core.title_same("nerust"));
     let title = fixture.core.title_update(&first.tick()).unwrap();
+    assert_eq!(fixture.core.main_window().title, title);
     assert!(fixture.core.title_same(&title));
     assert!(fixture.core.title_update(&first.tick()).is_none());
     assert_eq!(fixture.core.frame_ctx().generation(), first.generation());
@@ -313,6 +314,10 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
     assert!(fixture.core.menu_update(&ctx, false).is_some());
     let first = fixture.core.menubar_update(&ctx, false, caps).unwrap();
     assert_eq!(fixture.core.menubar(), Some(&first.menubar));
+    assert!(std::ptr::eq(
+        fixture.core.menubar().unwrap(),
+        fixture.core.main_window().menu.as_ref().unwrap()
+    ));
     assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
     let app_caps = crate::menu::MenuCapabilities {
         application_menu: true,
@@ -363,6 +368,75 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
     assert_eq!(update.signature.active_slot, Some(73));
     assert_eq!(initial.menubar, update.menubar);
     assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
+}
+
+#[test]
+fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
+    use crate::{
+        aux::{AuxWindows, OpenRequest},
+        commands::MenuCommand,
+        event::{CommandEffect, EventCommand, EventHandler},
+        menu::MenuEntry,
+        window::{WidgetContents, Window, WindowVisitor},
+    };
+
+    let mut fixture = Fixture::new();
+    let ctx = fixture.core.frame_ctx();
+    fixture.core.menubar_update(
+        &ctx,
+        false,
+        MenuCapabilities {
+            about: false,
+            dialog_ellipsis: false,
+            application_menu: false,
+        },
+    );
+    let command = fixture
+        .core
+        .main_window()
+        .menu
+        .as_ref()
+        .unwrap()
+        .menus
+        .iter()
+        .flat_map(|menu| &menu.children)
+        .find_map(|entry| match entry {
+            MenuEntry::Item(item) if item.command == Some(MenuCommand::Debugger) => item.command,
+            _ => None,
+        })
+        .expect("OpenDebugger belongs to this main window's actual menu");
+    let outcome = fixture
+        .core
+        .handle_event(EventCommand::Menu(command), false)
+        .unwrap();
+    let Some(CommandEffect::OpenAux(kind)) = outcome.effect else {
+        panic!("expected auxiliary open");
+    };
+    assert_eq!(kind, AuxKind::Debug);
+    let mut windows = AuxWindows::<u64, ()>::new();
+    let OpenRequest::Create(id) = windows.request_open(kind) else {
+        panic!("expected creation");
+    };
+    assert!(windows.get(kind).is_none(), "native creation has not run");
+    assert!(matches!(
+        windows.window(id).unwrap().contents.contents,
+        WidgetContents::Debug(_)
+    ));
+    struct MenuVisitor(bool);
+    impl WindowVisitor for MenuVisitor {
+        fn begin_window(&mut self, _: &Window) {
+            assert!(!self.0);
+        }
+        fn visit_menu(&mut self, _: &Menubar) {
+            self.0 = true;
+        }
+        fn visit_main(&mut self, _: &crate::window::MainContents) {
+            assert!(self.0, "menu is visited before contents");
+        }
+    }
+    let mut visitor = MenuVisitor(false);
+    fixture.core.main_window().visit(&mut visitor);
+    assert!(visitor.0);
 }
 
 #[test]

@@ -13,13 +13,35 @@ use nerust_frontend_host::settings::{
 };
 use nerust_gui_viewmodel::settings::dto::BindingValueView;
 
-use super::program::{El, Message};
+use super::bindings::{El, Message};
 
 /// All labels and callback IDs are owned; the snapshot may be dropped.
-pub(super) fn build(screen: &SettingsScreen) -> El<'static> {
+#[cfg(test)]
+pub(super) fn build(window: &nerust_frontend_host::window::Window) -> El<'static> {
+    let mut visitor = SettingsWindowVisitor::default();
+    window.visit(&mut visitor);
+    visitor
+        .output
+        .expect("settings window must contain a real settings screen")
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct SettingsWindowVisitor {
+    output: Option<El<'static>>,
+}
+
+#[cfg(test)]
+impl nerust_frontend_host::window::WindowVisitor for SettingsWindowVisitor {
+    fn visit_settings(&mut self, screen: &SettingsScreen) {
+        self.output = Some(build_screen(screen));
+    }
+}
+
+pub(crate) fn build_screen(screen: &SettingsScreen) -> El<'static> {
     let mut visitor = IcedSettingsVisitor::default();
     screen.visit(&mut visitor as &mut dyn SettingsVisitor);
-    visitor.output.expect("balanced settings screen")
+    visitor.output.expect("settings traversal must finish")
 }
 
 #[derive(Default)]
@@ -402,5 +424,4 @@ fn control_element(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
 mod tests;

@@ -9,6 +9,34 @@ use nerust_gui_shell::session::{
 };
 use std::time::Instant;
 
+use nerust_frontend_host::{
+    application::{MenuSig, MenubarUpdate},
+    menu::Menubar,
+    window::{Window, WindowVisitor},
+};
+
+struct MainPresentation<'a> {
+    native: Option<&'a tao::window::Window>,
+    menu: Option<(&'a mut dyn crate::menu::MenuSink, MenuSig)>,
+}
+
+impl WindowVisitor for MainPresentation<'_> {
+    fn begin_window(&mut self, window: &Window) {
+        if let Some(native) = self.native {
+            native.set_title(&window.title);
+        }
+    }
+
+    fn visit_menu(&mut self, menu: &Menubar) {
+        if let Some((sink, signature)) = self.menu.as_mut() {
+            sink.update(MenubarUpdate {
+                signature: signature.clone(),
+                menubar: menu.clone(),
+            });
+        }
+    }
+}
+
 impl HostState {
     pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
         let Some(is_fullscreen) = self.windows.with_usable(|w| w.fullscreen().is_some()) else {
@@ -37,19 +65,21 @@ impl HostState {
         else {
             return;
         };
-        self.app_menu.update(update);
-    }
-
-    fn push_title(&mut self, title: &str) {
-        if let Some(window) = self.windows.live() {
-            window.set_title(title);
-        }
+        let window = self.core.main_window().clone();
+        window.visit(&mut MainPresentation {
+            native: None,
+            menu: Some((self.app_menu.as_mut(), update.signature)),
+        });
     }
 
     /// Title-only gate over the cached session title: one format per change.
     pub(crate) fn refresh_window_title(&mut self, tick: &TickMetrics) {
-        if let Some(title) = self.core.title_update(tick) {
-            self.push_title(&title);
+        if self.core.title_update(tick).is_some() {
+            let window = self.core.main_window().clone();
+            window.visit(&mut MainPresentation {
+                native: self.windows.live().map(AsRef::as_ref),
+                menu: None,
+            });
         }
     }
 
