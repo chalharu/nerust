@@ -7,10 +7,18 @@
 //!   its policy-aware operations rather than duplicating controller state.
 //! - Implement [`loop_driver::LoopHost`] and call [`loop_driver::drive_turn`]
 //!   at the end of an event burst. Map its deadline/redraw result to the OS pump.
-//! - Use [`osd::OsdNotifications`]. Take an owned [`osd::ModalPresentation`],
-//!   release controller/`RefCell` borrows, then present native UI. ACK its
-//!   [`osd::ModalToken`] through the application host; present chained effects
-//!   only after releasing the borrow again. Callbacks may fire synchronously.
+//! - Let [`application::ApplicationHost`] own OSD state. Call
+//!   [`application::ApplicationHost::pump_osd`] and
+//!   [`application::ApplicationHost::prepare_osd`] under the host borrow, then
+//!   release it. Deliver owned [`osd::OsdUpdate`] through `dyn` [`osd::OsdVisitor`]
+//!   and owned [`osd::ModalPresentation`] through `dyn` [`osd::ModalPresenter`].
+//!   ACK with [`application::ApplicationHost::acknowledge_osd_modal`]; release
+//!   borrows again before presenting chained effects. Callbacks may reenter.
+//!   Invalidate OSD output when the destination is replaced or delivery abandoned.
+//! - Use [`history::HistoryController`] to gate session history updates, or cache
+//!   an owned [`history::HistoryModel`] built on sync/filter messages. Release
+//!   controller/host borrows before visiting through `dyn` [`history::HistoryVisitor`].
+//!   The model owns captions and rendered rows; only native controls stay local.
 //! - Dispatch gestures and poll [`debugger::DebuggerDriver`]; apply owned view
 //!   snapshots/effects outside controller borrows. Schedule pending polls.
 //! - Use [`settings::SettingsController`] and its apply mailbox; native controls
@@ -45,6 +53,7 @@ pub mod drain;
 pub mod event;
 pub mod focus;
 pub mod frame;
+pub mod history;
 pub mod loop_driver;
 pub mod menu;
 pub mod osd;

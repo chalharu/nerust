@@ -1,15 +1,11 @@
 //! Notification history viewer (iced aux window).
-//! Shell owns event capture; this module owns presentation state.
+//! Host owns the history model; this module owns native layout and style.
 
 use iced::Task;
 use iced_winit::program::{self, Program};
-use nerust_gui_shell::session::osd::{
-    HistoryFilter, HistoryLine, history_row_view, visible_history,
-};
-use nerust_settings_core::{
-    i18n::{UiText, history_count, text as ui_text},
-    model::language::AppLanguage,
-};
+use nerust_frontend_host::history::{HistoryModel, HistoryVisitor};
+use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine, HistoryRowView};
+use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
@@ -24,21 +20,9 @@ pub(crate) enum HistoryMessage {
     Clear,
 }
 
-/// Localized filter labels for the toolbar dropdown.
-/// Built on Sync only; the view borrows them.
-fn filter_options(language: AppLanguage) -> Vec<String> {
-    HistoryFilter::all()
-        .iter()
-        .map(|filter| filter.label(language).to_string())
-        .collect()
-}
-
 pub(crate) struct HistoryState {
     lines: std::sync::Arc<[HistoryLine]>,
-    filter: HistoryFilter,
-    language: AppLanguage,
-    /// Localized filter labels: rebuilt on Sync only, borrowed by the view.
-    options: Vec<String>,
+    model: HistoryModel,
     clear_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -75,9 +59,7 @@ impl Program for HistoryProgram {
         (
             HistoryState {
                 lines: std::sync::Arc::from([]),
-                filter: HistoryFilter::All,
-                language,
-                options: filter_options(language),
+                model: HistoryModel::build(&[], language, HistoryFilter::All),
                 clear_requested: std::sync::Arc::clone(&self.clear_requested),
             },
             Task::none(),
@@ -88,12 +70,11 @@ impl Program for HistoryProgram {
         match message {
             HistoryMessage::Sync { lines, language } => {
                 state.lines = lines;
-                state.language = language;
-                state.options = filter_options(language);
+                state.model = HistoryModel::build(&state.lines, language, state.model.filter);
                 Task::none()
             }
             HistoryMessage::SetFilter(filter) => {
-                state.filter = filter;
+                state.model = HistoryModel::build(&state.lines, state.model.language, filter);
                 Task::none()
             }
             HistoryMessage::Clear => {
@@ -110,90 +91,131 @@ impl Program for HistoryProgram {
         state: &'a Self::State,
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+        history_view(&state.model)
+    }
+}
+
+#[derive(Default)]
+struct IcedHistoryVisitor {
+    toolbar: Option<iced::Element<'static, HistoryMessage>>,
+    items: Vec<iced::Element<'static, HistoryMessage>>,
+    view: Option<iced::Element<'static, HistoryMessage>>,
+}
+
+impl HistoryVisitor for IcedHistoryVisitor {
+    fn begin(&mut self, model: &HistoryModel) {
         use iced::Length;
-        use iced::widget::{button, column, pick_list, row, rule, scrollable, text};
-        let language = state.language;
-        let shown = visible_history(&state.lines, state.filter);
-        let shown_count = shown.len();
-        // Toolbar: filter plus clear on top; count trails right.
-        let toolbar: iced::Element<'_, HistoryMessage> = row![
-            text(ui_text(language, UiText::HistoryLevel)).size(12),
-            pick_list(
-                state.options.as_slice(),
-                state.filter.label(language).to_string().into(),
-                move |label: String| HistoryMessage::SetFilter(
-                    HistoryFilter::from_label(&label, language).unwrap_or_default()
-                ),
-            )
-            .placeholder(ui_text(language, UiText::HistoryLevel)),
-            button(text(ui_text(language, UiText::HistoryClear)).size(12))
-                .on_press(HistoryMessage::Clear),
-            iced::widget::Space::new().width(Length::Fill),
-            text(history_count(language, shown_count)).size(12),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center)
-        .into();
-        let mut items = column![].spacing(2);
-        // Descriptive nouns, title case, no punctuation (Apple HIG).
-        items = items.push(
+        use iced::widget::{button, pick_list, row, rule, text};
+        let captions = &model.captions;
+        let options: Vec<_> = model
+            .options
+            .iter()
+            .map(|option| option.label.clone())
+            .collect();
+        let selected = model
+            .options
+            .iter()
+            .find(|option| option.filter == model.filter)
+            .map(|option| option.label.clone());
+        let filters: Vec<_> = model
+            .options
+            .iter()
+            .map(|option| (option.label.clone(), option.filter))
+            .collect();
+        self.toolbar = Some(
             row![
-                text(ui_text(language, UiText::HistoryDatetime))
+                text(captions.level.clone()).size(12),
+                pick_list(options, selected, move |label: String| {
+                    HistoryMessage::SetFilter(
+                        filters
+                            .iter()
+                            .find(|(name, _)| name == &label)
+                            .map(|(_, filter)| *filter)
+                            .unwrap_or_default(),
+                    )
+                })
+                .placeholder(captions.level.clone()),
+                button(text(captions.clear.clone()).size(12)).on_press(HistoryMessage::Clear),
+                iced::widget::Space::new().width(Length::Fill),
+                text(captions.count.clone()).size(12),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+            .into(),
+        );
+        self.items.clear();
+        self.items.push(
+            row![
+                text(captions.headers[0].clone())
                     .size(12)
                     .width(Length::Fixed(150.0)),
-                text(ui_text(language, UiText::HistoryLevel))
+                text(captions.headers[1].clone())
                     .size(12)
                     .width(Length::Fixed(70.0)),
-                text(ui_text(language, UiText::HistoryModule))
+                text(captions.headers[2].clone())
                     .size(12)
                     .width(Length::Fixed(220.0)),
-                text(ui_text(language, UiText::HistoryMessage))
+                text(captions.headers[3].clone())
                     .size(12)
                     .width(Length::Fill),
             ]
-            .spacing(12),
+            .spacing(12)
+            .into(),
         );
-        items = items.push(rule::horizontal(1));
-        if shown_count == 0 {
-            items = items.push(text(ui_text(language, UiText::HistoryEmpty)).size(13));
+        self.items.push(rule::horizontal(1).into());
+        if model.rows.is_empty() {
+            self.items
+                .push(text(captions.empty.clone()).size(13).into());
         }
-        for line in shown {
-            let row = history_row_view(line, language);
-            let (r, g, b) = row.rgb;
-            let level_color = iced::Color::from_rgb8(r, g, b);
-            // Cells wrap inside their column; no clip containers.
-            // Owned strings: the row is local, state borrows cannot outlive it.
-            items = items.push(
-                row![
-                    text(row.datetime)
-                        .size(12)
-                        .font(iced::Font::MONOSPACE)
-                        .width(Length::Fixed(150.0)),
-                    text(row.level)
-                        .size(12)
-                        .color(level_color)
-                        .width(Length::Fixed(70.0)),
-                    text(row.module)
-                        .size(11)
-                        .font(iced::Font::MONOSPACE)
-                        .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
-                        .width(Length::Fixed(220.0)),
-                    // `HistoryLine.text` already carries the `×N`
-                    // suffix when merged; use it as-is.
-                    text(row.message)
-                        .size(13)
-                        .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
-                        .width(Length::Fill),
-                ]
-                .spacing(12),
-            );
-        }
-        // 16 content margin, 12 between groups, 8 between controls.
-        column![toolbar, scrollable(items)]
+    }
+
+    fn row(&mut self, entry: &HistoryRowView) {
+        use iced::Length;
+        use iced::widget::{row, text};
+        let (r, g, b) = entry.rgb;
+        self.items.push(
+            row![
+                text(entry.datetime.clone())
+                    .size(12)
+                    .font(iced::Font::MONOSPACE)
+                    .width(Length::Fixed(150.0)),
+                text(entry.level)
+                    .size(12)
+                    .color(iced::Color::from_rgb8(r, g, b))
+                    .width(Length::Fixed(70.0)),
+                text(entry.module.clone())
+                    .size(11)
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
+                    .width(Length::Fixed(220.0)),
+                text(entry.message.clone())
+                    .size(13)
+                    .wrapping(iced::advanced::text::Wrapping::WordOrGlyph)
+                    .width(Length::Fill),
+            ]
+            .spacing(12)
+            .into(),
+        );
+    }
+
+    fn end(&mut self) {
+        use iced::widget::{column, scrollable};
+        self.view = Some(
+            column![
+                self.toolbar.take().expect("history begin before end"),
+                scrollable(column(std::mem::take(&mut self.items)).spacing(2)),
+            ]
             .spacing(12)
             .padding(16)
-            .into()
+            .into(),
+        );
     }
+}
+
+fn history_view(model: &HistoryModel) -> iced::Element<'static, HistoryMessage> {
+    let mut visitor = IcedHistoryVisitor::default();
+    model.visit(&mut visitor as &mut dyn HistoryVisitor);
+    visitor.view.expect("history traversal must finish")
 }
 
 pub(crate) struct HistoryWindowHandle {
@@ -209,10 +231,10 @@ impl HistoryWindowHandle {
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         language: AppLanguage,
     ) -> Option<Self> {
-        let title = ui_text(language, UiText::NotificationHistory);
+        let model = HistoryModel::build(&[], language, HistoryFilter::All);
         let surface = AuxSurface::open(
             event_loop,
-            title,
+            &model.captions.title,
             (720.0, 360.0),
             None,
             None,
@@ -345,7 +367,7 @@ mod tests {
         };
         let (mut state, _) = program.boot();
         assert!(state.lines.is_empty());
-        assert_eq!(state.filter, HistoryFilter::All);
+        assert_eq!(state.model.filter, HistoryFilter::All);
         let _ = program.update(
             &mut state,
             HistoryMessage::Sync {
@@ -357,9 +379,11 @@ mod tests {
             },
         );
         assert_eq!(state.lines.len(), 2);
-        assert_eq!(state.language, ja());
+        assert_eq!(state.model.language, ja());
+        assert_eq!(state.model.rows.len(), 2);
         let _ = program.update(&mut state, HistoryMessage::SetFilter(HistoryFilter::Error));
-        assert_eq!(state.filter, HistoryFilter::Error);
+        assert_eq!(state.model.filter, HistoryFilter::Error);
+        assert_eq!(state.model.rows.len(), 1);
     }
 
     #[test]
@@ -383,7 +407,7 @@ mod tests {
             },
         );
         drop(program.view(&state, iced::window::Id::unique()));
-        state.filter = HistoryFilter::Error;
+        let _ = program.update(&mut state, HistoryMessage::SetFilter(HistoryFilter::Error));
         drop(program.view(&state, iced::window::Id::unique()));
     }
 
@@ -461,6 +485,105 @@ mod tests {
             assert_eq!(rows[0].count, 3);
             assert!(rows[0].text.ends_with("×3"), "{}", rows[0].text);
             assert_eq!(rows[0].text.matches('×').count(), 1, "{}", rows[0].text);
+            let program = HistoryProgram {
+                language,
+                clear_requested: Default::default(),
+            };
+            let (mut state, _) = program.boot();
+            let _ = program.update(
+                &mut state,
+                HistoryMessage::Sync {
+                    lines: rows.into(),
+                    language,
+                },
+            );
+            assert!(state.model.rows[0].message.ends_with("×3"));
+            assert_eq!(state.model.rows[0].message.matches('×').count(), 1);
+            drop(program.view(&state, iced::window::Id::unique()));
         }
+    }
+
+    #[test]
+    fn shared_model_drives_native_view_and_balanced_visitor_order() {
+        struct Probe(Vec<String>);
+        impl HistoryVisitor for Probe {
+            fn begin(&mut self, model: &HistoryModel) {
+                self.0.push(format!("begin:{}", model.captions.title));
+            }
+            fn row(&mut self, row: &HistoryRowView) {
+                self.0.push(row.message.clone());
+            }
+            fn end(&mut self) {
+                self.0.push("end".into());
+            }
+        }
+        let program = HistoryProgram {
+            language: en(),
+            clear_requested: Default::default(),
+        };
+        let (mut state, _) = program.boot();
+        let lines: std::sync::Arc<[HistoryLine]> = [
+            line(NotificationLevel::Info, "info"),
+            line(NotificationLevel::Warning, "warning"),
+            line(NotificationLevel::Error, "error"),
+        ]
+        .into();
+        for language in [en(), ja()] {
+            let _ = program.update(
+                &mut state,
+                HistoryMessage::Sync {
+                    lines: lines.clone(),
+                    language,
+                },
+            );
+            for filter in [HistoryFilter::All, HistoryFilter::Error] {
+                let _ = program.update(&mut state, HistoryMessage::SetFilter(filter));
+                let expected = HistoryModel::build(&lines, language, filter);
+                assert_eq!(state.model.captions.title, expected.captions.title);
+                assert_eq!(state.model.captions.count, expected.captions.count);
+                assert_eq!(state.model.rows.len(), expected.rows.len());
+                let mut probe = Probe(Vec::new());
+                state.model.visit(&mut probe as &mut dyn HistoryVisitor);
+                assert_eq!(
+                    probe.0.first(),
+                    Some(&format!("begin:{}", expected.captions.title))
+                );
+                assert_eq!(probe.0.last().map(String::as_str), Some("end"));
+                assert_eq!(
+                    probe.0[1..probe.0.len() - 1],
+                    expected
+                        .rows
+                        .iter()
+                        .map(|row| row.message.clone())
+                        .collect::<Vec<_>>()
+                );
+                // The actual iced visitor consumes this same Host model without a display.
+                let mut native = IcedHistoryVisitor::default();
+                state.model.visit(&mut native as &mut dyn HistoryVisitor);
+                assert!(native.view.is_some());
+                assert!(native.toolbar.is_none());
+                assert!(native.items.is_empty());
+                drop(program.view(&state, iced::window::Id::unique()));
+            }
+        }
+        let _ = program.update(
+            &mut state,
+            HistoryMessage::Sync {
+                lines: lines.clone(),
+                language: en(),
+            },
+        );
+        let english = state.model.captions.title.clone();
+        let _ = program.update(
+            &mut state,
+            HistoryMessage::Sync {
+                lines,
+                language: ja(),
+            },
+        );
+        assert_ne!(state.model.captions.title, english);
+        assert_eq!(state.model.filter, HistoryFilter::Error);
+        assert_eq!(state.model.rows.len(), 1);
+        assert_eq!(state.model.rows[0].message, "error");
     }
 }

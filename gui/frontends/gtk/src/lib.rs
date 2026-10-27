@@ -170,21 +170,6 @@ impl State {
         self.host.finish_close();
     }
 
-    pub(crate) fn history_lines_cached(
-        &mut self,
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) -> &[nerust_gui_shell::session::osd::HistoryLine] {
-        self.host
-            .session_mut()
-            .notification_history_lines_cached(language)
-    }
-
-    /// History generation for the refresh gate: unchanged content
-    /// skips the full row rebuild (same contract as the tao twin).
-    pub(crate) fn notification_history_seq(&self) -> u64 {
-        self.host.session().notification_history_seq()
-    }
-
     pub(crate) fn clear_notification_history(&mut self) {
         self.host.clear_history();
     }

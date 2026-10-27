@@ -1,9 +1,14 @@
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Instant,
+};
 
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
     frame::{FrameCache, FrameCtx},
     loop_driver::{LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop},
+    osd::{ModalPresentation, OsdUpdate},
 };
 use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 
@@ -19,7 +24,7 @@ pub(crate) struct SurfaceCore {
     picture: gtk::Picture,
     renderer: Rc<RefCell<GtkRenderer>>,
     pub(crate) state: Rc<RefCell<State>>,
-    pub(crate) osd: RefCell<super::osd::GtkOsd>,
+    output_generation: Cell<Option<u64>>,
     frames: RefCell<FrameCache>,
     retry: RefCell<nerust_frontend_kernel::retry::RenderRetry>,
     wake: RefCell<WakeAt>,
@@ -88,6 +93,9 @@ struct GtkTurn<'a> {
     window: &'a gtk::ApplicationWindow,
     state: &'a mut State,
     physical_size: SurfaceSize,
+    client_height: u32,
+    update: OsdUpdate,
+    modal: Option<ModalPresentation>,
 }
 
 impl LoopHost for GtkTurn<'_> {
@@ -113,13 +121,14 @@ impl LoopHost for GtkTurn<'_> {
     }
 
     fn pump_osd(&mut self, ctx: &FrameCtx) -> WakeNeed {
-        self.core.osd.borrow_mut().poll(
-            self.state,
-            &self.core.renderer,
-            self.window,
-            self.physical_size,
-            ctx,
-        )
+        let now = Instant::now();
+        let turn = self.state.host.pump_osd(ctx, now);
+        self.modal = turn.modal;
+        self.update = self
+            .state
+            .host
+            .prepare_osd(self.physical_size, self.client_height, ctx, now);
+        turn.wake
     }
 
     fn pump_aux(&mut self) -> WakeNeed {
@@ -168,13 +177,12 @@ impl SurfaceExtend for Surface {
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
         let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));
-        let osd = super::osd::GtkOsd::new();
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.downgrade(),
             picture: picture.clone(),
             renderer,
             state,
-            osd: RefCell::new(osd),
+            output_generation: Cell::new(None),
             frames: RefCell::new(FrameCache::new()),
             retry: RefCell::new(Default::default()),
             wake: RefCell::new(WakeAt::default()),
@@ -258,16 +266,20 @@ impl SurfaceCore {
         }
         let effects = Self::poll_osd(&s, &window, physical_size);
         let deadline = match &effects {
-            Some((outcome, _)) => outcome.deadline,
+            Some((outcome, _, _)) => outcome.deadline,
             None => Some(flight_backstop(Instant::now())),
         };
         s.wake.borrow_mut().schedule(surface, deadline);
-        if render_frame {
-            Self::render_image_if_ready(&s, physical_size);
-        }
+        let renderer = s.renderer.clone();
         drop(s);
-        if let Some((_, Some(detail))) = effects {
-            super::osd::GtkOsd::present_modal(surface, &window, detail);
+        if let Some((_, update, modal)) = effects {
+            GtkRenderer::apply_osd(&renderer, update);
+            if let Some(presentation) = modal {
+                super::osd::GtkOsd::present_modal(surface, &window, presentation);
+            }
+        }
+        if render_frame {
+            Self::render_image_if_ready(&surface.borrow(), physical_size);
         }
         true
     }
@@ -330,10 +342,10 @@ impl SurfaceCore {
         s: &SurfaceCore,
         window: &gtk::ApplicationWindow,
         physical_size: SurfaceSize,
-    ) -> Option<(
-        TurnOutcome,
-        Option<nerust_frontend_host::osd::ModalPresentation>,
-    )> {
+    ) -> Option<(TurnOutcome, OsdUpdate, Option<ModalPresentation>)> {
+        let generation = s.renderer.borrow().output_generation();
+        let client_height =
+            (window.height().max(0) as u32).saturating_mul(window.scale_factor().max(1) as u32);
         let mut state = match s.state.try_borrow_mut() {
             Ok(state) => state,
             Err(_) => {
@@ -341,14 +353,20 @@ impl SurfaceCore {
                 return None;
             }
         };
-        let outcome = drive_turn(&mut GtkTurn {
+        if s.output_generation.replace(Some(generation)) != Some(generation) {
+            state.host.invalidate_osd();
+        }
+        let mut turn = GtkTurn {
             core: s,
             window,
             state: &mut state,
             physical_size,
-        });
-        let modal = s.osd.borrow_mut().take_modal();
-        Some((outcome, modal))
+            client_height,
+            update: OsdUpdate::default(),
+            modal: None,
+        };
+        let outcome = drive_turn(&mut turn);
+        Some((outcome, turn.update, turn.modal))
     }
 
     /// Render one frame into memory and hand it to the GTK picture, which
@@ -443,6 +461,175 @@ mod wake_tests {
             context.iteration(false);
             std::thread::yield_now();
         }
+    }
+
+    struct ReentrantBackend {
+        surface: std::rc::Weak<RefCell<SurfaceCore>>,
+        strips: Rc<Cell<usize>>,
+    }
+
+    impl std::fmt::Debug for ReentrantBackend {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("ReentrantBackend")
+        }
+    }
+
+    impl nerust_render_traits::renderer::SurfaceLifecycle for ReentrantBackend {
+        fn size(&self) -> SurfaceSize {
+            SurfaceSize::new(0, 0)
+        }
+        fn attach(
+            &mut self,
+            _: raw_window_handle::RawWindowHandle,
+            _: raw_window_handle::RawDisplayHandle,
+            _: SurfaceSize,
+        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
+            Ok(())
+        }
+        fn detach(&mut self) {}
+        fn resize(&mut self, _: SurfaceSize) {}
+    }
+
+    impl nerust_render_traits::renderer::FrameSink for ReentrantBackend {
+        fn render(
+            &mut self,
+            _: &nerust_render_traits::FrameBuffer,
+        ) -> nerust_render_traits::renderer::RenderResult {
+            panic!("hidden test must never render");
+        }
+    }
+
+    impl nerust_render_traits::renderer::ProfileSwitch for ReentrantBackend {
+        fn update_render_profile(
+            &mut self,
+            _: &nerust_render_traits::VideoRenderProfile,
+        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
+            Ok(())
+        }
+    }
+
+    impl nerust_render_traits::renderer::OsdSink for ReentrantBackend {
+        fn set_osd_layer(&mut self, _: Option<nerust_render_traits::renderer::OsdLayer>) {
+            let surface = self.surface.upgrade().unwrap();
+            assert!(surface.try_borrow_mut().is_ok());
+            let (state, renderer) = {
+                let s = surface.borrow();
+                (s.state.clone(), s.renderer.clone())
+            };
+            assert!(state.try_borrow_mut().is_ok());
+            assert!(renderer.try_borrow_mut().is_ok());
+        }
+    }
+
+    impl nerust_render_traits::renderer::StripSink for ReentrantBackend {
+        fn set_reserved_strip(&mut self, _: nerust_render_traits::ReservedStrip) {
+            let surface = self.surface.upgrade().unwrap();
+            assert!(surface.try_borrow_mut().is_ok());
+            let (state, renderer) = {
+                let s = surface.borrow();
+                (s.state.clone(), s.renderer.clone())
+            };
+            assert!(state.try_borrow_mut().is_ok());
+            assert!(renderer.try_borrow_mut().is_ok());
+            let before = self.strips.get();
+            self.strips.set(before + 1);
+            if before == 0 {
+                state.borrow_mut().host.invalidate_osd();
+                // Reenter the production turn during a real backend setter.
+                // Its update must wait until this backend has been restored.
+                assert!(surface.tick());
+                assert_eq!(self.strips.get(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn native_turn_backend_setters_are_borrow_free_and_reentrant_updates_are_delivered() {
+        let Some(h) = Harness::new() else { return };
+        let strips = Rc::new(Cell::new(0));
+        let renderer = h.surface.borrow().renderer.clone();
+        renderer
+            .borrow_mut()
+            .install_test_backend(Box::new(ReentrantBackend {
+                surface: Rc::downgrade(&h.surface),
+                strips: strips.clone(),
+            }));
+        assert!(h.surface.tick());
+        assert_eq!(
+            strips.get(),
+            2,
+            "queued nested strip must reach the restored backend"
+        );
+        assert!(h.surface.tick());
+        assert_eq!(strips.get(), 2, "unchanged Host output must skip setters");
+        renderer
+            .borrow_mut()
+            .install_test_backend(Box::new(ReentrantBackend {
+                surface: Rc::downgrade(&h.surface),
+                strips: strips.clone(),
+            }));
+        assert!(h.surface.tick());
+        assert_eq!(
+            strips.get(),
+            3,
+            "new output generation invalidates Host before prepare"
+        );
+    }
+
+    #[test]
+    fn native_modal_can_ack_synchronously_during_map_without_retaining_surface() {
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let Some(h) = Harness::new() else { return };
+        let mapped = Rc::new(Cell::new(0));
+        let dialogs = Rc::new(RefCell::new(Vec::<gtk::MessageDialog>::new()));
+        let toplevels = gtk::Window::toplevels();
+        let signal = toplevels.connect_items_changed({
+            let weak = Rc::downgrade(&h.surface);
+            let mapped = mapped.clone();
+            let dialogs = dialogs.clone();
+            move |list, position, _, added| {
+                for i in position..position + added {
+                    let Some(dialog) = list.item(i).and_downcast::<gtk::MessageDialog>() else {
+                        continue;
+                    };
+                    dialog.connect_map({
+                        let weak = weak.clone();
+                        let mapped = mapped.clone();
+                        move |dialog| {
+                            let surface = weak.upgrade().unwrap();
+                            assert!(surface.try_borrow_mut().is_ok());
+                            let (state, renderer) = {
+                                let s = surface.borrow();
+                                (s.state.clone(), s.renderer.clone())
+                            };
+                            assert!(state.try_borrow_mut().is_ok());
+                            assert!(renderer.try_borrow_mut().is_ok());
+                            assert!(state.borrow().host.owns_pause(PauseOwner::Modal));
+                            mapped.set(mapped.get() + 1);
+                            dialog.response(gtk::ResponseType::Ok);
+                            assert!(!state.borrow().host.owns_pause(PauseOwner::Modal));
+                        }
+                    });
+                    dialogs.borrow_mut().push(dialog);
+                }
+            }
+        });
+        h.state
+            .borrow_mut()
+            .host
+            .report_host_error("sync ACK".into());
+        assert!(h.surface.tick());
+        assert_eq!(mapped.get(), 1);
+        assert!(!h.state.borrow().host.owns_pause(PauseOwner::Modal));
+        toplevels.disconnect(signal);
+        let weak = Rc::downgrade(&h.surface);
+        drop(h);
+        assert!(
+            weak.upgrade().is_none(),
+            "native dialog callbacks must not own Surface"
+        );
+        // A late duplicate response after teardown is harmless.
+        dialogs.borrow()[0].response(gtk::ResponseType::Ok);
     }
 
     #[test]
@@ -667,7 +854,7 @@ mod wake_tests {
     }
 
     #[test]
-    fn native_modal_map_can_borrow_state_surface_and_osd_then_ack() {
+    fn native_modal_map_can_borrow_state_surface_and_renderer_then_ack() {
         use nerust_frontend_kernel::pause::PauseOwner;
         use nerust_gui_shell::session::notification::FailureOrigin;
 
@@ -696,7 +883,6 @@ mod wake_tests {
                         move |_| {
                             let surface = weak.upgrade().unwrap();
                             let s = surface.borrow_mut();
-                            assert!(s.osd.try_borrow_mut().is_ok());
                             assert!(s.renderer.try_borrow_mut().is_ok());
                             let state = state.borrow_mut();
                             assert!(state.host.owns_pause(PauseOwner::Modal));
