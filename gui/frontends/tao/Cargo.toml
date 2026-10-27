@@ -25,7 +25,7 @@ nerust_gui_shell.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_settings_core.workspace = true
 nerust_input_traits.workspace = true
-nerust_keyboard.workspace = true
+wakui.workspace = true
 nerust_persistence.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_run_options.workspace = true

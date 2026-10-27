@@ -1856,7 +1856,7 @@ pub(crate) mod tests {
                 .iter_mut()
                 .find(|binding| binding.action == ShortcutAction::OpenDebugger)
                 .unwrap();
-            binding.key = Some(nerust_keyboard::Key::F2);
+            binding.key = Some(wakui::Key::F2);
             state.borrow_mut().host.apply_settings(newest).unwrap();
             win.update_actions();
         });

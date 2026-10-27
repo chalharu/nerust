@@ -2,8 +2,8 @@
 //! Iced conversion lives in `crate::convert` (domain to iced).
 
 use super::domain::{AuxButton, AuxModifiers, ModifierFlag};
-use nerust_keyboard::Key;
 use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
+use wakui::Key;
 
 /// Convert Tao modifiers to domain modifiers.
 pub(crate) fn tao_modifiers_to_domain(m: TaoModifiers) -> AuxModifiers {

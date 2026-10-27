@@ -12,11 +12,11 @@ use nerust_frontend_host::{
     control::{Control, ControlEvent, ControlId, ControlKind, ControlVisitor, Tab},
     widget_session::WidgetSession,
 };
-use nerust_keyboard::Key;
 use nerust_settings_core::{
     i18n::{UiText, text as caption},
     model::language::AppLanguage,
 };
+use wakui::Key;
 
 use super::super::bindings::tests::{controls, find, prepare};
 use super::*;
