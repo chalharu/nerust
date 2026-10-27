@@ -318,7 +318,7 @@ impl NativeControl {
             _ => unreachable!("control kind checked on lookup"),
         }
         // Label/text setters may overwrite accessibility: metadata must be last.
-        metadata(&self.root, &control.metadata);
+        metadata_chrome(&self.root, &control.metadata);
         metadata(&self.input, &control.metadata);
         for (class, enabled) in [
             (
@@ -351,6 +351,20 @@ fn action_button(binding: &WidgetBinding, id: ControlId, input: ControlInput) ->
 fn metadata(widget: &gtk::Widget, metadata: &ControlMetadata) {
     widget.set_visible(metadata.visible);
     widget.set_sensitive(metadata.enabled);
+    widget.set_tooltip_text(metadata.help.as_deref());
+    accessible_text(
+        widget,
+        &metadata.accessible_label,
+        metadata.help.as_deref().unwrap_or(""),
+    );
+}
+
+/// Row chrome (row box, labels): visibility and semantics follow the
+/// model, but sensitivity stays on the input widget only. Master parity:
+/// master dimmed leaf inputs, never labels or rows, so an empty
+/// slot reads normal while its combo dims.
+fn metadata_chrome(widget: &gtk::Widget, metadata: &ControlMetadata) {
+    widget.set_visible(metadata.visible);
     widget.set_tooltip_text(metadata.help.as_deref());
     accessible_text(
         widget,
@@ -399,6 +413,8 @@ pub(super) struct ControlGtkVisitor<'a> {
     controls: Vec<ControlId>,
     pages: Vec<gtk::Widget>,
     selected_page: Option<gtk::Widget>,
+    footer: Option<LayoutId>,
+    in_footer: bool,
 }
 
 impl<'a> ControlGtkVisitor<'a> {
@@ -410,6 +426,8 @@ impl<'a> ControlGtkVisitor<'a> {
             controls: Vec::new(),
             pages: Vec::new(),
             selected_page: None,
+            footer: None,
+            in_footer: false,
         }
     }
 
@@ -473,6 +491,7 @@ impl<'a> ControlGtkVisitor<'a> {
 
 impl ControlVisitor for ControlGtkVisitor<'_> {
     fn begin_screen(&mut self, screen: &ControlScreen) {
+        self.footer = Some(screen.footer.id);
         self.binding
             .error_label
             .set_text(screen.message.as_deref().unwrap_or(""));
@@ -515,6 +534,13 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
     }
 
     fn begin_layout(&mut self, layout: &Layout, kind: LayoutKind) {
+        // Footer actions (Cancel/OK) belong to the dialog action area,
+        // not the content: master parity for placement and margins.
+        // No frame is pushed; end_layout skips symmetrically.
+        if self.footer == Some(layout.id) {
+            self.in_footer = true;
+            return;
+        }
         let kind = match kind {
             LayoutKind::Row => 0,
             LayoutKind::Column => 1,
@@ -567,14 +593,25 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             body.set_spacing(layout.spacing.into());
             body.set_margin_start(layout.indent.into());
             let label = node.label.unwrap();
-            label.set_text(&layout.label);
+            // Master parity: section titles render bold and larger, with
+            // breathing room above and a tight gap below the rows.
+            label.set_markup(&format!(
+                "<b><span size=\"larger\">{}</span></b>",
+                glib::markup_escape_text(&layout.label)
+            ));
+            label.set_margin_top(12);
+            label.set_margin_bottom(2);
             label.set_visible(!layout.label.is_empty());
             self.frames.push(Frame::Box(body, vec![label.upcast()]));
         }
         metadata(&node.widget, &layout.metadata);
     }
 
-    fn end_layout(&mut self, _layout: &Layout, _kind: LayoutKind) {
+    fn end_layout(&mut self, layout: &Layout, _kind: LayoutKind) {
+        if self.in_footer && self.footer == Some(layout.id) {
+            self.in_footer = false;
+            return;
+        }
         self.end_container();
     }
 
@@ -622,7 +659,14 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
 
     fn begin_tab(&mut self, tab: &Tab) {
         let node = self.node(NodeId::Tab(tab.id), || {
-            let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            // Master parity: notebook pages carry 6px margins and spacing
+            // (system/shortcuts tabs; section tabs used 8px spacing, close
+            // enough to share the geometry).
+            let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            body.set_margin_start(6);
+            body.set_margin_end(6);
+            body.set_margin_top(6);
+            body.set_margin_bottom(6);
             NativeNode {
                 widget: body.clone().upcast(),
                 body: Some(body),
@@ -696,6 +740,28 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             native
         };
         native.update(control);
+        // Footer actions live in the dialog action area (right-aligned
+        // with dialog margins), never in the content row. The input
+        // event flow is unchanged; only placement differs from content.
+        if self.in_footer && matches!(native.kind, NativeKind::Action(_)) {
+            if let Some(dialog) = self.binding.dialog() {
+                // NativeControl builds into a throwaway content row; move
+                // the button into the action area (reparent required:
+                // GTK4 append asserts on an already-parented child).
+                if let Some(parent) = native.input.parent().and_downcast::<gtk::Box>() {
+                    parent.remove(&native.input);
+                }
+                dialog.add_action_widget(&native.input, gtk::ResponseType::None);
+                // Master parity: 12px margins around the action area.
+                if let Some(area) = native.input.parent().and_downcast::<gtk::Box>() {
+                    area.set_margin_top(12);
+                    area.set_margin_bottom(12);
+                    area.set_margin_start(12);
+                    area.set_margin_end(12);
+                }
+            }
+            return;
+        }
         self.append(&native.root);
     }
 

@@ -849,7 +849,7 @@ fn visitor_obeys_selected_hidden_disabled_layouts_and_balances_frames() {
 fn native_navigation_emits_typed_activation_and_updates_all_pages_and_tabs() {
     let mut state = fixture(true);
     for page in state.screen().pages {
-        let mut element = navigation(&page.select, false, true);
+        let mut element = page_radio(&page.select, false);
         let (renderer, mut tree, node) = native_layout(&mut element);
         let messages = feed(
             &mut element,
