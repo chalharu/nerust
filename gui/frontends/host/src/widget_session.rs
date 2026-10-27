@@ -15,7 +15,7 @@ use nerust_settings_core::model::language::AppLanguage;
 
 use crate::{
     binding::{BindingTarget as _, ViewDefinition as _},
-    control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
+    control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
     debugger::lock_recovered,
     focus::AuxKind,
     history::{HistoryEffect, HistoryEvent, HistoryModel},
@@ -266,17 +266,12 @@ impl WidgetSession {
 
     /// Resolve callbacks against current topology and metadata, not retained AST
     /// bindings. The returned effects own all data; execute after releasing borrows.
+    /// Picker results never arrive here; see [`PickerSink`] instead.
     pub fn dispatch(&mut self, event: ControlEvent) -> Vec<ControlEffect> {
         let screen = self.screen();
         let Some(id) = event.id.or(screen.capture.target) else {
             return Vec::new();
         };
-        if let ControlInput::DirectorySelected { request, .. } = &event.input {
-            if self.picker != Some((id, *request)) {
-                return Vec::new();
-            }
-            self.picker = None;
-        }
         if !screen.control(id).is_some_and(|c| c.accepts(&event.input)) {
             return Vec::new();
         }
@@ -291,12 +286,8 @@ impl WidgetSession {
                 let Some((_, domain_id)) = bindings.iter().find(|(token, _)| *token == id) else {
                     return Vec::new();
                 };
-                let events = if let ControlInput::DirectorySelected { path, .. } = event.input {
-                    Some(vec![SettingsEvent::StorageDirectorySelected(path)])
-                } else {
-                    scene::settings_input(event.input)
-                        .and_then(|input| typed.bind(domain_id, input))
-                };
+                let events = scene::settings_input(event.input)
+                    .and_then(|input| typed.bind(domain_id, input));
                 let mut effects = Vec::new();
                 for event in events.into_iter().flatten() {
                     if let Some(SettingsEffect::BrowseStorageDirectory { title }) =
@@ -333,6 +324,43 @@ impl WidgetSession {
                 Vec::new()
             }
         }
+    }
+}
+
+impl crate::binding::PickerSink<std::path::PathBuf> for WidgetSession {
+    /// Deliver a native folder-picker result. Validates the pending request
+    /// and the target's current browse affordance, mirroring dispatch's gates.
+    fn submit(
+        &mut self,
+        target: ControlId,
+        request: crate::control::Id,
+        payload: Option<std::path::PathBuf>,
+    ) {
+        if self.picker != Some((target, request)) {
+            return;
+        }
+        self.picker = None;
+        let mailbox = self.mailbox.clone();
+        if lock_recovered(&mailbox.0.error).take().is_some() {
+            mailbox.invalidate();
+        }
+        let screen = self.screen();
+        let State::Settings(controller) = &mut self.state else {
+            return;
+        };
+        let browseable = screen.control(target).is_some_and(|c| {
+            matches!(
+                &c.kind,
+                ControlKind::Text {
+                    browse_label: Some(_),
+                    ..
+                }
+            )
+        });
+        if !browseable {
+            return;
+        }
+        let _ = controller.apply(SettingsEvent::StorageDirectorySelected(payload));
     }
 }
 

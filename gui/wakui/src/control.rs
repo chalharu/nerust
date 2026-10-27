@@ -1,10 +1,7 @@
 //! Domain-free, owned control scenes. Render snapshots outside all owner borrows;
 //! callbacks carry opaque IDs and are resolved against the latest scene.
 
-use std::{
-    path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::key::Key;
 
@@ -152,7 +149,7 @@ impl Control {
                     browse_label: Some(_),
                     ..
                 },
-                ControlInput::Activate | ControlInput::DirectorySelected { .. },
+                ControlInput::Activate,
             ) => true,
             (ControlKind::Action | ControlKind::Binding { .. }, ControlInput::Activate) => true,
             (ControlKind::Binding { .. }, ControlInput::CaptureClear) => true,
@@ -176,7 +173,6 @@ pub enum ControlInput {
     Activate,
     CaptureClear,
     CaptureKey(Key),
-    DirectorySelected { request: Id, path: Option<PathBuf> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +199,8 @@ impl ControlEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEffect {
-    /// Return the owned picker result to this target through DirectorySelected.
+    /// Ask the native side to open a folder picker. The result comes back
+    /// through [`crate::binding::PickerSink`], never through [`ControlInput`].
     PickDirectory {
         title: String,
         target: ControlId,

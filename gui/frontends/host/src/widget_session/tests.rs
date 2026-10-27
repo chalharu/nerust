@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
+    binding::PickerSink as _,
     control::{
-        Control, ControlKind, ControlVisitor, IdRegistry, Layout, LayoutKind, Page, Tab, Tabs,
+        Control, ControlInput, ControlKind, ControlVisitor, IdRegistry, Layout, LayoutKind, Page,
+        Tab, Tabs,
     },
     settings::{SettingsControlId, SettingsSystemId},
     window::{WidgetContents, WindowVisitor},
@@ -391,24 +393,10 @@ fn generic_picker_and_capture_results_need_no_domain_dto() {
     };
     assert!(!title.is_empty());
     assert_eq!(*target, directory);
-    send(
-        &mut session,
-        directory,
-        ControlInput::DirectorySelected {
-            request: *request,
-            path: Some("/tmp".into()),
-        },
-    );
+    session.submit(directory, *request, Some("/tmp".into()));
     assert!(matches!(&session.screen().control(directory).unwrap().kind,
         ControlKind::Text { value, .. } if value == "/tmp"));
-    send(
-        &mut session,
-        directory,
-        ControlInput::DirectorySelected {
-            request: *request,
-            path: Some("/stale".into()),
-        },
-    );
+    session.submit(directory, *request, Some("/stale".into()));
     assert!(matches!(&session.screen().control(directory).unwrap().kind,
         ControlKind::Text { value, .. } if value == "/tmp"));
     let binding = token(

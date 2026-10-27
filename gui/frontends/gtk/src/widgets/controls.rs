@@ -7,6 +7,7 @@ use std::{
 
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
+    binding::PickerSink as _,
     control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
     widget_session::{WidgetSession, WindowSubmission},
     window::Window as HostWindow,
@@ -319,10 +320,12 @@ impl WidgetBinding {
                     drop(old);
                     chooser.hide();
                     if binding.live() {
-                        binding.send(ControlEvent::new(
-                            target,
-                            ControlInput::DirectorySelected { request, path },
-                        ));
+                        if let Ok(mut session) = binding.session.try_borrow_mut() {
+                            session.submit(target, request, path);
+                        }
+                        // Mirror drain's post-dispatch repaint: picker results
+                        // produce no submission or effects, only a fresh screen.
+                        binding.refresh();
                     }
                 }
                 chooser.destroy();
