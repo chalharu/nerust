@@ -2,9 +2,13 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::control::{
-    Control, ControlDisplay, ControlId, ControlInput, ControlKind, ControlMetadata, ControlScreen,
-    ControlVisitor, Layout, LayoutId, LayoutKind, Page, PageId, Tab, TabId, Tabs, TabsId,
+use nerust_frontend_host::{
+    control::{
+        Control, ControlDisplay, ControlId, ControlInput, ControlKind, ControlMetadata,
+        ControlScreen, ControlVisitor, Layout, LayoutId, LayoutKind, Page, PageId, Tab, TabId,
+        Tabs, TabsId,
+    },
+    mapper::{PropertyUpdate, map_updates},
 };
 
 use super::WidgetBinding;
@@ -66,6 +70,7 @@ pub(super) struct NativeControl {
     pub input: gtk::Widget,
     label: gtk::Label,
     pub kind: NativeKind,
+    last: RefCell<Option<Control>>,
 }
 
 pub(super) enum NativeKind {
@@ -218,16 +223,91 @@ impl NativeControl {
             input,
             label,
             kind,
+            last: RefCell::new(None),
         }
     }
 
+    /// Retained execution of the framework mapper list. The stored snapshot
+    /// feeds diffs; unknown kinds never reach here (checked on lookup).
     fn update(&self, control: &Control) {
-        self.label.set_text(&control.label);
-        self.label.set_visible(
-            !control.label.is_empty()
-                && !matches!(self.kind, NativeKind::Toggle(_) | NativeKind::Action(_)),
-        );
-        match (&self.kind, &control.kind) {
+        let old = self.last.borrow().clone();
+        for update in map_updates(old.as_ref(), control) {
+            self.apply_update(control, update);
+        }
+        *self.last.borrow_mut() = Some(control.clone());
+    }
+
+    fn apply_update(&self, control: &Control, update: PropertyUpdate<'_>) {
+        match update {
+            // Master parity: sensitivity stays on the leaf input only,
+            // never labels or rows, so an empty slot reads normal
+            // while its combo dims.
+            PropertyUpdate::SetEnabled(enabled) => self.input.set_sensitive(enabled),
+            PropertyUpdate::SetVisible(visible) => {
+                self.root.set_visible(visible);
+                self.input.set_visible(visible);
+            }
+            PropertyUpdate::SetLabel(label) => {
+                self.label.set_text(label);
+                self.label.set_visible(
+                    !label.is_empty()
+                        && !matches!(self.kind, NativeKind::Toggle(_) | NativeKind::Action(_)),
+                );
+                match &self.kind {
+                    NativeKind::Toggle(check) => check.set_label(Some(label)),
+                    NativeKind::Action(button) => button.set_label(label),
+                    _ => (),
+                }
+            }
+            PropertyUpdate::SetValue(kind) => self.apply_value(control, kind),
+            PropertyUpdate::SetDisplay(display) => {
+                for (class, enabled) in [
+                    ("suggested-action", display == ControlDisplay::Primary),
+                    ("dim-label", display == ControlDisplay::Note),
+                    ("heading", display == ControlDisplay::Heading),
+                ] {
+                    if enabled {
+                        self.root.add_css_class(class);
+                    } else {
+                        self.root.remove_css_class(class);
+                    }
+                }
+            }
+            PropertyUpdate::SetAccessibleLabel(accessible) => {
+                accessible_text(
+                    self.root.upcast_ref(),
+                    accessible,
+                    control.metadata.help.as_deref().unwrap_or(""),
+                );
+                accessible_text(
+                    self.input.upcast_ref(),
+                    accessible,
+                    control.metadata.help.as_deref().unwrap_or(""),
+                );
+            }
+            PropertyUpdate::SetHelp(help) => {
+                self.root.set_tooltip_text(help);
+                self.input.set_tooltip_text(help);
+                let help = help.unwrap_or("");
+                accessible_text(
+                    self.root.upcast_ref(),
+                    &control.metadata.accessible_label,
+                    help,
+                );
+                accessible_text(
+                    self.input.upcast_ref(),
+                    &control.metadata.accessible_label,
+                    help,
+                );
+            }
+            // Forward compatibility: future mapper variants are ignored
+            // until this executor learns them.
+            _ => {}
+        }
+    }
+
+    fn apply_value(&self, control: &Control, kind: &ControlKind) {
+        match (&self.kind, kind) {
             (NativeKind::Toggle(check), ControlKind::Toggle { value }) => {
                 check.set_label(Some(&control.label));
                 if check.is_active() != *value {
@@ -317,23 +397,6 @@ impl NativeControl {
             (NativeKind::Note(label), ControlKind::Note { text }) => label.set_text(text),
             _ => unreachable!("control kind checked on lookup"),
         }
-        // Label/text setters may overwrite accessibility: metadata must be last.
-        metadata_chrome(&self.root, &control.metadata);
-        metadata(&self.input, &control.metadata);
-        for (class, enabled) in [
-            (
-                "suggested-action",
-                control.display == ControlDisplay::Primary,
-            ),
-            ("dim-label", control.display == ControlDisplay::Note),
-            ("heading", control.display == ControlDisplay::Heading),
-        ] {
-            if enabled {
-                self.root.add_css_class(class);
-            } else {
-                self.root.remove_css_class(class);
-            }
-        }
     }
 }
 
@@ -351,20 +414,6 @@ fn action_button(binding: &WidgetBinding, id: ControlId, input: ControlInput) ->
 fn metadata(widget: &gtk::Widget, metadata: &ControlMetadata) {
     widget.set_visible(metadata.visible);
     widget.set_sensitive(metadata.enabled);
-    widget.set_tooltip_text(metadata.help.as_deref());
-    accessible_text(
-        widget,
-        &metadata.accessible_label,
-        metadata.help.as_deref().unwrap_or(""),
-    );
-}
-
-/// Row chrome (row box, labels): visibility and semantics follow the
-/// model, but sensitivity stays on the input widget only. Master parity:
-/// master dimmed leaf inputs, never labels or rows, so an empty
-/// slot reads normal while its combo dims.
-fn metadata_chrome(widget: &gtk::Widget, metadata: &ControlMetadata) {
-    widget.set_visible(metadata.visible);
     widget.set_tooltip_text(metadata.help.as_deref());
     accessible_text(
         widget,

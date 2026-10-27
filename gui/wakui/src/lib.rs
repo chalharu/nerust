@@ -9,5 +9,6 @@ pub mod binding;
 pub mod control;
 pub mod key;
 pub mod loop_driver;
+pub mod mapper;
 
 pub use key::Key;
