@@ -548,7 +548,7 @@ mod tests {
         let rebound = vec![
             ShortcutBinding {
                 action: ShortcutAction::SaveActiveSlot,
-                key: Some(nerust_keyboard::Key::F2),
+                key: Some(wakui::Key::F2),
             },
             ShortcutBinding {
                 action: ShortcutAction::OpenDebugger,

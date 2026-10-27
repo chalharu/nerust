@@ -282,7 +282,7 @@ mod tests {
             UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
             UserEvent::Session(SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger)),
             UserEvent::Session(SessionEvent::Keyboard {
-                key: nerust_keyboard::Key::F4,
+                key: wakui::Key::F4,
                 pressed: true,
             }),
         ] {

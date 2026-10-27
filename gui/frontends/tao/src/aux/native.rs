@@ -269,7 +269,7 @@ mod tests {
     fn adapter_drops_unmapped_physical_codes() {
         // Unidentified codes have no domain mapping; `KeyboardInput`
         // itself is non-exhaustive tao-side and unconstructible here.
-        use nerust_keyboard::Key as K;
+        use wakui::Key as K;
         for (code, key) in [
             (tao::keyboard::KeyCode::KeyA, K::KeyA),
             (tao::keyboard::KeyCode::Enter, K::Enter),
