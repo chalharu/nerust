@@ -3,7 +3,8 @@
 use iced::{
     Alignment, Length,
     widget::{
-        button, checkbox, column, container, pick_list, row, scrollable, slider, text, text_input,
+        button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
+        text_input,
     },
 };
 use nerust_frontend_host::control::{
@@ -242,8 +243,7 @@ impl ControlVisitor for IcedControlVisitor {
 
     fn begin_page(&mut self, page: &Page) {
         if page.select.metadata.visible {
-            self.sidebar
-                .push(navigation(&page.select, page.selected, true));
+            self.sidebar.push(page_radio(&page.select, page.selected));
         }
         self.push(
             page.selected && page.select.metadata.visible,
@@ -274,11 +274,11 @@ impl ControlVisitor for IcedControlVisitor {
     fn end_tabs(&mut self, _: &Tabs) {
         let frame = self.stack.pop().expect("tabs frame");
         if frame.visible {
-            self.append(
-                column![row(frame.navigation).spacing(4), column(frame.children)]
-                    .spacing(12)
-                    .into(),
-            );
+            // Segmented control: borderless segments in one bordered
+            // track; the selected segment carries the primary fill.
+            let track = row(frame.navigation).spacing(0);
+            let track = container(track).padding(2).style(container::bordered_box);
+            self.append(column![track, column(frame.children)].spacing(12).into());
         }
     }
     fn begin_tab(&mut self, tab: &Tab) {
@@ -286,7 +286,7 @@ impl ControlVisitor for IcedControlVisitor {
         if parent.visible && tab.select.metadata.visible {
             parent
                 .navigation
-                .push(navigation(&tab.select, tab.selected, parent.enabled));
+                .push(tab_segment(&tab.select, tab.selected, parent.enabled));
         }
         self.push(
             tab.selected && tab.select.metadata.visible,
@@ -307,12 +307,29 @@ impl ControlVisitor for IcedControlVisitor {
     }
 }
 
-fn navigation(control: &Control, selected: bool, enabled: bool) -> El<'static> {
+/// Page selector: radio group, one dot per page. Master parity;
+/// page selects are always enabled, so the radio is unconditional
+/// and re-selecting the current page stays a harmless no-op.
+fn page_radio(control: &Control, selected: bool) -> El<'static> {
+    let id = control.id;
+    radio(
+        control.label.clone(),
+        id,
+        selected.then_some(id),
+        move |id| Message::new(id, ControlInput::Activate),
+    )
+    .into()
+}
+
+/// Sub-tab segment: borderless text inside the bordered track, primary
+/// fill when selected. Deliberately not master blue pills; the track
+/// reads as one segmented control instead of scattered buttons.
+fn tab_segment(control: &Control, selected: bool, enabled: bool) -> El<'static> {
     button(text(control.label.clone()))
         .style(if selected {
             button::primary
         } else {
-            button::secondary
+            button::text
         })
         .on_press_maybe(
             (enabled && control.metadata.enabled && !selected)

@@ -402,9 +402,15 @@ pub(crate) fn build(
         model.visit(&mut crate::window::GtkWindowRenderer::Controls(&binding));
     }
     // The dialog keeps its program alive; the program only weakly references it.
+    // Action-area buttons (footer Cancel/OK) emit ResponseType::None;
+    // their input events drive submit/close, so the response is ignored.
     dialog.connect_response({
         let binding = binding.clone();
-        move |_, _| binding.finish()
+        move |_, response| {
+            if response != gtk::ResponseType::None {
+                binding.finish()
+            }
+        }
     });
     let finish: crate::native::dialog::FinishCallback = Rc::new(RefCell::new(Some(Box::new({
         let weak = Rc::downgrade(&binding);
