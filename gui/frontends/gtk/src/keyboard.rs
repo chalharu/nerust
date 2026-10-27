@@ -2,7 +2,7 @@
 //! Converted to free functions: orphan rules forbid trait impls
 //! for the framework-owned key type outside its crate.
 
-use nerust_keyboard::Key;
+use wakui::Key;
 
 pub(crate) fn key_from_gdk(key: gdk::Key) -> Option<Key> {
     match key {

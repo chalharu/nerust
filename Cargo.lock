@@ -3653,7 +3653,6 @@ dependencies = [
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
  "nerust_input_traits",
- "nerust_keyboard",
  "nerust_nes_factory",
  "nerust_persistence",
  "nerust_render_osd",
@@ -3665,6 +3664,7 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-quartz-core 0.3.2",
  "raw-window-handle",
+ "wakui",
 ]
 
 [[package]]
@@ -4031,7 +4031,6 @@ dependencies = [
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
  "nerust_input_traits",
- "nerust_keyboard",
  "nerust_nes_factory",
  "nerust_persistence",
  "nerust_render_traits",
@@ -4041,6 +4040,7 @@ dependencies = [
  "raw-window-handle",
  "rfd",
  "tao",
+ "wakui",
 ]
 
 [[package]]

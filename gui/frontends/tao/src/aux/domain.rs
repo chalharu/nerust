@@ -99,12 +99,12 @@ pub(crate) enum AuxNativeEvent {
     WheelLines(f32, f32),
     WheelPixels(f32, f32),
     KeyPressed {
-        key: nerust_keyboard::Key,
+        key: wakui::Key,
         text: Option<String>,
         repeat: bool,
     },
     KeyReleased {
-        key: nerust_keyboard::Key,
+        key: wakui::Key,
     },
     Other,
 }
