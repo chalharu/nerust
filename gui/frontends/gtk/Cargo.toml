@@ -11,7 +11,6 @@ gdk.workspace = true
 gio.workspace = true
 gtk.workspace = true
 log.workspace = true
-nerust_crash_guard.workspace = true
 nerust_frontend_kernel.workspace = true
 nerust_frontend_host.workspace = true
 nerust_core_traits.workspace = true
@@ -24,7 +23,6 @@ nerust_input_traits.workspace = true
 wakui.workspace = true
 nerust_persistence.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }
-nerust_run_options.workspace = true
 raw-window-handle.workspace = true
 
 [dev-dependencies]
