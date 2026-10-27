@@ -9,6 +9,7 @@ use nerust_frontend_host::debugger::{
     DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope,
 };
 use nerust_frontend_host::focus::AuxKind;
+use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
 use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger as vm;
 use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
@@ -123,20 +124,69 @@ fn action_button(label: &str) -> gtk::Button {
 }
 
 impl DebuggerWindowCore {
+    /// Interpret the owned reservation only after the registry borrow ends.
+    pub(crate) fn from_window(
+        model: &HostWindow,
+        app: &gtk::Application,
+        main: &gtk::ApplicationWindow,
+        state: Rc<RefCell<State>>,
+    ) -> Option<DebuggerWindow> {
+        struct Builder<'a> {
+            app: &'a gtk::Application,
+            main: &'a gtk::ApplicationWindow,
+            state: Rc<RefCell<State>>,
+            title: String,
+            result: Option<DebuggerWindow>,
+        }
+        impl WindowVisitor for Builder<'_> {
+            fn begin_window(&mut self, model: &HostWindow) {
+                self.title.clone_from(&model.title);
+            }
+            fn visit_debug(&mut self, _contents: &DebugContents) {
+                self.result = Some(DebuggerWindowCore::open_group(
+                    self.app,
+                    self.main,
+                    self.state.clone(),
+                    &self.title,
+                ));
+            }
+        }
+        let mut builder = Builder {
+            app,
+            main,
+            state,
+            title: String::new(),
+            result: None,
+        };
+        model.visit(&mut builder);
+        builder.result
+    }
+
+    #[cfg(test)]
+    fn open(
+        app: &gtk::Application,
+        main: &gtk::ApplicationWindow,
+        state: Rc<RefCell<State>>,
+    ) -> DebuggerWindow {
+        Self::from_window(&HostWindow::auxiliary(AuxKind::Debug), app, main, state)
+            .expect("debug contents")
+    }
+
     /// Open the debugger: build widgets, then pause and refresh through the drain.
     /// Closing keeps the pause; resume stays explicit.
-    pub(crate) fn open(
+    fn open_group(
         app: &gtk::Application,
         // Independent toplevel like the tao twin: no transient-for parenting.
         // True dialogs (preferences, file/error) stay transient.
         _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
+        title: &str,
     ) -> DebuggerWindow {
         let data = DebuggerDriver::from_session(state.borrow().host.session());
         let language = data.language;
         let window = gtk::ApplicationWindow::builder()
             .application(app)
-            .title(text(language, UiText::Debugger))
+            .title(title)
             .default_width(1100)
             // Taller than the tao twin: Adwaita rows need ~920px
             // to show the panes plus the dump viewport.
@@ -888,9 +938,16 @@ impl DebuggerWindowCore {
         let images_gen = win.borrow().data.display.images_gen;
         let panels = win.borrow().data.display.panels.clone();
         let language = win.borrow().data.language;
-        let ppu = super::ppu_window::PpuWindowCore::open(
-            &app, &main, state, images, images_gen, panels, language,
-        );
+        let model = win.borrow().viewers.window(id).cloned();
+        let ppu = model.and_then(|model| {
+            super::ppu_window::PpuWindowCore::from_window(
+                &model, &app, &main, state, images, images_gen, panels, language,
+            )
+        });
+        let Some(ppu) = ppu else {
+            win.borrow_mut().viewers.cancel_open(id);
+            return;
+        };
         let completed = win.borrow_mut().viewers.complete_open(id, None, ppu);
         if let Err(ppu) = completed {
             // Destruction can emit callbacks: never retain the registry borrow.
@@ -2276,14 +2333,28 @@ mod tests {
     }
 
     #[test]
-    fn widget_preferences_dialog_builds() {
+    fn widget_settings_group_builds() {
         let Some((_app, main, state)) = harness() else {
             eprintln!("SKIP: preferences widget test needs a display");
             return;
         };
         // Builds the full dialog (settings snapshot drives every
         // section); closing runs the callback without applying.
-        super::super::preferences::present_preferences_dialog(&main, state, || {});
+        let controller = {
+            let state = state.borrow();
+            nerust_frontend_host::settings::SettingsController::new(
+                state.settings_snapshot(),
+                state.ctx.registry.clone(),
+                state.ctx.audio_registry.clone(),
+            )
+        };
+        let model = controller.window();
+        let built = crate::window::render_dialog(&model, &main, state, Some(controller), || {});
+        let Some(crate::window::RenderedDialog::Settings(dialog)) = built else {
+            panic!("settings group");
+        };
+        dialog.present();
+        dialog.destroy();
     }
 
     #[test]

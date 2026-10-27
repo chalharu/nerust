@@ -1,5 +1,6 @@
 //! Owned application state. Native adapters own resources, not control truth.
 
+mod auxiliary;
 mod chrome;
 mod debug;
 mod osd;
@@ -7,6 +8,7 @@ mod osd;
 mod tests;
 mod window;
 
+pub use auxiliary::WindowClose;
 pub use chrome::MenuSig;
 use debug::DebugRuntime;
 pub use debug::DebugView;
@@ -50,7 +52,7 @@ pub struct ApplicationHost {
     osd: osd::OsdRuntime,
     chrome: chrome::ChromeSync,
     menubar_chrome: chrome::ChromeSync,
-    menubar: Option<Menubar>,
+    main_window: crate::window::Window,
     menu_capabilities: Option<MenuCapabilities>,
     fullscreen: window::FullscreenSync,
     close: MainState,
@@ -74,7 +76,7 @@ impl ApplicationHost {
             osd: Default::default(),
             chrome: Default::default(),
             menubar_chrome: Default::default(),
-            menubar: None,
+            main_window: crate::window::Window::main(),
             menu_capabilities: None,
             fullscreen: Default::default(),
             close: MainState::new(),
@@ -390,15 +392,20 @@ impl ApplicationHost {
             };
         let menubar = Menubar::build(&signature, capabilities);
         self.menu_capabilities = Some(capabilities);
-        self.menubar = Some(menubar.clone());
+        self.main_window.menu = Some(menubar.clone());
         Some(MenubarUpdate { signature, menubar })
     }
 
+    pub fn main_window(&self) -> &crate::window::Window {
+        &self.main_window
+    }
+
     pub fn menubar(&self) -> Option<&Menubar> {
-        self.menubar.as_ref()
+        self.main_window.menu.as_ref()
     }
     pub fn title_update(&mut self, tick: &TickMetrics) -> Option<String> {
         let title = self.cached_title(tick);
+        self.main_window.title.clone_from(&title);
         self.chrome.title_update(title)
     }
     pub fn title_same(&self, title: &str) -> bool {

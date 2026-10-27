@@ -1,23 +1,62 @@
-//! Settings dialog lifecycle: open/close plus applying snapshots.
-//! Owned by `HostState`; the iced side lives in `crate::aux::settings`.
+//! Native auxiliary creation and settings effects. Policy lives in ApplicationHost.
 use super::HostState;
-use nerust_frontend_host::aux::OpenRequest;
-use nerust_frontend_host::session::SessionEvent;
-
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::session::{
-    SessionError,
-    access::{SessionControl, SettingsResult},
+use nerust_frontend_host::{
+    aux::{AuxId, OpenRequest},
+    focus::AuxKind,
 };
 
-use crate::ports::WindowOpener;
+use nerust_gui_runtime::settings::SettingsSnapshot;
+#[cfg(test)]
+use nerust_gui_shell::session::SessionError;
+use nerust_gui_shell::session::access::SettingsResult;
+
+use crate::ports::{AuxOpenParams, WindowOpener};
 
 impl HostState {
+    pub(crate) fn reserve_aux_window(&mut self, kind: AuxKind) -> Option<OpenRequest> {
+        match self.core.reserve_window(&mut self.aux.windows, kind) {
+            Ok(request) => request,
+            Err(error) => {
+                log::warn!("auxiliary reservation failed: {error}");
+                None
+            }
+        }
+    }
+
+    /// One native creation/completion path for every common auxiliary Window.
+    pub(crate) fn create_aux_window(
+        &mut self,
+        id: AuxId,
+        opener: &dyn WindowOpener,
+        params: AuxOpenParams,
+    ) -> bool {
+        let Some(kind) = self.aux.windows.kind_of_id(id) else {
+            return false;
+        };
+        if self.aux.windows.get(kind).is_some() {
+            return false;
+        }
+        let window = self.aux.window(id).expect("current reservation").clone();
+        let opened = opener
+            .create_aux(window, params)
+            .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+        if !opened {
+            self.core.cancel_window(&mut self.aux.windows, id);
+        }
+        opened
+    }
+
+    #[cfg(test)]
     pub(crate) fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
     ) -> Result<SettingsResult, SessionError> {
-        let result = SessionControl::apply_settings(&mut self.core, settings)?;
+        let result = self.core.apply_settings(settings)?;
+        self.apply_native_settings(&result);
+        Ok(result)
+    }
+
+    fn apply_native_settings(&mut self, result: &SettingsResult) {
         if result.fullscreen_default_changed {
             self.sync_fullscreen_from_settings();
         }
@@ -26,14 +65,11 @@ impl HostState {
         }
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, true);
-        Ok(result)
     }
 
+    #[cfg(test)]
     pub(crate) fn on_settings_closed(&mut self) {
-        let changed = self
-            .core
-            .dispatch(SessionEvent::SettingsClosed)
-            .is_ok_and(|out| out.settings_changed);
+        let changed = self.core.settings_closed();
         if !changed {
             return;
         }
@@ -42,34 +78,28 @@ impl HostState {
     }
 
     pub(super) fn open_settings_window(&mut self, opener: &dyn WindowOpener) {
-        if self.settings_open() {
-            return;
-        }
-        if !self
-            .core
-            .dispatch(SessionEvent::SettingsOpened)
-            .is_ok_and(|out| out.settings_changed)
-        {
-            return;
-        }
-        let OpenRequest::Create(id) = self.aux.request_open(crate::aux::focus::AuxKind::Settings)
-        else {
+        let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Settings) else {
             return;
         };
-        let opened = opener
-            .create_aux(
-                crate::aux::focus::AuxKind::Settings,
-                crate::ports::AuxOpenParams::Settings {
-                    snapshot: self.core.settings_snapshot().clone(),
-                    registry: self.ctx.registry.clone(),
-                    audio: self.ctx.audio_registry.clone(),
-                },
-            )
-            .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+        let controller = match self.core.prepare_settings_window(
+            &mut self.aux.windows,
+            id,
+            self.ctx.registry.clone(),
+            self.ctx.audio_registry.clone(),
+        ) {
+            Ok(Some(controller)) => controller,
+            Ok(None) => return,
+            Err(error) => {
+                log::error!("refusing settings window: {error}");
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, false);
+                return;
+            }
+        };
+        let program = crate::aux::widgets::bindings::SettingsBinding::from_controller(controller);
+        let opened = self.create_aux_window(id, opener, AuxOpenParams::Settings { program });
         if !opened {
-            self.aux.cancel_open(id);
             log::error!("failed to open settings window");
-            let _ = self.core.dispatch(SessionEvent::SettingsOpenFailed);
             let ctx = self.frame_ctx();
             self.sync_chrome(&ctx, false);
         } else {
@@ -84,18 +114,25 @@ impl HostState {
         &mut self,
         pending: Option<SettingsSnapshot>,
     ) -> Option<SettingsResult> {
-        let result = if let Some(snapshot) = pending {
-            match self.apply_settings(snapshot) {
-                Ok(plan) => Some(plan),
-                Err(error) => {
-                    log::warn!("settings apply failed after close: {error}");
-                    None
-                }
-            }
+        let closed = if let Some(id) = self.aux.route_id(crate::aux::focus::AuxKind::Settings) {
+            let (handle, result) = self.core.close_window(&mut self.aux.windows, id, pending)?;
+            drop(handle);
+            result
         } else {
-            None
+            self.core.finish_settings(pending)
         };
-        self.on_settings_closed();
+        let result = match closed {
+            Ok(result) => result,
+            Err(error) => {
+                log::warn!("settings apply failed after close: {error}");
+                None
+            }
+        };
+        if let Some(plan) = &result {
+            self.apply_native_settings(plan);
+        }
+        let ctx = self.frame_ctx();
+        self.sync_chrome(&ctx, false);
         result
     }
 }
@@ -103,9 +140,33 @@ impl HostState {
 #[cfg(test)]
 mod tests {
     use super::OpenRequest;
+    use super::{AuxKind, AuxOpenParams};
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::testkit::StubAux;
+
+    #[test]
+    fn generic_creation_rejects_stale_and_active_ids_before_native_effects() {
+        use nerust_settings_core::model::language::AppLanguage;
+        let mut host = TestHost::new().host;
+        let Some(OpenRequest::Create(old)) = host.reserve_aux_window(AuxKind::History) else {
+            panic!("expected reservation");
+        };
+        assert!(host.core.cancel_window(&mut host.aux.windows, old));
+        let current = host.aux.insert(Box::new(StubAux::new(AuxKind::History)));
+        let opener = FakeOpener::failing("must not create a native window");
+        for id in [old, current] {
+            assert!(!host.create_aux_window(
+                id,
+                &opener,
+                AuxOpenParams::History {
+                    language: AppLanguage::English
+                },
+            ));
+        }
+        assert!(opener.calls().is_empty());
+        assert_eq!(host.aux.route_id(AuxKind::History), Some(current));
+    }
 
     #[test]
     fn pending_settings_open_skips_native_creation_and_pause_acquisition() {

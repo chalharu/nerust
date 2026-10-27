@@ -22,11 +22,11 @@ use crate::aux::focus::AuxKind;
 use crate::aux::registry::AuxRegistry;
 use nerust_frontend_host::application::ApplicationHost;
 
+mod auxiliary;
 mod commands;
 mod frame;
 mod osd;
 mod presentation;
-mod settings;
 mod window;
 pub(crate) use frame::FrameCtx;
 
@@ -281,7 +281,6 @@ impl HostState {
     /// Close the settings window and rebuild the renderer when the render target changed.
     pub(super) fn close_settings_and_maybe_rebuild(&mut self) -> bool {
         let pending = self.aux.settings_take_pending();
-        self.aux.remove_kind(AuxKind::Settings);
         let plan = self.close_settings_window(pending);
         let rebuild = plan.is_some_and(|p| p.renderer_needs_rebuild);
         self.request_redraw();

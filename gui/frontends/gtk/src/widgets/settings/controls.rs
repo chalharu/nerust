@@ -9,7 +9,7 @@ use nerust_frontend_host::settings::{
 };
 use nerust_gui_viewmodel::settings::dto::BindingValueView;
 
-use super::PreferencesBinding;
+use super::SettingsBinding;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum NodeId {
@@ -94,7 +94,7 @@ impl NativeControl {
         )
     }
 
-    fn new(binding: &PreferencesBinding, control: &SettingsControl) -> Self {
+    fn new(binding: &SettingsBinding, control: &SettingsControl) -> Self {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
@@ -353,7 +353,7 @@ impl NativeControl {
 }
 
 fn action_button(
-    binding: &PreferencesBinding,
+    binding: &SettingsBinding,
     id: &SettingsControlId,
     input: ControlInput,
 ) -> gtk::Button {
@@ -416,7 +416,7 @@ enum Frame {
 }
 
 pub(super) struct SettingsGtkVisitor<'a> {
-    binding: &'a PreferencesBinding,
+    binding: &'a SettingsBinding,
     frames: Vec<Frame>,
     nodes: Vec<NodeId>,
     controls: Vec<SettingsControlId>,
@@ -425,7 +425,7 @@ pub(super) struct SettingsGtkVisitor<'a> {
 }
 
 impl<'a> SettingsGtkVisitor<'a> {
-    pub fn new(binding: &'a PreferencesBinding) -> Self {
+    pub fn new(binding: &'a SettingsBinding) -> Self {
         Self {
             binding,
             frames: Vec::new(),
@@ -505,9 +505,6 @@ impl<'a> SettingsGtkVisitor<'a> {
 
 impl SettingsVisitor for SettingsGtkVisitor<'_> {
     fn begin_screen(&mut self, screen: &SettingsScreen) {
-        if let Some(dialog) = self.binding.dialog.upgrade() {
-            dialog.set_title(Some(&screen.title));
-        }
         self.binding
             .error_label
             .set_text(screen.message.as_deref().unwrap_or(""));

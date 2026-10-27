@@ -34,7 +34,10 @@ impl ModalPresenter for DialogPresenter<'_> {
 impl HostState {
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
         let ctx = self.frame_ctx();
-        let id = match self.aux.request_open(AuxKind::History) {
+        let Some(request) = self.reserve_aux_window(AuxKind::History) else {
+            return;
+        };
+        let id = match request {
             OpenRequest::Create(id) => id,
             OpenRequest::Present(_) => {
                 self.sync_history_window(ctx.frame());
@@ -42,20 +45,23 @@ impl HostState {
             }
             OpenRequest::Pending(_) => return,
         };
-        let opened = opener
-            .create_aux(
-                AuxKind::History,
-                crate::ports::AuxOpenParams::History {
-                    language: ctx.frame().language(),
-                },
+        self.aux.window_mut(id).expect("history reservation").title =
+            nerust_settings_core::i18n::text(
+                ctx.frame().language(),
+                nerust_settings_core::i18n::UiText::NotificationHistory,
             )
-            .is_some_and(|handle| self.aux.complete_open(id, handle).is_ok());
+            .into();
+        let opened = self.create_aux_window(
+            id,
+            opener,
+            crate::ports::AuxOpenParams::History {
+                language: ctx.frame().language(),
+            },
+        );
         if opened {
             // Fresh window needs full content regardless of cache.
             self.core.invalidate_history();
             self.sync_history_window(ctx.frame());
-        } else {
-            self.aux.cancel_open(id);
         }
     }
 

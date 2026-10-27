@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use nerust_core_traits::debugger::SpaceId;
-use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
+use nerust_frontend_host::aux::AuxWindows;
+#[cfg(test)]
+use nerust_frontend_host::aux::OpenRequest;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{debug::DebugAction, session::osd::HistoryLine};
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
@@ -132,7 +134,7 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
 /// Native capability adapter; shared host owns all lifecycle and route state.
 #[derive(Default)]
 pub(crate) struct AuxRegistry {
-    windows: AuxWindows<NativeWindowId, Box<dyn AuxController>>,
+    pub(crate) windows: AuxWindows<NativeWindowId, Box<dyn AuxController>>,
 }
 
 impl AuxRegistry {
@@ -140,8 +142,20 @@ impl AuxRegistry {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn request_open(&mut self, kind: AuxKind) -> OpenRequest {
         self.windows.request_open(kind)
+    }
+
+    pub(crate) fn window(&self, id: AuxId) -> Option<&nerust_frontend_host::window::Window> {
+        self.windows.window(id)
+    }
+
+    pub(crate) fn window_mut(
+        &mut self,
+        id: AuxId,
+    ) -> Option<&mut nerust_frontend_host::window::Window> {
+        self.windows.window_mut(id)
     }
 
     pub(crate) fn complete_open(
@@ -162,6 +176,7 @@ impl AuxRegistry {
         result
     }
 
+    #[cfg(test)]
     pub(crate) fn cancel_open(&mut self, id: AuxId) -> bool {
         self.windows.cancel_open(id)
     }
@@ -522,6 +537,54 @@ pub(crate) mod test_double {
 mod tests {
     use super::test_double::StubAux;
     use super::*;
+
+    #[test]
+    fn reserved_window_snapshot_allows_reentry_and_stale_ids_cannot_touch_reopen() {
+        use nerust_frontend_host::window::{DebugContents, WidgetContents, WindowVisitor};
+        use std::cell::RefCell;
+
+        let registry = RefCell::new(AuxRegistry::new());
+        let OpenRequest::Create(old) = registry.borrow_mut().request_open(AuxKind::Debug) else {
+            panic!("expected reservation");
+        };
+        let window = registry.borrow().window(old).unwrap().clone();
+        assert!(matches!(window.contents.contents, WidgetContents::Debug(_)));
+        struct Reenter<'a>(&'a RefCell<AuxRegistry>, AuxId, bool);
+        impl WindowVisitor for Reenter<'_> {
+            fn visit_debug(&mut self, _: &DebugContents) {
+                assert_eq!(
+                    self.0.borrow_mut().request_open(AuxKind::Debug),
+                    OpenRequest::Pending(self.1)
+                );
+                self.2 = true;
+            }
+        }
+        let mut visitor = Reenter(&registry, old, false);
+        window.visit(&mut visitor);
+        assert!(visitor.2);
+        assert!(registry.borrow_mut().cancel_open(old));
+        let OpenRequest::Create(current) = registry.borrow_mut().request_open(AuxKind::Debug)
+        else {
+            panic!("expected reopen");
+        };
+        assert_ne!(old, current);
+        assert!(registry.borrow().window(old).is_none());
+        assert!(registry.borrow_mut().window_mut(old).is_none());
+        assert!(
+            registry
+                .borrow_mut()
+                .complete_open(old, Box::new(StubAux::new(AuxKind::Debug)))
+                .is_err()
+        );
+        assert_eq!(registry.borrow().route_id(AuxKind::Debug), Some(current));
+        assert!(
+            registry
+                .borrow_mut()
+                .complete_open(current, Box::new(StubAux::new(AuxKind::Debug)))
+                .is_ok()
+        );
+        assert!(registry.borrow().window(current).is_some());
+    }
 
     #[test]
     fn replacement_cleans_old_native_route_and_mints_new_id() {

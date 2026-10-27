@@ -17,6 +17,30 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
 
+use nerust_frontend_host::window::{MainContents, Window, WindowVisitor};
+
+struct CreateMain<'a> {
+    opener: &'a dyn WindowOpener,
+    size: TaoLogicalSize<f64>,
+    fullscreen: bool,
+    title: String,
+    output: Option<Result<Arc<tao::window::Window>, String>>,
+}
+
+impl WindowVisitor for CreateMain<'_> {
+    fn begin_window(&mut self, window: &Window) {
+        self.title.clone_from(&window.title);
+    }
+
+    fn visit_main(&mut self, _: &MainContents) {
+        self.output = Some(self.opener.create_main(create_window_builder(
+            self.size,
+            self.title.clone(),
+            self.fullscreen,
+        )));
+    }
+}
+
 pub(crate) use nerust_frontend_host::loop_driver::WakeNeed;
 use nerust_frontend_host::loop_driver::{LoopHost, TurnLiveness, drive_turn};
 #[cfg(test)]
@@ -228,12 +252,20 @@ impl HostState {
             .window
             .fullscreen_default;
         let tick = self.core.tick();
-        let title = self.core.cached_title(&tick);
-        let window = match opener.create_main(create_window_builder(
-            self.startup_window_size(),
-            title,
+        self.core.title_update(&tick);
+        let model = self.core.main_window().clone();
+        let mut visitor = CreateMain {
+            opener,
+            size: self.startup_window_size(),
             fullscreen,
-        )) {
+            title: String::new(),
+            output: None,
+        };
+        model.visit(&mut visitor);
+        let window = match visitor
+            .output
+            .expect("main contents select main native window")
+        {
             Ok(window) => window,
             Err(detail) => {
                 log::error!("failed to create window: {detail}");
