@@ -132,6 +132,36 @@ fn inventory(screen: &SettingsScreen) -> Inventory {
 }
 
 #[test]
+fn binding_table_covers_tree_controls_exactly_once() {
+    // The refactor relies on table/tree 1:1 correspondence: validation walks
+    // the tree while events come from the table. Duplicates would mix them.
+    for nes in [false, true] {
+        let mut controller = state(nes);
+        prepare(&mut controller);
+        let screen = controller.screen();
+        let tree: Vec<Id> = inventory(&screen)
+            .controls
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        let mut table: Vec<Id> = Vec::new();
+        screen
+            .bindings
+            .0
+            .iter()
+            .for_each(|(id, _, _)| table.push(id.clone()));
+        assert_eq!(table.len(), tree.len(), "table/tree size mismatch");
+        for id in &tree {
+            assert_eq!(
+                table.iter().filter(|entry| *entry == id).count(),
+                1,
+                "binding for {id:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn six_pages_have_complete_unique_inventory_and_shared_groups() {
     let mut controller = state(false);
     prepare(&mut controller);
