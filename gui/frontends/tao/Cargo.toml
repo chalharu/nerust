@@ -23,15 +23,14 @@ nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_settings_core.workspace = true
-nerust_input_traits.workspace = true
 wakui.workspace = true
-nerust_persistence.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }
 raw-window-handle.workspace = true
 rfd.workspace = true
 tao.workspace = true
 
 [dev-dependencies]
+nerust_persistence.workspace = true
 nerust_nes_factory.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
