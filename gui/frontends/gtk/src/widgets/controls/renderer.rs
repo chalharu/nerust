@@ -1,22 +1,20 @@
-//! Retained settings-specific visitor. IDs require Eq, not Hash or localized keys.
+//! One retained interpreter for every domain-free Host control scene.
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::settings::{
-    ControlInput, SettingsControl, SettingsControlId, SettingsControlKind, SettingsDisplay,
-    SettingsLayout, SettingsLayoutId, SettingsMetadata, SettingsPage, SettingsScreen,
-    SettingsScreenPage, SettingsTab, SettingsTabId, SettingsTabs, SettingsTabsId, SettingsVisitor,
+use nerust_frontend_host::control::{
+    Control, ControlDisplay, ControlId, ControlInput, ControlKind, ControlMetadata, ControlScreen,
+    ControlVisitor, Layout, LayoutId, LayoutKind, Page, PageId, Tab, TabId, Tabs, TabsId,
 };
-use nerust_gui_viewmodel::settings::dto::BindingValueView;
 
-use super::SettingsBinding;
+use super::WidgetBinding;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum NodeId {
-    Page(SettingsPage),
-    Layout(SettingsLayoutId, u8),
-    Tabs(SettingsTabsId),
-    Tab(SettingsTabId),
+    Page(PageId),
+    Layout(LayoutId, u8),
+    Tabs(TabsId),
+    Tab(TabId),
 }
 
 #[derive(Clone)]
@@ -24,12 +22,13 @@ pub(super) struct NativeNode {
     pub widget: gtk::Widget,
     pub body: Option<gtk::Box>,
     label: Option<gtk::Label>,
+    select: Option<ControlId>,
 }
 
 #[derive(Default)]
 pub(super) struct Registry {
     pub nodes: Vec<(NodeId, NativeNode)>,
-    pub controls: Vec<(SettingsControlId, Rc<NativeControl>)>,
+    pub controls: Vec<(ControlId, Rc<NativeControl>)>,
 }
 
 impl Registry {
@@ -40,23 +39,23 @@ impl Registry {
             .map(|(_, node)| node.clone())
     }
 
-    pub fn control(&self, id: &SettingsControlId) -> Option<Rc<NativeControl>> {
+    pub fn control(&self, id: &ControlId) -> Option<Rc<NativeControl>> {
         self.controls
             .iter()
             .find(|(key, _)| key == id)
-            .map(|(_, control)| control.clone())
+            .map(|(_, c)| c.clone())
     }
 
-    pub fn page_control(&self, widget: &gtk::Widget) -> Option<SettingsControlId> {
+    pub fn page_control(&self, widget: &gtk::Widget) -> Option<ControlId> {
         self.nodes.iter().find_map(|(id, node)| match id {
-            NodeId::Page(page) if &node.widget == widget => Some(SettingsControlId::Page(*page)),
+            NodeId::Page(_) if &node.widget == widget => node.select,
             _ => None,
         })
     }
 
-    fn tab_control(&self, widget: &gtk::Widget) -> Option<SettingsControlId> {
+    fn tab_control(&self, widget: &gtk::Widget) -> Option<ControlId> {
         self.nodes.iter().find_map(|(id, node)| match id {
-            NodeId::Tab(tab) if &node.widget == widget => Some(SettingsControlId::Tab(tab.clone())),
+            NodeId::Tab(_) if &node.widget == widget => node.select,
             _ => None,
         })
     }
@@ -67,12 +66,11 @@ pub(super) struct NativeControl {
     pub input: gtk::Widget,
     label: gtk::Label,
     pub kind: NativeKind,
-    native_action: bool,
 }
 
 pub(super) enum NativeKind {
     Toggle(gtk::CheckButton),
-    Choice(gtk::ComboBoxText, RefCell<Vec<String>>),
+    Choice(gtk::ComboBoxText, Rc<RefCell<ChoiceState>>),
     Number(gtk::SpinButton, gtk::Label),
     Text(gtk::Entry, gtk::Button),
     Binding(gtk::Label, gtk::Button, gtk::Button),
@@ -80,60 +78,72 @@ pub(super) enum NativeKind {
     Note(gtk::Label),
 }
 
+#[derive(Default)]
+pub(super) struct ChoiceState {
+    labels: Vec<String>,
+    selected: Option<u32>,
+}
+
 impl NativeControl {
-    fn accepts(&self, kind: &SettingsControlKind) -> bool {
+    fn accepts(&self, kind: &ControlKind) -> bool {
         matches!(
             (&self.kind, kind),
-            (NativeKind::Toggle(_), SettingsControlKind::Toggle { .. })
-                | (NativeKind::Choice(..), SettingsControlKind::Choice { .. })
-                | (NativeKind::Number(..), SettingsControlKind::Number { .. })
-                | (NativeKind::Text(..), SettingsControlKind::Text { .. })
-                | (NativeKind::Binding(..), SettingsControlKind::Binding { .. })
-                | (NativeKind::Action(_), SettingsControlKind::Action)
-                | (NativeKind::Note(_), SettingsControlKind::Note { .. })
+            (NativeKind::Toggle(_), ControlKind::Toggle { .. })
+                | (NativeKind::Choice(..), ControlKind::Choice { .. })
+                | (NativeKind::Number(..), ControlKind::Number { .. })
+                | (NativeKind::Text(..), ControlKind::Text { .. })
+                | (NativeKind::Binding(..), ControlKind::Binding { .. })
+                | (NativeKind::Action(_), ControlKind::Action)
+                | (NativeKind::Note(_), ControlKind::Note { .. })
         )
     }
 
-    fn new(binding: &SettingsBinding, control: &SettingsControl) -> Self {
+    fn new(binding: &WidgetBinding, control: &Control) -> Self {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
         label.set_width_chars(24);
         row.append(&label);
-        let mut native_action = false;
+        let id = control.id;
         let (input, kind): (gtk::Widget, NativeKind) = match &control.kind {
-            SettingsControlKind::Toggle { .. } => {
+            ControlKind::Toggle { .. } => {
                 let check = gtk::CheckButton::new();
                 check.connect_toggled({
                     let weak = binding.self_weak.clone();
-                    let id = control.id.clone();
                     move |check| {
                         if let Some(binding) = weak.upgrade() {
-                            binding.input(&id, ControlInput::Bool(check.is_active()));
+                            binding.input(id, ControlInput::Bool(check.is_active()));
                         }
                     }
                 });
                 (check.clone().upcast(), NativeKind::Toggle(check))
             }
-            SettingsControlKind::Choice { .. } => {
+            ControlKind::Choice { .. } => {
                 let combo = gtk::ComboBoxText::new();
+                let state = Rc::new(RefCell::new(ChoiceState::default()));
                 combo.connect_changed({
                     let weak = binding.self_weak.clone();
-                    let id = control.id.clone();
+                    let state = state.clone();
                     move |combo| {
                         if let Some(binding) = weak.upgrade()
                             && let Some(index) = combo.active()
                         {
-                            binding.input(&id, ControlInput::Select(index as usize));
+                            // During setters ignore only the programmed selection.
+                            let programmed = state.borrow().selected == Some(index);
+                            if binding.refreshing.get() && !programmed {
+                                binding.send(super::ControlEvent::new(
+                                    id,
+                                    ControlInput::Select(index as usize),
+                                ));
+                            } else {
+                                binding.input(id, ControlInput::Select(index as usize));
+                            }
                         }
                     }
                 });
-                (
-                    combo.clone().upcast(),
-                    NativeKind::Choice(combo, RefCell::default()),
-                )
+                (combo.clone().upcast(), NativeKind::Choice(combo, state))
             }
-            SettingsControlKind::Number { min, max, step, .. } => {
+            ControlKind::Number { min, max, step, .. } => {
                 let spin = gtk::SpinButton::with_range(
                     (*min).into(),
                     (*max).into(),
@@ -142,130 +152,111 @@ impl NativeControl {
                 spin.set_numeric(true);
                 spin.connect_value_changed({
                     let weak = binding.self_weak.clone();
-                    let id = control.id.clone();
                     move |spin| {
                         if let Some(binding) = weak.upgrade() {
-                            binding.input(&id, ControlInput::Number(spin.value() as u32));
+                            binding.input(id, ControlInput::Number(spin.value() as u32));
                         }
                     }
                 });
-                let unit = gtk::Label::new(None);
-                (spin.clone().upcast(), NativeKind::Number(spin, unit))
+                (
+                    spin.clone().upcast(),
+                    NativeKind::Number(spin, gtk::Label::new(None)),
+                )
             }
-            SettingsControlKind::Text { .. } => {
+            ControlKind::Text { .. } => {
                 let entry = gtk::Entry::new();
                 entry.set_hexpand(true);
                 entry.connect_changed({
                     let weak = binding.self_weak.clone();
-                    let id = control.id.clone();
                     move |entry| {
                         if let Some(binding) = weak.upgrade() {
-                            binding.input(&id, ControlInput::Text(entry.text().to_string()));
+                            binding.input(id, ControlInput::Text(entry.text().to_string()));
                         }
                     }
                 });
-                let browse = action_button(binding, &control.id, ControlInput::Activate);
+                let browse = action_button(binding, id, ControlInput::Activate);
                 (entry.clone().upcast(), NativeKind::Text(entry, browse))
             }
-            SettingsControlKind::Binding { .. } => {
+            ControlKind::Binding { .. } => {
                 let value = gtk::Label::new(None);
                 value.set_xalign(0.0);
                 value.set_hexpand(true);
-                let change = action_button(binding, &control.id, ControlInput::Activate);
-                let clear = action_button(binding, &control.id, ControlInput::CaptureClear);
+                let change = action_button(binding, id, ControlInput::Activate);
+                let clear = action_button(binding, id, ControlInput::CaptureClear);
                 (
                     change.clone().upcast(),
                     NativeKind::Binding(value, change, clear),
                 )
             }
-            SettingsControlKind::Action => {
-                // Native responses are the sole settings-ID-specific adaptation.
-                let response = match control.id {
-                    SettingsControlId::Cancel => Some(gtk::ResponseType::Cancel),
-                    SettingsControlId::Submit => Some(gtk::ResponseType::Ok),
-                    _ => None,
-                };
-                let button = if let Some(response) = response {
-                    native_action = true;
-                    binding
-                        .dialog
-                        .upgrade()
-                        .expect("live settings dialog")
-                        .add_button(&control.label, response)
-                        .downcast::<gtk::Button>()
-                        .unwrap()
-                } else {
-                    action_button(binding, &control.id, ControlInput::Activate)
-                };
+            ControlKind::Action => {
+                let button = action_button(binding, id, ControlInput::Activate);
                 (button.clone().upcast(), NativeKind::Action(button))
             }
-            SettingsControlKind::Note { .. } => {
+            ControlKind::Note { .. } => {
                 let note = gtk::Label::new(None);
                 note.set_xalign(0.0);
                 note.set_wrap(true);
                 (note.clone().upcast(), NativeKind::Note(note))
             }
         };
-        if !native_action {
-            match &kind {
-                NativeKind::Binding(value, change, clear) => {
-                    row.append(value);
-                    row.append(change);
-                    row.append(clear);
-                }
-                _ => row.append(&input),
+        match &kind {
+            NativeKind::Binding(value, change, clear) => {
+                row.append(value);
+                row.append(change);
+                row.append(clear);
             }
-            match &kind {
-                NativeKind::Number(_, unit) => row.append(unit),
-                NativeKind::Text(_, browse) => row.append(browse),
-                _ => (),
-            }
+            _ => row.append(&input),
+        }
+        match &kind {
+            NativeKind::Number(_, unit) => row.append(unit),
+            NativeKind::Text(_, browse) => row.append(browse),
+            _ => (),
         }
         label.set_mnemonic_widget(Some(&input));
         Self {
-            root: if native_action {
-                input.clone()
-            } else {
-                row.upcast()
-            },
+            root: row.upcast(),
             input,
             label,
             kind,
-            native_action,
         }
     }
 
-    fn update(&self, control: &SettingsControl) {
+    fn update(&self, control: &Control) {
         self.label.set_text(&control.label);
         self.label.set_visible(
             !control.label.is_empty()
                 && !matches!(self.kind, NativeKind::Toggle(_) | NativeKind::Action(_)),
         );
         match (&self.kind, &control.kind) {
-            (NativeKind::Toggle(check), SettingsControlKind::Toggle { value }) => {
+            (NativeKind::Toggle(check), ControlKind::Toggle { value }) => {
                 check.set_label(Some(&control.label));
                 if check.is_active() != *value {
                     check.set_active(*value);
                 }
             }
-            (NativeKind::Choice(combo, old), SettingsControlKind::Choice { choices, selected }) => {
-                let changed = *old.borrow() != *choices;
+            (NativeKind::Choice(combo, state), ControlKind::Choice { choices, selected }) => {
+                let changed = state.borrow().labels != *choices;
+                let selected = selected.map(|i| i as u32);
+                {
+                    let mut state = state.borrow_mut();
+                    state.selected = selected;
+                    if changed {
+                        state.labels = choices.clone();
+                    }
+                }
                 if changed {
-                    // Release the cache borrow before remove_all/append emit signals.
-                    *old.borrow_mut() = choices.clone();
                     combo.remove_all();
                     for choice in choices {
                         combo.append_text(choice);
                     }
                 }
-                let selected = selected.map(|i| i as u32);
                 if combo.active() != selected {
                     combo.set_active(selected);
                 }
             }
             (
                 NativeKind::Number(spin, unit_label),
-                SettingsControlKind::Number {
+                ControlKind::Number {
                     value,
                     min,
                     max,
@@ -274,8 +265,7 @@ impl NativeControl {
                     ..
                 },
             ) => {
-                let range = spin.range();
-                if range != (f64::from(*min), f64::from(*max)) {
+                if spin.range() != (f64::from(*min), f64::from(*max)) {
                     spin.set_range((*min).into(), (*max).into());
                 }
                 spin.set_increments((*step).max(1).into(), (*step).max(1) as f64 * 10.0);
@@ -286,13 +276,13 @@ impl NativeControl {
             }
             (
                 NativeKind::Text(entry, browse),
-                SettingsControlKind::Text {
+                ControlKind::Text {
                     value,
                     placeholder,
                     browse_label,
                 },
             ) => {
-                // Crucial for cursor, focus and IME: same text is not an edit.
+                // Stable widget, equal text: preserve focus, selection and IME.
                 if entry.text().as_str() != value {
                     entry.set_text(value);
                 }
@@ -307,16 +297,14 @@ impl NativeControl {
             }
             (
                 NativeKind::Binding(label, change, clear),
-                SettingsControlKind::Binding {
-                    value,
+                ControlKind::Binding {
+                    text,
                     change_label,
                     clear_label,
+                    ..
                 },
             ) => {
-                let (BindingValueView::Unbound(value)
-                | BindingValueView::Bound(value)
-                | BindingValueView::Capturing(value)) = value;
-                label.set_text(value);
+                label.set_text(text);
                 change.set_label(change_label);
                 clear.set_label(clear_label);
                 accessible_text(
@@ -325,23 +313,20 @@ impl NativeControl {
                     "",
                 );
             }
-            (NativeKind::Action(button), SettingsControlKind::Action) => {
-                button.set_label(&control.label)
-            }
-            (NativeKind::Note(label), SettingsControlKind::Note { text }) => label.set_text(text),
+            (NativeKind::Action(button), ControlKind::Action) => button.set_label(&control.label),
+            (NativeKind::Note(label), ControlKind::Note { text }) => label.set_text(text),
             _ => unreachable!("control kind checked on lookup"),
         }
-        // Native label/text setters can replace GTK's accessible name. Apply
-        // the host's explicit name last, including after a locale change.
+        // Label/text setters may overwrite accessibility: metadata must be last.
         metadata(&self.root, &control.metadata);
         metadata(&self.input, &control.metadata);
         for (class, enabled) in [
             (
                 "suggested-action",
-                control.display == SettingsDisplay::Primary,
+                control.display == ControlDisplay::Primary,
             ),
-            ("dim-label", control.display == SettingsDisplay::Note),
-            ("heading", control.display == SettingsDisplay::Heading),
+            ("dim-label", control.display == ControlDisplay::Note),
+            ("heading", control.display == ControlDisplay::Heading),
         ] {
             if enabled {
                 self.root.add_css_class(class);
@@ -352,23 +337,18 @@ impl NativeControl {
     }
 }
 
-fn action_button(
-    binding: &SettingsBinding,
-    id: &SettingsControlId,
-    input: ControlInput,
-) -> gtk::Button {
+fn action_button(binding: &WidgetBinding, id: ControlId, input: ControlInput) -> gtk::Button {
     let button = gtk::Button::new();
     let weak = binding.self_weak.clone();
-    let id = id.clone();
     button.connect_clicked(move |_| {
         if let Some(binding) = weak.upgrade() {
-            binding.input(&id, input.clone());
+            binding.input(id, input.clone());
         }
     });
     button
 }
 
-fn metadata(widget: &gtk::Widget, metadata: &SettingsMetadata) {
+fn metadata(widget: &gtk::Widget, metadata: &ControlMetadata) {
     widget.set_visible(metadata.visible);
     widget.set_sensitive(metadata.enabled);
     widget.set_tooltip_text(metadata.help.as_deref());
@@ -379,12 +359,9 @@ fn metadata(widget: &gtk::Widget, metadata: &SettingsMetadata) {
     );
 }
 
-/// GTK 4.0 supports this API, but gtk-rs gates its typed convenience wrapper
-/// behind v4_10. Keep the project's existing feature/minimum-version contract.
+/// GTK 4.0 ABI; gtk-rs gates its typed wrapper behind v4_10.
 fn accessible_text(widget: &gtk::Widget, label: &str, description: &str) {
     use glib::translate::{IntoGlib, ToGlibContainerFromSlice};
-    // The Rust declaration (including GtkAccessible) is feature-gated too.
-    // This is the GTK 4.0 ABI; no version-new symbols or layouts are used.
     unsafe extern "C" {
         fn gtk_accessible_update_property_value(
             accessible: *mut std::ffi::c_void,
@@ -398,8 +375,7 @@ fn accessible_text(widget: &gtk::Widget, label: &str, description: &str) {
         gtk::AccessibleProperty::Description.into_glib(),
     ];
     let values = [label.to_value(), description.to_value()];
-    // SAFETY: matching property/value arrays live for this synchronous GTK call;
-    // Widget implements Accessible, and GTK copies the supplied GValues.
+    // SAFETY: Widget is Accessible; GTK copies these matching live arrays.
     unsafe {
         gtk_accessible_update_property_value(
             widget.as_ptr().cast(),
@@ -412,20 +388,21 @@ fn accessible_text(widget: &gtk::Widget, label: &str, description: &str) {
 
 enum Frame {
     Box(gtk::Box, Vec<gtk::Widget>),
+    Table(gtk::Grid, Vec<gtk::Widget>),
     Tabs(gtk::Notebook, Vec<gtk::Widget>, Option<usize>),
 }
 
-pub(super) struct SettingsGtkVisitor<'a> {
-    binding: &'a SettingsBinding,
+pub(super) struct ControlGtkVisitor<'a> {
+    binding: &'a WidgetBinding,
     frames: Vec<Frame>,
     nodes: Vec<NodeId>,
-    controls: Vec<SettingsControlId>,
+    controls: Vec<ControlId>,
     pages: Vec<gtk::Widget>,
     selected_page: Option<gtk::Widget>,
 }
 
-impl<'a> SettingsGtkVisitor<'a> {
-    pub fn new(binding: &'a SettingsBinding) -> Self {
+impl<'a> ControlGtkVisitor<'a> {
+    pub fn new(binding: &'a WidgetBinding) -> Self {
         Self {
             binding,
             frames: Vec::new(),
@@ -452,13 +429,107 @@ impl<'a> SettingsGtkVisitor<'a> {
     }
 
     fn append(&mut self, widget: &gtk::Widget) {
-        if let Some(Frame::Box(_, children)) = self.frames.last_mut() {
+        if let Some(Frame::Box(_, children) | Frame::Table(_, children)) = self.frames.last_mut() {
             children.push(widget.clone());
         }
     }
 
-    fn layout(&mut self, layout: &SettingsLayout, kind: u8) {
-        let node = self.node(NodeId::Layout(layout.id.clone(), kind), || {
+    fn end_container(&mut self) {
+        match self.frames.pop().expect("layout frame") {
+            Frame::Box(parent, children) => reconcile_box(&parent, &children),
+            Frame::Table(grid, children) => {
+                let mut child = grid.first_child();
+                while let Some(current) = child {
+                    child = current.next_sibling();
+                    if !children.contains(&current) {
+                        grid.remove(&current);
+                    }
+                }
+                // Rows retain their own opaque identity. Only positioning follows
+                // controller order; no native sorting or row-index identity.
+                for (index, child) in children.iter().enumerate() {
+                    if child.parent().as_ref() != Some(grid.upcast_ref()) {
+                        grid.attach(child, 0, index as i32, 1, 1);
+                    } else {
+                        let layout = grid
+                            .layout_manager()
+                            .unwrap()
+                            .downcast::<gtk::GridLayout>()
+                            .unwrap();
+                        let cell = layout
+                            .layout_child(child)
+                            .downcast::<gtk::GridLayoutChild>()
+                            .unwrap();
+                        if cell.row() != index as i32 {
+                            cell.set_row(index as i32);
+                        }
+                    }
+                }
+            }
+            Frame::Tabs(..) => unreachable!("layout frame"),
+        }
+    }
+}
+
+impl ControlVisitor for ControlGtkVisitor<'_> {
+    fn begin_screen(&mut self, screen: &ControlScreen) {
+        self.binding
+            .error_label
+            .set_text(screen.message.as_deref().unwrap_or(""));
+        self.binding
+            .error_label
+            .set_visible(screen.message.is_some());
+    }
+
+    fn begin_page(&mut self, page: &Page) {
+        let node = self.node(NodeId::Page(page.id), || {
+            let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let scroll = gtk::ScrolledWindow::new();
+            scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+            scroll.set_hexpand(true);
+            scroll.set_vexpand(true);
+            scroll.set_child(Some(&body));
+            NativeNode {
+                widget: scroll.upcast(),
+                body: Some(body),
+                label: None,
+                select: Some(page.select.id),
+            }
+        });
+        if node.widget.parent().is_none() {
+            self.binding
+                .stack
+                .add_titled(&node.widget, None, &page.label);
+        }
+        self.binding.stack.page(&node.widget).set_title(&page.label);
+        metadata(&node.widget, &page.select.metadata);
+        self.pages.push(node.widget.clone());
+        if page.selected {
+            self.selected_page = Some(node.widget);
+        }
+        self.frames.push(Frame::Box(node.body.unwrap(), Vec::new()));
+    }
+
+    fn end_page(&mut self, _page: &Page) {
+        self.end_container();
+    }
+
+    fn begin_layout(&mut self, layout: &Layout, kind: LayoutKind) {
+        let kind = match kind {
+            LayoutKind::Row => 0,
+            LayoutKind::Column => 1,
+            LayoutKind::Group => 2,
+            LayoutKind::Table => 3,
+        };
+        let node = self.node(NodeId::Layout(layout.id, kind), || {
+            if kind == 3 {
+                return NativeNode {
+                    widget: gtk::Grid::new().upcast(),
+                    body: None,
+                    label: None,
+                    select: None,
+                };
+            }
             let body = gtk::Box::new(
                 if kind == 0 {
                     gtk::Orientation::Horizontal
@@ -474,98 +545,41 @@ impl<'a> SettingsGtkVisitor<'a> {
                 widget: body.clone().upcast(),
                 body: Some(body),
                 label: Some(label),
+                select: None,
             }
         });
-        metadata(&node.widget, &layout.metadata);
-        let body = node.body.unwrap();
-        body.set_spacing(layout.spacing.into());
-        body.set_margin_start(layout.indent.into());
         if self.frames.is_empty() {
-            if body.parent().is_none()
-                && let Some(dialog) = self.binding.dialog.upgrade()
+            if node.widget.parent().is_none()
+                && let Some(dialog) = self.binding.dialog()
             {
-                dialog.content_area().append(&body);
+                dialog.content_area().append(&node.widget);
             }
         } else {
             self.append(&node.widget);
         }
-        let label = node.label.unwrap();
-        label.set_text(&layout.label);
-        label.set_visible(!layout.label.is_empty());
-        self.frames.push(Frame::Box(body, vec![label.upcast()]));
-    }
-
-    fn end_box(&mut self) {
-        let Some(Frame::Box(parent, children)) = self.frames.pop() else {
-            unreachable!()
-        };
-        reconcile_box(&parent, &children);
-    }
-}
-
-impl SettingsVisitor for SettingsGtkVisitor<'_> {
-    fn begin_screen(&mut self, screen: &SettingsScreen) {
-        self.binding
-            .error_label
-            .set_text(screen.message.as_deref().unwrap_or(""));
-        self.binding
-            .error_label
-            .set_visible(screen.message.is_some());
-    }
-
-    fn begin_page(&mut self, page: &SettingsScreenPage) {
-        let node = self.node(NodeId::Page(page.id), || {
-            let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            let scroll = gtk::ScrolledWindow::new();
-            scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-            scroll.set_hexpand(true);
-            scroll.set_vexpand(true);
-            scroll.set_child(Some(&body));
-            NativeNode {
-                widget: scroll.upcast(),
-                body: Some(body),
-                label: None,
-            }
-        });
-        if node.widget.parent().is_none() {
-            // Native names are opaque; semantic identity lives in the registry.
-            self.binding
-                .stack
-                .add_titled(&node.widget, None, &page.label);
+        if kind == 3 {
+            let grid = node.widget.clone().downcast::<gtk::Grid>().unwrap();
+            grid.set_row_spacing(layout.spacing.into());
+            self.frames.push(Frame::Table(grid, Vec::new()));
+        } else {
+            let body = node.body.unwrap();
+            body.set_homogeneous(kind == 0 && matches!(self.frames.last(), Some(Frame::Table(..))));
+            body.set_spacing(layout.spacing.into());
+            body.set_margin_start(layout.indent.into());
+            let label = node.label.unwrap();
+            label.set_text(&layout.label);
+            label.set_visible(!layout.label.is_empty());
+            self.frames.push(Frame::Box(body, vec![label.upcast()]));
         }
-        self.binding.stack.page(&node.widget).set_title(&page.label);
-        metadata(&node.widget, &page.select.metadata);
-        self.pages.push(node.widget.clone());
-        if page.selected {
-            self.selected_page = Some(node.widget);
-        }
-        self.frames.push(Frame::Box(node.body.unwrap(), Vec::new()));
+        metadata(&node.widget, &layout.metadata);
     }
 
-    fn end_page(&mut self, _page: &SettingsScreenPage) {
-        self.end_box();
-    }
-    fn begin_row(&mut self, layout: &SettingsLayout) {
-        self.layout(layout, 0);
-    }
-    fn end_row(&mut self, _layout: &SettingsLayout) {
-        self.end_box();
-    }
-    fn begin_column(&mut self, layout: &SettingsLayout) {
-        self.layout(layout, 1);
-    }
-    fn end_column(&mut self, _layout: &SettingsLayout) {
-        self.end_box();
-    }
-    fn begin_group(&mut self, layout: &SettingsLayout) {
-        self.layout(layout, 2);
-    }
-    fn end_group(&mut self, _layout: &SettingsLayout) {
-        self.end_box();
+    fn end_layout(&mut self, _layout: &Layout, _kind: LayoutKind) {
+        self.end_container();
     }
 
-    fn begin_tabs(&mut self, tabs: &SettingsTabs) {
-        let node = self.node(NodeId::Tabs(tabs.id.clone()), || {
+    fn begin_tabs(&mut self, tabs: &Tabs) {
+        let node = self.node(NodeId::Tabs(tabs.id), || {
             let notebook = gtk::Notebook::new();
             notebook.set_scrollable(true);
             notebook.set_hexpand(true);
@@ -581,12 +595,10 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
                     }
                     let id = binding.registry.borrow().tab_control(child);
                     if let Some(id) = id {
-                        // switch-page precedes GTK's default selection handler.
-                        // Bind after it completes, against the latest screen.
                         let weak = binding.self_weak.clone();
                         glib::idle_add_local_once(move || {
                             if let Some(binding) = weak.upgrade() {
-                                binding.input(&id, ControlInput::Activate);
+                                binding.input(id, ControlInput::Activate);
                             }
                         });
                     }
@@ -596,6 +608,7 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
                 widget: notebook.upcast(),
                 body: None,
                 label: None,
+                select: None,
             }
         });
         metadata(&node.widget, &tabs.metadata);
@@ -607,13 +620,14 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
         ));
     }
 
-    fn begin_tab(&mut self, tab: &SettingsTab) {
-        let node = self.node(NodeId::Tab(tab.id.clone()), || {
+    fn begin_tab(&mut self, tab: &Tab) {
+        let node = self.node(NodeId::Tab(tab.id), || {
             let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
             NativeNode {
                 widget: body.clone().upcast(),
                 body: Some(body),
                 label: Some(gtk::Label::new(None)),
+                select: Some(tab.select.id),
             }
         });
         let Some(Frame::Tabs(notebook, children, _)) = self.frames.last_mut() else {
@@ -628,11 +642,11 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
         self.frames.push(Frame::Box(node.body.unwrap(), Vec::new()));
     }
 
-    fn end_tab(&mut self, _tab: &SettingsTab) {
-        self.end_box();
+    fn end_tab(&mut self, _tab: &Tab) {
+        self.end_container();
     }
 
-    fn end_tabs(&mut self, _tabs: &SettingsTabs) {
+    fn end_tabs(&mut self, _tabs: &Tabs) {
         let Some(Frame::Tabs(notebook, children, selected)) = self.frames.pop() else {
             unreachable!()
         };
@@ -655,8 +669,8 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
         }
     }
 
-    fn control(&mut self, control: &SettingsControl) {
-        self.controls.push(control.id.clone());
+    fn control(&mut self, control: &Control) {
+        self.controls.push(control.id);
         let old = self.binding.registry.borrow().control(&control.id);
         let native = if let Some(old) = old.filter(|old| old.accepts(&control.kind)) {
             old
@@ -664,17 +678,17 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
             let native = Rc::new(NativeControl::new(self.binding, control));
             let removed = {
                 let mut registry = self.binding.registry.borrow_mut();
-                let index = registry
+                if let Some(index) = registry
                     .controls
                     .iter()
-                    .position(|(id, _)| id == &control.id);
-                if let Some(index) = index {
+                    .position(|(id, _)| id == &control.id)
+                {
                     Some(std::mem::replace(
                         &mut registry.controls[index].1,
                         native.clone(),
                     ))
                 } else {
-                    registry.controls.push((control.id.clone(), native.clone()));
+                    registry.controls.push((control.id, native.clone()));
                     None
                 }
             };
@@ -682,15 +696,18 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
             native
         };
         native.update(control);
-        if !native.native_action {
-            self.append(&native.root);
-        }
+        self.append(&native.root);
     }
 
-    fn end_screen(&mut self, _screen: &SettingsScreen) {
-        let mut child = self.binding.stack.first_child();
-        while let Some(current) = child {
-            child = current.next_sibling();
+    fn end_screen(&mut self, _screen: &ControlScreen) {
+        // Stack's widget children can include outgoing transition widgets which
+        // are no longer pages. Remove only members of its actual page model.
+        let pages = self.binding.stack.pages();
+        let children: Vec<_> = (0..pages.n_items())
+            .filter_map(|index| pages.item(index).and_downcast::<gtk::StackPage>())
+            .map(|page| page.child())
+            .collect();
+        for current in children {
             if !self.pages.contains(&current) {
                 self.binding.stack.remove(&current);
             }
@@ -700,7 +717,6 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
         {
             self.binding.stack.set_visible_child(selected);
         }
-        // Drop obsolete native resources outside the registry borrow too.
         let (nodes, controls) = {
             let mut registry = self.binding.registry.borrow_mut();
             (
@@ -714,6 +730,12 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
         let (controls, dead_controls): (Vec<_>, Vec<_>) = controls
             .into_iter()
             .partition(|(id, _)| self.controls.contains(id));
+        // Old root layouts may be direct children of the dialog, not a frame.
+        for (_, node) in &dead_nodes {
+            if let Some(parent) = node.widget.parent().and_downcast::<gtk::Box>() {
+                parent.remove(&node.widget);
+            }
+        }
         {
             let mut registry = self.binding.registry.borrow_mut();
             registry.nodes = nodes;
@@ -723,7 +745,6 @@ impl SettingsVisitor for SettingsGtkVisitor<'_> {
     }
 }
 
-/// Do not unparent/reinsert stable children: GTK focus and IME belong to them.
 fn reconcile_box(parent: &gtk::Box, desired: &[gtk::Widget]) {
     let mut child = parent.first_child();
     while let Some(current) = child {

@@ -21,9 +21,11 @@
 //!   The model owns captions and rendered rows; only native controls stay local.
 //! - Dispatch gestures and poll [`debugger::DebuggerDriver`]; apply owned view
 //!   snapshots/effects outside controller borrows. Schedule pending polls.
-//! - Use [`settings::SettingsController`] and its apply mailbox; native controls
-//!   may bind directly to its view model. Track auxiliary lifetimes with
-//!   [`aux::AuxWindows`], reserving before native creation can reenter.
+//! - Prepare Settings and History with `ApplicationHost::prepare_widget_window`.
+//!   Render owned [`control::ControlScreen`] snapshots using `visit_controls`;
+//!   send opaque [`control::ControlEvent`] callbacks to [`widget_session::WidgetSession`].
+//!   Native registries retain [`widget_session::WindowMailbox`], never settings
+//!   drafts or domain bindings. Reserve [`aux::AuxWindows`] before native creation.
 //! - Translate callbacks through [`event::EventSink`] / [`event::EventHandler`]
 //!   (both support dyn). Take owned [`event::CommandEffect`] results and release
 //!   all controller borrows before native presentation can reenter.
@@ -47,6 +49,7 @@
 pub mod application;
 pub mod aux;
 pub mod commands;
+pub mod control;
 pub mod debug_schedule;
 pub mod debugger;
 pub mod drain;
@@ -59,5 +62,6 @@ pub mod menu;
 pub mod osd;
 pub mod session;
 pub mod settings;
+pub mod widget_session;
 pub mod widgets;
 pub mod window;

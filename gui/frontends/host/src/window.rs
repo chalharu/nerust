@@ -3,7 +3,7 @@
 //! Clone a window under the owner's borrow, release it, then visit the snapshot:
 //! native callbacks may synchronously reenter the host or auxiliary registry.
 
-use crate::{focus::AuxKind, menu::Menubar, settings::SettingsScreen};
+use crate::{focus::AuxKind, menu::Menubar};
 
 /// Semantic destination. Generation-sensitive callbacks must still use `AuxId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -20,6 +20,17 @@ pub struct Window {
     pub contents: Widget,
 }
 
+/// Concrete native work after a Host operation. No settings domain result leaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowEffects {
+    pub rebuild_renderer: bool,
+    pub fullscreen: Option<bool>,
+    /// Logical client dimensions, without toolkit decorations or menu height.
+    pub resize: Option<(u32, u32)>,
+    pub redraw: bool,
+    pub refresh_chrome: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Widget {
     pub contents: WidgetContents,
@@ -28,12 +39,11 @@ pub struct Widget {
 #[derive(Debug, Clone)]
 pub enum WidgetContents {
     Main(MainContents),
-    Settings(Box<SettingsScreen>),
-    /// Reservation exists, but no controller screen has been supplied yet.
-    PendingSettings,
+    Controls(Box<crate::control::ControlScreen>),
+    /// Reservation exists, but no generic control screen has been supplied yet.
+    PendingControls,
     Debug(DebugContents),
     Ppu(PpuContents),
-    History(HistoryContents),
 }
 
 /// Grouped emulation surface. Renderer resources remain native-owned.
@@ -51,11 +61,18 @@ pub struct DebugContents;
 #[derive(Debug, Clone, Default)]
 pub struct PpuContents;
 
-/// Grouped history presentation; HistoryModel/HistoryVisitor remain reusable.
-#[derive(Debug, Clone, Default)]
-pub struct HistoryContents;
-
 impl Window {
+    pub fn controls(kind: AuxKind, screen: crate::control::ControlScreen) -> Self {
+        Self {
+            id: WindowId::Auxiliary(kind),
+            title: screen.title.clone(),
+            menu: None,
+            contents: Widget {
+                contents: WidgetContents::Controls(Box::new(screen)),
+            },
+        }
+    }
+
     pub fn main() -> Self {
         Self {
             id: WindowId::Main,
@@ -68,34 +85,20 @@ impl Window {
     }
 
     /// Native creation may read this immediately after `request_open`.
-    /// Settings must replace the pending presentation with `controller.window()`
+    /// Control windows replace the pending presentation with `session.window()`
     /// before rendering; no default editor or second settings draft is created.
     pub fn auxiliary(kind: AuxKind) -> Self {
         let (title, contents) = match kind {
             AuxKind::Debug => ("Debugger", WidgetContents::Debug(DebugContents)),
             AuxKind::Ppu => ("PPU Viewer", WidgetContents::Ppu(PpuContents)),
-            AuxKind::History => (
-                "Notification History",
-                WidgetContents::History(HistoryContents),
-            ),
-            AuxKind::Settings => ("Settings", WidgetContents::PendingSettings),
+            AuxKind::History => ("Notification History", WidgetContents::PendingControls),
+            AuxKind::Settings => ("Settings", WidgetContents::PendingControls),
         };
         Self {
             id: WindowId::Auxiliary(kind),
             title: title.into(),
             menu: None,
             contents: Widget { contents },
-        }
-    }
-
-    pub fn settings(screen: SettingsScreen) -> Self {
-        Self {
-            id: WindowId::Auxiliary(AuxKind::Settings),
-            title: screen.title.clone(),
-            menu: None,
-            contents: Widget {
-                contents: WidgetContents::Settings(Box::new(screen)),
-            },
         }
     }
 
@@ -114,18 +117,17 @@ impl Widget {
         visitor.begin_widget(self);
         match &self.contents {
             WidgetContents::Main(contents) => visitor.visit_main(contents),
-            WidgetContents::Settings(screen) => visitor.visit_settings(screen),
-            WidgetContents::PendingSettings => visitor.visit_pending_settings(),
+            WidgetContents::Controls(screen) => visitor.visit_controls(screen),
+            WidgetContents::PendingControls => visitor.visit_pending_controls(),
             WidgetContents::Debug(contents) => visitor.visit_debug(contents),
             WidgetContents::Ppu(contents) => visitor.visit_ppu(contents),
-            WidgetContents::History(contents) => visitor.visit_history(contents),
         }
         visitor.end_widget(self);
     }
 }
 
 /// Object-safe outer traversal, with no Send/Sync or toolkit constraints.
-/// `visit_settings` can call `screen.visit(&mut dyn SettingsVisitor)`; similarly,
+/// `visit_controls` can call `screen.visit(&mut dyn ControlVisitor)`; similarly,
 /// `visit_menu` can delegate to the existing menu presenter/visitor.
 pub trait WindowVisitor {
     fn begin_window(&mut self, _window: &Window) {}
@@ -134,11 +136,10 @@ pub trait WindowVisitor {
     fn begin_widget(&mut self, _widget: &Widget) {}
     fn end_widget(&mut self, _widget: &Widget) {}
     fn visit_main(&mut self, _contents: &MainContents) {}
-    fn visit_settings(&mut self, _screen: &SettingsScreen) {}
-    fn visit_pending_settings(&mut self) {}
+    fn visit_controls(&mut self, _screen: &crate::control::ControlScreen) {}
+    fn visit_pending_controls(&mut self) {}
     fn visit_debug(&mut self, _contents: &DebugContents) {}
     fn visit_ppu(&mut self, _contents: &PpuContents) {}
-    fn visit_history(&mut self, _contents: &HistoryContents) {}
 }
 
 #[cfg(test)]

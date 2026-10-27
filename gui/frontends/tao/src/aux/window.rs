@@ -2,9 +2,9 @@
 
 use iced_winit::program::Program;
 use nerust_frontend_host::{
+    control::ControlScreen,
     focus::AuxKind,
-    settings::SettingsScreen,
-    window::{DebugContents, HistoryContents, PpuContents, Window, WindowVisitor},
+    window::{DebugContents, PpuContents, Window, WindowVisitor},
 };
 
 pub(crate) trait GroupedProgram: Program {
@@ -19,7 +19,7 @@ pub(crate) trait WidgetBinding {
     type Theme: iced::theme::Base;
     type Renderer: iced_winit::program::Renderer;
     type Executor: iced::Executor;
-    const KIND: AuxKind;
+    fn kind(&self) -> AuxKind;
 
     fn settings(&self) -> iced::Settings;
     fn boot(&self) -> (Self::State, iced::Task<Self::Message>);
@@ -35,10 +35,10 @@ pub(crate) trait WidgetBinding {
         state: &'a Self::State,
         id: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer>;
-    fn settings_view<'a>(
+    fn controls_view<'a>(
         &self,
         state: &'a Self::State,
-        _screen: &SettingsScreen,
+        _screen: &ControlScreen,
         id: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         self.view(state, id)
@@ -52,7 +52,9 @@ impl<P: GroupedProgram> WidgetBinding for P {
     type Theme = P::Theme;
     type Renderer = P::Renderer;
     type Executor = P::Executor;
-    const KIND: AuxKind = P::KIND;
+    fn kind(&self) -> AuxKind {
+        P::KIND
+    }
     fn settings(&self) -> iced::Settings {
         Program::settings(self)
     }
@@ -141,25 +143,20 @@ struct GroupedView<'p, 'a, P: WidgetBinding> {
 
 impl<P: WidgetBinding> GroupedView<'_, '_, P> {
     fn grouped(&mut self, kind: AuxKind) {
-        if kind == P::KIND {
+        if kind == self.program.kind() {
             self.output = Some(self.program.view(self.state, self.id));
         }
     }
 }
 
 impl<P: WidgetBinding> WindowVisitor for GroupedView<'_, '_, P> {
-    fn visit_settings(&mut self, screen: &SettingsScreen) {
-        if P::KIND == AuxKind::Settings {
-            self.output = Some(self.program.settings_view(self.state, screen, self.id));
-        }
+    fn visit_controls(&mut self, screen: &ControlScreen) {
+        self.output = Some(self.program.controls_view(self.state, screen, self.id));
     }
     fn visit_debug(&mut self, _: &DebugContents) {
         self.grouped(AuxKind::Debug);
     }
     fn visit_ppu(&mut self, _: &PpuContents) {
         self.grouped(AuxKind::Ppu);
-    }
-    fn visit_history(&mut self, _: &HistoryContents) {
-        self.grouped(AuxKind::History);
     }
 }

@@ -70,7 +70,9 @@ impl WindowRuntime {
     pub(super) fn on_settings_event(&mut self, event: WindowEvent) {
         // External destroy: run the normal close path (pending apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if self.host.settings_open() && self.host.close_settings_and_maybe_rebuild() {
+            if let Some(id) = self.host.aux.route_id(AuxKind::Settings)
+                && self.host.finish_widget_window(id, true)
+            {
                 self.recreate_renderer();
             }
             return;
@@ -82,7 +84,11 @@ impl WindowRuntime {
             return;
         };
         // Coalesced present: the pump above already requested a redraw.
-        if outcome.close && self.host.close_settings_and_maybe_rebuild() {
+        if outcome.close
+            && self
+                .host
+                .finish_widget_window(outcome.id.expect("routed generation"), true)
+        {
             self.recreate_renderer();
         }
     }
@@ -149,21 +155,22 @@ impl WindowRuntime {
         if let Some(detail) = outcome.error {
             self.host.report_host_error(detail);
         }
-        if outcome.cleared {
-            self.host.clear_history();
+        if matches!(kind, AuxKind::Settings | AuxKind::History) {
+            if (outcome.close || outcome.submitted)
+                && let Some(id) = outcome.id
+                && self.host.finish_widget_window(id, outcome.close)
+            {
+                self.recreate_renderer();
+            }
+            return;
         }
         if !outcome.close {
             return;
         }
         match kind {
-            AuxKind::Settings => {
-                if self.host.close_settings_and_maybe_rebuild() {
-                    self.recreate_renderer();
-                }
-            }
             AuxKind::Debug => self.host.drop_debug_window(),
             AuxKind::Ppu => self.host.drop_ppu_window(),
-            AuxKind::History => self.host.drop_history_window(),
+            AuxKind::Settings | AuxKind::History => unreachable!(),
         }
     }
 

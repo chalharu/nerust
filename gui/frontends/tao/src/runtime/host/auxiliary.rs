@@ -5,10 +5,7 @@ use nerust_frontend_host::{
     focus::AuxKind,
 };
 
-use nerust_gui_runtime::settings::SettingsSnapshot;
-#[cfg(test)]
-use nerust_gui_shell::session::SessionError;
-use nerust_gui_shell::session::access::SettingsResult;
+use nerust_frontend_host::{widget_session::WidgetSession, window::WindowEffects};
 
 use crate::ports::{AuxOpenParams, WindowOpener};
 
@@ -46,25 +43,28 @@ impl HostState {
         opened
     }
 
-    #[cfg(test)]
-    pub(crate) fn apply_settings(
-        &mut self,
-        settings: SettingsSnapshot,
-    ) -> Result<SettingsResult, SessionError> {
-        let result = self.core.apply_settings(settings)?;
-        self.apply_native_settings(&result);
-        Ok(result)
-    }
-
-    fn apply_native_settings(&mut self, result: &SettingsResult) {
-        if result.fullscreen_default_changed {
-            self.sync_fullscreen_from_settings();
+    pub(crate) fn apply_window_effects(&mut self, effects: WindowEffects) -> bool {
+        if let Some(fullscreen) = effects.fullscreen
+            && let Some(window) = self.windows.live()
+        {
+            window.set_fullscreen(super::fullscreen_mode(fullscreen));
         }
-        if result.scaling_changed {
-            self.update_window_size_for_scaling();
+        if let Some((width, height)) = effects.resize
+            && let Some(window) = self.windows.live()
+        {
+            let extra = self.windows.menu_height();
+            window.set_inner_size(tao::dpi::LogicalSize::new(
+                f64::from(width),
+                f64::from(height) + extra,
+            ));
         }
-        let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, true);
+        if effects.refresh_chrome {
+            let ctx = self.frame_ctx();
+            self.sync_chrome(&ctx, effects.redraw);
+        } else if effects.redraw {
+            self.request_redraw();
+        }
+        effects.rebuild_renderer
     }
 
     #[cfg(test)]
@@ -81,59 +81,77 @@ impl HostState {
         let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Settings) else {
             return;
         };
-        let controller = match self.core.prepare_settings_window(
-            &mut self.aux.windows,
-            id,
-            self.ctx.registry.clone(),
-            self.ctx.audio_registry.clone(),
-        ) {
-            Ok(Some(controller)) => controller,
-            Ok(None) => return,
-            Err(error) => {
-                log::error!("refusing settings window: {error}");
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, false);
-                return;
-            }
+        let Some(session) = self.prepare_widget_session(id) else {
+            return;
         };
-        let program = crate::aux::widgets::bindings::SettingsBinding::from_controller(controller);
-        let opened = self.create_aux_window(id, opener, AuxOpenParams::Settings { program });
+        let opened = self.create_aux_window(id, opener, AuxOpenParams::Controls { session });
         if !opened {
             log::error!("failed to open settings window");
             let ctx = self.frame_ctx();
             self.sync_chrome(&ctx, false);
         } else {
-            // Publish only the settled native lifecycle state. A failed open
-            // must not flash a guarded menu before its immediate rollback.
             let ctx = self.frame_ctx();
             self.sync_menu_state(&ctx);
         }
     }
 
-    pub(crate) fn close_settings_window(
-        &mut self,
-        pending: Option<SettingsSnapshot>,
-    ) -> Option<SettingsResult> {
-        let closed = if let Some(id) = self.aux.route_id(crate::aux::focus::AuxKind::Settings) {
-            let (handle, result) = self.core.close_window(&mut self.aux.windows, id, pending)?;
-            drop(handle);
-            result
-        } else {
-            self.core.finish_settings(pending)
-        };
-        let result = match closed {
-            Ok(result) => result,
+    pub(crate) fn prepare_widget_session(&mut self, id: AuxId) -> Option<WidgetSession> {
+        match self.core.prepare_widget_window(
+            &mut self.aux.windows,
+            id,
+            self.ctx.registry.clone(),
+            self.ctx.audio_registry.clone(),
+        ) {
+            Ok(session) => session,
             Err(error) => {
-                log::warn!("settings apply failed after close: {error}");
+                log::error!("refusing settings window: {error}");
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, false);
                 None
             }
-        };
-        if let Some(plan) = &result {
-            self.apply_native_settings(plan);
         }
-        let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, false);
-        result
+    }
+
+    /// The caller retains the original generation across native dispatch.
+    pub(crate) fn finish_widget_window(&mut self, id: AuxId, close: bool) -> bool {
+        if self.aux.windows.kind_of_id(id).is_none() {
+            return false;
+        }
+        let pending = self
+            .aux
+            .windows
+            .mailbox(id)
+            .and_then(|m| m.take_submission());
+        let result = if close {
+            let Some((handle, result)) =
+                self.core
+                    .close_widget_window(&mut self.aux.windows, id, pending)
+            else {
+                return false;
+            };
+            drop(handle);
+            result
+        } else if let Some(pending) = pending {
+            self.core
+                .apply_window_submission(&self.aux.windows, id, pending)
+        } else {
+            return false;
+        };
+        let effects = match result {
+            Ok(effects) => effects,
+            Err(error) => {
+                log::warn!("widget submission failed: {error}");
+                self.core.report_host_error(error.to_string());
+                WindowEffects {
+                    refresh_chrome: close,
+                    ..Default::default()
+                }
+            }
+        };
+        if !close {
+            self.aux.refresh_widget(id, &mut self.core);
+        }
+        self.apply_window_effects(effects)
     }
 }
 
@@ -147,7 +165,6 @@ mod tests {
 
     #[test]
     fn generic_creation_rejects_stale_and_active_ids_before_native_effects() {
-        use nerust_settings_core::model::language::AppLanguage;
         let mut host = TestHost::new().host;
         let Some(OpenRequest::Create(old)) = host.reserve_aux_window(AuxKind::History) else {
             panic!("expected reservation");
@@ -159,8 +176,13 @@ mod tests {
             assert!(!host.create_aux_window(
                 id,
                 &opener,
-                AuxOpenParams::History {
-                    language: AppLanguage::English
+                AuxOpenParams::Controls {
+                    session: {
+                        // This stale/active check runs before consuming native parameters.
+                        let mut other = TestHost::new().host;
+                        crate::aux::widgets::bindings::tests::prepare(&mut other, AuxKind::History)
+                            .1
+                    }
                 },
             ));
         }
@@ -268,14 +290,81 @@ mod tests {
     }
 
     #[test]
-    fn close_settings_window_applies_pending_snapshot() {
+    fn close_settings_window_applies_pending_submission() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(host.close_settings_window(None).is_none());
-        let snapshot = host.settings_snapshot().clone();
-        let plan = host
-            .close_settings_window(Some(snapshot))
-            .expect("identical snapshot applies cleanly");
-        assert!(!plan.renderer_needs_rebuild);
+        let (id, mut session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
+        crate::aux::widgets::bindings::tests::activate(&mut session, "OK");
+        assert!(session.mailbox().has_pending());
+        assert!(!host.finish_widget_window(id, true));
+        assert!(!host.settings_open());
+        assert!(!session.mailbox().has_pending());
+    }
+
+    #[test]
+    fn stale_close_cannot_consume_reopened_settings_submission_or_release_pause() {
+        use crate::aux::widgets::bindings::tests::{activate, prepare};
+        use nerust_frontend_kernel::pause::PauseOwner;
+
+        let mut host = TestHost::new().host;
+        let (old, _) = prepare(&mut host, AuxKind::Settings);
+        assert!(!host.finish_widget_window(old, true));
+        let (current, mut session) = prepare(&mut host, AuxKind::Settings);
+        assert_ne!(old, current);
+        activate(&mut session, "OK");
+        assert!(session.mailbox().has_pending());
+        for close in [false, true] {
+            assert!(!host.finish_widget_window(old, close));
+            assert!(session.mailbox().has_pending());
+            assert_eq!(host.aux.route_id(AuxKind::Settings), Some(current));
+            assert!(host.owns_pause(PauseOwner::Settings));
+        }
+        assert!(!host.finish_widget_window(current, true));
+        assert!(!session.mailbox().has_pending());
+        assert!(!host.owns_pause(PauseOwner::Settings));
+        assert!(!host.settings_open());
+    }
+
+    #[test]
+    fn failed_opaque_save_closes_and_releases_only_settings_pause() {
+        use crate::aux::widgets::bindings::tests::{activate, find, prepare};
+        use nerust_frontend_host::control::{ControlEvent, ControlInput};
+        use nerust_frontend_kernel::pause::PauseOwner;
+
+        let context = crate::test_session::TestContext::with_loader(
+            crate::test_session::FakeRomLoader::succeeding(),
+        );
+        let paths = context.settings_paths();
+        let path = paths.settings_file.clone();
+        let mut host = super::HostState::new_with_settings_paths(
+            context.ctx,
+            crate::test_menu::MenuRecorderHandle::default().into_box(),
+            std::sync::Arc::new(crate::test_dialogs::FakeDialogs::default()),
+            Some(paths),
+        )
+        .unwrap();
+        let (id, mut session) = prepare(&mut host, AuxKind::Settings);
+        host.set_pause_owner(PauseOwner::Modal, true);
+        let mute = find(&session.screen(), "Mute");
+        session.dispatch(ControlEvent::new(mute.id, ControlInput::Bool(true)));
+        activate(&mut session, "OK");
+        if path.is_file() {
+            std::fs::remove_file(&path).unwrap();
+        }
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(session.mailbox().has_pending());
+        assert!(!host.finish_widget_window(id, true));
+        assert!(!host.settings_open());
+        assert!(host.aux.window(id).is_none());
+        assert!(!host.owns_pause(PauseOwner::Settings));
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(!session.mailbox().has_pending());
+        assert!(
+            session.screen().message.is_some(),
+            "real save failure published"
+        );
+        assert!(host.session().notification_history().count() > 0);
+        std::fs::remove_dir(&path).unwrap();
     }
 }

@@ -114,8 +114,8 @@ fn submit_and_cancel_publish_close_state() {
     let mut submitted = empty_state();
     submitted.update(E::SetVolume(42));
     submitted.update(E::Submit);
-    assert!(submitted.should_close.load(Ordering::Acquire));
-    assert!(lock_recovered(&submitted.pending_apply).is_some());
+    assert!(submitted.mailbox.should_close.load(Ordering::Acquire));
+    assert!(lock_recovered(&submitted.mailbox.pending_apply).is_some());
     let mailbox = submitted.mailbox.clone();
     assert_eq!(
         mailbox
@@ -131,8 +131,8 @@ fn submit_and_cancel_publish_close_state() {
     let mut cancelled = empty_state();
     cancelled.update(E::SetVolume(42));
     cancelled.update(E::Cancel);
-    assert!(cancelled.should_close.load(Ordering::Acquire));
-    assert!(lock_recovered(&cancelled.pending_apply).is_none());
+    assert!(cancelled.mailbox.should_close.load(Ordering::Acquire));
+    assert!(lock_recovered(&cancelled.mailbox.pending_apply).is_none());
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn validation_errors_empty_with_default_settings() {
     assert!(state.validation_errors().is_empty());
     assert!(state.storage_error().is_none());
     state.update(E::Submit);
-    assert!(lock_recovered(&state.pending_apply).is_some());
+    assert!(lock_recovered(&state.mailbox.pending_apply).is_some());
 }
 
 #[test]
@@ -151,8 +151,8 @@ fn failed_validation_does_not_close_or_publish() {
     assert!(state.storage_error().is_some());
     assert!(!state.validation_errors().is_empty());
     state.update(E::Submit);
-    assert!(!state.should_close.load(Ordering::Acquire));
-    assert!(lock_recovered(&state.pending_apply).is_none());
+    assert!(!state.mailbox.should_close.load(Ordering::Acquire));
+    assert!(lock_recovered(&state.mailbox.pending_apply).is_none());
 }
 
 #[test]
@@ -166,18 +166,21 @@ fn browse_cancellation_preserves_text_and_draft_and_selection_updates_both() {
         })
     );
     let revision = state.vm.revision.get();
-    state.view_invalidated.store(false, Ordering::Release);
+    state
+        .mailbox
+        .view_invalidated
+        .store(false, Ordering::Release);
     state.update(E::StorageDirectorySelected(None));
     assert_eq!(state.storage_directory_input, "/original");
     assert_eq!(state.vm.general.view.get().storage_directory, "/original");
     assert_eq!(state.vm.revision.get(), revision);
-    assert!(!state.view_invalidated.load(Ordering::Acquire));
+    assert!(!state.mailbox.view_invalidated.load(Ordering::Acquire));
     state.update(E::StorageDirectorySelected(Some(PathBuf::from(
         "/selected",
     ))));
     assert_eq!(state.storage_directory_input, "/selected");
     assert_eq!(state.vm.general.view.get().storage_directory, "/selected");
-    assert!(state.view_invalidated.load(Ordering::Acquire));
+    assert!(state.mailbox.view_invalidated.load(Ordering::Acquire));
 }
 
 #[test]
@@ -212,9 +215,12 @@ fn local_navigation_invalidates_without_vm_revision() {
         E::SelectSystemTab(2),
         E::SelectInputTab(3),
     ] {
-        state.view_invalidated.store(false, Ordering::Release);
+        state
+            .mailbox
+            .view_invalidated
+            .store(false, Ordering::Release);
         state.update(event);
-        assert!(state.view_invalidated.load(Ordering::Acquire));
+        assert!(state.mailbox.view_invalidated.load(Ordering::Acquire));
         assert_eq!(state.vm.revision.get(), revision);
     }
 }
@@ -223,19 +229,25 @@ fn local_navigation_invalidates_without_vm_revision() {
 fn error_creation_and_clearing_invalidate_without_revision() {
     let mut state = nes_state();
     let revision = state.vm.revision.get();
-    state.view_invalidated.store(false, Ordering::Release);
+    state
+        .mailbox
+        .view_invalidated
+        .store(false, Ordering::Release);
     state.update(E::SetControllerSlot {
         slot: AttachmentId::new("nonexistent.slot"),
         controller_id: None,
     });
     assert!(state.error_message.is_some());
-    assert!(state.view_invalidated.load(Ordering::Acquire));
+    assert!(state.mailbox.view_invalidated.load(Ordering::Acquire));
     assert_eq!(state.vm.revision.get(), revision);
-    state.view_invalidated.store(false, Ordering::Release);
+    state
+        .mailbox
+        .view_invalidated
+        .store(false, Ordering::Release);
     // Key without an active capture is a VM no-op, but clears the error banner.
     state.update(E::CaptureKey(Key::Space));
     assert!(state.error_message.is_none());
-    assert!(state.view_invalidated.load(Ordering::Acquire));
+    assert!(state.mailbox.view_invalidated.load(Ordering::Acquire));
     assert_eq!(state.vm.revision.get(), revision);
 }
 
@@ -256,10 +268,10 @@ fn capture_messages_update_capture_state() {
     let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
     state.update(E::StartCapture(target.clone()));
     assert_eq!(state.vm.capture.view.get().target, Some(target.clone()));
-    assert!(state.view_invalidated.swap(false, Ordering::AcqRel));
+    assert!(state.mailbox.view_invalidated.swap(false, Ordering::AcqRel));
     state.update(E::CaptureKey(Key::Space));
     assert!(state.vm.capture.view.get().target.is_none());
-    assert!(state.view_invalidated.swap(false, Ordering::AcqRel));
+    assert!(state.mailbox.view_invalidated.swap(false, Ordering::AcqRel));
     assert_eq!(
         nerust_settings_core::editor::current_binding_label(&state.vm.snapshot(), &target),
         Some(Key::Space.label())
@@ -438,11 +450,14 @@ fn local_text_change_invalidates_even_when_vm_already_has_the_value() {
         .set_storage_directory(Some("/selected".into()))
         .unwrap();
     let revision = state.vm.revision.get();
-    state.view_invalidated.store(false, Ordering::Release);
+    state
+        .mailbox
+        .view_invalidated
+        .store(false, Ordering::Release);
     state.update(E::SetStorageDirectory("/selected".into()));
     assert_eq!(state.vm.revision.get(), revision);
     assert_eq!(state.storage_directory_input, "/selected");
-    assert!(state.view_invalidated.load(Ordering::Acquire));
+    assert!(state.mailbox.view_invalidated.load(Ordering::Acquire));
     state.update(E::SetStorageDirectory(String::new()));
     assert!(
         state

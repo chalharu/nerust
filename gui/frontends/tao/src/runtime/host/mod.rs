@@ -24,11 +24,9 @@ use nerust_frontend_host::application::ApplicationHost;
 
 mod auxiliary;
 mod commands;
-mod frame;
 mod osd;
 mod presentation;
 mod window;
-pub(crate) use frame::FrameCtx;
 
 pub(crate) use window::{WakeNeed, WindowCluster};
 
@@ -279,12 +277,12 @@ impl HostState {
     }
 
     /// Close the settings window and rebuild the renderer when the render target changed.
+    #[cfg(test)]
     pub(super) fn close_settings_and_maybe_rebuild(&mut self) -> bool {
-        let pending = self.aux.settings_take_pending();
-        let plan = self.close_settings_window(pending);
-        let rebuild = plan.is_some_and(|p| p.renderer_needs_rebuild);
-        self.request_redraw();
-        rebuild
+        let Some(id) = self.aux.route_id(AuxKind::Settings) else {
+            return false;
+        };
+        self.finish_widget_window(id, true)
     }
 
     /// Aux window of this kind still registered. Test-only read: the
@@ -320,9 +318,11 @@ impl HostState {
         self.aux.remove_kind(AuxKind::Ppu);
     }
 
+    #[cfg(test)]
     pub(super) fn drop_history_window(&mut self) {
-        self.aux.remove_kind(AuxKind::History);
-        self.core.invalidate_history();
+        if let Some(id) = self.aux.route_id(AuxKind::History) {
+            self.finish_widget_window(id, true);
+        }
     }
 }
 

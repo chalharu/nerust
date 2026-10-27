@@ -419,7 +419,7 @@ mod wake_tests {
             let window = gtk::ApplicationWindow::builder().build();
             let picture = gtk::Picture::new();
             window.set_child(Some(&picture));
-            let state = crate::widgets::history::history_dialog_tests::model_state();
+            let state = crate::window::tests::model_state();
             let factory = state.borrow().ctx.gpu_factory.clone();
             let surface = Surface::bind(&window, &picture, state.clone(), factory);
             Some(Self {

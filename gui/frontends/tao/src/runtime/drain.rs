@@ -198,7 +198,7 @@ impl HostState {
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; no redraw.
-    pub(crate) fn sync_debug_chrome(&mut self, ctx: &super::host::FrameCtx) {
+    pub(crate) fn sync_debug_chrome(&mut self, ctx: &nerust_frontend_host::frame::FrameCtx) {
         self.sync_chrome(ctx, false);
         if self.core.chrome_drain_due(self.is_debug_open()) {
             self.run_debug_drain(&[]);
@@ -311,6 +311,25 @@ mod tests {
             else {
                 panic!("expected reservation");
             };
+            let mut session = if kind == AuxKind::History {
+                host.prepare_widget_session(id)
+            } else {
+                None
+            };
+            if let Some(session) = session.as_mut() {
+                use crate::aux::widgets::bindings::tests::{activate, controls};
+                use nerust_frontend_host::control::{ControlEvent, ControlInput, ControlKind};
+                host.report_host_error("native history before clear".into());
+                host.refresh_widget_session(session);
+                let filter = controls(&session.screen())
+                    .into_iter()
+                    .find(|c| matches!(c.kind, ControlKind::Choice { .. }))
+                    .unwrap();
+                session.dispatch(ControlEvent::new(filter.id, ControlInput::Select(3)));
+                activate(session, "Clear History");
+                assert!(session.mailbox().has_pending());
+                assert!(!session.mailbox().close_requested());
+            }
             host.aux.window_mut(id).unwrap().title = format!("host-owned {kind:?}");
             let window = host.aux.window(id).unwrap().clone();
             if kind == AuxKind::History {
@@ -321,8 +340,12 @@ mod tests {
                     opener
                         .create_aux(
                             mismatched,
-                            crate::ports::AuxOpenParams::History {
-                                language: host.settings_snapshot().shared.general.language,
+                            crate::ports::AuxOpenParams::Controls {
+                                session: {
+                                    let mut other = TestHost::new().host;
+                                    crate::aux::widgets::bindings::tests::prepare(&mut other, kind)
+                                        .1
+                                },
                             },
                         )
                         .is_none(),
@@ -334,8 +357,8 @@ mod tests {
                     bridge: host.debug_bridge_for_ppu().unwrap(),
                     position: None,
                 },
-                AuxKind::History => crate::ports::AuxOpenParams::History {
-                    language: host.settings_snapshot().shared.general.language,
+                AuxKind::History => crate::ports::AuxOpenParams::Controls {
+                    session: session.unwrap(),
                 },
                 _ => unreachable!(),
             };
@@ -344,7 +367,8 @@ mod tests {
                 .expect("native contents path");
             assert_eq!(handle.kind(), kind);
             assert!(host.aux.complete_open(id, handle).is_ok());
-            assert!(!host.aux.render_kind(kind).unwrap().close);
+            let outcome = host.aux.render_kind(kind).unwrap();
+            assert!(!outcome.close);
             assert!(gtk::Window::list_toplevels().iter().any(|widget| {
                 widget
                     .downcast_ref::<gtk::Window>()
@@ -352,6 +376,48 @@ mod tests {
                     .as_deref()
                     == Some(window.title.as_str())
             }));
+            if kind == AuxKind::History {
+                use crate::aux::widgets::bindings::tests::controls;
+                use nerust_frontend_host::control::ControlKind;
+                assert!(outcome.submitted);
+                assert_eq!(outcome.id, Some(id));
+                assert!(!host.finish_widget_window(id, false));
+                assert_eq!(host.aux.route_id(kind), Some(id));
+                let WidgetContents::Controls(screen) =
+                    &host.aux.window(id).unwrap().contents.contents
+                else {
+                    panic!("generic history scene")
+                };
+                assert!(controls(screen).iter().any(|c| matches!(
+                    c.kind,
+                    ControlKind::Choice {
+                        selected: Some(3),
+                        ..
+                    }
+                )));
+                assert!(!controls(screen).iter().any(|c| matches!(
+                    &c.kind,
+                    ControlKind::Note { text } if text.contains("native history before clear")
+                )));
+                host.report_host_error("native history after clear".into());
+                host.aux.refresh_widget(id, &mut host.core);
+                let WidgetContents::Controls(screen) =
+                    &host.aux.window(id).unwrap().contents.contents
+                else {
+                    unreachable!()
+                };
+                assert!(controls(screen).iter().any(|c| matches!(
+                    &c.kind,
+                    ControlKind::Note { text } if text.contains("native history after clear")
+                )));
+                let mailbox = host.aux.windows.mailbox(id).unwrap();
+                assert!(!mailbox.has_pending());
+                mailbox.request_close();
+                mailbox.invalidate();
+                host.aux.refresh_widget(id, &mut host.core);
+                assert!(host.aux.render_kind(kind).unwrap().close);
+                assert!(!mailbox.take_invalidated());
+            }
         }
         // Settings reserves a real screen before native creation, then reuses
         // that same single controller for iced boot, save staging and close.
@@ -360,7 +426,7 @@ mod tests {
         let settings = host.aux.window(settings_id).unwrap().clone();
         assert!(matches!(
             settings.contents.contents,
-            WidgetContents::Settings(_)
+            WidgetContents::Controls(_)
         ));
         assert!(!host.aux.render_kind(AuxKind::Settings).unwrap().close);
         assert!(gtk::Window::list_toplevels().iter().any(|widget| {
@@ -377,7 +443,7 @@ mod tests {
         assert_ne!(settings_id, reopened);
         assert!(matches!(
             host.aux.window(reopened).unwrap().contents.contents,
-            WidgetContents::Settings(_)
+            WidgetContents::Controls(_)
         ));
         assert!(!host.aux.render_kind(AuxKind::Settings).unwrap().close);
         host.prepare_close();
