@@ -503,3 +503,30 @@ fn program_boot_and_chrome_are_headless() {
     let _ = program.view(&state, iced::window::Id::unique());
     drop(state);
 }
+
+#[test]
+fn outer_debug_window_uses_common_title_and_existing_grouped_pipeline() {
+    use crate::aux::window::WindowProgram;
+    use nerust_frontend_host::{focus::AuxKind, window::Window};
+
+    let bridge = full_bridge();
+    let mut window = Window::auxiliary(AuxKind::Debug);
+    window.title = "owned debugger title".into();
+    let program = WindowProgram {
+        window,
+        program: DebugProgram {
+            bridge: bridge.clone(),
+        },
+    };
+    let (mut state, _) = program.boot();
+    let id = iced::window::Id::unique();
+    assert_eq!(program.title(&state, id), "owned debugger title");
+    drop(program.update(&mut state, DebugMessage::MemInputChanged("1234".into())));
+    assert_eq!(views::capture_view(&bridge).mem_input, "1234");
+    let element = program.view(&state, id);
+    assert!(
+        !iced::advanced::widget::Tree::new(element.as_widget())
+            .children
+            .is_empty()
+    );
+}

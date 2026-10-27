@@ -296,6 +296,12 @@ impl SettingsController {
         self.vm.general.view.get().language
     }
 
+    /// Owned presentation of the current draft, never another editor. Release
+    /// the controller borrow before passing this snapshot to a native visitor.
+    pub fn window(&self) -> crate::window::Window {
+        crate::window::Window::settings(self.screen())
+    }
+
     pub fn validation_errors(&self) -> Vec<String> {
         self.vm
             .finish()

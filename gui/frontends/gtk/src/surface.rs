@@ -275,7 +275,7 @@ impl SurfaceCore {
         if let Some((_, update, modal)) = effects {
             GtkRenderer::apply_osd(&renderer, update);
             if let Some(presentation) = modal {
-                super::osd::GtkOsd::present_modal(surface, &window, presentation);
+                crate::native::dialog::present_modal(surface, &window, presentation);
             }
         }
         if render_frame {
@@ -419,7 +419,7 @@ mod wake_tests {
             let window = gtk::ApplicationWindow::builder().build();
             let picture = gtk::Picture::new();
             window.set_child(Some(&picture));
-            let state = crate::osd::history_dialog_tests::model_state();
+            let state = crate::widgets::history::history_dialog_tests::model_state();
             let factory = state.borrow().ctx.gpu_factory.clone();
             let surface = Surface::bind(&window, &picture, state.clone(), factory);
             Some(Self {

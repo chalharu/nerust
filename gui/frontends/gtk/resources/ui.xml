@@ -2,7 +2,6 @@
 <interface>
   <requires lib="gtk" version="4.0"/>
   <object class="GtkApplicationWindow" id="window">
-    <property name="title" translatable="yes">Nerust</property>
     <property name="default-width">500</property>
     <property name="default-height">400</property>
   </object>

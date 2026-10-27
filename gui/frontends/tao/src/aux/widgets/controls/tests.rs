@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use crate::aux::window::WidgetBinding;
 use iced::{
     Event, Point, Rectangle, Size,
     advanced::{
@@ -11,7 +12,6 @@ use iced::{
     },
     keyboard::{self, key},
 };
-use iced_winit::program::Program;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_frontend_host::settings::{
     InputTab, SettingsControlId as Id, SettingsSystemId, SettingsTabId,
@@ -26,35 +26,70 @@ use nerust_settings_core::model::{
     shared::{DesktopSharedSettings, StoragePolicy},
 };
 
-use super::super::program::{SettingsAppProgram, SettingsAppState};
+use super::super::bindings::{SettingsAppState, SettingsBinding as SettingsAppProgram};
 use super::*;
 
 fn fixture(nes: bool) -> (SettingsAppProgram, SettingsAppState) {
     let mut shared = DesktopSharedSettings::default();
     shared.input.shortcuts.keyboard =
         nerust_settings_core::model::input::default_shortcut_bindings();
-    let program = SettingsAppProgram {
-        snapshot: SettingsSnapshot {
+    let program = SettingsAppProgram::new(
+        SettingsSnapshot {
             shared,
             local: HostBackendLocalSettings::default(),
             app_state: DesktopAppState::default(),
         },
-        registry: Arc::new(SystemRegistry::new(if nes {
+        Arc::new(SystemRegistry::new(if nes {
             vec![nerust_nes_factory::NesFactory::boxed().into()]
         } else {
             vec![]
         })),
-        audio_registry: Arc::new(AudioBackendRegistry::new()),
-        should_close: Arc::new(AtomicBool::new(false)),
-        pending_apply: Arc::new(Mutex::new(None)),
-        view_invalidated: Arc::new(AtomicBool::new(false)),
-    };
+        Arc::new(AudioBackendRegistry::new()),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Mutex::new(None)),
+        Arc::new(AtomicBool::new(false)),
+    );
     let (state, _) = program.boot();
     (program, state)
 }
 
 fn send(program: &SettingsAppProgram, state: &mut SettingsAppState, id: Id, input: ControlInput) {
     drop(program.update(state, Message::Input(id, input)));
+}
+
+#[test]
+fn outer_window_consumes_the_actual_screen_and_program_title_uses_window_title() {
+    use nerust_frontend_host::window::{WidgetContents, WindowVisitor};
+
+    let (program, mut state) = fixture(false);
+    state.error_message = Some("actual draft screen".into());
+    state.page = nerust_frontend_host::settings::SettingsPage::Audio;
+    let window = state.window();
+    let WidgetContents::Settings(screen) = &window.contents.contents else {
+        panic!("settings window must contain the actual screen");
+    };
+    assert_eq!(screen.message.as_deref(), Some("actual draft screen"));
+    assert!(
+        screen
+            .pages
+            .iter()
+            .any(|page| page.selected && page.id == state.page)
+    );
+    let mut visitor = SettingsWindowVisitor::default();
+    let outer: &mut dyn WindowVisitor = &mut visitor;
+    window.visit(outer);
+    let mut element = visitor
+        .output
+        .expect("outer visitor must invoke nested settings visitor");
+    let (_, tree, _) = native_layout(&mut element);
+    assert!(!tree.children.is_empty());
+    // The title port reads the common window, not a standalone screen title.
+    assert_eq!(program.presentation(&state).unwrap().title, window.title);
+    // A native tree owns all text even after both projections are dropped.
+    drop(window);
+    drop(state);
+    let (_, tree, _) = native_layout(&mut element);
+    assert!(!tree.children.is_empty());
 }
 
 fn native_layout(element: &mut El<'static>) -> (iced_tiny_skia::Renderer, Tree, layout::Node) {
@@ -548,7 +583,7 @@ fn all_six_pages_build_native_trees_from_owned_empty_and_real_models() {
             state.page = page.id;
             let revision = state.vm.revision.get();
             // Temporary screen is gone before iced even performs layout.
-            let mut element: El<'static> = build(&state.screen());
+            let mut element: El<'static> = build(&state.window());
             let (_, tree, node) = native_layout(&mut element);
             assert!(!tree.children.is_empty());
             assert!(node.size().width > 0.0 && node.size().height > 0.0);
