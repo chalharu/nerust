@@ -1,20 +1,35 @@
-//! OSD notification orchestration: drain, modal flow, and in-frame layer sync.
-//! Display state lives in `OsdManager`; this impl block wires it to the session.
+//! Native OSD effects; ApplicationHost owns notification and rendering state.
 
 use std::time::Instant;
 
 use nerust_frontend_host::{
     aux::OpenRequest,
     frame::{FrameCtx, FrameSnapshot},
-    osd::{ModalAdvance, ModalPresentation},
+    osd::{ModalPresentation, ModalPresenter, OsdUpdate},
 };
-use nerust_render_traits::renderer::RenderPipeline;
 use tao::event::WindowEvent;
 
 use super::HostState;
 use super::window::WakeNeed;
 use crate::aux::focus::AuxKind;
 use crate::ports::WindowOpener;
+
+struct DialogPresenter<'a> {
+    dialogs: &'a dyn crate::ports::DialogPorts,
+    language: nerust_settings_core::model::language::AppLanguage,
+}
+
+impl ModalPresenter for DialogPresenter<'_> {
+    fn present_modal(
+        &self,
+        presentation: ModalPresentation,
+    ) -> Option<std::sync::mpsc::Receiver<()>> {
+        Some(
+            self.dialogs
+                .show_error_async(self.language, presentation.detail),
+        )
+    }
+}
 
 impl HostState {
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
@@ -82,112 +97,55 @@ impl HostState {
 
     /// A fresh destination has neither the layer nor the reserved strip.
     pub(crate) fn note_renderer_replaced(&mut self) {
-        self.osd.layer.invalidate();
+        self.core.invalidate_osd();
     }
 
-    /// Present one error batch without blocking the loop.
-    fn spawn_modal(
-        &mut self,
-        presentation: ModalPresentation,
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) {
-        let ack = self.dialogs.show_error_async(language, presentation.detail);
-        self.osd
-            .modal
-            .attach_modal_receiver(presentation.token, ack);
-    }
-
-    /// Reap a finished dialog, chain the next batch, and resume once the queue drains.
-    fn reap_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
-        if let Some(ModalAdvance::Present(presentation)) =
-            self.core.poll_modal_ack(&mut self.osd.modal)
-        {
-            self.spawn_modal(presentation, language);
-        }
-    }
-
-    /// Present one error batch without blocking the loop, via the
-    /// [`OsdService`] modal ports (never the manager fields directly).
-    fn present_modal(&mut self, language: nerust_settings_core::model::language::AppLanguage) {
-        if let Some(presentation) = self.osd.modal.take_modal() {
-            self.spawn_modal(presentation, language);
-        }
-    }
-
-    /// Drain shell notifications into display state, show error modals, refresh the overlay.
-    /// Cheap when idle; safe to call every loop pass.
+    #[cfg(test)]
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
-        let language = ctx.frame().language();
-        let report = self
-            .core
-            .pump_notifications(&mut self.osd.modal, ctx, Instant::now());
-        self.reap_modal(language);
-        self.present_modal(language);
-        if report.changed {
-            // Paint even idle: no main redraw is scheduled while
-            // paused+unfocused, which is exactly when Paused lands.
-            self.request_redraw();
+        self.tick_osd_pump(ctx);
+    }
+
+    /// Execute only native effects after the application borrow ends.
+    pub(super) fn tick_osd_pump(&mut self, ctx: &FrameCtx) -> WakeNeed {
+        let turn = self.core.pump_osd(ctx, Instant::now());
+        if let Some(presentation) = turn.modal {
+            let token = presentation.token;
+            let adapter = DialogPresenter {
+                dialogs: self.dialogs.as_ref(),
+                language: ctx.frame().language(),
+            };
+            let presenter: &dyn ModalPresenter = &adapter;
+            if let Some(receiver) = presenter.present_modal(presentation) {
+                self.core.attach_osd_modal_receiver(token, receiver);
+            }
+        }
+        if self.core.redraw_needed() {
+            self.windows.request_redraw();
         }
         if self.aux.contains(AuxKind::History) {
             self.sync_history_window(ctx.frame());
         }
-    }
-
-    /// OSD pump for the control-flow pass: drain plus expiry-driven wake.
-    pub(super) fn tick_osd_pump(&mut self, ctx: &FrameCtx) -> WakeNeed {
-        self.poll_notifications(ctx);
-        // Post-pump the deadline implies a showing label: one call drives expiry and wait.
-        let osd_deadline = self.osd_wakeup();
-        if osd_deadline.is_some() {
-            // Redraw while labels show so expiry applies even paused.
-            self.request_redraw();
-        }
+        // Receiver attachment adds a polling flight after the core's turn capture.
         WakeNeed {
-            osd_deadline,
-            flight_pending: self.osd.modal.flight_pending(),
-            ..WakeNeed::default()
+            flight_pending: self.core.osd_flight_pending(),
+            ..turn.wake
         }
     }
 
-    /// One capture per redraw: edge strips and the layer sync share
-    /// the context instead of cloning snapshots twice.
-    pub(crate) fn render_osd_frame(
+    /// Return owned output for delivery outside the host borrow.
+    pub(crate) fn prepare_osd_frame(
         &mut self,
-        renderer: &mut dyn RenderPipeline,
         size: nerust_render_traits::SurfaceSize,
         ctx: &FrameCtx,
-    ) {
-        self.osd.layer.render(
-            self.osd.modal.manager(),
-            renderer,
-            size,
-            self.windows.client_height(),
-            ctx,
-            Instant::now(),
-        );
-    }
-
-    /// Rasterize the OSD layer on change and hand it to the renderer.
-    /// Coordinates are renderer surface pixels, not the full window.
-    #[cfg(test)]
-    fn sync_osd_layer(
-        &mut self,
-        renderer: &mut dyn RenderPipeline,
-        size: nerust_render_traits::SurfaceSize,
-        ctx: &FrameCtx,
-    ) {
-        self.osd.layer.sync_layer(
-            self.osd.modal.manager(),
-            renderer,
-            size,
-            ctx,
-            Instant::now(),
-        );
+    ) -> OsdUpdate {
+        self.core
+            .prepare_osd(size, self.windows.client_height(), ctx, Instant::now())
     }
 
     /// Wake the loop for OSD expiry while labels are visible.
+    #[cfg(test)]
     pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.osd.modal.wakeup_deadline(Instant::now())
+        self.core.osd_wakeup(Instant::now())
     }
 }
 
@@ -214,21 +172,15 @@ mod tests {
         host.tick_focus_sync();
         let (ack, done) = std::sync::mpsc::channel();
         let ctx = host.frame_ctx();
-        host.core
-            .pump_notifications(&mut host.osd.modal, &ctx, Instant::now());
-        let presentation = host.osd.modal.take_modal().unwrap();
-        assert!(
-            host.osd
-                .modal
-                .attach_modal_receiver(presentation.token, done)
-        );
+        let presentation = host.core.pump_osd(&ctx, Instant::now()).modal.unwrap();
+        assert!(host.attach_osd_modal_receiver(presentation.token, done));
         let wake = host.tick_osd_pump(&ctx);
         assert!(
             wake.flight_pending,
             "ACK must wake a paused, unfocused loop"
         );
         ack.send(()).unwrap();
-        host.reap_modal(ctx.frame().language());
+        host.tick_osd_pump(&ctx);
         assert!(host.session().tick_metrics().paused, "focus still holds");
         assert!(!host.owns_pause(PauseOwner::Modal));
         host.release_focus_pause();
@@ -301,13 +253,18 @@ mod tests {
         // geometry move -- the presenter stays untouched.
         assert!(
             !host
-                .osd
-                .layer
-                .is_due(host.osd.modal.manager(), false, false)
+                .osd_layer()
+                .is_due(host.osd_notifications().manager(), false, false)
         );
         // Status liveness and geometry moves each pass alone.
-        assert!(host.osd.layer.is_due(host.osd.modal.manager(), true, false));
-        assert!(host.osd.layer.is_due(host.osd.modal.manager(), false, true));
+        assert!(
+            host.osd_layer()
+                .is_due(host.osd_notifications().manager(), true, false)
+        );
+        assert!(
+            host.osd_layer()
+                .is_due(host.osd_notifications().manager(), false, true)
+        );
     }
 
     #[test]
@@ -315,14 +272,15 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let mut renderer = StubRenderer::default();
-        // Clean peek, nothing showing, status off, no live layer:
-        // the snapshot and the renderer stay untouched.
+        // Nothing showing, status off: only the initial strip reservation
+        // is delivered; subsequent frames leave the renderer untouched.
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert!(renderer.layers.is_empty());
-        assert!(!host.osd.layer.layer_live());
+        assert_eq!(renderer.strips, [ReservedStrip::default()]);
+        assert!(!host.osd_layer_live());
     }
 
     #[test]
@@ -334,23 +292,23 @@ mod tests {
         host.apply_settings(on).expect("headless settings apply");
         let mut renderer = StubRenderer::default();
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert_eq!(renderer.layers, [true]);
-        assert!(host.osd.layer.layer_live());
+        assert!(host.osd_layer_live());
         // Steady second frame reuses the layer: no re-push.
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert_eq!(renderer.layers, [true]);
         // Toggle off: one Clear lands, then idle skips again.
         let mut off = host.settings_snapshot().clone();
         off.local.notifications.status_enabled = false;
         host.apply_settings(off).expect("headless settings apply");
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert_eq!(renderer.layers, [true, false]);
-        assert!(!host.osd.layer.layer_live());
+        assert!(!host.osd_layer_live());
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert_eq!(renderer.layers, [true, false]);
     }
 
@@ -403,9 +361,10 @@ mod tests {
         // Invalidated presenter re-runs the decision; with nothing
         // visible the outcome is still Skip, so no layer lands.
         let ctx = host.frame_ctx();
-        host.sync_osd_layer(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert!(renderer.layers.is_empty());
-        assert!(!host.osd.layer.layer_live());
+        assert_eq!(renderer.strips, [ReservedStrip::default()]);
+        assert!(!host.osd_layer_live());
     }
 
     #[test]
@@ -421,15 +380,49 @@ mod tests {
     }
 
     #[test]
+    fn close_retires_owned_modal_receiver_queue_and_layer() {
+        use nerust_frontend_host::osd::ModalAdvance;
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let mut host = TestHost::new().host;
+        host.set_pause_owner(PauseOwner::Settings, true);
+        host.report_host_error("active on close".into());
+        let ctx = host.frame_ctx();
+        let presentation = host.core.pump_osd(&ctx, Instant::now()).modal.unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        assert!(host.attach_osd_modal_receiver(presentation.token, receiver));
+        host.report_host_error("queued on close".into());
+        host.core.pump_osd(&ctx, Instant::now());
+        assert!(host.osd_modal_pending());
+        assert!(host.osd_flight_pending());
+        host.prepare_close();
+        assert!(sender.send(()).is_err());
+        assert!(!host.osd_modal_pending());
+        assert!(!host.osd_flight_pending());
+        assert!(!host.osd_layer_live());
+        assert_eq!(host.osd_pending(), 0);
+        assert!(!host.pause_held());
+        assert_eq!(
+            host.acknowledge_osd_modal(presentation.token),
+            ModalAdvance::Ignored
+        );
+        let mut renderer = StubRenderer::default();
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        assert!(renderer.strips.is_empty());
+        assert!(renderer.layers.is_empty());
+        host.prepare_close();
+        assert!(host.core.pump_osd(&ctx, Instant::now()).modal.is_none());
+    }
+
+    #[test]
     fn frame_render_applies_strip_once() {
         let support = TestHost::new();
         let mut host = support.host;
         let mut renderer = StubRenderer::default();
         // First frame records the strip; the repeat reuses the memo.
         let ctx = host.frame_ctx();
-        host.render_osd_frame(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         let ctx = host.frame_ctx();
-        host.render_osd_frame(&mut renderer, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
         assert!(renderer.layers.is_empty());
         assert_eq!(renderer.strips.len(), 1);
     }
@@ -444,17 +437,17 @@ mod tests {
             .expect("headless settings apply");
         let ctx = host.frame_ctx();
         let mut old = StubRenderer::default();
-        host.render_osd_frame(&mut old, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut old);
         assert_eq!(old.layers, [true]);
         assert_eq!(old.strips.len(), 1);
 
         host.note_renderer_replaced();
-        assert!(!host.osd.layer.layer_live());
+        assert!(!host.osd_layer_live());
         let mut fresh = StubRenderer::default();
-        host.render_osd_frame(&mut fresh, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut fresh);
         assert_eq!(fresh.strips, old.strips);
         assert_eq!(fresh.layers, [true]);
-        host.render_osd_frame(&mut fresh, surface(), &ctx);
+        host.prepare_osd_frame(surface(), &ctx).apply(&mut fresh);
         assert_eq!(fresh.strips.len(), 1);
         assert_eq!(fresh.layers, [true]);
     }

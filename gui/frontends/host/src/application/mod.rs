@@ -2,6 +2,7 @@
 
 mod chrome;
 mod debug;
+mod osd;
 #[cfg(test)]
 mod tests;
 mod window;
@@ -46,6 +47,7 @@ pub struct ApplicationHost {
     frame_cache: FrameCache,
     render_retry: RenderRetry,
     debug: DebugRuntime,
+    osd: osd::OsdRuntime,
     chrome: chrome::ChromeSync,
     menubar_chrome: chrome::ChromeSync,
     menubar: Option<Menubar>,
@@ -69,6 +71,7 @@ impl ApplicationHost {
             frame_cache: FrameCache::new(),
             render_retry: Default::default(),
             debug: DebugRuntime::new(),
+            osd: Default::default(),
             chrome: Default::default(),
             menubar_chrome: Default::default(),
             menubar: None,
@@ -229,6 +232,12 @@ impl ApplicationHost {
         ctx: &FrameCtx,
         now: Instant,
     ) -> nerust_gui_shell::session::osd::PumpReport {
+        if self.close_exited() {
+            return nerust_gui_shell::session::osd::PumpReport {
+                changed: false,
+                modal_queued: false,
+            };
+        }
         let report = notifications.pump(&mut self.session, ctx, now);
         let pending = notifications.modal_pending();
         if self.owns_pause(PauseOwner::Modal) != pending {
@@ -243,6 +252,9 @@ impl ApplicationHost {
         notifications: &mut OsdNotifications,
         token: ModalToken,
     ) -> ModalAdvance {
+        if self.close_exited() {
+            return ModalAdvance::Ignored;
+        }
         let advance = notifications.acknowledge_modal(token);
         self.commit_modal_advance(&advance);
         advance
@@ -250,6 +262,9 @@ impl ApplicationHost {
 
     /// Thread ACK/disconnection uses the same policy path as widget callbacks.
     pub fn poll_modal_ack(&mut self, notifications: &mut OsdNotifications) -> Option<ModalAdvance> {
+        if self.close_exited() {
+            return None;
+        }
         let advance = notifications.poll_modal_ack()?;
         self.commit_modal_advance(&advance);
         Some(advance)
@@ -432,6 +447,7 @@ impl ApplicationHost {
         if !self.close.begin_close() {
             return false;
         }
+        self.osd.close();
         self.pause_policy = Default::default();
         self.invalidate_history();
         true

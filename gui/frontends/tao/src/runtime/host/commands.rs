@@ -484,7 +484,7 @@ mod tests {
         host.poll_notifications(&ctx);
         // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
-        while support.dialogs.errors().is_empty() || host.osd.modal_pending() != 0 {
+        while support.dialogs.errors().is_empty() || host.osd_modal_pending() {
             let ctx = host.frame_ctx();
             host.poll_notifications(&ctx);
             tries += 1;
@@ -493,27 +493,70 @@ mod tests {
         }
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("test error"));
-        assert_eq!(host.osd.modal_pending(), 0);
+        assert_eq!(host.osd_pending(), 0);
+        assert!(!host.osd_modal_pending());
     }
 
     #[test]
     fn dead_dialog_thread_unwedges_the_queue() {
+        use nerust_frontend_kernel::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
+        host.set_pause_owner(PauseOwner::Settings, true);
         // Simulate a dialog thread that died before acking: the
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
         let ctx = host.frame_ctx();
         host.report_host_error("disconnected dialog".into());
-        host.core
-            .pump_notifications(&mut host.osd.modal, &ctx, std::time::Instant::now());
-        let presentation = host.osd.modal.take_modal().unwrap();
-        assert!(host.osd.modal.attach_modal_receiver(presentation.token, rx));
+        let presentation = host
+            .core
+            .pump_osd(&ctx, std::time::Instant::now())
+            .modal
+            .unwrap();
+        assert!(host.attach_osd_modal_receiver(presentation.token, rx));
+        assert!(host.owns_pause(PauseOwner::Modal));
         host.poll_notifications(&ctx);
         // Reaped as a failed ack: flight gone, queue unblocked.
-        assert!(!host.osd.modal_showing());
-        assert_eq!(host.osd.modal_pending(), 0);
+        assert!(!host.osd_modal_pending());
+        assert_eq!(host.osd_pending(), 0);
+        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(PauseOwner::Settings));
+    }
+
+    #[test]
+    fn disconnected_dialog_chains_through_native_presenter_before_modal_release() {
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let support = TestHost::new();
+        let mut host = support.host;
+        host.set_pause_owner(PauseOwner::Focus, true);
+        host.report_host_error("dead first dialog".into());
+        let ctx = host.frame_ctx();
+        let first = host
+            .core
+            .pump_osd(&ctx, std::time::Instant::now())
+            .modal
+            .unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        assert!(host.attach_osd_modal_receiver(first.token, receiver));
+        host.report_host_error("chained native dialog".into());
+        drop(sender);
+
+        host.poll_notifications(&ctx);
+        assert_eq!(support.dialogs.errors().len(), 1);
+        assert!(support.dialogs.errors()[0].contains("chained native dialog"));
+        assert!(host.osd_modal_pending());
+        assert!(host.osd_flight_pending());
+        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(PauseOwner::Focus));
+        assert_eq!(host.osd_pending(), 0);
+
+        host.poll_notifications(&ctx);
+        assert!(!host.osd_modal_pending());
+        assert!(!host.osd_flight_pending());
+        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(PauseOwner::Focus));
+        assert_eq!(support.dialogs.errors().len(), 1);
     }
 
     #[test]
@@ -527,7 +570,7 @@ mod tests {
         let ctx = host.frame_ctx();
         host.poll_notifications(&ctx);
         assert!(support.dialogs.errors().is_empty());
-        assert_eq!(host.osd.modal_pending(), 0);
+        assert_eq!(host.osd_pending(), 0);
         assert!(host.history_key().is_none());
     }
 
