@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use iced::{Task, Theme};
 use nerust_frontend_host::{
+    binding::PickerSink as _,
     control::{ControlEffect, ControlEvent, ControlScreen},
     focus::AuxKind,
     widget_session::WidgetSession,
@@ -81,10 +82,7 @@ impl WidgetBinding for ControlsBinding {
                 request,
             } = effect;
             let path = rfd::FileDialog::new().set_title(title).pick_folder();
-            state.borrow_mut().dispatch(ControlEvent::new(
-                target,
-                nerust_frontend_host::control::ControlInput::DirectorySelected { request, path },
-            ));
+            state.borrow_mut().submit(target, request, path);
         }
         Task::none()
     }
