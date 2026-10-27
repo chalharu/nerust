@@ -211,7 +211,10 @@ mod tests {
     use crate::runtime::host::TestHost;
 
     /// Run separately under Xvfb: Tao/GTK3 initialization belongs to this thread.
+    /// CI-only (ignored by default): needs a display, enabled in
+    /// CI with `--run-ignored only` under `xvfb-run`.
     #[cfg(target_os = "linux")]
+    #[ignore = "needs display; CI-only under xvfb"]
     #[test]
     fn native_common_windows_menu_effect_reservation_and_grouped_creation() {
         // libtest uses a new thread for every test, even with one test thread.
@@ -221,7 +224,7 @@ mod tests {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "runtime::drain::tests::native_common_windows_menu_effect_reservation_and_grouped_creation",
-                    "--exact", "--nocapture", "--test-threads=1",
+                    "--exact", "--nocapture", "--test-threads=1", "--ignored",
                 ])
                 .env(CHILD, "1")
                 .env("GDK_BACKEND", "x11")

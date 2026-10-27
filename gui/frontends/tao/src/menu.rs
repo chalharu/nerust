@@ -363,7 +363,10 @@ pub(crate) mod imp {
         }
 
         /// Run alone under Xvfb: GTK3 owns the initializing test thread.
+        /// CI-only (ignored by default): needs a display, enabled in
+        /// CI with `--run-ignored only` under `xvfb-run`.
         #[cfg(target_os = "linux")]
+        #[ignore = "needs display; CI-only under xvfb"]
         #[test]
         fn gtk3_native_visitor_preserves_identity_and_current_routing() {
             use std::{
