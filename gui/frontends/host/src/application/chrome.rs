@@ -50,6 +50,11 @@ impl ChromeSync {
         self.last_menu = Some(sig.clone());
         Some(sig)
     }
+
+    pub fn menu_signature(&self) -> Option<&MenuSig> {
+        self.last_menu.as_ref()
+    }
+
     pub fn title_same(&self, title: &str) -> bool {
         self.last_title.as_deref() == Some(title)
     }

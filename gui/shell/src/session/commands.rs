@@ -1,4 +1,5 @@
 pub use crate::session::error::SlotOpFailure;
+pub use nerust_host_protocol::SessionCommand;
 
 /// Data-driven command vocabulary: every per-command answer lives on this trait.
 /// The executor matches once; [`SessionCommand`] is the sole implementor.
@@ -15,23 +16,6 @@ pub trait SessionCmd {
         outcome: &SessionCommandOutcome,
         active_slot: Option<u64>,
     ) -> Option<crate::session::notification::Message>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionCommand {
-    Pause,
-    Resume,
-    TogglePause,
-    Reset,
-    CreateSlot,
-    SaveActiveSlotOrNew,
-    LoadActiveSlot,
-    SelectActiveSlot(u64),
-    SaveSlot(u64),
-    LoadSlot(u64),
-    DeleteSlot(u64),
-    SelectNextSlot,
-    SelectPreviousSlot,
 }
 
 impl SessionCmd for SessionCommand {

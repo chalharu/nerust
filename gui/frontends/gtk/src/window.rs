@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    path::Path,
+    rc::{Rc, Weak},
+};
 
 use gtk::{
     gio, glib,
@@ -7,17 +12,14 @@ use gtk::{
 };
 use nerust_frontend_host::{
     aux::{AuxId, AuxWindows, OpenRequest},
-    focus::AuxKind,
-    menu::{
-        MenuCapabilities, MenuCommand, MenuId, MenuItem, MenuModel, MenuVisitor, NativeRole,
-        Submenu,
-    },
-    session::{SessionEffect, SessionEvent, SessionOutcome},
+    commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
+    event::{CommandEffect, EventCommand, EventHandler, EventSink},
+    focus::{AuxKind, FocusEvent},
+    menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
+    session::SessionEvent,
     widgets::MenuPresenter,
 };
-use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError, access::SessionControl, commands::SessionCommand,
-};
+use nerust_gui_shell::session::{SessionError, access::SessionControl};
 use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::local::ScalingMode;
 
@@ -34,6 +36,7 @@ use crate::preferences::present_preferences_dialog;
 pub(crate) struct MenubarModels {
     pub(crate) menu_model: gio::Menu,
     models: Rc<RefCell<HashMap<MenuId, gio::Menu>>>,
+    attached: Rc<Cell<bool>>,
 }
 
 impl MenubarModels {
@@ -41,6 +44,7 @@ impl MenubarModels {
         Self {
             menu_model: gio::Menu::new(),
             models: Rc::default(),
+            attached: Rc::default(),
         }
     }
 
@@ -60,9 +64,11 @@ pub(crate) struct WindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
+    about_dialog: Option<gtk::AboutDialog>,
+    about_opening: bool,
     aux: AuxWindows<u64, NativeAux>,
-    #[cfg(test)]
-    actions: WindowActions,
+    actions: ActionRegistry,
+    sink: Rc<dyn EventSink>,
     menubar: MenubarModels,
     menu_presenter: Rc<MenuPresenter>,
 }
@@ -173,7 +179,7 @@ fn close_aux(window: &Window, id: AuxId) -> bool {
     kind.is_some()
 }
 
-fn open_settings(window: &Window, _action: &gio::SimpleAction) {
+fn open_settings(window: &Window) {
     let Some(id) = request_aux(window, AuxKind::Settings) else {
         return;
     };
@@ -200,82 +206,112 @@ fn open_settings(window: &Window, _action: &gio::SimpleAction) {
     }
 }
 
-/// Window action cluster: every menu/toolbar command in one place.
-/// `WindowCore` owns one; wiring and gating go through these narrow ports.
-#[derive(Clone)]
-pub(crate) struct WindowActions {
-    pub open: gio::SimpleAction,
-    pub settings: gio::SimpleAction,
-    pub close: gio::SimpleAction,
-    pub pause: gio::SimpleAction,
-    pub resume: gio::SimpleAction,
-    pub reset: gio::SimpleAction,
-    pub debugger: gio::SimpleAction,
-    pub history: gio::SimpleAction,
-    pub state_create: gio::SimpleAction,
-    pub state_save_active: gio::SimpleAction,
-    pub state_load_active: gio::SimpleAction,
-    pub state_select_slot: gio::SimpleAction,
-    pub state_save_slot: gio::SimpleAction,
-    pub state_load_slot: gio::SimpleAction,
-    pub state_delete_slot: gio::SimpleAction,
-}
+/// Shared identity cache only; no borrow may survive a native call.
+#[derive(Clone, Default)]
+pub(crate) struct ActionRegistry(Rc<RefCell<HashMap<CommandId, gio::SimpleAction>>>);
 
-impl WindowActions {
-    /// Fresh actions; the shared host snapshot gates them before presentation.
-    pub fn new() -> Self {
-        Self {
-            open: gio::SimpleAction::new("open", None),
-            settings: gio::SimpleAction::new("settings", None),
-            close: gio::SimpleAction::new("close", None),
-            pause: gio::SimpleAction::new("pause", None),
-            resume: gio::SimpleAction::new("resume", None),
-            reset: gio::SimpleAction::new("reset", None),
-            debugger: gio::SimpleAction::new("debugger", None),
-            history: gio::SimpleAction::new("history", None),
-            state_create: gio::SimpleAction::new("state-create", None),
-            state_save_active: gio::SimpleAction::new("state-save-active", None),
-            state_load_active: gio::SimpleAction::new("state-load-active", None),
-            state_select_slot: gio::SimpleAction::new(
-                "state-select-slot",
-                Some(&u64::static_variant_type()),
-            ),
-            state_save_slot: gio::SimpleAction::new(
-                "state-save-slot",
-                Some(&u64::static_variant_type()),
-            ),
-            state_load_slot: gio::SimpleAction::new(
-                "state-load-slot",
-                Some(&u64::static_variant_type()),
-            ),
-            state_delete_slot: gio::SimpleAction::new(
-                "state-delete-slot",
-                Some(&u64::static_variant_type()),
-            ),
-        }
-    }
-
-    /// Seat every action on the window.
-    pub fn add_to(&self, window: &gtk::ApplicationWindow) {
-        window.add_action(&self.open);
-        window.add_action(&self.settings);
-        window.add_action(&self.close);
-        window.add_action(&self.pause);
-        window.add_action(&self.resume);
-        window.add_action(&self.reset);
-        window.add_action(&self.debugger);
-        window.add_action(&self.history);
-        window.add_action(&self.state_create);
-        window.add_action(&self.state_save_active);
-        window.add_action(&self.state_load_active);
-        window.add_action(&self.state_select_slot);
-        window.add_action(&self.state_save_slot);
-        window.add_action(&self.state_load_slot);
-        window.add_action(&self.state_delete_slot);
+impl ActionRegistry {
+    fn get(&self, id: CommandId) -> Option<gio::SimpleAction> {
+        self.0.borrow().get(&id).cloned()
     }
 }
 
 pub(crate) type Window = Rc<RefCell<WindowCore>>;
+
+struct WindowEventSink(Weak<RefCell<WindowCore>>);
+
+impl EventSink for WindowEventSink {
+    fn send(&self, event: EventCommand) -> bool {
+        let Some(window) = self.0.upgrade() else {
+            return false;
+        };
+        let (state, settings_open) = {
+            let core = window.borrow();
+            (core.state.clone(), core.aux.contains(AuxKind::Settings))
+        };
+        let outcome = {
+            let mut state = state.borrow_mut();
+            let handler: &mut dyn EventHandler = &mut state.host;
+            handler.handle_event(event, settings_open)
+        };
+        // Native constructors, setters and effects may synchronously reenter.
+        match outcome {
+            Ok(outcome) => {
+                if let Some(effect) = outcome.effect {
+                    apply_command_effect(&window, effect);
+                }
+                if matches!(event, EventCommand::Menu(_))
+                    || outcome.session.command.is_some()
+                    || outcome.session.settings_changed
+                    || outcome.effect.is_some()
+                {
+                    window.update_actions();
+                }
+            }
+            Err(error) => {
+                log::warn!("GTK event failed: {error}");
+                window.update_actions();
+            }
+        }
+        true
+    }
+}
+
+fn apply_command_effect(window: &Window, effect: CommandEffect) {
+    match effect {
+        CommandEffect::OpenRom => window.open(),
+        CommandEffect::OpenAux(AuxKind::Settings) => open_settings(window),
+        CommandEffect::OpenAux(AuxKind::Debug) => window.open_debugger(),
+        CommandEffect::OpenAux(AuxKind::History) => window.open_history(),
+        // PPU windows are owned by the native debugger, not main chrome.
+        CommandEffect::OpenAux(AuxKind::Ppu) => (),
+        CommandEffect::About => open_about(window),
+        CommandEffect::Quit => window.window().close(),
+        CommandEffect::ToggleFullscreen => toggle_window_fullscreen(window),
+        CommandEffect::LiveTick => (),
+    }
+}
+
+fn open_about(window: &Window) {
+    let existing = window.borrow().about_dialog.clone();
+    if let Some(dialog) = existing {
+        dialog.present();
+        return;
+    }
+    {
+        let mut core = window.borrow_mut();
+        if core.about_opening {
+            return;
+        }
+        core.about_opening = true;
+    }
+    let dialog: gtk::AboutDialog =
+        gtk::Builder::from_string(include_str!("../resources/about.xml"))
+            .object("about")
+            .unwrap();
+    dialog.set_transient_for(Some(&window.window()));
+    let weak = Rc::downgrade(window);
+    dialog.connect_close_request(move |dialog| {
+        if let Some(window) = weak.upgrade() {
+            let old = {
+                let mut core = window.borrow_mut();
+                if core.about_dialog.as_ref() == Some(dialog) {
+                    core.about_dialog.take()
+                } else {
+                    None
+                }
+            };
+            drop(old);
+        }
+        glib::Propagation::Proceed
+    });
+    {
+        let mut core = window.borrow_mut();
+        core.about_dialog = Some(dialog.clone());
+        core.about_opening = false;
+    }
+    dialog.present();
+}
 
 pub(crate) trait WindowExtend {
     fn bind(
@@ -295,14 +331,12 @@ pub(crate) trait WindowExtend {
     fn close_request(&self) -> bool;
     fn open(&self);
     fn load_path(&self, path: &Path);
-    fn close(&self);
     fn update_actions(&self);
     fn rebuild_menubar(&self);
     fn refresh_title(&self);
     fn sync_fullscreen_from_settings(&self);
     fn key_event(&self, key: gdk::Key, enevt: KeyEventState) -> bool;
-    fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut);
-    fn apply_session_outcome(&self, outcome: SessionOutcome);
+    fn event_sink(&self) -> Rc<dyn EventSink>;
 }
 
 #[derive(Clone, Copy)]
@@ -328,170 +362,86 @@ impl WindowExtend for Window {
         factory: Rc<dyn PipelineFactory>,
         menubar: MenubarModels,
     ) -> Window {
-        let actions = WindowActions::new();
-        let close_action = actions.close.clone();
-        let pause_action = actions.pause.clone();
-        let resume_action = actions.resume.clone();
-        let reset_action = actions.reset.clone();
-        let debugger_action = actions.debugger.clone();
-        let history_action = actions.history.clone();
-        let state_create_action = actions.state_create.clone();
-        let state_save_active_action = actions.state_save_active.clone();
-        let state_load_active_action = actions.state_load_active.clone();
-        let state_select_slot_action = actions.state_select_slot.clone();
-        let state_save_slot_action = actions.state_save_slot.clone();
-        let state_load_slot_action = actions.state_load_slot.clone();
-        let state_delete_slot_action = actions.state_delete_slot.clone();
-        let settings_action = actions.settings.clone();
-        let open_action = actions.open.clone();
         let _ = Surface::bind(&window, &picture, state.clone(), factory);
-        actions.add_to(&window);
-        let result = Rc::new(RefCell::new(WindowCore {
-            application,
-            window: window.clone(),
-            state,
-            open_dialog: None,
-            aux: AuxWindows::new(),
-            #[cfg(test)]
-            actions,
-            menubar,
-            menu_presenter: Rc::default(),
-        }));
+        let result = Rc::new_cyclic(|weak| {
+            RefCell::new(WindowCore {
+                application,
+                window: window.clone(),
+                state,
+                open_dialog: None,
+                about_dialog: None,
+                about_opening: false,
+                aux: AuxWindows::new(),
+                actions: ActionRegistry::default(),
+                sink: Rc::new(WindowEventSink(weak.clone())),
+                menubar,
+                menu_presenter: Rc::default(),
+            })
+        });
         {
-            let result = result.clone();
-            let _ = window.connect_realize(move |_window| result.realize());
-        }
-        {
-            let result = result.clone();
-            let _ = window
-                .connect_close_request(move |_| glib::Propagation::from(result.close_request()));
-        }
-        {
-            let result = result.clone();
-            let _ = window.connect_is_active_notify(move |window| {
-                if window.is_active() {
-                    result
-                        .state()
-                        .borrow_mut()
-                        .focus_event(nerust_frontend_host::focus::FocusEvent::Main(true));
-                } else {
-                    result.state().borrow_mut().clear_input();
-                    result
-                        .state()
-                        .borrow_mut()
-                        .focus_event(nerust_frontend_host::focus::FocusEvent::Main(false));
+            let weak = Rc::downgrade(&result);
+            let _ = window.connect_realize(move |_window| {
+                if let Some(result) = weak.upgrade() {
+                    result.realize();
                 }
             });
         }
         {
-            let result = result.clone();
+            let weak = Rc::downgrade(&result);
+            let _ = window.connect_close_request(move |_| {
+                glib::Propagation::from(weak.upgrade().is_some_and(|result| result.close_request()))
+            });
+        }
+        {
+            let sink = result.event_sink();
+            let _ = window.connect_is_active_notify(move |window| {
+                if !window.is_active() {
+                    sink.send(EventCommand::Session(SessionEvent::ClearInput));
+                }
+                sink.send(EventCommand::Focus(FocusEvent::Main(window.is_active())));
+            });
+        }
+        {
+            let weak = Rc::downgrade(&result);
             let _ = window.connect_notify_local(Some("fullscreened"), move |window, _| {
-                sync_persisted_window_fullscreen(&result, window.is_fullscreen());
+                if let Some(result) = weak.upgrade() {
+                    sync_persisted_window_fullscreen(&result, window.is_fullscreen());
+                }
             });
         }
 
         let key_controller = gtk::EventControllerKey::new();
         {
-            let result = result.clone();
+            let weak = Rc::downgrade(&result);
             let _ = key_controller.connect_key_pressed(move |_, key, _, _| {
-                glib::Propagation::from(result.key_event(key, KeyEventState::Press))
+                glib::Propagation::from(
+                    weak.upgrade()
+                        .is_some_and(|result| result.key_event(key, KeyEventState::Press)),
+                )
             });
         }
         {
-            let result = result.clone();
+            let weak = Rc::downgrade(&result);
             let _ = key_controller.connect_key_released(move |_, key, _, _| {
-                result.key_event(key, KeyEventState::Release);
+                if let Some(result) = weak.upgrade() {
+                    result.key_event(key, KeyEventState::Release);
+                }
             });
         }
         window.add_controller(key_controller);
 
         {
-            let result = result.clone();
-            let _ = open_action.connect_activate(move |_, _| {
-                result.open();
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = close_action.connect_activate(move |_, _| {
-                result.close();
-            });
-        }
-
-        // Menu and keyboard use the same command vocabulary and pause arbiter.
-        for (action, command) in [
-            (pause_action, SessionCommand::Pause),
-            (resume_action, SessionCommand::Resume),
-            (reset_action, SessionCommand::Reset),
-            (state_create_action, SessionCommand::CreateSlot),
-            (
-                state_save_active_action,
-                SessionCommand::SaveActiveSlotOrNew,
-            ),
-            (state_load_active_action, SessionCommand::LoadActiveSlot),
-        ] {
-            let result = result.clone();
-            let _ = action.connect_activate(move |_, _| {
-                let _ = result
-                    .state()
-                    .borrow_mut()
-                    .dispatch_session(SessionEvent::Command(command));
-                result.update_actions();
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = debugger_action.connect_activate(move |_, _| {
-                result.apply_keyboard_shortcut(KeyboardShortcut::OpenDebugger);
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = history_action.connect_activate(move |_, _| {
-                result.open_history();
-            });
-        }
-
-        for (action, command) in [
-            (
-                state_select_slot_action,
-                SessionCommand::SelectActiveSlot as fn(u64) -> SessionCommand,
-            ),
-            (state_save_slot_action, SessionCommand::SaveSlot),
-            (state_load_slot_action, SessionCommand::LoadSlot),
-            (state_delete_slot_action, SessionCommand::DeleteSlot),
-        ] {
-            let result = result.clone();
-            let _ = action.connect_activate(move |_, parameter| {
-                if let Some(slot_id) = parameter.and_then(|value| value.get::<u64>()) {
-                    let _ = result
-                        .state()
-                        .borrow_mut()
-                        .dispatch_session(SessionEvent::Command(command(slot_id)));
-                    result.update_actions();
-                }
-            });
-        }
-
-        {
-            let result = result.clone();
-            let _ = settings_action.connect_activate(move |action, _| {
-                open_settings(&result, action);
-            });
-        }
-
-        {
-            let result = result.clone();
+            let weak = Rc::downgrade(&result);
             let _ = glib::timeout_add_local(TITLE_UPDATE_INTERVAL, move || {
+                let Some(result) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
                 let due = result
                     .state()
                     .borrow_mut()
                     .title_refresh_due(std::time::Instant::now());
                 if due {
-                    result.refresh_title();
+                    result.event_sink().send(EventCommand::LiveTick);
                 }
                 glib::ControlFlow::Continue
             });
@@ -542,10 +492,11 @@ impl WindowExtend for Window {
         // Unified "All ROMs" first: GTK pre-selects the first filter, so
         // every registered system is visible in the initial view while
         // per-factory entries stay selectable behind it.
-        let mut first_filter = None;
-        for (name, extensions) in nerust_gui_shell::registry::rom_picker_filters(
+        let filters = nerust_gui_shell::registry::rom_picker_filters(
             self.state().borrow().host.session().factories(),
-        ) {
+        );
+        let mut first_filter = None;
+        for (name, extensions) in filters {
             let filter = gtk::FileFilter::new();
             filter.set_name(Some(&name));
             for extension in extensions {
@@ -559,8 +510,9 @@ impl WindowExtend for Window {
         if let Some(first) = first_filter {
             file_chooser_native.set_filter(&first);
         }
-        let result = self.clone();
+        let weak = Rc::downgrade(self);
         let _ = file_chooser_native.connect_response(move |file_chooser_native, response| {
+            let Some(result) = weak.upgrade() else { return };
             if response == gtk::ResponseType::Accept
                 && let Some(path) = file_chooser_native.file().and_then(|f| f.path())
             {
@@ -589,11 +541,6 @@ impl WindowExtend for Window {
         if let Some(detail) = detail {
             show_rom_load_error(&self.window(), self.state(), &detail);
         }
-        self.update_actions();
-    }
-
-    fn close(&self) {
-        self.state().borrow_mut().unload();
         self.update_actions();
     }
 
@@ -632,7 +579,9 @@ impl WindowExtend for Window {
         let menu = {
             let mut state = state.borrow_mut();
             let ctx = state.host.frame_ctx();
-            state.host.menu_update(&ctx, settings_open)
+            state
+                .host
+                .menubar_update(&ctx, settings_open, GTK_MENU_CAPABILITIES)
         };
         if let Some(menu) = menu {
             let (mut visitor, presenter, mut next) = {
@@ -641,10 +590,11 @@ impl WindowExtend for Window {
                     menubar: core.menubar.clone(),
                     window: Some(core.window.clone()),
                     application: Some(core.application.clone()),
+                    actions: core.actions.clone(),
+                    sink: Some(core.sink.clone()),
                     stack: Vec::new(),
                 };
-                let model = MenuModel::build(&menu, GTK_MENU_CAPABILITIES);
-                let next = core.menu_presenter.submit(model);
+                let next = core.menu_presenter.submit(menu.menubar);
                 (visitor, core.menu_presenter.clone(), next)
             };
             // Both RefCells are released before synchronous native signals.
@@ -697,52 +647,24 @@ impl WindowExtend for Window {
         // No hardcoded F-keys: the debugger open rides the shortcut schema
         // (default F4, rebindable in Settings), so a user binding always wins.
         if let Ok(controller_input) = key.try_into() {
-            let outcome = self
-                .state()
-                .borrow_mut()
-                .dispatch_session(SessionEvent::Keyboard {
+            self.event_sink()
+                .send(EventCommand::Session(SessionEvent::Keyboard {
                     key: controller_input,
                     pressed: key_event_pressed(event),
-                });
-            match outcome {
-                Ok(outcome) if outcome.command.is_some() || outcome.effect.is_some() => {
-                    self.apply_session_outcome(outcome);
-                }
-                Err(_) => self.update_actions(),
-                _ => (),
-            }
+                }));
         }
         false
     }
 
-    fn apply_keyboard_shortcut(&self, shortcut: KeyboardShortcut) {
-        let outcome = self
-            .state()
-            .borrow_mut()
-            .dispatch_session(SessionEvent::Shortcut(shortcut));
-        match outcome {
-            Ok(outcome) => self.apply_session_outcome(outcome),
-            Err(_) => self.update_actions(),
-        }
-    }
-
-    fn apply_session_outcome(&self, outcome: SessionOutcome) {
-        match outcome.effect {
-            Some(SessionEffect::ToggleFullscreen) => {
-                toggle_window_fullscreen(self);
-            }
-            Some(SessionEffect::NativeOpenDebugger) => {
-                self.open_debugger();
-            }
-            None => (),
-        }
-        self.update_actions();
+    fn event_sink(&self) -> Rc<dyn EventSink> {
+        self.borrow().sink.clone()
     }
 }
 
 pub(crate) const GTK_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: true,
     dialog_ellipsis: false,
+    application_menu: false,
 };
 
 /// A stack over persistent native objects, keyed by host semantic identity.
@@ -750,6 +672,8 @@ pub(crate) struct GtkMenuVisitor {
     menubar: MenubarModels,
     window: Option<gtk::ApplicationWindow>,
     application: Option<gtk::Application>,
+    actions: ActionRegistry,
+    sink: Option<Rc<dyn EventSink>>,
     stack: Vec<(gio::Menu, bool)>,
 }
 
@@ -760,57 +684,64 @@ impl GtkMenuVisitor {
             menubar,
             window: None,
             application: None,
+            actions: ActionRegistry::default(),
+            sink: None,
             stack: Vec::new(),
         }
     }
+}
 
-    fn enabled(&self, name: &str, enabled: bool) {
-        let action = if let Some(name) = name.strip_prefix("app.") {
-            self.application
-                .as_ref()
-                .and_then(|app| app.lookup_action(name))
-        } else {
-            self.window
-                .as_ref()
-                .and_then(|window| window.lookup_action(name.strip_prefix("win.")?))
-        };
-        if let Some(action) = action.and_then(|action| action.downcast::<gio::SimpleAction>().ok())
-        {
-            action.set_enabled(enabled);
+/// Decode strictly before binding: a bad or missing slot is never slot zero.
+fn send_action(
+    sink: &dyn EventSink,
+    descriptor: &CommandDescriptor,
+    value: Option<&glib::Variant>,
+) {
+    let argument = match (descriptor.parameter, value) {
+        (CommandParameter::None, None) => None,
+        (CommandParameter::SlotId, Some(value)) => {
+            let Some(id) = value.get::<u64>() else { return };
+            Some(id)
         }
+        _ => return,
+    };
+    if let Some(command) = descriptor.bind(argument) {
+        sink.send(EventCommand::Menu(command));
     }
 }
 
-/// Native action names and target encoding are adapter policy, not host policy.
-fn native_action(command: MenuCommand) -> Option<(&'static str, Option<u64>)> {
-    use MenuCommand as C;
-    use SessionCommand as S;
-    Some(match command {
-        C::Open => ("win.open", None),
-        C::Close => ("win.close", None),
-        C::Settings => ("win.settings", None),
-        C::Debugger => ("win.debugger", None),
-        C::NotificationHistory => ("win.history", None),
-        C::Native(NativeRole::Quit) => ("app.quit", None),
-        C::Native(NativeRole::About) => ("app.about", None),
-        C::Session(command) => match command {
-            S::Pause => ("win.pause", None),
-            S::Resume => ("win.resume", None),
-            S::Reset => ("win.reset", None),
-            S::CreateSlot => ("win.state-create", None),
-            S::SaveActiveSlotOrNew => ("win.state-save-active", None),
-            S::LoadActiveSlot => ("win.state-load-active", None),
-            S::SelectActiveSlot(id) => ("win.state-select-slot", Some(id)),
-            S::SaveSlot(id) => ("win.state-save-slot", Some(id)),
-            S::LoadSlot(id) => ("win.state-load-slot", Some(id)),
-            S::DeleteSlot(id) => ("win.state-delete-slot", Some(id)),
-            S::TogglePause | S::SelectNextSlot | S::SelectPreviousSlot => return None,
-        },
-    })
+impl CommandVisitor for GtkMenuVisitor {
+    fn command(&mut self, descriptor: &CommandDescriptor) {
+        let action = if let Some(action) = self.actions.get(descriptor.id) {
+            action
+        } else {
+            let parameter_type = match descriptor.parameter {
+                CommandParameter::None => None,
+                CommandParameter::SlotId => Some(u64::static_variant_type()),
+            };
+            let action = gio::SimpleAction::new(descriptor.id.name(), parameter_type.as_deref());
+            if let Some(sink) = self.sink.clone() {
+                let descriptor = *descriptor;
+                action.connect_activate(move |_, parameter| {
+                    send_action(sink.as_ref(), &descriptor, parameter);
+                });
+            }
+            self.actions
+                .0
+                .borrow_mut()
+                .insert(descriptor.id, action.clone());
+            if let Some(window) = &self.window {
+                window.add_action(&action);
+            }
+            action
+        };
+        // Once per declaration, never per slot entry. No registry borrow here.
+        action.set_enabled(descriptor.enabled);
+    }
 }
 
 impl MenuVisitor for GtkMenuVisitor {
-    fn begin_model(&mut self, rebuild: bool) {
+    fn begin_menubar(&mut self, _menubar: &Menubar, rebuild: bool) {
         if rebuild {
             self.menubar.menu_model.remove_all();
         }
@@ -823,17 +754,6 @@ impl MenuVisitor for GtkMenuVisitor {
         if *parent_rebuild {
             parent.append_submenu(Some(&menu.label), &native);
         }
-        // Parameterized GTK actions also need gating when their submenu is empty.
-        let action = match menu.id {
-            MenuId::SelectSlot => Some("win.state-select-slot"),
-            MenuId::SaveSlot => Some("win.state-save-slot"),
-            MenuId::LoadSlot => Some("win.state-load-slot"),
-            MenuId::DeleteSlot => Some("win.state-delete-slot"),
-            _ => None,
-        };
-        if let Some(action) = action {
-            self.enabled(action, menu.enabled);
-        }
         if rebuild {
             native.remove_all();
         }
@@ -841,16 +761,13 @@ impl MenuVisitor for GtkMenuVisitor {
     }
 
     fn item(&mut self, item: &MenuItem) {
-        let action = item.command.and_then(native_action);
-        if let Some((name, _)) = action {
-            self.enabled(name, item.enabled);
-        }
+        let action = item.command.map(|command| command.binding());
         let (parent, rebuild) = self.stack.last().expect("host item parent");
         if *rebuild {
             let native = gio::MenuItem::new(Some(&item.label), None);
-            if let Some((name, target)) = action {
+            if let Some((id, target)) = action {
                 native.set_action_and_target_value(
-                    Some(name),
+                    Some(&format!("win.{}", id.name())),
                     target.map(|id| id.to_variant()).as_ref(),
                 );
             }
@@ -861,9 +778,15 @@ impl MenuVisitor for GtkMenuVisitor {
     fn end_menu(&mut self, _id: MenuId) {
         self.stack.pop();
     }
-    fn end_model(&mut self) {
+    fn end_menubar(&mut self) {
         self.stack.pop();
         debug_assert!(self.stack.is_empty());
+        if let (Some(application), Some(window)) = (&self.application, &self.window)
+            && !self.menubar.attached.replace(true)
+        {
+            application.set_menubar(Some(&self.menubar.menu_model));
+            window.set_show_menubar(true);
+        }
     }
 }
 
@@ -919,13 +842,16 @@ fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State
 #[cfg(test)]
 mod tests {
     use gio::prelude::ActionExt as _;
-    use gtk::prelude::{ActionMapExt as _, Cast as _, DialogExt as _, GtkWindowExt as _};
+    use gtk::prelude::{
+        ActionMapExt as _, ApplicationExt as _, Cast as _, CastNone as _, DialogExt as _,
+        GtkApplicationExt as _, GtkWindowExt as _, ObjectExt as _,
+    };
 
     use super::{
-        GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenuId, MenuModel, MenubarModels,
-        WindowActions, WindowExtend, key_event_pressed,
+        CommandId, GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenuId, MenubarModels,
+        WindowExtend, key_event_pressed,
     };
-    use nerust_frontend_host::application::MenuSig;
+    use nerust_frontend_host::{application::MenuSig, menu::MenuModel};
 
     use crate::surface_state::surface_gone;
 
@@ -1008,7 +934,7 @@ mod tests {
         };
         let notifications = Rc::new(Cell::new(0));
         let borrow_free = Rc::new(Cell::new(true));
-        let action = win.borrow().actions.open.clone();
+        let action = win.borrow().actions.get(CommandId::Open).unwrap();
         let weak = Rc::downgrade(&win);
         let count = notifications.clone();
         let available = borrow_free.clone();
@@ -1017,7 +943,8 @@ mod tests {
             let state = win.state();
             let free = win.try_borrow_mut().is_ok()
                 && state.try_borrow_mut().is_ok()
-                && win.borrow().menubar.models.try_borrow_mut().is_ok();
+                && win.borrow().menubar.models.try_borrow_mut().is_ok()
+                && win.borrow().actions.0.try_borrow_mut().is_ok();
             available.set(available.get() && free);
             count.set(count.get() + 1);
             if free {
@@ -1034,13 +961,25 @@ mod tests {
         assert_eq!(notifications.get(), 1);
         assert!(borrow_free.get());
         assert!(!action.is_enabled());
-        assert!(!win.borrow().actions.settings.is_enabled());
+        assert!(
+            !win.borrow()
+                .actions
+                .get(CommandId::Settings)
+                .unwrap()
+                .is_enabled()
+        );
         assert!(super::close_aux(&win, id));
         win.update_actions();
         assert_eq!(notifications.get(), 2);
         assert!(borrow_free.get());
         assert!(action.is_enabled());
-        assert!(win.borrow().actions.settings.is_enabled());
+        assert!(
+            win.borrow()
+                .actions
+                .get(CommandId::Settings)
+                .unwrap()
+                .is_enabled()
+        );
     }
 
     #[test]
@@ -1060,6 +999,11 @@ mod tests {
         state.borrow_mut().host.apply_settings(settings).unwrap();
         win.update_actions();
         let menubar = win.borrow().menubar.clone();
+        assert!(menubar.attached.get());
+        assert_eq!(
+            win.application().menubar().as_ref(),
+            Some(menubar.menu_model.upcast_ref())
+        );
         let models = [
             menubar.menu_model.clone(),
             menubar.submenu(MenuId::File),
@@ -1082,7 +1026,8 @@ mod tests {
                 let state = win.state();
                 let free = win.try_borrow_mut().is_ok()
                     && state.try_borrow_mut().is_ok()
-                    && win.borrow().menubar.models.try_borrow_mut().is_ok();
+                    && win.borrow().menubar.models.try_borrow_mut().is_ok()
+                    && win.borrow().actions.0.try_borrow_mut().is_ok();
                 available.set(available.get() && free);
                 changes.set(changes.get() + 1);
                 if free {
@@ -1113,6 +1058,10 @@ mod tests {
         win.update_actions();
         assert!(changes.get() > 0);
         assert!(borrow_free.get());
+        assert_eq!(
+            win.application().menubar().as_ref(),
+            Some(menubar.menu_model.upcast_ref())
+        );
         for (model, id) in models[1..].iter().zip([
             MenuId::File,
             MenuId::States,
@@ -1138,9 +1087,8 @@ mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let action = win.borrow().actions.open.clone();
-        let quit = gio::SimpleAction::new("quit", None);
-        win.application().add_action(&quit);
+        let action = win.borrow().actions.get(CommandId::Open).unwrap();
+        let quit = win.borrow().actions.get(CommandId::Quit).unwrap();
         let super::OpenRequest::Create(id) =
             win.borrow_mut().aux.request_open(super::AuxKind::Settings)
         else {
@@ -1162,14 +1110,38 @@ mod tests {
         win.update_actions();
         assert!(called.get());
         assert!(action.is_enabled());
-        assert!(win.borrow().actions.settings.is_enabled());
-        assert!(win.borrow().actions.debugger.is_enabled());
-        assert!(win.borrow().actions.history.is_enabled());
+        assert!(
+            win.borrow()
+                .actions
+                .get(CommandId::Settings)
+                .unwrap()
+                .is_enabled()
+        );
+        assert!(
+            win.borrow()
+                .actions
+                .get(CommandId::Debugger)
+                .unwrap()
+                .is_enabled()
+        );
+        assert!(
+            win.borrow()
+                .actions
+                .get(CommandId::NotificationHistory)
+                .unwrap()
+                .is_enabled()
+        );
         assert!(
             quit.is_enabled(),
             "old outer traversal must not leave Quit disabled"
         );
-        assert!(!win.borrow().actions.close.is_enabled());
+        assert!(
+            !win.borrow()
+                .actions
+                .get(CommandId::Close)
+                .unwrap()
+                .is_enabled()
+        );
     }
 
     #[test]
@@ -1269,8 +1241,8 @@ mod tests {
                 AuxKind::Debug => win.open_debugger(),
                 AuxKind::History => win.open_history(),
                 AuxKind::Settings => {
-                    let action = gio::SimpleAction::new("settings-test", None);
-                    super::open_settings(&win, &action);
+                    let action = win.borrow().actions.get(CommandId::Settings).unwrap();
+                    super::open_settings(&win);
                     assert!(action.is_enabled());
                 }
                 AuxKind::Ppu => unreachable!(),
@@ -1321,14 +1293,14 @@ mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let action = win.borrow().actions.settings.clone();
+        let action = win.borrow().actions.get(CommandId::Settings).unwrap();
         action.activate(None);
         let old_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
         let Some(NativeAux::Settings(old)) = win.borrow().aux.get(AuxKind::Settings).cloned()
         else {
             panic!("settings dialog");
         };
-        super::open_settings(&win, &action);
+        super::open_settings(&win);
         assert_eq!(win.borrow().aux.route_id(AuxKind::Settings), Some(old_id));
         win.update_actions();
         assert!(!action.is_enabled());
@@ -1336,7 +1308,7 @@ mod tests {
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(AuxKind::Settings));
         assert!(!win.state().borrow().host.owns_pause(PauseOwner::Settings));
-        super::open_settings(&win, &action);
+        super::open_settings(&win);
         let new_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
         assert_ne!(old_id, new_id);
         assert!(!super::close_aux(&win, old_id));
@@ -1371,7 +1343,11 @@ mod tests {
         }
         let app = gtk::Application::builder()
             .application_id("org.nerust.window-test")
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
             .build();
+        // Menubar binding requires startup, just as in the real activate path.
+        app.register(None::<&gio::Cancellable>)
+            .expect("test application registers");
         let window = gtk::ApplicationWindow::builder().application(&app).build();
         Some((app, window, model_state()))
     }
@@ -1432,29 +1408,291 @@ mod tests {
     }
 
     #[test]
-    fn action_cluster_names_every_command() {
-        // One home for all command names: renaming a command updates
-        // construction and wiring together, never just one side.
-        let actions = WindowActions::new();
-        for (action, name) in [
-            (&actions.open, "open"),
-            (&actions.settings, "settings"),
-            (&actions.close, "close"),
-            (&actions.pause, "pause"),
-            (&actions.resume, "resume"),
-            (&actions.reset, "reset"),
-            (&actions.debugger, "debugger"),
-            (&actions.history, "history"),
-            (&actions.state_create, "state-create"),
-            (&actions.state_save_active, "state-save-active"),
-            (&actions.state_load_active, "state-load-active"),
-            (&actions.state_select_slot, "state-select-slot"),
-            (&actions.state_save_slot, "state-save-slot"),
-            (&actions.state_load_slot, "state-load-slot"),
-            (&actions.state_delete_slot, "state-delete-slot"),
-        ] {
-            assert_eq!(action.name().as_str(), name);
+    fn command_declarations_generate_and_reuse_every_action() {
+        use super::{CommandParameter, StaticVariantType};
+        use gio::prelude::MenuModelExt;
+        let state = model_state();
+        let model = {
+            let mut state = state.borrow_mut();
+            let ctx = state.host.frame_ctx();
+            state
+                .host
+                .menubar_update(&ctx, false, GTK_MENU_CAPABILITIES)
+                .unwrap()
+                .menubar
+        };
+        let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
+        model.visit(None, &mut visitor);
+        assert_eq!(
+            visitor.actions.0.borrow().len(),
+            model.commands.definitions.len()
+        );
+        let actions: Vec<_> = model
+            .commands
+            .definitions
+            .iter()
+            .map(|descriptor| {
+                let action = visitor.actions.get(descriptor.id).unwrap();
+                assert_eq!(action.name().as_str(), descriptor.id.name());
+                assert_eq!(action.is_enabled(), descriptor.enabled);
+                assert_eq!(
+                    action.parameter_type(),
+                    match descriptor.parameter {
+                        CommandParameter::None => None,
+                        CommandParameter::SlotId => Some(u64::static_variant_type().into_owned()),
+                    }
+                );
+                (descriptor.id, action)
+            })
+            .collect();
+        model.visit(Some(&model), &mut visitor);
+        for (id, action) in actions {
+            assert_eq!(visitor.actions.get(id).unwrap(), action);
         }
+        let file = visitor.menubar.submenu(MenuId::File);
+        assert_eq!(
+            file.item_attribute_value(file.n_items() - 1, "action", None)
+                .unwrap()
+                .str(),
+            Some("win.quit")
+        );
+        assert_eq!(
+            visitor
+                .menubar
+                .submenu(MenuId::Help)
+                .item_attribute_value(0, "action", None)
+                .unwrap()
+                .str(),
+            Some("win.about")
+        );
+    }
+
+    #[test]
+    fn generated_actions_send_typed_commands_to_dyn_sink_and_reject_bad_arguments() {
+        use super::{CommandVisitor, EventCommand, EventSink, ToVariant};
+        use nerust_frontend_host::commands::{MenuCommand, SessionCommand};
+        use std::{cell::RefCell, rc::Rc};
+        #[derive(Default)]
+        struct RecordingSink(RefCell<Vec<EventCommand>>);
+        impl EventSink for RecordingSink {
+            fn send(&self, event: EventCommand) -> bool {
+                self.0.borrow_mut().push(event);
+                true
+            }
+        }
+        let state = model_state();
+        let model = {
+            let mut state = state.borrow_mut();
+            let ctx = state.host.frame_ctx();
+            state
+                .host
+                .menubar_update(&ctx, false, GTK_MENU_CAPABILITIES)
+                .unwrap()
+                .menubar
+        };
+        let recording = Rc::new(RecordingSink::default());
+        let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
+        visitor.sink = Some(recording.clone());
+        for descriptor in &model.commands.definitions {
+            let mut descriptor = *descriptor;
+            descriptor.enabled = true;
+            visitor.command(&descriptor);
+        }
+        let reset = visitor.actions.get(CommandId::Reset).unwrap();
+        let slot = visitor.actions.get(CommandId::LoadSlot).unwrap();
+        reset.activate(None);
+        slot.activate(Some(&42_u64.to_variant()));
+        assert!(matches!(
+            recording.0.borrow().as_slice(),
+            [
+                EventCommand::Menu(MenuCommand::Session(SessionCommand::Reset)),
+                EventCommand::Menu(MenuCommand::Session(SessionCommand::LoadSlot(42))),
+            ]
+        ));
+        let descriptor = model.commands.get(CommandId::LoadSlot).unwrap();
+        let sink: Rc<dyn EventSink> = recording.clone();
+        // Exercise the callback decoder directly: GAction itself also rejects
+        // these before emitting activate, which would otherwise mask a bug here.
+        super::send_action(sink.as_ref(), descriptor, None);
+        super::send_action(sink.as_ref(), descriptor, Some(&"42".to_variant()));
+        super::send_action(sink.as_ref(), descriptor, Some(&42_i32.to_variant()));
+        super::send_action(
+            sink.as_ref(),
+            model.commands.get(CommandId::Reset).unwrap(),
+            Some(&42_u64.to_variant()),
+        );
+        assert_eq!(recording.0.borrow().len(), 2);
+        slot.activate(Some(&0_u64.to_variant()));
+        assert!(
+            matches!(
+                recording.0.borrow().last(),
+                Some(EventCommand::Menu(MenuCommand::Session(
+                    SessionCommand::LoadSlot(0)
+                )))
+            ),
+            "explicit zero is valid, never a missing-argument fallback"
+        );
+    }
+
+    #[test]
+    fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
+        use super::{AuxKind, EventCommand, OpenRequest};
+        use nerust_frontend_host::commands::{MenuCommand, NativeRole};
+        use nerust_frontend_kernel::pause::PauseOwner;
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        assert!(win.application().lookup_action("about").is_none());
+        assert!(win.application().lookup_action("quit").is_none());
+        let about = win.borrow().actions.get(CommandId::About).unwrap();
+        let quit = win.borrow().actions.get(CommandId::Quit).unwrap();
+        assert_eq!(
+            win.window().lookup_action("about").unwrap(),
+            about.clone().upcast::<gio::Action>()
+        );
+        assert_eq!(
+            win.window().lookup_action("quit").unwrap(),
+            quit.clone().upcast::<gio::Action>()
+        );
+        let sink = win.event_sink();
+        let about_event = EventCommand::Menu(MenuCommand::Native(NativeRole::About));
+        let OpenRequest::Create(id) = win.borrow_mut().aux.request_open(AuxKind::Settings) else {
+            panic!("settings reservation");
+        };
+        // Bypass native enablement to emulate an already queued activation.
+        assert!(sink.send(about_event));
+        assert!(win.borrow().about_dialog.is_none());
+        assert!(!about.is_enabled());
+        assert!(quit.is_enabled());
+        assert!(super::close_aux(&win, id));
+        win.state()
+            .borrow_mut()
+            .host
+            .set_pause_owner(PauseOwner::Settings, true);
+        assert!(sink.send(about_event));
+        assert!(
+            win.borrow().about_dialog.is_none(),
+            "host pause guard also applies without aux"
+        );
+        win.state()
+            .borrow_mut()
+            .host
+            .set_pause_owner(PauseOwner::Settings, false);
+        win.update_actions();
+        about.activate(None);
+        let dialog = win
+            .borrow()
+            .about_dialog
+            .clone()
+            .expect("Host About effect");
+        assert_eq!(dialog.transient_for(), Some(win.window().upcast()));
+        about.activate(None);
+        assert_eq!(win.borrow().about_dialog.as_ref(), Some(&dialog));
+        dialog.close();
+        assert!(win.borrow().about_dialog.is_none());
+        let OpenRequest::Create(_) = win.borrow_mut().aux.request_open(AuxKind::Settings) else {
+            panic!("settings reservation");
+        };
+        win.update_actions();
+        quit.activate(None);
+        assert!(
+            win.state().borrow().host.close_exited(),
+            "Quit crosses Host guard and closes"
+        );
+    }
+
+    #[test]
+    fn about_map_effect_is_borrow_free_and_can_reenter_event_sink() {
+        use gtk::prelude::{ListModelExt, WidgetExt};
+        use std::{cell::Cell, rc::Rc};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let mapped = Rc::new(Cell::new(0));
+        let toplevels = gtk::Window::toplevels();
+        let signal = toplevels.connect_items_changed({
+            let weak = Rc::downgrade(&win);
+            let mapped = mapped.clone();
+            move |list, position, _, added| {
+                for i in position..position + added {
+                    let Some(dialog) = list.item(i).and_downcast::<gtk::AboutDialog>() else {
+                        continue;
+                    };
+                    dialog.connect_map({
+                        let weak = weak.clone();
+                        let mapped = mapped.clone();
+                        move |_| {
+                            let win = weak.upgrade().unwrap();
+                            assert!(win.try_borrow_mut().is_ok());
+                            assert!(win.state().try_borrow_mut().is_ok());
+                            assert!(win.borrow().actions.0.try_borrow_mut().is_ok());
+                            mapped.set(mapped.get() + 1);
+                            win.event_sink().send(super::EventCommand::LiveTick);
+                        }
+                    });
+                }
+            }
+        });
+        let about = win.borrow().actions.get(CommandId::About).unwrap();
+        about.activate(None);
+        assert_eq!(mapped.get(), 1);
+        let dialog = win.borrow().about_dialog.clone().unwrap();
+        dialog.close();
+        toplevels.disconnect(signal);
+    }
+
+    #[test]
+    fn event_sink_and_action_callbacks_do_not_keep_window_alive() {
+        use super::{EventCommand, SessionEvent};
+        use std::rc::Rc;
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let weak = Rc::downgrade(&win);
+        let sink = win.event_sink();
+        let action = win.borrow().actions.get(CommandId::About).unwrap();
+        let native = win.window();
+        drop(win);
+        assert!(weak.upgrade().is_none());
+        assert!(!sink.send(EventCommand::Session(SessionEvent::ClearInput)));
+        action.activate(None);
+        native.destroy();
+    }
+
+    #[test]
+    fn keys_and_shortcuts_use_the_same_dyn_event_boundary() {
+        use super::{EventCommand, EventSink, SessionEvent};
+        use nerust_gui_shell::session::KeyboardShortcut;
+        use std::{cell::RefCell, rc::Rc};
+        struct RecordingSink(RefCell<Vec<EventCommand>>);
+        impl EventSink for RecordingSink {
+            fn send(&self, event: EventCommand) -> bool {
+                self.0.borrow_mut().push(event);
+                true
+            }
+        }
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let sink = Rc::new(RecordingSink(RefCell::new(Vec::new())));
+        win.borrow_mut().sink = sink.clone();
+        win.key_event(gdk::Key::F4, KeyEventState::Press);
+        win.key_event(gdk::Key::F4, KeyEventState::Release);
+        let shortcut = SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger);
+        win.event_sink().send(EventCommand::Session(shortcut));
+        assert!(matches!(
+            sink.0.borrow().as_slice(),
+            [
+                EventCommand::Session(SessionEvent::Keyboard { pressed: true, .. }),
+                EventCommand::Session(SessionEvent::Keyboard { pressed: false, .. }),
+                EventCommand::Session(SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger)),
+            ]
+        ));
+        win.window().destroy();
     }
 
     #[test]
@@ -1471,8 +1709,14 @@ mod tests {
             shortcuts: Vec::new().into(),
         };
         let bars = MenubarModels::new();
-        MenuModel::build(&sig, GTK_MENU_CAPABILITIES)
-            .visit(None, &mut GtkMenuVisitor::new(bars.clone()));
+        let model = MenuModel::build(&sig, GTK_MENU_CAPABILITIES);
+        let mut visitor = GtkMenuVisitor::new(bars.clone());
+        model.visit(None, &mut visitor);
+        for descriptor in &model.commands.definitions {
+            if descriptor.parameter == super::CommandParameter::SlotId {
+                assert!(!visitor.actions.get(descriptor.id).unwrap().is_enabled());
+            }
+        }
         // One disabled item names the empty state, never a blank list.
         for id in [
             MenuId::SelectSlot,
@@ -1523,8 +1767,29 @@ mod tests {
             shortcuts: Vec::new().into(),
         };
         let bars = MenubarModels::new();
-        MenuModel::build(&sig, GTK_MENU_CAPABILITIES)
-            .visit(None, &mut GtkMenuVisitor::new(bars.clone()));
+        let mut model = MenuModel::build(&sig, GTK_MENU_CAPABILITIES);
+        fn disable_items(menu: &mut super::Submenu) {
+            use nerust_frontend_host::menu::MenuEntry;
+            for entry in &mut menu.children {
+                match entry {
+                    MenuEntry::Item(item) => item.enabled = false,
+                    MenuEntry::Submenu(child) => disable_items(child),
+                }
+            }
+        }
+        for menu in &mut model.menus {
+            disable_items(menu);
+        }
+        let mut visitor = GtkMenuVisitor::new(bars.clone());
+        model.visit(None, &mut visitor);
+        assert!(
+            visitor
+                .actions
+                .get(CommandId::LoadSlot)
+                .unwrap()
+                .is_enabled(),
+            "slot entries cannot overwrite shared declaration enablement"
+        );
         let menu = bars.submenu(MenuId::LoadSlot);
         use gio::prelude::MenuModelExt;
         assert_eq!(menu.n_items(), 2);

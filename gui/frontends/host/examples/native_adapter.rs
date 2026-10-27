@@ -14,10 +14,12 @@ use std::{
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_frontend_host::{
     application::ApplicationHost,
+    commands::{CommandDescriptor, CommandVisitor, MenuCommand},
     debugger::{DebuggerDriver, DebuggerEvent},
+    event::{CommandEffect, EventCommand, EventHandler, EventSink},
     frame::FrameCtx,
     loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn},
-    menu::{MenuCapabilities, MenuId, MenuItem, MenuModel, MenuVisitor, Submenu},
+    menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
     osd::{ModalAdvance, ModalPresentation, ModalToken, OsdNotifications},
     widgets::MenuPresenter,
 };
@@ -55,12 +57,23 @@ struct NativeMenus {
     common: Rc<RefCell<Common>>,
     depth: usize,
     items: usize,
+    declarations: usize,
+}
+
+impl CommandVisitor for NativeMenus {
+    fn command(&mut self, command: &CommandDescriptor) {
+        assert!(self.common.try_borrow_mut().is_ok());
+        assert_eq!(self.depth, 0);
+        assert!(!command.id.name().is_empty());
+        self.declarations += 1;
+    }
 }
 
 impl MenuVisitor for NativeMenus {
-    fn begin_model(&mut self, _rebuild: bool) {
+    fn begin_menubar(&mut self, menubar: &Menubar, _rebuild: bool) {
         assert!(self.common.try_borrow_mut().is_ok());
         assert_eq!(self.depth, 0);
+        assert!(menubar.application_menu.is_some());
     }
     fn begin_menu(&mut self, _menu: &Submenu, _rebuild: bool) {
         self.depth += 1;
@@ -72,8 +85,19 @@ impl MenuVisitor for NativeMenus {
     fn end_menu(&mut self, _id: MenuId) {
         self.depth -= 1;
     }
-    fn end_model(&mut self) {
+    fn end_menubar(&mut self) {
         assert_eq!(self.depth, 0);
+    }
+}
+
+// A real adapter enqueues on its native loop. This Rc mailbox deliberately has
+// no Send/Sync bound, just like a GTK callback transport.
+struct NativeEvents(Rc<RefCell<Vec<EventCommand>>>);
+
+impl EventSink for NativeEvents {
+    fn send(&self, event: EventCommand) -> bool {
+        self.0.borrow_mut().push(event);
+        true
     }
 }
 
@@ -124,30 +148,35 @@ impl LoopHost for NativeAdapter {
             let mut state = self.common.borrow_mut();
             (
                 state.app.title_update(&ctx.tick()),
-                state.app.menu_update(ctx, false),
+                state.app.menubar_update(
+                    ctx,
+                    false,
+                    MenuCapabilities {
+                        about: false,
+                        dialog_ellipsis: false,
+                        application_menu: true,
+                    },
+                ),
             )
         };
         if let Some(title) = title {
             println!("native title: {title}");
         }
         if let Some(menu) = menu {
-            let mut next = self.menus.submit(MenuModel::build(
-                &menu,
-                MenuCapabilities {
-                    about: false,
-                    dialog_ellipsis: false,
-                },
-            ));
+            let mut next = self.menus.submit(menu.menubar);
             let mut visitor = NativeMenus {
                 common: self.common.clone(),
                 depth: 0,
                 items: 0,
+                declarations: 0,
             };
             while let Some(plan) = next {
-                plan.visit(&mut visitor);
+                let port: &mut dyn MenuVisitor = &mut visitor;
+                plan.visit(port);
                 next = self.menus.complete(plan);
             }
             self.menu_items += visitor.items;
+            assert!(visitor.declarations > 0);
         }
     }
     fn pump_debug(&mut self) -> WakeNeed {
@@ -249,6 +278,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menus: MenuPresenter::default(),
         menu_items: 0,
     };
+    let events = NativeEvents(Rc::new(RefCell::new(Vec::new())));
+    let sink: &dyn EventSink = &events;
+    assert!(sink.send(EventCommand::Menu(MenuCommand::Open)));
+    let event = events.0.borrow_mut().pop().unwrap();
+    let outcome = {
+        let mut common = native.common.borrow_mut();
+        let handler: &mut dyn EventHandler = &mut common.app;
+        handler.handle_event(event, false)?
+    };
+    assert_eq!(outcome.effect, Some(CommandEffect::OpenRom));
+    // Native presentation can synchronously reenter only after borrow release.
+    assert!(native.common.try_borrow_mut().is_ok());
     native.common.borrow_mut().app.note_main_departure();
     let idle = drive_turn(&mut native);
     assert_eq!(idle.deadline, None);
@@ -280,7 +321,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "unchanged menus are not rebuilt"
     );
     println!(
-        "verified: menu visitor, idle turn, debugger poll, synchronous modal ACK, active redraw"
+        "verified: dyn events, command declarations, root visitor, idle turn, debugger poll, synchronous modal ACK, active redraw"
     );
     Ok(())
 }

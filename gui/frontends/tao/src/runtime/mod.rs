@@ -2,7 +2,8 @@ mod dispatch;
 mod drain;
 pub(crate) mod host;
 
-use std::path::Path;
+use nerust_frontend_host::event::EventSink;
+use std::{path::Path, sync::Arc};
 
 use nerust_gui_shell::context::FrontendContext;
 use nerust_render_traits::{
@@ -18,12 +19,13 @@ use tao::{
 };
 
 use self::host::{HostAction, HostState};
-use crate::event::UserEvent;
+use crate::event::{TaoEventSink, UserEvent};
 use crate::menu::imp::AppMenu;
 use crate::ports::{NativeDialogs, TaoWindowOpener};
 
 pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
+    event_sink: Option<Arc<dyn EventSink + Send + Sync>>,
     host: HostState,
     renderer: Option<Box<dyn RenderPipeline>>,
     /// Native target the surface is attached to (`None` = toplevel).
@@ -39,13 +41,15 @@ impl WindowRuntime {
             event_loop.set_activate_ignoring_other_apps(true);
             event_loop
         };
-        let proxy = event_loop.create_proxy();
-        let app_menu = AppMenu::new(proxy);
+        let event_sink: Arc<dyn EventSink + Send + Sync> =
+            Arc::new(TaoEventSink(event_loop.create_proxy()));
+        let app_menu = AppMenu::new(event_sink.clone());
 
         let host = HostState::new(ctx, Box::new(app_menu), std::sync::Arc::new(NativeDialogs))?;
 
         Ok(Self {
             event_loop: Some(event_loop),
+            event_sink: Some(event_sink),
             host,
             renderer: None,
             surface_xid: None,
@@ -55,7 +59,7 @@ impl WindowRuntime {
     /// Live-follow pulse: parked with no wakeups unless a viewer
     /// wants live ticks; arming wakes it, disarming re-parks it.
     fn spawn_tick_thread(
-        tick_proxy: tao::event_loop::EventLoopProxy<UserEvent>,
+        tick_sink: Arc<dyn EventSink + Send + Sync>,
         tick_armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Option<std::thread::Thread> {
         let (thread_tx, thread_rx) = std::sync::mpsc::channel();
@@ -65,7 +69,7 @@ impl WindowRuntime {
             loop {
                 if tick_armed.load(Ordering::Acquire) {
                     std::thread::sleep(std::time::Duration::from_millis(250));
-                    if tick_proxy.send_event(UserEvent::LiveTick).is_err() {
+                    if !tick_sink.send(UserEvent::LiveTick) {
                         break;
                     }
                 } else {
@@ -153,9 +157,10 @@ impl WindowRuntime {
             .take()
             .expect("WindowRuntime::run() called more than once");
 
-        if let Some(thread) =
-            Self::spawn_tick_thread(event_loop.create_proxy(), self.host.live_armed())
-        {
+        if let Some(thread) = Self::spawn_tick_thread(
+            self.event_sink.take().expect("native event sink"),
+            self.host.live_armed(),
+        ) {
             self.host.register_tick_thread(thread);
         }
 
@@ -193,21 +198,18 @@ impl WindowRuntime {
                 }
             }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
-            Event::UserEvent(command) => match command {
-                UserEvent::LiveTick => self.host.live_tick(),
-                UserEvent::Menu(command) => {
-                    let opener = TaoWindowOpener::new(event_loop);
-                    let action = self.host.on_menu_command(command, &opener);
-                    match action {
-                        HostAction::None => (),
-                        HostAction::RomLoaded => self.recreate_renderer(),
-                        HostAction::Exit => {
-                            self.begin_close();
-                            *control_flow = ControlFlow::Exit
-                        }
+            Event::UserEvent(command) => {
+                let opener = TaoWindowOpener::new(event_loop);
+                let action = self.host.on_event(command, &opener);
+                match action {
+                    HostAction::None => (),
+                    HostAction::RomLoaded => self.recreate_renderer(),
+                    HostAction::Exit => {
+                        self.begin_close();
+                        *control_flow = ControlFlow::Exit
                     }
                 }
-            },
+            }
             Event::LoopDestroyed => self.host.clear_event_handler(),
             _ => (),
         });

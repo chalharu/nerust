@@ -13,6 +13,7 @@ nerust_core_traits.workspace = true
 nerust_frontend_kernel.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
+nerust_host_protocol.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_input_traits.workspace = true
 nerust_keyboard.workspace = true
