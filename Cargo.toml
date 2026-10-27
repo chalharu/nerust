@@ -77,6 +77,8 @@ nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
+nerust_crash_guard = { optional = true, workspace = true }
+rfd = { optional = true, workspace = true }
 nerust_gui_shell.workspace = true
 nerust_gbc_factory = { optional = true, workspace = true }
 nerust_gba_factory = { optional = true, workspace = true }
@@ -93,16 +95,17 @@ simple_logger.workspace = true
 
 [dev-dependencies]
 nerust_gba_core.workspace = true
+nerust_settings_core.workspace = true
 
 [features]
 default = ["nes", "gbc", "gba", "wgpu"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
+gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_crash_guard"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "nerust_tao"]
+tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "nerust_tao", "nerust_crash_guard", "rfd"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]

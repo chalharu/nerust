@@ -11,7 +11,12 @@ pub(crate) mod test_support;
 mod widgets;
 mod window;
 
-use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::Duration,
+};
 
 use gtk::{
     gdk::prelude::SurfaceExt as _,
@@ -33,7 +38,6 @@ use nerust_gui_shell::{
     },
 };
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
-use nerust_run_options::RunOptions;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
@@ -273,31 +277,15 @@ fn ensure_window(
 }
 
 /// Exit status for the binary wrapper: the library never terminates the process.
-pub fn run(ctx: FrontendContext, _options: RunOptions) -> i32 {
-    // No dialog here: the event loop died with the panic, and stderr
-    // (already logged by the guard) is the UX. Match exhaustively.
-    match nerust_crash_guard::run_guarded_with(
-        || run_inner(ctx),
-        nerust_crash_guard::default_sink,
-        nerust_crash_guard::capture_backtrace,
-    ) {
-        // Rust panic convention: a crash never exits 0.
-        nerust_crash_guard::GuardOutcome::Completed(Ok(())) => 0,
-        nerust_crash_guard::GuardOutcome::Completed(Err(error)) => {
+/// Crash containment lives in the composition root; see `nerust::run`.
+pub fn run(ctx: FrontendContext, _rom_path: Option<PathBuf>) -> i32 {
+    match run_inner(ctx) {
+        Ok(()) => 0,
+        Err(error) => {
             log::error!("{error}");
             1
         }
-        nerust_crash_guard::GuardOutcome::Crashed(report) => {
-            log::error!("{}", crash_note(report.message()));
-            101
-        }
     }
-}
-
-/// Crash log line: the guard already logged the full report; this
-/// names the missing-dialog situation for stderr readers.
-fn crash_note(message: &str) -> String {
-    format!("gtk frontend crashed with no dialog available: {message}")
 }
 
 fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
@@ -371,13 +359,6 @@ mod tests {
         language::AppLanguage,
     };
     use window::{GTK_MENU_CAPABILITIES, GtkMenuVisitor};
-
-    #[test]
-    fn crash_note_names_missing_dialog() {
-        let text = crash_note("boom");
-        assert!(text.contains("boom"), "{text}");
-        assert!(text.contains("no dialog"), "{text}");
-    }
 
     fn collect_labels(model: &gio::MenuModel, out: &mut Vec<String>) {
         use gio::prelude::MenuModelExt;
