@@ -755,8 +755,10 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                     parent.remove(&native.input);
                 }
                 dialog.add_action_widget(&native.input, gtk::ResponseType::None);
-                // Master parity: 12px margins around the action area.
+                // Master parity: 12px margins around the action area and
+                // between its buttons.
                 if let Some(area) = native.input.parent().and_downcast::<gtk::Box>() {
+                    area.set_spacing(12);
                     area.set_margin_top(12);
                     area.set_margin_bottom(12);
                     area.set_margin_start(12);
