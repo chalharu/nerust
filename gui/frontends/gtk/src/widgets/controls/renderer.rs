@@ -503,6 +503,9 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
     fn begin_page(&mut self, page: &Page) {
         let node = self.node(NodeId::Page(page.id), || {
             let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            // The last group (e.g. notification status) would otherwise sit
+            // flush against the scrolled viewport edge under its shadow.
+            body.set_margin_bottom(12);
             let scroll = gtk::ScrolledWindow::new();
             scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
             scroll.set_hexpand(true);
@@ -769,6 +772,10 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         // Stack's widget children can include outgoing transition widgets which
         // are no longer pages. Remove only members of its actual page model.
         let pages = self.binding.stack.pages();
+
+        // Single-panel screens (e.g. notification history) need no tab
+        // switching chrome; the content fills the dialog instead.
+        self.binding.sidebar.set_visible(self.pages.len() > 1);
         let children: Vec<_> = (0..pages.n_items())
             .filter_map(|index| pages.item(index).and_downcast::<gtk::StackPage>())
             .map(|page| page.child())
