@@ -334,8 +334,8 @@ impl HostState {
         }
         self.remember_fit_window_size();
         // Renderer teardown precedes this at the runtime boundary. Retire
-        // native dialogs and aux before flights, main window, and session flush.
-        self.osd.close_all();
+        // application OSD is retired by begin_close; drop aux before debug
+        // flights, main window, and session flush.
         self.aux.close_all();
         self.core.close_debug_flights();
         self.windows.close_main();

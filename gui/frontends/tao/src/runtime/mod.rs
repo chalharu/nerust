@@ -245,8 +245,8 @@ impl WindowRuntime {
         // No notification drain here: `update_control_flow` drains every pass.
         // One capture for the whole redraw: strips and layer sync share the frame.
         let ctx = self.host.frame_ctx();
-        self.host
-            .render_osd_frame(renderer.as_mut(), window_size, &ctx);
+        let osd = self.host.prepare_osd_frame(window_size, &ctx);
+        osd.apply(renderer.as_mut());
 
         self.host.swap_frame_buffer();
         if let Some(fb) = self.host.frame_buffer() {

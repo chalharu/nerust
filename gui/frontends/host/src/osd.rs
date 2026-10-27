@@ -16,10 +16,75 @@ use nerust_gui_shell::session::{
 };
 use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
-    renderer::{OsdSink, StripSink, strip_pixels},
+    renderer::{OsdLayer, OsdSink, StripSink, strip_pixels},
 };
 
-use crate::frame::FrameCtx;
+use crate::{frame::FrameCtx, loop_driver::WakeNeed};
+
+/// Native presentation runs only after the application borrow has ended.
+/// Callback-based dialogs return None; worker dialogs return their ACK receiver.
+pub trait ModalPresenter {
+    fn present_modal(&self, presentation: ModalPresentation) -> Option<Receiver<()>>;
+}
+
+#[derive(Debug, Default)]
+pub struct OsdTurn {
+    pub modal: Option<ModalPresentation>,
+    pub wake: WakeNeed,
+    pub changed: bool,
+}
+
+/// Skip leaves the destination untouched; Clear explicitly removes its layer.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum OsdLayerUpdate {
+    #[default]
+    Skip,
+    Clear,
+    Set(OsdLayer),
+}
+
+/// Owned output difference. Apply outside the host borrow, in delivery order.
+/// If the destination is lost or delivery is abandoned, invalidate before preparing again.
+#[must_use]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct OsdUpdate {
+    pub strip: Option<ReservedStrip>,
+    pub layer: OsdLayerUpdate,
+}
+
+/// Object-safe native drawing port; operations may synchronously reenter the host.
+pub trait OsdVisitor {
+    fn reserved_strip(&mut self, strip: ReservedStrip);
+    fn layer(&mut self, layer: Option<OsdLayer>);
+}
+
+impl OsdUpdate {
+    pub fn visit(self, visitor: &mut dyn OsdVisitor) {
+        if let Some(strip) = self.strip {
+            visitor.reserved_strip(strip);
+        }
+        match self.layer {
+            OsdLayerUpdate::Skip => {}
+            OsdLayerUpdate::Clear => visitor.layer(None),
+            OsdLayerUpdate::Set(layer) => visitor.layer(Some(layer)),
+        }
+    }
+
+    pub fn apply<S: OsdSink + StripSink + ?Sized>(self, sink: &mut S) {
+        self.visit(&mut SinkVisitor(sink));
+    }
+}
+
+struct SinkVisitor<'a, S: ?Sized>(&'a mut S);
+
+impl<S: OsdSink + StripSink + ?Sized> OsdVisitor for SinkVisitor<'_, S> {
+    fn reserved_strip(&mut self, strip: ReservedStrip) {
+        self.0.set_reserved_strip(strip);
+    }
+    fn layer(&mut self, layer: Option<OsdLayer>) {
+        self.0.set_osd_layer(layer);
+    }
+}
 
 /// Process-unique dialog identity, including across runtime replacement/close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,40 +328,40 @@ impl OsdLayerSync {
     }
 
     /// Strip reservation uses physical client height, not the renderer's cropped extent.
-    pub fn render<S: OsdSink + StripSink + ?Sized>(
+    /// No native output is called while preparing this owned difference.
+    pub fn prepare(
         &mut self,
         manager: &OsdManager,
-        sink: &mut S,
         size: SurfaceSize,
         client_height: u32,
         ctx: &FrameCtx,
         now: Instant,
-    ) {
+    ) -> OsdUpdate {
         let (top_rows, bottom_rows) = ctx.frame().chrome().reserved_rows();
         let strip = ReservedStrip {
             top: strip_pixels(client_height, top_rows, 1.0),
             bottom: strip_pixels(client_height, bottom_rows, 1.0),
         };
-        if self.last_strip.check(&strip) {
-            sink.set_reserved_strip(strip);
+        let strip = self.last_strip.check(&strip).then_some(strip);
+        OsdUpdate {
+            strip,
+            ..self.prepare_layer(manager, size, ctx, now)
         }
-        self.sync_layer(manager, sink, size, ctx, now);
     }
 
-    /// Rasterize only a changed plan; Skip never touches the renderer sink.
-    pub fn sync_layer<S: OsdSink + ?Sized>(
+    /// Rasterize only a changed plan, without reserving a strip or calling native code.
+    pub fn prepare_layer(
         &mut self,
         manager: &OsdManager,
-        sink: &mut S,
         size: SurfaceSize,
         ctx: &FrameCtx,
         now: Instant,
-    ) {
+    ) -> OsdUpdate {
         let chrome = *ctx.frame().chrome();
         let geometry = (size.width, size.height, chrome);
         let geometry_changed = self.last_sync_geometry.check(&geometry);
         if !self.is_due(manager, chrome.status_enabled, geometry_changed) {
-            return;
+            return OsdUpdate::default();
         }
         let decision = self.presenter.sync(
             manager,
@@ -312,19 +377,60 @@ impl OsdLayerSync {
             },
         );
         log::trace!("osd sync geometry v{}", self.last_sync_geometry.version());
-        match decision {
-            OsdSync::Skip => {}
+        let layer = match decision {
+            OsdSync::Skip => OsdLayerUpdate::Skip,
             OsdSync::Clear => {
                 self.layer_live = false;
-                sink.set_osd_layer(None);
+                OsdLayerUpdate::Clear
             }
             OsdSync::Render(plan) => {
                 let (width, height) = (plan.width, plan.height);
                 let layer = self.raster.rasterize(&plan.into_content(), width, height);
                 self.layer_live = layer.is_some();
-                sink.set_osd_layer(layer);
+                match layer {
+                    Some(layer) => OsdLayerUpdate::Set(layer),
+                    None => OsdLayerUpdate::Clear,
+                }
+            }
+        };
+        OsdUpdate {
+            layer,
+            ..Default::default()
+        }
+    }
+
+    /// Compatibility delegate. Owned host adapters use prepare/apply instead.
+    pub fn render<S: OsdSink + StripSink + ?Sized>(
+        &mut self,
+        manager: &OsdManager,
+        sink: &mut S,
+        size: SurfaceSize,
+        client_height: u32,
+        ctx: &FrameCtx,
+        now: Instant,
+    ) {
+        self.prepare(manager, size, client_height, ctx, now)
+            .apply(sink);
+    }
+
+    /// Compatibility delegate for callers that reserve their strip separately.
+    pub fn sync_layer<S: OsdSink + ?Sized>(
+        &mut self,
+        manager: &OsdManager,
+        sink: &mut S,
+        size: SurfaceSize,
+        ctx: &FrameCtx,
+        now: Instant,
+    ) {
+        struct LayerVisitor<'a, S: ?Sized>(&'a mut S);
+        impl<S: OsdSink + ?Sized> OsdVisitor for LayerVisitor<'_, S> {
+            fn reserved_strip(&mut self, _: ReservedStrip) {}
+            fn layer(&mut self, layer: Option<OsdLayer>) {
+                self.0.set_osd_layer(layer);
             }
         }
+        self.prepare_layer(manager, size, ctx, now)
+            .visit(&mut LayerVisitor(sink));
     }
 }
 

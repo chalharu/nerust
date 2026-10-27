@@ -25,12 +25,10 @@ use nerust_frontend_host::application::ApplicationHost;
 mod commands;
 mod frame;
 mod osd;
-mod osd_state;
 mod presentation;
 mod settings;
 mod window;
 pub(crate) use frame::FrameCtx;
-use osd_state::OsdService;
 
 pub(crate) use window::{WakeNeed, WindowCluster};
 
@@ -136,8 +134,6 @@ pub(crate) struct HostState {
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
     pub(super) aux: AuxRegistry,
-    /// OSD overlay domain: layer sync plus history plus modal queue.
-    osd: OsdService,
 }
 
 impl std::ops::Deref for HostState {
@@ -233,7 +229,6 @@ impl HostState {
             app_menu,
             dialogs,
             aux: AuxRegistry::new(),
-            osd: OsdService::new(),
         })
     }
 

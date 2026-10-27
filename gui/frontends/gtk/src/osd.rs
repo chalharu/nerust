@@ -1,16 +1,20 @@
 //! GTK OSD: in-frame layer, error modals, history.
 //! Native dialogs stay here; pump and renderer wiring live in frontend_host.
 
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    rc::{Rc, Weak},
+    sync::mpsc::Receiver,
+};
 
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
-    frame::FrameCtx,
-    loop_driver::WakeNeed,
-    osd::{ModalAdvance, ModalPresentation, OsdLayerSync, OsdNotifications},
+    history::{HistoryController, HistoryModel, HistoryVisitor},
+    osd::{ModalAdvance, ModalPresentation, ModalPresenter},
 };
 
 use super::{State, renderer::GtkRenderer};
+use nerust_gui_shell::session::osd::{HistoryFilter, HistoryRowView};
 
 impl nerust_render_traits::renderer::OsdSink for GtkRenderer {
     fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
@@ -28,19 +32,136 @@ impl nerust_render_traits::renderer::StripSink for GtkRenderer {
 /// rebuilt so the `changed` handler skips the recursive refresh.
 struct CaptionSyncGuard<'a> {
     flag: &'a std::cell::Cell<bool>,
+    previous: bool,
 }
 
 impl<'a> CaptionSyncGuard<'a> {
     fn new(flag: &'a std::cell::Cell<bool>) -> Self {
-        flag.set(true);
-        Self { flag }
+        Self {
+            flag,
+            previous: flag.replace(true),
+        }
     }
 }
 
 impl Drop for CaptionSyncGuard<'_> {
     fn drop(&mut self) {
-        self.flag.set(false);
+        self.flag.set(self.previous);
     }
+}
+
+/// A reentrant native setter may submit a newer owned model. Finish the outer
+/// traversal, then replay the latest one without holding any mailbox borrow.
+#[derive(Default)]
+struct HistoryDelivery {
+    active: Cell<bool>,
+    pending: RefCell<Option<HistoryModel>>,
+}
+
+impl HistoryDelivery {
+    fn submit(&self, model: HistoryModel, visitor: &mut dyn HistoryVisitor) {
+        *self.pending.borrow_mut() = Some(model);
+        if self.active.get() {
+            return;
+        }
+        let _active = CaptionSyncGuard::new(&self.active);
+        loop {
+            let next = self.pending.borrow_mut().take();
+            let Some(model) = next else { break };
+            model.visit(visitor);
+        }
+    }
+}
+
+#[derive(Clone)]
+struct GtkHistoryVisitor {
+    dialog: gtk::Dialog,
+    close: Option<gtk::Button>,
+    level: gtk::Label,
+    filter: gtk::ComboBoxText,
+    clear: gtk::Button,
+    count: gtk::Label,
+    grid: gtk::Grid,
+    syncing_captions: Rc<Cell<bool>>,
+    caption_filter: Rc<Cell<HistoryFilter>>,
+    row: i32,
+}
+
+impl HistoryVisitor for GtkHistoryVisitor {
+    fn begin(&mut self, model: &HistoryModel) {
+        let captions = &model.captions;
+        self.dialog.set_title(Some(&captions.title));
+        if let Some(close) = &self.close {
+            close.set_label(&captions.close);
+        }
+        self.level.set_text(&captions.level);
+        {
+            let _sync = CaptionSyncGuard::new(&self.syncing_captions);
+            self.caption_filter.set(model.filter);
+            self.filter.remove_all();
+            for option in &model.options {
+                self.filter.append(Some(option.filter.id()), &option.label);
+            }
+            self.filter.set_active_id(Some(model.filter.id()));
+        }
+        self.clear.set_label(&captions.clear);
+        self.count.set_text(&captions.count);
+        while let Some(child) = self.grid.first_child() {
+            self.grid.remove(&child);
+        }
+        for (column, header) in captions.headers.iter().enumerate() {
+            let label = gtk::Label::new(Some(header));
+            label.set_xalign(0.0);
+            label.add_css_class("heading");
+            self.grid.attach(&label, column as i32, 0, 1, 1);
+        }
+        self.grid.attach(
+            &gtk::Separator::new(gtk::Orientation::Horizontal),
+            0,
+            1,
+            4,
+            1,
+        );
+        self.row = 2;
+        if model.rows.is_empty() {
+            let empty = gtk::Label::new(Some(&captions.empty));
+            empty.set_xalign(0.0);
+            self.grid.attach(&empty, 0, self.row, 4, 1);
+        }
+    }
+
+    fn row(&mut self, row: &HistoryRowView) {
+        let (r, g, b) = row.rgb;
+        let datetime = gtk::Label::new(None);
+        datetime.set_markup(&format!(
+            "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
+            glib::markup_escape_text(&row.datetime),
+        ));
+        let level = gtk::Label::new(None);
+        level.set_markup(&format!(
+            "<span foreground=\"#{r:02X}{g:02X}{b:02X}\">{}</span>",
+            glib::markup_escape_text(row.level),
+        ));
+        let module = gtk::Label::new(None);
+        module.set_markup(&format!(
+            "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
+            glib::markup_escape_text(&row.module),
+        ));
+        module.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        let message = gtk::Label::new(Some(&row.message));
+        message.set_wrap(true);
+        message.set_hexpand(true);
+        for (column, label) in [&datetime, &level, &module, &message]
+            .into_iter()
+            .enumerate()
+        {
+            label.set_xalign(0.0);
+            self.grid.attach(label, column as i32, self.row, 1, 1);
+        }
+        self.row += 1;
+    }
+
+    fn end(&mut self) {}
 }
 
 /// Built history dialog plus its live controls; tests drive `filter` and `clear`.
@@ -56,136 +177,37 @@ pub(crate) struct HistoryDialog {
     /// Row container for widget tests: growth proves open-dialog re-render.
     #[cfg(test)]
     pub grid: gtk::Grid,
+    #[cfg(test)]
+    controller: Rc<RefCell<HistoryController>>,
+    #[cfg(test)]
+    delivery: Rc<HistoryDelivery>,
 }
 
-/// Fixed history-dialog captions for one language. Plain owned strings:
-/// widgets take copies, the table stays authoritative.
-pub(crate) struct HistoryDialogCaptions {
-    pub title: String,
-    pub close: String,
-    pub level: String,
-    pub filter_all: String,
-    pub filter_info: String,
-    pub filter_warning: String,
-    pub filter_error: String,
-    pub clear: String,
-}
-
-pub(crate) struct GtkOsd {
-    notifications: OsdNotifications,
-    layer: OsdLayerSync,
-    output_generation: Option<u64>,
-}
+/// Native UI namespace only; ApplicationHost owns all OSD state.
+pub(crate) struct GtkOsd;
 
 impl GtkOsd {
-    pub(crate) fn new() -> Self {
-        Self {
-            notifications: OsdNotifications::new(),
-            layer: OsdLayerSync::new(),
-            output_generation: None,
-        }
-    }
-
-    /// Forget sync state after a renderer rebuild: the new object
-    /// holds no layer, so the next sync must re-push instead of skip.
-    pub(crate) fn invalidate(&mut self) {
-        self.layer.invalidate();
-    }
-
-    /// Drain the session queue, extract modal effects, and sync the OSD layer.
-    /// Takes `&mut State` directly: the tick already holds the borrow.
-    pub(crate) fn poll(
-        &mut self,
-        state: &mut State,
-        renderer: &Rc<RefCell<GtkRenderer>>,
-        window: &gtk::ApplicationWindow,
-        size: nerust_render_traits::SurfaceSize,
-        ctx: &FrameCtx,
-    ) -> WakeNeed {
-        let generation = renderer.borrow().output_generation();
-        if self.output_generation != Some(generation) {
-            self.invalidate();
-            self.output_generation = Some(generation);
-        }
-        let now = Instant::now();
-        let report = state
-            .host
-            .pump_notifications(&mut self.notifications, ctx, now);
-        if report.changed {
-            log::debug!("gtk osd: display state changed");
-        }
-        let client_h = window.height().max(0) as u32 * window.scale_factor().max(1) as u32;
-        self.layer.render(
-            self.notifications.manager(),
-            &mut *renderer.borrow_mut(),
-            size,
-            client_h,
-            ctx,
-            now,
-        );
-        WakeNeed {
-            osd_deadline: self.notifications.wakeup_deadline(Instant::now()),
-            ..WakeNeed::default()
-        }
-    }
-
-    pub(crate) fn take_modal(&mut self) -> Option<ModalPresentation> {
-        self.notifications.take_modal()
-    }
-
-    /// Build the history dialog without presenting; captions follow the tracked language.
-    pub(crate) fn history_dialog_captions(
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) -> HistoryDialogCaptions {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
-        HistoryDialogCaptions {
-            title: ui_text(language, UiText::NotificationHistory).to_string(),
-            close: ui_text(language, UiText::Close).to_string(),
-            level: ui_text(language, UiText::HistoryLevel).to_string(),
-            filter_all: ui_text(language, UiText::HistoryFilterAll).to_string(),
-            filter_info: ui_text(language, UiText::NotificationInfo).to_string(),
-            filter_warning: ui_text(language, UiText::NotificationWarning).to_string(),
-            filter_error: ui_text(language, UiText::Error).to_string(),
-            clear: ui_text(language, UiText::HistoryClear).to_string(),
-        }
-    }
-
     pub(crate) fn build_history(
         window: &gtk::ApplicationWindow,
         state: &Rc<RefCell<State>>,
     ) -> HistoryDialog {
-        let language = state.borrow().settings_snapshot().shared.general.language;
         let dialog = gtk::Dialog::with_buttons(
-            Some(nerust_settings_core::i18n::text(
-                language,
-                nerust_settings_core::i18n::UiText::NotificationHistory,
-            )),
+            None::<&str>,
             Some(window),
             gtk::DialogFlags::DESTROY_WITH_PARENT,
-            &[(
-                nerust_settings_core::i18n::text(
-                    language,
-                    nerust_settings_core::i18n::UiText::Close,
-                ),
-                gtk::ResponseType::Close,
-            )],
+            &[("", gtk::ResponseType::Close)],
         );
         // Toolbar: filter plus clear live together at the top. Every caption
         // goes through the i18n table (same keys as the tao twin).
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let level_caption = gtk::Label::new(Some(ui_text(language, UiText::HistoryLevel)));
+        let level_caption = gtk::Label::new(None);
         level_caption.set_xalign(0.0);
         let filter = gtk::ComboBoxText::new();
-        for filter_kind in nerust_gui_shell::session::osd::HistoryFilter::all() {
-            filter.append(Some(filter_kind.id()), filter_kind.label(language));
-        }
-        filter.set_active_id(Some("all"));
         toolbar.append(&level_caption);
         toolbar.append(&filter);
         // "Clear History" names the target explicitly (cf. Event
         // Viewer "Clear Filter" vs "Clear Log"); count trails right.
-        let clear = gtk::Button::with_label(ui_text(language, UiText::HistoryClear));
+        let clear = gtk::Button::new();
         toolbar.append(&clear);
         let count = gtk::Label::new(None);
         count.set_hexpand(true);
@@ -212,144 +234,42 @@ impl GtkOsd {
         let close_button = dialog
             .widget_for_response(gtk::ResponseType::Close)
             .and_downcast::<gtk::Button>();
-        // Same (seq, language, filter) gate as the tao twin: a refresh with
-        // unchanged inputs rebuilds nothing instead of re-allocating rows.
-        let last_sync = Rc::new(RefCell::new(None));
-        // Reentrancy guard: rebuilding filter items emits `changed`; skip the recursive refresh.
-        let syncing_captions = Rc::new(std::cell::Cell::new(false));
+        let controller = Rc::new(RefCell::new(HistoryController::new()));
+        let delivery = Rc::new(HistoryDelivery::default());
+        let syncing_captions = Rc::new(Cell::new(false));
+        let selected = Rc::new(Cell::new(HistoryFilter::from_id(None)));
+        let caption_filter = Rc::new(Cell::new(selected.get()));
+        let visitor = GtkHistoryVisitor {
+            dialog: dialog.clone(),
+            close: close_button,
+            level: level_caption,
+            filter: filter.clone(),
+            clear: clear.clone(),
+            count,
+            grid: grid.clone(),
+            syncing_captions: syncing_captions.clone(),
+            caption_filter: caption_filter.clone(),
+            row: 2,
+        };
         let refresh = Rc::new({
             let state = Rc::clone(state);
-            let dialog = dialog.clone();
-            let grid = grid.clone();
-            let filter = filter.clone();
-            let count = count.clone();
-            let level_caption = level_caption.clone();
-            let clear = clear.clone();
-            let close_button = close_button.clone();
-            let syncing_captions = Rc::clone(&syncing_captions);
-            let last_sync = Rc::clone(&last_sync);
+            let controller = controller.clone();
+            let delivery = delivery.clone();
+            let selected = selected.clone();
             move || {
                 // Skip refresh on a destroyed native surface; never-realized dialogs still refresh.
-                if super::surface_state::surface_dead(&dialog) {
+                if super::surface_state::surface_dead(&visitor.dialog) {
                     return;
                 }
-                // Gate inputs first: a refresh with unchanged inputs
-                // rebuilds nothing instead of re-allocating rows.
-                let (language, seq) = {
-                    let borrowed = state.borrow();
-                    let language = borrowed.settings_snapshot().shared.general.language;
-                    (language, borrowed.notification_history_seq())
+                let model = {
+                    let mut state = state.borrow_mut();
+                    controller
+                        .borrow_mut()
+                        .update(state.host.session_mut(), selected.get())
                 };
-                let active = filter.active_id();
-                let key = (
-                    seq,
-                    language,
-                    active.as_deref().unwrap_or("all").to_string(),
-                );
-                if last_sync.borrow().as_ref() == Some(&key) {
-                    return;
-                }
-                *last_sync.borrow_mut() = Some(key);
-                // Fixed captions follow the language; the selection survives the rebuild.
-                let _caption_sync = CaptionSyncGuard::new(&syncing_captions);
-                let captions = Self::history_dialog_captions(language);
-                dialog.set_title(Some(&captions.title));
-                if let Some(close) = close_button.as_ref() {
-                    close.set_label(&captions.close);
-                }
-                level_caption.set_text(&captions.level);
-                let selected = filter.active_id();
-                filter.remove_all();
-                for (id, label) in [
-                    ("all", captions.filter_all.as_str()),
-                    ("info", captions.filter_info.as_str()),
-                    ("warning", captions.filter_warning.as_str()),
-                    ("error", captions.filter_error.as_str()),
-                ] {
-                    filter.append(Some(id), label);
-                }
-                filter.set_active_id(selected.as_deref());
-                clear.set_label(&captions.clear);
-                let mut borrowed = state.borrow_mut();
-                let lines = borrowed.history_lines_cached(language);
-                while let Some(child) = grid.first_child() {
-                    grid.remove(&child);
-                }
-                // Shared threshold: this level and above.
-                let filter_kind =
-                    nerust_gui_shell::session::osd::HistoryFilter::from_id(active.as_deref());
-                let visible = nerust_gui_shell::session::osd::visible_history(lines, filter_kind);
-                count.set_text(&nerust_settings_core::i18n::history_count(
-                    language,
-                    visible.len(),
-                ));
-                // Header: descriptive nouns, title case (Apple HIG).
-                let mut row_idx = 0;
-                for (col, header) in [
-                    ui_text(language, UiText::HistoryDatetime),
-                    ui_text(language, UiText::HistoryLevel),
-                    ui_text(language, UiText::HistoryModule),
-                    ui_text(language, UiText::HistoryMessage),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    let label = gtk::Label::new(Some(header));
-                    label.set_xalign(0.0);
-                    label.add_css_class("heading");
-                    grid.attach(&label, col as i32, row_idx, 1, 1);
-                }
-                row_idx += 1;
-                grid.attach(
-                    &gtk::Separator::new(gtk::Orientation::Horizontal),
-                    0,
-                    row_idx,
-                    4,
-                    1,
-                );
-                row_idx += 1;
-                if visible.is_empty() {
-                    let empty = gtk::Label::new(Some(ui_text(language, UiText::HistoryEmpty)));
-                    empty.set_xalign(0.0);
-                    grid.attach(&empty, 0, row_idx, 4, 1);
-                    return;
-                }
-                for line in visible {
-                    let row = nerust_gui_shell::session::osd::history_row_view(line, language);
-                    let (r, g, b) = row.rgb;
-                    // `HistoryLine.text` already carries the `×N` suffix
-                    // when merged; use it as-is.
-                    let text = row.message.clone();
-                    let datetime = gtk::Label::new(None);
-                    datetime.set_markup(&format!(
-                        "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
-                        glib::markup_escape_text(&row.datetime),
-                    ));
-                    datetime.set_xalign(0.0);
-                    let level = gtk::Label::new(None);
-                    level.set_markup(&format!(
-                        "<span foreground=\"#{r:02X}{g:02X}{b:02X}\">{}</span>",
-                        row.level,
-                    ));
-                    level.set_xalign(0.0);
-                    let module = gtk::Label::new(None);
-                    module.set_markup(&format!(
-                        "<span font_family=\"monospace\" size=\"smaller\">{}</span>",
-                        glib::markup_escape_text(&row.module),
-                    ));
-                    module.set_xalign(0.0);
-                    module.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-                    let message = gtk::Label::new(None);
-                    message
-                        .set_markup(&format!("<span>{}</span>", glib::markup_escape_text(&text),));
-                    message.set_xalign(0.0);
-                    message.set_wrap(true);
-                    message.set_hexpand(true);
-                    grid.attach(&datetime, 0, row_idx, 1, 1);
-                    grid.attach(&level, 1, row_idx, 1, 1);
-                    grid.attach(&module, 2, row_idx, 1, 1);
-                    grid.attach(&message, 3, row_idx, 1, 1);
-                    row_idx += 1;
+                // Release State and controller before any native setter.
+                if let Some(model) = model {
+                    delivery.submit(model, &mut visitor.clone());
                 }
             }
         });
@@ -357,10 +277,16 @@ impl GtkOsd {
         filter.connect_changed({
             let refresh = Rc::clone(&refresh);
             let syncing_captions = Rc::clone(&syncing_captions);
-            move |_| {
-                if !syncing_captions.get() {
-                    refresh()
+            move |filter| {
+                let active = filter.active_id();
+                let next = HistoryFilter::from_id(active.as_deref());
+                // Ignore only our temporary None / programmed selection. A
+                // different selection from a synchronous callback is real input.
+                if syncing_captions.get() && (active.is_none() || next == caption_filter.get()) {
+                    return;
                 }
+                selected.set(next);
+                refresh()
             }
         });
         clear.connect_clicked({
@@ -406,6 +332,10 @@ impl GtkOsd {
             clear,
             #[cfg(test)]
             grid,
+            #[cfg(test)]
+            controller,
+            #[cfg(test)]
+            delivery,
         }
     }
 }
@@ -417,66 +347,97 @@ impl GtkOsd {
         window: &gtk::ApplicationWindow,
         presentation: ModalPresentation,
     ) {
+        let port = GtkModalPresenter {
+            surface: Rc::downgrade(surface),
+            window: window.downgrade(),
+        };
+        let presenter: &dyn ModalPresenter = &port;
+        let token = presentation.token;
+        if let Some(receiver) = presenter.present_modal(presentation) {
+            let state = surface.borrow().state.clone();
+            state
+                .borrow_mut()
+                .host
+                .attach_osd_modal_receiver(token, receiver);
+        }
+    }
+}
+
+struct GtkModalPresenter {
+    surface: Weak<RefCell<super::surface::SurfaceCore>>,
+    window: glib::WeakRef<gtk::ApplicationWindow>,
+}
+
+impl ModalPresenter for GtkModalPresenter {
+    fn present_modal(&self, presentation: ModalPresentation) -> Option<Receiver<()>> {
+        let window = self.window.upgrade()?;
         let dialog = gtk::MessageDialog::new(
-            Some(window),
+            Some(&window),
             gtk::DialogFlags::MODAL,
             gtk::MessageType::Error,
             gtk::ButtonsType::Ok,
             &presentation.detail,
         );
-        let surface = surface.clone();
-        let window = window.clone();
+        let surface = self.surface.clone();
+        let window = self.window.clone();
         dialog.connect_response(move |dialog, _| {
             // close() can emit a second (DeleteEvent) response and ACK twice.
             dialog.destroy();
             // Bounded recursion: the modal queue caps at MAX_QUEUED,
             // so nesting depth is capped too, not an unbounded chain.
-            let next = {
-                let surface = surface.borrow();
-                let mut osd = surface.osd.borrow_mut();
-                let mut state = surface.state.borrow_mut();
-                state
-                    .host
-                    .acknowledge_modal(&mut osd.notifications, presentation.token)
+            let Some(surface) = surface.upgrade() else {
+                return;
             };
+            let state = surface.borrow().state.clone();
+            let next = state
+                .borrow_mut()
+                .host
+                .acknowledge_osd_modal(presentation.token);
             match next {
-                ModalAdvance::Present(next) => Self::present_modal(&surface, &window, next),
+                ModalAdvance::Present(next) => {
+                    if let Some(window) = window.upgrade() {
+                        GtkOsd::present_modal(&surface, &window, next);
+                    }
+                }
                 ModalAdvance::Ignored | ModalAdvance::Drained => {}
             }
         });
         dialog.present();
+        None
     }
 }
 
 #[cfg(test)]
-#[cfg(test)]
 pub(super) mod history_dialog_tests {
-    use super::GtkOsd;
+    use super::{GtkOsd, HistoryController, HistoryFilter, HistoryModel};
     use gtk::prelude::*;
     use nerust_settings_core::model::language::AppLanguage;
 
     /// Caption table follows the language; display application rides `refresh`.
     #[test]
     fn history_captions_follow_language() {
-        let en = GtkOsd::history_dialog_captions(AppLanguage::English);
-        let ja = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
-        for captions in [&en, &ja] {
+        let en = HistoryModel::build(&[], AppLanguage::English, HistoryFilter::from_id(None));
+        let ja = HistoryModel::build(&[], AppLanguage::Japanese, HistoryFilter::from_id(None));
+        for model in [&en, &ja] {
+            let captions = &model.captions;
             for text in [
                 &captions.title,
                 &captions.close,
                 &captions.level,
-                &captions.filter_all,
-                &captions.filter_info,
-                &captions.filter_warning,
-                &captions.filter_error,
                 &captions.clear,
-            ] {
+                &captions.count,
+                &captions.empty,
+            ]
+            .into_iter()
+            .chain(captions.headers.iter())
+            {
                 assert!(!text.is_empty());
             }
+            assert!(model.options.iter().all(|option| !option.label.is_empty()));
         }
-        assert_ne!(en.title, ja.title);
-        assert_ne!(en.clear, ja.clear);
-        assert_ne!(en.filter_all, ja.filter_all);
+        assert_ne!(en.captions.title, ja.captions.title);
+        assert_ne!(en.captions.clear, ja.captions.clear);
+        assert_ne!(en.options[0].label, ja.options[0].label);
     }
 
     fn harness() -> Option<(
@@ -628,6 +589,219 @@ pub(super) mod history_dialog_tests {
 
     /// Model gate: revision-gated refresh rebuilds only on seq or language change.
     #[test]
+    fn host_history_controller_gates_language_revision_and_filter() {
+        let state = model_state();
+        let mut controller = HistoryController::new();
+        let all = HistoryFilter::from_id(None);
+        let update = |controller: &mut HistoryController, filter| {
+            controller.update(state.borrow_mut().host.session_mut(), filter)
+        };
+        assert!(update(&mut controller, all).unwrap().rows.is_empty());
+        assert!(update(&mut controller, all).is_none());
+        state.borrow_mut().host.report_host_error("new row".into());
+        assert_eq!(update(&mut controller, all).unwrap().rows.len(), 1);
+        assert!(update(&mut controller, all).is_none());
+        let mut settings = state.borrow().settings_snapshot().clone();
+        settings.shared.general.language = AppLanguage::Japanese;
+        state.borrow_mut().host.apply_settings(settings).unwrap();
+        assert_eq!(
+            update(&mut controller, all).unwrap().language,
+            AppLanguage::Japanese
+        );
+        let error = HistoryFilter::from_id(Some("error"));
+        assert!(update(&mut controller, error).is_some());
+        assert!(update(&mut controller, error).is_none());
+        controller.invalidate();
+        assert!(update(&mut controller, error).is_some());
+        state.borrow_mut().clear_notification_history();
+        assert!(update(&mut controller, error).unwrap().rows.is_empty());
+    }
+
+    fn assert_host_model(built: &super::HistoryDialog, model: &HistoryModel) {
+        assert_eq!(
+            built.dialog.title().as_deref(),
+            Some(model.captions.title.as_str())
+        );
+        assert_eq!(
+            built.clear.label().as_deref(),
+            Some(model.captions.clear.as_str())
+        );
+        let close = built
+            .dialog
+            .widget_for_response(gtk::ResponseType::Close)
+            .and_downcast::<gtk::Button>()
+            .unwrap();
+        assert_eq!(
+            close.label().as_deref(),
+            Some(model.captions.close.as_str())
+        );
+        assert_eq!(built.filter.active_id().as_deref(), Some(model.filter.id()));
+        let selected = model
+            .options
+            .iter()
+            .find(|option| option.filter == model.filter)
+            .unwrap();
+        assert_eq!(
+            built.filter.active_text().as_deref(),
+            Some(selected.label.as_str())
+        );
+        let toolbar = built.clear.parent().unwrap();
+        let level = toolbar.first_child().and_downcast::<gtk::Label>().unwrap();
+        let count = toolbar.last_child().and_downcast::<gtk::Label>().unwrap();
+        assert_eq!(level.text().as_str(), model.captions.level);
+        assert_eq!(count.text().as_str(), model.captions.count);
+        for (column, header) in model.captions.headers.iter().enumerate() {
+            let label = built
+                .grid
+                .child_at(column as i32, 0)
+                .and_downcast::<gtk::Label>()
+                .unwrap();
+            assert_eq!(label.text().as_str(), header);
+        }
+        if model.rows.is_empty() {
+            let empty = built
+                .grid
+                .child_at(0, 2)
+                .and_downcast::<gtk::Label>()
+                .unwrap();
+            assert_eq!(empty.text().as_str(), model.captions.empty);
+        }
+        for (index, row) in model.rows.iter().enumerate() {
+            for (column, text) in [
+                row.datetime.as_str(),
+                row.level,
+                row.module.as_str(),
+                row.message.as_str(),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let label = built
+                    .grid
+                    .child_at(column as i32, index as i32 + 2)
+                    .and_downcast::<gtk::Label>()
+                    .unwrap();
+                assert_eq!(label.text().as_str(), text);
+            }
+        }
+    }
+
+    /// Exercise actual GTK setters, not a fake visitor. The newer model is
+    /// submitted synchronously while the outer title/caption traversal runs.
+    #[test]
+    fn native_history_title_reentry_is_borrow_free_and_latest_model_wins() {
+        use std::{cell::Cell, rc::Rc};
+        let Some((_app, window, state)) = harness() else {
+            eprintln!("SKIP: history widget test needs a display (run isolated under Xvfb)");
+            return;
+        };
+        let mut settings = state.borrow().settings_snapshot().clone();
+        settings.shared.general.language = AppLanguage::English;
+        state
+            .borrow_mut()
+            .host
+            .apply_settings(settings.clone())
+            .unwrap();
+        let built = GtkOsd::build_history(&window, &state);
+        let empty = HistoryController::new()
+            .update(
+                state.borrow_mut().host.session_mut(),
+                HistoryFilter::from_id(None),
+            )
+            .unwrap();
+        assert_host_model(&built, &empty);
+        let called = Rc::new(Cell::new(false));
+        let signal = built.dialog.connect_title_notify({
+            let called = called.clone();
+            let state = state.clone();
+            let controller = built.controller.clone();
+            let delivery = built.delivery.clone();
+            let refresh = built.refresh.clone();
+            let filter = built.filter.clone();
+            move |_| {
+                if called.replace(true) {
+                    return;
+                }
+                assert!(state.try_borrow_mut().is_ok());
+                assert!(controller.try_borrow_mut().is_ok());
+                assert!(delivery.pending.try_borrow_mut().is_ok());
+                let mut settings = state.borrow().settings_snapshot().clone();
+                settings.shared.general.language = AppLanguage::English;
+                state.borrow_mut().host.apply_settings(settings).unwrap();
+                state
+                    .borrow_mut()
+                    .host
+                    .report_host_error("newest <row> & detail".into());
+                filter.set_active_id(Some("error"));
+                refresh();
+            }
+        });
+        settings.shared.general.language = AppLanguage::Japanese;
+        state.borrow_mut().host.apply_settings(settings).unwrap();
+        (built.refresh)();
+        assert!(called.get(), "native title notify must actually execute");
+        let model = HistoryController::new()
+            .update(
+                state.borrow_mut().host.session_mut(),
+                HistoryFilter::from_id(Some("error")),
+            )
+            .unwrap();
+        assert!(!model.rows.is_empty());
+        assert_host_model(&built, &model);
+        built.dialog.disconnect(signal);
+        built.dialog.destroy();
+        window.destroy();
+    }
+
+    #[test]
+    fn native_history_filter_reentry_during_caption_sync_keeps_newest_selection() {
+        use std::{cell::Cell, rc::Rc};
+        let Some((_app, window, state)) = harness() else {
+            eprintln!("SKIP: history widget test needs a display (run isolated under Xvfb)");
+            return;
+        };
+        let built = GtkOsd::build_history(&window, &state);
+        let called = Rc::new(Cell::new(false));
+        let signal = built.filter.connect_changed({
+            let called = called.clone();
+            let state = state.clone();
+            let controller = built.controller.clone();
+            let delivery = built.delivery.clone();
+            move |filter| {
+                if filter.active_id().as_deref() != Some("all") || called.replace(true) {
+                    return;
+                }
+                assert!(state.try_borrow_mut().is_ok());
+                assert!(controller.try_borrow_mut().is_ok());
+                assert!(delivery.pending.try_borrow_mut().is_ok());
+                // This invokes production's changed handler while caption-sync
+                // is armed, and must enqueue rather than silently drop input.
+                filter.set_active_id(Some("error"));
+            }
+        });
+        state
+            .borrow_mut()
+            .host
+            .report_host_error("filter callback".into());
+        (built.refresh)();
+        assert!(
+            called.get(),
+            "native changed callback must actually execute"
+        );
+        let model = HistoryController::new()
+            .update(
+                state.borrow_mut().host.session_mut(),
+                HistoryFilter::from_id(Some("error")),
+            )
+            .unwrap();
+        assert_host_model(&built, &model);
+        built.filter.disconnect(signal);
+        built.dialog.destroy();
+        window.destroy();
+    }
+
+    /// Model gate: revision-gated refresh rebuilds only on seq or language change.
+    #[test]
     fn history_model_refresh_is_revision_gated() {
         use nerust_gui_shell::session::notification::{
             FailureOrigin, Message, NotificationLevel, UiNotification,
@@ -678,8 +852,10 @@ pub(super) mod history_dialog_tests {
             .as_ptr();
         assert_eq!(first, second, "seq-unchanged refresh must not rebuild");
         // The language switch rebuilds captions and rows alike.
-        let en_captions = GtkOsd::history_dialog_captions(AppLanguage::English);
-        let ja_captions = GtkOsd::history_dialog_captions(AppLanguage::Japanese);
+        let en_captions =
+            HistoryModel::build(&[], AppLanguage::English, HistoryFilter::from_id(None)).captions;
+        let ja_captions =
+            HistoryModel::build(&[], AppLanguage::Japanese, HistoryFilter::from_id(None)).captions;
         assert_ne!(en_captions.title, ja_captions.title);
         assert_ne!(en_captions.clear, ja_captions.clear);
         let mut snapshot = state.borrow().host.session().settings_snapshot().clone();
@@ -721,17 +897,9 @@ pub(super) mod history_dialog_tests {
         let lines =
             nerust_gui_shell::session::osd::history_lines(events.iter(), AppLanguage::English);
         let visible = |active: Option<&str>| {
-            let minimum = match active {
-                None | Some("all") | Some("info") => 0,
-                Some("warning") => 1,
-                _ => 2,
-            };
-            lines
-                .iter()
-                .filter(|line| {
-                    nerust_frontend_kernel::level_visible(minimum, line.level.severity())
-                })
-                .count()
+            HistoryModel::build(&lines, AppLanguage::English, HistoryFilter::from_id(active))
+                .rows
+                .len()
         };
         assert_eq!(visible(Some("all")), 2);
         assert_eq!(visible(Some("warning")), 1);
@@ -741,7 +909,6 @@ pub(super) mod history_dialog_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::GtkOsd;
     use nerust_gui_shell::session::osd::{
         OsdChrome, OsdRow, OsdState, OsdSync, OsdSyncInput, TickMetrics, ViewInsets,
     };
@@ -794,7 +961,6 @@ mod tests {
     #[test]
     fn osd_new_and_invalidate_are_headless() {
         // No display needed: construction and plan reset stay CPU-side.
-        let mut osd = GtkOsd::new();
         #[derive(Debug, Default)]
         struct Sink(usize);
         impl nerust_render_traits::renderer::OsdSink for Sink {
@@ -811,17 +977,17 @@ mod tests {
         let mut sink = Sink::default();
         let size = nerust_render_traits::SurfaceSize::new(320, 240);
         let now = std::time::Instant::now();
-        osd.layer
-            .render(osd.notifications.manager(), &mut sink, size, 240, &ctx, now);
-        osd.layer
-            .render(osd.notifications.manager(), &mut sink, size, 240, &ctx, now);
+        let update = state.borrow_mut().host.prepare_osd(size, 240, &ctx, now);
+        update.apply(&mut sink);
+        let update = state.borrow_mut().host.prepare_osd(size, 240, &ctx, now);
+        update.apply(&mut sink);
         assert_eq!(sink.0, 1);
-        osd.invalidate();
-        assert!(!osd.layer.layer_live());
-        osd.layer
-            .render(osd.notifications.manager(), &mut sink, size, 240, &ctx, now);
+        state.borrow_mut().host.invalidate_osd();
+        assert!(!state.borrow().host.osd_layer_live());
+        let update = state.borrow_mut().host.prepare_osd(size, 240, &ctx, now);
+        update.apply(&mut sink);
         assert_eq!(sink.0, 2, "renderer replacement re-pushes the strip");
-        osd.invalidate();
+        state.borrow_mut().host.invalidate_osd();
     }
 
     #[test]
