@@ -299,3 +299,251 @@ fn render_retry_and_notification_pause_are_owned_by_application() {
     assert!(report.modal_queued);
     assert!(fixture.core.owns_pause(PauseOwner::Modal));
 }
+
+#[test]
+fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
+    let mut fixture = Fixture::new();
+    let caps = crate::menu::MenuCapabilities {
+        about: false,
+        dialog_ellipsis: false,
+        application_menu: false,
+    };
+    assert!(fixture.core.menubar().is_none());
+    let ctx = fixture.core.frame_ctx();
+    assert!(fixture.core.menu_update(&ctx, false).is_some());
+    let first = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    assert_eq!(fixture.core.menubar(), Some(&first.menubar));
+    assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
+    let app_caps = crate::menu::MenuCapabilities {
+        application_menu: true,
+        ..caps
+    };
+    let next = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    assert!(!next.signature.loaded);
+    assert!(next.menubar.application_menu.is_some());
+    assert!(fixture.core.menubar_update(&ctx, false, app_caps).is_none());
+    fixture.core.dispatch(SessionEvent::SettingsOpened).unwrap();
+    let guarded = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    assert!(guarded.signature.settings_open);
+    fixture.core.dispatch(SessionEvent::SettingsClosed).unwrap();
+    assert!(fixture.core.menu_update(&ctx, false).is_none());
+    let unguarded = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    assert!(!unguarded.signature.settings_open);
+    // Reallocated captures notify consumers, but equal trees do not repaint.
+    let mut settings = fixture.core.settings_snapshot().clone();
+    settings.local.notifications.info_duration_ms += 1;
+    fixture.core.apply_settings(settings).unwrap();
+    let ctx = fixture.core.frame_ctx();
+    let replaced = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    assert_eq!(replaced.menubar, unguarded.menubar);
+    let presenter = crate::widgets::MenuPresenter::default();
+    let plan = presenter.submit(unguarded.menubar).unwrap();
+    assert!(presenter.complete(plan).is_none());
+    assert!(presenter.submit(replaced.menubar).is_none());
+    assert!(fixture.core.menubar_update(&ctx, false, app_caps).is_none());
+}
+
+#[test]
+fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
+    let mut fixture = Fixture::new();
+    let caps = crate::menu::MenuCapabilities {
+        about: false,
+        dialog_ellipsis: true,
+        application_menu: false,
+    };
+    let ctx = fixture.core.frame_ctx();
+    let initial = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    fixture
+        .core
+        .dispatch(SessionEvent::Command(
+            crate::commands::SessionCommand::SelectActiveSlot(73),
+        ))
+        .unwrap();
+    let update = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    assert_eq!(update.signature.active_slot, Some(73));
+    assert_eq!(initial.menubar, update.menubar);
+    assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
+}
+
+#[test]
+fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() {
+    use crate::{
+        commands::{MenuCommand as M, NativeRole, SessionCommand as S},
+        event::{CommandEffect as E, EventCommand as C, EventHandler},
+    };
+    let mut fixture = Fixture::new();
+    let host: &mut dyn EventHandler = &mut fixture.core;
+    for event in [
+        C::Menu(M::Open),
+        C::Menu(M::Close),
+        C::Menu(M::Settings),
+        C::Menu(M::Debugger),
+        C::Menu(M::NotificationHistory),
+        C::Menu(M::Native(NativeRole::About)),
+        C::Menu(M::Session(S::Pause)),
+        C::Session(SessionEvent::Command(S::Resume)),
+        C::Session(SessionEvent::Keyboard {
+            key: nerust_keyboard::Key::F2,
+            pressed: true,
+        }),
+        C::Session(SessionEvent::Shortcut(
+            nerust_gui_shell::session::KeyboardShortcut::OpenDebugger,
+        )),
+    ] {
+        let result = host.handle_event(event, true).unwrap();
+        assert!(!result.handled && result.effect.is_none() && result.session.command.is_none());
+    }
+    let quit = host
+        .handle_event(C::Menu(M::Native(NativeRole::Quit)), true)
+        .unwrap();
+    assert_eq!(quit.effect, Some(E::Quit));
+    let tick = host.handle_event(C::LiveTick, true).unwrap();
+    assert_eq!(tick.effect, Some(E::LiveTick));
+    let focus = host
+        .handle_event(C::Focus(FocusEvent::Main(false)), true)
+        .unwrap();
+    assert!(focus.handled);
+    let clear = host
+        .handle_event(C::Session(SessionEvent::ClearInput), true)
+        .unwrap();
+    assert!(clear.handled);
+    let opened = host
+        .handle_event(C::Session(SessionEvent::SettingsOpened), true)
+        .unwrap();
+    assert!(opened.session.settings_changed);
+    let guarded = host.handle_event(C::Menu(M::Debugger), false).unwrap();
+    assert!(!guarded.handled, "owned Settings also guards");
+    let closed = host
+        .handle_event(C::Session(SessionEvent::SettingsClosed), true)
+        .unwrap();
+    assert!(closed.session.settings_changed);
+    assert!(!fixture.core.main_active());
+    assert!(!fixture.core.pause_held());
+}
+
+#[test]
+fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
+    use crate::{
+        commands::{MenuCommand as M, NativeRole},
+        event::{CommandEffect as E, EventCommand as C, EventHandler, EventSink},
+    };
+    use std::{cell::RefCell, rc::Rc};
+    struct Sink(Rc<RefCell<Vec<C>>>);
+    impl EventSink for Sink {
+        fn send(&self, event: C) -> bool {
+            self.0.borrow_mut().push(event);
+            true
+        }
+    }
+    let fixture = RefCell::new(Fixture::new());
+    let sink = Sink(Rc::new(RefCell::new(Vec::new())));
+    let transport: &dyn EventSink = &sink;
+    for (command, effect) in [
+        (M::Open, E::OpenRom),
+        (M::Settings, E::OpenAux(AuxKind::Settings)),
+        (M::Debugger, E::OpenAux(AuxKind::Debug)),
+        (M::NotificationHistory, E::OpenAux(AuxKind::History)),
+        (M::Native(NativeRole::About), E::About),
+        (M::Native(NativeRole::Quit), E::Quit),
+    ] {
+        assert!(transport.send(C::Menu(command)));
+        let event = sink.0.borrow_mut().pop().unwrap();
+        let result = {
+            let mut state = fixture.borrow_mut();
+            let handler: &mut dyn EventHandler = &mut state.core;
+            handler.handle_event(event, false).unwrap()
+        };
+        assert_eq!(result.effect, Some(effect));
+        // Simulate a synchronously reentrant native operation after dispatch.
+        assert!(fixture.try_borrow_mut().is_ok());
+    }
+    let mut state = fixture.borrow_mut();
+    for (shortcut, effect) in [
+        (
+            nerust_gui_shell::session::KeyboardShortcut::OpenDebugger,
+            E::OpenAux(AuxKind::Debug),
+        ),
+        (
+            nerust_gui_shell::session::KeyboardShortcut::ToggleFullscreen,
+            E::ToggleFullscreen,
+        ),
+    ] {
+        let result = state
+            .core
+            .handle_event(C::Session(SessionEvent::Shortcut(shortcut)), false)
+            .unwrap();
+        assert_eq!(result.effect, Some(effect));
+        assert!(result.session.effect.is_some());
+    }
+    struct Dead;
+    impl EventSink for Dead {
+        fn send(&self, _: C) -> bool {
+            false
+        }
+    }
+    let dead: &dyn EventSink = &Dead;
+    assert!(!dead.send(C::LiveTick));
+}
+
+#[test]
+fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
+    use crate::{
+        commands::{MenuCommand as M, SessionCommand as S},
+        event::{EventCommand as C, EventHandler},
+    };
+    let mut fixture = Fixture::new();
+    fixture
+        .core
+        .handle_event(C::Menu(M::Session(S::SelectActiveSlot(73))), false)
+        .unwrap();
+    assert_eq!(fixture.core.session().active_slot_id(), Some(73));
+    assert!(matches!(
+        fixture
+            .core
+            .handle_event(C::Menu(M::Session(S::Reset)), false),
+        Err(SessionError::NoCore)
+    ));
+    let load = fixture
+        .core
+        .handle_event(C::Menu(M::Session(S::LoadActiveSlot)), false)
+        .unwrap();
+    assert!(
+        load.session.command.is_some(),
+        "disabled coreless commands still dispatch"
+    );
+    fixture.load();
+    fixture
+        .core
+        .handle_event(C::Menu(M::Session(S::TogglePause)), false)
+        .unwrap();
+    assert!(
+        fixture.core.tick().paused,
+        "double dispatch would toggle back"
+    );
+    assert!(fixture.core.owns_pause(PauseOwner::User));
+    fixture.core.set_pause_owner(PauseOwner::Modal, true);
+    fixture
+        .core
+        .handle_event(C::Menu(M::Session(S::Resume)), false)
+        .unwrap();
+    assert!(!fixture.core.owns_pause(PauseOwner::User));
+    assert!(fixture.core.tick().paused, "modal still owns pause");
+    fixture.core.set_pause_owner(PauseOwner::Modal, false);
+    assert!(!fixture.core.tick().paused);
+    fixture
+        .core
+        .handle_event(C::Focus(FocusEvent::Main(false)), false)
+        .unwrap();
+    fixture
+        .core
+        .handle_event(C::Focus(FocusEvent::BurstEnd), false)
+        .unwrap();
+    assert!(fixture.core.owns_pause(PauseOwner::Focus));
+    fixture
+        .core
+        .handle_event(C::Focus(FocusEvent::Main(true)), false)
+        .unwrap();
+    assert!(!fixture.core.tick().paused);
+    fixture.core.handle_event(C::Menu(M::Close), false).unwrap();
+    assert!(!fixture.core.tick().loaded);
+}

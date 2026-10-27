@@ -1,6 +1,7 @@
 //! Session presentation sync: menu, title, and fullscreen state.
 use super::HostState;
 use super::frame::FrameCtx;
+use crate::menu::TAO_MENU_CAPABILITIES;
 use nerust_gui_shell::session::osd::TickMetrics;
 use nerust_gui_shell::session::{
     SessionError,
@@ -30,10 +31,13 @@ impl HostState {
     /// Menu sync using scalar state and immutable snapshot identities only.
     pub(crate) fn sync_menu_state(&mut self, ctx: &FrameCtx) {
         let settings_open = self.settings_open();
-        let Some(sig) = self.core.menu_update(ctx, settings_open) else {
+        let Some(update) = self
+            .core
+            .menubar_update(ctx, settings_open, TAO_MENU_CAPABILITIES)
+        else {
             return;
         };
-        self.app_menu.update(sig);
+        self.app_menu.update(update);
     }
 
     fn push_title(&mut self, title: &str) {

@@ -25,12 +25,12 @@ impl WindowRuntime {
             WindowEvent::Focused(true) => {
                 // Focus truth plus resume only; chrome sync and drains
                 // stay deferred to the tick burst (one pass, one capture).
-                self.host.core.focus_event(FocusEvent::Main(true));
+                self.host.on_focus_event(FocusEvent::Main(true));
                 self.host.request_redraw();
             }
             WindowEvent::Focused(false) => {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
-                let _ = self.host.focus_event(FocusEvent::Main(false));
+                self.host.on_focus_event(FocusEvent::Main(false));
                 self.host.clear_keys();
             }
             WindowEvent::Resized(_) => {
@@ -38,7 +38,7 @@ impl WindowRuntime {
                 self.host.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                self.host.on_keyboard_input(event);
+                self.host.on_keyboard_input(event, opener);
                 self.pump_debug_open_request(opener);
             }
             _ => (),
@@ -91,7 +91,10 @@ impl WindowRuntime {
     /// host focus port, which resumes on `Resume` and reports arrival.
     fn drive_focus(&mut self, kind: AuxKind, event: &WindowEvent) -> bool {
         match event {
-            WindowEvent::Focused(focused) => self.host.drive_aux_focus(kind, *focused),
+            WindowEvent::Focused(focused) => {
+                self.host.on_focus_event(FocusEvent::Aux(kind, *focused));
+                *focused
+            }
             _ => false,
         }
     }
@@ -211,6 +214,7 @@ mod tests {
         let menu = support.menu.clone();
         let runtime = WindowRuntime {
             event_loop: None,
+            event_sink: None,
             host: support.host,
             renderer: None,
             surface_xid: None,
@@ -325,7 +329,10 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         // Menu Quit returns the exit intent only: renderer and host teardown wait.
         assert_eq!(
-            runtime.host.on_menu_command(MenuCommand::Quit, &opener),
+            runtime.host.on_menu_command(
+                MenuCommand::Native(nerust_frontend_host::commands::NativeRole::Quit),
+                &opener
+            ),
             HostAction::Exit
         );
         assert!(runtime.renderer.is_some());

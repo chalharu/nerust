@@ -30,6 +30,7 @@ use nerust_gui_shell::{
 use crate::{
     focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent},
     frame::{FrameCache, FrameCtx},
+    menu::{MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalToken, OsdNotifications},
     session::{SessionEvent, SessionOutcome},
 };
@@ -46,6 +47,9 @@ pub struct ApplicationHost {
     render_retry: RenderRetry,
     debug: DebugRuntime,
     chrome: chrome::ChromeSync,
+    menubar_chrome: chrome::ChromeSync,
+    menubar: Option<Menubar>,
+    menu_capabilities: Option<MenuCapabilities>,
     fullscreen: window::FullscreenSync,
     close: MainState,
     flushed: bool,
@@ -66,6 +70,9 @@ impl ApplicationHost {
             render_retry: Default::default(),
             debug: DebugRuntime::new(),
             chrome: Default::default(),
+            menubar_chrome: Default::default(),
+            menubar: None,
+            menu_capabilities: None,
             fullscreen: Default::default(),
             close: MainState::new(),
             flushed: false,
@@ -341,6 +348,40 @@ impl ApplicationHost {
         self.chrome
             .menu_update(ctx, settings_open, self.session.active_slot_id())
     }
+
+    /// Independent of the legacy signature gate: calling menu_update cannot
+    /// consume this update. Unchanged captures skip building the tree entirely.
+    /// Changed signatures are delivered even if the resulting tree is equal;
+    /// MenuPresenter then skips native work, not the signature notification.
+    pub fn menubar_update(
+        &mut self,
+        ctx: &FrameCtx,
+        settings_open: bool,
+        capabilities: MenuCapabilities,
+    ) -> Option<MenubarUpdate> {
+        let settings_open = settings_open || self.owns_pause(PauseOwner::Settings);
+        let signature =
+            match self
+                .menubar_chrome
+                .menu_update(ctx, settings_open, self.session.active_slot_id())
+            {
+                Some(signature) => signature,
+                None if self.menu_capabilities == Some(capabilities) => return None,
+                None => self
+                    .menubar_chrome
+                    .menu_signature()
+                    .expect("menubar signature initialized")
+                    .clone(),
+            };
+        let menubar = Menubar::build(&signature, capabilities);
+        self.menu_capabilities = Some(capabilities);
+        self.menubar = Some(menubar.clone());
+        Some(MenubarUpdate { signature, menubar })
+    }
+
+    pub fn menubar(&self) -> Option<&Menubar> {
+        self.menubar.as_ref()
+    }
     pub fn title_update(&mut self, tick: &TickMetrics) -> Option<String> {
         let title = self.cached_title(tick);
         self.chrome.title_update(title)
@@ -407,6 +448,12 @@ impl ApplicationHost {
 }
 
 crate::impl_session_controls!(ApplicationHost);
+
+#[derive(Debug, Clone)]
+pub struct MenubarUpdate {
+    pub signature: MenuSig,
+    pub menubar: Menubar,
+}
 
 // Scheduling already exposes meaningful request/consume/cadence operations;
 // reuse that facade rather than growing a second forest of forwarding methods.

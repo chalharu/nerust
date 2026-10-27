@@ -1,29 +1,14 @@
-//! Event-loop user events: the leaf type both [`crate::menu`] (producer)
-//! and [`crate::runtime`] (consumer/loop owner) depend on. [`MenuCommand`]
-//! lives here too so the edge is one-directional (nothing in `event`
-//! depends back on `menu` or `runtime`).
+//! Host events transported unchanged through Tao's native event loop.
 
-use nerust_gui_shell::session::commands::SessionCommand;
+pub(crate) use nerust_frontend_host::commands::MenuCommand;
+pub(crate) use nerust_frontend_host::event::EventCommand as UserEvent;
+use nerust_frontend_host::event::EventSink;
+use tao::event_loop::EventLoopProxy;
 
-/// Native menu selections. Produced by [`crate::menu`], consumed by
-/// [`crate::runtime`] via [`UserEvent::Menu`].
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum MenuCommand {
-    Open,
-    Close,
-    Settings,
-    Debugger,
-    NotificationHistory,
-    Session(SessionCommand),
-    Quit,
-}
+pub(crate) struct TaoEventSink(pub(crate) EventLoopProxy<UserEvent>);
 
-/// Menu selections from the native menu and the periodic live-follow
-/// pulse for the PPU viewer. User events always wake a `Wait` loop,
-/// unlike timer-based waits; the tick handler no-ops unless a running
-/// core has the viewer open.
-#[derive(Debug)]
-pub(crate) enum UserEvent {
-    Menu(MenuCommand),
-    LiveTick,
+impl EventSink for TaoEventSink {
+    fn send(&self, event: UserEvent) -> bool {
+        self.0.send_event(event).is_ok()
+    }
 }

@@ -60,7 +60,10 @@ impl HostState {
         // Read-only viewer: shared aux-focus drive (arrival only
         // cancels a pending pause, never resumes).
         if let WindowEvent::Focused(focused) = event {
-            let _ = self.drive_aux_focus(AuxKind::History, focused);
+            self.on_focus_event(nerust_frontend_host::focus::FocusEvent::Aux(
+                AuxKind::History,
+                focused,
+            ));
         }
         let domain = crate::aux::native::adapt_event(&event);
         let Some(outcome) = self.aux_on_event(AuxKind::History, domain) else {

@@ -23,7 +23,7 @@ pub struct MenuPresentation {
 }
 
 impl MenuPresentation {
-    pub fn visit(&self, visitor: &mut impl MenuVisitor) {
+    pub fn visit(&self, visitor: &mut dyn MenuVisitor) {
         self.model.visit(self.previous.as_ref(), visitor);
     }
 }
