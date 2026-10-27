@@ -33,15 +33,7 @@ impl HostState {
         let Some(sig) = self.core.menu_update(ctx, settings_open) else {
             return;
         };
-        self.app_menu.update(crate::menu::MenuSync {
-            loaded: sig.loaded,
-            paused: sig.paused,
-            slots: &sig.slots,
-            active_slot: sig.active_slot,
-            settings_open: sig.settings_open,
-            language: sig.language,
-            shortcuts: &sig.shortcuts,
-        });
+        self.app_menu.update(sig);
     }
 
     fn push_title(&mut self, title: &str) {

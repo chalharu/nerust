@@ -16,6 +16,9 @@
 //! - Use [`settings::SettingsController`] and its apply mailbox; native controls
 //!   may bind directly to its view model. Track auxiliary lifetimes with
 //!   [`aux::AuxWindows`], reserving before native creation can reenter.
+//! - Build owned [`menu::MenuModel`] trees and implement [`menu::MenuVisitor`].
+//!   Submit through [`widgets::MenuPresenter`], release controller borrows, then
+//!   drain presentation plans so synchronous reentry always renders newest last.
 //! - Retire application liveness, tear down auxiliary/native resources and
 //!   flights, then flush with [`application::ApplicationHost::finish_close`].
 //!
@@ -34,6 +37,8 @@ pub mod drain;
 pub mod focus;
 pub mod frame;
 pub mod loop_driver;
+pub mod menu;
 pub mod osd;
 pub mod session;
 pub mod settings;
+pub mod widgets;

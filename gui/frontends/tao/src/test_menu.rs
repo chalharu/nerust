@@ -1,9 +1,10 @@
-//! Headless menu sink: records `MenuSync` snapshots for assertions.
+//! Headless menu sink: records shared `MenuSig` snapshots for assertions.
 //! Production code never touches this module.
 
 use std::sync::{Arc, Mutex};
 
-use crate::menu::{MenuSink, MenuSync};
+use crate::menu::MenuSink;
+use nerust_frontend_host::application::MenuSig;
 
 /// `MenuSink` that records sync snapshots for assertions.
 #[derive(Debug, Default)]
@@ -29,7 +30,7 @@ impl MenuRecorderHandle {
 }
 
 impl MenuSink for MenuRecorderHandle {
-    fn update(&mut self, sync: MenuSync<'_>) {
+    fn update(&mut self, sync: MenuSig) {
         crate::aux::bridge::lock_recovered(&self.inner.updates).push(MenuSyncSnapshot {
             loaded: sync.loaded,
             paused: sync.paused,
