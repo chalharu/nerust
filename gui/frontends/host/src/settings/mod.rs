@@ -129,6 +129,25 @@ impl SettingsMailbox {
     }
 }
 
+impl crate::binding::BindingTarget for SettingsController {
+    type DomainEvent = SettingsEvent;
+    type Effect = SettingsEffect;
+
+    fn apply(&mut self, event: SettingsEvent) -> Option<SettingsEffect> {
+        self.update(event)
+    }
+}
+
+impl crate::binding::Invalidatable for SettingsMailbox {
+    fn invalidate(&self) {
+        self.view_invalidated.store(true, Ordering::Release);
+    }
+
+    fn take_invalidated(&self) -> bool {
+        self.view_invalidated.swap(false, Ordering::AcqRel)
+    }
+}
+
 pub struct SettingsController {
     pub(crate) mailbox: SettingsMailbox,
     pub vm: SettingsViewModel,
