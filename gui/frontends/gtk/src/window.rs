@@ -1,4 +1,4 @@
-use std::{cell::RefCell, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 use gtk::{
     gio, glib,
@@ -8,51 +8,50 @@ use gtk::{
 use nerust_frontend_host::{
     aux::{AuxId, AuxWindows, OpenRequest},
     focus::AuxKind,
+    menu::{
+        MenuCapabilities, MenuCommand, MenuId, MenuItem, MenuModel, MenuVisitor, NativeRole,
+        Submenu,
+    },
     session::{SessionEffect, SessionEvent, SessionOutcome},
+    widgets::MenuPresenter,
 };
-use nerust_gui_runtime::slots::slot_label;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError, access::SessionControl, commands::SessionCommand,
 };
-use nerust_persistence::model::StateSlotSummary;
 use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
-    State, TITLE_UPDATE_INTERVAL, build_menu_model,
+    State, TITLE_UPDATE_INTERVAL,
     surface::{Surface, SurfaceExtend},
     surface_state::surface_gone,
 };
 use crate::preferences::present_preferences_dialog;
 
-pub(crate) struct StateMenus {
-    pub(crate) select_active_slot_menu: gio::Menu,
-    pub(crate) save_slot_menu: gio::Menu,
-    pub(crate) load_slot_menu: gio::Menu,
-    pub(crate) delete_slot_menu: gio::Menu,
-}
-
-/// Persistent menubar skeleton: the top-level model plus its section menus.
-/// Built once, bound once via `set_menubar`; language switches refill these
-/// same objects in place because replacing the top-level model at runtime
-/// does not propagate to the visible menubar.
+/// Bound once via `set_menubar`; host IDs retain the same native submenus
+/// across refills because replacing the root does not update the visible bar.
+#[derive(Clone)]
 pub(crate) struct MenubarModels {
     pub(crate) menu_model: gio::Menu,
-    pub(crate) file_menu: gio::Menu,
-    pub(crate) state_menu: gio::Menu,
-    pub(crate) emulation_menu: gio::Menu,
-    pub(crate) help_menu: gio::Menu,
+    models: Rc<RefCell<HashMap<MenuId, gio::Menu>>>,
 }
 
 impl MenubarModels {
     pub(crate) fn new() -> Self {
         Self {
             menu_model: gio::Menu::new(),
-            file_menu: gio::Menu::new(),
-            state_menu: gio::Menu::new(),
-            emulation_menu: gio::Menu::new(),
-            help_menu: gio::Menu::new(),
+            models: Rc::default(),
         }
+    }
+
+    pub(crate) fn submenu(&self, id: MenuId) -> gio::Menu {
+        let existing = self.models.borrow().get(&id).cloned();
+        if let Some(menu) = existing {
+            return menu;
+        }
+        // No cache borrow across native construction, even on the first visit.
+        let menu = gio::Menu::new();
+        self.models.borrow_mut().entry(id).or_insert(menu).clone()
     }
 }
 
@@ -62,12 +61,10 @@ pub(crate) struct WindowCore {
     state: Rc<RefCell<State>>,
     open_dialog: Option<gtk::FileChooserNative>,
     aux: AuxWindows<u64, NativeAux>,
+    #[cfg(test)]
     actions: WindowActions,
     menubar: MenubarModels,
-    select_active_slot_menu: gio::Menu,
-    save_slot_menu: gio::Menu,
-    load_slot_menu: gio::Menu,
-    delete_slot_menu: gio::Menu,
+    menu_presenter: Rc<MenuPresenter>,
 }
 
 /// Native resources only. Opening, presence, identity and routing belong to host.
@@ -176,7 +173,7 @@ fn close_aux(window: &Window, id: AuxId) -> bool {
     kind.is_some()
 }
 
-fn open_settings(window: &Window, action: &gio::SimpleAction) {
+fn open_settings(window: &Window, _action: &gio::SimpleAction) {
     let Some(id) = request_aux(window, AuxKind::Settings) else {
         return;
     };
@@ -189,15 +186,12 @@ fn open_settings(window: &Window, action: &gio::SimpleAction) {
         window.borrow_mut().aux.cancel_open(id);
         return;
     }
-    action.set_enabled(false);
-    let action = action.clone();
+    window.update_actions();
     let weak = Rc::downgrade(window);
     let dialog = present_preferences_dialog(&window.window(), window.state(), move || {
         if let Some(window) = weak.upgrade()
             && close_aux(&window, id)
         {
-            action.set_enabled(true);
-            window.rebuild_menubar();
             window.update_actions();
         }
     });
@@ -208,7 +202,10 @@ fn open_settings(window: &Window, action: &gio::SimpleAction) {
 
 /// Window action cluster: every menu/toolbar command in one place.
 /// `WindowCore` owns one; wiring and gating go through these narrow ports.
+#[derive(Clone)]
 pub(crate) struct WindowActions {
+    pub open: gio::SimpleAction,
+    pub settings: gio::SimpleAction,
     pub close: gio::SimpleAction,
     pub pause: gio::SimpleAction,
     pub resume: gio::SimpleAction,
@@ -225,9 +222,11 @@ pub(crate) struct WindowActions {
 }
 
 impl WindowActions {
-    /// Fresh disabled-by-default actions; `update` gates them per tick.
+    /// Fresh actions; the shared host snapshot gates them before presentation.
     pub fn new() -> Self {
         Self {
+            open: gio::SimpleAction::new("open", None),
+            settings: gio::SimpleAction::new("settings", None),
             close: gio::SimpleAction::new("close", None),
             pause: gio::SimpleAction::new("pause", None),
             resume: gio::SimpleAction::new("resume", None),
@@ -256,8 +255,10 @@ impl WindowActions {
         }
     }
 
-    /// Seat every action on the window: one call instead of twelve.
+    /// Seat every action on the window.
     pub fn add_to(&self, window: &gtk::ApplicationWindow) {
+        window.add_action(&self.open);
+        window.add_action(&self.settings);
         window.add_action(&self.close);
         window.add_action(&self.pause);
         window.add_action(&self.resume);
@@ -283,7 +284,6 @@ pub(crate) trait WindowExtend {
         picture: gtk::Picture,
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
-        state_menus: StateMenus,
         menubar: MenubarModels,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
@@ -326,7 +326,6 @@ impl WindowExtend for Window {
         picture: gtk::Picture,
         state: Rc<RefCell<State>>,
         factory: Rc<dyn PipelineFactory>,
-        state_menus: StateMenus,
         menubar: MenubarModels,
     ) -> Window {
         let actions = WindowActions::new();
@@ -343,7 +342,8 @@ impl WindowExtend for Window {
         let state_save_slot_action = actions.state_save_slot.clone();
         let state_load_slot_action = actions.state_load_slot.clone();
         let state_delete_slot_action = actions.state_delete_slot.clone();
-        let settings_action = gio::SimpleAction::new("settings", None);
+        let settings_action = actions.settings.clone();
+        let open_action = actions.open.clone();
         let _ = Surface::bind(&window, &picture, state.clone(), factory);
         actions.add_to(&window);
         let result = Rc::new(RefCell::new(WindowCore {
@@ -352,12 +352,10 @@ impl WindowExtend for Window {
             state,
             open_dialog: None,
             aux: AuxWindows::new(),
+            #[cfg(test)]
             actions,
             menubar,
-            select_active_slot_menu: state_menus.select_active_slot_menu,
-            save_slot_menu: state_menus.save_slot_menu,
-            load_slot_menu: state_menus.load_slot_menu,
-            delete_slot_menu: state_menus.delete_slot_menu,
+            menu_presenter: Rc::default(),
         }));
         {
             let result = result.clone();
@@ -407,15 +405,12 @@ impl WindowExtend for Window {
         }
         window.add_controller(key_controller);
 
-        let open_action = gio::SimpleAction::new("open", None);
-
         {
             let result = result.clone();
             let _ = open_action.connect_activate(move |_, _| {
                 result.open();
             });
         }
-        window.add_action(&open_action);
 
         {
             let result = result.clone();
@@ -487,7 +482,6 @@ impl WindowExtend for Window {
                 open_settings(&result, action);
             });
         }
-        window.add_action(&settings_action);
 
         {
             let result = result.clone();
@@ -504,8 +498,6 @@ impl WindowExtend for Window {
         }
 
         result.rebuild_menubar();
-
-        result.update_actions();
         window.present();
         result.sync_fullscreen_from_settings();
         let _ = window.grab_focus();
@@ -636,97 +628,41 @@ impl WindowExtend for Window {
 
     fn update_actions(&self) {
         let state = self.state();
-        let state = state.borrow();
-        let tick = state.host.session().tick_metrics();
-        self.borrow().actions.close.set_enabled(tick.loaded);
-        self.borrow().actions.pause.set_enabled(tick.can_pause());
-        self.borrow().actions.resume.set_enabled(tick.can_resume());
-        self.borrow().actions.reset.set_enabled(tick.loaded);
-        // Coreless open is a designed state: gating on `loaded` would disagree
-        // with the shortcut, so the action stays enabled.
-        self.borrow().actions.debugger.set_enabled(true);
-        self.borrow().actions.history.set_enabled(true);
-        self.borrow().actions.state_create.set_enabled(tick.loaded);
-        self.borrow()
-            .actions
-            .state_save_active
-            .set_enabled(tick.loaded);
-        self.borrow()
-            .actions
-            .state_load_active
-            .set_enabled(state.active_slot_id().is_some());
-        self.borrow()
-            .actions
-            .state_select_slot
-            .set_enabled(tick.loaded && !state.slots().is_empty());
-        self.borrow()
-            .actions
-            .state_save_slot
-            .set_enabled(tick.loaded && !state.slots().is_empty());
-        self.borrow()
-            .actions
-            .state_load_slot
-            .set_enabled(tick.loaded && !state.slots().is_empty());
-        self.borrow()
-            .actions
-            .state_delete_slot
-            .set_enabled(tick.loaded && !state.slots().is_empty());
-
-        let language = state.settings_snapshot().shared.general.language;
-        rebuild_slot_menu(
-            &self.borrow().select_active_slot_menu,
-            state.slots(),
-            state.active_slot_id(),
-            "win.state-select-slot",
-            language,
-        );
-        rebuild_slot_menu(
-            &self.borrow().save_slot_menu,
-            state.slots(),
-            state.active_slot_id(),
-            "win.state-save-slot",
-            language,
-        );
-        rebuild_slot_menu(
-            &self.borrow().load_slot_menu,
-            state.slots(),
-            state.active_slot_id(),
-            "win.state-load-slot",
-            language,
-        );
-        rebuild_slot_menu(
-            &self.borrow().delete_slot_menu,
-            state.slots(),
-            state.active_slot_id(),
-            "win.state-delete-slot",
-            language,
-        );
-        drop(state);
+        let settings_open = self.borrow().aux.contains(AuxKind::Settings);
+        let menu = {
+            let mut state = state.borrow_mut();
+            let ctx = state.host.frame_ctx();
+            state.host.menu_update(&ctx, settings_open)
+        };
+        if let Some(menu) = menu {
+            let (mut visitor, presenter, mut next) = {
+                let core = self.borrow();
+                let visitor = GtkMenuVisitor {
+                    menubar: core.menubar.clone(),
+                    window: Some(core.window.clone()),
+                    application: Some(core.application.clone()),
+                    stack: Vec::new(),
+                };
+                let model = MenuModel::build(&menu, GTK_MENU_CAPABILITIES);
+                let next = core.menu_presenter.submit(model);
+                (visitor, core.menu_presenter.clone(), next)
+            };
+            // Both RefCells are released before synchronous native signals.
+            while let Some(plan) = next {
+                plan.visit(&mut visitor);
+                next = presenter.complete(plan);
+            }
+        }
         self.refresh_title();
     }
 
     fn rebuild_menubar(&self) {
-        let state = self.state();
-        let guarded = state.borrow();
-        let snapshot = guarded.settings_snapshot();
-        // In-place refill only, no set_menubar: replacing the top-level
-        // model at runtime leaves the visible menubar stale, while the
-        // binding set once at build propagates label updates on these same
-        // objects. Slot submenu contents are deliberately untouched here.
-        let core = self.borrow();
-        build_menu_model(
-            snapshot.shared.general.language,
-            &snapshot.shared.input.shortcuts.keyboard,
-            &core.menubar,
-            &core.select_active_slot_menu,
-            &core.save_slot_menu,
-            &core.load_slot_menu,
-            &core.delete_slot_menu,
-        );
+        self.update_actions();
     }
 
     fn refresh_title(&self) {
-        if let Some(title) = self.state().borrow_mut().title_update() {
+        let title = self.state().borrow_mut().title_update();
+        if let Some(title) = title {
             self.window().set_title(Some(title.as_str()));
         }
     }
@@ -804,6 +740,133 @@ impl WindowExtend for Window {
     }
 }
 
+pub(crate) const GTK_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
+    about: true,
+    dialog_ellipsis: false,
+};
+
+/// A stack over persistent native objects, keyed by host semantic identity.
+pub(crate) struct GtkMenuVisitor {
+    menubar: MenubarModels,
+    window: Option<gtk::ApplicationWindow>,
+    application: Option<gtk::Application>,
+    stack: Vec<(gio::Menu, bool)>,
+}
+
+impl GtkMenuVisitor {
+    #[cfg(test)]
+    pub(crate) fn new(menubar: MenubarModels) -> Self {
+        Self {
+            menubar,
+            window: None,
+            application: None,
+            stack: Vec::new(),
+        }
+    }
+
+    fn enabled(&self, name: &str, enabled: bool) {
+        let action = if let Some(name) = name.strip_prefix("app.") {
+            self.application
+                .as_ref()
+                .and_then(|app| app.lookup_action(name))
+        } else {
+            self.window
+                .as_ref()
+                .and_then(|window| window.lookup_action(name.strip_prefix("win.")?))
+        };
+        if let Some(action) = action.and_then(|action| action.downcast::<gio::SimpleAction>().ok())
+        {
+            action.set_enabled(enabled);
+        }
+    }
+}
+
+/// Native action names and target encoding are adapter policy, not host policy.
+fn native_action(command: MenuCommand) -> Option<(&'static str, Option<u64>)> {
+    use MenuCommand as C;
+    use SessionCommand as S;
+    Some(match command {
+        C::Open => ("win.open", None),
+        C::Close => ("win.close", None),
+        C::Settings => ("win.settings", None),
+        C::Debugger => ("win.debugger", None),
+        C::NotificationHistory => ("win.history", None),
+        C::Native(NativeRole::Quit) => ("app.quit", None),
+        C::Native(NativeRole::About) => ("app.about", None),
+        C::Session(command) => match command {
+            S::Pause => ("win.pause", None),
+            S::Resume => ("win.resume", None),
+            S::Reset => ("win.reset", None),
+            S::CreateSlot => ("win.state-create", None),
+            S::SaveActiveSlotOrNew => ("win.state-save-active", None),
+            S::LoadActiveSlot => ("win.state-load-active", None),
+            S::SelectActiveSlot(id) => ("win.state-select-slot", Some(id)),
+            S::SaveSlot(id) => ("win.state-save-slot", Some(id)),
+            S::LoadSlot(id) => ("win.state-load-slot", Some(id)),
+            S::DeleteSlot(id) => ("win.state-delete-slot", Some(id)),
+            S::TogglePause | S::SelectNextSlot | S::SelectPreviousSlot => return None,
+        },
+    })
+}
+
+impl MenuVisitor for GtkMenuVisitor {
+    fn begin_model(&mut self, rebuild: bool) {
+        if rebuild {
+            self.menubar.menu_model.remove_all();
+        }
+        self.stack.push((self.menubar.menu_model.clone(), rebuild));
+    }
+
+    fn begin_menu(&mut self, menu: &Submenu, rebuild: bool) {
+        let native = self.menubar.submenu(menu.id);
+        let (parent, parent_rebuild) = self.stack.last().expect("host menu parent");
+        if *parent_rebuild {
+            parent.append_submenu(Some(&menu.label), &native);
+        }
+        // Parameterized GTK actions also need gating when their submenu is empty.
+        let action = match menu.id {
+            MenuId::SelectSlot => Some("win.state-select-slot"),
+            MenuId::SaveSlot => Some("win.state-save-slot"),
+            MenuId::LoadSlot => Some("win.state-load-slot"),
+            MenuId::DeleteSlot => Some("win.state-delete-slot"),
+            _ => None,
+        };
+        if let Some(action) = action {
+            self.enabled(action, menu.enabled);
+        }
+        if rebuild {
+            native.remove_all();
+        }
+        self.stack.push((native, rebuild));
+    }
+
+    fn item(&mut self, item: &MenuItem) {
+        let action = item.command.and_then(native_action);
+        if let Some((name, _)) = action {
+            self.enabled(name, item.enabled);
+        }
+        let (parent, rebuild) = self.stack.last().expect("host item parent");
+        if *rebuild {
+            let native = gio::MenuItem::new(Some(&item.label), None);
+            if let Some((name, target)) = action {
+                native.set_action_and_target_value(
+                    Some(name),
+                    target.map(|id| id.to_variant()).as_ref(),
+                );
+            }
+            parent.append_item(&native);
+        }
+    }
+
+    fn end_menu(&mut self, _id: MenuId) {
+        self.stack.pop();
+    }
+    fn end_model(&mut self) {
+        self.stack.pop();
+        debug_assert!(self.stack.is_empty());
+    }
+}
+
 fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
     window.set_fullscreened(fullscreen);
 }
@@ -845,29 +908,6 @@ fn toggle_window_fullscreen(window: &Window) {
     apply_persisted_window_fullscreen(window, fullscreen);
 }
 
-fn rebuild_slot_menu(
-    menu: &gio::Menu,
-    slots: &[StateSlotSummary],
-    active_slot: Option<u64>,
-    action: &str,
-    language: nerust_settings_core::model::language::AppLanguage,
-) {
-    use nerust_settings_core::i18n::{UiText, text};
-    menu.remove_all();
-    if slots.is_empty() {
-        // An action-less item renders disabled: the empty submenu
-        // explains itself instead of showing a blank list.
-        let item = gio::MenuItem::new(Some(text(language, UiText::NoSaveSlots)), None);
-        menu.append_item(&item);
-        return;
-    }
-    for slot in slots {
-        let item = gio::MenuItem::new(Some(&slot_label(slot, active_slot)), None);
-        item.set_action_and_target_value(Some(action), Some(&slot.slot_id.to_variant()));
-        menu.append_item(&item);
-    }
-}
-
 /// Use the single modal queue, including its pause ownership and acknowledgement path.
 fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
     state.borrow_mut().host.session_mut().report_external_error(
@@ -879,10 +919,29 @@ fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State
 #[cfg(test)]
 mod tests {
     use gio::prelude::ActionExt as _;
-    use gtk::prelude::{DialogExt as _, GtkWindowExt as _};
+    use gtk::prelude::{ActionMapExt as _, Cast as _, DialogExt as _, GtkWindowExt as _};
 
-    use super::{KeyEventState, WindowActions, WindowExtend, key_event_pressed, rebuild_slot_menu};
+    use super::{
+        GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenuId, MenuModel, MenubarModels,
+        WindowActions, WindowExtend, key_event_pressed,
+    };
+    use nerust_frontend_host::application::MenuSig;
+
     use crate::surface_state::surface_gone;
+
+    #[test]
+    fn submenu_registry_is_lazy_and_shared_across_clones() {
+        let bars = MenubarModels::new();
+        let shared = bars.clone();
+        assert!(bars.models.borrow().is_empty());
+        let file = bars.submenu(MenuId::File);
+        assert_eq!(bars.models.borrow().len(), 1);
+        assert_eq!(shared.submenu(MenuId::File), file);
+        let states = shared.submenu(MenuId::States);
+        assert_ne!(states, file);
+        assert_eq!(bars.submenu(MenuId::States), states);
+        assert_eq!(bars.models.borrow().len(), 2);
+    }
 
     /// Externally destroyed dialogs keep their slot (no signal fires):
     /// reopening must rebuild instead of panicking on the slot borrow.
@@ -936,14 +995,263 @@ mod tests {
             gtk::Picture::new(),
             state,
             std::rc::Rc::new(MockPipelineFactory),
-            super::StateMenus {
-                select_active_slot_menu: gio::Menu::new(),
-                save_slot_menu: gio::Menu::new(),
-                load_slot_menu: gio::Menu::new(),
-                delete_slot_menu: gio::Menu::new(),
-            },
             super::MenubarModels::new(),
         ))
+    }
+
+    #[test]
+    fn action_enabled_notify_can_reenter_updates_without_controller_borrows() {
+        use std::{cell::Cell, rc::Rc};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let notifications = Rc::new(Cell::new(0));
+        let borrow_free = Rc::new(Cell::new(true));
+        let action = win.borrow().actions.open.clone();
+        let weak = Rc::downgrade(&win);
+        let count = notifications.clone();
+        let available = borrow_free.clone();
+        action.connect_enabled_notify(move |_| {
+            let win = weak.upgrade().unwrap();
+            let state = win.state();
+            let free = win.try_borrow_mut().is_ok()
+                && state.try_borrow_mut().is_ok()
+                && win.borrow().menubar.models.try_borrow_mut().is_ok();
+            available.set(available.get() && free);
+            count.set(count.get() + 1);
+            if free {
+                win.update_actions();
+            }
+        });
+        // A real host input change, not a direct call to the native setter.
+        let super::OpenRequest::Create(id) =
+            win.borrow_mut().aux.request_open(super::AuxKind::Settings)
+        else {
+            panic!("expected settings reservation");
+        };
+        win.update_actions();
+        assert_eq!(notifications.get(), 1);
+        assert!(borrow_free.get());
+        assert!(!action.is_enabled());
+        assert!(!win.borrow().actions.settings.is_enabled());
+        assert!(super::close_aux(&win, id));
+        win.update_actions();
+        assert_eq!(notifications.get(), 2);
+        assert!(borrow_free.get());
+        assert!(action.is_enabled());
+        assert!(win.borrow().actions.settings.is_enabled());
+    }
+
+    #[test]
+    fn unchanged_menu_models_emit_no_items_changed_and_relabels_allow_reentry() {
+        use gio::prelude::MenuModelExt as _;
+        use nerust_settings_core::model::language::AppLanguage;
+        use std::{cell::Cell, rc::Rc};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        // Auto and English may render identical strings. Establish an explicit
+        // baseline so the later language change must change the visible model.
+        let state = win.state();
+        let mut settings = state.borrow().settings_snapshot().clone();
+        settings.shared.general.language = AppLanguage::English;
+        state.borrow_mut().host.apply_settings(settings).unwrap();
+        win.update_actions();
+        let menubar = win.borrow().menubar.clone();
+        let models = [
+            menubar.menu_model.clone(),
+            menubar.submenu(MenuId::File),
+            menubar.submenu(MenuId::States),
+            menubar.submenu(MenuId::Emulation),
+            menubar.submenu(MenuId::Help),
+            menubar.submenu(MenuId::SelectSlot),
+            menubar.submenu(MenuId::SaveSlot),
+            menubar.submenu(MenuId::LoadSlot),
+            menubar.submenu(MenuId::DeleteSlot),
+        ];
+        let changes = Rc::new(Cell::new(0));
+        let borrow_free = Rc::new(Cell::new(true));
+        for model in &models {
+            let weak = Rc::downgrade(&win);
+            let changes = changes.clone();
+            let available = borrow_free.clone();
+            model.connect_items_changed(move |_, _, _, _| {
+                let win = weak.upgrade().unwrap();
+                let state = win.state();
+                let free = win.try_borrow_mut().is_ok()
+                    && state.try_borrow_mut().is_ok()
+                    && win.borrow().menubar.models.try_borrow_mut().is_ok();
+                available.set(available.get() && free);
+                changes.set(changes.get() + 1);
+                if free {
+                    win.update_actions();
+                }
+            });
+        }
+        win.update_actions();
+        win.rebuild_menubar();
+        let super::OpenRequest::Create(id) =
+            win.borrow_mut().aux.request_open(super::AuxKind::Settings)
+        else {
+            panic!("expected settings reservation");
+        };
+        win.update_actions();
+        assert!(super::close_aux(&win, id));
+        win.update_actions();
+        assert_eq!(
+            changes.get(),
+            0,
+            "action-only changes must not rebuild models"
+        );
+
+        let state = win.state();
+        let mut settings = state.borrow().settings_snapshot().clone();
+        settings.shared.general.language = AppLanguage::Japanese;
+        state.borrow_mut().host.apply_settings(settings).unwrap();
+        win.update_actions();
+        assert!(changes.get() > 0);
+        assert!(borrow_free.get());
+        for (model, id) in models[1..].iter().zip([
+            MenuId::File,
+            MenuId::States,
+            MenuId::Emulation,
+            MenuId::Help,
+            MenuId::SelectSlot,
+            MenuId::SaveSlot,
+            MenuId::LoadSlot,
+            MenuId::DeleteSlot,
+        ]) {
+            assert_eq!(model, &menubar.submenu(id));
+        }
+        changes.set(0);
+        win.update_actions();
+        win.rebuild_menubar();
+        assert_eq!(changes.get(), 0);
+    }
+
+    #[test]
+    fn action_notify_newer_settings_guard_wins_over_outer_render() {
+        use std::{cell::Cell, rc::Rc};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let action = win.borrow().actions.open.clone();
+        let quit = gio::SimpleAction::new("quit", None);
+        win.application().add_action(&quit);
+        let super::OpenRequest::Create(id) =
+            win.borrow_mut().aux.request_open(super::AuxKind::Settings)
+        else {
+            panic!("expected settings reservation");
+        };
+        let called = Rc::new(Cell::new(false));
+        let once = called.clone();
+        let weak = Rc::downgrade(&win);
+        action.connect_enabled_notify(move |_| {
+            if once.replace(true) {
+                return;
+            }
+            let win = weak.upgrade().unwrap();
+            assert!(win.try_borrow_mut().is_ok());
+            assert!(win.state().try_borrow_mut().is_ok());
+            assert!(super::close_aux(&win, id));
+            win.update_actions();
+        });
+        win.update_actions();
+        assert!(called.get());
+        assert!(action.is_enabled());
+        assert!(win.borrow().actions.settings.is_enabled());
+        assert!(win.borrow().actions.debugger.is_enabled());
+        assert!(win.borrow().actions.history.is_enabled());
+        assert!(
+            quit.is_enabled(),
+            "old outer traversal must not leave Quit disabled"
+        );
+        assert!(!win.borrow().actions.close.is_enabled());
+    }
+
+    #[test]
+    fn items_changed_callback_mutates_settings_and_newest_labels_win() {
+        use gio::prelude::MenuModelExt;
+        use nerust_settings_core::model::{input::ShortcutAction, language::AppLanguage};
+        use std::{cell::Cell, rc::Rc};
+        let Some(win) = bound_window() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
+        let state = win.state();
+        let mut initial = state.borrow().settings_snapshot().clone();
+        initial.shared.general.language = AppLanguage::English;
+        state
+            .borrow_mut()
+            .host
+            .apply_settings(initial.clone())
+            .unwrap();
+        win.update_actions();
+        let called = Rc::new(Cell::new(false));
+        let once = called.clone();
+        let weak = Rc::downgrade(&win);
+        let menubar = win.borrow().menubar.clone();
+        let model = menubar.submenu(MenuId::States);
+        model.connect_items_changed(move |_, _, _, _| {
+            if once.replace(true) {
+                return;
+            }
+            let win = weak.upgrade().unwrap();
+            assert!(win.try_borrow_mut().is_ok());
+            let state = win.state();
+            let mut newest = state.borrow().settings_snapshot().clone();
+            newest.shared.general.language = AppLanguage::English;
+            let binding = newest
+                .shared
+                .input
+                .shortcuts
+                .keyboard
+                .iter_mut()
+                .find(|binding| binding.action == ShortcutAction::OpenDebugger)
+                .unwrap();
+            binding.key = Some(nerust_keyboard::Key::F2);
+            state.borrow_mut().host.apply_settings(newest).unwrap();
+            win.update_actions();
+        });
+        initial.shared.general.language = AppLanguage::Japanese;
+        state.borrow_mut().host.apply_settings(initial).unwrap();
+        win.update_actions();
+        assert!(called.get(), "must exercise real items-changed reentry");
+        fn labels(model: &gio::MenuModel, result: &mut Vec<String>) {
+            for index in 0..model.n_items() {
+                if let Some(label) = model
+                    .item_attribute_value(index, "label", None)
+                    .and_then(|value| value.str().map(str::to_owned))
+                {
+                    result.push(label);
+                }
+                if let Some(child) = model.item_link(index, gio::MENU_LINK_SUBMENU) {
+                    labels(&child, result);
+                }
+            }
+        }
+        let root = win.borrow().menubar.menu_model.clone();
+        let mut rendered = Vec::new();
+        labels(root.upcast_ref(), &mut rendered);
+        assert!(rendered.iter().any(|label| label == "File"), "{rendered:?}");
+        assert!(
+            rendered.iter().any(|label| label == "Open Debugger (F2)"),
+            "{rendered:?}"
+        );
+        assert!(
+            !rendered
+                .iter()
+                .any(|label| label == "ファイル" || label.contains("(F4)")),
+            "{rendered:?}"
+        );
+        assert_eq!(
+            state.borrow().settings_snapshot().shared.general.language,
+            AppLanguage::English
+        );
+        win.update_actions();
     }
 
     #[test]
@@ -1013,8 +1321,8 @@ mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let action = gio::SimpleAction::new("settings-test", None);
-        super::open_settings(&win, &action);
+        let action = win.borrow().actions.settings.clone();
+        action.activate(None);
         let old_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
         let Some(NativeAux::Settings(old)) = win.borrow().aux.get(AuxKind::Settings).cloned()
         else {
@@ -1022,6 +1330,7 @@ mod tests {
         };
         super::open_settings(&win, &action);
         assert_eq!(win.borrow().aux.route_id(AuxKind::Settings), Some(old_id));
+        win.update_actions();
         assert!(!action.is_enabled());
         old.response(gtk::ResponseType::Cancel);
         assert!(action.is_enabled());
@@ -1128,6 +1437,8 @@ mod tests {
         // construction and wiring together, never just one side.
         let actions = WindowActions::new();
         for (action, name) in [
+            (&actions.open, "open"),
+            (&actions.settings, "settings"),
             (&actions.close, "close"),
             (&actions.pause, "pause"),
             (&actions.resume, "resume"),
@@ -1146,24 +1457,38 @@ mod tests {
         }
     }
 
-    fn slot_menu_count(menu: &gio::Menu) -> i32 {
-        use gio::prelude::MenuModelExt;
-        menu.n_items()
-    }
-
     #[test]
     fn slot_menu_explains_empty_state() {
+        use gio::prelude::MenuModelExt;
         use nerust_settings_core::model::language::AppLanguage;
-        let menu = gio::Menu::new();
-        rebuild_slot_menu(
-            &menu,
-            &[],
-            None,
-            "win.state-save-slot",
-            AppLanguage::English,
-        );
+        let sig = MenuSig {
+            loaded: true,
+            paused: false,
+            settings_open: false,
+            language: AppLanguage::English,
+            active_slot: None,
+            slots: Vec::new().into(),
+            shortcuts: Vec::new().into(),
+        };
+        let bars = MenubarModels::new();
+        MenuModel::build(&sig, GTK_MENU_CAPABILITIES)
+            .visit(None, &mut GtkMenuVisitor::new(bars.clone()));
         // One disabled item names the empty state, never a blank list.
-        assert_eq!(slot_menu_count(&menu), 1);
+        for id in [
+            MenuId::SelectSlot,
+            MenuId::SaveSlot,
+            MenuId::LoadSlot,
+            MenuId::DeleteSlot,
+        ] {
+            let menu = bars.submenu(id);
+            assert_eq!(menu.n_items(), 1);
+            assert!(menu.item_attribute_value(0, "action", None).is_none());
+            assert!(menu.item_attribute_value(0, "target", None).is_none());
+            assert_eq!(
+                menu.item_attribute_value(0, "label", None).unwrap().str(),
+                Some("No save slots yet")
+            );
+        }
     }
 
     #[test]
@@ -1188,14 +1513,34 @@ mod tests {
                 emulator_version: "test".to_string(),
             },
         ];
-        let menu = gio::Menu::new();
-        rebuild_slot_menu(
-            &menu,
-            &slots,
-            Some(2),
-            "win.state-load-slot",
-            AppLanguage::English,
-        );
-        assert_eq!(slot_menu_count(&menu), 2);
+        let sig = MenuSig {
+            loaded: true,
+            paused: false,
+            settings_open: false,
+            language: AppLanguage::English,
+            active_slot: Some(2),
+            slots: slots.into(),
+            shortcuts: Vec::new().into(),
+        };
+        let bars = MenubarModels::new();
+        MenuModel::build(&sig, GTK_MENU_CAPABILITIES)
+            .visit(None, &mut GtkMenuVisitor::new(bars.clone()));
+        let menu = bars.submenu(MenuId::LoadSlot);
+        use gio::prelude::MenuModelExt;
+        assert_eq!(menu.n_items(), 2);
+        for (index, id) in [(0, 1_u64), (1, 2_u64)] {
+            assert_eq!(
+                menu.item_attribute_value(index, "target", None)
+                    .unwrap()
+                    .get::<u64>(),
+                Some(id)
+            );
+            assert_eq!(
+                menu.item_attribute_value(index, "action", None)
+                    .unwrap()
+                    .str(),
+                Some("win.state-load-slot")
+            );
+        }
     }
 }

@@ -17,7 +17,9 @@ use nerust_frontend_host::{
     debugger::{DebuggerDriver, DebuggerEvent},
     frame::FrameCtx,
     loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn},
+    menu::{MenuCapabilities, MenuId, MenuItem, MenuModel, MenuVisitor, Submenu},
     osd::{ModalAdvance, ModalPresentation, ModalToken, OsdNotifications},
+    widgets::MenuPresenter,
 };
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
@@ -43,6 +45,36 @@ struct NativeAdapter {
     common: Rc<RefCell<Common>>,
     redraws: usize, // Native resource/effect bookkeeping, not controller state.
     modals: usize,
+    menus: MenuPresenter,
+    menu_items: usize,
+}
+
+// Replace this visitor's operations with native menu APIs, not a second menu
+// definition. Every operation may synchronously call back into Common.
+struct NativeMenus {
+    common: Rc<RefCell<Common>>,
+    depth: usize,
+    items: usize,
+}
+
+impl MenuVisitor for NativeMenus {
+    fn begin_model(&mut self, _rebuild: bool) {
+        assert!(self.common.try_borrow_mut().is_ok());
+        assert_eq!(self.depth, 0);
+    }
+    fn begin_menu(&mut self, _menu: &Submenu, _rebuild: bool) {
+        self.depth += 1;
+    }
+    fn item(&mut self, _item: &MenuItem) {
+        assert!(self.common.try_borrow_mut().is_ok());
+        self.items += 1;
+    }
+    fn end_menu(&mut self, _id: MenuId) {
+        self.depth -= 1;
+    }
+    fn end_model(&mut self) {
+        assert_eq!(self.depth, 0);
+    }
 }
 
 // A real adapter creates a dialog and wires its response callback here. This
@@ -88,9 +120,34 @@ impl LoopHost for NativeAdapter {
         self.common.borrow_mut().app.frame_ctx()
     }
     fn chrome(&mut self, ctx: &FrameCtx) {
-        let title = self.common.borrow_mut().app.title_update(&ctx.tick());
+        let (title, menu) = {
+            let mut state = self.common.borrow_mut();
+            (
+                state.app.title_update(&ctx.tick()),
+                state.app.menu_update(ctx, false),
+            )
+        };
         if let Some(title) = title {
             println!("native title: {title}");
+        }
+        if let Some(menu) = menu {
+            let mut next = self.menus.submit(MenuModel::build(
+                &menu,
+                MenuCapabilities {
+                    about: false,
+                    dialog_ellipsis: false,
+                },
+            ));
+            let mut visitor = NativeMenus {
+                common: self.common.clone(),
+                depth: 0,
+                items: 0,
+            };
+            while let Some(plan) = next {
+                plan.visit(&mut visitor);
+                next = self.menus.complete(plan);
+            }
+            self.menu_items += visitor.items;
         }
     }
     fn pump_debug(&mut self) -> WakeNeed {
@@ -189,11 +246,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })),
         redraws: 0,
         modals: 0,
+        menus: MenuPresenter::default(),
+        menu_items: 0,
     };
     native.common.borrow_mut().app.note_main_departure();
     let idle = drive_turn(&mut native);
     assert_eq!(idle.deadline, None);
     assert!(!idle.wants_redraw);
+    assert!(native.menu_items > 0);
+    let menu_items = native.menu_items;
     {
         let mut state = native.common.borrow_mut();
         let Common { app, debugger, .. } = &mut *state;
@@ -214,6 +275,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     native.common.borrow_mut().app.note_main_arrival();
     assert!(drive_turn(&mut native).wants_redraw);
     assert_eq!(native.redraws, 1);
-    println!("verified: idle turn, debugger poll, synchronous modal ACK, active redraw");
+    assert_eq!(
+        native.menu_items, menu_items,
+        "unchanged menus are not rebuilt"
+    );
+    println!(
+        "verified: menu visitor, idle turn, debugger poll, synchronous modal ACK, active redraw"
+    );
     Ok(())
 }
