@@ -1,6 +1,6 @@
 [package]
 authors.workspace = true
-description = "Platform-agnostic keyboard key code type with From implementations"
+description = "Re-export shim for the framework-owned key type (wakui::Key)"
 edition.workspace = true
 license.workspace = true
 name = "nerust_keyboard"
@@ -10,15 +10,6 @@ version.workspace = true
 
 [features]
 default = []
-error = ["dep:thiserror"]
-gdk = ["dep:gdk", "error"]
-iced = ["dep:iced", "error"]
 
 [dependencies]
-gdk = { optional = true, workspace = true }
-iced = { optional = true, workspace = true }
-serde = { features = ["derive"], workspace = true }
-thiserror = { optional = true, workspace = true }
-
-[dev-dependencies]
-strum.workspace = true
+wakui.workspace = true

@@ -136,7 +136,7 @@ impl WidgetBinding {
                 if !capturing {
                     return glib::Propagation::Proceed;
                 }
-                if let Ok(key) = nerust_keyboard::Key::try_from(key) {
+                if let Some(key) = crate::keyboard::key_from_gdk(key) {
                     binding.send(ControlEvent::capture_key(key));
                 }
                 glib::Propagation::Stop

@@ -900,7 +900,7 @@ impl WindowExtend for Window {
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
         // No hardcoded F-keys: the debugger open rides the shortcut schema
         // (default F4, rebindable in Settings), so a user binding always wins.
-        if let Ok(controller_input) = key.try_into() {
+        if let Some(controller_input) = crate::keyboard::key_from_gdk(key) {
             self.event_sink()
                 .send(EventCommand::Session(SessionEvent::Keyboard {
                     key: controller_input,

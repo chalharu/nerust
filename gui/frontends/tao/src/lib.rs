@@ -12,6 +12,7 @@ mod event;
     target_os = "openbsd"
 ))]
 mod gtk_embed;
+mod keyboard;
 mod menu;
 mod ports;
 

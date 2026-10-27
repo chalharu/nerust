@@ -109,7 +109,7 @@ impl WidgetBinding for ControlsBinding {
 }
 
 pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical) -> Option<Key> {
-    physical.try_into().ok()
+    crate::keyboard::key_from_physical(physical)
 }
 
 #[cfg(test)]

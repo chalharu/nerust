@@ -1,0 +1,14 @@
+[package]
+authors.workspace = true
+description = "Cross-platform native UI framework core: controls, binding, mapper, turn driver"
+edition.workspace = true
+license.workspace = true
+name = "wakui"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { features = ["derive"], workspace = true }
+
+[dev-dependencies]
+strum.workspace = true
