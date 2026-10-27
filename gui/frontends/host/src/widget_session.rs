@@ -14,10 +14,11 @@ use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine};
 use nerust_settings_core::model::language::AppLanguage;
 
 use crate::{
+    binding::{BindingTarget as _, ViewDefinition as _},
     control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
     debugger::lock_recovered,
     focus::AuxKind,
-    history::HistoryModel,
+    history::{HistoryEffect, HistoryEvent, HistoryModel},
     settings::{SettingsController, SettingsEffect, SettingsEvent, SettingsMailbox},
     window::Window,
 };
@@ -136,13 +137,51 @@ impl WindowMailbox {
     }
 }
 
+impl crate::binding::Invalidatable for WindowMailbox {
+    fn invalidate(&self) {
+        WindowMailbox::invalidate(self);
+    }
+
+    fn take_invalidated(&self) -> bool {
+        WindowMailbox::take_invalidated(self)
+    }
+}
+
 enum State {
     Settings(Box<SettingsController>),
-    History {
-        lines: Arc<[HistoryLine]>,
-        language: AppLanguage,
-        filter: HistoryFilter,
-    },
+    History(HistorySession),
+}
+
+/// Bound history instance. Owns filter state and mailbox effects;
+/// the view itself stays a fresh `HistoryModel` snapshot.
+pub(crate) struct HistorySession {
+    lines: Arc<[HistoryLine]>,
+    language: AppLanguage,
+    filter: HistoryFilter,
+    mailbox: WindowMailbox,
+}
+
+impl crate::binding::BindingTarget for HistorySession {
+    type DomainEvent = HistoryEvent;
+    type Effect = HistoryEffect;
+
+    fn apply(&mut self, event: HistoryEvent) -> Option<HistoryEffect> {
+        match event {
+            HistoryEvent::SetFilter(filter) => {
+                self.filter = filter;
+            }
+            HistoryEvent::Clear => {
+                if let MailboxSource::History { clear, .. } = &self.mailbox.0.source {
+                    clear.store(true, Ordering::Release);
+                }
+            }
+            HistoryEvent::Close => {
+                self.mailbox.request_close();
+            }
+        }
+        self.mailbox.invalidate();
+        None
+    }
 }
 
 /// Native code owns one of these, without knowing which domain controller it wraps.
@@ -166,18 +205,20 @@ impl WidgetSession {
     }
 
     pub(crate) fn history(lines: Arc<[HistoryLine]>, language: AppLanguage) -> Self {
+        let mailbox = WindowMailbox::new(MailboxSource::History {
+            close: AtomicBool::new(false),
+            invalidated: AtomicBool::new(false),
+            clear: AtomicBool::new(false),
+        });
         Self {
-            state: State::History {
+            state: State::History(HistorySession {
                 lines,
                 language,
                 filter: HistoryFilter::All,
-            },
-            scene: RefCell::new(Default::default()),
-            mailbox: WindowMailbox::new(MailboxSource::History {
-                close: AtomicBool::new(false),
-                invalidated: AtomicBool::new(false),
-                clear: AtomicBool::new(false),
+                mailbox: mailbox.clone(),
             }),
+            scene: RefCell::new(Default::default()),
+            mailbox,
             picker: None,
         }
     }
@@ -190,11 +231,11 @@ impl WidgetSession {
         let mut scene = self.scene.borrow_mut();
         let mut screen = match &self.state {
             State::Settings(controller) => scene.settings(&controller.screen()).0,
-            State::History {
-                lines,
-                language,
-                filter,
-            } => scene.history(&HistoryModel::build(lines, *language, *filter)),
+            State::History(session) => scene.history(&HistoryModel::build(
+                &session.lines,
+                session.language,
+                session.filter,
+            )),
         };
         if let Some(error) = lock_recovered(&self.mailbox.0.error).clone() {
             screen.message = Some(error);
@@ -209,21 +250,17 @@ impl WidgetSession {
     pub(crate) fn kind(&self) -> AuxKind {
         match self.state {
             State::Settings(_) => AuxKind::Settings,
-            State::History { .. } => AuxKind::History,
+            State::History(_) => AuxKind::History,
         }
     }
 
     pub(crate) fn refresh_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage) {
-        if let State::History {
-            lines: current,
-            language: current_language,
-            ..
-        } = &mut self.state
-            && (*current != lines || *current_language != language)
+        if let State::History(session) = &mut self.state
+            && (session.lines != lines || session.language != language)
         {
-            *current = lines;
-            *current_language = language;
-            self.mailbox.invalidate();
+            session.lines = lines;
+            session.language = language;
+            session.mailbox.invalidate();
         }
     }
 
@@ -243,8 +280,9 @@ impl WidgetSession {
         if !screen.control(id).is_some_and(|c| c.accepts(&event.input)) {
             return Vec::new();
         }
-        if lock_recovered(&self.mailbox.0.error).take().is_some() {
-            self.mailbox.invalidate();
+        let mailbox = self.mailbox.clone();
+        if lock_recovered(&mailbox.0.error).take().is_some() {
+            mailbox.invalidate();
         }
         match &mut self.state {
             State::Settings(controller) => {
@@ -262,7 +300,7 @@ impl WidgetSession {
                 let mut effects = Vec::new();
                 for event in events.into_iter().flatten() {
                     if let Some(SettingsEffect::BrowseStorageDirectory { title }) =
-                        controller.update(event)
+                        controller.apply(event)
                     {
                         let request = crate::control::Id::fresh();
                         self.picker = Some((id, request));
@@ -275,20 +313,23 @@ impl WidgetSession {
                 }
                 effects
             }
-            State::History { filter, .. } => {
-                let mut scene = self.scene.borrow_mut();
-                if id == scene.history_filter() {
-                    if let ControlInput::Select(index) = event.input {
-                        *filter = HistoryFilter::all()[index];
-                    }
-                } else if id == scene.history_clear() {
-                    if let MailboxSource::History { clear, .. } = &self.mailbox.0.source {
-                        clear.store(true, Ordering::Release);
-                    }
-                } else if id == scene.history_close() {
-                    self.mailbox.request_close();
+            State::History(session) => {
+                let action = match self.scene.borrow_mut().history_action(id) {
+                    Some(action) => action,
+                    None => return Vec::new(),
+                };
+                let input = match scene::history_input(event.input) {
+                    Some(input) => input,
+                    None => return Vec::new(),
+                };
+                let model = HistoryModel::build(&session.lines, session.language, session.filter);
+                let events = match model.bind(&action, input) {
+                    Some(events) => events,
+                    None => return Vec::new(),
+                };
+                for event in events {
+                    let _ = session.apply(event);
                 }
-                self.mailbox.invalidate();
                 Vec::new()
             }
         }

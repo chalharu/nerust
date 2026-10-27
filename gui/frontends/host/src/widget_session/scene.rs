@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::history::HistoryModel;
+use crate::history::{HistoryInput, HistoryModel, HistoryViewId};
 use crate::{control::*, settings::*};
 use nerust_gui_shell::session::osd::HistoryRowView;
 use nerust_gui_viewmodel::settings::dto::BindingValueView;
@@ -239,6 +239,19 @@ impl SceneBuilder {
     }
     pub(super) fn history_close(&mut self) -> ControlId {
         self.ids.id(Key::HistoryClose)
+    }
+
+    /// Map a native control ID back to the domain history action.
+    pub(super) fn history_action(&mut self, id: ControlId) -> Option<HistoryViewId> {
+        if id == self.history_filter() {
+            Some(HistoryViewId::Filter)
+        } else if id == self.history_clear() {
+            Some(HistoryViewId::Clear)
+        } else if id == self.history_close() {
+            Some(HistoryViewId::Close)
+        } else {
+            None
+        }
     }
 
     pub(super) fn history(&mut self, model: &HistoryModel) -> ControlScreen {
@@ -492,6 +505,15 @@ pub(super) fn settings_input(
         I::CaptureClear => O::CaptureClear,
         I::CaptureKey(v) => O::CaptureKey(v),
         I::DirectorySelected { .. } => return None,
+    })
+}
+
+pub(super) fn history_input(input: crate::control::ControlInput) -> Option<HistoryInput> {
+    use crate::control::ControlInput as I;
+    Some(match input {
+        I::Select(index) => HistoryInput::Select(index),
+        I::Activate => HistoryInput::Activate,
+        _ => return None,
     })
 }
 
