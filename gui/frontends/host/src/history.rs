@@ -91,6 +91,53 @@ pub trait HistoryVisitor {
     fn end(&mut self);
 }
 
+/// Domain-side identity for bindable history controls.
+/// Native code only sees opaque framework IDs; this is the view-defs side key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryViewId {
+    Filter,
+    Clear,
+    Close,
+}
+
+/// Framework-agnostic input for history controls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryInput {
+    Select(usize),
+    Activate,
+}
+
+/// Domain events produced by history binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryEvent {
+    SetFilter(HistoryFilter),
+    Clear,
+    Close,
+}
+
+/// History produces no native effects. Uninhabited and future-proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryEffect {}
+
+impl crate::binding::ViewDefinition for HistoryModel {
+    type ViewId = HistoryViewId;
+    type ViewInput = HistoryInput;
+    type DomainEvent = HistoryEvent;
+
+    fn bind(&self, id: &HistoryViewId, input: HistoryInput) -> Option<Vec<HistoryEvent>> {
+        match (id, input) {
+            (HistoryViewId::Filter, HistoryInput::Select(index)) => {
+                Some(vec![HistoryEvent::SetFilter(
+                    self.options.get(index)?.filter,
+                )])
+            }
+            (HistoryViewId::Clear, HistoryInput::Activate) => Some(vec![HistoryEvent::Clear]),
+            (HistoryViewId::Close, HistoryInput::Activate) => Some(vec![HistoryEvent::Close]),
+            _ => None,
+        }
+    }
+}
+
 /// Input-identity gate only: no retained model, native state or presentation borrow.
 /// Invalidate when reopening or switching sessions, or if an update was not delivered.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

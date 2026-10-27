@@ -14,7 +14,10 @@ use nerust_settings_core::{
 };
 
 use super::*;
-use crate::settings::{InputPageSection, InputTab, SettingsEvent as E};
+use crate::{
+    binding::ViewDefinition,
+    settings::{InputPageSection, InputTab, SettingsEvent as E},
+};
 
 type Id = SettingsControlId;
 type Kind = SettingsControlKind;
@@ -349,7 +352,10 @@ fn all_static_bindings_emit_the_exact_typed_event() {
         events(screen.bind(&id, input), vec![event]);
     }
     for page in &screen.pages {
-        events(page.select.bind(I::Activate), vec![E::SelectPage(page.id)]);
+        events(
+            screen.bind(&page.select.id, I::Activate),
+            vec![E::SelectPage(page.id)],
+        );
     }
     for row in &controller.vm.shortcuts.view.get().rows {
         let id = Id::Binding(row.target.clone());
@@ -383,27 +389,33 @@ fn all_controls_reject_wrong_kind_bad_indices_and_numeric_overflow() {
     prepare(&mut controller);
     let screen = controller.screen();
     for control in inventory(&screen).controls {
-        assert!(control.bind(I::CaptureKey(Key::Space)).is_none());
+        assert!(
+            screen
+                .bind(&control.id, I::CaptureKey(Key::Space))
+                .is_none()
+        );
         match control.kind {
-            Kind::Toggle { .. } => assert!(control.bind(I::Select(0)).is_none()),
+            Kind::Toggle { .. } => assert!(screen.bind(&control.id, I::Select(0)).is_none()),
             Kind::Choice { ref choices, .. } => {
-                assert!(control.bind(I::Bool(true)).is_none());
-                assert!(control.bind(I::Select(choices.len())).is_none());
-                assert!(control.bind(I::Select(usize::MAX)).is_none());
+                assert!(screen.bind(&control.id, I::Bool(true)).is_none());
+                assert!(screen.bind(&control.id, I::Select(choices.len())).is_none());
+                assert!(screen.bind(&control.id, I::Select(usize::MAX)).is_none());
             }
             Kind::Number { min, max, .. } => {
-                assert!(control.bind(I::Text("12".into())).is_none());
-                assert!(control.bind(I::Number(max + 1)).is_none());
-                assert!(control.bind(I::Number(u32::MAX)).is_none());
+                assert!(screen.bind(&control.id, I::Text("12".into())).is_none());
+                assert!(screen.bind(&control.id, I::Number(max + 1)).is_none());
+                assert!(screen.bind(&control.id, I::Number(u32::MAX)).is_none());
                 if min > 0 {
-                    assert!(control.bind(I::Number(min - 1)).is_none());
+                    assert!(screen.bind(&control.id, I::Number(min - 1)).is_none());
                 }
-                assert!(control.bind(I::Number(min)).is_some());
-                assert!(control.bind(I::Number(max)).is_some());
+                assert!(screen.bind(&control.id, I::Number(min)).is_some());
+                assert!(screen.bind(&control.id, I::Number(max)).is_some());
             }
-            Kind::Text { .. } => assert!(control.bind(I::Number(0)).is_none()),
-            Kind::Binding { .. } | Kind::Action => assert!(control.bind(I::Bool(true)).is_none()),
-            Kind::Note { .. } => assert!(control.bind(I::Activate).is_none()),
+            Kind::Text { .. } => assert!(screen.bind(&control.id, I::Number(0)).is_none()),
+            Kind::Binding { .. } | Kind::Action => {
+                assert!(screen.bind(&control.id, I::Bool(true)).is_none())
+            }
+            Kind::Note { .. } => assert!(screen.bind(&control.id, I::Activate).is_none()),
         }
     }
     assert!(
@@ -479,10 +491,10 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
         );
         for (index, choice) in slot.choices.iter().enumerate() {
             if slot.occupied_by_other_slot {
-                assert!(c.bind(I::Select(index)).is_none());
+                assert!(screen.bind(&id, I::Select(index)).is_none());
             } else {
                 events(
-                    c.bind(I::Select(index)),
+                    screen.bind(&id, I::Select(index)),
                     vec![
                         E::SelectInputTab(0),
                         E::SetControllerSlot {
@@ -530,7 +542,7 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
                 ]
             }
         };
-        events(tab.select.bind(I::Activate), expected);
+        events(screen.bind(&tab.select.id, I::Activate), expected);
     }
     for row in input.sections.iter().flat_map(|s| &s.rows) {
         let id = Id::Binding(row.target.clone());
@@ -571,7 +583,7 @@ fn occupied_multiport_controller_is_disabled_and_topology_changes_are_scoped() {
                 let c = screen.control(&id).unwrap();
                 assert!(!c.metadata.enabled);
                 assert!(c.metadata.help.is_some());
-                assert!(c.bind(I::Select(0)).is_none());
+                assert!(screen.bind(&id, I::Select(0)).is_none());
                 for id in original_ids
                     .iter()
                     .filter(|id| !matches!(id, Id::Binding(_)))

@@ -196,20 +196,39 @@ pub struct SettingsControl {
     pub metadata: SettingsMetadata,
     pub display: SettingsDisplay,
     pub kind: SettingsControlKind,
-    binding: ControlBinding,
-    context: Vec<SettingsEvent>,
 }
 
-impl SettingsControl {
+/// Domain binding table, kept separate from the pure view tree.
+/// The screen owns both; controls never carry their own binding.
+#[derive(Debug, Clone, Default)]
+pub struct BindingTable(Vec<(SettingsControlId, ControlBinding, Vec<SettingsEvent>)>);
+
+impl BindingTable {
+    fn push(
+        &mut self,
+        id: SettingsControlId,
+        binding: ControlBinding,
+        context: Vec<SettingsEvent>,
+    ) {
+        self.0.push((id, binding, context));
+    }
+
     /// Rejects wrong input kinds, unknown indices, invalid ranges, and disabled
     /// or intrinsically hidden controls. Apply the returned events in order.
-    pub fn bind(&self, input: ControlInput) -> Option<Vec<SettingsEvent>> {
+    pub(crate) fn bind(
+        &self,
+        screen: &SettingsScreen,
+        id: &SettingsControlId,
+        input: ControlInput,
+    ) -> Option<Vec<SettingsEvent>> {
         use ControlInput as I;
         use SettingsControlKind as K;
-        if !self.metadata.enabled || !self.metadata.visible {
+        let control = screen.control(id)?;
+        if !control.metadata.enabled || !control.metadata.visible {
             return None;
         }
-        let event = match (&self.kind, &self.binding, input) {
+        let (_, binding, context) = self.0.iter().find(|(entry, _, _)| entry == id)?;
+        let event = match (&control.kind, binding, input) {
             (K::Toggle { .. }, ControlBinding::Toggle(event), I::Bool(value)) => event(value),
             (K::Choice { choices, .. }, ControlBinding::Choice(events), I::Select(index)) => {
                 choices.get(index)?;
@@ -246,7 +265,7 @@ impl SettingsControl {
             ) => SettingsEvent::CaptureKey(key),
             _ => return None,
         };
-        let mut events = self.context.clone();
+        let mut events = context.clone();
         events.push(event);
         Some(events)
     }
@@ -310,6 +329,8 @@ pub struct SettingsScreen {
     pub message: Option<String>,
     pub capture: CaptureStateView,
     pub footer: SettingsLayout,
+    /// Domain bindings, separate from the pure view tree above.
+    pub bindings: BindingTable,
 }
 
 impl SettingsController {
@@ -345,14 +366,21 @@ impl SettingsScreen {
         find_layout(&self.footer, id)
     }
 
-    pub fn bind(&self, id: &SettingsControlId, input: ControlInput) -> Option<Vec<SettingsEvent>> {
-        self.control(id)?.bind(input)
-    }
-
     /// Native keyboard adapters need no knowledge of the selected input page.
     pub fn bind_capture_key(&self, key: Key) -> Option<Vec<SettingsEvent>> {
         self.capture.target.as_ref()?;
         Some(vec![SettingsEvent::CaptureKey(key)])
+    }
+}
+
+impl crate::binding::ViewDefinition for SettingsScreen {
+    type ViewId = SettingsControlId;
+    type ViewInput = ControlInput;
+    type DomainEvent = SettingsEvent;
+
+    /// Resolve retained native IDs against current values before handling input.
+    fn bind(&self, id: &SettingsControlId, input: ControlInput) -> Option<Vec<SettingsEvent>> {
+        self.bindings.bind(self, id, input)
     }
 }
 

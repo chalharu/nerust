@@ -16,15 +16,32 @@ fn metadata(label: &str) -> SettingsMetadata {
     }
 }
 
-fn control(id: Id, label: String, kind: Kind, binding: ControlBinding) -> SettingsControl {
-    SettingsControl {
-        id,
-        metadata: metadata(&label),
-        label,
-        display: SettingsDisplay::Standard,
-        kind,
+fn control(id: Id, label: String, kind: Kind, binding: ControlBinding) -> Draft {
+    Draft {
+        view: SettingsControl {
+            id,
+            metadata: metadata(&label),
+            label,
+            display: SettingsDisplay::Standard,
+            kind,
+        },
         binding,
         context: Vec::new(),
+    }
+}
+
+/// View/binding pair under construction. `finish` registers the binding
+/// into the screen table and returns the pure view for the tree.
+struct Draft {
+    view: SettingsControl,
+    binding: ControlBinding,
+    context: Vec<E>,
+}
+
+impl Draft {
+    fn finish(self, table: &mut BindingTable) -> SettingsControl {
+        table.push(self.view.id.clone(), self.binding, self.context);
+        self.view
     }
 }
 
@@ -47,7 +64,7 @@ fn row(control: SettingsControl) -> SettingsNode {
     ))
 }
 
-fn toggle(id: Id, label: String, value: bool, event: fn(bool) -> E) -> SettingsControl {
+fn toggle(id: Id, label: String, value: bool, event: fn(bool) -> E) -> Draft {
     control(
         id,
         label,
@@ -62,7 +79,7 @@ fn choice<T: Clone + Eq>(
     choices: &[ChoiceView<T>],
     value: &T,
     event: impl Fn(ChoiceView<T>) -> E,
-) -> SettingsControl {
+) -> Draft {
     control(
         id,
         label,
@@ -74,7 +91,7 @@ fn choice<T: Clone + Eq>(
     )
 }
 
-fn number(id: Id, label: String, value: u32, event: fn(u32) -> E) -> SettingsControl {
+fn number(id: Id, label: String, value: u32, event: fn(u32) -> E) -> Draft {
     let (min, max, step, unit) = match id {
         Id::Volume => (0, 100, 1, "%"),
         Id::Latency => (10, 200, 1, "ms"),
@@ -99,55 +116,76 @@ fn number(id: Id, label: String, value: u32, event: fn(u32) -> E) -> SettingsCon
     )
 }
 
-fn note(id: Id, label: String, value: String) -> SettingsControl {
+fn note(id: Id, label: String, value: String) -> Draft {
     let accessible_label = if label.is_empty() {
         value.clone()
     } else {
         format!("{label}: {value}")
     };
     let mut result = control(id, label, Kind::Note { text: value }, ControlBinding::None);
-    result.metadata.accessible_label = accessible_label;
-    result.display = SettingsDisplay::Note;
+    result.view.metadata.accessible_label = accessible_label;
+    result.view.display = SettingsDisplay::Note;
     result
 }
 
-fn action(id: Id, label: String, event: E) -> SettingsControl {
+fn action(id: Id, label: String, event: E) -> Draft {
     control(id, label, Kind::Action, ControlBinding::Action(event))
 }
 
-fn enabled(mut control: SettingsControl, enabled: bool) -> SettingsControl {
-    control.metadata.enabled = enabled;
-    control
+fn enabled(mut draft: Draft, enabled: bool) -> Draft {
+    draft.view.metadata.enabled = enabled;
+    draft
 }
 
-fn visible(mut control: SettingsControl, visible: bool) -> SettingsControl {
-    control.metadata.visible = visible;
-    control
+fn visible(mut draft: Draft, visible: bool) -> Draft {
+    draft.view.metadata.visible = visible;
+    draft
 }
 
 pub(super) fn build(controller: &SettingsController) -> SettingsScreen {
     let language = controller.language();
     let t = |key| text(language, key).to_string();
     let validation = controller.validation_banner();
+    let mut table = BindingTable::default();
     let definitions = [
-        (SettingsPage::General, UiText::General, general(controller)),
-        (SettingsPage::Input, UiText::Input, input(controller)),
-        (SettingsPage::Video, UiText::Video, video(controller)),
-        (SettingsPage::Audio, UiText::Audio, audio(controller)),
+        (
+            SettingsPage::General,
+            UiText::General,
+            general(controller, &mut table),
+        ),
+        (
+            SettingsPage::Input,
+            UiText::Input,
+            input(controller, &mut table),
+        ),
+        (
+            SettingsPage::Video,
+            UiText::Video,
+            video(controller, &mut table),
+        ),
+        (
+            SettingsPage::Audio,
+            UiText::Audio,
+            audio(controller, &mut table),
+        ),
         (
             SettingsPage::Notifications,
             UiText::Notifications,
-            notifications(controller),
+            notifications(controller, &mut table),
         ),
-        (SettingsPage::System, UiText::System, systems(controller)),
+        (
+            SettingsPage::System,
+            UiText::System,
+            systems(controller, &mut table),
+        ),
     ];
     let mut cancel = action(Id::Cancel, t(UiText::Cancel), E::Cancel);
-    cancel.display = SettingsDisplay::Secondary;
+    cancel.view.display = SettingsDisplay::Secondary;
     let mut submit = enabled(
         action(Id::Submit, t(UiText::Ok), E::Submit),
         validation.can_submit,
     );
-    submit.display = SettingsDisplay::Primary;
+    submit.view.display = SettingsDisplay::Primary;
     SettingsScreen {
         title: t(UiText::Preferences),
         language,
@@ -157,7 +195,7 @@ pub(super) fn build(controller: &SettingsController) -> SettingsScreen {
                 id,
                 label: t(key),
                 selected: controller.page == id,
-                select: action(Id::Page(id), t(key), E::SelectPage(id)),
+                select: action(Id::Page(id), t(key), E::SelectPage(id)).finish(&mut table),
                 body: layout(SettingsLayoutId::Page(id), children),
             })
             .collect(),
@@ -170,12 +208,16 @@ pub(super) fn build(controller: &SettingsController) -> SettingsScreen {
         capture: controller.vm.capture.view.get(),
         footer: layout(
             SettingsLayoutId::Footer,
-            vec![SettingsNode::Control(cancel), SettingsNode::Control(submit)],
+            vec![
+                SettingsNode::Control(cancel.finish(&mut table)),
+                SettingsNode::Control(submit.finish(&mut table)),
+            ],
         ),
+        bindings: table,
     }
 }
 
-fn general(controller: &SettingsController) -> Vec<SettingsNode> {
+fn general(controller: &SettingsController, table: &mut BindingTable) -> Vec<SettingsNode> {
     let view = controller.vm.general.view.get();
     let t = |key| text(view.language, key).to_string();
     let storage = control(
@@ -197,18 +239,21 @@ fn general(controller: &SettingsController) -> Vec<SettingsNode> {
             &view.language_choices,
             &view.language,
             E::SetLanguage,
-        )),
+        )
+        .finish(table)),
         row(choice(
             Id::StoragePolicy,
             t(UiText::SaveStoragePolicy),
             &view.storage_policy_choices,
             &view.storage_policy,
             E::SetStoragePolicy,
-        )),
+        )
+        .finish(table)),
         row(visible(
             enabled(storage, view.show_storage_directory),
             view.show_storage_directory,
-        )),
+        )
+        .finish(table)),
         row(visible(
             note(
                 Id::StorageError,
@@ -216,11 +261,12 @@ fn general(controller: &SettingsController) -> Vec<SettingsNode> {
                 error.clone().unwrap_or_default(),
             ),
             view.show_storage_directory && error.is_some(),
-        )),
+        )
+        .finish(table)),
     ]
 }
 
-fn video(controller: &SettingsController) -> Vec<SettingsNode> {
+fn video(controller: &SettingsController, table: &mut BindingTable) -> Vec<SettingsNode> {
     let view = controller.vm.video.view.get();
     let t = |key| text(controller.language(), key).to_string();
     vec![
@@ -229,47 +275,47 @@ fn video(controller: &SettingsController) -> Vec<SettingsNode> {
             t(UiText::FullscreenDefault),
             view.fullscreen_default,
             E::ToggleFullscreenDefault,
-        )),
+        )
+        .finish(table)),
         row(choice(
             Id::Scaling,
             t(UiText::Scaling),
             &view.scaling_choices,
             &view.scaling,
             E::SetScaling,
-        )),
-        row(toggle(
-            Id::Vsync,
-            t(UiText::Vsync),
-            view.vsync,
-            E::ToggleVsync,
-        )),
+        )
+        .finish(table)),
+        row(toggle(Id::Vsync, t(UiText::Vsync), view.vsync, E::ToggleVsync).finish(table)),
     ]
 }
 
-fn audio(controller: &SettingsController) -> Vec<SettingsNode> {
+fn audio(controller: &SettingsController, table: &mut BindingTable) -> Vec<SettingsNode> {
     let view = controller.vm.audio.view.get();
     let t = |key| text(controller.language(), key).to_string();
     vec![
-        row(toggle(Id::Mute, t(UiText::Mute), view.muted, E::ToggleMute)),
+        row(toggle(Id::Mute, t(UiText::Mute), view.muted, E::ToggleMute).finish(table)),
         row(number(
             Id::Volume,
             t(UiText::MasterVolume),
             view.volume_percent.into(),
             |v| E::SetVolume(v as u8),
-        )),
+        )
+        .finish(table)),
         row(choice(
             Id::SampleRate,
             t(UiText::SampleRate),
             &view.sample_rate_choices,
             &view.sample_rate,
             E::SetSampleRate,
-        )),
+        )
+        .finish(table)),
         row(number(
             Id::Latency,
             t(UiText::AudioLatency),
             view.latency_ms.into(),
             |v| E::SetLatency(v as u16),
-        )),
+        )
+        .finish(table)),
     ]
 }
 
@@ -296,7 +342,7 @@ fn group(
     SettingsNode::Group(group)
 }
 
-fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
+fn notifications(controller: &SettingsController, table: &mut BindingTable) -> Vec<SettingsNode> {
     let view = controller.vm.notifications.view.get();
     let lang = controller.language();
     let t = |key| text(lang, key).to_string();
@@ -346,12 +392,9 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
             lang,
             group_id,
             title,
-            Some(toggle(
-                enabled_id,
-                t(UiText::NotificationEnabled),
-                on,
-                toggle_event,
-            )),
+            Some(
+                toggle(enabled_id, t(UiText::NotificationEnabled), on, toggle_event).finish(table),
+            ),
             vec![
                 row(enabled(
                     number(
@@ -361,7 +404,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                         duration_event,
                     ),
                     on,
-                )),
+                )
+                .finish(table)),
                 row(enabled(
                     choice(
                         color_id,
@@ -371,7 +415,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                         color_event,
                     ),
                     on,
-                )),
+                )
+                .finish(table)),
             ],
         ));
     }
@@ -389,12 +434,15 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
         lang,
         NotificationGroup::Error,
         UiText::Error,
-        Some(toggle(
-            Id::ErrorEnabled,
-            t(UiText::NotificationEnabled),
-            view.error_enabled,
-            E::ToggleErrorEnabled,
-        )),
+        Some(
+            toggle(
+                Id::ErrorEnabled,
+                t(UiText::NotificationEnabled),
+                view.error_enabled,
+                E::ToggleErrorEnabled,
+            )
+            .finish(table),
+        ),
         vec![
             row(enabled(
                 choice(
@@ -405,7 +453,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                     |c| E::ToggleErrorModal(c.value),
                 ),
                 view.error_enabled,
-            )),
+            )
+            .finish(table)),
             row(visible(
                 enabled(
                     choice(
@@ -418,7 +467,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                     view.error_enabled && !view.error_modal,
                 ),
                 !view.error_modal,
-            )),
+            )
+            .finish(table)),
         ],
     ));
     groups.push(group(
@@ -433,14 +483,16 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                 &view.position_choices,
                 &view.position,
                 E::SetPosition,
-            )),
+            )
+            .finish(table)),
             row(choice(
                 Id::AreaMode,
                 t(UiText::NotificationAreaMode),
                 &view.area_mode_choices,
                 &view.area_mode,
                 E::SetAreaMode,
-            )),
+            )
+            .finish(table)),
         ],
     ));
     let same_edge = view.position.same_edge(view.status_position);
@@ -448,12 +500,15 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
         lang,
         NotificationGroup::Status,
         UiText::NotificationSectionStatus,
-        Some(toggle(
-            Id::StatusEnabled,
-            t(UiText::NotificationEnabled),
-            view.status_enabled,
-            E::ToggleStatusEnabled,
-        )),
+        Some(
+            toggle(
+                Id::StatusEnabled,
+                t(UiText::NotificationEnabled),
+                view.status_enabled,
+                E::ToggleStatusEnabled,
+            )
+            .finish(table),
+        ),
         vec![
             row(enabled(
                 choice(
@@ -464,7 +519,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                     E::SetStatusPosition,
                 ),
                 view.status_enabled,
-            )),
+            )
+            .finish(table)),
             row(visible(
                 enabled(
                     choice(
@@ -477,7 +533,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                     view.status_enabled && !same_edge,
                 ),
                 !same_edge,
-            )),
+            )
+            .finish(table)),
             row(visible(
                 note(
                     Id::StatusAreaFollows,
@@ -485,7 +542,8 @@ fn notifications(controller: &SettingsController) -> Vec<SettingsNode> {
                     t(UiText::NotificationStatusAreaFollows),
                 ),
                 same_edge,
-            )),
+            )
+            .finish(table)),
         ],
     ));
     groups
@@ -497,6 +555,7 @@ fn tab(
     selected: bool,
     context: Vec<E>,
     children: Vec<SettingsNode>,
+    table: &mut BindingTable,
 ) -> SettingsTab {
     let mut select = action(
         Id::Tab(id.clone()),
@@ -509,7 +568,7 @@ fn tab(
         id,
         label,
         selected,
-        select,
+        select: select.finish(table),
     }
 }
 
@@ -522,7 +581,7 @@ fn tabs(id: SettingsTabsId, selected: Option<usize>, tabs: Vec<SettingsTab>) -> 
     })
 }
 
-fn systems(controller: &SettingsController) -> Vec<SettingsNode> {
+fn systems(controller: &SettingsController, table: &mut BindingTable) -> Vec<SettingsNode> {
     let mut result = Vec::new();
     for (index, vm) in controller.vm.systems().iter().enumerate() {
         let view = vm.view.get();
@@ -542,7 +601,7 @@ fn systems(controller: &SettingsController) -> Vec<SettingsNode> {
                     |c| E::SetSystemChoice(field.id.as_str().into(), c),
                 );
                 control.context = vec![E::SelectSystemTab(index)];
-                row(control)
+                row(control.finish(table))
             })
             .collect();
         result.push(tab(
@@ -551,6 +610,7 @@ fn systems(controller: &SettingsController) -> Vec<SettingsNode> {
             controller.system_tab_index == Some(index),
             vec![E::SelectSystemTab(index)],
             children,
+            table,
         ));
     }
     let mut children = vec![tabs(
@@ -563,12 +623,18 @@ fn systems(controller: &SettingsController) -> Vec<SettingsNode> {
             AppLanguage::Japanese => "利用可能なシステムがありません",
             _ => "No systems available",
         };
-        children.push(row(note(Id::NoSystems, String::new(), label.into())));
+        children.push(row(
+            note(Id::NoSystems, String::new(), label.into()).finish(table)
+        ));
     }
     children
 }
 
-fn binding(controller: &SettingsController, row_view: &BindingRowView) -> SettingsNode {
+fn binding(
+    controller: &SettingsController,
+    row_view: &BindingRowView,
+    table: &mut BindingTable,
+) -> SettingsNode {
     let lang = controller.language();
     row(control(
         Id::Binding(row_view.target.clone()),
@@ -579,10 +645,11 @@ fn binding(controller: &SettingsController, row_view: &BindingRowView) -> Settin
             clear_label: text(lang, UiText::Clear).into(),
         },
         ControlBinding::Capture(row_view.target.clone()),
-    ))
+    )
+    .finish(table))
 }
 
-fn input(controller: &SettingsController) -> Vec<SettingsNode> {
+fn input(controller: &SettingsController, table: &mut BindingTable) -> Vec<SettingsNode> {
     let mut result = Vec::new();
     for (index, vm) in controller.vm.inputs().iter().enumerate() {
         let view = vm.view.get();
@@ -599,7 +666,8 @@ fn input(controller: &SettingsController) -> Vec<SettingsNode> {
                     },
                     String::new(),
                     conflict.message.clone(),
-                ))
+                )
+                .finish(table))
             })
             .collect();
         let slots = view
@@ -620,9 +688,9 @@ fn input(controller: &SettingsController) -> Vec<SettingsNode> {
                     },
                 );
                 control.context = vec![E::SelectInputTab(index)];
-                control.metadata.enabled = !slot.occupied_by_other_slot;
+                control.view.metadata.enabled = !slot.occupied_by_other_slot;
                 if slot.occupied_by_other_slot {
-                    control.metadata.help = Some(
+                    control.view.metadata.help = Some(
                         match resolve_language(controller.language()) {
                             AppLanguage::Japanese => "他のスロットで使用中",
                             _ => "Occupied by another slot",
@@ -630,7 +698,7 @@ fn input(controller: &SettingsController) -> Vec<SettingsNode> {
                         .into(),
                     );
                 }
-                row(control)
+                row(control.finish(table))
             })
             .collect();
         let sections = view
@@ -665,8 +733,9 @@ fn input(controller: &SettingsController) -> Vec<SettingsNode> {
                     section
                         .rows
                         .iter()
-                        .map(|r| binding(controller, r))
+                        .map(|r| binding(controller, r, table))
                         .collect(),
+                    table,
                 )
             })
             .collect::<Vec<_>>();
@@ -689,6 +758,7 @@ fn input(controller: &SettingsController) -> Vec<SettingsNode> {
             controller.input_tab == Some(InputTab::System(index)),
             vec![E::SelectInputTab(index)],
             children,
+            table,
         ));
     }
     let shortcuts = controller.vm.shortcuts.view.get();
@@ -707,8 +777,9 @@ fn input(controller: &SettingsController) -> Vec<SettingsNode> {
         shortcuts
             .rows
             .iter()
-            .map(|r| binding(controller, r))
+            .map(|r| binding(controller, r, table))
             .collect(),
+        table,
     ));
     vec![tabs(SettingsTabsId::Inputs, selected, result)]
 }
