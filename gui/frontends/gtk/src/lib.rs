@@ -16,9 +16,8 @@ use gtk::{
     gdk::prelude::SurfaceExt as _,
     gio, glib,
     prelude::{
-        ActionMapExt as _, ApplicationExt as _, ApplicationExtManual as _,
-        ApplicationWindowExt as _, FileExt as _, GtkApplicationExt as _, GtkWindowExt as _,
-        NativeExt as _, WidgetExt as _,
+        ApplicationExt as _, ApplicationExtManual as _, FileExt as _, GtkApplicationExt as _,
+        GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
 use nerust_frontend_host::session::{SessionEvent, SessionOutcome};
@@ -201,15 +200,13 @@ impl State {
         self.host.dispatch(event)
     }
 
-    pub(crate) fn focus_event(
-        &mut self,
-        event: nerust_frontend_host::focus::FocusEvent,
-    ) -> Option<nerust_frontend_host::focus::FocusEffect> {
-        self.host.focus_event(event)
-    }
-
     pub(crate) fn tick_focus_sync(&mut self) {
-        self.host.tick_focus_sync();
+        use nerust_frontend_host::{
+            event::{EventCommand, EventHandler},
+            focus::FocusEvent,
+        };
+        let handler: &mut dyn EventHandler = &mut self.host;
+        let _ = handler.handle_event(EventCommand::Focus(FocusEvent::BurstEnd), false);
     }
 }
 
@@ -247,10 +244,6 @@ impl SessionControl for State {
 }
 
 impl State {
-    pub(crate) fn clear_input(&mut self) {
-        let _ = self.dispatch_session(SessionEvent::ClearInput);
-    }
-
     pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.host.settings_snapshot()
     }
@@ -265,54 +258,13 @@ fn build_window(
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let menubar = MenubarModels::new();
 
-    app.set_menubar(Some(&menubar.menu_model));
     app.add_window(&window);
-    window.set_show_menubar(true);
     // Game viewport: a memory picture composited by GTK; backends never present here.
     let picture = gtk::Picture::new();
     picture.set_hexpand(true);
     picture.set_vexpand(true);
     picture.set_can_shrink(true);
     window.set_child(Some(&picture));
-
-    let quit_action = gio::SimpleAction::new("quit", None);
-    {
-        let window = window.clone();
-        let _ = quit_action.connect_activate(move |_, _| {
-            window.close();
-        });
-    }
-    app.add_action(&quit_action);
-
-    fn create_about_dialog() -> gtk::AboutDialog {
-        gtk::Builder::from_string(include_str!("../resources/about.xml"))
-            .object("about")
-            .unwrap()
-    }
-    let about_action = gio::SimpleAction::new("about", None);
-    {
-        let window = window.clone();
-        let window_about: Rc<RefCell<Option<gtk::AboutDialog>>> = Rc::new(RefCell::new(None));
-        let _ = about_action.connect_activate(move |_, _| {
-            if let Some(dialog) = window_about.borrow().as_ref() {
-                dialog.present();
-                return;
-            }
-
-            let dialog = create_about_dialog();
-            dialog.set_transient_for(Some(&window));
-
-            let window_about_on_close = window_about.clone();
-            let _ = dialog.connect_close_request(move |_| {
-                *window_about_on_close.borrow_mut() = None;
-                glib::Propagation::Proceed
-            });
-
-            dialog.present();
-            *window_about.borrow_mut() = Some(dialog);
-        });
-    }
-    app.add_action(&about_action);
 
     Window::bind(
         app.clone(),

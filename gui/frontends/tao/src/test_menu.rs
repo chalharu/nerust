@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::menu::MenuSink;
-use nerust_frontend_host::application::MenuSig;
+use nerust_frontend_host::application::MenubarUpdate;
 
 /// `MenuSink` that records sync snapshots for assertions.
 #[derive(Debug, Default)]
@@ -30,7 +30,8 @@ impl MenuRecorderHandle {
 }
 
 impl MenuSink for MenuRecorderHandle {
-    fn update(&mut self, sync: MenuSig) {
+    fn update(&mut self, update: MenubarUpdate) {
+        let sync = update.signature;
         crate::aux::bridge::lock_recovered(&self.inner.updates).push(MenuSyncSnapshot {
             loaded: sync.loaded,
             paused: sync.paused,

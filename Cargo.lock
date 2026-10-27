@@ -3494,6 +3494,7 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
+ "nerust_host_protocol",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_nes_factory",
@@ -3696,6 +3697,7 @@ dependencies = [
  "nerust_emu_thread",
  "nerust_gui_runtime",
  "nerust_gui_viewmodel",
+ "nerust_host_protocol",
  "nerust_input_traits",
  "nerust_keyboard",
  "nerust_nes_settings",
@@ -3724,6 +3726,10 @@ dependencies = [
  "thiserror 2.0.21",
  "typetag",
 ]
+
+[[package]]
+name = "nerust_host_protocol"
+version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_input_traits"

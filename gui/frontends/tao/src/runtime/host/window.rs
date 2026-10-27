@@ -164,7 +164,7 @@ impl LoopHost for HostState {
     type Frame = super::FrameCtx;
 
     fn before_turn(&mut self) {
-        self.tick_focus_sync();
+        self.on_focus_event(nerust_frontend_host::focus::FocusEvent::BurstEnd);
     }
 
     fn frame_ctx(&mut self) -> Self::Frame {

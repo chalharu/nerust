@@ -5,13 +5,14 @@
 //! objects by those identities. Labels and enablement are not identities.
 
 use nerust_gui_runtime::{menu_labels::shortcut_hint, slots::slot_label};
-use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_settings_core::{
     i18n::{UiText, text},
     model::input::ShortcutAction,
 };
 
 use crate::application::MenuSig;
+use crate::commands::{CommandModel, CommandVisitor, SessionCommand};
+pub use crate::commands::{MenuCommand, NativeRole};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuId {
@@ -25,63 +26,12 @@ pub enum MenuId {
     Help,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeRole {
-    About,
-    Quit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MenuCommand {
-    Open,
-    Close,
-    Settings,
-    Debugger,
-    NotificationHistory,
-    Session(SessionCommand),
-    Native(NativeRole),
-}
-
-impl MenuCommand {
-    pub fn enabled(self, sig: &MenuSig) -> bool {
-        use SessionCommand as S;
-        if self == Self::Native(NativeRole::Quit) {
-            return true;
-        }
-        !sig.settings_open
-            && match self {
-                Self::Open
-                | Self::Settings
-                | Self::Debugger
-                | Self::NotificationHistory
-                | Self::Native(_) => true,
-                Self::Close => sig.loaded,
-                Self::Session(command) => match command {
-                    S::Pause => sig.loaded && !sig.paused,
-                    S::Resume => sig.loaded && sig.paused,
-                    S::LoadActiveSlot => sig.loaded && sig.active_slot.is_some(),
-                    S::SelectActiveSlot(id)
-                    | S::SaveSlot(id)
-                    | S::LoadSlot(id)
-                    | S::DeleteSlot(id) => {
-                        sig.loaded && sig.slots.iter().any(|slot| slot.slot_id == id)
-                    }
-                    S::SelectNextSlot | S::SelectPreviousSlot => {
-                        sig.loaded && !sig.slots.is_empty()
-                    }
-                    S::Reset | S::CreateSlot | S::SaveActiveSlotOrNew | S::TogglePause => {
-                        sig.loaded
-                    }
-                },
-            }
-    }
-}
-
 /// Explicit frontend differences; no toolkit or target dependencies in host.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MenuCapabilities {
     pub about: bool,
     pub dialog_ellipsis: bool,
+    pub application_menu: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,14 +57,41 @@ pub struct Submenu {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MenuModel {
+pub struct Menubar {
+    pub commands: CommandModel,
     pub menus: Vec<Submenu>,
+    pub application_menu: Option<NativeApplicationMenu>,
 }
 
-impl MenuModel {
+pub type MenuModel = Menubar;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeApplicationMenu {
+    pub label: String,
+    pub entries: Vec<NativeApplicationEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeApplicationEntry {
+    Role(NativeApplicationRole),
+    Separator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeApplicationRole {
+    About,
+    Services,
+    Hide,
+    HideOthers,
+    ShowAll,
+    Quit,
+}
+
+impl Menubar {
     pub fn build(sig: &MenuSig, capabilities: MenuCapabilities) -> Self {
         use MenuCommand as C;
         use SessionCommand as S;
+        let commands = CommandModel::build(sig);
         let label = |key| text(sig.language, key).to_owned();
         let item = |command: C, key| MenuItem {
             command: Some(command),
@@ -162,6 +139,10 @@ impl MenuModel {
             (MenuId::LoadSlot, UiText::LoadSlot, S::LoadSlot),
             (MenuId::DeleteSlot, UiText::DeleteSlot, S::DeleteSlot),
         ] {
+            let enabled = commands
+                .get(C::Session(command(0)).binding().0)
+                .expect("slot command declaration")
+                .enabled;
             let children = if sig.slots.is_empty() {
                 vec![MenuEntry::Item(MenuItem {
                     command: None,
@@ -178,17 +159,12 @@ impl MenuModel {
                             label: slot_label(slot, sig.active_slot),
                             // This entry comes directly from the current slots;
                             // do not rescan the entire list for every item.
-                            enabled: !sig.settings_open && sig.loaded,
+                            enabled,
                         })
                     })
                     .collect()
             };
-            states.push(MenuEntry::Submenu(submenu(
-                id,
-                key,
-                !sig.settings_open && sig.loaded && !sig.slots.is_empty(),
-                children,
-            )));
+            states.push(MenuEntry::Submenu(submenu(id, key, enabled, children)));
         }
         let mut menus = vec![
             submenu(
@@ -231,13 +207,42 @@ impl MenuModel {
                 ))],
             ));
         }
-        Self { menus }
+        let application_menu = capabilities.application_menu.then(|| {
+            use NativeApplicationEntry::{Role, Separator};
+            use NativeApplicationRole as R;
+            NativeApplicationMenu {
+                label: "App".into(),
+                entries: vec![
+                    Role(R::About),
+                    Separator,
+                    Role(R::Services),
+                    Separator,
+                    Role(R::Hide),
+                    Role(R::HideOthers),
+                    Role(R::ShowAll),
+                    Separator,
+                    Role(R::Quit),
+                ],
+            }
+        });
+        Self {
+            commands,
+            menus,
+            application_menu,
+        }
     }
 
     /// Balanced preorder. Compare direct identities/labels only, not enabled
     /// state or descendants: slot changes do not rebuild their ancestors.
-    pub fn visit(&self, previous: Option<&Self>, visitor: &mut impl MenuVisitor) {
-        visitor.begin_model(previous.is_none_or(|old| !same_menus(&self.menus, &old.menus)));
+    pub fn visit(&self, previous: Option<&Self>, visitor: &mut dyn MenuVisitor) {
+        visitor.begin_menubar(
+            self,
+            previous.is_none_or(|old| {
+                self.application_menu != old.application_menu
+                    || !same_menus(&self.menus, &old.menus)
+            }),
+        );
+        self.commands.visit(visitor);
         for menu in &self.menus {
             visit_menu(
                 menu,
@@ -245,7 +250,7 @@ impl MenuModel {
                 visitor,
             );
         }
-        visitor.end_model();
+        visitor.end_menubar();
     }
 }
 
@@ -284,7 +289,7 @@ fn find_menu(menus: &[Submenu], id: MenuId) -> Option<&Submenu> {
     None
 }
 
-fn visit_menu(menu: &Submenu, old: Option<&Submenu>, visitor: &mut impl MenuVisitor) {
+fn visit_menu(menu: &Submenu, old: Option<&Submenu>, visitor: &mut dyn MenuVisitor) {
     visitor.begin_menu(
         menu,
         old.is_none_or(|old| !same_children(&menu.children, &old.children)),
@@ -301,12 +306,12 @@ fn visit_menu(menu: &Submenu, old: Option<&Submenu>, visitor: &mut impl MenuVisi
     visitor.end_menu(menu.id);
 }
 
-pub trait MenuVisitor {
-    fn begin_model(&mut self, rebuild: bool);
+pub trait MenuVisitor: CommandVisitor {
+    fn begin_menubar(&mut self, menubar: &Menubar, rebuild: bool);
     fn begin_menu(&mut self, menu: &Submenu, rebuild: bool);
     fn item(&mut self, item: &MenuItem);
     fn end_menu(&mut self, id: MenuId);
-    fn end_model(&mut self);
+    fn end_menubar(&mut self);
 }
 
 #[cfg(test)]
