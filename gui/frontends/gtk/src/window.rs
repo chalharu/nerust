@@ -1190,6 +1190,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "needs display; CI-only under xvfb"]
     fn common_main_title_reentry_delivers_latest_window_including_menu() {
         use gio::prelude::MenuModelExt;
         use std::{cell::Cell, rc::Rc};
@@ -1231,6 +1232,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "needs display; CI-only under xvfb"]
     fn common_main_window_menu_opens_debug_from_reserved_owned_blueprint() {
         use super::{AuxKind, HostWindow, NativeAux, OpenRequest};
         use gio::prelude::MenuModelExt;
@@ -1329,6 +1331,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "needs display; CI-only under xvfb"]
     fn common_auxiliary_contents_choose_native_groups_and_owned_titles() {
         use super::{AuxKind, HostWindow};
         use gtk::prelude::WidgetExt;
@@ -1421,6 +1424,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "needs display; CI-only under xvfb"]
     fn common_dialog_map_reentry_sees_committed_identity_without_borrows() {
         use super::{AuxKind, OpenRequest};
         use gtk::prelude::{ListModelExt, WidgetExt};
@@ -1480,6 +1484,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "needs display; CI-only under xvfb"]
     fn common_dialog_stale_build_cannot_remove_replacement_or_release_settings_pause() {
         use super::AuxKind;
         use gtk::prelude::{ListModelExt, WidgetExt};
@@ -1538,6 +1543,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "needs display; CI-only under xvfb"]
     fn common_debug_stale_native_completion_preserves_replacement_without_borrows() {
         use super::AuxKind;
         use std::{cell::RefCell, rc::Rc};
