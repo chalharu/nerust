@@ -1,53 +1,57 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use iced_winit::program;
-use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_frontend_host::settings::SettingsMailbox;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::registry::SystemRegistry;
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::program::{Message, SettingsAppProgram, find_duplicate_system_id};
+use super::bindings::{Message, SettingsBinding};
+use super::history::{HistoryBinding, HistoryMessage};
 use crate::aux::shell::{AuxShell, AuxSurface};
+use crate::aux::window::{WidgetBinding, WindowProgram};
+use nerust_gui_shell::session::osd::HistoryLine;
+use nerust_settings_core::model::language::AppLanguage;
 
-/// Settings dialog: shared [`AuxShell`] host plus pending-apply staging.
-/// Matches the debugger/PPU shape.
-pub(crate) struct SettingsWindowHandle {
-    shell: AuxShell<SettingsAppProgram>,
-    mailbox: SettingsMailbox,
+/// A native window owns only surface/shell and typed widget signals.
+pub(crate) struct WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+{
+    shell: AuxShell<WindowProgram<B>>,
+    signals: S,
 }
 
-impl SettingsWindowHandle {
-    pub(crate) fn new(
-        snapshot: SettingsSnapshot,
-        registry: Arc<SystemRegistry>,
-        audio_registry: Arc<AudioBackendRegistry>,
-        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
-    ) -> Option<Self> {
-        if let Some(duplicate) = find_duplicate_system_id(&registry) {
-            log::error!("refusing settings window: duplicate SystemId '{duplicate}'");
-            return None;
-        }
-        let mailbox = SettingsMailbox::default();
+pub(crate) trait WidgetSignals<B: WidgetBinding> {
+    fn close_flag(&self) -> &Arc<AtomicBool>;
+    fn refresh_flag(&self) -> &AtomicBool;
+    fn capture(&self, _event: &iced::Event) -> Option<B::Message> {
+        None
+    }
+}
 
-        let program = SettingsAppProgram {
-            snapshot,
-            registry,
-            audio_registry,
-            should_close: Arc::clone(&mailbox.should_close),
-            pending_apply: Arc::clone(&mailbox.pending_apply),
-            view_invalidated: Arc::clone(&mailbox.view_invalidated),
-        };
-        let (instance, _task) = program::Instance::new(program);
-        let title = instance.title(iced::window::Id::unique());
+impl<B, S> WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+    S: WidgetSignals<B>,
+{
+    fn open(
+        window: nerust_frontend_host::window::Window,
+        binding: B,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
+        signals: S,
+        size: (f64, f64),
+    ) -> Option<Self> {
         let surface = AuxSurface::open(
             event_loop,
-            &title,
-            (960.0, 720.0),
+            &window.title,
+            size,
             None,
             None,
-            "settings window",
-            Arc::clone(&mailbox.should_close),
+            B::KIND.log_tag(),
+            Arc::clone(signals.close_flag()),
         )
         .map_err(|error| {
             // Typed scaffold failure: surface the tagged native detail here.
@@ -59,22 +63,25 @@ impl SettingsWindowHandle {
         // it to tell "born 0x0, never resized" apart from later traffic.
         let (viewport_w, viewport_h) = surface.viewport();
         log::debug!(
-            "settings create: physical={viewport_w}x{viewport_h} scale={} bounds={:?}",
+            "widget create: physical={viewport_w}x{viewport_h} scale={} bounds={:?}",
             surface.scale(),
             surface.bounds(),
         );
+        let (instance, _task) = program::Instance::new(WindowProgram {
+            window,
+            program: binding,
+        });
         let shell = AuxShell::assemble(surface, instance);
-        Some(Self { shell, mailbox })
-    }
-
-    pub(crate) fn take_pending_apply(&mut self) -> Option<SettingsSnapshot> {
-        self.mailbox.take_pending_apply()
+        Some(Self { shell, signals })
     }
 }
 
-impl crate::aux::focus::AuxShellRef for SettingsWindowHandle {
+impl<B, S> crate::aux::focus::AuxShellRef for WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+{
     fn kind(&self) -> crate::aux::focus::AuxKind {
-        crate::aux::focus::AuxKind::Settings
+        B::KIND
     }
 
     fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
@@ -86,6 +93,35 @@ impl crate::aux::focus::AuxShellRef for SettingsWindowHandle {
     }
 }
 
+impl<B, S> crate::aux::focus::AuxEvents for WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+    S: WidgetSignals<B>,
+{
+    fn handle(&mut self, mapped: iced::Event) -> bool {
+        let extra = self.signals.capture(&mapped);
+        self.shell
+            .pump_finish(mapped, extra, self.signals.refresh_flag())
+    }
+}
+
+pub(crate) type SettingsWindowHandle = WidgetWindow<SettingsBinding, SettingsMailbox>;
+
+impl SettingsWindowHandle {
+    pub(crate) fn new(
+        window: nerust_frontend_host::window::Window,
+        binding: SettingsBinding,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
+    ) -> Option<Self> {
+        let signals = SettingsMailbox {
+            should_close: binding.should_close.clone(),
+            pending_apply: binding.pending_apply.clone(),
+            view_invalidated: binding.view_invalidated.clone(),
+        };
+        Self::open(window, binding, event_loop, signals, (960.0, 720.0))
+    }
+}
+
 impl crate::aux::registry::AuxController for SettingsWindowHandle {
     fn as_settings(&mut self) -> Option<&mut dyn crate::aux::registry::SettingsClosePort> {
         Some(self)
@@ -94,35 +130,105 @@ impl crate::aux::registry::AuxController for SettingsWindowHandle {
 
 impl crate::aux::registry::SettingsClosePort for SettingsWindowHandle {
     fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {
-        self.take_pending_apply()
+        self.signals.take_pending_apply()
     }
 }
 
-impl crate::aux::focus::AuxEvents for SettingsWindowHandle {
-    fn handle(&mut self, mapped: iced::Event) -> bool {
-        let capture = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+impl WidgetSignals<SettingsBinding> for SettingsMailbox {
+    fn close_flag(&self) -> &Arc<AtomicBool> {
+        &self.should_close
+    }
+    fn refresh_flag(&self) -> &AtomicBool {
+        &self.view_invalidated
+    }
+    fn capture(&self, mapped: &iced::Event) -> Option<Message> {
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
             physical_key,
             repeat: false,
             ..
-        }) = &mapped
+        }) = mapped
         {
-            crate::aux::settings::program::keyboard_key_from_physical(*physical_key)
-                .map(Message::CaptureKey)
+            super::bindings::keyboard_key_from_physical(*physical_key).map(Message::CaptureKey)
         } else {
             None
-        };
-        self.shell
-            .pump_finish(mapped, capture, &self.mailbox.view_invalidated)
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct HistorySignals {
+    should_close: Arc<AtomicBool>,
+    clear_requested: Arc<AtomicBool>,
+    view_invalidated: AtomicBool,
+}
+
+impl WidgetSignals<HistoryBinding> for HistorySignals {
+    fn close_flag(&self) -> &Arc<AtomicBool> {
+        &self.should_close
+    }
+    fn refresh_flag(&self) -> &AtomicBool {
+        &self.view_invalidated
+    }
+}
+
+pub(crate) type HistoryWindowHandle = WidgetWindow<HistoryBinding, HistorySignals>;
+
+impl HistoryWindowHandle {
+    pub(crate) fn new(
+        window: nerust_frontend_host::window::Window,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
+        language: AppLanguage,
+    ) -> Option<Self> {
+        let signals = HistorySignals::default();
+        let binding = HistoryBinding::new(language, signals.clear_requested.clone());
+        Self::open(window, binding, event_loop, signals, (720.0, 360.0))
+    }
+}
+
+impl crate::aux::registry::AuxController for HistoryWindowHandle {
+    fn as_history(&mut self) -> Option<&mut dyn crate::aux::registry::HistorySyncPort> {
+        Some(self)
+    }
+}
+
+impl crate::aux::registry::HistorySyncPort for HistoryWindowHandle {
+    fn sync_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage) {
+        self.shell.process(
+            [HistoryMessage::Sync { lines, language }],
+            &self.signals.view_invalidated,
+        );
+    }
+
+    fn take_history_clear(&mut self) -> bool {
+        self.signals.clear_requested.swap(false, Ordering::AcqRel)
     }
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
     use iced::{Event, Point, keyboard, mouse};
     use std::sync::atomic::AtomicBool;
     use tao::{dpi::PhysicalPosition, event::WindowEvent};
 
     use crate::aux::native::adapt_event;
     use crate::convert::{FeedContext, feed_domain_event};
+
+    #[test]
+    fn widget_signals_keep_close_separate_from_repaint_and_clear() {
+        let settings = SettingsMailbox::default();
+        settings.close_flag().store(true, Ordering::Release);
+        settings.refresh_flag().store(true, Ordering::Release);
+        assert!(settings.refresh_flag().swap(false, Ordering::AcqRel));
+        assert!(settings.close_flag().load(Ordering::Acquire));
+
+        let history = HistorySignals::default();
+        history.close_flag().store(true, Ordering::Release);
+        history.clear_requested.store(true, Ordering::Release);
+        history.refresh_flag().store(true, Ordering::Release);
+        assert!(history.refresh_flag().swap(false, Ordering::AcqRel));
+        assert!(history.clear_requested.swap(false, Ordering::AcqRel));
+        assert!(history.close_flag().load(Ordering::Acquire));
+    }
 
     fn initial_cursor() -> mouse::Cursor {
         mouse::Cursor::Available(Point::new(0.0, 0.0))

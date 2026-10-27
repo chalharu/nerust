@@ -3,23 +3,22 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::{Rc, Weak},
-    sync::Arc,
 };
 
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::settings::{
     ControlInput, SettingsControlId, SettingsController, SettingsEffect, SettingsEvent,
-    find_duplicate_system_id,
 };
+use nerust_frontend_host::window::Window as HostWindow;
 use nerust_gui_shell::session::access::SessionControl;
 use nerust_gui_viewmodel::settings::Subscription;
 use nerust_settings_core::model::local::ScalingMode;
 
 use crate::State;
 
-#[path = "retained.rs"]
-mod retained;
-use retained::{Registry, SettingsGtkVisitor};
+#[path = "settings/controls.rs"]
+mod controls;
+use controls::{Registry, SettingsGtkVisitor};
 
 /// Also restores the previous state for nested guards and unwinding callbacks.
 struct FlagGuard<'a>(&'a Cell<bool>, bool);
@@ -36,7 +35,7 @@ impl Drop for FlagGuard<'_> {
     }
 }
 
-struct PreferencesBinding {
+pub(crate) struct SettingsBinding {
     self_weak: Weak<Self>,
     controller: RefCell<SettingsController>,
     _subscription: Subscription,
@@ -54,7 +53,15 @@ struct PreferencesBinding {
     closed: Cell<bool>,
 }
 
-impl PreferencesBinding {
+impl SettingsBinding {
+    pub(crate) fn dialog(&self) -> Option<gtk::Dialog> {
+        self.dialog.upgrade()
+    }
+
+    pub(crate) fn render(&self, screen: &nerust_frontend_host::settings::SettingsScreen) {
+        screen.visit(&mut SettingsGtkVisitor::new(self));
+    }
+
     fn new(controller: SettingsController, dialog: &gtk::Dialog) -> Rc<Self> {
         let stack = gtk::Stack::new();
         stack.set_hexpand(true);
@@ -215,16 +222,18 @@ impl PreferencesBinding {
         let _updating = FlagGuard::enter(&self.updating);
         loop {
             self.pending.set(false);
-            let screen = {
+            let window = {
                 let Ok(controller) = self.controller.try_borrow() else {
                     self.schedule();
                     return;
                 };
-                controller.screen()
+                // This controller is the only settings draft. The auxiliary
+                // registry's PendingSettings is just a lifetime reservation.
+                controller.window()
             };
             // No controller/registry borrow across any synchronous native setter.
             let _signals = FlagGuard::enter(&self.refreshing);
-            screen.visit(&mut SettingsGtkVisitor::new(self));
+            window.visit(&mut crate::window::GtkWindowRenderer::Settings(self));
             if self.closed.get() || !self.pending.get() {
                 break;
             }
@@ -286,28 +295,15 @@ impl PreferencesBinding {
     }
 }
 
-pub(crate) fn present_preferences_dialog(
+/// Native controls and response effects only. The common window path supplies
+/// the single host controller; this adapter never fetches or validates a draft.
+pub(crate) fn build(
+    model: &HostWindow,
     parent: &gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
+    controller: SettingsController,
     on_close: impl FnOnce() + 'static,
-) -> Option<gtk::Dialog> {
-    let (snapshot, registry, audio_registry) = {
-        let state = state.borrow();
-        (
-            state.settings_snapshot().clone(),
-            state.ctx.registry.clone(),
-            state.ctx.audio_registry.clone(),
-        )
-    };
-    if let Some(duplicate) = find_duplicate_system_id(&registry) {
-        state.borrow_mut().host.session_mut().report_external_error(
-            nerust_gui_shell::session::notification::FailureOrigin::Host,
-            format!("duplicate SystemId '{duplicate}'"),
-        );
-        on_close();
-        return None;
-    }
-    let controller = SettingsController::new(&snapshot, Arc::clone(&registry), audio_registry);
+) -> gtk::Dialog {
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
         .modal(true)
@@ -315,7 +311,11 @@ pub(crate) fn present_preferences_dialog(
         .default_width(900)
         .default_height(560)
         .build();
-    let binding = PreferencesBinding::new(controller, &dialog);
+    let binding = SettingsBinding::new(controller, &dialog);
+    {
+        let _signals = FlagGuard::enter(&binding.refreshing);
+        model.visit(&mut crate::window::GtkWindowRenderer::Settings(&binding));
+    }
     let finish: FinishCallback = Rc::new(RefCell::new(Some(Box::new({
         let weak = Rc::downgrade(&binding);
         move || {
@@ -325,7 +325,7 @@ pub(crate) fn present_preferences_dialog(
             on_close();
         }
     }))));
-    connect_preferences_finish(&dialog, &finish);
+    crate::native::dialog::connect_finish(&dialog, &finish);
     let parent = parent.clone();
     let responding = Cell::new(false);
     dialog.connect_response(move |dialog, response| {
@@ -337,7 +337,7 @@ pub(crate) fn present_preferences_dialog(
             binding.input(&SettingsControlId::Cancel, ControlInput::Activate);
             binding.close();
             dialog.destroy();
-            finish_preferences(&finish);
+            crate::native::dialog::finish(&finish);
             return;
         }
         binding.input(&SettingsControlId::Submit, ControlInput::Activate);
@@ -359,7 +359,7 @@ pub(crate) fn present_preferences_dialog(
                 }
                 binding.close();
                 dialog.destroy();
-                finish_preferences(&finish);
+                crate::native::dialog::finish(&finish);
             }
             Err(error) => {
                 binding.controller.borrow_mut().error_message = Some(error.to_string());
@@ -367,30 +367,10 @@ pub(crate) fn present_preferences_dialog(
             }
         }
     });
-    dialog.present();
-    Some(dialog)
+    dialog
 }
 
-type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
-
-fn connect_preferences_finish(dialog: &gtk::Dialog, callback: &FinishCallback) {
-    let on_destroy = callback.clone();
-    dialog.connect_destroy(move |_| finish_preferences(&on_destroy));
-    let on_unrealize = callback.clone();
-    dialog.connect_unrealize(move |_| finish_preferences(&on_unrealize));
-    let on_close = callback.clone();
-    dialog.connect_close_request(move |_| {
-        finish_preferences(&on_close);
-        glib::Propagation::Proceed
-    });
-}
-
-fn finish_preferences(callback: &FinishCallback) {
-    let finish = callback.borrow_mut().take();
-    if let Some(finish) = finish {
-        finish();
-    }
-}
+use crate::native::dialog::FinishCallback;
 
 fn apply_scaling_to_window(
     window: &gtk::ApplicationWindow,
@@ -415,5 +395,5 @@ fn apply_scaling_to_window(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "settings/tests.rs"]
 mod tests;

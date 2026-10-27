@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use crate::focus::AuxKind;
+use crate::window::Window;
 
 /// Registry-issued identity. Never reused within the issuing registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,6 +20,7 @@ pub enum OpenRequest {
 
 struct Slot<N, H> {
     id: AuxId,
+    window: Window,
     native: Option<N>,
     handle: Option<H>,
 }
@@ -61,6 +63,7 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
             kind,
             Slot {
                 id,
+                window: Window::auxiliary(kind),
                 native: None,
                 handle: None,
             },
@@ -112,6 +115,18 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
 
     pub fn kind_of(&self, native: N) -> Option<AuxKind> {
         self.by_native.get(&native).copied()
+    }
+
+    /// Presentation exists even before native creation; stale IDs see nothing.
+    pub fn window(&self, id: AuxId) -> Option<&Window> {
+        Some(&self.entries.get(&self.kind_of_id(id)?)?.window)
+    }
+
+    /// Install a fresh settings projection or update presentation in this same
+    /// lifetime slot. Do not retain the registry borrow during native visiting.
+    pub fn window_mut(&mut self, id: AuxId) -> Option<&mut Window> {
+        let kind = self.kind_of_id(id)?;
+        Some(&mut self.entries.get_mut(&kind)?.window)
     }
 
     /// Includes opening reservations.

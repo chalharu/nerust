@@ -5,7 +5,7 @@ use iced::{
     advanced::{Layout, Widget, layout, mouse, renderer, widget::Tree},
 };
 
-use super::program::{El, Message};
+use super::bindings::{El, Message};
 type Renderer = iced_tiny_skia::Renderer;
 
 pub(super) fn gate(element: El<'static>, enabled: bool) -> El<'static> {

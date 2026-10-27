@@ -1,32 +1,18 @@
-//! GTK OSD: in-frame layer, error modals, history.
-//! Native dialogs stay here; pump and renderer wiring live in frontend_host.
+//! Grouped native notification history controls and reentrant model delivery.
 
 use std::{
     cell::{Cell, RefCell},
-    rc::{Rc, Weak},
-    sync::mpsc::Receiver,
+    rc::Rc,
 };
 
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
     history::{HistoryController, HistoryModel, HistoryVisitor},
-    osd::{ModalAdvance, ModalPresentation, ModalPresenter},
+    window::Window as HostWindow,
 };
 
-use super::{State, renderer::GtkRenderer};
+use crate::State;
 use nerust_gui_shell::session::osd::{HistoryFilter, HistoryRowView};
-
-impl nerust_render_traits::renderer::OsdSink for GtkRenderer {
-    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
-        GtkRenderer::set_osd_layer(self, layer);
-    }
-}
-
-impl nerust_render_traits::renderer::StripSink for GtkRenderer {
-    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
-        GtkRenderer::set_reserved_strip(self, strip);
-    }
-}
 
 /// Reentrancy guard for caption rebuilds: set while the filter items are
 /// rebuilt so the `changed` handler skips the recursive refresh.
@@ -59,7 +45,7 @@ struct HistoryDelivery {
 }
 
 impl HistoryDelivery {
-    fn submit(&self, model: HistoryModel, visitor: &mut dyn HistoryVisitor) {
+    fn submit(&self, model: HistoryModel, visitor: &mut GtkHistoryVisitor) {
         *self.pending.borrow_mut() = Some(model);
         if self.active.get() {
             return;
@@ -68,14 +54,21 @@ impl HistoryDelivery {
         loop {
             let next = self.pending.borrow_mut().take();
             let Some(model) = next else { break };
-            model.visit(visitor);
+            // HistoryModel owns the localized captions; project its title onto
+            // the common window before native chrome and grouped body dispatch.
+            let mut window = visitor.window.clone();
+            window.title.clone_from(&model.captions.title);
+            window.visit(&mut crate::window::GtkWindowRenderer::History(
+                &model, visitor,
+            ));
         }
     }
 }
 
 #[derive(Clone)]
-struct GtkHistoryVisitor {
-    dialog: gtk::Dialog,
+pub(crate) struct GtkHistoryVisitor {
+    window: HostWindow,
+    pub(crate) dialog: gtk::Dialog,
     close: Option<gtk::Button>,
     level: gtk::Label,
     filter: gtk::ComboBoxText,
@@ -90,7 +83,6 @@ struct GtkHistoryVisitor {
 impl HistoryVisitor for GtkHistoryVisitor {
     fn begin(&mut self, model: &HistoryModel) {
         let captions = &model.captions;
-        self.dialog.set_title(Some(&captions.title));
         if let Some(close) = &self.close {
             close.set_label(&captions.close);
         }
@@ -183,16 +175,14 @@ pub(crate) struct HistoryDialog {
     delivery: Rc<HistoryDelivery>,
 }
 
-/// Native UI namespace only; ApplicationHost owns all OSD state.
-pub(crate) struct GtkOsd;
-
-impl GtkOsd {
-    pub(crate) fn build_history(
+impl HistoryDialog {
+    pub(crate) fn build(
+        model: &HostWindow,
         window: &gtk::ApplicationWindow,
         state: &Rc<RefCell<State>>,
     ) -> HistoryDialog {
         let dialog = gtk::Dialog::with_buttons(
-            None::<&str>,
+            Some(&model.title),
             Some(window),
             gtk::DialogFlags::DESTROY_WITH_PARENT,
             &[("", gtk::ResponseType::Close)],
@@ -240,6 +230,7 @@ impl GtkOsd {
         let selected = Rc::new(Cell::new(HistoryFilter::from_id(None)));
         let caption_filter = Rc::new(Cell::new(selected.get()));
         let visitor = GtkHistoryVisitor {
+            window: model.clone(),
             dialog: dialog.clone(),
             close: close_button,
             level: level_caption,
@@ -258,7 +249,7 @@ impl GtkOsd {
             let selected = selected.clone();
             move || {
                 // Skip refresh on a destroyed native surface; never-realized dialogs still refresh.
-                if super::surface_state::surface_dead(&visitor.dialog) {
+                if crate::surface_state::surface_dead(&visitor.dialog) {
                     return;
                 }
                 let model = {
@@ -303,7 +294,7 @@ impl GtkOsd {
         let follow = std::cell::Cell::new(Some(glib::timeout_add_local(
             std::time::Duration::from_millis(500),
             move || {
-                if super::surface_state::surface_gone(&follow_dialog) {
+                if crate::surface_state::surface_gone(&follow_dialog) {
                     return glib::ControlFlow::Break;
                 }
                 follow_refresh();
@@ -339,79 +330,26 @@ impl GtkOsd {
         }
     }
 }
-impl GtkOsd {
-    /// Present one error batch; the ack chains the next.
-    /// Release only the modal ownership after the last batch.
-    pub(crate) fn present_modal(
-        surface: &super::surface::Surface,
-        window: &gtk::ApplicationWindow,
-        presentation: ModalPresentation,
-    ) {
-        let port = GtkModalPresenter {
-            surface: Rc::downgrade(surface),
-            window: window.downgrade(),
-        };
-        let presenter: &dyn ModalPresenter = &port;
-        let token = presentation.token;
-        if let Some(receiver) = presenter.present_modal(presentation) {
-            let state = surface.borrow().state.clone();
-            state
-                .borrow_mut()
-                .host
-                .attach_osd_modal_receiver(token, receiver);
-        }
-    }
-}
-
-struct GtkModalPresenter {
-    surface: Weak<RefCell<super::surface::SurfaceCore>>,
-    window: glib::WeakRef<gtk::ApplicationWindow>,
-}
-
-impl ModalPresenter for GtkModalPresenter {
-    fn present_modal(&self, presentation: ModalPresentation) -> Option<Receiver<()>> {
-        let window = self.window.upgrade()?;
-        let dialog = gtk::MessageDialog::new(
-            Some(&window),
-            gtk::DialogFlags::MODAL,
-            gtk::MessageType::Error,
-            gtk::ButtonsType::Ok,
-            &presentation.detail,
-        );
-        let surface = self.surface.clone();
-        let window = self.window.clone();
-        dialog.connect_response(move |dialog, _| {
-            // close() can emit a second (DeleteEvent) response and ACK twice.
-            dialog.destroy();
-            // Bounded recursion: the modal queue caps at MAX_QUEUED,
-            // so nesting depth is capped too, not an unbounded chain.
-            let Some(surface) = surface.upgrade() else {
-                return;
-            };
-            let state = surface.borrow().state.clone();
-            let next = state
-                .borrow_mut()
-                .host
-                .acknowledge_osd_modal(presentation.token);
-            match next {
-                ModalAdvance::Present(next) => {
-                    if let Some(window) = window.upgrade() {
-                        GtkOsd::present_modal(&surface, &window, next);
-                    }
-                }
-                ModalAdvance::Ignored | ModalAdvance::Drained => {}
-            }
-        });
-        dialog.present();
-        None
-    }
-}
-
 #[cfg(test)]
-pub(super) mod history_dialog_tests {
-    use super::{GtkOsd, HistoryController, HistoryFilter, HistoryModel};
+pub(crate) mod history_dialog_tests {
+    use super::{HistoryController, HistoryFilter, HistoryModel};
     use gtk::prelude::*;
     use nerust_settings_core::model::language::AppLanguage;
+
+    pub(crate) fn build_history(
+        parent: &gtk::ApplicationWindow,
+        state: &std::rc::Rc<std::cell::RefCell<crate::State>>,
+    ) -> super::HistoryDialog {
+        let model = nerust_frontend_host::window::Window::auxiliary(
+            nerust_frontend_host::focus::AuxKind::History,
+        );
+        let Some(crate::window::RenderedDialog::History(built)) =
+            crate::window::render_dialog(&model, parent, state.clone(), None, || {})
+        else {
+            panic!("history contents")
+        };
+        built
+    }
 
     /// Caption table follows the language; display application rides `refresh`.
     #[test]
@@ -513,7 +451,7 @@ pub(super) mod history_dialog_tests {
             eprintln!("SKIP: history widget test needs a display (run under Xvfb)");
             return;
         };
-        let built = GtkOsd::build_history(&window, &state);
+        let built = build_history(&window, &state);
         (built.refresh)();
         // Filter to warnings on an empty history: still the empty state.
         built.filter.set_active_id(Some("warning"));
@@ -522,7 +460,7 @@ pub(super) mod history_dialog_tests {
         (built.refresh)();
         built.dialog.destroy();
         // Reopen pattern: a fresh build works after destroy.
-        let rebuilt = GtkOsd::build_history(&window, &state);
+        let rebuilt = build_history(&window, &state);
         (rebuilt.refresh)();
         rebuilt.dialog.destroy();
     }
@@ -547,7 +485,7 @@ pub(super) mod history_dialog_tests {
             eprintln!("SKIP: history widget test needs a display (run under Xvfb)");
             return;
         };
-        let built = GtkOsd::build_history(&window, &state);
+        let built = build_history(&window, &state);
         let en_title = ui_text(AppLanguage::English, UiText::NotificationHistory);
         assert_eq!(built.dialog.title().as_deref(), Some(en_title));
         assert_eq!(
@@ -702,7 +640,7 @@ pub(super) mod history_dialog_tests {
             .host
             .apply_settings(settings.clone())
             .unwrap();
-        let built = GtkOsd::build_history(&window, &state);
+        let built = build_history(&window, &state);
         let empty = HistoryController::new()
             .update(
                 state.borrow_mut().host.session_mut(),
@@ -760,7 +698,7 @@ pub(super) mod history_dialog_tests {
             eprintln!("SKIP: history widget test needs a display (run isolated under Xvfb)");
             return;
         };
-        let built = GtkOsd::build_history(&window, &state);
+        let built = build_history(&window, &state);
         let called = Rc::new(Cell::new(false));
         let signal = built.filter.connect_changed({
             let called = called.clone();

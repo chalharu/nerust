@@ -44,10 +44,13 @@ impl crate::ports::WindowOpener for FakeOpener {
 
     fn create_aux(
         &self,
-        kind: crate::aux::focus::AuxKind,
+        window: nerust_frontend_host::window::Window,
         _params: crate::ports::AuxOpenParams,
     ) -> Option<Box<dyn crate::aux::registry::AuxController>> {
         use crate::aux::focus::AuxKind;
+        let nerust_frontend_host::window::WindowId::Auxiliary(kind) = window.id else {
+            return None;
+        };
         let call = match kind {
             AuxKind::Settings => OpenerCall::Settings,
             AuxKind::Debug => OpenerCall::Debug,
@@ -72,7 +75,7 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    AuxKind::History,
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::History),
                     AuxOpenParams::History {
                         language: AppLanguage::English
                     }
@@ -82,7 +85,7 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    AuxKind::Debug,
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug),
                     AuxOpenParams::Debug {
                         display: Default::default(),
                         spaces: Vec::new(),
@@ -118,14 +121,19 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    AuxKind::Settings,
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Settings),
                     AuxOpenParams::Settings {
-                        snapshot,
-                        registry: std::sync::Arc::new(
-                            nerust_gui_shell::registry::SystemRegistry::new(Vec::new())
-                        ),
-                        audio: std::sync::Arc::new(
-                            nerust_core_traits::audio::AudioBackendRegistry::new()
+                        program: crate::aux::widgets::bindings::SettingsBinding::new(
+                            snapshot,
+                            std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(
+                                Vec::new()
+                            )),
+                            std::sync::Arc::new(
+                                nerust_core_traits::audio::AudioBackendRegistry::new()
+                            ),
+                            Default::default(),
+                            Default::default(),
+                            Default::default(),
                         ),
                     }
                 )
@@ -140,7 +148,7 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    AuxKind::Ppu,
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Ppu),
                     AuxOpenParams::Ppu {
                         bridge,
                         position: None
