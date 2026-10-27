@@ -45,18 +45,13 @@ impl HostState {
             }
             OpenRequest::Pending(_) => return,
         };
-        self.aux.window_mut(id).expect("history reservation").title =
-            nerust_settings_core::i18n::text(
-                ctx.frame().language(),
-                nerust_settings_core::i18n::UiText::NotificationHistory,
-            )
-            .into();
+        let Some(session) = self.prepare_widget_session(id) else {
+            return;
+        };
         let opened = self.create_aux_window(
             id,
             opener,
-            crate::ports::AuxOpenParams::History {
-                language: ctx.frame().language(),
-            },
+            crate::ports::AuxOpenParams::Controls { session },
         );
         if opened {
             // Fresh window needs full content regardless of cache.
@@ -66,16 +61,18 @@ impl HostState {
     }
 
     fn sync_history_window(&mut self, frame: &FrameSnapshot) {
-        let language = frame.language();
-        let Some(lines) = self.core.history_update(language) else {
-            return;
-        };
-        self.aux.history_sync(lines, language);
+        self.core.history_update(frame.language());
+        if let Some(id) = self.aux.route_id(AuxKind::History) {
+            self.aux.refresh_widget(id, &mut self.core);
+        }
     }
 
     pub(crate) fn on_history_event(&mut self, event: WindowEvent) {
+        let id = self.aux.route_id(AuxKind::History);
         if matches!(event, WindowEvent::Destroyed) {
-            self.drop_history_window();
+            if let Some(id) = id {
+                self.finish_widget_window(id, true);
+            }
             return;
         }
         // Read-only viewer: shared aux-focus drive (arrival only
@@ -91,11 +88,11 @@ impl HostState {
             return;
         };
         if outcome.close {
-            self.drop_history_window();
+            self.finish_widget_window(outcome.id.expect("routed generation"), true);
             return;
         }
-        if outcome.cleared {
-            self.core.clear_history();
+        if outcome.submitted {
+            self.finish_widget_window(outcome.id.expect("routed generation"), false);
             let ctx = self.frame_ctx();
             self.sync_history_window(ctx.frame());
         }

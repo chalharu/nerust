@@ -15,12 +15,11 @@ use nerust_frontend_host::{
     commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
     event::{CommandEffect, EventCommand, EventHandler, EventSink},
     focus::{AuxKind, FocusEvent},
-    history::HistoryModel,
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
     session::SessionEvent,
-    settings::{SettingsController, SettingsScreen},
+    widget_session::WidgetSession,
     widgets::MenuPresenter,
-    window::{HistoryContents, MainContents, Window as HostWindow, WindowVisitor},
+    window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
 use nerust_gui_shell::session::{SessionError, access::SessionControl};
 use nerust_render_traits::renderer::PipelineFactory;
@@ -31,10 +30,7 @@ use super::{
     surface::{Surface, SurfaceExtend},
     surface_state::surface_gone,
 };
-use crate::widgets::{
-    history::{GtkHistoryVisitor, HistoryDialog},
-    settings::SettingsBinding,
-};
+use crate::widgets::controls::{Callbacks, WidgetBinding, WidgetDialog};
 
 /// Bound once via `set_menubar`; host IDs retain the same native submenus
 /// across refills because replacing the root does not update the visible bar.
@@ -109,36 +105,31 @@ pub(crate) struct MainWindowRenderer {
 pub(crate) enum GtkWindowRenderer<'a> {
     Main(MainWindowRenderer),
     Build(Box<DialogRenderer<'a>>),
-    Settings(&'a SettingsBinding),
-    History(&'a HistoryModel, &'a mut GtkHistoryVisitor),
+    Controls(&'a WidgetBinding),
 }
 
 pub(crate) struct DialogRenderer<'a> {
     parent: &'a gtk::ApplicationWindow,
-    state: Rc<RefCell<State>>,
-    controller: Option<SettingsController>,
-    on_close: Option<Box<dyn FnOnce()>>,
+    session: Option<WidgetSession>,
+    callbacks: Option<Callbacks>,
     model: Option<HostWindow>,
     result: Option<RenderedDialog>,
 }
 
 pub(crate) enum RenderedDialog {
-    History(HistoryDialog),
-    Settings(gtk::Dialog),
+    Controls(WidgetDialog),
 }
 
 pub(crate) fn render_dialog(
     model: &HostWindow,
     parent: &gtk::ApplicationWindow,
-    state: Rc<RefCell<State>>,
-    controller: Option<SettingsController>,
-    on_close: impl FnOnce() + 'static,
+    session: Option<WidgetSession>,
+    callbacks: Callbacks,
 ) -> Option<RenderedDialog> {
     let mut renderer = GtkWindowRenderer::Build(Box::new(DialogRenderer {
         parent,
-        state,
-        controller,
-        on_close: Some(Box::new(on_close)),
+        session,
+        callbacks: Some(callbacks),
         model: None,
         result: None,
     }));
@@ -157,8 +148,7 @@ impl WindowVisitor for GtkWindowRenderer<'_> {
                 builder.model = Some(model.clone());
                 None
             }
-            Self::Settings(binding) => binding.dialog().map(Cast::upcast),
-            Self::History(_, visitor) => Some(visitor.dialog.clone().upcast()),
+            Self::Controls(binding) => binding.dialog().map(Cast::upcast),
         };
         if let Some(window) = native
             && window.title().as_deref() != Some(model.title.as_str())
@@ -185,33 +175,18 @@ impl WindowVisitor for GtkWindowRenderer<'_> {
         }
     }
 
-    fn visit_settings(&mut self, screen: &SettingsScreen) {
+    fn visit_controls(&mut self, screen: &nerust_frontend_host::control::ControlScreen) {
         match self {
-            Self::Settings(binding) => binding.render(screen),
+            Self::Controls(binding) => binding.render(screen),
             Self::Build(builder) => {
-                let Some(controller) = builder.controller.take() else {
+                let Some(session) = builder.session.take() else {
                     return;
                 };
-                builder.result = Some(RenderedDialog::Settings(crate::widgets::settings::build(
+                builder.result = Some(RenderedDialog::Controls(crate::widgets::controls::build(
                     builder.model.as_ref().expect("window chrome"),
                     builder.parent,
-                    builder.state.clone(),
-                    controller,
-                    builder.on_close.take().expect("one grouped body"),
-                )));
-            }
-            _ => (),
-        }
-    }
-
-    fn visit_history(&mut self, _contents: &HistoryContents) {
-        match self {
-            Self::History(model, visitor) => model.visit(*visitor),
-            Self::Build(builder) => {
-                builder.result = Some(RenderedDialog::History(HistoryDialog::build(
-                    builder.model.as_ref().expect("window chrome"),
-                    builder.parent,
-                    &builder.state,
+                    session,
+                    builder.callbacks.take().expect("one control program"),
                 )));
             }
             _ => (),
@@ -254,15 +229,14 @@ fn present_main_model(window: &Window, model: HostWindow, surface: Option<MainSu
 #[derive(Clone)]
 enum NativeAux {
     Debug(crate::debugger::DebuggerWindow),
-    History(gtk::Dialog, Rc<dyn Fn()>),
-    Settings(gtk::Dialog),
+    Controls(WidgetDialog),
 }
 
 impl NativeAux {
     fn is_gone(&self) -> bool {
         match self {
             Self::Debug(debugger) => debugger.borrow().is_gone(),
-            Self::History(dialog, _) | Self::Settings(dialog) => surface_gone(dialog),
+            Self::Controls(program) => surface_gone(&program.dialog),
         }
     }
 
@@ -272,18 +246,17 @@ impl NativeAux {
                 crate::debugger::DebuggerWindowCore::refresh(debugger);
                 debugger.borrow().present();
             }
-            Self::History(dialog, refresh) => {
-                dialog.present();
-                refresh();
+            Self::Controls(program) => {
+                program.dialog.present();
+                program.binding.sync();
             }
-            Self::Settings(dialog) => dialog.present(),
         }
     }
 
     fn native_window(&self) -> gtk::Window {
         match self {
             Self::Debug(debugger) => debugger.borrow().native_window().upcast(),
-            Self::History(dialog, _) | Self::Settings(dialog) => dialog.clone().upcast(),
+            Self::Controls(program) => program.dialog.clone().upcast(),
         }
     }
 }
@@ -327,7 +300,7 @@ fn request_aux(window: &Window, kind: AuxKind) -> Option<AuxId> {
 
 fn complete_aux(window: &Window, id: AuxId, handle: NativeAux) -> bool {
     let native = handle.native_window();
-    let history = matches!(&handle, NativeAux::History(_, _));
+    let controls = matches!(&handle, NativeAux::Controls(_));
     let result = window.borrow_mut().aux.complete_open(id, None, handle);
     if let Err(rejected) = result {
         rejected.native_window().destroy();
@@ -340,7 +313,7 @@ fn complete_aux(window: &Window, id: AuxId, handle: NativeAux) -> bool {
             close_aux(&window, id);
         }
     });
-    if history {
+    if controls {
         let weak = Rc::downgrade(window);
         native.connect_unrealize(move |_| {
             if let Some(window) = weak.upgrade() {
@@ -359,7 +332,7 @@ fn close_aux(window: &Window, id: AuxId) -> bool {
         state
             .borrow_mut()
             .host
-            .close_window(&mut core.aux, id, None)
+            .close_widget_window(&mut core.aux, id, None)
     };
     let Some((handle, result)) = closed else {
         return false;
@@ -379,7 +352,7 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
     let state = window.state();
     // Host prepares the only draft and publishes its Window into the reserved
     // route. Validation/rollback and SettingsOpened/Closed are not native policy.
-    let controller = if kind == AuxKind::Settings {
+    let session = if matches!(kind, AuxKind::Settings | AuxKind::History) {
         let prepared = {
             let mut core = window.borrow_mut();
             let mut state = state.borrow_mut();
@@ -387,10 +360,10 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
             let audio = state.ctx.audio_registry.clone();
             state
                 .host
-                .prepare_settings_window(&mut core.aux, id, registry, audio)
+                .prepare_widget_window(&mut core.aux, id, registry, audio)
         };
         match prepared {
-            Ok(Some(controller)) => Some(controller),
+            Ok(Some(session)) => Some(session),
             Ok(None) => return,
             Err(error) => {
                 state.borrow_mut().host.report_host_error(error);
@@ -406,17 +379,14 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
         close_aux(window, id);
         return;
     };
-    let weak = Rc::downgrade(window);
-    let built = render_dialog(&model, &window.window(), state, controller, move || {
-        if let Some(window) = weak.upgrade()
-            && close_aux(&window, id)
-        {
-            window.update_actions();
-        }
-    });
+    let built = render_dialog(
+        &model,
+        &window.window(),
+        session,
+        widget_callbacks(window, id),
+    );
     let handle = match built {
-        Some(RenderedDialog::History(built)) => NativeAux::History(built.dialog, built.refresh),
-        Some(RenderedDialog::Settings(dialog)) => NativeAux::Settings(dialog),
+        Some(RenderedDialog::Controls(built)) => NativeAux::Controls(built),
         None => {
             close_aux(window, id);
             window.update_actions();
@@ -426,6 +396,85 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
     let native = handle.native_window();
     if complete_aux(window, id, handle) {
         native.present();
+    }
+}
+
+fn widget_callbacks(window: &Window, id: AuxId) -> Callbacks {
+    let current = Rc::downgrade(window);
+    let refresh = current.clone();
+    let publish = current.clone();
+    let submit = current.clone();
+    let close = current.clone();
+    Callbacks {
+        current: Box::new(move || {
+            current.upgrade().is_some_and(|window| {
+                let core = window.borrow();
+                core.aux.kind_of_id(id).is_some() && !core.state.borrow().host.close_exited()
+            })
+        }),
+        refresh: Box::new(move |session| {
+            if let Some(window) = refresh.upgrade() {
+                let state = window.state();
+                state.borrow_mut().host.refresh_widget_session(session);
+            }
+        }),
+        publish: Box::new(move |model| {
+            if let Some(window) = publish.upgrade()
+                && let Some(slot) = window.borrow_mut().aux.window_mut(id)
+            {
+                *slot = model;
+            }
+        }),
+        submit: Box::new(move |submission| {
+            let Some(window) = submit.upgrade() else {
+                return false;
+            };
+            let result = {
+                let core = window.borrow();
+                core.state
+                    .borrow_mut()
+                    .host
+                    .apply_window_submission(&core.aux, id, submission)
+            };
+            match result {
+                Ok(effects) => {
+                    apply_window_effects(&window, effects);
+                    true
+                }
+                // Host publishes the error through the same opaque mailbox.
+                Err(error) => {
+                    log::warn!("GTK widget apply failed: {error}");
+                    false
+                }
+            }
+        }),
+        close: Box::new(move || {
+            if let Some(window) = close.upgrade()
+                && close_aux(&window, id)
+            {
+                window.update_actions();
+            }
+        }),
+    }
+}
+
+fn apply_window_effects(window: &Window, effects: WindowEffects) {
+    if effects.rebuild_renderer {
+        window.state().borrow_mut().renderer_reload_pending = true;
+    }
+    let native = window.window();
+    if let Some(fullscreen) = effects.fullscreen {
+        native.set_fullscreened(fullscreen);
+    }
+    if let Some((width, height)) = effects.resize {
+        native.set_default_size(width as i32, height as i32);
+        native.queue_resize();
+    }
+    if effects.redraw {
+        native.queue_draw();
+    }
+    if effects.refresh_chrome {
+        window.update_actions();
     }
 }
 
@@ -1042,7 +1091,29 @@ fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    pub(crate) fn program(window: &super::Window, kind: super::AuxKind) -> super::WidgetDialog {
+        super::open_auxiliary(window, kind);
+        let Some(super::NativeAux::Controls(program)) = window.borrow().aux.get(kind).cloned()
+        else {
+            panic!("generic widget program");
+        };
+        program
+    }
+
+    pub(crate) fn route(window: &super::Window, kind: super::AuxKind) -> Option<super::AuxId> {
+        window.borrow().aux.route_id(kind)
+    }
+
+    pub(crate) fn inert_callbacks() -> super::Callbacks {
+        super::Callbacks {
+            current: Box::new(|| true),
+            refresh: Box::new(|_| {}),
+            publish: Box::new(|_| {}),
+            submit: Box::new(|_| true),
+            close: Box::new(|| {}),
+        }
+    }
     use gio::prelude::ActionExt as _;
     use gtk::prelude::{
         ActionMapExt as _, ApplicationExt as _, Cast as _, CastNone as _, DialogExt as _,
@@ -1080,42 +1151,33 @@ mod tests {
             eprintln!("SKIP: window widget test needs a display (run under Xvfb)");
             return;
         };
-        let window = win.window();
-        let state = win.state();
         // Bypass the slot wiring: a directly built dialog carries no
         // destroy hook, like an externally destroyed one whose
         // close-request never ran.
-        let built = crate::widgets::history::history_dialog_tests::build_history(&window, &state);
-        let super::OpenRequest::Create(id) =
-            win.borrow_mut().aux.request_open(super::AuxKind::History)
-        else {
-            panic!("expected reservation");
-        };
-        assert!(
-            win.borrow_mut()
-                .aux
-                .complete_open(
-                    id,
-                    None,
-                    super::NativeAux::History(built.dialog.clone(), built.refresh.clone()),
-                )
-                .is_ok()
-        );
+        win.open_history();
+        let built = win
+            .borrow()
+            .aux
+            .get(super::AuxKind::History)
+            .cloned()
+            .unwrap();
         // External destroy disposes the widget without signals; the
         // slot keeps the dead dialog.
-        built.dialog.destroy();
-        assert!(surface_gone(&built.dialog));
+        let dead = built.native_window();
+        dead.destroy();
+        assert!(surface_gone(&dead));
         // Must rebuild, not panic on the slot borrow.
         win.open_history();
         let slot = win.borrow().aux.get(super::AuxKind::History).cloned();
-        let Some(super::NativeAux::History(dialog, _)) = slot else {
+        let Some(super::NativeAux::Controls(program)) = slot else {
             panic!("rebuilt dialog");
         };
+        let dialog = program.dialog;
         assert!(!surface_gone(&dialog));
         dialog.destroy();
     }
 
-    fn bound_window() -> Option<super::Window> {
+    pub(crate) fn bound_window() -> Option<super::Window> {
         let (app, window, state) = harness()?;
         Some(super::Window::bind(
             app,
@@ -1284,7 +1346,7 @@ mod tests {
         let native = native_debug.borrow().native_window();
         assert_eq!(native.title().as_deref(), Some(debug.title.as_str()));
         assert!(native.child().is_some());
-        assert!(super::render_dialog(&debug, &main, state.clone(), None, || {}).is_none());
+        assert!(super::render_dialog(&debug, &main, None, inert_callbacks()).is_none());
 
         let mut ppu = HostWindow::auxiliary(AuxKind::Ppu);
         ppu.id = WindowId::Main;
@@ -1310,16 +1372,31 @@ mod tests {
                 .is_none()
         );
 
-        let mut history = HostWindow::auxiliary(AuxKind::History);
+        let id = super::request_aux(&win, AuxKind::History).unwrap();
+        let session = {
+            let mut core = win.borrow_mut();
+            let mut state = state.borrow_mut();
+            let registry = state.ctx.registry.clone();
+            let audio = state.ctx.audio_registry.clone();
+            state
+                .host
+                .prepare_widget_window(&mut core.aux, id, registry, audio)
+                .unwrap()
+                .unwrap()
+        };
+        let mut history = session.window();
         history.id = WindowId::Auxiliary(AuxKind::Debug);
-        let Some(super::RenderedDialog::History(built)) =
-            super::render_dialog(&history, &main, state.clone(), None, || {})
-        else {
+        let Some(super::RenderedDialog::Controls(built)) = super::render_dialog(
+            &history,
+            &main,
+            Some(session),
+            super::widget_callbacks(&win, id),
+        ) else {
             panic!("History contents, not ID, select grouped controls")
         };
         assert!(built.dialog.content_area().first_child().is_some());
         let pending = HostWindow::auxiliary(AuxKind::Settings);
-        assert!(super::render_dialog(&pending, &main, state.clone(), None, || {}).is_none());
+        assert!(super::render_dialog(&pending, &main, None, inert_callbacks()).is_none());
         assert!(
             crate::debugger::DebuggerWindowCore::from_window(&pending, &app, &main, state.clone())
                 .is_none()
@@ -1848,10 +1925,11 @@ mod tests {
         };
         win.open_history();
         let old_id = win.borrow().aux.route_id(AuxKind::History).unwrap();
-        let Some(NativeAux::History(old, _)) = win.borrow().aux.get(AuxKind::History).cloned()
+        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(AuxKind::History).cloned()
         else {
             panic!("history dialog");
         };
+        let old = program.dialog;
         win.open_history();
         assert_eq!(win.borrow().aux.route_id(AuxKind::History), Some(old_id));
         assert!(super::close_aux(&win, old_id));
@@ -1882,10 +1960,11 @@ mod tests {
         let action = win.borrow().actions.get(CommandId::Settings).unwrap();
         action.activate(None);
         let old_id = win.borrow().aux.route_id(AuxKind::Settings).unwrap();
-        let Some(NativeAux::Settings(old)) = win.borrow().aux.get(AuxKind::Settings).cloned()
+        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(AuxKind::Settings).cloned()
         else {
             panic!("settings dialog");
         };
+        let old = program.dialog;
         super::open_auxiliary(&win, AuxKind::Settings);
         assert_eq!(win.borrow().aux.route_id(AuxKind::Settings), Some(old_id));
         win.update_actions();
@@ -1927,8 +2006,10 @@ mod tests {
         if !crate::test_support::ui_test_available() {
             return None;
         }
+        static NEXT_APP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let app_id = NEXT_APP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let app = gtk::Application::builder()
-            .application_id("org.nerust.window-test")
+            .application_id(format!("org.nerust.window-test.n{app_id}"))
             .flags(gio::ApplicationFlags::NON_UNIQUE)
             .build();
         // Menubar binding requires startup, just as in the real activate path.
@@ -1938,7 +2019,7 @@ mod tests {
         Some((app, window, model_state()))
     }
 
-    fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
+    pub(crate) fn model_state() -> std::rc::Rc<std::cell::RefCell<crate::State>> {
         use std::sync::Arc;
         let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());

@@ -8,7 +8,7 @@ mod osd;
 mod tests;
 mod window;
 
-pub use auxiliary::WindowClose;
+pub use auxiliary::WidgetWindowClose;
 pub use chrome::MenuSig;
 use debug::DebugRuntime;
 pub use debug::DebugView;

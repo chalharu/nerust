@@ -14,7 +14,7 @@ use std::{
 pub(super) struct Fixture {
     pub core: ApplicationHost,
     loader: Box<dyn nerust_gui_shell::load::RomLoader>,
-    root: PathBuf,
+    pub(super) root: PathBuf,
 }
 
 impl Fixture {

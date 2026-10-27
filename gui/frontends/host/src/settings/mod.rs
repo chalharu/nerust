@@ -4,7 +4,6 @@
 //! projections and execute returned effects, feeding their results back here.
 
 use std::{
-    ops::Deref,
     path::PathBuf,
     rc::Rc,
     sync::{
@@ -115,33 +114,23 @@ pub enum SettingsEffect {
     BrowseStorageDirectory { title: String },
 }
 
-/// Shared native-host signals, not a second settings draft. Clones refer to
+/// Internal signals, not a second settings draft. Clones refer to
 /// the controller's same close/apply/repaint mailboxes.
 #[derive(Clone)]
-pub struct SettingsMailbox {
-    pub should_close: Arc<AtomicBool>,
-    pub pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub view_invalidated: Arc<AtomicBool>,
-}
-
-impl Default for SettingsMailbox {
-    fn default() -> Self {
-        Self {
-            should_close: Arc::new(AtomicBool::new(false)),
-            pending_apply: Arc::new(Mutex::new(None)),
-            view_invalidated: Arc::new(AtomicBool::new(false)),
-        }
-    }
+pub(crate) struct SettingsMailbox {
+    pub(crate) should_close: Arc<AtomicBool>,
+    pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub(crate) view_invalidated: Arc<AtomicBool>,
 }
 
 impl SettingsMailbox {
-    pub fn take_pending_apply(&self) -> Option<SettingsSnapshot> {
+    pub(crate) fn take_pending_apply(&self) -> Option<SettingsSnapshot> {
         lock_recovered(&self.pending_apply).take()
     }
 }
 
 pub struct SettingsController {
-    pub mailbox: SettingsMailbox,
+    pub(crate) mailbox: SettingsMailbox,
     pub vm: SettingsViewModel,
     _revision_subscription: Subscription,
     pub page: SettingsPage,
@@ -150,14 +139,6 @@ pub struct SettingsController {
     pub input_section: InputPageSection,
     pub storage_directory_input: String,
     pub error_message: Option<String>,
-}
-
-impl Deref for SettingsController {
-    type Target = SettingsMailbox;
-
-    fn deref(&self) -> &Self::Target {
-        &self.mailbox
-    }
 }
 
 fn system_id_key(factory: &Arc<dyn CoreFactory>) -> String {
@@ -240,8 +221,7 @@ impl SettingsController {
         )
     }
 
-    /// Retains the native host's existing close/apply/repaint mailboxes.
-    pub fn new_with_shared(
+    fn new_with_shared(
         snapshot: &SettingsSnapshot,
         registry: Arc<SystemRegistry>,
         audio_registry: Arc<AudioBackendRegistry>,
@@ -294,12 +274,6 @@ impl SettingsController {
 
     pub fn language(&self) -> AppLanguage {
         self.vm.general.view.get().language
-    }
-
-    /// Owned presentation of the current draft, never another editor. Release
-    /// the controller borrow before passing this snapshot to a native visitor.
-    pub fn window(&self) -> crate::window::Window {
-        crate::window::Window::settings(self.screen())
     }
 
     pub fn validation_errors(&self) -> Vec<String> {
@@ -423,11 +397,11 @@ impl SettingsController {
             E::CaptureKey(key) => self.vm.capture.apply_captured_key(key),
             E::Submit => {
                 if let Ok(snapshot) = self.vm.finish() {
-                    *lock_recovered(&self.pending_apply) = Some(snapshot);
-                    self.should_close.store(true, Ordering::Release);
+                    *lock_recovered(&self.mailbox.pending_apply) = Some(snapshot);
+                    self.mailbox.should_close.store(true, Ordering::Release);
                 }
             }
-            E::Cancel => self.should_close.store(true, Ordering::Release),
+            E::Cancel => self.mailbox.should_close.store(true, Ordering::Release),
         }
         let after = (
             self.page,
@@ -440,7 +414,7 @@ impl SettingsController {
         // VM mutations invalidate through the subscription. Local edits and
         // error transitions must also repaint when the VM revision is unchanged.
         if before != after {
-            self.view_invalidated.store(true, Ordering::Release);
+            self.mailbox.view_invalidated.store(true, Ordering::Release);
         }
         effect
     }
