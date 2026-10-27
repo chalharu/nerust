@@ -3,25 +3,27 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicBool},
 };
 
-use iced::{
-    Length, Task, Theme,
-    alignment::Alignment,
-    widget::{button, column, container, row, scrollable, text},
-};
+use iced::{Task, Theme};
 use iced_winit::program::Program;
 use nerust_core_traits::audio::AudioBackendRegistry;
-pub(crate) use nerust_frontend_host::settings::{
-    InputPageSection, InputTab, SettingsEvent as Message, SettingsPage, find_duplicate_system_id,
+pub(crate) use nerust_frontend_host::settings::find_duplicate_system_id;
+use nerust_frontend_host::settings::{
+    ControlInput, SettingsControlId, SettingsController, SettingsEffect, SettingsEvent,
 };
-use nerust_frontend_host::settings::{SettingsController, SettingsEffect};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_keyboard::Key;
-use nerust_settings_core::i18n::{UiText, text as ui_text};
 
 use crate::convert::default_font;
 
 pub(super) type El<'a> = iced::Element<'a, Message, iced::Theme, iced_tiny_skia::Renderer>;
+
+/// Native callbacks retain identity and input, never a snapshot's bound events.
+#[derive(Debug, Clone)]
+pub(crate) enum Message {
+    Input(SettingsControlId, ControlInput),
+    CaptureKey(Key),
+}
 
 pub(crate) struct SettingsAppProgram {
     pub(crate) snapshot: SettingsSnapshot,
@@ -78,6 +80,10 @@ impl Program for SettingsAppProgram {
     fn window(&self) -> Option<iced::window::Settings> {
         None
     }
+
+    fn title(&self, state: &Self::State, _window: iced::window::Id) -> String {
+        state.screen().title
+    }
 }
 
 /// Native view wrapper; the common controller owns all dialog state.
@@ -121,74 +127,25 @@ impl SettingsAppState {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        if let Some(SettingsEffect::BrowseStorageDirectory { title }) =
-            self.controller.update(message)
-        {
-            let path = rfd::FileDialog::new().set_title(title).pick_folder();
-            self.controller
-                .update(Message::StorageDirectorySelected(path));
+        // Resolve once, release the snapshot, then apply context and edit in order.
+        let events = match message {
+            Message::Input(id, input) => self.controller.screen().bind(&id, input),
+            Message::CaptureKey(key) => self.controller.screen().bind_capture_key(key),
+        };
+        for event in events.into_iter().flatten() {
+            if let Some(SettingsEffect::BrowseStorageDirectory { title }) =
+                self.controller.update(event)
+            {
+                let path = rfd::FileDialog::new().set_title(title).pick_folder();
+                self.controller
+                    .update(SettingsEvent::StorageDirectorySelected(path));
+            }
         }
         Task::none()
     }
 
     fn view(&self) -> El<'_> {
-        let language = self.language();
-        let banner = self.validation_banner();
-        let can_submit = banner.can_submit;
-
-        let sidebar = column![
-            super::views::page_radio(language, UiText::General, SettingsPage::General, self.page),
-            super::views::page_radio(language, UiText::Input, SettingsPage::Input, self.page),
-            super::views::page_radio(language, UiText::Video, SettingsPage::Video, self.page),
-            super::views::page_radio(language, UiText::Audio, SettingsPage::Audio, self.page),
-            super::views::page_radio(
-                language,
-                UiText::Notifications,
-                SettingsPage::Notifications,
-                self.page,
-            ),
-            super::views::page_radio(language, UiText::System, SettingsPage::System, self.page),
-        ]
-        .spacing(10)
-        .width(Length::Shrink);
-
-        let content = scrollable(
-            container(self.page_content())
-                .padding(12)
-                .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        let mut root = column![
-            row![
-                container(sidebar).padding(12).width(Length::Fixed(180.0)),
-                content
-            ]
-            .spacing(16)
-            .width(Length::Fill)
-            .height(Length::Fill)
-        ]
-        .spacing(12)
-        .padding(16)
-        .height(Length::Fill);
-
-        if let Some(error_message) = self.error_message.as_ref() {
-            root = root.push(text(error_message.clone()));
-        } else if let Some(headline) = banner.headline.as_ref() {
-            root = root.push(text(headline.clone()));
-        }
-
-        let buttons = row![
-            iced::widget::Space::new().width(Length::Fill),
-            button(ui_text(language, UiText::Cancel)).on_press(Message::Cancel),
-            button(ui_text(language, UiText::Ok))
-                .on_press_maybe(can_submit.then_some(Message::Submit)),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
-
-        root.push(container(buttons).width(Length::Fill)).into()
+        super::views::build(&self.controller.screen())
     }
 }
 
@@ -200,9 +157,9 @@ pub(crate) fn keyboard_key_from_physical(physical: iced::keyboard::key::Physical
 mod tests {
     use iced::keyboard::key::{Code, Physical};
     use nerust_core_traits::audio::AudioBackendRegistry;
+    use nerust_frontend_host::settings::{SettingsControlId as Id, SettingsPage};
     use nerust_gui_runtime::settings::SettingsSnapshot;
     use nerust_gui_shell::registry::SystemRegistry;
-    use nerust_gui_viewmodel::settings::dto::ChoiceView;
     use nerust_keyboard::Key;
     use nerust_settings_core::model::{
         app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
@@ -235,12 +192,22 @@ mod tests {
             view_invalidated: Arc::new(AtomicBool::new(false)),
         }
         .boot();
+        state.vm.notifications.set_status_enabled(true).unwrap();
+        state
+            .vm
+            .notifications
+            .set_position(nerust_settings_core::model::local::NotificationPosition::TopLeft)
+            .unwrap();
+        state
+            .vm
+            .notifications
+            .set_status_position(
+                nerust_settings_core::model::local::NotificationPosition::BottomLeft,
+            )
+            .unwrap();
         dispatch(
             &mut state,
-            Message::SetStatusAreaMode(ChoiceView {
-                value: NotificationAreaMode::Strip,
-                label: String::new(),
-            }),
+            Message::Input(Id::StatusAreaMode, ControlInput::Select(1)),
         );
         assert_eq!(
             state.vm.notifications.view.get().status_area_mode,
@@ -249,7 +216,7 @@ mod tests {
         // The notifications page (with the new Status area row)
         // builds without panicking.
         state.page = SettingsPage::Notifications;
-        let _ = state.page_content();
+        let _ = state.view();
     }
 
     #[test]
@@ -263,9 +230,15 @@ mod tests {
             view_invalidated: Arc::new(AtomicBool::new(false)),
         };
         let (mut state, _task) = program.boot();
-        dispatch(&mut state, Message::SelectPage(SettingsPage::Audio));
+        dispatch(
+            &mut state,
+            Message::Input(Id::Page(SettingsPage::Audio), ControlInput::Activate),
+        );
         assert_eq!(state.page, SettingsPage::Audio);
-        let _ = program.update(&mut state, Message::SelectPage(SettingsPage::General));
+        let _ = program.update(
+            &mut state,
+            Message::Input(Id::Page(SettingsPage::General), ControlInput::Activate),
+        );
         // Storage error reads the live ViewModel projection.
         let _ = state.validation_banner();
         // Error banner renders above the buttons when set.
@@ -294,6 +267,10 @@ mod tests {
             &program.view_invalidated
         ));
         assert!(program.theme(&state, iced::window::Id::unique()).is_none());
+        assert_eq!(
+            program.title(&state, iced::window::Id::unique()),
+            state.screen().title
+        );
         let _ = program.view(&state, iced::window::Id::unique());
     }
 

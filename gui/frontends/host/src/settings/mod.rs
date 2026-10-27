@@ -41,6 +41,9 @@ use nerust_system_traits::factory::{
 
 use crate::debugger::lock_recovered;
 
+mod screen;
+pub use screen::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPage {
     General,
