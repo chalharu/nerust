@@ -4,16 +4,16 @@ use std::sync::{
 };
 
 use iced_winit::program;
-use nerust_frontend_host::settings::SettingsMailbox;
-use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_frontend_host::{
+    application::ApplicationHost,
+    widget_session::{WidgetSession, WindowMailbox},
+    window::Window,
+};
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::bindings::{Message, SettingsBinding};
-use super::history::{HistoryBinding, HistoryMessage};
+use super::bindings::{ControlsBinding, ControlsState, Message};
 use crate::aux::shell::{AuxShell, AuxSurface};
 use crate::aux::window::{WidgetBinding, WindowProgram};
-use nerust_gui_shell::session::osd::HistoryLine;
-use nerust_settings_core::model::language::AppLanguage;
 
 /// A native window owns only surface/shell and typed widget signals.
 pub(crate) struct WidgetWindow<B, S>
@@ -22,6 +22,7 @@ where
 {
     shell: AuxShell<WindowProgram<B>>,
     signals: S,
+    kind: crate::aux::focus::AuxKind,
 }
 
 pub(crate) trait WidgetSignals<B: WidgetBinding> {
@@ -44,13 +45,14 @@ where
         signals: S,
         size: (f64, f64),
     ) -> Option<Self> {
+        let kind = binding.kind();
         let surface = AuxSurface::open(
             event_loop,
             &window.title,
             size,
             None,
             None,
-            B::KIND.log_tag(),
+            kind.log_tag(),
             Arc::clone(signals.close_flag()),
         )
         .map_err(|error| {
@@ -72,7 +74,11 @@ where
             program: binding,
         });
         let shell = AuxShell::assemble(surface, instance);
-        Some(Self { shell, signals })
+        Some(Self {
+            shell,
+            signals,
+            kind,
+        })
     }
 }
 
@@ -81,7 +87,7 @@ where
     B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
 {
     fn kind(&self) -> crate::aux::focus::AuxKind {
-        B::KIND
+        self.kind
     }
 
     fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
@@ -105,36 +111,58 @@ where
     }
 }
 
-pub(crate) type SettingsWindowHandle = WidgetWindow<SettingsBinding, SettingsMailbox>;
+pub(crate) struct WindowSignals {
+    session: ControlsState,
+    mailbox: WindowMailbox,
+    should_close: Arc<AtomicBool>,
+    view_invalidated: AtomicBool,
+}
 
-impl SettingsWindowHandle {
+pub(crate) type ControlsWindowHandle = WidgetWindow<ControlsBinding, WindowSignals>;
+
+impl ControlsWindowHandle {
     pub(crate) fn new(
-        window: nerust_frontend_host::window::Window,
-        binding: SettingsBinding,
+        window: Window,
+        session: WidgetSession,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
     ) -> Option<Self> {
-        let signals = SettingsMailbox {
-            should_close: binding.should_close.clone(),
-            pending_apply: binding.pending_apply.clone(),
-            view_invalidated: binding.view_invalidated.clone(),
+        let binding = ControlsBinding::new(session);
+        let session = binding.session();
+        let signals = WindowSignals {
+            mailbox: session.borrow().mailbox(),
+            session: session.clone(),
+            should_close: Default::default(),
+            view_invalidated: AtomicBool::new(false),
         };
         Self::open(window, binding, event_loop, signals, (960.0, 720.0))
     }
 }
 
-impl crate::aux::registry::AuxController for SettingsWindowHandle {
-    fn as_settings(&mut self) -> Option<&mut dyn crate::aux::registry::SettingsClosePort> {
+impl crate::aux::registry::AuxController for ControlsWindowHandle {
+    fn as_widget(&mut self) -> Option<&mut dyn crate::aux::registry::WidgetSessionPort> {
         Some(self)
     }
-}
-
-impl crate::aux::registry::SettingsClosePort for SettingsWindowHandle {
-    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot> {
-        self.signals.take_pending_apply()
+    fn widget_mailbox(&self) -> Option<WindowMailbox> {
+        Some(self.signals.mailbox.clone())
     }
 }
 
-impl WidgetSignals<SettingsBinding> for SettingsMailbox {
+impl crate::aux::registry::WidgetSessionPort for ControlsWindowHandle {
+    fn refresh_widget(&mut self, host: &mut ApplicationHost) -> Window {
+        let window = {
+            let mut session = self.signals.session.borrow_mut();
+            host.refresh_widget_session(&mut session);
+            session.window()
+        };
+        if self.signals.mailbox.take_invalidated() {
+            self.signals.view_invalidated.store(true, Ordering::Release);
+            self.shell.process([], &self.signals.view_invalidated);
+        }
+        window
+    }
+}
+
+impl WidgetSignals<ControlsBinding> for WindowSignals {
     fn close_flag(&self) -> &Arc<AtomicBool> {
         &self.should_close
     }
@@ -148,61 +176,13 @@ impl WidgetSignals<SettingsBinding> for SettingsMailbox {
             ..
         }) = mapped
         {
-            super::bindings::keyboard_key_from_physical(*physical_key).map(Message::CaptureKey)
+            super::bindings::keyboard_key_from_physical(*physical_key).map(Message::capture_key)
         } else {
             None
         }
     }
 }
 
-#[derive(Default)]
-pub(crate) struct HistorySignals {
-    should_close: Arc<AtomicBool>,
-    clear_requested: Arc<AtomicBool>,
-    view_invalidated: AtomicBool,
-}
-
-impl WidgetSignals<HistoryBinding> for HistorySignals {
-    fn close_flag(&self) -> &Arc<AtomicBool> {
-        &self.should_close
-    }
-    fn refresh_flag(&self) -> &AtomicBool {
-        &self.view_invalidated
-    }
-}
-
-pub(crate) type HistoryWindowHandle = WidgetWindow<HistoryBinding, HistorySignals>;
-
-impl HistoryWindowHandle {
-    pub(crate) fn new(
-        window: nerust_frontend_host::window::Window,
-        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
-        language: AppLanguage,
-    ) -> Option<Self> {
-        let signals = HistorySignals::default();
-        let binding = HistoryBinding::new(language, signals.clear_requested.clone());
-        Self::open(window, binding, event_loop, signals, (720.0, 360.0))
-    }
-}
-
-impl crate::aux::registry::AuxController for HistoryWindowHandle {
-    fn as_history(&mut self) -> Option<&mut dyn crate::aux::registry::HistorySyncPort> {
-        Some(self)
-    }
-}
-
-impl crate::aux::registry::HistorySyncPort for HistoryWindowHandle {
-    fn sync_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage) {
-        self.shell.process(
-            [HistoryMessage::Sync { lines, language }],
-            &self.signals.view_invalidated,
-        );
-    }
-
-    fn take_history_clear(&mut self) -> bool {
-        self.signals.clear_requested.swap(false, Ordering::AcqRel)
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,19 +195,27 @@ mod tests {
 
     #[test]
     fn widget_signals_keep_close_separate_from_repaint_and_clear() {
-        let settings = SettingsMailbox::default();
+        let mut support = crate::runtime::host::TestHost::new().host;
+        let (_, session) = super::super::bindings::tests::prepare(
+            &mut support,
+            crate::aux::focus::AuxKind::History,
+        );
+        let settings = WindowSignals {
+            mailbox: session.mailbox(),
+            session: std::rc::Rc::new(std::cell::RefCell::new(session)),
+            should_close: Default::default(),
+            view_invalidated: AtomicBool::new(false),
+        };
         settings.close_flag().store(true, Ordering::Release);
         settings.refresh_flag().store(true, Ordering::Release);
         assert!(settings.refresh_flag().swap(false, Ordering::AcqRel));
         assert!(settings.close_flag().load(Ordering::Acquire));
 
-        let history = HistorySignals::default();
-        history.close_flag().store(true, Ordering::Release);
-        history.clear_requested.store(true, Ordering::Release);
-        history.refresh_flag().store(true, Ordering::Release);
-        assert!(history.refresh_flag().swap(false, Ordering::AcqRel));
-        assert!(history.clear_requested.swap(false, Ordering::AcqRel));
-        assert!(history.close_flag().load(Ordering::Acquire));
+        settings.mailbox.request_close();
+        settings.mailbox.invalidate();
+        assert!(settings.mailbox.take_invalidated());
+        assert!(settings.mailbox.close_requested());
+        assert!(!settings.mailbox.has_pending());
     }
 
     fn initial_cursor() -> mouse::Cursor {

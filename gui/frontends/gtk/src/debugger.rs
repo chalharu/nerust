@@ -2340,21 +2340,47 @@ mod tests {
         };
         // Builds the full dialog (settings snapshot drives every
         // section); closing runs the callback without applying.
-        let controller = {
-            let state = state.borrow();
-            nerust_frontend_host::settings::SettingsController::new(
-                state.settings_snapshot(),
-                state.ctx.registry.clone(),
-                state.ctx.audio_registry.clone(),
-            )
+        let mut windows = nerust_frontend_host::aux::AuxWindows::<u64, ()>::new();
+        let (id, session) = {
+            let mut state = state.borrow_mut();
+            let registry = state.ctx.registry.clone();
+            let audio = state.ctx.audio_registry.clone();
+            let Some(OpenRequest::Create(id)) = state
+                .host
+                .reserve_window(&mut windows, AuxKind::Settings)
+                .unwrap()
+            else {
+                panic!("settings reservation");
+            };
+            let session = state
+                .host
+                .prepare_widget_window(&mut windows, id, registry, audio)
+                .unwrap()
+                .unwrap();
+            (id, session)
         };
-        let model = controller.window();
-        let built = crate::window::render_dialog(&model, &main, state, Some(controller), || {});
-        let Some(crate::window::RenderedDialog::Settings(dialog)) = built else {
+        let model = session.window();
+        let built = crate::window::render_dialog(
+            &model,
+            &main,
+            Some(session),
+            crate::window::tests::inert_callbacks(),
+        );
+        let Some(crate::window::RenderedDialog::Controls(program)) = built else {
             panic!("settings group");
         };
+        let dialog = program.dialog;
         dialog.present();
         dialog.destroy();
+        assert!(
+            state
+                .borrow_mut()
+                .host
+                .close_widget_window(&mut windows, id, None)
+                .unwrap()
+                .1
+                .is_ok()
+        );
     }
 
     #[test]

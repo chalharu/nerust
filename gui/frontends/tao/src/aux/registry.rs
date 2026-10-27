@@ -7,10 +7,11 @@ use nerust_core_traits::debugger::SpaceId;
 use nerust_frontend_host::aux::AuxWindows;
 #[cfg(test)]
 use nerust_frontend_host::aux::OpenRequest;
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_shell::{debug::DebugAction, session::osd::HistoryLine};
+use nerust_frontend_host::{
+    application::ApplicationHost, widget_session::WindowMailbox, window::Window,
+};
+use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
-use nerust_settings_core::model::language::AppLanguage;
 
 use super::bridge::{DebugBridge, DrainSnapshot};
 use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
@@ -19,10 +20,11 @@ use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AuxOutcome {
+    pub id: Option<AuxId>,
     /// Close flag raised: drop the window.
     pub close: bool,
-    /// History clear requested (history only).
-    pub cleared: bool,
+    /// Opaque work is waiting; only ApplicationHost may consume it.
+    pub submitted: bool,
     pub error: Option<String>,
 }
 
@@ -47,19 +49,9 @@ pub(crate) trait LiveImagesPort {
     ) -> bool;
 }
 
-/// Settings-close port: pending apply staged for close teardown.
-/// Only settings implements this; see `AuxController::as_settings`.
-pub(crate) trait SettingsClosePort {
-    /// Take the pending settings apply on close (settings only).
-    fn take_pending_settings(&mut self) -> Option<SettingsSnapshot>;
-}
-
-/// History-sync port: content push for the history viewer.
-pub(crate) trait HistorySyncPort {
-    /// Push fresh history content (history only).
-    fn sync_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage);
-    /// Take a history clear request; the default pump routes here.
-    fn take_history_clear(&mut self) -> bool;
+/// Generic session capability; native code never sees a domain controller.
+pub(crate) trait WidgetSessionPort {
+    fn refresh_widget(&mut self, host: &mut ApplicationHost) -> Window;
 }
 
 /// Uniform aux controller: identity plus render plus capability queries.
@@ -67,13 +59,12 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
     /// Pump one domain event: prelude, dispatch, outcome.
     fn on_event(&mut self, event: AuxNativeEvent) -> AuxOutcome {
         pump_aux(self, event);
-        let cleared = self
-            .as_history()
-            .map(HistorySyncPort::take_history_clear)
-            .unwrap_or(false);
+        let mailbox = self.widget_mailbox();
         AuxOutcome {
-            close: self.close_requested(),
-            cleared,
+            id: None,
+            close: self.close_requested()
+                || mailbox.as_ref().is_some_and(WindowMailbox::close_requested),
+            submitted: mailbox.as_ref().is_some_and(WindowMailbox::has_pending),
             error: None,
         }
     }
@@ -81,13 +72,12 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
     /// Full render through the shared pump.
     fn on_redraw(&mut self) -> AuxOutcome {
         let error = super::focus::AuxRender::render(self);
-        let cleared = self
-            .as_history()
-            .map(HistorySyncPort::take_history_clear)
-            .unwrap_or(false);
+        let mailbox = self.widget_mailbox();
         AuxOutcome {
-            close: self.close_requested(),
-            cleared,
+            id: None,
+            close: self.close_requested()
+                || mailbox.as_ref().is_some_and(WindowMailbox::close_requested),
+            submitted: mailbox.as_ref().is_some_and(WindowMailbox::has_pending),
             error,
         }
     }
@@ -110,13 +100,11 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
         None
     }
 
-    /// Settings-close capability (settings only).
-    fn as_settings(&mut self) -> Option<&mut dyn SettingsClosePort> {
+    fn as_widget(&mut self) -> Option<&mut dyn WidgetSessionPort> {
         None
     }
 
-    /// History-sync capability (history only).
-    fn as_history(&mut self) -> Option<&mut dyn HistorySyncPort> {
+    fn widget_mailbox(&self) -> Option<WindowMailbox> {
         None
     }
 
@@ -213,14 +201,22 @@ impl AuxRegistry {
 
     /// Pump one domain event through the entry of this kind.
     pub(crate) fn on_event(&mut self, kind: AuxKind, event: AuxNativeEvent) -> Option<AuxOutcome> {
-        self.windows
-            .get_mut(kind)
-            .map(|entry| entry.on_event(event))
+        let id = self.route_id(kind)?;
+        self.windows.get_mut(kind).map(|entry| {
+            let mut outcome = entry.on_event(event);
+            outcome.id = Some(id);
+            outcome
+        })
     }
 
     /// Render the open window of this kind, if any.
     pub(crate) fn render_kind(&mut self, kind: AuxKind) -> Option<AuxOutcome> {
-        self.windows.get_mut(kind).map(|entry| entry.on_redraw())
+        let id = self.route_id(kind)?;
+        self.windows.get_mut(kind).map(|entry| {
+            let mut outcome = entry.on_redraw();
+            outcome.id = Some(id);
+            outcome
+        })
     }
 
     pub(crate) fn pump_deadlines(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
@@ -322,21 +318,19 @@ impl AuxRegistry {
         }
     }
 
-    /// Push fresh history content.
-    pub(crate) fn history_sync(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage) {
-        if let Some(port) = self
-            .entry_mut(AuxKind::History)
-            .and_then(AuxController::as_history)
+    pub(crate) fn refresh_widget(&mut self, id: AuxId, host: &mut ApplicationHost) {
+        let Some(kind) = self.windows.kind_of_id(id) else {
+            return;
+        };
+        let window = self
+            .entry_mut(kind)
+            .and_then(AuxController::as_widget)
+            .map(|port| port.refresh_widget(host));
+        if let Some(window) = window
+            && let Some(current) = self.window_mut(id)
         {
-            port.sync_history(lines, language);
+            *current = window;
         }
-    }
-
-    /// Take the pending settings apply on close.
-    pub(crate) fn settings_take_pending(&mut self) -> Option<SettingsSnapshot> {
-        self.entry_mut(AuxKind::Settings)
-            .and_then(AuxController::as_settings)
-            .and_then(SettingsClosePort::take_pending_settings)
     }
 
     /// Contended bridge locks, if any (debug only).
@@ -377,21 +371,18 @@ pub(crate) mod test_double {
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender};
     use nerust_gui_viewmodel::debugger::DebugImageRgba;
 
-    use super::{
-        AuxController, DebugDrainPort, HistorySyncPort, LiveImagesPort, SettingsClosePort,
-    };
+    use super::{AuxController, DebugDrainPort, LiveImagesPort, WindowMailbox};
     /// Configurable stub aux: answers only the capability its kind owns.
     pub(crate) struct StubAux {
         pub kind: AuxKind,
         pub nid: NativeWindowId,
         pub close: bool,
-        pub clear_history: bool,
+        pub mailbox: Option<WindowMailbox>,
         pub live_rebuild: bool,
         pub applied_drain: Rc<Cell<bool>>,
         pub bridge: Option<Arc<DebugBridge>>,
         pub drain_open: bool,
         pub debug_batch: Vec<DebugAction>,
-        pub pending_settings: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
         pub reg_target: Option<&'static str>,
     }
 
@@ -401,13 +392,12 @@ pub(crate) mod test_double {
                 kind,
                 nid: NativeWindowId::dummy(),
                 close: false,
-                clear_history: false,
+                mailbox: None,
                 live_rebuild: false,
                 applied_drain: Rc::new(Cell::new(false)),
                 bridge: None,
                 drain_open: false,
                 debug_batch: Vec::new(),
-                pending_settings: None,
                 reg_target: None,
             }
         }
@@ -472,27 +462,6 @@ pub(crate) mod test_double {
         }
     }
 
-    impl SettingsClosePort for StubAux {
-        fn take_pending_settings(
-            &mut self,
-        ) -> Option<nerust_gui_runtime::settings::SettingsSnapshot> {
-            (self.kind == AuxKind::Settings).then(|| self.pending_settings.take())?
-        }
-    }
-
-    impl HistorySyncPort for StubAux {
-        fn sync_history(
-            &mut self,
-            _lines: Arc<[nerust_gui_shell::session::osd::HistoryLine]>,
-            _language: nerust_settings_core::model::language::AppLanguage,
-        ) {
-        }
-
-        fn take_history_clear(&mut self) -> bool {
-            self.clear_history
-        }
-    }
-
     impl AuxController for StubAux {
         fn as_debug(&mut self) -> Option<&mut dyn DebugDrainPort> {
             (self.kind == AuxKind::Debug).then_some(self as &mut dyn DebugDrainPort)
@@ -515,12 +484,8 @@ pub(crate) mod test_double {
             (self.kind == AuxKind::Debug).then_some(self as &mut dyn LiveImagesPort)
         }
 
-        fn as_settings(&mut self) -> Option<&mut dyn SettingsClosePort> {
-            (self.kind == AuxKind::Settings).then_some(self as &mut dyn SettingsClosePort)
-        }
-
-        fn as_history(&mut self) -> Option<&mut dyn HistorySyncPort> {
-            (self.kind == AuxKind::History).then_some(self as &mut dyn HistorySyncPort)
+        fn widget_mailbox(&self) -> Option<WindowMailbox> {
+            self.mailbox.clone()
         }
 
         fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
@@ -689,14 +654,18 @@ mod tests {
     fn on_event_reports_close_and_clear_flags() {
         let mut registry = AuxRegistry::new();
         let mut stub = StubAux::new(AuxKind::History);
-        stub.clear_history = true;
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, mut session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
+        crate::aux::widgets::bindings::tests::activate(&mut session, "Clear History");
+        stub.mailbox = Some(session.mailbox());
         stub.close = true;
         registry.insert(Box::new(stub));
         let outcome = registry
             .on_event(AuxKind::History, AuxNativeEvent::Focused(true))
             .expect("history routes");
         assert!(outcome.close);
-        assert!(outcome.cleared);
+        assert!(outcome.submitted);
         // Default controller hooks stay quiet.
         registry.render_kind(AuxKind::History);
         registry.focus_kind(AuxKind::History);
@@ -718,8 +687,11 @@ mod tests {
         registry.debug_apply(DisplayCache::default(), None);
         registry.debug_sync();
         registry.ppu_sync();
-        assert!(registry.settings_take_pending().is_none());
-        registry.history_sync(Arc::from([]), AppLanguage::English);
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let OpenRequest::Create(absent) = host.reserve_aux_window(AuxKind::History).unwrap() else {
+            panic!("reservation")
+        };
+        registry.refresh_widget(absent, &mut host);
         // Open debugger: batch, snapshot, and bridge delegate.
         let mut stub = StubAux::new(AuxKind::Debug);
         stub.drain_open = true;
@@ -767,6 +739,11 @@ mod tests {
         registry.insert(Box::new(StubAux::new(AuxKind::Settings)));
         assert!(registry.debug_take_requests().is_none());
         assert!(registry.debug_snapshot(false).is_none());
-        assert!(registry.settings_take_pending().is_none());
+        assert!(
+            registry
+                .windows
+                .mailbox(registry.route_id(AuxKind::Settings).unwrap())
+                .is_none()
+        );
     }
 }

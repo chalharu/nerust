@@ -169,10 +169,6 @@ impl State {
     pub(crate) fn finish_close(&mut self) {
         self.host.finish_close();
     }
-
-    pub(crate) fn clear_notification_history(&mut self) {
-        self.host.clear_history();
-    }
 }
 
 nerust_frontend_host::impl_session_controls!(State);

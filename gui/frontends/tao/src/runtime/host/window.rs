@@ -62,6 +62,16 @@ pub(crate) struct WindowCluster {
 }
 
 impl WindowCluster {
+    pub(super) fn menu_height(&self) -> f64 {
+        let Some(window) = self.live() else {
+            return 0.0;
+        };
+        let Some((_, content, _)) = self.content_target() else {
+            return 0.0;
+        };
+        f64::from(window.inner_size().height.saturating_sub(content.height)) / window.scale_factor()
+    }
+
     pub(super) fn new() -> Self {
         Self {
             window: None,
@@ -185,7 +195,7 @@ impl WindowCluster {
 
 /// Native Tao ports for the shared end-of-burst driver.
 impl LoopHost for HostState {
-    type Frame = super::FrameCtx;
+    type Frame = nerust_frontend_host::frame::FrameCtx;
 
     fn before_turn(&mut self) {
         self.on_focus_event(nerust_frontend_host::focus::FocusEvent::BurstEnd);
@@ -383,6 +393,7 @@ impl HostState {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn update_window_size_for_scaling(&self) {
         let Some(window) = self.windows.live() else {
             return;

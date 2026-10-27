@@ -3,14 +3,16 @@ use std::{cell::RefCell, sync::Arc};
 use super::*;
 use crate::{
     aux::{AuxWindows, OpenRequest},
-    settings::{
-        SettingsControl, SettingsControlId, SettingsControlKind, SettingsController, SettingsEvent,
-        SettingsScreenPage, SettingsVisitor,
+    control::{
+        Control, ControlEvent, ControlId, ControlInput, ControlKind, ControlScreen, ControlVisitor,
+        Page,
     },
+    settings::SettingsController,
+    widget_session::WidgetSession,
 };
 
-fn controller() -> SettingsController {
-    SettingsController::new(
+fn session() -> WidgetSession {
+    WidgetSession::from_settings(SettingsController::new(
         &nerust_gui_runtime::settings::SettingsSnapshot {
             shared: Default::default(),
             local: Default::default(),
@@ -18,7 +20,7 @@ fn controller() -> SettingsController {
         },
         Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![])),
         Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
-    )
+    ))
 }
 
 #[test]
@@ -47,10 +49,7 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         fn visit_ppu(&mut self, _: &PpuContents) {
             self.0.push("ppu");
         }
-        fn visit_history(&mut self, _: &HistoryContents) {
-            self.0.push("history");
-        }
-        fn visit_pending_settings(&mut self) {
+        fn visit_pending_controls(&mut self) {
             self.0.push("pending");
         }
     }
@@ -58,7 +57,7 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         (Window::main(), "main"),
         (Window::auxiliary(AuxKind::Debug), "debug"),
         (Window::auxiliary(AuxKind::Ppu), "ppu"),
-        (Window::auxiliary(AuxKind::History), "history"),
+        (Window::auxiliary(AuxKind::History), "pending"),
         (Window::auxiliary(AuxKind::Settings), "pending"),
     ] {
         assert!(!window.title.is_empty());
@@ -73,50 +72,58 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
 #[test]
 fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
     struct Visitor<'a> {
-        controller: &'a RefCell<SettingsController>,
+        session: &'a RefCell<WidgetSession>,
+        volume: ControlId,
         pages: usize,
         controls: usize,
     }
     impl WindowVisitor for Visitor<'_> {
-        fn visit_settings(&mut self, screen: &SettingsScreen) {
-            self.controller
+        fn visit_controls(&mut self, screen: &ControlScreen) {
+            self.session
                 .borrow_mut()
-                .update(SettingsEvent::SetVolume(19));
-            let nested = self.controller.borrow().window();
+                .dispatch(ControlEvent::new(self.volume, ControlInput::Number(19)));
+            let nested = self.session.borrow().window();
             assert!(matches!(
                 nested.contents.contents,
-                WidgetContents::Settings(_)
+                WidgetContents::Controls(_)
             ));
-            let dynamic: &mut dyn SettingsVisitor = self;
+            let dynamic: &mut dyn ControlVisitor = self;
             screen.visit(dynamic);
         }
     }
-    impl SettingsVisitor for Visitor<'_> {
-        fn begin_page(&mut self, _: &SettingsScreenPage) {
+    impl ControlVisitor for Visitor<'_> {
+        fn begin_page(&mut self, _: &Page) {
             self.pages += 1;
         }
-        fn control(&mut self, _: &SettingsControl) {
+        fn control(&mut self, _: &Control) {
             self.controls += 1;
         }
     }
-    let controller = RefCell::new(controller());
-    controller.borrow_mut().update(SettingsEvent::SetVolume(37));
-    controller
-        .borrow()
-        .vm
-        .general
-        .set_language(nerust_settings_core::model::language::AppLanguage::Japanese)
-        .unwrap();
-    let revision = controller.borrow().vm.revision.get();
-    let window = controller.borrow().window();
-    assert_eq!(controller.borrow().vm.revision.get(), revision);
+    #[derive(Default)]
+    struct Volume(Option<ControlId>);
+    impl ControlVisitor for Volume {
+        fn control(&mut self, control: &Control) {
+            if matches!(control.kind, ControlKind::Number { max: 100, .. }) {
+                self.0 = Some(control.id);
+            }
+        }
+    }
+    let session = RefCell::new(session());
+    let mut volume = Volume::default();
+    session.borrow().screen().visit(&mut volume);
+    let volume = volume.0.unwrap();
+    session
+        .borrow_mut()
+        .dispatch(ControlEvent::new(volume, ControlInput::Number(37)));
+    let window = session.borrow().window();
     assert_eq!(window.id, WindowId::Auxiliary(AuxKind::Settings));
-    let WidgetContents::Settings(screen) = &window.contents.contents else {
-        panic!("settings tree must be owned by the widget");
+    let WidgetContents::Controls(screen) = &window.contents.contents else {
+        panic!("generic tree must be owned by the widget");
     };
     assert_eq!(window.title, screen.title);
     let mut visitor = Visitor {
-        controller: &controller,
+        session: &session,
+        volume,
         pages: 0,
         controls: 0,
     };
@@ -124,18 +131,17 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
     assert_eq!(visitor.pages, 6);
     assert!(visitor.controls > 20);
     assert!(matches!(
-        screen.control(&SettingsControlId::Volume).unwrap().kind,
-        SettingsControlKind::Number { value: 37, .. }
+        screen.control(volume).unwrap().kind,
+        ControlKind::Number { value: 37, .. }
     ));
-    assert_eq!(controller.borrow().vm.audio.view.get().volume_percent, 19);
-    let latest = controller.borrow().window();
-    drop(controller);
-    let WidgetContents::Settings(screen) = latest.contents.contents else {
+    let latest = session.borrow().window();
+    drop(session);
+    let WidgetContents::Controls(screen) = latest.contents.contents else {
         panic!()
     };
     assert!(matches!(
-        screen.control(&SettingsControlId::Volume).unwrap().kind,
-        SettingsControlKind::Number { value: 19, .. }
+        screen.control(volume).unwrap().kind,
+        ControlKind::Number { value: 19, .. }
     ));
 }
 
@@ -187,10 +193,10 @@ fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
     let OpenRequest::Create(old) = windows.request_open(AuxKind::Settings) else {
         panic!()
     };
-    *windows.window_mut(old).unwrap() = controller().window();
+    *windows.window_mut(old).unwrap() = session().window();
     assert!(matches!(
         windows.window(old).unwrap().contents.contents,
-        WidgetContents::Settings(_)
+        WidgetContents::Controls(_)
     ));
     assert!(windows.cancel_open(old));
     assert!(windows.window(old).is_none());
@@ -201,7 +207,7 @@ fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
     assert_ne!(old, current);
     assert!(matches!(
         windows.window(current).unwrap().contents.contents,
-        WidgetContents::PendingSettings
+        WidgetContents::PendingControls
     ));
     assert_eq!(windows.complete_open(old, Some(1), ()), Err(()));
     assert_eq!(windows.remove_id(old), None);

@@ -21,6 +21,7 @@ pub enum OpenRequest {
 struct Slot<N, H> {
     id: AuxId,
     window: Window,
+    mailbox: Option<crate::widget_session::WindowMailbox>,
     native: Option<N>,
     handle: Option<H>,
 }
@@ -64,6 +65,7 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
             Slot {
                 id,
                 window: Window::auxiliary(kind),
+                mailbox: None,
                 native: None,
                 handle: None,
             },
@@ -127,6 +129,19 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
     pub fn window_mut(&mut self, id: AuxId) -> Option<&mut Window> {
         let kind = self.kind_of_id(id)?;
         Some(&mut self.entries.get_mut(&kind)?.window)
+    }
+
+    /// Opaque shared lifecycle signals, available during native creation too.
+    pub fn mailbox(&self, id: AuxId) -> Option<crate::widget_session::WindowMailbox> {
+        self.entries.get(&self.kind_of_id(id)?)?.mailbox.clone()
+    }
+
+    pub(crate) fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox) {
+        let kind = self.kind_of_id(id).expect("current reservation");
+        self.entries
+            .get_mut(&kind)
+            .expect("current reservation")
+            .mailbox = Some(mailbox);
     }
 
     /// Includes opening reservations.

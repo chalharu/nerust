@@ -9,8 +9,10 @@ use tao::{
 };
 
 use nerust_core_traits::debugger::SpaceId;
-use nerust_frontend_host::window::{
-    DebugContents, HistoryContents, PpuContents, Window, WindowVisitor,
+use nerust_frontend_host::{
+    control::ControlScreen,
+    widget_session::WidgetSession,
+    window::{DebugContents, PpuContents, Window, WindowVisitor},
 };
 use nerust_gui_viewmodel::debugger::DisplayCache;
 use nerust_settings_core::{
@@ -161,8 +163,8 @@ pub(crate) fn show_rom_load_error(language: AppLanguage, detail: &str) {
 
 /// Aux-window open parameters: one variant per capability.
 pub(crate) enum AuxOpenParams {
-    Settings {
-        program: crate::aux::widgets::bindings::SettingsBinding,
+    Controls {
+        session: WidgetSession,
     },
     Debug {
         display: Box<DisplayCache>,
@@ -174,9 +176,6 @@ pub(crate) enum AuxOpenParams {
     Ppu {
         bridge: Arc<DebugBridge>,
         position: Option<(i32, i32)>,
-    },
-    History {
-        language: AppLanguage,
     },
 }
 
@@ -227,15 +226,15 @@ struct CreateAux<'a> {
 }
 
 impl WindowVisitor for CreateAux<'_> {
-    fn visit_settings(&mut self, _: &nerust_frontend_host::settings::SettingsScreen) {
+    fn visit_controls(&mut self, _: &ControlScreen) {
         self.output = self
             .params
             .take()
-            .and_then(settings_parts)
-            .and_then(|program| {
-                crate::aux::widgets::native::SettingsWindowHandle::new(
+            .and_then(controls_parts)
+            .and_then(|session| {
+                crate::aux::widgets::native::ControlsWindowHandle::new(
                     self.window.clone(),
-                    program,
+                    session,
                     self.target,
                 )
                 .map(aux_box)
@@ -272,20 +271,6 @@ impl WindowVisitor for CreateAux<'_> {
                 .map(aux_box)
             });
     }
-    fn visit_history(&mut self, _: &HistoryContents) {
-        self.output = self
-            .params
-            .take()
-            .and_then(history_parts)
-            .and_then(|language| {
-                crate::aux::widgets::native::HistoryWindowHandle::new(
-                    self.window.clone(),
-                    self.target,
-                    language,
-                )
-                .map(aux_box)
-            });
-    }
 }
 
 /// Box a concrete aux handle behind its capability ports.
@@ -293,16 +278,13 @@ fn aux_box<T: AuxController + 'static>(handle: T) -> Box<dyn AuxController> {
     Box::new(handle)
 }
 
-/// Single prepared controller, moved into the native iced instance.
-type SettingsParts = crate::aux::widgets::bindings::SettingsBinding;
-
-/// Split one settings open: the variant check is pure, so tests cover
+/// Split one controls open: the variant check is pure, so tests cover
 /// foreign-variant rejection without a display.
-fn settings_parts(params: AuxOpenParams) -> Option<SettingsParts> {
-    let AuxOpenParams::Settings { program } = params else {
+fn controls_parts(params: AuxOpenParams) -> Option<WidgetSession> {
+    let AuxOpenParams::Controls { session } = params else {
         return None;
     };
-    Some(program)
+    Some(session)
 }
 
 /// Split one debugger open: pure variant check, display-free tests.
@@ -337,14 +319,6 @@ fn ppu_parts(params: AuxOpenParams) -> Option<PpuParts> {
         return None;
     };
     Some((bridge, position))
-}
-
-/// Split one history open: pure variant check, display-free tests.
-fn history_parts(params: AuxOpenParams) -> Option<AppLanguage> {
-    let AuxOpenParams::History { language } = params else {
-        return None;
-    };
-    Some(language)
 }
 
 #[cfg(test)]
@@ -414,30 +388,19 @@ mod tests {
         // Kind routing guarantees the variant; a foreign variant is a
         // caller bug answered with `None`, never a logged mismatch.
         fn history_params() -> AuxOpenParams {
-            AuxOpenParams::History {
-                language: AppLanguage::English,
-            }
+            let mut host = crate::runtime::host::TestHost::new().host;
+            let (_, session) =
+                crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
+            AuxOpenParams::Controls { session }
         }
-        assert!(settings_parts(history_params()).is_none());
         assert!(debug_parts(history_params()).is_none());
         assert!(ppu_parts(history_params()).is_none());
-        assert_eq!(history_parts(history_params()), Some(AppLanguage::English));
+        assert!(controls_parts(history_params()).is_some());
         // Own variants split cleanly.
-        let settings = AuxOpenParams::Settings {
-            program: crate::aux::widgets::bindings::SettingsBinding::new(
-                nerust_gui_runtime::settings::SettingsSnapshot {
-                    shared: Default::default(),
-                    local: Default::default(),
-                    app_state: Default::default(),
-                },
-                Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new())),
-                Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-            ),
-        };
-        assert!(settings_parts(settings).is_some());
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
+        assert!(controls_parts(AuxOpenParams::Controls { session }).is_some());
         let debug = AuxOpenParams::Debug {
             display: Default::default(),
             spaces: Vec::new(),

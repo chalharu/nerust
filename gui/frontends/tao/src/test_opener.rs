@@ -72,14 +72,12 @@ mod tests {
     #[test]
     fn fake_opener_records_each_aux_kind() {
         let opener = FakeOpener::failing("no display");
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
         assert!(
             opener
-                .create_aux(
-                    nerust_frontend_host::window::Window::auxiliary(AuxKind::History),
-                    AuxOpenParams::History {
-                        language: AppLanguage::English
-                    }
-                )
+                .create_aux(session.window(), AuxOpenParams::Controls { session })
                 .is_none()
         );
         assert!(
@@ -113,30 +111,12 @@ mod tests {
         use crate::aux::bridge::DebugBridge;
         use nerust_gui_viewmodel::debugger::DisplayCache;
         let opener = FakeOpener::failing("no display");
-        let snapshot = nerust_settings_core::model::snapshot::SettingsSnapshot {
-            shared: Default::default(),
-            local: Default::default(),
-            app_state: Default::default(),
-        };
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
         assert!(
             opener
-                .create_aux(
-                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Settings),
-                    AuxOpenParams::Settings {
-                        program: crate::aux::widgets::bindings::SettingsBinding::new(
-                            snapshot,
-                            std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(
-                                Vec::new()
-                            )),
-                            std::sync::Arc::new(
-                                nerust_core_traits::audio::AudioBackendRegistry::new()
-                            ),
-                            Default::default(),
-                            Default::default(),
-                            Default::default(),
-                        ),
-                    }
-                )
+                .create_aux(session.window(), AuxOpenParams::Controls { session })
                 .is_none()
         );
         let bridge = std::sync::Arc::new(DebugBridge::new(

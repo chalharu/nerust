@@ -1,7 +1,7 @@
 //! Session presentation sync: menu, title, and fullscreen state.
 use super::HostState;
-use super::frame::FrameCtx;
 use crate::menu::TAO_MENU_CAPABILITIES;
+use nerust_frontend_host::frame::FrameCtx;
 use nerust_gui_shell::session::osd::TickMetrics;
 use nerust_gui_shell::session::{
     SessionError,
