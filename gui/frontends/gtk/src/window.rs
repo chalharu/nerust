@@ -869,29 +869,32 @@ impl WindowExtend for Window {
     }
 
     fn sync_fullscreen_from_settings(&self) {
-        let fullscreen = {
+        let native = self.window().is_fullscreen();
+        let (request, scaling, size) = {
             let state = self.state();
             let mut borrowed = state.borrow_mut();
-            let native = self.window().is_fullscreen();
-            let Some(fullscreen) = borrowed.fullscreen_request(native) else {
-                return;
-            };
+            let request = borrowed.fullscreen_request(native);
             let snapshot = borrowed.settings_snapshot();
             let scaling = snapshot.local.video.window.scaling;
             let size = snapshot.app_state.window_size("main");
-            (fullscreen, scaling, size)
+            (request, scaling, size)
         };
 
-        // Restore remembered window size when not in fullscreen or scaling mode.
-        if !fullscreen.0
-            && fullscreen.1 == ScalingMode::FitToWindow
-            && let Some(size) = fullscreen.2
+        // Restore remembered window size whenever the window ends up
+        // windowed, even with no fullscreen transition pending: the
+        // request gate returns None in the steady state, which must not
+        // skip the restore.
+        if !request.unwrap_or(native)
+            && scaling == ScalingMode::FitToWindow
+            && let Some(size) = size
         {
             self.window()
                 .set_default_size(size.width as i32, size.height as i32);
         }
 
-        set_window_fullscreen(&self.window(), fullscreen.0);
+        if let Some(fullscreen) = request {
+            set_window_fullscreen(&self.window(), fullscreen);
+        }
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {

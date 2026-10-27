@@ -128,26 +128,28 @@ impl IcedControlVisitor {
                 .padding(iced::padding::left(f32::from(layout.indent)))
                 .into()
         } else if matches!(kind, LayoutKind::Group) {
-            let mut header = row![].spacing(spacing).align_y(Alignment::Center);
+            // Title stands alone; the group header action (e.g. the
+            // notification Enable toggle) renders as the first indented
+            // row below it, matching GTK's header-below-title order.
+            let mut stacked: Vec<El<'static>> = Vec::new();
             if !layout.label.is_empty() {
-                header = header.push(text(layout.label.clone()).font(iced::Font {
-                    weight: iced::font::Weight::Bold,
-                    ..self.font
-                }));
+                stacked.push(
+                    row![text(layout.label.clone()).font(iced::Font {
+                        weight: iced::font::Weight::Bold,
+                        ..self.font
+                    })]
+                    .spacing(spacing)
+                    .align_y(Alignment::Center)
+                    .into(),
+                );
             }
-            if layout.header.as_ref().is_some_and(|c| c.metadata.visible)
-                && !frame.children.is_empty()
-            {
-                header = header.push(frame.children.remove(0));
-            }
-            column![
-                header,
+            stacked.push(
                 column(frame.children)
                     .spacing(spacing)
                     .padding(iced::padding::left(f32::from(layout.indent)))
-            ]
-            .spacing(spacing)
-            .into()
+                    .into(),
+            );
+            column(stacked).spacing(spacing).into()
         } else {
             let mut children = column(frame.children).spacing(spacing);
             if !layout.label.is_empty() {
@@ -216,8 +218,10 @@ impl ControlVisitor for IcedControlVisitor {
     fn end_screen(&mut self, screen: &ControlScreen) {
         let frame = self.stack.pop().expect("screen frame");
         let content = self.page.take().unwrap_or_else(|| column![].into());
-        let mut root = column![
-            text(screen.title.clone()).font(self.font).size(20),
+        // No in-content title label (GTK parity: the outer window carries
+        // the screen title). Single-panel screens (e.g. notification
+        // history) need no navigation chrome; content fills the dialog.
+        let body: El<'static> = if self.sidebar.len() > 1 {
             row![
                 container(column(std::mem::take(&mut self.sidebar)).spacing(10))
                     .padding(12)
@@ -228,10 +232,15 @@ impl ControlVisitor for IcedControlVisitor {
             ]
             .spacing(16)
             .height(Length::Fill)
-        ]
-        .spacing(12)
-        .padding(16)
-        .height(Length::Fill);
+            .into()
+        } else {
+            self.sidebar.clear();
+            scrollable(container(content).padding(12).width(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        };
+        let mut root = column![body].spacing(12).padding(16).height(Length::Fill);
         if let Some(message) = &screen.message {
             root = root.push(text(message.clone()).font(self.font));
         }
@@ -495,13 +504,10 @@ fn control_element(control: &Control, parent_enabled: bool, font: iced::Font) ->
             }
         }
     };
-    if let Some(help) = &control.metadata.help {
-        column![element, text(help.clone()).font(font).size(13)]
-            .spacing(4)
-            .into()
-    } else {
-        element
-    }
+    // Help surfaces as hover tooltips in GTK; Tao has no hover affordance,
+    // so a permanent subtitle (e.g. "Occupied by another slot") only adds
+    // noise. The disabled state already reads off the dimmed input itself.
+    element
 }
 
 #[cfg(test)]
