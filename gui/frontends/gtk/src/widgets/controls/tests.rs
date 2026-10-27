@@ -1269,30 +1269,12 @@ fn generic_picker_rejects_stale_request_and_old_generation() {
     let second = session.dispatch(ControlEvent::new(target, ControlInput::Activate));
     let ControlEffect::PickDirectory { request: old, .. } = first[0];
     let ControlEffect::PickDirectory { request: new, .. } = second[0];
-    session.dispatch(ControlEvent::new(
-        target,
-        ControlInput::DirectorySelected {
-            request: old,
-            path: Some("/stale".into()),
-        },
-    ));
+    session.submit(target, old, Some("/stale".into()));
     assert!(
         matches!(&session.screen().control(target).unwrap().kind, ControlKind::Text { value, .. } if value == "/tmp")
     );
-    session.dispatch(ControlEvent::new(
-        target,
-        ControlInput::DirectorySelected {
-            request: new,
-            path: Some("/accepted".into()),
-        },
-    ));
-    session.dispatch(ControlEvent::new(
-        target,
-        ControlInput::DirectorySelected {
-            request: new,
-            path: Some("/duplicate".into()),
-        },
-    ));
+    session.submit(target, new, Some("/accepted".into()));
+    session.submit(target, new, Some("/duplicate".into()));
     assert!(
         matches!(&session.screen().control(target).unwrap().kind, ControlKind::Text { value, .. } if value == "/accepted")
     );
