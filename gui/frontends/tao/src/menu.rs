@@ -383,7 +383,6 @@ pub(crate) mod imp {
                 menu::{MenuId, Menubar},
             };
             use nerust_gui_runtime::slots::slot_label;
-            use nerust_keyboard::Key;
             use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
             use nerust_settings_core::{
                 i18n::{UiText, text},
@@ -392,6 +391,7 @@ pub(crate) mod imp {
                     language::AppLanguage,
                 },
             };
+            use wakui::Key;
 
             use super::AppMenu;
 

@@ -9,7 +9,7 @@ use nerust_frontend_host::{
     widget_session::WidgetSession,
     window::Window,
 };
-use nerust_keyboard::Key;
+use wakui::Key;
 
 use crate::{aux::window::WidgetBinding, convert::default_font};
 
