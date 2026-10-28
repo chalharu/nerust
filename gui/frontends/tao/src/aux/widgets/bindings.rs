@@ -2,14 +2,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use iced::{Task, Theme};
-use nerust_frontend_host::{
+use nerust_frontend_host::{focus::AuxKind, widget_session::WidgetSession, window::Window};
+use wakui::Key;
+use wakui::{
     binding::PickerSink as _,
     control::{ControlEffect, ControlEvent, ControlScreen},
-    focus::AuxKind,
-    widget_session::WidgetSession,
-    window::Window,
 };
-use wakui::Key;
 
 use crate::{aux::window::WidgetBinding, convert::default_font};
 

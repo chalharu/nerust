@@ -9,11 +9,11 @@ use tao::{
 };
 
 use nerust_frontend_host::{
-    control::ControlScreen,
     widget_session::WidgetSession,
     window::{DebugContents, PpuContents, Window, WindowVisitor},
 };
 use rfd::FileDialog;
+use wakui::control::ControlScreen;
 
 use crate::aux::bridge::DebugBridge;
 #[cfg(test)]

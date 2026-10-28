@@ -18,7 +18,6 @@ use nerust_frontend_host::{
     debugger::{DebuggerDriver, DebuggerEvent},
     event::{CommandEffect, EventCommand, EventHandler, EventSink},
     frame::FrameCtx,
-    loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn},
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
     osd::{ModalAdvance, ModalPresentation, ModalPresenter, OsdVisitor},
     widgets::MenuPresenter,
@@ -28,6 +27,7 @@ use nerust_gui_runtime::settings::{
 };
 use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
 use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
+use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
 
 struct Common {
     app: ApplicationHost,

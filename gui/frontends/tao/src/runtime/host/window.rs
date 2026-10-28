@@ -37,10 +37,10 @@ impl WindowVisitor for CreateMain<'_> {
     }
 }
 
-pub(crate) use nerust_frontend_host::loop_driver::WakeNeed;
-use nerust_frontend_host::loop_driver::{LoopHost, TurnLiveness, drive_turn};
+pub(crate) use wakui::loop_driver::WakeNeed;
+use wakui::loop_driver::{LoopHost, TurnLiveness, drive_turn};
 #[cfg(test)]
-pub(crate) use nerust_frontend_host::loop_driver::{earliest_wake, flight_backstop, update_flow};
+pub(crate) use wakui::loop_driver::{earliest_wake, flight_backstop, update_flow};
 
 /// Native main-window handle and surface target.
 /// ApplicationHost owns liveness, close, and fullscreen synchronization.
