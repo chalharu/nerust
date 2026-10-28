@@ -3,8 +3,7 @@
 
 use nerust_frontend_host::application::DebugView;
 use nerust_frontend_host::aux::OpenRequest;
-use nerust_gui_shell::{debug::DebugDrainOutput, session::LiveImages};
-use nerust_gui_viewmodel::debugger as debug_vm;
+use nerust_frontend_host::debugger::{AppliedDrain, AppliedLive};
 
 use super::host::{HostState, WakeNeed};
 use crate::aux::focus::AuxKind;
@@ -16,26 +15,13 @@ struct NativeDebugView<'a> {
 }
 
 impl DebugView for NativeDebugView<'_> {
-    fn apply_drain(&mut self, output: DebugDrainOutput) {
-        self.aux.debug_apply(output.display, output.reselected);
+    fn apply_drain(&mut self, output: AppliedDrain) {
+        self.aux.debug_apply(output);
         self.applied = true;
     }
 
-    fn apply_live(&mut self, live: LiveImages, running: bool) {
-        let Some(batch) = live else {
-            return;
-        };
-        let images = batch
-            .images
-            .into_iter()
-            .map(|image| debug_vm::DebugImageRgba {
-                label: image.label,
-                width: image.width,
-                height: image.height,
-                rgba: image.rgba,
-            })
-            .collect();
-        if self.aux.debug_apply_live(batch.generation, images, running) {
+    fn apply_live(&mut self, live: AppliedLive) {
+        if self.aux.debug_apply_live(live) {
             self.aux.ppu_sync();
         }
     }
@@ -525,11 +511,15 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         use nerust_frontend_host::application::DebugView;
-        super::NativeDebugView {
+        let mut view = super::NativeDebugView {
             aux: &mut host.aux,
             applied: false,
-        }
-        .apply_live(None, true);
+        };
+        view.apply_live(crate::aux::bridge::AppliedLive {
+            generation: 0,
+            images: Vec::new(),
+            running: true,
+        });
         assert!(!host.live_follow_active());
     }
 

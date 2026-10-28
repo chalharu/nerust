@@ -2,9 +2,13 @@
 
 mod bridge;
 mod model;
+mod view;
 
 pub use bridge::{BridgeLock, BridgeView, DebugBridge, DebuggerChrome, DrainSnapshot, PpuChrome};
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
+pub use view::{
+    AppliedDrain, AppliedLive, DebuggerRows, DisasmRow, DumpRow, RegRow, ScaledPicture, pin_marker,
+};
 
 use nerust_gui_shell::debug::DebugAction;
 

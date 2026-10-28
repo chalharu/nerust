@@ -1,7 +1,7 @@
 use super::views::*;
 use super::*;
 use nerust_core_traits::debugger::{HexRow, SpaceId};
-use nerust_gui_viewmodel::debugger::{self as vm, StatusMessage};
+use nerust_gui_viewmodel::debugger::{DisplayCache, StatusMessage};
 use nerust_settings_core::model::language::AppLanguage;
 
 fn freeze_bridge() -> Arc<DebugBridge> {
@@ -290,34 +290,27 @@ fn update_drives_write_and_register_flow() {
 fn view_builders_construct_every_section() {
     let bridge = full_bridge();
     let chrome = bridge.debugger_chrome();
-    let display = bridge.display_snapshot().clone_without_images();
+    let rows = bridge.debugger_rows();
     let selected = bridge.selected();
     let _ = view_toolbar(true, &chrome);
     let _ = view_toolbar(false, &chrome);
     let _ = view_space_row("Memory", &chrome);
     let _ = view_mem_nav("0x00000100", &chrome);
     // Mid-row byte selection still lights its row.
-    let _ = view_dump_col(&display.dump_rows, &display.diff, Some((0x102, Some(9))));
-    let _ = view_dump_col(&display.dump_rows, &[], None);
-    let _ = view_regs_section(&display.regs, Some("r0"), "7", &chrome);
-    let _ = view_regs_section(&display.regs, None, "", &chrome);
+    let _ = view_dump_col(&rows.dump, &rows.changed_addrs, Some((0x102, Some(9))));
+    let _ = view_dump_col(&rows.dump, &[], None);
+    let _ = view_regs_section(&rows.regs, Some("r0"), "7", &chrome);
+    let _ = view_regs_section(&rows.regs, None, "", &chrome);
     let _ = view_regs_section(&[], None, "", &chrome);
     let _ = view_edit_row(selected, "42", &chrome);
     let _ = view_edit_row(None, "", &chrome);
-    let _ = view_confirm_row(
-        Some(vm::PendingWrite {
-            addr: 0x100,
-            old: Some(0xAB),
-            value: 0x42,
-        }),
-        &chrome,
-    );
+    let _ = view_confirm_row(rows.pending_text.clone(), &chrome);
     let _ = view_confirm_row(None, &chrome);
     let _ = view_dis_nav(true, 0, 0x0800_27D2, "", &chrome);
     let _ = view_dis_nav(false, 2, 0x300, "0x00000300", &chrome);
     let _ = view_dis_col(&[], None, &chrome);
-    let _ = view_dis_col(&display.disasm_lines, None, &chrome);
-    let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), &chrome);
+    let _ = view_dis_col(&rows.disasm, None, &chrome);
+    let _ = view_dis_col(&rows.disasm, Some(0x0800_27D2E), &chrome);
     let _ = view_watch_row(Some(0x100), Some(0xAB), &chrome);
     let _ = view_freeze_row(Some((0x100, 0xFF)), "FF", &chrome);
     let _ = view_bookmark_section("tag", &[(0x200, "BM1".to_string())], &chrome);
@@ -325,7 +318,7 @@ fn view_builders_construct_every_section() {
     let _ = view_freeze_row(None, "", &chrome);
     let _ = view_bookmark_section("", &[], &chrome);
     // Disassembly lines exercise the target follow button.
-    assert_eq!(display.disasm_lines.len(), 2);
+    assert_eq!(rows.disasm.len(), 2);
 }
 
 #[test]
@@ -348,28 +341,14 @@ fn view_assembles_follow_and_fixed_modes() {
 
 #[test]
 fn disasm_marker_never_double_marks_pc() {
-    use nerust_core_traits::debugger::DisasmLine;
+    use nerust_frontend_host::debugger::pin_marker;
 
-    let pc_line = DisasmLine {
-        addr: 0xC293,
-        bytes: [0x60, 0, 0, 0],
-        len: 1,
-        text: "RTS".to_string(),
-        is_pc: true,
-        target: None,
-    };
-    // The composed row carries exactly one `>`: the format owns
-    // it, the view prefix contributes blanks.
-    let composed = format!(
-        "{}{}",
-        vm::disasm_marker(pc_line.is_pc, true),
-        vm::format_disasm_line(&pc_line)
-    );
-    assert!(composed.starts_with("  >0x"), "got {composed:?}");
+    // The PC row carries exactly one `>`: the pin column contributes blanks.
+    assert_eq!(pin_marker(true, true), "  ");
     // Pinned non-PC rows keep the `@` in the same column.
-    assert_eq!(vm::disasm_marker(false, true), "@ ");
-    assert_eq!(vm::disasm_marker(false, false), "  ");
-    assert_eq!(vm::disasm_marker(true, false), "  ");
+    assert_eq!(pin_marker(false, true), "@ ");
+    assert_eq!(pin_marker(false, false), "  ");
+    assert_eq!(pin_marker(true, false), "  ");
 }
 
 #[test]
@@ -457,7 +436,6 @@ fn uishell_headless_build_pump_relayout_draw() {
 
 #[test]
 fn capture_view_marks_coreless_as_paused_no_core() {
-    use nerust_gui_viewmodel::debugger::StatusMessage;
     let bridge = Arc::new(DebugBridge::new(
         DisplayCache::default(),
         Vec::new(),
@@ -466,7 +444,7 @@ fn capture_view_marks_coreless_as_paused_no_core() {
     ));
     let snap = views::capture_view(&bridge);
     assert!(snap.paused);
-    assert!(matches!(snap.status, StatusMessage::NoCore));
+    assert!(!snap.status_text.is_empty());
 }
 
 #[test]

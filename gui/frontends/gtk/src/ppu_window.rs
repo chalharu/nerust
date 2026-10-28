@@ -5,12 +5,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_core_traits::debugger::DebugPanel;
 use nerust_frontend_host::{
-    debugger::PpuChrome,
+    debugger::{PpuChrome, ScaledPicture},
     window::{PpuContents, Window as HostWindow, WindowVisitor},
 };
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, format_panels, scale2x_nearest};
 
 use super::State;
 
@@ -23,11 +21,11 @@ pub(crate) struct PpuWindowCore {
     chrome: PpuChrome,
     state: Rc<RefCell<State>>,
     /// Generation of the last synced images. Refresh drains re-run
-    /// sync with identical generations while paused; the 2x scale
-    /// and widget rebuild run only on change. Starts impossibly high
-    /// so the first sync always derives (generation zero is valid).
+    /// sync with identical generations while paused; the widget rebuild
+    /// runs only on change. Starts impossibly high so the first sync
+    /// always derives (generation zero is valid).
     last_gen: u64,
-    last_panels: Vec<DebugPanel>,
+    last_panels: Option<String>,
 }
 
 impl PpuWindowCore {
@@ -39,9 +37,9 @@ impl PpuWindowCore {
         app: &gtk::Application,
         main: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        images: Vec<DebugImageRgba>,
+        images: Vec<ScaledPicture>,
         images_gen: u64,
-        panels: Vec<DebugPanel>,
+        panels: Option<String>,
         chrome: PpuChrome,
     ) -> Option<PpuWindow> {
         struct Builder<F> {
@@ -77,9 +75,9 @@ impl PpuWindowCore {
         // true dialogs stay transient, tool windows do not.
         _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
-        images: Vec<DebugImageRgba>,
+        images: Vec<ScaledPicture>,
         images_gen: u64,
-        panels: Vec<DebugPanel>,
+        panels: Option<String>,
         chrome: PpuChrome,
         title: &str,
     ) -> PpuWindow {
@@ -115,9 +113,11 @@ impl PpuWindowCore {
             chrome,
             state,
             last_gen: u64::MAX,
-            last_panels: Vec::new(),
+            last_panels: None,
         }));
-        result.borrow_mut().sync(&images, images_gen, &panels);
+        result
+            .borrow_mut()
+            .sync(&images, images_gen, panels.as_deref());
         #[cfg(target_os = "macos")]
         crate::gdk_raw::guard_window_tabs(&window);
         window.present();
@@ -129,20 +129,16 @@ impl PpuWindowCore {
         self.window.present();
     }
 
-    /// Re-derive scaled pictures from fresh images (one 2x scale per
-    /// change). Empty images show an explicit degenerate, never a
-    /// blank window. Unchanged content skips the rebuild entirely.
-    pub(crate) fn sync(
-        &mut self,
-        images: &[DebugImageRgba],
-        images_gen: u64,
-        panels: &[DebugPanel],
-    ) {
-        if images_gen == self.last_gen && panels == self.last_panels {
+    /// Present pre-scaled pictures from the view-owned DTO (scaling runs
+    /// in view-defs, once per change). Empty images show an explicit
+    /// degenerate, never a blank window. Unchanged content skips the
+    /// rebuild entirely.
+    pub(crate) fn sync(&mut self, images: &[ScaledPicture], images_gen: u64, panels: Option<&str>) {
+        if images_gen == self.last_gen && panels == self.last_panels.as_deref() {
             return;
         }
         self.last_gen = images_gen;
-        self.last_panels = panels.to_vec();
+        self.last_panels = panels.map(str::to_string);
         while let Some(child) = self.images_box.first_child() {
             self.images_box.remove(&child);
         }
@@ -155,18 +151,17 @@ impl PpuWindowCore {
             let title = gtk::Label::new(Some(&image.label));
             title.set_xalign(0.0);
             self.images_box.append(&title);
-            let scaled = scale2x_nearest(&image.rgba, image.width, image.height);
-            let stride = (image.width as usize) * 2 * 4;
+            let stride = (image.width as usize) * 4;
             let texture = gdk::MemoryTexture::new(
-                image.width as i32 * 2,
-                image.height as i32 * 2,
+                image.width as i32,
+                image.height as i32,
                 gdk::MemoryFormat::R8g8b8a8,
-                &glib::Bytes::from(&scaled),
+                &glib::Bytes::from(&image.rgba),
                 stride,
             );
             let picture = gtk::Picture::for_paintable(&texture);
             picture.set_can_shrink(false);
-            picture.set_size_request(image.width as i32 * 2, image.height as i32 * 2);
+            picture.set_size_request(image.width as i32, image.height as i32);
             let motion = gtk::EventControllerMotion::new();
             let hover = self.hover_label.clone();
             let label = image.label.clone();
@@ -186,11 +181,11 @@ impl PpuWindowCore {
         // the tao viewer layout (images first, panels below).
         // Systems without observation tables show no Panels section
         // at all instead of a puzzling marker.
-        if !panels.is_empty() {
+        if let Some(panels) = panels {
             let panels_title = gtk::Label::new(Some(self.chrome.panels_title.as_str()));
             panels_title.set_xalign(0.0);
             self.images_box.append(&panels_title);
-            let panels_label = gtk::Label::new(Some(&format_panels(panels)));
+            let panels_label = gtk::Label::new(Some(panels));
             panels_label.add_css_class("monospace");
             panels_label.set_xalign(0.0);
             self.images_box.append(&panels_label);

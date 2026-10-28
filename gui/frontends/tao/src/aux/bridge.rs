@@ -2,4 +2,6 @@
 
 #[cfg(test)]
 pub(crate) use nerust_frontend_host::debugger::lock_recovered;
-pub(crate) use nerust_frontend_host::debugger::{BridgeLock, DebugBridge, DrainSnapshot};
+pub(crate) use nerust_frontend_host::debugger::{
+    AppliedDrain, AppliedLive, BridgeLock, DebugBridge, DrainSnapshot,
+};
