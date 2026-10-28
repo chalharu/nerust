@@ -20,7 +20,7 @@ use nerust_gui_shell::{
 };
 
 use super::*;
-use nerust_frontend_host::application::ApplicationHost;
+use crate::application::ApplicationHost;
 
 fn lines() -> Vec<HistoryLine> {
     [

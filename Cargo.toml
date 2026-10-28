@@ -24,7 +24,6 @@ members = [
   "gui/frontends/android",
   "gui/frontends/gtk",
   "gui/frontends/host",
-  "gui/frontends/host/protocol",
   "gui/frontends/kernel",
   "gui/frontends/rom_tool",
   "gui/frontends/tao",
@@ -206,7 +205,6 @@ nerust_gui_shell = { path = "gui/shell" }
 nerust_frontend_kernel = { path = "gui/frontends/kernel" }
 nerust_frontend_host = { path = "gui/frontends/host" }
 nerust_frontend_viewdefs = { path = "gui/frontends/view-defs" }
-nerust_host_protocol = { path = "gui/frontends/host/protocol" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_nes_controller = { path = "console/nes/controller" }

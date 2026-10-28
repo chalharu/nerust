@@ -6,10 +6,8 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::{
-    widget_session::{WidgetSession, WindowSubmission},
-    window::Window as HostWindow,
-};
+use nerust_frontend_host::window::Window as HostWindow;
+use nerust_frontend_viewdefs::widget_session::{WidgetSession, WindowSubmission};
 use wakui::{
     binding::PickerSink as _,
     control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
@@ -215,7 +213,8 @@ impl WidgetBinding {
             return;
         }
         let mailbox = self.session.borrow().mailbox();
-        if let Some(submission) = mailbox.take_submission()
+        if let Some(submission) =
+            nerust_frontend_viewdefs::widget_session::take_submission(&mailbox)
             && !(self.callbacks.submit)(submission)
         {
             self.refresh();

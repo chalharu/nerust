@@ -191,7 +191,7 @@ impl WindowCluster {
 
 /// Native Tao ports for the shared end-of-burst driver.
 impl LoopHost for HostState {
-    type Frame = nerust_frontend_host::frame::FrameCtx;
+    type Frame = nerust_frontend_viewdefs::frame::FrameCtx;
 
     fn before_turn(&mut self) {
         self.on_focus_event(nerust_frontend_host::focus::FocusEvent::BurstEnd);
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn redraw_flag_sets_without_native_window() {
-        use nerust_frontend_host::viewport::ViewportPresent;
+        use nerust_frontend_viewdefs::viewport::ViewportPresent;
         use wakui::viewport::ViewportRegion;
         let support = TestHost::new();
         let mut host = support.host;

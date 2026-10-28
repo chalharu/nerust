@@ -1,10 +1,12 @@
 //! Toolkit-free debugger intents, owned state, and split-lock storage.
 
 mod bridge;
+mod driver;
 mod model;
 mod view;
 
 pub use bridge::{BridgeLock, BridgeView, DebugBridge, DebuggerChrome, DrainSnapshot, PpuChrome};
+pub use driver::{DebuggerDriver, DebuggerEffects, DebuggerLiveEffects};
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 pub use view::{
     AppliedDrain, AppliedLive, DebuggerRows, DisasmRow, DumpRow, RegRow, ScaledPicture, pin_marker,
