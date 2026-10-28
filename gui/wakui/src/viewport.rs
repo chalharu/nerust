@@ -1,22 +1,31 @@
-//! Game-viewport abstractions. Widget chrome belongs to native controls;
-//! the shared emulation frame belongs here, behind framework traits.
+//! Content-area handle seam. wakui exposes the drawable region's native
+//! handle; the render engine attaches to it. Nothing more.
 //!
-//! Names are fixed in Phase 2; frontend migration follows in Phase 3.
-//! Concrete selection (wgpu/gl/softbuffer) is injected by the composition
-//! root, never chosen by frontends.
+//! Deliberate non-goal: pipeline, frame, and OSD vocabulary
+//! (`PipelineFactory`, `FrameBuffer`, `VideoRenderProfile`, ...) stays in
+//! the render engine (`nerust_render_traits`). A UI framework owns windows
+//! and controls, never GPU pipelines — same split as winit versus wgpu.
+//! `raw-window-handle` is the only window-system vocabulary wakui names.
 
-/// Native-side viewport surface (GTK `Picture`, iced texture, ...).
-pub trait ViewportSurface {
-    /// Cloneable handle shared with the render pipeline.
-    type Handle: Clone;
-    fn handle(&self) -> Self::Handle;
-    fn resize(&mut self, width: u32, height: u32);
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+
+/// Drawable content area of one viewport: native handles plus pixel extent.
+/// Produced by the native surface owner (frontend), consumed by the render
+/// engine selected by the composition root. Plain data; no render types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewportRegion {
+    pub window: RawWindowHandle,
+    pub display: RawDisplayHandle,
+    pub width: u32,
+    pub height: u32,
 }
 
-/// Destination for rendered frames.
-pub trait FrameSink {
-    type Frame;
-    fn present(&mut self, frame: Self::Frame);
+/// Provision contract for native surfaces (GTK `Picture` container, iced
+/// window, ...). Implementors stay alive while the region is attached;
+/// handles never outlive the native surface (see `SurfaceLifecycle` docs
+/// on the render side for the attach/detach rules).
+pub trait ViewportRegionProvider {
+    fn viewport_region(&self) -> ViewportRegion;
 }
 
 #[cfg(test)]
@@ -24,36 +33,44 @@ mod tests {
     use super::*;
 
     struct FakeSurface {
-        size: (u32, u32),
-        presented: Vec<u32>,
+        region: ViewportRegion,
     }
 
-    impl ViewportSurface for FakeSurface {
-        type Handle = (u32, u32);
-        fn handle(&self) -> Self::Handle {
-            self.size
-        }
-        fn resize(&mut self, width: u32, height: u32) {
-            self.size = (width, height);
+    fn test_region() -> ViewportRegion {
+        // SAFETY: test-only constant handles; never attached to a real surface.
+        let window: RawWindowHandle = unsafe { std::mem::zeroed() };
+        let display: RawDisplayHandle = unsafe { std::mem::zeroed() };
+        ViewportRegion {
+            window,
+            display,
+            width: 960,
+            height: 720,
         }
     }
 
-    impl FrameSink for FakeSurface {
-        type Frame = u32;
-        fn present(&mut self, frame: Self::Frame) {
-            self.presented.push(frame);
+    impl ViewportRegionProvider for FakeSurface {
+        fn viewport_region(&self) -> ViewportRegion {
+            self.region
         }
     }
 
     #[test]
-    fn surface_and_sink_contract() {
-        let mut surface = FakeSurface {
-            size: (0, 0),
-            presented: Vec::new(),
+    fn region_carries_handles_and_extent() {
+        use std::mem::discriminant;
+        let surface = FakeSurface {
+            region: test_region(),
         };
-        surface.resize(256, 240);
-        assert_eq!(surface.handle(), (256, 240));
-        surface.present(1);
-        assert_eq!(surface.presented, vec![1]);
+        let region = surface.viewport_region();
+        assert_eq!((region.width, region.height), (960, 720));
+        // Zeroed test handles carry no identity; only the selected
+        // variant must round-trip, never the pointer value.
+        assert_eq!(
+            discriminant(&region.window),
+            discriminant(&test_region().window)
+        );
+        assert_eq!(
+            discriminant(&region.display),
+            discriminant(&test_region().display)
+        );
     }
 }
