@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn failed_opaque_save_closes_and_releases_only_settings_pause() {
         use crate::aux::widgets::bindings::tests::{activate, find, prepare};
-        use nerust_frontend_host::control::{ControlEvent, ControlInput};
+        use wakui::control::{ControlEvent, ControlInput};
         use wakui::pause::PauseOwner;
 
         let context = crate::test_session::TestContext::with_loader(

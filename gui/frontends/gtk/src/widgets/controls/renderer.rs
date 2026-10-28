@@ -2,7 +2,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::{
+use wakui::{
     control::{
         Control, ControlDisplay, ControlId, ControlInput, ControlKind, ControlMetadata,
         ControlScreen, ControlVisitor, Layout, LayoutId, LayoutKind, Page, PageId, Tab, TabId,

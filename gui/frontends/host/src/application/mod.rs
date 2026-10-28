@@ -482,7 +482,7 @@ impl ApplicationHost {
         debug_open: bool,
         ppu_open: bool,
         view: &mut impl DebugView,
-    ) -> crate::loop_driver::WakeNeed {
+    ) -> wakui::loop_driver::WakeNeed {
         self.pump_live_debug(debug_open, ppu_open, view);
         let pending = self.poll_debug(view);
         self.debug_wake(debug_open, ppu_open, pending)
@@ -495,7 +495,7 @@ impl ApplicationHost {
         debug_open: bool,
         ppu_open: bool,
         drain_pending: bool,
-    ) -> crate::loop_driver::WakeNeed {
+    ) -> wakui::loop_driver::WakeNeed {
         self.debug
             .wake(&self.session, debug_open, ppu_open, drain_pending)
     }

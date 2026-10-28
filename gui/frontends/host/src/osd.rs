@@ -19,7 +19,8 @@ use nerust_render_traits::{
 };
 use wakui::cache::Versioned;
 
-use crate::{frame::FrameCtx, loop_driver::WakeNeed};
+use crate::frame::FrameCtx;
+use wakui::loop_driver::WakeNeed;
 
 /// Native presentation runs only after the application borrow has ended.
 /// Callback-based dialogs return None; worker dialogs return their ACK receiver.

@@ -7,8 +7,10 @@ use std::{
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
     frame::{FrameCache, FrameCtx},
-    loop_driver::{LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop},
     osd::{ModalPresentation, OsdUpdate},
+};
+use wakui::loop_driver::{
+    LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop,
 };
 use wakui::viewport::ViewportRegion;
 

@@ -1,11 +1,11 @@
 //! History exercises the same controls binding, not a second toolbar/program.
 use super::*;
 use crate::aux::widgets::controls::build_screen;
-use nerust_frontend_host::control::{ControlKind, Layout, LayoutKind};
 use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
+use wakui::control::{ControlKind, Layout, LayoutKind};
 
 fn fixture() -> (HostState, AuxId, WidgetSession) {
     let mut host = TestHost::new().host;
@@ -82,7 +82,7 @@ fn history_sync_sets_lines_language_and_preserves_filter() {
     settings.dispatch(Message::new(language.id, ControlInput::Select(japanese)));
     let submit = controls(&settings.screen())
         .into_iter()
-        .find(|c| c.display == nerust_frontend_host::control::ControlDisplay::Primary)
+        .find(|c| c.display == wakui::control::ControlDisplay::Primary)
         .unwrap();
     settings.dispatch(Message::new(submit.id, ControlInput::Activate));
     host.finish_widget_window(settings_id, true);
@@ -164,11 +164,11 @@ fn sync_consumes_refresh_flag_not_close_flag() {
 
 #[test]
 fn merged_history_line_carries_single_count_suffix() {
-    use nerust_frontend_host::control::Node;
     use nerust_gui_shell::session::{
         notification::{Message, NotificationLevel, UiNotification},
         osd::{history_lines, history_row_view},
     };
+    use wakui::control::Node;
     let (_, _, session) = fixture();
     for language in [AppLanguage::English, AppLanguage::Japanese] {
         let notification = UiNotification {

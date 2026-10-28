@@ -11,9 +11,9 @@ use wakui::pause::PauseOwner;
 use super::ApplicationHost;
 use crate::{
     frame::FrameCtx,
-    loop_driver::WakeNeed,
     osd::{ModalAdvance, ModalToken, OsdLayerSync, OsdNotifications, OsdTurn, OsdUpdate},
 };
+use wakui::loop_driver::WakeNeed;
 
 #[derive(Default)]
 pub(super) struct OsdRuntime {

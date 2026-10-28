@@ -4,7 +4,6 @@ use crate::{
     debug_schedule::DebugSchedule,
     debugger::{AppliedDrain, AppliedLive, DrainSnapshot},
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
-    loop_driver::WakeNeed,
     session::SessionEvent,
 };
 use nerust_gui_shell::{
@@ -12,6 +11,7 @@ use nerust_gui_shell::{
     session::{SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
+use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
 
 /// Native drain port. Results arrive as view-owned DTOs so adapters
