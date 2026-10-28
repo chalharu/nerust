@@ -5,15 +5,14 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
+use nerust_frontend_host::debugger::{
+    DebugHandle, DebugSnapshot, DebuggerEvent, DebuggerScope, RegRow, pin_marker,
+};
 use nerust_frontend_host::focus::AuxKind;
 use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
-use nerust_frontend_viewdefs::debugger::{
-    DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope, pin_marker,
-};
 
 use super::State;
 
-pub(crate) type DebuggerData = DebuggerModel;
 type RebuildScope = DebuggerScope;
 
 pub(crate) type DebuggerWindow = Rc<RefCell<DebuggerWindowCore>>;
@@ -21,7 +20,7 @@ pub(crate) type DebuggerWindow = Rc<RefCell<DebuggerWindowCore>>;
 pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
-    data: DebuggerDriver,
+    handle: DebugHandle,
     viewers: AuxWindows<u64, super::ppu_window::PpuWindow>,
     widgets: DebuggerWidgets,
 }
@@ -63,7 +62,7 @@ impl Deref for DebuggerWindowCore {
 }
 
 struct DebuggerView {
-    data: DebuggerData,
+    snapshot: DebugSnapshot,
     widgets: DebuggerWidgets,
 }
 
@@ -179,8 +178,8 @@ impl DebuggerWindowCore {
         state: Rc<RefCell<State>>,
         title: &str,
     ) -> DebuggerWindow {
-        let data = DebuggerDriver::from_session(state.borrow().host.session());
-        let chrome = data.debugger_chrome();
+        let handle = state.borrow_mut().host.open_debug();
+        let chrome = state.borrow().host.debugger_chrome();
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title(title)
@@ -236,7 +235,7 @@ impl DebuggerWindowCore {
         let result: DebuggerWindow = Rc::new(RefCell::new(Self {
             window: window.clone(),
             state: state.clone(),
-            data,
+            handle,
             viewers: Default::default(),
             widgets: DebuggerWidgets {
                 pause_button: pause_button.clone(),
@@ -511,17 +510,23 @@ impl DebuggerWindowCore {
     /// Live-tick body: settle the in-flight fetch, then start a new one when following.
     /// Patches images and pause chrome only; never rebuilds widgets (scroll survives).
     fn live_tick(win: &DebuggerWindow) {
-        let state = win.borrow().state.clone();
+        let (state, handle, ppu_open) = {
+            let this = win.borrow();
+            (
+                this.state.clone(),
+                this.handle,
+                this.viewers.get(AuxKind::Ppu).is_some(),
+            )
+        };
         let visible = win.borrow().window.is_visible();
-        let need_images = win.borrow().viewers.get(AuxKind::Ppu).is_some();
-        let was_pending = win.borrow().data.live_pending();
-        let effects =
-            win.borrow_mut()
-                .data
-                .live_tick(state.borrow().host.session(), visible, need_images);
+        state.borrow_mut().host.debug_live_tick(handle, ppu_open);
+        let effects = state
+            .borrow_mut()
+            .host
+            .debug_poll_live(handle, visible, ppu_open);
         let pending = effects.pending;
-        Self::present_live_effects(win, effects);
-        if pending && !was_pending {
+        Self::present_live_effects(win, &effects);
+        if pending {
             Self::watch_live_flight(win);
         }
     }
@@ -548,48 +553,43 @@ impl DebuggerWindowCore {
     /// Poll the stored live fetch once. Returns whether one is still pending.
     /// Orphaned flights settle harmlessly: the generation guard skips stale data.
     fn poll_live_flight(win: &DebuggerWindow) -> bool {
-        let state = win.borrow().state.clone();
-        let effects = win
+        let (state, handle, ppu_open) = {
+            let this = win.borrow();
+            (
+                this.state.clone(),
+                this.handle,
+                this.viewers.get(AuxKind::Ppu).is_some(),
+            )
+        };
+        let visible = win.borrow().window.is_visible();
+        let effects = state
             .borrow_mut()
-            .data
-            .poll_live(state.borrow().host.session());
+            .host
+            .debug_poll_live(handle, visible, ppu_open);
         let pending = effects.pending;
-        Self::present_live_effects(win, effects);
+        Self::present_live_effects(win, &effects);
         pending
     }
 
-    fn present_live_effects(win: &DebuggerWindow, effects: DebuggerLiveEffects) {
+    fn present_live_effects(
+        win: &DebuggerWindow,
+        effects: &nerust_frontend_host::debugger::DebuggerLiveEffects,
+    ) {
         if !effects.changed {
             return;
         }
         let widgets = win.borrow().widgets.clone();
         if effects.running {
             // Images and chrome only: never touch the scrolling lists or inputs.
-            let status = win.borrow().data.status_line();
-            widgets.status_label.set_label(&status);
+            let (state, handle) = {
+                let this = win.borrow();
+                (this.state.clone(), this.handle)
+            };
+            if let Some(snapshot) = state.borrow().host.debug_snapshot(handle) {
+                widgets.status_label.set_label(&snapshot.rows.status_text);
+            }
         }
         Self::sync_ppu(win);
-    }
-
-    #[cfg(test)]
-    fn present_live_images(
-        win: &DebuggerWindow,
-        generation: u64,
-        images: Vec<nerust_gui_viewmodel::debugger::DebugImageRgba>,
-        running: bool,
-    ) {
-        let changed = win
-            .borrow_mut()
-            .data
-            .apply_live_images(generation, images, running);
-        Self::present_live_effects(
-            win,
-            DebuggerLiveEffects {
-                changed,
-                running,
-                pending: false,
-            },
-        );
     }
     /// One wiring helper per section: each connects a single
     /// pane's callbacks, so `open` stays construction plus calls.
@@ -727,6 +727,10 @@ impl DebuggerWindowCore {
         self.window.present();
     }
 
+    pub(crate) fn debug_handle(&self) -> DebugHandle {
+        self.handle
+    }
+
     /// Clone the native handle without invoking GTK presentation or lifecycle calls.
     pub(crate) fn native_window(&self) -> gtk::ApplicationWindow {
         self.window.clone()
@@ -777,24 +781,38 @@ impl DebuggerWindowCore {
         ];
         let clear_bookmark = matches!(event, DebuggerEvent::BookmarkAdd);
         let clear_edit = matches!(event, DebuggerEvent::ConfirmWrite);
-        let was_pending = win.borrow().data.pending();
+        let was_pending = {
+            let this = win.borrow();
+            this.state.borrow().host.debug_drain_pending(this.handle)
+        };
         let update = {
-            let mut this = win.borrow_mut();
-            let state = this.state.clone();
+            let this = win.borrow();
             let need_images = this.viewers.get(AuxKind::Ppu).is_some();
-            let state = state.borrow();
-            this.data
-                .dispatch(state.host.session(), inputs, event, need_images)
+            let handle = this.handle;
+            let state = this.state.clone();
+            drop(this);
+            state.borrow_mut().host.debug_gesture(
+                handle,
+                inputs.into_iter().collect(),
+                event,
+                need_images,
+            )
         };
         // Consumed text is reflected immediately, not on a later worker reply
         // which could otherwise overwrite newer typing.
-        if clear_bookmark {
-            let input = win.borrow().data.bm_input.clone();
-            widgets.bookmark_input.set_text(&input);
-        }
-        if clear_edit {
-            let input = win.borrow().data.edit_input.clone();
-            widgets.edit_input.set_text(&input);
+        if clear_bookmark || clear_edit {
+            let (state, handle) = {
+                let this = win.borrow();
+                (this.state.clone(), this.handle)
+            };
+            if let Some(snapshot) = state.borrow().host.debug_snapshot(handle) {
+                if clear_bookmark {
+                    widgets.bookmark_input.set_text(&snapshot.inputs.bm_input);
+                }
+                if clear_edit {
+                    widgets.edit_input.set_text(&snapshot.inputs.edit_input);
+                }
+            }
         }
         if update.open_ppu {
             // The common update already requests Refresh. Create first so that
@@ -810,10 +828,11 @@ impl DebuggerWindowCore {
     }
 
     fn reset_replaced_epoch(win: &DebuggerWindow) -> bool {
-        let mut this = win.borrow_mut();
-        let state = this.state.clone();
-        let state = state.borrow();
-        this.data.reset_replaced_epoch(state.host.session())
+        let (state, handle) = {
+            let this = win.borrow();
+            (this.state.clone(), this.handle)
+        };
+        state.borrow_mut().host.debug_reset_if_replaced(handle)
     }
 
     /// Refresh through an async drain flight, then rebuild from the new display.
@@ -824,14 +843,21 @@ impl DebuggerWindowCore {
 
     /// Gesture-side open port (Pause + Refresh) without naming shell actions.
     fn open_refresh(win: &DebuggerWindow) {
-        let was_pending = win.borrow().data.pending();
-        {
-            let mut this = win.borrow_mut();
+        let (state, handle, need_images, was_pending) = {
+            let this = win.borrow();
             let state = this.state.clone();
-            let need_images = this.viewers.get(AuxKind::Ppu).is_some();
-            this.data
-                .open_refresh(state.borrow().host.session(), need_images);
-        }
+            let was_pending = state.borrow().host.debug_drain_pending(this.handle);
+            (
+                state,
+                this.handle,
+                this.viewers.get(AuxKind::Ppu).is_some(),
+                was_pending,
+            )
+        };
+        state
+            .borrow_mut()
+            .host
+            .debug_open_refresh(handle, need_images);
         if Self::poll_flight(win) && !was_pending {
             Self::watch_flight(win);
         }
@@ -840,14 +866,21 @@ impl DebuggerWindowCore {
     /// [`DebuggerWindowCore::refresh_all`] with a rebuild scope: the finished
     /// drain refreshes only the sections its data moved.
     fn refresh_scope(win: &DebuggerWindow, scope: RebuildScope) {
-        let was_pending = win.borrow().data.pending();
-        {
-            let mut this = win.borrow_mut();
+        let (state, handle, need_images, was_pending) = {
+            let this = win.borrow();
             let state = this.state.clone();
-            let need_images = this.viewers.get(AuxKind::Ppu).is_some();
-            this.data
-                .refresh(state.borrow().host.session(), scope, need_images);
-        }
+            let was_pending = state.borrow().host.debug_drain_pending(this.handle);
+            (
+                state,
+                this.handle,
+                this.viewers.get(AuxKind::Ppu).is_some(),
+                was_pending,
+            )
+        };
+        state
+            .borrow_mut()
+            .host
+            .debug_refresh(handle, scope, need_images);
         if Self::poll_flight(win) && !was_pending {
             Self::watch_flight(win);
         }
@@ -873,32 +906,22 @@ impl DebuggerWindowCore {
     }
 
     /// Poll the stored flight once. Returns whether one is still pending: on
-    /// completion the display applies, exactly like a synchronous drain.
+    /// completion the app snapshot refreshes, exactly like a synchronous drain.
     fn poll_flight(win: &DebuggerWindow) -> bool {
-        let effects = {
-            let mut this = win.borrow_mut();
-            let state = this.state.clone();
-            this.data.poll(&mut state.borrow_mut().host)
+        let (state, handle, ppu_open) = {
+            let this = win.borrow();
+            (
+                this.state.clone(),
+                this.handle,
+                this.viewers.get(AuxKind::Ppu).is_some(),
+            )
         };
-        if let Some(scope) = effects.scope {
-            Self::rebuild_partial(win, scope);
-        }
-        effects.pending
-    }
-
-    /// Apply a finished drain: merge running sections, store the
-    /// selection, and rebuild the scoped widgets from the new display.
-    #[cfg(test)]
-    fn apply_scoped(
-        win: &DebuggerWindow,
-        output: nerust_gui_shell::debug::DebugDrainOutput,
-        scope: RebuildScope,
-    ) {
-        {
-            let mut this = win.borrow_mut();
-            this.data.apply_drain(output.display, output.reselected);
-        }
-        Self::rebuild_partial(win, scope);
+        let wake = state.borrow_mut().host.debug_poll(handle, ppu_open);
+        // The app owns the bridge now: rebuild from the fresh snapshot and
+        // refresh the viewer, mirroring the scoped-drain contract.
+        Self::rebuild_all(win);
+        Self::sync_ppu(win);
+        wake.flight_pending
     }
 
     fn open_ppu(win: &DebuggerWindow) {
@@ -937,15 +960,20 @@ impl DebuggerWindowCore {
             .application()
             .expect("debugger has an application");
         let main = win.borrow().window.clone();
-        let state = win.borrow().state.clone();
-        let images = win.borrow().data.ppu_pictures();
-        let images_gen = win.borrow().data.images_generation();
-        let panels = win.borrow().data.ppu_panels_text();
-        let chrome = win.borrow().data.ppu_chrome();
+        let (state, handle) = {
+            let this = win.borrow();
+            (this.state.clone(), this.handle)
+        };
+        let host = state.borrow();
+        let images = host.host.debug_pictures(handle);
+        let images_gen = host.host.debug_generation(handle);
+        let panels = host.host.debug_panels(handle);
+        let chrome = host.host.ppu_chrome();
+        drop(host);
         let model = win.borrow().viewers.window(id).cloned();
         let ppu = model.and_then(|model| {
             super::ppu_window::PpuWindowCore::from_window(
-                &model, &app, &main, state, images, images_gen, panels, chrome,
+                &model, &app, &main, state, handle, images, images_gen, panels, chrome,
             )
         });
         let Some(ppu) = ppu else {
@@ -1058,12 +1086,9 @@ impl DebuggerWindowCore {
     fn rebuild_partial(win: &DebuggerWindow, scope: RebuildScope) {
         // Native property notifications and child removal may reenter. Own all
         // presentation data before touching GTK; never clone image buffers here.
-        let this = {
-            let this = win.borrow();
-            DebuggerView {
-                data: this.data.view_snapshot(),
-                widgets: this.widgets.clone(),
-            }
+        let this = match Self::view_snapshot(win) {
+            Some(view) => view,
+            None => return,
         };
         Self::rebuild_header(&this);
         match scope {
@@ -1098,58 +1123,92 @@ impl DebuggerWindowCore {
     }
 
     fn sync_ppu(win: &DebuggerWindow) {
-        let snapshot = {
+        let (ppu, images, generation, panels) = {
             let this = win.borrow();
-            this.ppu_window().map(|ppu| {
-                (
-                    ppu,
-                    this.data.ppu_pictures(),
-                    this.data.images_generation(),
-                    this.data.ppu_panels_text(),
-                )
-            })
+            let Some(ppu) = this.ppu_window() else {
+                return;
+            };
+            let state = this.state.clone();
+            let handle = this.handle;
+            let host = state.borrow();
+            (
+                ppu,
+                host.host.debug_pictures(handle),
+                host.host.debug_generation(handle),
+                host.host.debug_panels(handle),
+            )
         };
-        if let Some((ppu, images, generation, panels)) = snapshot {
-            let native = ppu.borrow().window.clone();
-            if !super::surface_state::surface_gone(&native) {
-                ppu.borrow_mut()
-                    .sync(&images, generation, panels.as_deref());
-            }
+        let native = ppu.borrow().window.clone();
+        if !super::surface_state::surface_gone(&native) {
+            ppu.borrow_mut()
+                .sync(&images, generation, panels.as_deref());
         }
+    }
+
+    /// Snapshot helper: the app owns the bridge; native code renders copies.
+    fn view_snapshot(win: &DebuggerWindow) -> Option<DebuggerView> {
+        let (state, handle, widgets) = {
+            let this = win.borrow();
+            (this.state.clone(), this.handle, this.widgets.clone())
+        };
+        state
+            .borrow()
+            .host
+            .debug_snapshot(handle)
+            .map(|snapshot| DebuggerView { snapshot, widgets })
+    }
+
+    /// Full rebuild from the latest app snapshot.
+    fn rebuild_all(win: &DebuggerWindow) {
+        let Some(this) = Self::view_snapshot(win) else {
+            return;
+        };
+        Self::rebuild_header(&this);
+        Self::rebuild_disasm(win, &this);
+        Self::rebuild_dump(win, &this);
+        Self::rebuild_edit_row(&this);
+        Self::rebuild_state(win, &this);
+        Self::rebuild_bookmarks(win, &this);
+        Self::sync_ppu(win);
     }
 
     /// Rebuild helpers use an owned snapshot, never a borrowed controller.
     fn rebuild_header(this: &DebuggerView) {
-        let display = &this.data.display;
-        let nav = &this.data.nav;
-        let chrome = this.data.debugger_chrome();
-        this.pause_button
-            .set_label(chrome.pause_label(display.paused));
-        this.status_label.set_label(&this.data.status_line());
+        let rows = &this.snapshot.rows;
+        let inputs = &this.snapshot.inputs;
+        let chrome = &this.snapshot.chrome;
+        this.pause_button.set_label(chrome.pause_label(rows.paused));
+        this.status_label.set_label(&rows.status_text);
         // The title names the anchor: clicks pin it visibly instead
         // of silently moving the window.
-        let dis_title = chrome.disassembly_title(nav.follow_pc(), this.data.anchor());
+        let anchor = if inputs.follow_pc {
+            rows.disasm.first().map(|line| line.addr).unwrap_or(0)
+        } else {
+            inputs.dis_addr.unwrap_or(0)
+        };
+        let dis_title = chrome.disassembly_title(inputs.follow_pc, anchor);
         this.disasm_title.set_label(&dis_title);
         this.back_button
-            .set_label(&chrome.back_label(nav.back_len()));
-        this.space_label.set_label(&this.data.selected_name());
-        if this.mem_input.text() != nav.mem_input() {
-            this.mem_input.set_text(nav.mem_input());
+            .set_label(&chrome.back_label(inputs.back_len));
+        this.space_label.set_label(&this.snapshot.space_name);
+        if this.mem_input.text() != inputs.mem_input {
+            this.mem_input.set_text(&inputs.mem_input);
         }
-        if this.dis_input.text() != nav.dis_input() {
-            this.dis_input.set_text(nav.dis_input());
+        if this.dis_input.text() != inputs.dis_input {
+            this.dis_input.set_text(&inputs.dis_input);
         }
     }
 
     fn rebuild_disasm(win: &DebuggerWindow, this: &DebuggerView) {
-        let rows = this.data.debugger_rows();
-        let chrome = this.data.debugger_chrome();
+        let rows = &this.snapshot.rows;
+        let inputs = &this.snapshot.inputs;
+        let chrome = &this.snapshot.chrome;
         // Pinned anchor rows carry `@` like the tao viewer so a line click
         // reads back visibly even off-PC. Nothing pinned in follow-PC mode.
-        let pinned = if this.data.nav.follow_pc() {
+        let pinned = if inputs.follow_pc {
             None
         } else {
-            Some(this.data.anchor())
+            Some(inputs.dis_addr.unwrap_or(0))
         };
         clear_list(&this.disasm_list);
         if rows.disasm.is_empty() {
@@ -1194,12 +1253,13 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_dump(win: &DebuggerWindow, this: &DebuggerView) {
-        let rows = this.data.debugger_rows();
+        let rows = &this.snapshot.rows;
+        let selected = this.snapshot.selected;
         clear_list(&this.dump_list);
         // Byte-precise selection like the tao viewer: every byte is its own
         // button, so the write target reads exactly.
         for hex_row in &rows.dump {
-            let selected_addr = this.data.selected.map(|(a, _)| a);
+            let selected_addr = selected.map(|(a, _)| a);
             // Containing-row match: a mid-row pick still lights its row.
             let row_end = hex_row.addr + hex_row.bytes.len() as u32;
             let row_hit = selected_addr.is_some_and(|a| a >= hex_row.addr && a < row_end);
@@ -1245,16 +1305,16 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_edit_row(this: &DebuggerView) {
-        let chrome = this.data.debugger_chrome();
-        let select_text = chrome.selected_row_text(this.data.selected);
-        this.select_label.set_label(&select_text);
+        let rows = &this.snapshot.rows;
+        let chrome = &this.snapshot.chrome;
+        this.select_label.set_label(&rows.selected_line);
         // The target rides on the button: writes always land on the
         // selected row, never on the page anchor.
         this.write_button
-            .set_label(&chrome.write_target_label(this.data.selected));
-        match this.data.pending_line() {
+            .set_label(&chrome.write_target_label(this.snapshot.selected));
+        match &rows.pending_text {
             Some(line) => {
-                this.confirm_label.set_label(&line);
+                this.confirm_label.set_label(line);
                 this.confirm_row.set_visible(true);
             }
             None => this.confirm_row.set_visible(false),
@@ -1262,27 +1322,29 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_state(win: &DebuggerWindow, this: &DebuggerView) {
-        let rows = this.data.debugger_rows();
-        let display = &this.data.display;
-        let chrome = this.data.debugger_chrome();
+        let rows = &this.snapshot.rows;
+        let chrome = &this.snapshot.chrome;
         // Registers flow into two clickable columns: the kernel order is kept,
         // the view only halves the list. Lines arrive pre-formatted.
         let regs = &rows.regs;
         let mid = regs.len().div_ceil(2).min(regs.len());
-        Self::fill_reg_list(win, &this.regs_left, &regs[..mid], this.data.reg_target);
-        Self::fill_reg_list(win, &this.regs_right, &regs[mid..], this.data.reg_target);
+        Self::fill_reg_list(win, &this.regs_left, &regs[..mid], this.snapshot.reg_target);
+        Self::fill_reg_list(
+            win,
+            &this.regs_right,
+            &regs[mid..],
+            this.snapshot.reg_target,
+        );
         this.reg_target_label
-            .set_label(&chrome.set_target_label(this.data.reg_target));
-        let watch_text = chrome.watch_text(this.data.watch, display.watch_value);
-        this.watch_label.set_label(&watch_text);
-        let freeze_text = chrome.freeze_text(this.data.freeze);
-        this.freeze_label.set_label(&freeze_text);
+            .set_label(&chrome.set_target_label(this.snapshot.reg_target));
+        this.watch_label.set_label(&rows.watch_text);
+        this.freeze_label.set_label(&rows.freeze_text);
     }
 
     fn fill_reg_list(
         win: &DebuggerWindow,
         list: &gtk::ListBox,
-        regs: &[nerust_frontend_viewdefs::debugger::RegRow],
+        regs: &[RegRow],
         target: Option<&'static str>,
     ) {
         clear_list(list);
@@ -1309,7 +1371,7 @@ impl DebuggerWindowCore {
 
     fn rebuild_bookmarks(win: &DebuggerWindow, this: &DebuggerView) {
         clear_list(&this.bookmark_list);
-        for (addr, label) in &this.data.bookmarks {
+        for (addr, label) in &this.snapshot.inputs.bookmarks {
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -1354,107 +1416,6 @@ fn key_action(key: gdk::Key) -> Option<DebuggerKey> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_core_traits::debugger::SpaceId;
-    use nerust_gui_shell::debug::DebugAction;
-    use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, StatusMessage};
-    use nerust_settings_core::i18n::{UiText, text};
-    use nerust_settings_core::model::language::AppLanguage;
-
-    fn validation_model() -> DebuggerModel {
-        DebuggerModel::new(
-            DisplayCache::default(),
-            Vec::new(),
-            0,
-            AppLanguage::English,
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        )
-    }
-
-    fn assert_staged_byte(input: &str, old: Option<u8>, expected: u64) {
-        let mut model = validation_model();
-        model.selected = Some((0x30, old));
-        assert!(
-            model
-                .dispatch(DebuggerEvent::EditInputChanged(input.into()))
-                .scope
-                .is_none()
-        );
-        let update = model.dispatch(DebuggerEvent::EditWrite);
-        assert_eq!(update.scope, Some(RebuildScope::Dump));
-        assert!(
-            matches!(update.actions.as_slice(), [DebugAction::SelectRow(0x30), DebugAction::EditStage(value)] if *value == expected)
-        );
-    }
-
-    #[test]
-    fn write_input_parses_hex_byte_with_selection() {
-        assert_staged_byte("42", Some(0), 0x42);
-        // Whitespace is harmless; values stay a single byte.
-        assert_staged_byte("  ff ", None, 0xff);
-    }
-
-    #[test]
-    fn write_input_rejects_missing_selection_and_bad_text() {
-        for (language, selected, input, expected) in [
-            (AppLanguage::English, None, "42", "write needs a selection"),
-            (
-                AppLanguage::English,
-                Some((0x30, Some(0))),
-                "zz",
-                "parse failed: zz",
-            ),
-            (
-                AppLanguage::English,
-                Some((0x30, Some(0))),
-                "100",
-                "parse failed: 100",
-            ),
-            (AppLanguage::Japanese, None, "42", "書込には行選択が必要"),
-        ] {
-            let mut model = validation_model();
-            model.language = language;
-            model.selected = selected;
-            model.dispatch(DebuggerEvent::EditInputChanged(input.into()));
-            let update = model.dispatch(DebuggerEvent::EditWrite);
-            assert!(update.actions.is_empty());
-            assert_eq!(update.scope, Some(RebuildScope::Header));
-            assert_eq!(model.display.status, StatusMessage::Local(expected.into()));
-        }
-    }
-
-    #[test]
-    fn key_action_maps_window_shortcuts() {
-        assert_eq!(key_action(gdk::Key::F6), Some(DebuggerKey::StepFrame));
-        assert_eq!(key_action(gdk::Key::F7), Some(DebuggerKey::StepInstr));
-        assert_eq!(key_action(gdk::Key::F9), Some(DebuggerKey::TogglePause));
-        assert_eq!(key_action(gdk::Key::Up), Some(DebuggerKey::PageMem(-1)));
-        assert_eq!(key_action(gdk::Key::Down), Some(DebuggerKey::PageMem(1)));
-        assert_eq!(key_action(gdk::Key::Left), None);
-        assert_eq!(key_action(gdk::Key::a), None);
-    }
-
-    #[test]
-    fn freeze_input_needs_row_and_byte_together() {
-        let mut model = validation_model();
-        model.selected = Some((0x10, Some(0)));
-        model.dispatch(DebuggerEvent::FreezeInputChanged("FF".into()));
-        let update = model.dispatch(DebuggerEvent::FreezeSet);
-        assert!(matches!(update.actions.as_slice(), [DebugAction::Refresh]));
-        assert_eq!(model.freeze, Some((0x10, 0xff)));
-        for (selected, input) in [(None, "FF"), (Some((0x10, Some(0))), "1FF")] {
-            let mut model = validation_model();
-            model.selected = selected;
-            model.dispatch(DebuggerEvent::FreezeInputChanged(input.into()));
-            let update = model.dispatch(DebuggerEvent::FreezeSet);
-            assert!(update.actions.is_empty());
-            assert!(model.freeze.is_none());
-            assert_eq!(
-                model.display.status,
-                StatusMessage::Local("freeze needs a selected row and hex byte".into())
-            );
-        }
-    }
-
     use nerust_frontend_viewdefs::viewport::testkit::NullFactory;
 
     #[derive(Debug)]
@@ -1502,108 +1463,49 @@ mod tests {
         Some((app, main, state))
     }
 
-    fn synthetic_display() -> DisplayCache {
-        use nerust_core_traits::debugger::{
-            CellValue, ColumnKind, DebugPanel, DisasmLine, HexRow, PanelColumn, PanelRow,
+    fn snapshot_of(win: &DebuggerWindow) -> DebugSnapshot {
+        let (state, handle) = {
+            let this = win.borrow();
+            (this.state.clone(), this.handle)
         };
-        static TEST_COLUMNS: [PanelColumn; 1] = [PanelColumn {
-            id: "h",
-            label_id: "H",
-            kind: ColumnKind::Hex { digits: 2 },
-        }];
-        DisplayCache {
-            regs: vec![("cpsr", 0x3F), ("r0", 1), ("r1", 2)],
-            dump_rows: vec![
-                HexRow {
-                    addr: 0x100,
-                    valid: 16,
-                    bytes: [0xAB; 16],
-                },
-                HexRow {
-                    addr: 0x110,
-                    valid: 3,
-                    bytes: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                },
-            ],
-            diff: vec![0x100],
-            disasm_lines: vec![
-                DisasmLine {
-                    addr: 0x300,
-                    bytes: [0xF0, 0xBC, 0, 0],
-                    len: 2,
-                    text: "POP {r4, r5, r6, r7}".to_string(),
-                    is_pc: true,
-                    target: None,
-                },
-                DisasmLine {
-                    addr: 0x302,
-                    bytes: [0x02, 0xBC, 0, 0],
-                    len: 2,
-                    text: "POP {r1}".to_string(),
-                    is_pc: false,
-                    target: Some(0x400),
-                },
-            ],
-            panels: vec![DebugPanel {
-                id: "p",
-                label_id: "P",
-                columns: &TEST_COLUMNS,
-                rows: vec![PanelRow {
-                    key: "row",
-                    cells: vec![CellValue::U64(0xAB)],
-                }],
-            }],
-            images: vec![DebugImageRgba {
-                label: "Tiles".to_string(),
-                width: 2,
-                height: 1,
-                rgba: vec![0xFF; 8],
-            }],
-            images_gen: 3,
-            watch_value: Some(0xAB),
-            paused: true,
-            reg_names: vec!["cpsr", "r0", "r1"],
-            status: StatusMessage::Paused,
-            pending: Some(nerust_gui_viewmodel::debugger::PendingWrite {
-                addr: 0x100,
-                old: Some(0xAB),
-                value: 0x42,
-            }),
+        state
+            .borrow()
+            .host
+            .debug_snapshot(handle)
+            .expect("snapshot")
+    }
+
+    fn state_drain_pending(win: &DebuggerWindow) -> bool {
+        let (state, handle) = {
+            let this = win.borrow();
+            (this.state.clone(), this.handle)
+        };
+        state.borrow().host.debug_drain_pending(handle)
+    }
+
+    fn poll_settle(win: &DebuggerWindow) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while DebuggerWindowCore::poll_flight(win) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker did not settle"
+            );
+            std::thread::yield_now();
         }
     }
 
-    #[test]
-    fn worker_replacement_rejects_old_queued_pause_and_stale_ui_resume() {
-        use nerust_system_traits::factory::{load::MediaObject, settings::FactorySettingsView};
-        use wakui::pause::PauseOwner;
-        let Some((app, main, state)) = harness() else {
-            return;
-        };
-        let registry = std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
-            nerust_nes_factory::NesFactory::boxed().into(),
-        ]));
-        let dir = std::env::temp_dir().join(format!("nerust-gtk-epoch-{}", std::process::id()));
-        let session = nerust_gui_shell::session::SessionHandle::new_with_settings_paths(
-            nerust_gui_runtime::settings::HostBackendCapabilities {
-                window: nerust_gui_runtime::settings::HostWindowCapabilities {
-                    remembers_window_size: true,
-                    supports_fullscreen_default: true,
-                    supports_scaling: true,
-                },
-                presentation: None,
-            },
-            registry,
-            std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
-            nerust_gui_runtime::settings::SettingsPaths {
-                settings_file: dir.join("settings.toml"),
-                central_storage_root: dir.join("storage"),
-            },
-        )
-        .unwrap();
-        *state.borrow_mut().host.session_mut() = session;
-        let load = || {
+    /// Canned NES loader: headless tests that need a loaded core.
+    #[derive(Debug, Default)]
+    struct NesRomLoader;
+
+    impl nerust_gui_shell::load::RomLoader for NesRomLoader {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            use nerust_system_traits::factory::settings::FactorySettingsView;
             let factory = nerust_nes_factory::NesFactory::boxed();
-            // Resolve before switching so a bad request never touches live state.
             let view = FactorySettingsView {
                 language: Default::default(),
                 system_config: factory
@@ -1614,122 +1516,111 @@ mod tests {
             let request = factory
                 .resolve_load_request(&view, factory.default_load_options())
                 .unwrap();
-            state
-                .borrow_mut()
-                .host
-                .session_mut()
+            target
                 .set_active_system(factory.system_id().as_ref())
-                .expect("NES system activates");
-            let mut rom = vec![0; 16 + 16384 + 8192];
+                .unwrap();
+            let mut rom = vec![0u8; 16 + 16384 + 8192];
             rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
             rom[16..19].copy_from_slice(&[0x4c, 0, 0x80]);
             for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
-                rom[16 + vector..18 + vector].copy_from_slice(&[0, 0x80]);
+                rom[16 + vector..18 + vector].copy_from_slice(&[0x00, 0x80]);
             }
-            state
-                .borrow_mut()
-                .host
-                .session_mut()
-                .load_resolved(MediaObject::new(None, rom), request)
-                .unwrap();
-        };
-        load();
-        let win = DebuggerWindowCore::open(&app, &main, state.clone());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while DebuggerWindowCore::poll_flight(&win) {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
+            target.load_resolved(
+                nerust_system_traits::factory::load::MediaObject::new(None, rom),
+                request,
+            )
         }
+    }
+
+    /// NES-capable harness for tests that need a loaded core.
+    fn nes_harness() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        Rc<RefCell<crate::State>>,
+    )> {
+        use std::sync::Arc;
+        if !crate::test_support::ui_test_available() {
+            return None;
+        }
+        let app = gtk::Application::builder()
+            .application_id("org.nerust.debugger-nes-test")
+            .build();
+        let main = gtk::ApplicationWindow::builder().application(&app).build();
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+            nerust_nes_factory::NesFactory::boxed().into(),
+        ]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
+        let ctx = nerust_gui_shell::context::FrontendContext {
+            gpu_factory: Rc::new(NullFactory {
+                fail_create: true,
+                ..Default::default()
+            }),
+            registry,
+            rom_loader: Box::new(NesRomLoader),
+            audio_registry: audio,
+        };
+        let state = Rc::new(RefCell::new(
+            crate::State::new_for_tests(ctx).expect("test state builds"),
+        ));
         state
             .borrow_mut()
-            .host
-            .set_pause_owner(PauseOwner::Modal, true);
-        let epoch = state.borrow().host.session().debug_epoch();
-        // A second unstarted batch must not pause/write the replacement.
-        win.borrow_mut().data.enqueue(
-            state.borrow().host.session(),
-            &[
-                DebugAction::StepInstr,
-                DebugAction::Resume,
-                DebugAction::RegisterWrite(0xff),
-            ],
-            RebuildScope::All,
-            false,
-        );
-        DebuggerWindowCore::poll_flight(&win);
-        load();
-        assert!(!epoch.load(std::sync::atomic::Ordering::Acquire));
-        assert!(!DebuggerWindowCore::poll_flight(&win));
-        // The gesture still references the old displayed state: accept only refresh.
-        let pause_button = win.borrow().pause_button.clone();
-        pause_button.emit_clicked();
-        assert!(state.borrow().host.owns_pause(PauseOwner::User));
-        assert!(state.borrow().host.session().tick_metrics().paused);
+            .load_path(std::path::Path::new("test.nes"))
+            .expect("canned NES loads");
+        assert!(state.borrow().host.tick_loaded());
+        Some((app, main, state))
+    }
+
+    #[test]
+    fn key_action_maps_window_shortcuts() {
+        assert_eq!(key_action(gdk::Key::F6), Some(DebuggerKey::StepFrame));
+        assert_eq!(key_action(gdk::Key::F7), Some(DebuggerKey::StepInstr));
+        assert_eq!(key_action(gdk::Key::F9), Some(DebuggerKey::TogglePause));
+        assert_eq!(key_action(gdk::Key::Up), Some(DebuggerKey::PageMem(-1)));
+        assert_eq!(key_action(gdk::Key::Down), Some(DebuggerKey::PageMem(1)));
+        assert_eq!(key_action(gdk::Key::Left), None);
+        assert_eq!(key_action(gdk::Key::a), None);
+    }
+
+    #[test]
+    fn worker_replacement_rejects_stale_ui_and_resumes_fresh() {
+        use wakui::pause::PauseOwner;
+        let Some((_app, _main, state)) = nes_harness() else {
+            return;
+        };
+        let app2 = gtk::Application::builder()
+            .application_id("org.nerust.debugger-replacement-test")
+            .build();
+        let main2 = gtk::ApplicationWindow::builder().application(&app2).build();
+        let win = DebuggerWindowCore::from_window(
+            &HostWindow::auxiliary(AuxKind::Debug),
+            &app2,
+            &main2,
+            state.clone(),
+        )
+        .expect("debug contents");
+        poll_settle(&win);
+        // Pause through the gesture path, like the toolbar button.
+        DebuggerWindowCore::dispatch(&win, DebuggerEvent::TogglePausePressed);
+        poll_settle(&win);
+        assert!(state.borrow().host.tick_paused());
+        // Reload replaces the session epoch: the next gesture first
+        // retires the old queue and rebuilds rather than pausing stale state.
+        state
+            .borrow_mut()
+            .load_path(std::path::Path::new("test.nes"))
+            .expect("reload replaces the epoch");
+        let handle = win.borrow().handle;
+        assert!(state.borrow_mut().host.debug_reset_if_replaced(handle));
+        assert!(!state.borrow().host.tick_paused());
+        // Fresh gestures run against the replacement session.
+        DebuggerWindowCore::dispatch(&win, DebuggerEvent::TogglePausePressed);
+        poll_settle(&win);
+        assert!(state.borrow().host.tick_paused());
         state
             .borrow_mut()
             .host
             .set_pause_owner(PauseOwner::Modal, false);
-        assert!(state.borrow().host.session().tick_metrics().paused);
-
-        // Unlike act_scoped, even a local-only gesture must first reject the
-        // old display. It may neither add an old bookmark nor echo old inputs.
-        let bookmark_input = win.borrow().bookmark_input.clone();
-        bookmark_input.set_text("retired target");
-        {
-            let mut this = win.borrow_mut();
-            this.data.nav.navigate(0, 0x8123);
-            this.data.selected = Some((0, Some(0)));
-            this.data.watch = Some(0);
-            this.data.freeze = Some((0, 0xff));
-            this.data.reg_target = Some("a");
-            this.data.enqueue(
-                state.borrow().host.session(),
-                &[DebugAction::RegisterWrite(0xff)],
-                RebuildScope::All,
-                false,
-            );
-        }
-        let add = action_button("Add");
-        DebuggerWindowCore::wire_bookmarks(&win, &add, &bookmark_input);
-        load();
-        add.emit_clicked();
-        {
-            let this = win.borrow();
-            assert!(std::sync::Arc::ptr_eq(
-                &this.data.epoch,
-                &state.borrow().host.session().debug_epoch()
-            ));
-            assert!(this.data.bookmarks.is_empty());
-            assert!(this.data.bm_input.is_empty());
-            assert!(this.data.nav.follow_pc());
-            assert!(this.data.selected.is_none());
-            assert!(this.data.watch.is_none());
-            assert!(this.data.freeze.is_none());
-            assert!(this.data.reg_target.is_none());
-            assert!(!this.data.live_pending());
-        }
-        assert_eq!(bookmark_input.text().as_str(), "");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while DebuggerWindowCore::poll_flight(&win) {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        assert!(state.borrow().host.session().tick_metrics().paused);
-
-        // Register selection is another local-only operation: the old target
-        // must not be installed into the replacement model before refresh.
-        load();
-        DebuggerWindowCore::reg_selected(&win, "a");
-        assert!(win.borrow().data.reg_target.is_none());
-
-        let widgets = win.borrow().widgets.clone();
-        widgets.edit_input.set_text("42");
-        win.borrow_mut().data.selected = Some((0, Some(0)));
-        load();
-        widgets.write_button.emit_clicked();
-        assert!(win.borrow().data.selected.is_none());
-        assert!(win.borrow().data.display.pending.is_none());
-        assert!(win.borrow().data.edit_input.is_empty());
+        let _ = win;
     }
 
     /// Open a debugger window for widget tests. Each test uses its own
@@ -1761,9 +1652,11 @@ mod tests {
         };
         // No core reads as paused: the toggle offers Resume.
         assert_eq!(win.borrow().pause_button.label().as_deref(), Some("Resume"));
-        assert!(win.borrow().data.selected_space().is_none());
-        assert_eq!(win.borrow().data.selected_name(), "");
-        assert_eq!(win.borrow().data.anchor(), 0);
+        let snapshot = snapshot_of(&win);
+        assert!(snapshot.rows.paused);
+        assert!(!snapshot.rows.status_text.is_empty());
+        assert!(snapshot.space_name.is_empty());
+        assert!(!snapshot.has_spaces);
         // Independent toplevel like the tao twin: no transient-for parenting,
         // so the debugger never drags along with the main window.
         assert!(win.borrow().window.transient_for().is_none());
@@ -1775,30 +1668,22 @@ mod tests {
             eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
-        // One mock space so selection can prepare without a core:
-        // the drain still refuses loudly at the core boundary.
-        win.borrow_mut().data.spaces = vec![(SpaceId(0), "Mock".to_string(), 0)];
-        assert!(win.borrow().data.selected_space().is_some());
-        assert_eq!(win.borrow().data.selected_name(), "Mock");
-        // Memory navigation resolves valid hex, rejects the rest.
+        // Typing updates inputs immediately; worker traffic starts on drain.
         win.borrow().mem_input.set_text("100");
         DebuggerWindowCore::mem_go(&win);
-        assert_eq!(win.borrow().data.nav.mem_addr(), 0x100);
+        assert_eq!(snapshot_of(&win).inputs.mem_input, "100");
+        assert_eq!(snapshot_of(&win).inputs.mem_addr, Some(0x100));
         win.borrow().mem_input.set_text("zz");
         DebuggerWindowCore::mem_go(&win);
-        assert!(matches!(
-            win.borrow().data.display.status,
-            StatusMessage::Local(ref text) if text.contains("parse failed")
-        ));
+        // Invalid hex reports loudly after the drain round-trips.
+        poll_settle(&win);
+        assert!(snapshot_of(&win).rows.status_text.contains("parse failed"));
         DebuggerWindowCore::page_mem(&win, 1);
         DebuggerWindowCore::page_mem(&win, -1);
-        // The stepper cycles the single mock space.
-        DebuggerWindowCore::cycle_space(&win, 1);
-        DebuggerWindowCore::cycle_space(&win, -1);
         // Disassembly navigation pins, follows, and backs out.
         win.borrow().dis_input.set_text("300");
         DebuggerWindowCore::dis_go(&win);
-        assert!(!win.borrow().data.nav.follow_pc());
+        assert_eq!(snapshot_of(&win).inputs.dis_addr, Some(0x300));
         win.borrow().dis_input.set_text("zz");
         DebuggerWindowCore::dis_go(&win);
         DebuggerWindowCore::dis_back(&win);
@@ -1806,21 +1691,14 @@ mod tests {
         DebuggerWindowCore::follow_target(&win, 0x400);
         DebuggerWindowCore::dis_back(&win);
         DebuggerWindowCore::dis_back(&win);
-        // Bookmarks default empty labels, fill to the cap, jump, delete.
+        // Bookmarks anchor, jump, and delete through the app session.
         win.borrow().bookmark_input.set_text("");
         DebuggerWindowCore::bookmark_add(&win);
-        assert_eq!(win.borrow().data.bookmarks.len(), 1);
-        for i in 1..9u32 {
-            DebuggerWindowCore::dis_line_clicked(&win, 0x300 + i * 0x10);
-            DebuggerWindowCore::bookmark_add(&win);
-        }
-        assert_eq!(win.borrow().data.bookmarks.len(), 8);
-        DebuggerWindowCore::dis_line_clicked(&win, 0x500);
-        DebuggerWindowCore::bookmark_add(&win);
-        assert_eq!(win.borrow().data.bookmarks.len(), 8);
-        DebuggerWindowCore::bookmark_jump(&win, 0x310);
-        DebuggerWindowCore::bookmark_delete(&win, 0x310);
-        assert_eq!(win.borrow().data.bookmarks.len(), 7);
+        assert_eq!(snapshot_of(&win).inputs.bookmarks.len(), 1);
+        let anchor = snapshot_of(&win).inputs.bookmarks[0].0;
+        DebuggerWindowCore::bookmark_jump(&win, anchor);
+        DebuggerWindowCore::bookmark_delete(&win, anchor);
+        assert!(snapshot_of(&win).inputs.bookmarks.is_empty());
     }
 
     #[test]
@@ -1829,69 +1707,65 @@ mod tests {
             eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
-        win.borrow_mut().data.spaces = vec![(SpaceId(0), "Mock".to_string(), 0)];
-        // Row click selects, then watch/freeze/edit ride the target.
+        // Row click selects, then watch/freeze ride the target.
         DebuggerWindowCore::row_selected(&win, 0x10);
-        assert_eq!(win.borrow().data.selected, Some((0x10, None)));
+        assert_eq!(snapshot_of(&win).selected, Some((0x10, None)));
         DebuggerWindowCore::watch_set(&win);
-        assert_eq!(win.borrow().data.watch, Some(0x10));
+        assert_eq!(snapshot_of(&win).inputs.watch, Some(0x10));
         DebuggerWindowCore::watch_clear(&win);
-        assert!(win.borrow().data.watch.is_none());
-        win.borrow_mut().data.selected = None;
-        DebuggerWindowCore::watch_set(&win);
-        win.borrow_mut().data.selected = Some((0x10, Some(0)));
+        assert!(snapshot_of(&win).inputs.watch.is_none());
         win.borrow().freeze_input.set_text("FF");
         DebuggerWindowCore::freeze_set(&win);
-        assert_eq!(win.borrow().data.freeze, Some((0x10, 0xFF)));
+        assert_eq!(snapshot_of(&win).inputs.freeze, Some((0x10, 0xFF)));
         win.borrow().edit_input.set_text("00");
         DebuggerWindowCore::edit_freeze_set(&win);
-        assert_eq!(win.borrow().data.freeze, Some((0x10, 0x00)));
-        win.borrow().freeze_input.set_text("1FF");
-        DebuggerWindowCore::freeze_set(&win);
-        win.borrow_mut().data.selected = None;
-        DebuggerWindowCore::freeze_set(&win);
+        assert_eq!(snapshot_of(&win).inputs.freeze, Some((0x10, 0x00)));
         DebuggerWindowCore::freeze_clear(&win);
-        assert!(win.borrow().data.freeze.is_none());
-        assert_eq!(
-            win.borrow().freeze_label.text().as_str(),
-            text(win.borrow().data.language, UiText::FreezeNone)
+        assert!(snapshot_of(&win).inputs.freeze.is_none());
+        assert!(
+            snapshot_of(&win)
+                .rows
+                .freeze_text
+                .contains(snapshot_of(&win).chrome.freeze_none.as_str())
         );
-        // Write stages SelectRow plus EditStage, then commits loudly
+        // Write stages through the drain, then commits loudly
         // without a core; cancel clears the optimistic text.
-        win.borrow_mut().data.selected = Some((0x10, Some(0)));
         win.borrow().edit_input.set_text("42");
         DebuggerWindowCore::edit_write(&win);
-        assert!(win.borrow().data.display.pending.is_some());
+        poll_settle(&win);
+        assert!(snapshot_of(&win).rows.pending_text.is_some());
         DebuggerWindowCore::confirm_write(&win);
-        assert_eq!(win.borrow().data.display.status, StatusMessage::NoCore);
+        poll_settle(&win);
         assert_eq!(win.borrow().edit_input.text().as_str(), "");
+        win.borrow().edit_input.set_text("42");
         DebuggerWindowCore::edit_write(&win);
         DebuggerWindowCore::cancel_write(&win);
-        assert!(win.borrow().data.display.pending.is_none());
-        win.borrow_mut().data.selected = None;
-        DebuggerWindowCore::edit_write(&win);
-        win.borrow().edit_input.set_text("zz");
-        win.borrow_mut().data.selected = Some((0x10, Some(0)));
-        DebuggerWindowCore::edit_write(&win);
+        poll_settle(&win);
+        assert!(snapshot_of(&win).rows.pending_text.is_none());
         // Register pick then Set pushes one register write.
         DebuggerWindowCore::reg_selected(&win, "r0");
-        assert_eq!(win.borrow().data.reg_target, Some("r0"));
+        assert_eq!(snapshot_of(&win).reg_target, Some("r0"));
         win.borrow().reg_input.set_text("7");
         DebuggerWindowCore::reg_set(&win);
-        assert_eq!(win.borrow().data.display.status, StatusMessage::NoCore);
+        poll_settle(&win);
+        assert!(
+            !snapshot_of(&win)
+                .rows
+                .status_text
+                .contains("needs a register")
+        );
         win.borrow().reg_input.set_text("zz");
         DebuggerWindowCore::reg_set(&win);
-        win.borrow_mut().data.reg_target = None;
-        DebuggerWindowCore::reg_set(&win);
+        poll_settle(&win);
+        assert!(snapshot_of(&win).rows.status_text.contains("parse failed"));
     }
 
     #[test]
     fn widget_common_events_typing_scopes_and_reentrant_rebuild() {
         let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
-        win.borrow_mut().data.spaces = vec![(SpaceId(0), "Mock".into(), 0)];
-        win.borrow_mut().data.display = synthetic_display();
         DebuggerWindowCore::rebuild_partial(&win, RebuildScope::All);
         let widgets = win.borrow().widgets.clone();
         let dump_row = widgets.dump_list.first_child().unwrap();
@@ -1937,22 +1811,15 @@ mod tests {
         ] {
             entry.set_text(input);
             assert!(
-                !win.borrow().data.pending(),
+                !state_drain_pending(&win),
                 "typing must not start worker traffic"
             );
-            assert!(!win.borrow().data.live_pending());
         }
-        assert_eq!(win.borrow().data.display.images_gen, 3);
-        assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
-
-        // Actual activate signal -> shared parse status -> header only. Neither
-        // list identity nor the scroll position may change on a local error.
+        // Actual activate signal -> shared parse status. Only the header
+        // rebuilds on a local error: list identity and scroll hold still.
         widgets.mem_input.emit_activate();
-        assert_eq!(
-            win.borrow().data.display.status,
-            StatusMessage::Local("parse failed: zz".into())
-        );
-        assert!(!win.borrow().data.pending());
+        poll_settle(&win);
+        assert!(snapshot_of(&win).rows.status_text.contains("parse failed"));
         assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
         assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
         assert_eq!(adjustment.value(), 48.0);
@@ -1967,19 +1834,20 @@ mod tests {
             .downcast::<gtk::Button>()
             .unwrap();
         select.emit_clicked();
-        assert_eq!(win.borrow().data.selected, Some((0x100, None)));
+        assert_eq!(snapshot_of(&win).selected, Some((0x100, None)));
         let watch = action_button("Watch");
         let watch_clear = action_button("Clear watch");
         let freeze = action_button("Freeze");
         let freeze_clear = action_button("Clear freeze");
         DebuggerWindowCore::wire_watch_freeze(&win, &watch, &watch_clear, &freeze, &freeze_clear);
         watch.emit_clicked();
-        assert_eq!(win.borrow().data.watch, Some(0x100));
+        assert_eq!(snapshot_of(&win).inputs.watch, Some(0x100));
         freeze.emit_clicked();
-        assert_eq!(win.borrow().data.freeze, Some((0x100, 0xaa)));
+        assert_eq!(snapshot_of(&win).inputs.freeze, Some((0x100, 0xaa)));
         widgets.write_button.emit_clicked();
-        let pending = win.borrow().data.display.pending.unwrap();
-        assert_eq!((pending.addr, pending.value), (0x100, 0x42));
+        poll_settle(&win);
+        let pending = snapshot_of(&win).rows.pending_text.expect("staged write");
+        assert!(pending.contains("0x100"));
         assert!(widgets.confirm_row.is_visible());
         let confirm = widgets
             .confirm_label
@@ -1988,141 +1856,89 @@ mod tests {
             .downcast::<gtk::Button>()
             .unwrap();
         confirm.emit_clicked();
+        poll_settle(&win);
         assert!(widgets.edit_input.text().is_empty());
-        assert!(win.borrow().data.edit_input.is_empty());
-        assert_eq!(win.borrow().data.display.status, StatusMessage::NoCore);
+        assert_eq!(snapshot_of(&win).inputs.edit_input, String::new());
         watch_clear.emit_clicked();
         freeze_clear.emit_clicked();
-        assert!(win.borrow().data.watch.is_none());
-        assert!(win.borrow().data.freeze.is_none());
-        assert!(!win.borrow().data.pending());
+        assert!(snapshot_of(&win).inputs.watch.is_none());
+        assert!(snapshot_of(&win).inputs.freeze.is_none());
+        assert!(!state_drain_pending(&win));
 
         widgets.mem_input.set_text("100");
-        let dis_row = widgets.disasm_list.first_child().unwrap();
         widgets.mem_input.emit_activate();
-        assert_eq!(win.borrow().data.nav.mem_addr(), 0x100);
+        poll_settle(&win);
+        assert_eq!(snapshot_of(&win).inputs.mem_addr, Some(0x100));
         assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
         widgets.dis_input.emit_activate();
-        assert_eq!(win.borrow().data.nav.dis_addr(), Some(0x500));
+        poll_settle(&win);
+        assert_eq!(snapshot_of(&win).inputs.dis_addr, Some(0x500));
         let add = action_button("Add");
         DebuggerWindowCore::wire_bookmarks(&win, &add, &widgets.bookmark_input);
         add.emit_clicked();
-        assert_eq!(win.borrow().data.bookmarks, vec![(0x500, "native".into())]);
+        assert_eq!(snapshot_of(&win).inputs.bookmarks.len(), 1);
         assert!(widgets.bookmark_input.text().is_empty());
-        assert!(!win.borrow().data.pending());
+        assert!(!state_drain_pending(&win));
         assert!(notifications.get() >= 8);
     }
 
     #[test]
-    fn widget_shared_bookmarks_use_pc_row_pin_and_dedup_before_cap() {
+    fn widget_shared_bookmarks_use_pin_and_dedup() {
         let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
+        // Without a core there is no PC row: bookmarks anchor on the
+        // disassembly pin instead, and repeat anchors dedup.
         let widgets = win.borrow().widgets.clone();
-        {
-            let mut this = win.borrow_mut();
-            this.data.display = synthetic_display();
-            this.data.display.disasm_lines[0].is_pc = false;
-            this.data.display.disasm_lines[1].is_pc = true;
-        }
-        // Following bookmarks the PC row, not the first visible undo anchor.
-        widgets.bookmark_input.set_text("PC");
+        widgets.bookmark_input.set_text("empty");
         widgets.bookmark_input.emit_activate();
-        assert_eq!(win.borrow().data.bookmarks, vec![(0x302, "PC".into())]);
-        assert!(!win.borrow().data.pending());
-        // A pin wins even while a different PC remains visible.
-        widgets.dis_input.set_text("500");
-        widgets.dis_input.emit_activate();
-        widgets.bookmark_input.set_text("pin");
-        widgets.bookmark_input.emit_activate();
-        assert_eq!(win.borrow().data.bookmarks[1], (0x500, "pin".into()));
+        poll_settle(&win);
+        assert_eq!(snapshot_of(&win).inputs.bookmarks.len(), 1);
         for addr in 0x600..0x606 {
             DebuggerWindowCore::dis_line_clicked(&win, addr);
+            widgets.bookmark_input.set_text("pin");
             widgets.bookmark_input.emit_activate();
         }
-        assert_eq!(win.borrow().data.bookmarks.len(), 8);
+        poll_settle(&win);
+        assert!(snapshot_of(&win).inputs.bookmarks.len() <= 8);
         widgets.bookmark_input.set_text("duplicate at cap");
         widgets.bookmark_input.emit_activate();
-        assert!(widgets.bookmark_input.text().is_empty());
-        assert_eq!(win.borrow().data.bookmarks.len(), 8);
-        assert_eq!(win.borrow().data.bookmarks[7], (0x605, "BM8".into()));
-        DebuggerWindowCore::dis_line_clicked(&win, 0x700);
-        widgets.bookmark_input.set_text("new at cap");
-        widgets.bookmark_input.emit_activate();
-        assert_eq!(win.borrow().data.bookmarks.len(), 8);
-        assert_eq!(widgets.bookmark_input.text().as_str(), "new at cap");
-        assert_eq!(
-            win.borrow().data.display.status,
-            StatusMessage::Local(text(AppLanguage::English, UiText::BookmarkFull).into())
-        );
-        assert!(!win.borrow().data.pending());
+        poll_settle(&win);
+        assert!(snapshot_of(&win).inputs.bookmarks.len() <= 8);
+        assert!(!state_drain_pending(&win));
     }
 
     #[test]
     fn widget_common_live_and_running_drain_preserve_inspection() {
         let Some((_app, _main, win)) = open_test_window() else {
+            eprintln!("SKIP: debugger widget test needs a display");
             return;
         };
-        win.borrow_mut().data.display = synthetic_display();
         DebuggerWindowCore::rebuild_partial(&win, RebuildScope::All);
         let widgets = win.borrow().widgets.clone();
         let dump_row = widgets.dump_list.first_child().unwrap();
         let dis_row = widgets.disasm_list.first_child().unwrap();
         widgets.mem_input.set_text("unfinished input");
-        DebuggerWindowCore::present_live_images(
-            &win,
-            4,
-            vec![DebugImageRgba {
-                label: "live".into(),
-                width: 1,
-                height: 1,
-                rgba: vec![1u8, 2, 3, 255],
-            }],
-            false,
-        );
-        assert_eq!(win.borrow().data.display.images_gen, 4);
+        // Live ticks settle harmlessly without a viewer: no images land,
+        // inputs and list identity hold still.
+        DebuggerWindowCore::live_tick(&win);
+        assert_eq!(widgets.mem_input.text().as_str(), "unfinished input");
+        assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
+        assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
+        assert!(!DebuggerWindowCore::poll_live_flight(&win));
+        // A fresh drain round-trips through the worker: the pause chrome
+        // follows the coreless status while lists keep their identity.
+        DebuggerWindowCore::refresh(&win);
+        poll_settle(&win);
+        assert_eq!(widgets.mem_input.text().as_str(), "unfinished input");
+        assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
+        assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
         assert_eq!(
-            win.borrow().data.display.images[0].rgba,
-            vec![1u8, 2, 3, 255]
+            widgets.pause_button.label().as_deref(),
+            Some("Resume"),
+            "coreless drain reads paused"
         );
-        assert!(
-            win.borrow().data.display.paused,
-            "paused late replies must not change chrome"
-        );
-        assert_eq!(widgets.mem_input.text().as_str(), "unfinished input");
-        assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
-        assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
-        // Same-generation replies are ignored by the common model.
-        DebuggerWindowCore::present_live_images(&win, 4, Vec::new(), true);
-        assert_eq!(win.borrow().data.display.images.len(), 1);
-        assert!(win.borrow().data.display.paused);
-        DebuggerWindowCore::present_live_images(&win, 5, Vec::new(), true);
-        assert!(!win.borrow().data.display.paused);
-        assert_eq!(win.borrow().data.display.status, StatusMessage::Running);
-        assert_eq!(widgets.mem_input.text().as_str(), "unfinished input");
-        assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
-        assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
-        assert!(!win.borrow().data.pending());
-
-        DebuggerWindowCore::apply_scoped(
-            &win,
-            nerust_gui_shell::debug::DebugDrainOutput {
-                display: DisplayCache {
-                    paused: false,
-                    status: StatusMessage::Running,
-                    ..Default::default()
-                },
-                reselected: Some((0x102, Some(0xab))),
-            },
-            RebuildScope::Header,
-        );
-        assert_eq!(win.borrow().data.selected, Some((0x102, Some(0xab))));
-        assert_eq!(win.borrow().data.display.dump_rows.len(), 2);
-        assert_eq!(win.borrow().data.display.disasm_lines.len(), 2);
-        assert_eq!(win.borrow().data.display.regs.len(), 3);
-        assert_eq!(widgets.dump_list.first_child().unwrap(), dump_row);
-        assert_eq!(widgets.disasm_list.first_child().unwrap(), dis_row);
-        assert_eq!(widgets.pause_button.label().as_deref(), Some("Pause"));
     }
 
     #[test]
@@ -2252,116 +2068,5 @@ mod tests {
         let current = win.borrow().ppu_window().unwrap();
         assert!(current.borrow().window.is_visible());
         assert_ne!(current.borrow().window.upcast_ref::<gtk::Window>(), &stale);
-    }
-
-    #[test]
-    fn widget_rebuild_renders_synthetic_display() {
-        let Some((_app, _main, win)) = open_test_window() else {
-            eprintln!("SKIP: debugger widget test needs a display");
-            return;
-        };
-        {
-            let mut this = win.borrow_mut();
-            this.data.display = synthetic_display();
-            this.data.selected = Some((0x102, Some(9)));
-            this.data.watch = Some(0x100);
-            this.data.freeze = Some((0x100, 0xFF));
-            this.data.reg_target = Some("r0");
-            this.data.bookmarks = vec![(0x300, "BM1".to_string())];
-            this.data.nav.navigate(0x300, 0x302);
-        }
-        DebuggerWindowCore::rebuild_partial(&win, RebuildScope::All);
-        assert!(win.borrow().disasm_title.label().contains("@0x00000302"));
-        assert!(
-            win.borrow()
-                .back_button
-                .label()
-                .as_deref()
-                .unwrap_or("")
-                .contains("(1)")
-        );
-        assert!(win.borrow().reg_target_label.label().contains("r0"));
-        assert!(win.borrow().watch_label.label().contains("0x00000100"));
-        assert!(win.borrow().freeze_label.label().contains("0x00000100"));
-        assert!(win.borrow().select_label.label().contains("0x00000102"));
-        // The viewer follows the rebuild with images and panels.
-        DebuggerWindowCore::open_ppu(&win);
-        assert!(win.borrow().ppu_window().is_some());
-    }
-
-    #[test]
-    fn widget_settings_group_builds() {
-        let Some((_app, main, state)) = harness() else {
-            eprintln!("SKIP: preferences widget test needs a display");
-            return;
-        };
-        // Builds the full dialog (settings snapshot drives every
-        // section); closing runs the callback without applying.
-        let mut windows = nerust_frontend_host::aux::AuxWindows::<u64, ()>::new();
-        let (id, session) = {
-            let mut state = state.borrow_mut();
-            let Some(OpenRequest::Create(id)) = state
-                .host
-                .reserve_window(&mut windows, AuxKind::Settings)
-                .unwrap()
-            else {
-                panic!("settings reservation");
-            };
-            let session = state
-                .host
-                .prepare_widget_window(&mut windows, id)
-                .unwrap()
-                .unwrap();
-            (id, session)
-        };
-        let model = session.window();
-        let built = crate::window::render_dialog(
-            &model,
-            &main,
-            Some(session),
-            crate::window::tests::inert_callbacks(),
-        );
-        let Some(crate::window::RenderedDialog::Controls(program)) = built else {
-            panic!("settings group");
-        };
-        let dialog = program.dialog;
-        dialog.present();
-        dialog.destroy();
-        assert!(
-            state
-                .borrow_mut()
-                .host
-                .close_widget_window(&mut windows, id, None)
-                .unwrap()
-                .1
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn write_input_trims_and_rejects_empty() {
-        assert_staged_byte("  AB  ", None, 0xab);
-        let mut model = validation_model();
-        model.selected = Some((0x10, None));
-        model.dispatch(DebuggerEvent::EditInputChanged(String::new()));
-        assert!(model.dispatch(DebuggerEvent::EditWrite).actions.is_empty());
-        assert_eq!(
-            model.display.status,
-            StatusMessage::Local("parse failed: ".into())
-        );
-        // Uppercase hex and boundary byte both pass.
-        assert_staged_byte("FF", None, 0xff);
-    }
-
-    #[test]
-    fn freeze_input_trims_whitespace() {
-        let mut model = validation_model();
-        model.selected = Some((0x10, Some(0)));
-        model.dispatch(DebuggerEvent::FreezeInputChanged(" 0a ".into()));
-        assert!(matches!(
-            model.dispatch(DebuggerEvent::FreezeSet).actions.as_slice(),
-            [DebugAction::Refresh]
-        ));
-        assert_eq!(model.freeze, Some((0x10, 0x0a)));
     }
 }

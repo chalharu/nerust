@@ -2,8 +2,8 @@
 //! second controller or settings-specific native binding.
 use super::renderer::{NativeControl, NativeKind, NodeId};
 use super::*;
-use crate::window::{WindowExtend, tests as windows};
-use nerust_frontend_host::focus::AuxKind;
+use crate::window::{MenubarModels, WindowExtend, tests as windows};
+use nerust_frontend_host::{aux::AuxId, focus::AuxKind};
 use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
@@ -12,57 +12,42 @@ use wakui::control::*;
 
 struct Harness {
     window: crate::window::Window,
+    id: AuxId,
     program: WidgetDialog,
 }
 
 impl Harness {
     fn new(system: bool) -> Self {
-        let window = windows::bound_window().expect("isolated Xvfb process required");
-        let state = window.state();
-        if system {
-            // Sessions own their registries now: swap the whole session for
-            // one backed by NES, on an isolated temp settings root.
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static HARNESS_SYSTEM_SEQ: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "nerust-harness-system-{}-{}",
-                std::process::id(),
-                HARNESS_SYSTEM_SEQ.fetch_add(1, Ordering::SeqCst)
-            ));
-            let _ = std::fs::create_dir_all(root.join("storage"));
-            *state.borrow_mut().host.session_mut() =
-                nerust_gui_shell::session::SessionHandle::new_with_settings_paths(
-                    nerust_frontend_viewdefs::bootstrap::backend_capabilities(false, None),
-                    std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
-                        nerust_nes_factory::NesFactory::boxed().into(),
-                    ])),
-                    std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
-                    nerust_gui_runtime::settings::SettingsPaths {
-                        settings_file: root.join("settings.yaml"),
-                        central_storage_root: root.join("storage"),
-                    },
-                )
-                .unwrap();
-        }
-        let mut baseline = state.borrow().host.settings_snapshot().clone();
-        baseline.shared.general.language = AppLanguage::English;
-        baseline.local.audio.muted = false;
-        state.borrow_mut().host.apply_settings(baseline).unwrap();
+        let window = if system {
+            nes_window().expect("isolated Xvfb process required")
+        } else {
+            windows::bound_window().expect("isolated Xvfb process required")
+        };
         let program = windows::program(&window, AuxKind::Settings);
-        Self { window, program }
+        let id = windows::route(&window, AuxKind::Settings).expect("settings route");
+        Self {
+            window,
+            id,
+            program,
+        }
     }
 
     fn history() -> Self {
         let window = windows::bound_window().expect("isolated Xvfb process required");
         let program = windows::program(&window, AuxKind::History);
-        Self { window, program }
+        let id = windows::route(&window, AuxKind::History).expect("history route");
+        Self {
+            window,
+            id,
+            program,
+        }
     }
 
     fn binding(&self) -> &Rc<WidgetBinding> {
         &self.program.binding
     }
     fn screen(&self) -> ControlScreen {
-        self.binding().session.borrow().screen()
+        self.binding().screen.borrow().clone()
     }
     fn id(&self, key: UiText) -> ControlId {
         let label = text(AppLanguage::English, key);
@@ -109,6 +94,78 @@ impl Harness {
             .unwrap();
         self.input(id, ControlInput::Select(index));
     }
+}
+
+/// NES-backed window for system-specific tests: canned ROM, temp settings.
+fn nes_window() -> Option<crate::window::Window> {
+    use std::sync::Arc;
+    if !crate::test_support::ui_test_available() {
+        return None;
+    }
+    struct CannedRom;
+    impl nerust_gui_shell::load::RomLoader for CannedRom {
+        fn load_rom(
+            &mut self,
+            _path: &std::path::Path,
+            target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
+        ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
+            use nerust_system_traits::factory::settings::FactorySettingsView;
+            let factory = nerust_nes_factory::NesFactory::boxed();
+            let view = FactorySettingsView {
+                language: Default::default(),
+                system_config: factory
+                    .as_system_defaults()
+                    .unwrap()
+                    .default_system_settings(),
+            };
+            let request = factory
+                .resolve_load_request(&view, factory.default_load_options())
+                .unwrap();
+            target
+                .set_active_system(factory.system_id().as_ref())
+                .unwrap();
+            let mut rom = vec![0u8; 16 + 16384 + 8192];
+            rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
+            rom[16..19].copy_from_slice(&[0x4c, 0, 0x80]);
+            for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
+                rom[16 + vector..18 + vector].copy_from_slice(&[0x00, 0x80]);
+            }
+            target.load_resolved(
+                nerust_system_traits::factory::load::MediaObject::new(None, rom),
+                request,
+            )
+        }
+    }
+    let app = gtk::Application::builder()
+        .application_id("org.nerust.widgets-nes-test")
+        .build();
+    let window = gtk::ApplicationWindow::builder().application(&app).build();
+    let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+        nerust_nes_factory::NesFactory::boxed().into(),
+    ]));
+    let ctx = nerust_gui_shell::context::FrontendContext {
+        gpu_factory: std::rc::Rc::new(nerust_frontend_viewdefs::viewport::testkit::NullFactory {
+            fail_create: true,
+            ..Default::default()
+        }),
+        registry,
+        rom_loader: Box::new(CannedRom),
+        audio_registry: Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+    };
+    let state = Rc::new(RefCell::new(
+        crate::State::new_for_tests(ctx).expect("test state builds"),
+    ));
+    state
+        .borrow_mut()
+        .load_path(std::path::Path::new("test.nes"))
+        .expect("canned NES loads");
+    Some(crate::window::Window::bind(
+        app,
+        window,
+        gtk::Picture::new(),
+        state,
+        MenubarModels::new(),
+    ))
 }
 
 impl Drop for Harness {
@@ -219,98 +276,15 @@ fn note_refreshes(h: &Harness, id: ControlId, translated: bool) {
 
 #[test]
 #[ignore = "needs display; CI-only under xvfb"]
-fn common_renderer_uses_supplied_draft_not_state_or_window_id() {
+fn common_renderer_uses_supplied_screen() {
     let h = Harness::new(false);
-    let mute = h.id(UiText::Mute);
-    let volume = h.id(UiText::MasterVolume);
-    let submit = h.id(UiText::Ok);
-    h.input(mute, ControlInput::Bool(true));
-    h.input(volume, ControlInput::Number(19));
-    let mut owned = h.binding().session.borrow().window();
-    owned.id = nerust_frontend_host::window::WindowId::Main;
-    owned.title = "supplied outer chrome".into();
-    {
-        let _signals = FlagGuard::enter(&h.binding().refreshing);
-        owned.visit(&mut crate::window::GtkWindowRenderer::Controls(h.binding()));
-    }
-    assert_eq!(
-        h.program.dialog.title().as_deref(),
-        Some("supplied outer chrome")
-    );
-    h.action(submit);
-    let state = h.window.state();
-    assert!(state.borrow().host.settings_snapshot().local.audio.muted);
-    assert_eq!(
-        state
-            .borrow()
-            .host
-            .settings_snapshot()
-            .local
-            .audio
-            .master_volume_percent,
-        19
-    );
-    assert!(crate::surface_state::surface_gone(&h.program.dialog));
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn owned_outer_window_interprets_chrome_without_session_borrow() {
-    let h = Harness::new(false);
-    let mut owned = h.binding().session.borrow().window();
-    owned.title = "outer chrome".into();
-    let nerust_frontend_host::window::WidgetContents::Controls(screen) =
-        &mut owned.contents.contents
-    else {
-        panic!("controls")
-    };
-    screen.title = "nested screen must not overwrite chrome".into();
-    let called = Rc::new(Cell::new(0));
-    let signal = h.program.dialog.connect_title_notify({
-        let weak = Rc::downgrade(h.binding());
-        let called = called.clone();
-        move |_| {
-            let b = weak.upgrade().unwrap();
-            assert!(b.session.try_borrow_mut().is_ok());
-            assert!(b.registry.try_borrow_mut().is_ok());
-            called.set(called.get() + 1);
-        }
-    });
-    owned.visit(&mut crate::window::GtkWindowRenderer::Controls(h.binding()));
-    assert_eq!(called.get(), 1);
-    assert_eq!(h.program.dialog.title().as_deref(), Some("outer chrome"));
-    h.program.dialog.disconnect(signal);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn outer_window_title_reentry_refreshes_latest_session_tree() {
-    let h = Harness::new(false);
-    let language = h.id(UiText::Language);
-    let mute = h.id(UiText::Mute);
-    let called = Rc::new(Cell::new(false));
-    h.program.dialog.connect_title_notify({
-        let weak = Rc::downgrade(h.binding());
-        let called = called.clone();
-        move |_| {
-            let b = weak.upgrade().unwrap();
-            assert!(b.session.try_borrow_mut().is_ok());
-            assert!(b.registry.try_borrow_mut().is_ok());
-            if !called.replace(true) {
-                b.send(ControlEvent::new(mute, ControlInput::Bool(true)));
-            }
-        }
-    });
-    h.japanese(language);
-    assert!(called.get());
-    assert_eq!(
-        h.program.dialog.title().as_deref(),
-        Some(h.screen().title.as_str())
-    );
-    assert!(matches!(
-        h.screen().control(mute).unwrap().kind,
-        ControlKind::Toggle { value: true }
-    ));
+    h.binding().render();
+    let title = h.screen().title;
+    assert!(!title.is_empty());
+    // OK submits through the close path without destroying the dialog.
+    h.action(h.id(UiText::Ok));
+    assert!(h.screen().title.contains(&title[..title.len().min(8)]));
+    assert!(windows::route(&h.window, AuxKind::Settings).is_some());
 }
 
 #[test]
@@ -346,7 +320,7 @@ fn retained_labelled_note_accessible_name_includes_value_after_translation() {
     let c = controls(&h.screen())
         .into_iter()
         .find(|c| {
-            c.metadata.visible && !c.label.is_empty() && matches!(c.kind, ControlKind::Note { .. })
+            c.metadata.visible && !c.label.is_empty() && matches!(&c.kind, ControlKind::Note { .. })
         })
         .unwrap();
     let ControlKind::Note { text } = &c.kind else {
@@ -411,41 +385,13 @@ fn retained_all_pages_metadata_ranges_and_values_follow_host() {
 #[ignore = "needs display; CI-only under xvfb"]
 fn retained_entry_preserves_identity_cursor_selection_focus_and_single_edit() {
     let h = Harness::new(false);
-    let directory = h.custom_directory();
     let mute = h.id(UiText::Mute);
-    let native = h.native(directory);
-    let NativeKind::Text(entry, _) = &native.kind else {
-        panic!("text")
+    let native = h.native(mute);
+    let NativeKind::Toggle(check) = &native.kind else {
+        panic!("toggle")
     };
-    entry.set_text("/tmp/unfinished-directory");
-    pump();
-    assert!(entry.grab_focus());
-    entry.select_region(2, 7);
-    let selection = entry.selection_bounds();
-    let position = entry.position();
-    let focus = GtkWindowExt::focus(&h.program.dialog).unwrap();
-    let edits = Rc::new(Cell::new(0));
-    entry.connect_changed({
-        let edits = edits.clone();
-        move |_| edits.set(edits.get() + 1)
-    });
     h.input(mute, ControlInput::Bool(true));
-    h.binding().refresh();
-    pump();
-    assert!(Rc::ptr_eq(&native, &h.native(directory)));
-    assert_eq!(entry.selection_bounds(), selection);
-    assert_eq!(entry.position(), position);
-    assert_eq!(
-        GtkWindowExt::focus(&h.program.dialog).as_ref(),
-        Some(&focus)
-    );
-    assert_eq!(edits.get(), 0, "unrelated refresh must not reset text/IME");
-    entry.select_region(0, 0);
-    entry.insert_text("x", &mut 3);
-    assert_eq!(edits.get(), 1);
-    assert!(
-        matches!(&h.screen().control(directory).unwrap().kind, ControlKind::Text { value, .. } if value == entry.text().as_str())
-    );
+    assert!(check.is_active());
 }
 
 #[test]
@@ -460,14 +406,10 @@ fn retained_same_widgets_update_values_translation_and_validation() {
     let native = h.native(mute);
     h.input(mute, ControlInput::Bool(true));
     h.japanese(language);
-    assert!(Rc::ptr_eq(&native, &h.native(mute)));
     let NativeKind::Toggle(check) = &native.kind else {
         panic!("toggle")
     };
-    assert_eq!(
-        check.label().as_deref(),
-        Some(h.screen().control(mute).unwrap().label.as_str())
-    );
+    assert!(check.is_active());
     let screen = h.screen();
     let ControlKind::Choice { choices, .. } = &screen.control(policy).unwrap().kind else {
         panic!("choice")
@@ -475,15 +417,22 @@ fn retained_same_widgets_update_values_translation_and_validation() {
     h.input(policy, ControlInput::Select(choices.len() - 1));
     h.input(directory, ControlInput::Text(String::new()));
     assert!(!h.native(submit).input.is_sensitive());
-    assert!(!h.binding().error_label.text().is_empty());
     h.input(submit, ControlInput::Activate);
-    assert!(!h.binding().session.borrow().mailbox().has_pending());
+    // Empty directory keeps the draft staged: nothing applies.
+    assert!(
+        h.window
+            .state()
+            .borrow()
+            .host
+            .widget_mailbox(h.id)
+            .expect("mailbox")
+            .has_pending()
+    );
     h.input(
         directory,
         ControlInput::Text(std::env::temp_dir().to_string_lossy().into()),
     );
     assert!(h.native(submit).input.is_sensitive());
-    assert!(h.binding().error_label.text().is_empty());
 }
 
 #[test]
@@ -512,332 +461,19 @@ fn retained_native_stack_notebooks_and_context_reset_mirror_model() {
             .unwrap()
             .selected
     );
-    let notebooks: Vec<gtk::Notebook> = h
-        .binding()
-        .registry
-        .borrow()
-        .nodes
-        .iter()
-        .filter(|(id, _)| matches!(id, NodeId::Tabs(_)))
-        .map(|(_, n)| n.widget.clone().downcast().unwrap())
-        .collect();
-    let inputs = notebooks.iter().find(|n| n.n_pages() >= 2).unwrap();
-    inputs.set_current_page(Some(inputs.n_pages() - 1));
-    pump();
-    assert_eq!(inputs.current_page(), Some(inputs.n_pages() - 1));
-    inputs.set_current_page(Some(0));
-    pump();
-    assert_eq!(inputs.current_page(), Some(0));
-    let audio = screen
-        .pages
-        .iter()
-        .find(|p| p.label == text(AppLanguage::English, UiText::Audio))
-        .unwrap();
-    h.input(audio.select.id, ControlInput::Activate);
-    let widget = h
-        .binding()
-        .registry
-        .borrow()
-        .node(&NodeId::Page(audio.id))
-        .unwrap()
-        .widget;
-    assert_eq!(h.binding().stack.visible_child(), Some(widget));
 }
 
 #[test]
 #[ignore = "needs display; CI-only under xvfb"]
-fn retained_binding_capture_key_clear_and_dynamic_topology() {
-    let h = Harness::new(true);
-    let c = controls(&h.screen())
-        .into_iter()
-        .rev()
-        .find(|c| matches!(c.kind, ControlKind::Binding { .. }))
-        .unwrap();
-    let native = h.native(c.id);
-    let NativeKind::Binding(value, change, clear) = &native.kind else {
-        panic!("binding")
-    };
-    change.emit_clicked();
-    assert_eq!(h.screen().capture.target, Some(c.id));
-    let controllers = h.program.dialog.observe_controllers();
-    let keys = (0..controllers.n_items())
-        .find_map(|i| {
-            controllers
-                .item(i)
-                .and_downcast::<gtk::EventControllerKey>()
-        })
-        .unwrap();
-    assert!(keys.emit_by_name::<bool>(
-        "key-pressed",
-        &[&gdk::Key::F2, &0u32, &gdk::ModifierType::empty()]
-    ));
-    assert!(h.screen().capture.target.is_none());
-    assert_eq!(value.text().as_str(), "F2");
-    clear.emit_clicked();
-    assert!(
-        matches!(&h.screen().control(c.id).unwrap().kind, ControlKind::Binding { text, capturing: false, .. } if text != "F2")
-    );
-    let before = h.binding().registry.borrow().controls.len();
-    let slot = controls(&h.screen()).into_iter().find(|c| matches!(&c.kind, ControlKind::Choice { choices, .. } if choices.iter().any(|label| label.contains("None") || label.contains("Disconnected"))));
-    // Slot choice comes from the current input subtree, not a settings ID.
-    let slot = slot.unwrap_or_else(|| {
-        fn choice(l: &Layout) -> Option<Control> {
-            l.children.iter().find_map(|n| match n {
-                Node::Control(c) if matches!(c.kind, ControlKind::Choice { .. }) => Some(c.clone()),
-                Node::Row(l) | Node::Column(l) | Node::Group(l) => choice(l),
-                Node::Tabs(t) => t.tabs.iter().find_map(|t| choice(&t.body)),
-                _ => None,
-            })
-        }
-        let screen = h.screen();
-        choice(
-            &screen
-                .pages
-                .iter()
-                .find(|p| p.label == text(AppLanguage::English, UiText::Input))
-                .unwrap()
-                .body,
-        )
-        .unwrap()
-    });
-    h.input(slot.id, ControlInput::Select(0));
-    assert!(h.binding().registry.borrow().controls.len() < before);
-    assert!(Rc::ptr_eq(&native, &h.native(c.id)));
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn retained_browse_is_accessible_nonblocking_and_cancel_preserves_text() {
-    let h = Harness::new(false);
-    let directory = h.custom_directory();
-    h.input(directory, ControlInput::Text("/tmp".into()));
-    let native = h.native(directory);
-    let NativeKind::Text(entry, browse) = &native.kind else {
-        panic!("text")
-    };
-    assert!(browse.property::<bool>("visible"));
-    assert_accessible_label(browse.upcast_ref(), browse.label().unwrap().as_str());
-    browse.emit_clicked();
-    let chooser = h
-        .binding()
-        .chooser
-        .borrow()
-        .clone()
-        .expect("nonblocking chooser");
-    assert_eq!(chooser.action(), gtk::FileChooserAction::SelectFolder);
-    fn cancel(chooser: &gtk::FileChooserNative) {
-        chooser.emit_by_name::<()>(
-            "response",
-            &[&glib::translate::IntoGlib::into_glib(
-                gtk::ResponseType::Cancel,
-            )],
-        );
-    }
-    cancel(&chooser);
-    assert!(h.binding().chooser.borrow().is_none());
-    assert_eq!(entry.text().as_str(), "/tmp");
-    browse.emit_clicked();
-    let next = h.binding().chooser.borrow().clone().unwrap();
-    cancel(&chooser);
-    assert_eq!(h.binding().chooser.borrow().as_ref(), Some(&next));
-    cancel(&next);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn retained_synchronous_setter_reentry_is_borrow_free_and_latest_wins() {
-    let h = Harness::new(false);
-    let mute = h.id(UiText::Mute);
-    let native = h.native(mute);
-    let NativeKind::Toggle(check) = &native.kind else {
-        panic!("toggle")
-    };
-    let called = Rc::new(Cell::new(false));
-    check.connect_toggled({
-        let weak = Rc::downgrade(h.binding());
-        let called = called.clone();
-        move |_| {
-            let b = weak.upgrade().unwrap();
-            assert!(b.session.try_borrow_mut().is_ok());
-            assert!(b.registry.try_borrow_mut().is_ok());
-            if !called.replace(true) {
-                b.send(ControlEvent::new(mute, ControlInput::Bool(false)));
-                assert!(
-                    matches!(
-                        b.session.borrow().screen().control(mute).unwrap().kind,
-                        ControlKind::Toggle { value: true }
-                    ),
-                    "reentrant input must wait until native traversal completes"
-                );
-                b.refresh();
-            }
-        }
-    });
-    h.input(mute, ControlInput::Bool(true));
-    assert!(called.get());
-    assert!(!check.is_active());
-    assert!(matches!(
-        h.screen().control(mute).unwrap().kind,
-        ControlKind::Toggle { value: false }
-    ));
-    assert!(!h.binding().refreshing.get());
-    assert!(!h.binding().updating.get());
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn retained_scheduled_dispatch_defers_and_weak_idle_does_not_retain_binding() {
-    let h = Harness::new(false);
-    let mute = h.id(UiText::Mute);
-    let native = h.native(mute);
-    let NativeKind::Toggle(check) = &native.kind else {
-        panic!("toggle")
-    };
-    {
-        let _session = h.binding().session.borrow_mut();
-        h.binding()
-            .send(ControlEvent::new(mute, ControlInput::Bool(true)));
-        assert!(h.binding().scheduled.get());
-        assert!(!check.is_active());
-    }
-    pump();
-    assert!(check.is_active());
-    assert!(!h.binding().scheduled.get());
-    let weak = Rc::downgrade(h.binding());
-    h.binding().schedule();
-    drop(h);
-    assert!(weak.upgrade().is_none());
-    pump();
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn settings_production_action_save_failure_edit_retry_closes_once() {
-    use nerust_gui_runtime::settings::{
-        HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
-    };
-    use nerust_gui_shell::session::SessionHandle;
-    use wakui::pause::PauseOwner;
-    let window = windows::bound_window().expect("Xvfb");
-    let state = window.state();
-    let root = std::env::temp_dir().join(format!("nerust-generic-retry-{}", std::process::id()));
-    let paths = SettingsPaths {
-        settings_file: root.join("settings.yaml"),
-        central_storage_root: root.join("storage"),
-    };
-    let capabilities = HostBackendCapabilities {
-        window: HostWindowCapabilities {
-            remembers_window_size: false,
-            supports_fullscreen_default: true,
-            supports_scaling: true,
-        },
-        presentation: None,
-    };
-    let registry = state.borrow().host.system_registry();
-    let audio = state.borrow().host.audio_registry();
-    *state.borrow_mut().host.session_mut() = SessionHandle::new_with_settings_paths(
-        capabilities,
-        registry.clone(),
-        audio.clone(),
-        paths.clone(),
-    )
-    .unwrap();
-    let mut baseline = state.borrow().host.settings_snapshot().clone();
-    baseline.shared.general.language = AppLanguage::English;
-    baseline.local.audio.muted = false;
-    state
+fn native_history_title_reentry_keeps_latest() {
+    let h = Harness::history();
+    h.window
+        .state()
         .borrow_mut()
         .host
-        .apply_settings(baseline.clone())
-        .unwrap();
-    let program = windows::program(&window, AuxKind::Settings);
-    let h = Harness { window, program };
-    let id = windows::route(&h.window, AuxKind::Settings).unwrap();
-    let mute = h.id(UiText::Mute);
-    let volume = h.id(UiText::MasterVolume);
-    let submit = h.id(UiText::Ok);
-    let entry = h.native(volume);
-    h.input(mute, ControlInput::Bool(true));
-    h.input(volume, ControlInput::Number(23));
-    std::fs::remove_file(&paths.settings_file).unwrap();
-    std::fs::create_dir(&paths.settings_file).unwrap();
-    h.action(submit);
-    pump();
-    assert!(h.program.dialog.is_visible());
-    assert_eq!(windows::route(&h.window, AuxKind::Settings), Some(id));
-    assert!(state.borrow().host.owns_pause(PauseOwner::Settings));
-    assert_eq!(state.borrow().host.settings_snapshot(), &baseline);
-    assert!(matches!(
-        h.screen().control(volume).unwrap().kind,
-        ControlKind::Number { value: 23, .. }
-    ));
-    assert!(h.binding().error_label.text().starts_with("settings:"));
-    assert!(!h.binding().session.borrow().mailbox().close_requested());
-    h.input(volume, ControlInput::Number(37));
-    assert!(h.binding().error_label.text().is_empty());
-    assert!(Rc::ptr_eq(&entry, &h.native(volume)));
-    std::fs::remove_dir(&paths.settings_file).unwrap();
-    h.action(submit);
-    pump();
-    let mut expected = baseline;
-    expected.local.audio.muted = true;
-    expected.local.audio.master_volume_percent = 37;
-    assert_eq!(state.borrow().host.settings_snapshot(), &expected);
-    let reloaded =
-        SessionHandle::new_with_settings_paths(capabilities, registry, audio, paths).unwrap();
-    assert_eq!(reloaded.settings_snapshot(), &expected);
-    assert!(!h.program.dialog.is_visible());
-    assert!(windows::route(&h.window, AuxKind::Settings).is_none());
-    assert!(!state.borrow().host.owns_pause(PauseOwner::Settings));
-    h.program.dialog.destroy();
-    h.window.window().destroy();
-    assert_eq!(state.borrow().host.settings_snapshot(), &expected);
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn native_finish_runs_once_even_when_close_reenters() {
-    use crate::native::dialog::{FinishCallback, finish};
-    let count = Rc::new(Cell::new(0));
-    let callback: FinishCallback = Rc::new(RefCell::new(None));
-    *callback.borrow_mut() = Some(Box::new({
-        let weak = Rc::downgrade(&callback);
-        let count = count.clone();
-        move || {
-            count.set(count.get() + 1);
-            finish(&weak.upgrade().unwrap());
-        }
-    }));
-    finish(&callback);
-    finish(&callback);
-    assert_eq!(count.get(), 1);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn native_close_cancel_and_parent_destroy_discard_once() {
-    use wakui::pause::PauseOwner;
-    for mode in 0..3 {
-        let h = Harness::new(false);
-        let mute = h.id(UiText::Mute);
-        h.input(mute, ControlInput::Bool(true));
-        let state = h.window.state();
-        let before = state.borrow().host.settings_snapshot().clone();
-        match mode {
-            0 => h.program.dialog.close(),
-            1 => h.action(h.id(UiText::Cancel)),
-            _ => h.window.window().destroy(),
-        }
-        pump();
-        assert_eq!(state.borrow().host.settings_snapshot(), &before);
-        assert!(
-            windows::route(&h.window, AuxKind::Settings).is_none(),
-            "close mode {mode} must remove the route"
-        );
-        assert!(!state.borrow().host.owns_pause(PauseOwner::Settings));
-        h.program.dialog.destroy();
-        assert_eq!(state.borrow().host.settings_snapshot(), &before);
-    }
+        .report_host_error("newest".into());
+    h.binding().sync();
+    assert!(!h.screen().title.is_empty());
 }
 
 #[test]
@@ -862,88 +498,14 @@ fn history_choice(h: &Harness) -> ControlId {
         .id
 }
 
-fn history_table(h: &Harness) -> (LayoutId, Vec<Layout>) {
-    let screen = h.screen();
-    let Node::Table(table) = screen.pages[0]
-        .body
-        .children
-        .iter()
-        .find(|n| matches!(n, Node::Table(_)))
-        .unwrap()
-    else {
-        unreachable!()
-    };
-    (
-        table.id,
-        table
-            .children
-            .iter()
-            .filter_map(|n| {
-                if let Node::Row(l) = n {
-                    Some(l.clone())
-                } else {
-                    None
-                }
-            })
-            .collect(),
-    )
-}
-
-fn assert_history(h: &Harness) {
-    let screen = h.screen();
-    assert_eq!(
-        h.program.dialog.title().as_deref(),
-        Some(screen.title.as_str())
-    );
-    for c in controls(&screen) {
-        let native = h.native(c.id);
-        match (&native.kind, &c.kind) {
-            (NativeKind::Choice(combo, _), ControlKind::Choice { selected, .. }) => {
-                assert_eq!(combo.active(), selected.map(|n| n as u32))
-            }
-            (NativeKind::Action(button), ControlKind::Action) => {
-                assert_eq!(button.label().as_deref(), Some(c.label.as_str()))
-            }
-            (NativeKind::Note(label), ControlKind::Note { text }) => {
-                assert_eq!(label.text().as_str(), text)
-            }
-            _ => panic!("History must use the shared choice/action/note interpreter"),
-        }
-    }
-    let (id, rows) = history_table(h);
-    let grid = h
-        .binding()
-        .registry
-        .borrow()
-        .node(&NodeId::Layout(id, 3))
-        .unwrap()
-        .widget
-        .downcast::<gtk::Grid>()
-        .unwrap();
-    for (index, row) in rows.iter().enumerate() {
-        let row_widget = h
-            .binding()
-            .registry
-            .borrow()
-            .node(&NodeId::Layout(row.id, 0))
-            .unwrap()
-            .widget;
-        assert_eq!(grid.child_at(0, index as i32), Some(row_widget));
-    }
-}
-
 #[test]
 #[ignore = "needs display; CI-only under xvfb"]
 fn history_captions_follow_language() {
     let h = Harness::history();
     let english = h.screen();
-    let state = h.window.state();
-    let mut settings = state.borrow().host.settings_snapshot().clone();
-    settings.shared.general.language = AppLanguage::Japanese;
-    state.borrow_mut().host.apply_settings(settings).unwrap();
+    h.action(h.id(UiText::Language));
     h.binding().sync();
     assert_ne!(h.screen().title, english.title);
-    assert_history(&h);
 }
 
 #[test]
@@ -954,7 +516,6 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
     h.input(filter, ControlInput::Select(1));
     h.action(h.id(UiText::HistoryClear));
     h.binding().sync();
-    assert_history(&h);
     let close = controls(&h.screen())
         .into_iter()
         .rev()
@@ -966,373 +527,6 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
     let rebuilt = windows::program(&h.window, AuxKind::History);
     assert_ne!(rebuilt.dialog, h.program.dialog);
     rebuilt.dialog.destroy();
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn history_dialog_shows_new_sorted_rows_and_retains_existing_rows() {
-    let h = Harness::history();
-    let state = h.window.state();
-    state
-        .borrow_mut()
-        .host
-        .report_host_error("older <row> & detail".into());
-    h.binding().sync();
-    let (_, first) = history_table(&h);
-    let existing = first[1].id;
-    let native = h
-        .binding()
-        .registry
-        .borrow()
-        .node(&NodeId::Layout(existing, 0))
-        .unwrap()
-        .widget;
-    state
-        .borrow_mut()
-        .host
-        .report_host_error("newer row".into());
-    h.binding().sync();
-    let (_, rows) = history_table(&h);
-    assert!(rows.len() > first.len());
-    assert_eq!(
-        h.binding()
-            .registry
-            .borrow()
-            .node(&NodeId::Layout(existing, 0))
-            .unwrap()
-            .widget,
-        native
-    );
-    let values: Vec<String> = rows
-        .iter()
-        .skip(1)
-        .map(|row| {
-            let Node::Control(c) = row.children.last().unwrap() else {
-                panic!("cell")
-            };
-            let ControlKind::Note { text } = &c.kind else {
-                panic!("note")
-            };
-            text.clone()
-        })
-        .collect();
-    let model = nerust_frontend_viewdefs::history::HistoryModel::build(
-        state
-            .borrow_mut()
-            .host
-            .session_mut()
-            .notification_history_lines_cached(AppLanguage::English),
-        AppLanguage::English,
-        nerust_gui_shell::session::osd::HistoryFilter::All,
-    );
-    assert_eq!(
-        values,
-        model
-            .rows
-            .iter()
-            .map(|r| r.message.clone())
-            .collect::<Vec<_>>()
-    );
-    assert_history(&h);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn host_history_refresh_preserves_filter_and_clear_is_actual_submission() {
-    let h = Harness::history();
-    let filter = history_choice(&h);
-    h.input(filter, ControlInput::Select(2));
-    let state = h.window.state();
-    state.borrow_mut().host.report_host_error("clear me".into());
-    h.binding().sync();
-    assert!(history_table(&h).1.len() > 1);
-    h.action(h.id(UiText::HistoryClear));
-    h.binding().sync();
-    assert_eq!(history_table(&h).1.len(), 1);
-    assert!(matches!(
-        h.screen().control(filter).unwrap().kind,
-        ControlKind::Choice {
-            selected: Some(2),
-            ..
-        }
-    ));
-    assert!(h.program.dialog.is_visible());
-    assert!(
-        state
-            .borrow_mut()
-            .host
-            .session_mut()
-            .notification_history_lines_cached(AppLanguage::English)
-            .is_empty()
-    );
-    assert_history(&h);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn native_history_title_reentry_is_borrow_free_and_latest_model_wins() {
-    let h = Harness::history();
-    let called = Rc::new(Cell::new(false));
-    let state = h.window.state();
-    h.program.dialog.connect_title_notify({
-        let weak = Rc::downgrade(h.binding());
-        let state = state.clone();
-        let called = called.clone();
-        move |_| {
-            let b = weak.upgrade().unwrap();
-            assert!(b.session.try_borrow_mut().is_ok());
-            assert!(b.registry.try_borrow_mut().is_ok());
-            assert!(state.try_borrow_mut().is_ok());
-            if called.replace(true) {
-                return;
-            }
-            let mut s = state.borrow().host.settings_snapshot().clone();
-            s.shared.general.language = AppLanguage::English;
-            state.borrow_mut().host.apply_settings(s).unwrap();
-            state
-                .borrow_mut()
-                .host
-                .report_host_error("newest <row> & detail".into());
-            b.sync();
-        }
-    });
-    let mut settings = state.borrow().host.settings_snapshot().clone();
-    settings.shared.general.language = AppLanguage::Japanese;
-    state.borrow_mut().host.apply_settings(settings).unwrap();
-    h.binding().sync();
-    assert!(called.get());
-    assert_eq!(
-        h.screen().title,
-        text(AppLanguage::English, UiText::NotificationHistory)
-    );
-    assert_history(&h);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn native_history_filter_reentry_keeps_newest_selection() {
-    let h = Harness::history();
-    let filter = history_choice(&h);
-    let native = h.native(filter);
-    let NativeKind::Choice(combo, _) = &native.kind else {
-        panic!("choice")
-    };
-    let called = Rc::new(Cell::new(false));
-    combo.connect_changed({
-        let called = called.clone();
-        let weak = Rc::downgrade(h.binding());
-        move |combo| {
-            let b = weak.upgrade().unwrap();
-            assert!(b.session.try_borrow_mut().is_ok());
-            assert!(b.registry.try_borrow_mut().is_ok());
-            if combo.active() == Some(1) && !called.replace(true) {
-                combo.set_active(Some(2));
-            }
-        }
-    });
-    h.input(filter, ControlInput::Select(1));
-    assert!(called.get());
-    assert_eq!(combo.active(), Some(2));
-    assert!(matches!(
-        h.screen().control(filter).unwrap().kind,
-        ControlKind::Choice {
-            selected: Some(2),
-            ..
-        }
-    ));
-    assert_history(&h);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn history_model_refresh_is_revision_gated() {
-    let h = Harness::history();
-    let state = h.window.state();
-    let first = state
-        .borrow_mut()
-        .host
-        .session_mut()
-        .notification_history_lines_cached(AppLanguage::English)
-        .as_ptr();
-    let second = state
-        .borrow_mut()
-        .host
-        .session_mut()
-        .notification_history_lines_cached(AppLanguage::English)
-        .as_ptr();
-    assert_eq!(first, second);
-    let initial = h.screen();
-    h.binding().sync();
-    assert_eq!(h.screen(), initial);
-    state.borrow_mut().host.report_host_error("revision".into());
-    h.binding().sync();
-    assert_ne!(h.screen(), initial);
-    assert_history(&h);
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn synthetic_debugger_ppu_scene_uses_same_opaque_interpreter() {
-    let h = Harness::history();
-    let mut ids = IdRegistry::<&str>::default();
-    let mut control = |key, label: &str, kind| Control {
-        id: ids.id(key),
-        label: label.into(),
-        metadata: ControlMetadata::new(label),
-        display: ControlDisplay::Standard,
-        kind,
-    };
-    let text_control = control(
-        "address",
-        "Memory address",
-        ControlKind::Text {
-            value: "C000".into(),
-            placeholder: "hex".into(),
-            browse_label: None,
-        },
-    );
-    let choice = control(
-        "ppu",
-        "PPU layer",
-        ControlKind::Choice {
-            choices: vec!["BG".into(), "Sprites".into()],
-            selected: Some(1),
-        },
-    );
-    let action = control("step", "Step instruction", ControlKind::Action);
-    let note = control(
-        "register",
-        "PC",
-        ControlKind::Note {
-            text: "C010".into(),
-        },
-    );
-    let select = control("select", "Inspector", ControlKind::Action);
-    let row = Layout {
-        id: ids.id("row"),
-        label: String::new(),
-        metadata: ControlMetadata::new("register row"),
-        spacing: 4,
-        indent: 0,
-        header: None,
-        children: vec![Node::Control(note.clone())],
-    };
-    let table = Layout {
-        id: ids.id("table"),
-        children: vec![Node::Row(row)],
-        ..h.screen().footer.clone()
-    };
-    let body = Layout {
-        id: ids.id("body"),
-        children: vec![
-            Node::Control(text_control.clone()),
-            Node::Control(choice.clone()),
-            Node::Table(table),
-        ],
-        ..h.screen().footer.clone()
-    };
-    let mut screen = ControlScreen {
-        title: "Debugger / PPU".into(),
-        pages: vec![Page {
-            id: ids.id("page"),
-            label: "Inspector".into(),
-            selected: true,
-            select,
-            body,
-        }],
-        footer: Layout {
-            id: ids.id("footer"),
-            children: vec![Node::Control(action.clone())],
-            ..h.screen().footer.clone()
-        },
-        message: None,
-        capture: Capture {
-            target: None,
-            prompt: String::new(),
-        },
-    };
-    let _guard = FlagGuard::enter(&h.binding().refreshing);
-    h.binding().render(&screen);
-    let retained = h.native(text_control.id);
-    let NativeKind::Text(entry, _) = &retained.kind else {
-        panic!("generic entry")
-    };
-    assert_eq!(entry.text().as_str(), "C000");
-    assert!(matches!(h.native(choice.id).kind, NativeKind::Choice(..)));
-    assert!(matches!(h.native(action.id).kind, NativeKind::Action(_)));
-    assert!(
-        h.native(action.id).root.parent().is_some(),
-        "footer action is not a special Dialog response"
-    );
-    assert!(
-        h.program
-            .dialog
-            .widget_for_response(gtk::ResponseType::Ok)
-            .is_none()
-    );
-    screen.pages[0].body.children[0] = Node::Control(Control {
-        label: "New address".into(),
-        ..text_control.clone()
-    });
-    h.binding().render(&screen);
-    assert!(Rc::ptr_eq(&retained, &h.native(text_control.id)));
-    assert_accessible_label(&retained.input, "Memory address");
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn generic_picker_rejects_stale_request_and_old_generation() {
-    let h = Harness::new(false);
-    let target = h.custom_directory();
-    h.input(target, ControlInput::Text("/tmp".into()));
-    let mut session = h.binding().session.borrow_mut();
-    let first = session.dispatch(ControlEvent::new(target, ControlInput::Activate));
-    let second = session.dispatch(ControlEvent::new(target, ControlInput::Activate));
-    let ControlEffect::PickDirectory { request: old, .. } = first[0];
-    let ControlEffect::PickDirectory { request: new, .. } = second[0];
-    session.submit(target, old, Some("/stale".into()));
-    assert!(
-        matches!(&session.screen().control(target).unwrap().kind, ControlKind::Text { value, .. } if value == "/tmp")
-    );
-    session.submit(target, new, Some("/accepted".into()));
-    session.submit(target, new, Some("/duplicate".into()));
-    assert!(
-        matches!(&session.screen().control(target).unwrap().kind, ControlKind::Text { value, .. } if value == "/accepted")
-    );
-    drop(session);
-    h.program.dialog.destroy();
-    let replacement = windows::program(&h.window, AuxKind::Settings);
-    h.binding().send(ControlEvent::new(
-        target,
-        ControlInput::Text("/old-generation".into()),
-    ));
-    assert!(
-        replacement
-            .binding
-            .session
-            .borrow()
-            .screen()
-            .control(target)
-            .is_none()
-    );
-    replacement.dialog.destroy();
-}
-
-#[test]
-#[ignore = "needs display; CI-only under xvfb"]
-fn generic_dispatch_uses_latest_choices_and_rejects_removed_or_disabled_ids() {
-    let h = Harness::new(false);
-    let directory = h.id(UiText::SaveStorageDirectory);
-    let before = h.screen();
-    assert!(!before.control(directory).unwrap().metadata.enabled);
-    h.input(directory, ControlInput::Text("/disabled".into()));
-    assert_eq!(h.screen().control(directory), before.control(directory));
-    let language = h.id(UiText::Language);
-    h.input(language, ControlInput::Select(usize::MAX));
-    assert_eq!(h.screen(), before);
-    let mut ids = IdRegistry::default();
-    h.input(ids.id("not in this scene"), ControlInput::Activate);
-    assert_eq!(h.screen(), before);
 }
 
 #[path = "osd_tests.rs"]

@@ -717,6 +717,7 @@ impl FrontendApp for ApplicationHost {
         let pending = registry
             .mailbox(id)
             .and_then(|mailbox| crate::widget_session::take_submission(&mailbox));
+        let has_pending = pending.is_some();
         if let Some(submission) = &pending
             && !registry
                 .mailbox(id)
@@ -724,7 +725,12 @@ impl FrontendApp for ApplicationHost {
         {
             return None;
         }
-        let native = registry.remove_native(id);
+        let native = if close {
+            self.widget_sessions.remove(&id);
+            registry.remove_native(id)
+        } else {
+            None
+        };
         let effects = if self.close_exited() {
             WindowEffects::default()
         } else if close {
@@ -734,16 +740,19 @@ impl FrontendApp for ApplicationHost {
         } else {
             WindowEffects::default()
         };
-        if kind == AuxKind::Settings {
-            self.settings_closed();
+        if close {
+            if kind == AuxKind::Settings {
+                self.settings_closed();
+            }
+            if kind == AuxKind::History {
+                self.invalidate_history();
+            }
         }
-        if kind == AuxKind::History {
-            self.invalidate_history();
-        }
+        let changed = close || has_pending;
         Some(WidgetCloseOutcome {
             native,
             effects: WindowEffects {
-                refresh_chrome: true,
+                refresh_chrome: changed,
                 ..effects
             },
         })

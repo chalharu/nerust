@@ -5,7 +5,7 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_viewdefs::osd::{ModalAdvance, ModalPresentation, ModalPresenter};
+use nerust_frontend_host::osd::{ModalAdvance, ModalPresentation, ModalPresenter};
 
 use crate::surface::{Surface, SurfaceCore};
 
