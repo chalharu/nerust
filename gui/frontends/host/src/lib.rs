@@ -64,6 +64,7 @@ pub mod menu;
 pub mod osd;
 pub mod session;
 pub mod settings;
+pub mod viewport;
 pub mod widget_session;
 pub mod widgets;
 pub mod window;

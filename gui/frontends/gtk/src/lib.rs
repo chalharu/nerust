@@ -3,7 +3,6 @@ mod gdk_raw;
 mod keyboard;
 mod native;
 mod ppu_window;
-mod renderer;
 mod surface;
 mod surface_state;
 #[cfg(test)]
@@ -37,7 +36,6 @@ use nerust_gui_shell::{
         access::{SessionControl, SettingsResult},
     },
 };
-use nerust_render_traits::{FrameBuffer, VideoRenderProfile, renderer::PipelineFactory};
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
@@ -113,8 +111,14 @@ impl State {
             e
         })?;
 
+        let factory = ctx.gpu_factory.clone();
+        let mut host = nerust_frontend_host::application::ApplicationHost::new(session);
+        // The factory enters the view-definition side once; frontend
+        // signatures never name the pipeline type.
+        host.set_gpu_factory(factory);
+
         Ok(Self {
-            host: nerust_frontend_host::application::ApplicationHost::new(session),
+            host,
             ctx,
             renderer_reload_pending: false,
         })
@@ -122,14 +126,6 @@ impl State {
 
     pub(crate) fn swap_frame_buffer(&mut self) {
         self.host.swap_frame_buffer();
-    }
-
-    pub(crate) fn frame_buffer(&self) -> Option<&FrameBuffer> {
-        self.host.frame_buffer()
-    }
-
-    pub(crate) fn render_profile(&self) -> Option<VideoRenderProfile> {
-        self.host.render_profile()
     }
 
     /// Load a ROM, flagging a renderer rebuild on success.
@@ -223,11 +219,7 @@ impl SessionControl for State {
     }
 }
 
-fn build_window(
-    app: &gtk::Application,
-    factory: &Rc<dyn PipelineFactory>,
-    state: Rc<RefCell<State>>,
-) -> Window {
+fn build_window(app: &gtk::Application, state: Rc<RefCell<State>>) -> Window {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let menubar = MenubarModels::new();
@@ -239,19 +231,11 @@ fn build_window(
     picture.set_vexpand(true);
     picture.set_can_shrink(true);
 
-    Window::bind(
-        app.clone(),
-        window,
-        picture,
-        state,
-        Rc::clone(factory),
-        menubar,
-    )
+    Window::bind(app.clone(), window, picture, state, menubar)
 }
 
 fn ensure_window(
     app: &gtk::Application,
-    factory: &Rc<dyn PipelineFactory>,
     state: &Rc<RefCell<State>>,
     current_window: &Rc<RefCell<Option<Window>>>,
 ) -> Window {
@@ -259,7 +243,7 @@ fn ensure_window(
         return window;
     }
 
-    let window = build_window(app, factory, Rc::clone(state));
+    let window = build_window(app, Rc::clone(state));
     *current_window.borrow_mut() = Some(window.clone());
     window
 }
@@ -286,19 +270,17 @@ fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
     let state = Rc::new(RefCell::new(State::new(ctx)?));
     {
         let state = Rc::clone(&state);
-        let gpu_factory = state.borrow().ctx.gpu_factory.clone();
         let current_window = current_window.clone();
         let _ = app.connect_activate(move |app| {
-            let window = ensure_window(app, &gpu_factory, &state, &current_window);
+            let window = ensure_window(app, &state, &current_window);
             window.window().present();
         });
     }
     {
         let state = Rc::clone(&state);
-        let gpu_factory = state.borrow().ctx.gpu_factory.clone();
         let current_window = current_window.clone();
         let _ = app.connect_open(move |app, files, _| {
-            let window = ensure_window(app, &gpu_factory, &state, &current_window);
+            let window = ensure_window(app, &state, &current_window);
             // Present first: a failure dialog raised by load_path must
             // stay above the main window.
             window.window().present();
