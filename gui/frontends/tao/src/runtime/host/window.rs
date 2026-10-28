@@ -202,7 +202,7 @@ impl LoopHost for HostState {
     }
 
     fn chrome(&mut self, ctx: &Self::Frame) {
-        self.tick_chrome_sync(ctx);
+        self.tick_chrome_sync();
         self.sync_debug_chrome(ctx);
     }
 
@@ -230,10 +230,10 @@ impl LoopHost for HostState {
     }
 
     fn late_liveness(&mut self) -> TurnLiveness {
-        let tick = self.core.tick();
+        let (loaded, paused) = self.core.liveness_inputs();
         TurnLiveness {
-            loaded: tick.loaded,
-            paused: tick.paused,
+            loaded,
+            paused,
             main_active: self.main_active(),
             live_follow: self.live_follow_active(),
         }
@@ -257,8 +257,7 @@ impl HostState {
             .video
             .window
             .fullscreen_default;
-        let tick = self.core.tick();
-        self.core.title_update(&tick);
+        self.core.refresh_window_title();
         let model = self.core.main_window().clone();
         let mut visitor = CreateMain {
             opener,
@@ -346,8 +345,7 @@ impl HostState {
     /// Title refresh after the host presented a frame. Result bookkeeping
     /// itself lives in the host; only the native title stays here.
     pub(crate) fn refresh_title_after_present(&mut self) {
-        let ctx = self.frame_ctx();
-        self.maybe_refresh_window_title(&ctx, Instant::now());
+        self.maybe_refresh_window_title(Instant::now());
     }
 
     pub(crate) fn clear_event_handler(&self) {
