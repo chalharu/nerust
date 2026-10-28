@@ -128,7 +128,27 @@ impl HostState {
 
     #[cfg(test)]
     fn apply_keyboard_shortcut(&mut self, shortcut: nerust_gui_shell::session::KeyboardShortcut) {
-        self.handle_native_event(UserEvent::Session(SessionEvent::Shortcut(shortcut)), None);
+        use nerust_frontend_host::session::ShortcutGesture;
+        use nerust_settings_core::model::input::ShortcutAction;
+        let gesture = match shortcut {
+            nerust_gui_shell::session::KeyboardShortcut::OpenDebugger => {
+                ShortcutGesture::OpenDebugger
+            }
+            nerust_gui_shell::session::KeyboardShortcut::ToggleFullscreen => {
+                ShortcutGesture::ToggleFullscreen
+            }
+            nerust_gui_shell::session::KeyboardShortcut::Session(action) => match action {
+                ShortcutAction::TogglePause => ShortcutGesture::TogglePause,
+                ShortcutAction::SaveActiveSlot => ShortcutGesture::SaveActiveSlot,
+                ShortcutAction::LoadActiveSlot => ShortcutGesture::LoadActiveSlot,
+                ShortcutAction::SelectNextSlot => ShortcutGesture::SelectNextSlot,
+                ShortcutAction::SelectPreviousSlot => ShortcutGesture::SelectPreviousSlot,
+                ShortcutAction::Reset => ShortcutGesture::Reset,
+                ShortcutAction::OpenDebugger => ShortcutGesture::OpenDebugger,
+                ShortcutAction::ToggleFullscreen => ShortcutGesture::ToggleFullscreen,
+            },
+        };
+        self.handle_native_event(UserEvent::Session(SessionEvent::Shortcut(gesture)), None);
     }
 }
 
@@ -260,7 +280,6 @@ mod tests {
         use crate::event::UserEvent;
         use nerust_frontend_host::focus::FocusEvent;
         use nerust_frontend_viewdefs::session::SessionEvent;
-        use nerust_gui_shell::session::KeyboardShortcut;
         let support = settings_blocked_host();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
@@ -270,7 +289,9 @@ mod tests {
         for event in [
             UserEvent::Menu(MenuCommand::Native(NativeRole::About)),
             UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
-            UserEvent::Session(SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger)),
+            UserEvent::Session(SessionEvent::Shortcut(
+                nerust_frontend_host::session::ShortcutGesture::OpenDebugger,
+            )),
             UserEvent::Session(SessionEvent::Keyboard {
                 key: wakui::Key::F4,
                 pressed: true,
@@ -304,12 +325,13 @@ mod tests {
     fn canonical_shortcut_effect_opens_native_debugger() {
         use crate::event::UserEvent;
         use nerust_frontend_viewdefs::session::SessionEvent;
-        use nerust_gui_shell::session::KeyboardShortcut;
         let mut host = TestHost::new().host;
         let opener = FakeOpener::failing("no display");
         assert_eq!(
             host.on_event(
-                UserEvent::Session(SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger)),
+                UserEvent::Session(SessionEvent::Shortcut(
+                    nerust_frontend_host::session::ShortcutGesture::OpenDebugger
+                )),
                 &opener
             ),
             HostAction::None

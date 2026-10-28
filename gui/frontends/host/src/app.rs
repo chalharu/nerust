@@ -186,6 +186,12 @@ pub trait FrontendApp: EventHandler {
     ) -> String;
     fn take_debug_open_request(&mut self) -> bool;
     fn take_ppu_open_request(&mut self) -> bool;
+    /// Live-tick arming for the native timer thread. The schedule lives
+    /// view-side; native code parks/unparks its thread on this flag.
+    fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool>;
+    fn register_tick_thread(&mut self, thread: std::thread::Thread);
+    fn next_live_tick(&self) -> Option<std::time::Instant>;
+    fn live_due(&mut self, now: std::time::Instant) -> bool;
 
     // -- OSD / notifications ----------------------------------------------
     fn pump_osd(&mut self, now: Instant) -> crate::osd::OsdTurn;

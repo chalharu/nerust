@@ -1,14 +1,17 @@
 //! Debugger window: memory/disassembly probe plus register, watch, freeze, bookmarks.
-//! Pure view; the host drain runs requests and refreshes the display cache.
+//! Pure view over pushed snapshots; gestures queue into the host drain.
 
 #[cfg(test)]
 mod tests;
-mod update;
-mod views;
+pub(crate) mod views;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use iced::Task;
@@ -18,7 +21,7 @@ use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
-use super::bridge::{AppliedDrain, AppliedLive, DebugBridge};
+use views::ViewSnapshot;
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -28,14 +31,21 @@ pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
 /// Right state column width.
 const STATE_COLUMN_WIDTH: f32 = 340.0;
 
-pub(crate) use nerust_frontend_viewdefs::debugger::DebuggerEvent as DebugMessage;
+pub(crate) use nerust_frontend_host::debugger::DebuggerEvent as DebugMessage;
+
+/// Gesture queue: iced update/keyboard push here, the host drain consumes.
+pub(crate) type DebugQueue = Rc<RefCell<Vec<DebugMessage>>>;
+/// Pushed snapshot shared between the handle and iced state.
+pub(crate) type SharedView = Rc<RefCell<ViewSnapshot>>;
 
 pub(crate) struct DebugState {
-    bridge: Arc<DebugBridge>,
+    view: SharedView,
+    queue: DebugQueue,
 }
 
 pub(crate) struct DebugProgram {
-    pub(crate) bridge: Arc<DebugBridge>,
+    view: SharedView,
+    queue: DebugQueue,
 }
 
 impl super::window::GroupedProgram for DebugProgram {
@@ -68,14 +78,15 @@ impl Program for DebugProgram {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         (
             DebugState {
-                bridge: Arc::clone(&self.bridge),
+                view: Rc::clone(&self.view),
+                queue: Rc::clone(&self.queue),
             },
             Task::none(),
         )
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
-        update::update_message(&state.bridge, message);
+        state.queue.borrow_mut().push(message);
         Task::none()
     }
 
@@ -98,13 +109,13 @@ impl Program for DebugProgram {
             anchor,
             bookmarks,
             bm_input,
-            watch,
-            watch_value,
-            freeze,
             freeze_input,
             selected,
             edit_input,
             pending_text,
+            select_line,
+            watch_line,
+            freeze_line,
             selected_name,
             regs,
             dump_rows,
@@ -114,7 +125,8 @@ impl Program for DebugProgram {
             paused,
             reg_target,
             reg_input,
-        } = views::capture_view(&state.bridge);
+            ..
+        } = state.view.borrow().clone();
         // Button hierarchy: one primary per flow, secondary for toolbar/nav.
         let toolbar = views::view_toolbar(paused, &chrome);
         // Settings form language: fixed label column + stepper.
@@ -131,7 +143,7 @@ impl Program for DebugProgram {
         .into();
         // Two-phase write: select a dump row, type the new byte,
         // Write stages it, and the confirm row commits or cancels.
-        let edit_row = views::view_edit_row(selected, &edit_input, &chrome);
+        let edit_row = views::view_edit_row(&select_line, selected, &edit_input, &chrome);
         // Confirm row: the one primary button in the window; Cancel is
         // a text escape. The drain owns the authoritative text.
         let confirm_row = views::view_confirm_row(pending_text, &chrome);
@@ -157,9 +169,9 @@ impl Program for DebugProgram {
             text(chrome.registers.clone()).size(16),
             regs_view,
             text(chrome.watch.clone()).size(16),
-            views::view_watch_row(watch, watch_value, &chrome),
+            views::view_watch_row(&watch_line, &chrome),
             text(chrome.freeze.clone()).size(16),
-            views::view_freeze_row(freeze, &freeze_input, &chrome),
+            views::view_freeze_row(&freeze_line, &freeze_input, &chrome),
             views::view_bookmark_section(&bm_input, &bookmarks, &chrome),
         ]
         .spacing(12)
@@ -202,25 +214,15 @@ impl Program for DebugProgram {
 
 pub(crate) struct DebugWindowHandle {
     shell: crate::aux::shell::AuxShell<super::window::WindowProgram<DebugProgram>>,
-    bridge: Arc<DebugBridge>,
+    view: SharedView,
+    queue: DebugQueue,
+    invalidated: Arc<AtomicBool>,
 }
 
 impl DebugWindowHandle {
-    /// Narrow live-images apply for the PPU follow tick: images land when newer.
-    /// Returns whether the viewer needs a rebuild.
-    pub(crate) fn apply_live(&mut self, live: AppliedLive) -> bool {
-        self.bridge.apply_applied_live(live)
-    }
-
-    /// Share the bridge for PPU-viewer creation. Narrow: creation only, never display locks.
-    pub(crate) fn shared_bridge(&self) -> &Arc<DebugBridge> {
-        &self.bridge
-    }
-
-    /// Narrow selection write + paused-section restore for a finished
-    /// drain. The host never holds a `display` guard itself.
-    pub(crate) fn apply_drain_display(&mut self, drain: AppliedDrain) {
-        self.bridge.apply_applied_drain(drain);
+    /// Take queued gestures for the host drain.
+    pub(crate) fn drain_queue(&mut self) -> Vec<DebugMessage> {
+        std::mem::take(&mut *self.queue.borrow_mut())
     }
 }
 
@@ -250,7 +252,6 @@ fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage>
 impl DebugWindowHandle {
     pub(crate) fn new(
         window: nerust_frontend_host::window::Window,
-        bridge: Arc<DebugBridge>,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
@@ -269,19 +270,21 @@ impl DebugWindowHandle {
             error
         })
         .ok()?;
+        let view = Rc::new(RefCell::new(ViewSnapshot::default()));
+        let queue = Rc::new(RefCell::new(Vec::new()));
         let program = DebugProgram {
-            bridge: Arc::clone(&bridge),
+            view: Rc::clone(&view),
+            queue: Rc::clone(&queue),
         };
         let (instance, _task) =
             program::Instance::new(super::window::WindowProgram { window, program });
         let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
-        Some(Self { shell, bridge })
-    }
-
-    pub(crate) fn sync_from_bridge(&mut self) {
-        self.bridge.view_invalidated.store(true, Ordering::Release);
-        self.shell
-            .process(Vec::new(), &self.bridge.view_invalidated);
+        Some(Self {
+            shell,
+            view,
+            queue,
+            invalidated: Arc::new(AtomicBool::new(false)),
+        })
     }
 }
 
@@ -299,43 +302,16 @@ impl super::focus::AuxShellRef for DebugWindowHandle {
     }
 }
 
-impl super::registry::DebugDrainPort for DebugWindowHandle {
-    fn apply_drain(&mut self, drain: AppliedDrain) {
-        self.apply_drain_display(drain);
-    }
-}
-
-impl super::registry::LiveImagesPort for DebugWindowHandle {
-    fn apply_live(&mut self, live: AppliedLive) -> bool {
-        self.apply_live(live)
-    }
-}
-
 impl super::registry::AuxController for DebugWindowHandle {
-    fn sync_view(&mut self) {
-        self.sync_from_bridge();
+    fn push_debug_snapshot(&mut self, snapshot: &ViewSnapshot) -> bool {
+        *self.view.borrow_mut() = snapshot.clone();
+        self.invalidated.store(true, Ordering::Release);
+        self.shell.process(Vec::new(), &self.invalidated);
+        true
     }
 
-    fn as_debug(&mut self) -> Option<&mut dyn super::registry::DebugDrainPort> {
-        Some(self)
-    }
-
-    fn debug_snapshot_of(&self, ppu_open: bool) -> Option<super::bridge::DrainSnapshot> {
-        use crate::aux::bridge::BridgeLock;
-        let lock: &dyn BridgeLock = &*self.bridge;
-        Some(lock.drain_snapshot(ppu_open))
-    }
-
-    fn as_live(&mut self) -> Option<&mut dyn super::registry::LiveImagesPort> {
-        Some(self)
-    }
-
-    fn shared_bridge(&self) -> Option<std::sync::Arc<super::bridge::DebugBridge>> {
-        Some(std::sync::Arc::clone(self.shared_bridge()))
-    }
-
-    fn debug_lock_audit(&self) -> Vec<&'static str> {
-        self.bridge.try_lock_audit()
+    fn drain_debug_queue(&mut self) -> Vec<DebugMessage> {
+        self.drain_queue()
     }
 }
 
@@ -350,7 +326,7 @@ impl super::focus::AuxEvents for DebugWindowHandle {
         }) = &mapped
             && let Some(event) = shortcut_request(physical_key)
         {
-            self.bridge.dispatch(event);
+            self.queue.borrow_mut().push(event);
         }
         // Cursor keys page the dump; Left/Right stay with the widgets.
         let page = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -363,7 +339,6 @@ impl super::focus::AuxEvents for DebugWindowHandle {
         } else {
             None
         };
-        self.shell
-            .pump_finish(mapped, page, &self.bridge.view_invalidated)
+        self.shell.pump_finish(mapped, page, &self.invalidated)
     }
 }

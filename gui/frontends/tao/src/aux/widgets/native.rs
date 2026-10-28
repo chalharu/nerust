@@ -5,10 +5,10 @@ use std::sync::{
 
 use iced_winit::program;
 use nerust_frontend_host::{widget_session::WindowMailbox, window::Window};
-use nerust_frontend_viewdefs::{application::ApplicationHost, widget_session::WidgetSession};
 use tao::event_loop::EventLoopWindowTarget;
+use wakui::control::{ControlEvent, ControlScreen};
 
-use super::bindings::{ControlsBinding, ControlsState, Message};
+use super::bindings::{ControlsBinding, EventQueue, Message, SharedScreen};
 use crate::aux::shell::{AuxShell, AuxSurface};
 use crate::aux::window::{WidgetBinding, WindowProgram};
 
@@ -109,10 +109,25 @@ where
 }
 
 pub(crate) struct WindowSignals {
-    session: ControlsState,
+    screen: SharedScreen,
+    queue: EventQueue,
     mailbox: WindowMailbox,
     should_close: Arc<AtomicBool>,
     view_invalidated: AtomicBool,
+}
+
+impl WindowSignals {
+    /// Take queued control events for the host drain.
+    pub(crate) fn drain_events(&mut self) -> Vec<ControlEvent> {
+        std::mem::take(&mut *self.queue.borrow_mut())
+    }
+
+    /// Push the latest app screen; the next rebuild renders it.
+    pub(crate) fn push_screen(&self, screen: &ControlScreen) -> &AtomicBool {
+        *self.screen.borrow_mut() = screen.clone();
+        self.view_invalidated.store(true, Ordering::Release);
+        &self.view_invalidated
+    }
 }
 
 pub(crate) type ControlsWindowHandle = WidgetWindow<ControlsBinding, WindowSignals>;
@@ -120,14 +135,18 @@ pub(crate) type ControlsWindowHandle = WidgetWindow<ControlsBinding, WindowSigna
 impl ControlsWindowHandle {
     pub(crate) fn new(
         window: Window,
-        session: WidgetSession,
+        screen: Box<ControlScreen>,
+        mailbox: WindowMailbox,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
     ) -> Option<Self> {
-        let binding = ControlsBinding::new(session);
-        let session = binding.session();
+        let nerust_frontend_host::window::WindowId::Auxiliary(kind) = window.id else {
+            unreachable!("widget windows are auxiliary windows");
+        };
+        let (binding, screen, queue) = ControlsBinding::new(*screen, kind);
         let signals = WindowSignals {
-            mailbox: session.borrow().mailbox(),
-            session: session.clone(),
+            screen,
+            queue,
+            mailbox,
             should_close: Default::default(),
             view_invalidated: AtomicBool::new(false),
         };
@@ -145,17 +164,13 @@ impl crate::aux::registry::AuxController for ControlsWindowHandle {
 }
 
 impl crate::aux::registry::WidgetSessionPort for ControlsWindowHandle {
-    fn refresh_widget(&mut self, host: &mut ApplicationHost) -> Window {
-        let window = {
-            let mut session = self.signals.session.borrow_mut();
-            host.refresh_widget_session(&mut session);
-            session.window()
-        };
-        if self.signals.mailbox.take_invalidated() {
-            self.signals.view_invalidated.store(true, Ordering::Release);
-            self.shell.process([], &self.signals.view_invalidated);
-        }
-        window
+    fn push_snapshot(&mut self, screen: &ControlScreen) {
+        let flag = self.signals.push_screen(screen);
+        self.shell.process([], flag);
+    }
+
+    fn drain_events(&mut self) -> Vec<ControlEvent> {
+        self.signals.drain_events()
     }
 }
 
@@ -192,14 +207,16 @@ mod tests {
 
     #[test]
     fn widget_signals_keep_close_separate_from_repaint_and_clear() {
+        use crate::aux::widgets::bindings::tests::{mailbox_of, prepare};
+        use nerust_frontend_host::app::FrontendApp as _;
         let mut support = crate::runtime::host::TestHost::new().host;
-        let (_, session) = super::super::bindings::tests::prepare(
-            &mut support,
-            crate::aux::focus::AuxKind::History,
-        );
+        let id = prepare(&mut support, crate::aux::focus::AuxKind::History);
         let settings = WindowSignals {
-            mailbox: session.mailbox(),
-            session: std::rc::Rc::new(std::cell::RefCell::new(session)),
+            screen: std::rc::Rc::new(std::cell::RefCell::new(
+                support.core.widget_screen(id).expect("screen"),
+            )),
+            queue: Default::default(),
+            mailbox: mailbox_of(&support, id),
             should_close: Default::default(),
             view_invalidated: AtomicBool::new(false),
         };

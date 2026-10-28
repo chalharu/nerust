@@ -19,6 +19,4 @@ mod pump;
 mod surface;
 
 pub(crate) use presenter::AuxShell;
-#[cfg(test)]
-pub(crate) use pump::UiShell;
 pub(crate) use surface::{AuxSurface, aux_settings, aux_theme};

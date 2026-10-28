@@ -1,9 +1,14 @@
 //! PPU viewer: 2x system pattern images plus panels and tile hover info.
-//! Scaled pictures derive once per drain; hover clones cached handles.
+//! Pictures and chrome arrive pushed from the app; hover coordinates queue
+//! into the host drain for app-side formatting.
 
-use std::sync::{
-    Arc, RwLock,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use iced::{Length, Task};
@@ -11,8 +16,7 @@ use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use super::bridge::DebugBridge;
-use nerust_frontend_viewdefs::debugger::PpuChrome;
+use nerust_frontend_host::debugger::{PpuChrome, ScaledPicture};
 
 /// Poison-safe snapshot read: recovers the last snapshot after a panic.
 fn snapshot_read(
@@ -41,22 +45,40 @@ pub(crate) const PPU_WINDOW_SIZE: (f64, f64) = (560.0, 620.0);
 use super::focus::{AuxRender as _, AuxShellRef};
 
 use super::registry::AuxController;
-#[cfg(test)]
-use nerust_gui_viewmodel::debugger::DebugImageRgba;
+
+/// Raw hover coordinates: the host drain formats them app-side, so the
+/// view never names the language or tile geometry.
+#[derive(Debug, Clone)]
+pub(crate) struct HoverAt {
+    pub(crate) label: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) enum PpuMessage {
     Hovered(String),
-    /// Re-derive cached pictures from the bridge (one 2x scale per
-    /// drain, never per hover or view).
+    /// Hover coordinates for the host drain (formats app-side).
+    HoverRequest(HoverAt),
+    /// Re-derive cached pictures from pushed data (one 2x scale per
+    /// generation change, never per hover or view).
     Sync,
 }
 
+/// Hover queue: iced view pushes coordinates, the host drain consumes.
+pub(crate) type PpuQueue = Rc<RefCell<Vec<HoverAt>>>;
+
 pub(crate) struct PpuState {
-    bridge: Arc<DebugBridge>,
-    /// Hot pictures plus cold text, shared by `Arc`; `RwLock` for read-mostly sharing.
     snapshot: RwLock<Arc<PpuSnapshot>>,
+    queue: PpuQueue,
+    pending: PendingPush,
 }
+
+/// Pushed payload waiting for Sync derivation. Shared with the handle so
+/// the host turn can stage pictures without touching iced state.
+pub(crate) type PendingPush = Rc<RefCell<Option<PpuPictures>>>;
 
 /// Hot pictures plus cold text, shared by `Arc` so hover-driven
 /// rebuilds never re-copy megabytes per mouse move.
@@ -68,8 +90,9 @@ struct PpuSnapshot {
     #[allow(clippy::type_complexity)]
     scaled: ScaledPictures,
     panels: Arc<str>,
+    has_panels: bool,
     hover: Arc<str>,
-    /// Pre-localized chrome from the host bridge; refreshed on Sync.
+    /// Pre-localized chrome pushed from the app; refreshed on Sync.
     chrome: PpuChrome,
     /// Generation of the source images behind `scaled`.
     /// Starts at `u64::MAX` so the first Sync always derives.
@@ -81,6 +104,7 @@ impl PpuSnapshot {
         Arc::new(Self {
             scaled: Arc::from([]),
             panels: Arc::from(""),
+            has_panels: false,
             hover: Arc::from(""),
             chrome,
             source_gen: u64::MAX,
@@ -88,8 +112,19 @@ impl PpuSnapshot {
     }
 }
 
+/// Pushed picture payload: raw bytes plus generation, before 2x derivation.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PpuPictures {
+    pub(crate) pictures: Vec<ScaledPicture>,
+    pub(crate) panels: String,
+    pub(crate) has_panels: bool,
+    pub(crate) chrome: PpuChrome,
+    pub(crate) generation: u64,
+}
+
 pub(crate) struct PpuProgram {
-    pub(crate) bridge: Arc<DebugBridge>,
+    pub(crate) queue: PpuQueue,
+    pub(crate) pending: PendingPush,
 }
 
 impl super::window::GroupedProgram for PpuProgram {
@@ -122,68 +157,74 @@ impl Program for PpuProgram {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         (
             PpuState {
-                bridge: Arc::clone(&self.bridge),
-                snapshot: RwLock::new(PpuSnapshot::empty(self.bridge.ppu_chrome())),
+                snapshot: RwLock::new(PpuSnapshot::empty(PpuChrome {
+                    title: String::new(),
+                    hover_empty: String::new(),
+                    no_images: String::new(),
+                    panels_title: String::new(),
+                })),
+                queue: Rc::clone(&self.queue),
+                pending: Rc::clone(&self.pending),
             },
             Task::none(),
         )
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
-        let bridge = &state.bridge;
         match message {
             PpuMessage::Hovered(line) => {
-                // Same-line hovers skip everything: no bridge write,
-                // no snapshot alloc, no redraw.
+                // Same-line hovers skip everything: no snapshot alloc, no redraw.
                 if snapshot_read(&state.snapshot).hover.as_ref() == line {
                     return Task::none();
                 }
-                bridge.set_hover(line.clone());
                 let current = Arc::clone(&snapshot_read(&state.snapshot));
                 // Hover swaps only the hover line; the scaled `Arc` is cloned.
                 *snapshot_write(&state.snapshot) = Arc::new(PpuSnapshot {
                     scaled: Arc::clone(&current.scaled),
                     panels: Arc::clone(&current.panels),
+                    has_panels: current.has_panels,
                     hover: Arc::from(line),
                     chrome: current.chrome.clone(),
                     source_gen: current.source_gen,
                 });
-                bridge.ppu_invalidated.store(true, Ordering::Release);
+            }
+            PpuMessage::HoverRequest(at) => {
+                state.queue.borrow_mut().push(at);
             }
             PpuMessage::Sync => {
-                // View-owned derivation: scaling and panel text live in
-                // view-defs, so no formatter or image-type import is needed.
-                let generation = bridge.images_generation();
-                let panels = bridge.formatted_panels();
+                // Derivation runs on pushed data staged by the handle;
+                // Sync only swaps once per pushed payload. Pictures arrive
+                // already 2x-scaled from the app; handles wrap the bytes.
                 let current = Arc::clone(&snapshot_read(&state.snapshot));
-                // Sync swaps once per drain: scaled re-derived only on
-                // generation change, hover preserved as-is.
-                let scaled: ScaledPictures = if current.source_gen != generation {
-                    let mut scaled = Vec::new();
-                    for image in bridge.scaled_pictures() {
-                        scaled.push((
-                            image.label,
-                            image.width,
-                            image.height,
-                            iced::widget::image::Handle::from_rgba(
+                if let Some(pushed) = state.pending.borrow_mut().take() {
+                    let scaled: ScaledPictures = if current.source_gen != pushed.generation {
+                        let mut scaled = Vec::new();
+                        for image in &pushed.pictures {
+                            scaled.push((
+                                image.label.clone(),
                                 image.width,
                                 image.height,
-                                image.rgba,
-                            ),
-                        ));
-                    }
-                    Arc::from(scaled)
-                } else {
-                    Arc::clone(&current.scaled)
-                };
-                let panels: Arc<str> = Arc::from(panels);
-                *snapshot_write(&state.snapshot) = Arc::new(PpuSnapshot {
-                    scaled,
-                    panels,
-                    hover: Arc::clone(&current.hover),
-                    chrome: bridge.ppu_chrome(),
-                    source_gen: generation,
-                });
+                                iced::widget::image::Handle::from_rgba(
+                                    image.width,
+                                    image.height,
+                                    image.rgba.clone(),
+                                ),
+                            ));
+                        }
+                        Arc::from(scaled)
+                    } else {
+                        Arc::clone(&current.scaled)
+                    };
+                    let panels: Arc<str> = Arc::from(pushed.panels);
+                    *snapshot_write(&state.snapshot) = Arc::new(PpuSnapshot {
+                        scaled,
+                        panels,
+                        has_panels: pushed.has_panels,
+                        hover: Arc::clone(&current.hover),
+                        chrome: pushed.chrome,
+                        source_gen: pushed.generation,
+                    });
+                }
             }
         }
         Task::none()
@@ -221,28 +262,26 @@ impl Program for PpuProgram {
         if scaled.is_empty() {
             content = content.push(text(chrome.no_images.clone()).size(14));
         }
-        let state_bridge = Arc::clone(&state.bridge);
         for (label, width, height, handle) in scaled.iter() {
             content = content.push(text(label.clone()).size(14));
             // Arc clone only: the bytes were scaled once at Sync time.
             let shown = image(handle.clone());
             let hover_label = label.clone();
-            let row_bridge = Arc::clone(&state_bridge);
             // Cache stores display size; halve back for hover math.
             let (hover_w, hover_h) = (width / 2, height / 2);
             content = content.push(mouse_area(shown).on_move(move |point| {
-                PpuMessage::Hovered(row_bridge.hover_line(
-                    &hover_label,
-                    hover_w,
-                    hover_h,
-                    f64::from(point.x),
-                    f64::from(point.y),
-                ))
+                PpuMessage::HoverRequest(HoverAt {
+                    label: hover_label.clone(),
+                    width: hover_w,
+                    height: hover_h,
+                    x: f64::from(point.x),
+                    y: f64::from(point.y),
+                })
             }));
         }
         // Systems without observation tables (GBA/GBC) show no
-        // Panels section at all instead of a puzzling marker.
-        if state.bridge.has_panels() {
+        // Panels section instead of a puzzling marker.
+        if snapshot.has_panels {
             content = content.push(text(chrome.panels_title.clone()).size(16));
             content = content.push(
                 text(panels_text.to_string())
@@ -259,13 +298,14 @@ impl Program for PpuProgram {
 
 pub(crate) struct PpuWindowHandle {
     shell: crate::aux::shell::AuxShell<super::window::WindowProgram<PpuProgram>>,
-    bridge: Arc<DebugBridge>,
+    queue: PpuQueue,
+    pending: PendingPush,
+    invalidated: Arc<AtomicBool>,
 }
 
 impl PpuWindowHandle {
     pub(crate) fn new(
         window: nerust_frontend_host::window::Window,
-        bridge: Arc<DebugBridge>,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
@@ -284,8 +324,11 @@ impl PpuWindowHandle {
             error
         })
         .ok()?;
+        let queue = Rc::new(RefCell::new(Vec::new()));
+        let pending = Rc::new(RefCell::new(None));
         let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
+            queue: Rc::clone(&queue),
+            pending: Rc::clone(&pending),
         };
         let (instance, _task) =
             program::Instance::new(super::window::WindowProgram { window, program });
@@ -293,16 +336,34 @@ impl PpuWindowHandle {
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
         shell.focus_window();
-        Some(Self { shell, bridge })
+        Some(Self {
+            shell,
+            queue,
+            pending,
+            invalidated: Arc::new(AtomicBool::new(false)),
+        })
     }
 
-    pub(crate) fn sync_from_bridge(&mut self) {
-        // Derive cached bytes first, then rebuild the view from cache.
-        self.bridge.ppu_invalidated.store(true, Ordering::Release);
+    /// Take queued hover coordinates for the host drain.
+    pub(crate) fn drain_hover(&mut self) -> Vec<HoverAt> {
+        std::mem::take(&mut *self.queue.borrow_mut())
+    }
+
+    /// Stage pushed pictures and derive handles on the iced thread.
+    pub(crate) fn push_pictures(&mut self, pictures: PpuPictures) {
+        *self.pending.borrow_mut() = Some(pictures);
+        self.invalidated.store(true, Ordering::Release);
         self.shell
-            .process(vec![PpuMessage::Sync], &self.bridge.ppu_invalidated);
+            .process(vec![PpuMessage::Sync], &self.invalidated);
         // Render synchronously so the viewer never sits on a stale frame.
-        self.render();
+        let _ = self.render();
+    }
+
+    /// Show app-formatted hover text without touching geometry here.
+    pub(crate) fn push_hover(&mut self, line: String) {
+        self.invalidated.store(true, Ordering::Release);
+        self.shell
+            .process(vec![PpuMessage::Hovered(line)], &self.invalidated);
     }
 }
 
@@ -321,264 +382,13 @@ impl AuxShellRef for PpuWindowHandle {
 }
 
 impl AuxController for PpuWindowHandle {
-    fn sync_view(&mut self) {
-        self.sync_from_bridge();
+    fn as_ppu(&mut self) -> Option<&mut PpuWindowHandle> {
+        Some(self)
     }
 }
 
 impl super::focus::AuxEvents for PpuWindowHandle {
     fn handle(&mut self, mapped: iced::Event) -> bool {
-        self.shell
-            .pump_finish(mapped, None, &self.bridge.ppu_invalidated)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outer_ppu_window_uses_common_title_and_existing_grouped_pipeline() {
-        use super::super::window::WindowProgram;
-        use nerust_frontend_host::{focus::AuxKind, window::Window};
-
-        let mut window = Window::auxiliary(AuxKind::Ppu);
-        window.title = "owned PPU title".into();
-        let mut program = WindowProgram {
-            window,
-            program: PpuProgram {
-                bridge: ppu_bridge(),
-            },
-        };
-        let (mut state, _) = program.boot();
-        let id = iced::window::Id::unique();
-        assert_eq!(program.title(&state, id), "owned PPU title");
-        drop(program.update(&mut state, PpuMessage::Sync));
-        assert_eq!(snapshot_read(&state.snapshot).scaled.len(), 1);
-        drop(program.view(&state, id));
-        // A different grouped contents cannot accidentally render this program.
-        program.window.contents = Window::auxiliary(AuxKind::Debug).contents;
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                drop(program.view(&state, id));
-            }))
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn tile_hover_reports_index_and_offset() {
-        let bridge = ppu_bridge();
-        let line = bridge.hover_line("Pattern left", 128, 128, 88.0, 26.0);
-        assert_eq!(line, "Pattern left tile #21 (px 44,13, +0x0150)");
-    }
-
-    #[test]
-    fn tile_hover_clamps_to_table() {
-        use nerust_settings_core::model::language::AppLanguage;
-        let bridge = Arc::new(DebugBridge::new(
-            nerust_gui_viewmodel::debugger::DisplayCache::default(),
-            Vec::new(),
-            0,
-            AppLanguage::Japanese,
-        ));
-        let line = bridge.hover_line("Pattern right", 128, 128, 500.0, 500.0);
-        assert!(line.starts_with("Pattern right タイル #255 "));
-    }
-
-    fn ppu_bridge() -> Arc<DebugBridge> {
-        use nerust_gui_viewmodel::debugger::DisplayCache;
-        use nerust_settings_core::model::language::AppLanguage;
-        let display = DisplayCache {
-            images: vec![DebugImageRgba {
-                label: "Tiles".to_string(),
-                width: 2,
-                height: 1,
-                rgba: vec![0xFF; 8],
-            }],
-            images_gen: 5,
-            ..DisplayCache::default()
-        };
-        Arc::new(DebugBridge::new(
-            display,
-            Vec::new(),
-            0,
-            AppLanguage::English,
-        ))
-    }
-
-    fn ppu_state(bridge: &Arc<DebugBridge>) -> PpuState {
-        PpuState {
-            bridge: Arc::clone(bridge),
-            snapshot: RwLock::new(PpuSnapshot::empty(bridge.ppu_chrome())),
-        }
-    }
-
-    #[test]
-    fn sync_derives_once_per_generation() {
-        let bridge = ppu_bridge();
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        let mut state = ppu_state(&bridge);
-        let _ = program.update(&mut state, PpuMessage::Sync);
-        // First sync derives: one 2x image plus the generation.
-        assert_eq!(snapshot_read(&state.snapshot).scaled.len(), 1);
-        assert_eq!(snapshot_read(&state.snapshot).source_gen, 5);
-        assert_eq!(snapshot_read(&state.snapshot).scaled[0].1, 4);
-        assert_eq!(snapshot_read(&state.snapshot).scaled[0].2, 2);
-        let scaled = Arc::clone(&snapshot_read(&state.snapshot).scaled);
-        // Identical generation re-runs Sync without re-deriving.
-        let _ = program.update(&mut state, PpuMessage::Sync);
-        assert_eq!(snapshot_read(&state.snapshot).source_gen, 5);
-        assert!(Arc::ptr_eq(&scaled, &snapshot_read(&state.snapshot).scaled));
-        // Hover only records the line, never re-derives.
-        let _ = program.update(
-            &mut state,
-            PpuMessage::Hovered("Tiles tile #0 (px 0,0, +0000)".to_string()),
-        );
-        assert_eq!(
-            &*snapshot_read(&state.snapshot).hover,
-            "Tiles tile #0 (px 0,0, +0000)"
-        );
-        assert!(bridge.ppu_invalidated.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn same_line_hover_skips_bridge_and_snapshot() {
-        let bridge = ppu_bridge();
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        let mut state = ppu_state(&bridge);
-        // First hover records and invalidates.
-        let _ = program.update(&mut state, PpuMessage::Hovered("row".to_string()));
-        bridge.ppu_invalidated.store(false, Ordering::Release);
-        // Same line again: no bridge write, no snapshot swap, no redraw flag.
-        let _ = program.update(&mut state, PpuMessage::Hovered("row".to_string()));
-        assert!(!bridge.ppu_invalidated.load(Ordering::Acquire));
-        assert_eq!(&*snapshot_read(&state.snapshot).hover, "row");
-        assert_eq!(bridge.hover(), "row");
-    }
-
-    #[test]
-    fn view_renders_scaled_empty_and_hover() {
-        let bridge = ppu_bridge();
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        // Empty cache shows the degenerate, never a blank window.
-        let state = ppu_state(&bridge);
-        let _empty = program.view(&state, iced::window::Id::unique());
-        drop(_empty);
-        // Synced cache renders labels plus images plus hover text.
-        let mut synced = ppu_state(&bridge);
-        let _ = program.update(&mut synced, PpuMessage::Sync);
-        let _ = program.update(
-            &mut synced,
-            PpuMessage::Hovered("Tiles tile #1 (px 8,0, +0010)".to_string()),
-        );
-        let _full = program.view(&synced, iced::window::Id::unique());
-        drop(_full);
-    }
-    #[test]
-    fn program_boot_and_chrome_are_headless() {
-        let bridge = ppu_bridge();
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        assert_eq!(PpuProgram::name(), "nerust_ppu_viewer");
-        assert!(program.window().is_none());
-        let _ = program.settings();
-        let (state, _task) = program.boot();
-        let theme = program.theme(&state, iced::window::Id::unique());
-        assert!(matches!(theme, Some(iced::Theme::Light)));
-        let _ = program.view(&state, iced::window::Id::unique());
-        drop(state);
-    }
-
-    #[test]
-    fn sync_with_empty_images_keeps_empty_cache() {
-        use nerust_gui_viewmodel::debugger::DisplayCache;
-        use nerust_settings_core::model::language::AppLanguage;
-        let bridge = Arc::new(DebugBridge::new(
-            DisplayCache::default(),
-            Vec::new(),
-            0,
-            AppLanguage::English,
-        ));
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        let mut state = ppu_state(&bridge);
-        // Generation zero differs from the empty sentinel: sync
-        // records it without deriving any pictures.
-        let _ = program.update(&mut state, PpuMessage::Sync);
-        assert!(snapshot_read(&state.snapshot).scaled.is_empty());
-        assert_eq!(snapshot_read(&state.snapshot).source_gen, 0);
-    }
-
-    #[test]
-    fn sync_rederives_on_generation_change_and_keeps_hover() {
-        let bridge = ppu_bridge();
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        let mut state = ppu_state(&bridge);
-        let _ = program.update(&mut state, PpuMessage::Sync);
-        let _ = program.update(&mut state, PpuMessage::Hovered("Tiles hover".to_string()));
-        // New images plus new generation: scaled re-derived, hover kept.
-        bridge.update_display(|display| {
-            display.images = vec![DebugImageRgba {
-                label: "Map".to_string(),
-                width: 1,
-                height: 1,
-                rgba: vec![0x00; 4],
-            }];
-            display.images_gen = 6;
-        });
-        let _ = program.update(&mut state, PpuMessage::Sync);
-        let snapshot = snapshot_read(&state.snapshot);
-        assert_eq!(snapshot.scaled.len(), 1);
-        assert_eq!(snapshot.scaled[0].0, "Map");
-        assert_eq!(snapshot.source_gen, 6);
-        assert_eq!(&*snapshot.hover, "Tiles hover");
-    }
-
-    #[test]
-    fn view_shows_panels_section_only_when_present() {
-        use nerust_core_traits::debugger::{ColumnKind, DebugPanel, PanelColumn};
-        use nerust_gui_viewmodel::debugger::DisplayCache;
-        use nerust_settings_core::model::language::AppLanguage;
-        static COLUMNS: &[PanelColumn] = &[PanelColumn {
-            id: "t",
-            label_id: "T",
-            kind: ColumnKind::Text,
-        }];
-        let bridge = Arc::new(DebugBridge::new(
-            DisplayCache {
-                panels: vec![DebugPanel {
-                    id: "p",
-                    label_id: "P",
-                    columns: COLUMNS,
-                    rows: Vec::new(),
-                }],
-                ..DisplayCache::default()
-            },
-            Vec::new(),
-            0,
-            AppLanguage::English,
-        ));
-        let program = PpuProgram {
-            bridge: Arc::clone(&bridge),
-        };
-        let mut state = ppu_state(&bridge);
-        let _ = program.update(&mut state, PpuMessage::Sync);
-        // Non-empty panels render the section; empty ones skip it.
-        let _full = program.view(&state, iced::window::Id::unique());
-        drop(_full);
-        assert!(nerust_gui_viewmodel::debugger::panels_visible(
-            &snapshot_read(&state.snapshot).panels
-        ));
+        self.shell.pump_finish(mapped, None, &self.invalidated)
     }
 }

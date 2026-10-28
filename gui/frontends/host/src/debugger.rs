@@ -80,7 +80,7 @@ pub struct DebuggerLiveEffects {
 }
 
 /// Pre-localized debugger chrome. Frontends render it verbatim.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct DebuggerChrome {
     pub debugger: String,
     pub pause: String,
@@ -160,7 +160,7 @@ impl DebuggerChrome {
 }
 
 /// Pre-localized PPU viewer chrome for the viewer opened from a session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PpuChrome {
     pub title: String,
     pub hover_empty: String,
@@ -235,6 +235,9 @@ pub struct DebugInputs {
     pub freeze_input: String,
     pub edit_input: String,
     pub reg_input: String,
+    pub watch: Option<u32>,
+    pub watch_value: Option<u8>,
+    pub freeze: Option<(u32, u8)>,
 }
 
 /// One coherent debugger snapshot: chrome, formatted rows, inputs, and the
