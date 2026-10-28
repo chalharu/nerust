@@ -91,23 +91,17 @@ impl HostState {
             }
             let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos();
-            let language = self.settings_snapshot().shared.general.language;
             self.aux.window_mut(id).expect("debug reservation").title =
-                nerust_settings_core::i18n::text(
-                    language,
-                    nerust_settings_core::i18n::UiText::Debugger,
-                )
-                .into();
+                self.core.debugger_window_title();
+            let bridge = std::sync::Arc::new(self.core.new_debug_bridge(
+                Default::default(),
+                spaces,
+                mem_addr,
+            ));
             let opened = self.create_aux_window(
                 id,
                 opener,
-                crate::ports::AuxOpenParams::Debug {
-                    display: Box::default(),
-                    spaces,
-                    mem_addr,
-                    language,
-                    position,
-                },
+                crate::ports::AuxOpenParams::Debug { bridge, position },
             );
             if opened {
                 self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
@@ -121,12 +115,7 @@ impl HostState {
                     return;
                 };
                 let position = self.ppu_window_pos();
-                self.aux.window_mut(id).expect("PPU reservation").title =
-                    nerust_settings_core::i18n::text(
-                        bridge.language(),
-                        nerust_settings_core::i18n::UiText::PpuViewer,
-                    )
-                    .into();
+                self.aux.window_mut(id).expect("PPU reservation").title = bridge.ppu_chrome().title;
                 let opened = self.create_aux_window(
                     id,
                     opener,

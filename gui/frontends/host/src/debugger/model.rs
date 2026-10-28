@@ -379,6 +379,16 @@ impl DebuggerModel {
         self.state.anchor(&self.display)
     }
 
+    /// Pre-localized debugger chrome. Frontends render it verbatim.
+    pub fn debugger_chrome(&self) -> super::DebuggerChrome {
+        super::DebuggerChrome::new(self.language)
+    }
+
+    /// Pre-localized PPU chrome for the viewer opened from this model.
+    pub fn ppu_chrome(&self) -> super::PpuChrome {
+        super::PpuChrome::new(self.language)
+    }
+
     pub fn apply_drain(
         &mut self,
         mut display: DisplayCache,
