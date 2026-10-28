@@ -4,11 +4,10 @@ mod bridge;
 mod driver;
 mod model;
 
-pub use bridge::{
-    BridgeLock, BridgeView, DebugBridge, DebuggerChrome, DrainSnapshot, PpuChrome, lock_recovered,
-};
+pub use bridge::{BridgeLock, BridgeView, DebugBridge, DebuggerChrome, DrainSnapshot, PpuChrome};
 pub use driver::{DebuggerDriver, DebuggerEffects, DebuggerLiveEffects};
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
+pub use nerust_frontend_viewdefs::sync::lock_recovered;
 
 use nerust_gui_shell::debug::DebugAction;
 

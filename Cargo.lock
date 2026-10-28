@@ -3519,11 +3519,17 @@ version = "0.1.0-dev"
 name = "nerust_frontend_viewdefs"
 version = "0.1.0-dev"
 dependencies = [
+ "log",
  "nerust_core_traits",
  "nerust_frontend_host",
  "nerust_gui_runtime",
  "nerust_gui_shell",
+ "nerust_gui_viewmodel",
+ "nerust_input_traits",
+ "nerust_keyboard",
+ "nerust_nes_factory",
  "nerust_settings_core",
+ "nerust_system_traits",
  "wakui",
 ]
 

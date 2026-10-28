@@ -11,10 +11,10 @@ use crate::{
     aux::{AuxId, AuxWindows, OpenRequest},
     focus::AuxKind,
     session::SessionEvent,
-    settings::{SettingsController, find_duplicate_system_id},
     widget_session::{Pending, WidgetSession, WindowSubmission},
     window::WindowEffects,
 };
+use nerust_frontend_viewdefs::settings::{SettingsController, find_duplicate_system_id};
 
 pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>);
 

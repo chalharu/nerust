@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use crate::history::{HistoryModel, HistoryViewId};
 use crate::{control::*, settings::*};
+use nerust_frontend_viewdefs::history::{HistoryModel, HistoryViewId};
 use nerust_gui_shell::session::osd::HistoryRowView;
 use nerust_gui_viewmodel::settings::dto::BindingValueView;
 

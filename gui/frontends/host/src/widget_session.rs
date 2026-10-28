@@ -16,13 +16,15 @@ use nerust_settings_core::model::language::AppLanguage;
 use crate::{
     binding::{BindingTarget, ViewDefinition, drive},
     control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
-    debugger::lock_recovered,
     focus::AuxKind,
+    window::Window,
+};
+use nerust_frontend_viewdefs::{
     history::{HistoryEffect, HistoryEvent, HistoryModel},
     settings::{
         SettingsController, SettingsEffect, SettingsEvent, SettingsMailbox, SettingsScreen,
     },
-    window::Window,
+    sync::lock_recovered,
 };
 
 mod scene;

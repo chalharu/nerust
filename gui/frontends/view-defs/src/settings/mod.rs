@@ -38,7 +38,7 @@ use nerust_system_traits::factory::{
     descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
 };
 
-use crate::debugger::lock_recovered;
+use crate::sync::lock_recovered;
 
 mod screen;
 pub use screen::*;
@@ -117,19 +117,19 @@ pub enum SettingsEffect {
 /// Internal signals, not a second settings draft. Clones refer to
 /// the controller's same close/apply/repaint mailboxes.
 #[derive(Clone)]
-pub(crate) struct SettingsMailbox {
-    pub(crate) should_close: Arc<AtomicBool>,
-    pub(crate) pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
-    pub(crate) view_invalidated: Arc<AtomicBool>,
+pub struct SettingsMailbox {
+    pub should_close: Arc<AtomicBool>,
+    pub pending_apply: Arc<Mutex<Option<SettingsSnapshot>>>,
+    pub view_invalidated: Arc<AtomicBool>,
 }
 
 impl SettingsMailbox {
-    pub(crate) fn take_pending_apply(&self) -> Option<SettingsSnapshot> {
+    pub fn take_pending_apply(&self) -> Option<SettingsSnapshot> {
         lock_recovered(&self.pending_apply).take()
     }
 }
 
-impl crate::binding::BindingTarget for SettingsController {
+impl wakui::binding::BindingTarget for SettingsController {
     type DomainEvent = SettingsEvent;
     type Effect = SettingsEffect;
 
@@ -138,7 +138,7 @@ impl crate::binding::BindingTarget for SettingsController {
     }
 }
 
-impl crate::binding::Invalidatable for SettingsMailbox {
+impl wakui::binding::Invalidatable for SettingsMailbox {
     fn invalidate(&self) {
         self.view_invalidated.store(true, Ordering::Release);
     }
@@ -149,7 +149,7 @@ impl crate::binding::Invalidatable for SettingsMailbox {
 }
 
 pub struct SettingsController {
-    pub(crate) mailbox: SettingsMailbox,
+    pub mailbox: SettingsMailbox,
     pub vm: SettingsViewModel,
     _revision_subscription: Subscription,
     pub page: SettingsPage,
