@@ -25,7 +25,7 @@ pub(crate) struct SurfaceCore {
     pub(crate) state: Rc<RefCell<State>>,
     output_generation: Cell<Option<u64>>,
     frames: RefCell<FrameCache>,
-    retry: RefCell<nerust_frontend_kernel::retry::RenderRetry>,
+    retry: RefCell<wakui::retry::RenderRetry>,
     wake: RefCell<WakeAt>,
 }
 
