@@ -114,13 +114,13 @@ pub(crate) struct HostState {
     pub(super) windows: WindowCluster,
     /// The single policy owner, injected by the composition root.
     /// Native code drives it through the trait only.
-    pub(crate) core: Box<dyn nerust_frontend_host::app::FrontendApp>,
+    pub(crate) core: Box<dyn wakui::app::FrontendApp>,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
     pub(crate) aux: AuxRegistry,
     /// App-side debug session shared by the debugger and PPU windows.
-    pub(super) debug_handle: Option<nerust_frontend_host::debugger::DebugHandle>,
+    pub(super) debug_handle: Option<wakui::debugger::DebugHandle>,
     /// Last PPU generation pushed into the viewer.
     pub(super) ppu_generation: u64,
 }
@@ -154,11 +154,11 @@ impl HostState {
     }
 
     pub(crate) fn new(
-        boot: nerust_frontend_host::bootstrap::Boot,
+        boot: wakui::bootstrap::Boot,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Self {
-        let nerust_frontend_host::bootstrap::Boot { app: core } = boot;
+        let wakui::bootstrap::Boot { app: core } = boot;
         Self {
             windows: WindowCluster::new(),
             core,

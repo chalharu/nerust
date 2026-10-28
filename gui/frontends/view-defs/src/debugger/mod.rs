@@ -12,11 +12,11 @@ pub(crate) use bridge::{
 };
 pub use driver::DebuggerDriver;
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
-pub use nerust_frontend_host::debugger::{
+pub use view::{AppliedDrain, AppliedLive};
+pub use wakui::debugger::{
     DebugInputs, DebugSnapshot, DebuggerChrome, DebuggerEvent, DebuggerRows, DebuggerScope,
     DisasmRow, DumpRow, PpuChrome, RegRow, ScaledPicture, pin_marker,
 };
-pub use view::{AppliedDrain, AppliedLive};
 
 use nerust_gui_shell::debug::DebugAction;
 

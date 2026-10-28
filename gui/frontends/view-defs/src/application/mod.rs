@@ -51,10 +51,8 @@ pub struct ApplicationHost {
     debug: DebugRuntime,
     debug_sessions: std::collections::HashMap<u64, frontend::DebugSession>,
     debug_next: u64,
-    widget_sessions: std::collections::HashMap<
-        nerust_frontend_host::aux::AuxId,
-        crate::widget_session::WidgetSession,
-    >,
+    widget_sessions:
+        std::collections::HashMap<wakui::aux::AuxId, crate::widget_session::WidgetSession>,
     loader: Option<Box<dyn nerust_gui_shell::load::RomLoader>>,
     osd: osd::OsdRuntime,
     chrome: chrome::ChromeSync,
@@ -638,7 +636,7 @@ impl ApplicationHost {
     pub fn window_chrome_sync(
         &mut self,
         native_fullscreen: bool,
-    ) -> nerust_frontend_host::window::WindowChromeSync {
+    ) -> wakui::window::WindowChromeSync {
         use nerust_settings_core::model::local::ScalingMode;
         let request = self.fullscreen_request(native_fullscreen);
         let ends_windowed = !request.unwrap_or(native_fullscreen);
@@ -652,7 +650,7 @@ impl ApplicationHost {
             } else {
                 None
             };
-        nerust_frontend_host::window::WindowChromeSync {
+        wakui::window::WindowChromeSync {
             restore_size,
             set_fullscreen: request,
         }
@@ -704,7 +702,7 @@ pub struct MenubarUpdate {
 // Scheduling already exposes meaningful request/consume/cadence operations;
 // reuse that facade rather than growing a second forest of forwarding methods.
 impl std::ops::Deref for ApplicationHost {
-    type Target = nerust_frontend_host::debug_schedule::DebugSchedule;
+    type Target = wakui::debug_schedule::DebugSchedule;
     fn deref(&self) -> &Self::Target {
         self.debug.schedule()
     }

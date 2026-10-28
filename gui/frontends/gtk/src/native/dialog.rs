@@ -5,31 +5,9 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::osd::{ModalAdvance, ModalPresentation, ModalPresenter};
+use wakui::osd::{ModalAdvance, ModalPresentation, ModalPresenter};
 
 use crate::surface::{Surface, SurfaceCore};
-
-pub(crate) type FinishCallback = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
-
-/// Native close signals may nest. Take the callback before running any effect.
-pub(crate) fn finish(callback: &FinishCallback) {
-    let finish = callback.borrow_mut().take();
-    if let Some(finish) = finish {
-        finish();
-    }
-}
-
-pub(crate) fn connect_finish(dialog: &gtk::Dialog, callback: &FinishCallback) {
-    let on_destroy = callback.clone();
-    dialog.connect_destroy(move |_| finish(&on_destroy));
-    let on_unrealize = callback.clone();
-    dialog.connect_unrealize(move |_| finish(&on_unrealize));
-    let on_close = callback.clone();
-    dialog.connect_close_request(move |_| {
-        finish(&on_close);
-        glib::Propagation::Proceed
-    });
-}
 
 /// Only translates the host token into a native response. Host retains the
 /// queue, pause ownership and stale-ACK checks; there is no native ModalState.

@@ -58,8 +58,8 @@ pub(crate) fn rows_from_display(
     display: &DisplayCache,
     status_text: String,
     pending_text: Option<String>,
-) -> nerust_frontend_host::debugger::DebuggerRows {
-    use nerust_frontend_host::debugger::{DebuggerRows, DisasmRow, DumpRow, RegRow};
+) -> wakui::debugger::DebuggerRows {
+    use wakui::debugger::{DebuggerRows, DisasmRow, DumpRow, RegRow};
     DebuggerRows {
         watch_text: String::new(),
         freeze_text: String::new(),
@@ -100,13 +100,11 @@ pub(crate) fn rows_from_display(
     }
 }
 
-pub(crate) fn scaled_from_display(
-    display: &DisplayCache,
-) -> Vec<nerust_frontend_host::debugger::ScaledPicture> {
+pub(crate) fn scaled_from_display(display: &DisplayCache) -> Vec<wakui::debugger::ScaledPicture> {
     display
         .images
         .iter()
-        .map(|image| nerust_frontend_host::debugger::ScaledPicture {
+        .map(|image| wakui::debugger::ScaledPicture {
             label: image.label.clone(),
             width: image.width * 2,
             height: image.height * 2,

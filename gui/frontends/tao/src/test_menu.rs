@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::menu::MenuSink;
-use nerust_frontend_host::menu::Menubar;
+use wakui::menu::Menubar;
 
 /// `MenuSink` that records sync snapshots for assertions.
 #[derive(Debug, Default)]

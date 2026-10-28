@@ -3,7 +3,7 @@ use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
 use std::time::Instant;
 
-use nerust_frontend_host::{
+use wakui::{
     menu::Menubar,
     window::{Window, WindowVisitor},
 };

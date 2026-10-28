@@ -19,16 +19,31 @@
 //!    root's [`backend::BackendRegistry`] for builder-style selection.
 //! 6. Deliver native picker results through [`binding::PickerSink`].
 
+pub mod app;
+pub mod aux;
 pub mod backend;
 pub mod binding;
+pub mod bootstrap;
 pub mod cache;
+pub mod commands;
 pub mod conformance;
 pub mod control;
+pub mod debug_schedule;
+pub mod debugger;
+pub mod event;
+pub mod focus;
 pub mod key;
 pub mod loop_driver;
+pub mod mailbox;
 pub mod mapper;
+pub mod menu;
+pub mod menu_presenter;
+pub mod osd;
 pub mod pause;
 pub mod retry;
+pub mod session;
+pub mod sync;
 pub mod viewport;
+pub mod window;
 
 pub use key::Key;

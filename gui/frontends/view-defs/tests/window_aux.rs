@@ -5,12 +5,12 @@ use wakui::control::{
     Page,
 };
 
-use nerust_frontend_host::{
+use nerust_frontend_viewdefs::{settings::SettingsController, widget_session::WidgetSession};
+use wakui::{
     aux::{AuxWindows, OpenRequest},
     focus::AuxKind,
     window::*,
 };
-use nerust_frontend_viewdefs::{settings::SettingsController, widget_session::WidgetSession};
 
 fn session() -> WidgetSession {
     WidgetSession::from_settings(SettingsController::new(
@@ -161,7 +161,7 @@ fn reservation_owns_group_before_native_creation_and_reentrant_open() {
         ));
         struct Reenter<'a> {
             windows: &'a RefCell<AuxWindows<u64, ()>>,
-            id: nerust_frontend_host::aux::AuxId,
+            id: wakui::aux::AuxId,
         }
         impl WindowVisitor for Reenter<'_> {
             fn begin_window(&mut self, window: &Window) {

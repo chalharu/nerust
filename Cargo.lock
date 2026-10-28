@@ -3389,7 +3389,6 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_crash_guard",
- "nerust_frontend_host",
  "nerust_frontend_viewdefs",
  "nerust_gba_core",
  "nerust_gba_factory",
@@ -3410,6 +3409,7 @@ dependencies = [
  "nerust_tao",
  "rfd",
  "simple_logger",
+ "wakui",
 ]
 
 [[package]]
@@ -3490,15 +3490,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_frontend_host"
-version = "0.1.0-dev"
-dependencies = [
- "log",
- "nerust_nes_factory",
- "wakui",
-]
-
-[[package]]
 name = "nerust_frontend_kernel"
 version = "0.1.0-dev"
 
@@ -3508,7 +3499,6 @@ version = "0.1.0-dev"
 dependencies = [
  "log",
  "nerust_core_traits",
- "nerust_frontend_host",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
@@ -3659,7 +3649,6 @@ dependencies = [
  "gtk4",
  "log",
  "nerust_core_traits",
- "nerust_frontend_host",
  "nerust_frontend_kernel",
  "nerust_frontend_viewdefs",
  "nerust_gui_runtime",
@@ -3676,6 +3665,7 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "raw-window-handle",
  "wakui",
+ "wakui-gtk",
 ]
 
 [[package]]
@@ -3707,7 +3697,6 @@ dependencies = [
  "nerust_console_input",
  "nerust_core_traits",
  "nerust_emu_thread",
- "nerust_frontend_host",
  "nerust_gui_runtime",
  "nerust_gui_viewmodel",
  "nerust_input_traits",
@@ -4024,7 +4013,6 @@ dependencies = [
  "log",
  "muda",
  "nerust_core_traits",
- "nerust_frontend_host",
  "nerust_frontend_kernel",
  "nerust_frontend_viewdefs",
  "nerust_gui_runtime",
@@ -4039,6 +4027,7 @@ dependencies = [
  "rfd",
  "tao",
  "wakui",
+ "wakui-tao",
 ]
 
 [[package]]
@@ -6457,9 +6446,34 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "wakui"
 version = "0.1.0-dev"
 dependencies = [
+ "log",
  "raw-window-handle",
  "serde",
  "strum",
+]
+
+[[package]]
+name = "wakui-gtk"
+version = "0.1.0-dev"
+dependencies = [
+ "gdk4",
+ "gio 0.22.10",
+ "gtk4",
+ "log",
+ "wakui",
+]
+
+[[package]]
+name = "wakui-tao"
+version = "0.1.0-dev"
+dependencies = [
+ "iced",
+ "iced_tiny_skia",
+ "iced_winit",
+ "log",
+ "strum",
+ "tao",
+ "wakui",
 ]
 
 [[package]]

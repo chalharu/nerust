@@ -39,7 +39,7 @@ pub struct Widget {
 #[derive(Debug, Clone)]
 pub enum WidgetContents {
     Main(MainContents),
-    Controls(Box<wakui::control::ControlScreen>),
+    Controls(Box<crate::control::ControlScreen>),
     /// Reservation exists, but no generic control screen has been supplied yet.
     PendingControls,
     Debug(DebugContents),
@@ -62,7 +62,7 @@ pub struct DebugContents;
 pub struct PpuContents;
 
 impl Window {
-    pub fn controls(kind: AuxKind, screen: wakui::control::ControlScreen) -> Self {
+    pub fn controls(kind: AuxKind, screen: crate::control::ControlScreen) -> Self {
         Self {
             id: WindowId::Auxiliary(kind),
             title: screen.title.clone(),
@@ -136,7 +136,7 @@ pub trait WindowVisitor {
     fn begin_widget(&mut self, _widget: &Widget) {}
     fn end_widget(&mut self, _widget: &Widget) {}
     fn visit_main(&mut self, _contents: &MainContents) {}
-    fn visit_controls(&mut self, _screen: &wakui::control::ControlScreen) {}
+    fn visit_controls(&mut self, _screen: &crate::control::ControlScreen) {}
     fn visit_pending_controls(&mut self) {}
     fn visit_debug(&mut self, _contents: &DebugContents) {}
     fn visit_ppu(&mut self, _contents: &PpuContents) {}

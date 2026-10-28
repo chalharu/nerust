@@ -5,10 +5,10 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::osd::ModalPresentation;
 use wakui::loop_driver::{
     LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop,
 };
+use wakui::osd::ModalPresentation;
 use wakui::viewport::ViewportRegion;
 
 use super::State;

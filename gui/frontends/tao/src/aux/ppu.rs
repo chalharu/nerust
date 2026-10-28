@@ -16,7 +16,7 @@ use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
-use nerust_frontend_host::debugger::{PpuChrome, ScaledPicture};
+use wakui::debugger::{PpuChrome, ScaledPicture};
 
 /// Poison-safe snapshot read: recovers the last snapshot after a panic.
 fn snapshot_read(
@@ -305,7 +305,7 @@ pub(crate) struct PpuWindowHandle {
 
 impl PpuWindowHandle {
     pub(crate) fn new(
-        window: nerust_frontend_host::window::Window,
+        window: wakui::window::Window,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {

@@ -44,11 +44,11 @@ impl crate::ports::WindowOpener for FakeOpener {
 
     fn create_aux(
         &self,
-        window: nerust_frontend_host::window::Window,
+        window: wakui::window::Window,
         _params: crate::ports::AuxOpenParams,
     ) -> Option<Box<dyn crate::aux::registry::AuxController>> {
         use crate::aux::focus::AuxKind;
-        let nerust_frontend_host::window::WindowId::Auxiliary(kind) = window.id else {
+        let wakui::window::WindowId::Auxiliary(kind) = window.id else {
             return None;
         };
         let call = match kind {
@@ -89,7 +89,7 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug),
+                    wakui::window::Window::auxiliary(AuxKind::Debug),
                     AuxOpenParams::Debug { position: None }
                 )
                 .is_none()
@@ -127,7 +127,7 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Ppu),
+                    wakui::window::Window::auxiliary(AuxKind::Ppu),
                     AuxOpenParams::Ppu { position: None }
                 )
                 .is_none()

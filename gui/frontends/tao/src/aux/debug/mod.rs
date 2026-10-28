@@ -31,7 +31,7 @@ pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
 /// Right state column width.
 const STATE_COLUMN_WIDTH: f32 = 340.0;
 
-pub(crate) use nerust_frontend_host::debugger::DebuggerEvent as DebugMessage;
+pub(crate) use wakui::debugger::DebuggerEvent as DebugMessage;
 
 /// Gesture queue: iced update/keyboard push here, the host drain consumes.
 pub(crate) type DebugQueue = Rc<RefCell<Vec<DebugMessage>>>;
@@ -251,7 +251,7 @@ fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage>
 
 impl DebugWindowHandle {
     pub(crate) fn new(
-        window: nerust_frontend_host::window::Window,
+        window: wakui::window::Window,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {

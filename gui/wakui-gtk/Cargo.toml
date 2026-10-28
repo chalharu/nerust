@@ -1,15 +1,15 @@
 [package]
 authors.workspace = true
-description = "Toolkit-independent frontend event and lifecycle host"
+description = "wakui platform backend for gtk4: retained control handlers and input mapping"
 edition.workspace = true
 license.workspace = true
-name = "nerust_frontend_host"
+name = "wakui-gtk"
 rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+gdk.workspace = true
+gio.workspace = true
+gtk.workspace = true
 log.workspace = true
 wakui.workspace = true
-
-[dev-dependencies]
-nerust_nes_factory.workspace = true

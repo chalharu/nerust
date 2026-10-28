@@ -1,9 +1,9 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
+use crate::session::{SessionError, SessionEvent, SessionOutcome};
 use crate::{
     commands::MenuCommand,
     focus::{AuxKind, FocusEvent},
-    session::{SessionError, SessionEvent, SessionOutcome},
 };
 
 #[derive(Debug, Clone, Copy)]

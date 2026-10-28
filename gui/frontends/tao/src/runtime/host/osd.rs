@@ -2,9 +2,9 @@
 
 use std::time::Instant;
 
-use nerust_frontend_host::aux::{AuxId, OpenRequest};
-use nerust_frontend_host::osd::{ModalPresentation, ModalPresenter};
 use tao::event::WindowEvent;
+use wakui::aux::{AuxId, OpenRequest};
+use wakui::osd::{ModalPresentation, ModalPresenter};
 
 use super::HostState;
 use super::window::WakeNeed;
@@ -88,10 +88,7 @@ impl HostState {
         // Read-only viewer: shared aux-focus drive (arrival only
         // cancels a pending pause, never resumes).
         if let WindowEvent::Focused(focused) = event {
-            self.on_focus_event(nerust_frontend_host::focus::FocusEvent::Aux(
-                AuxKind::History,
-                focused,
-            ));
+            self.on_focus_event(wakui::focus::FocusEvent::Aux(AuxKind::History, focused));
         }
         let domain = crate::aux::native::adapt_event(&event);
         let Some(outcome) = self.aux_on_event(AuxKind::History, domain) else {
@@ -148,7 +145,7 @@ impl HostState {
 mod tests {
     use super::*;
     use crate::runtime::host::TestHost;
-    use nerust_frontend_host::focus::FocusEvent;
+    use wakui::focus::FocusEvent;
 
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
@@ -190,7 +187,7 @@ mod tests {
 
     #[test]
     fn close_retires_owned_modal_receiver_queue() {
-        use nerust_frontend_host::osd::ModalAdvance;
+        use wakui::osd::ModalAdvance;
         use wakui::pause::PauseOwner;
         let mut host = TestHost::new().host;
         host.core.set_pause_owner(PauseOwner::Settings, true);

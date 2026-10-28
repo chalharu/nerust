@@ -486,3 +486,58 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
         ControlKind::Number { value: 100, .. }
     ));
 }
+
+#[test]
+fn page_and_tab_activation_marks_selection() {
+    let mut session = settings(true);
+    let pages: Vec<(wakui::control::PageId, ControlId)> = session
+        .screen()
+        .pages
+        .iter()
+        .map(|page| (page.id, page.select.id))
+        .collect();
+    assert!(pages.len() > 1);
+    for (page_id, select) in pages {
+        send(&mut session, select, ControlInput::Activate);
+        assert!(
+            session
+                .screen()
+                .pages
+                .iter()
+                .find(|page| page.id == page_id)
+                .unwrap()
+                .selected
+        );
+    }
+    let tabs: Vec<(wakui::control::TabId, ControlId)> = {
+        struct Tabs(Vec<(wakui::control::TabId, ControlId)>);
+        impl ControlVisitor for Tabs {
+            fn begin_tab(&mut self, tab: &wakui::control::Tab) {
+                self.0.push((tab.id, tab.select.id));
+            }
+        }
+        let mut visitor = Tabs(Vec::new());
+        session.screen().visit(&mut visitor);
+        visitor.0
+    };
+    for (tab_id, select) in tabs {
+        send(&mut session, select, ControlInput::Activate);
+        struct Probe {
+            target: wakui::control::TabId,
+            selected: bool,
+        }
+        impl ControlVisitor for Probe {
+            fn begin_tab(&mut self, tab: &wakui::control::Tab) {
+                if tab.id == self.target {
+                    self.selected = tab.selected;
+                }
+            }
+        }
+        let mut probe = Probe {
+            target: tab_id,
+            selected: false,
+        };
+        session.screen().visit(&mut probe);
+        assert!(probe.selected);
+    }
+}

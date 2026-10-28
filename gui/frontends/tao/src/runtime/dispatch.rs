@@ -279,7 +279,7 @@ mod tests {
         // Menu Quit returns the exit intent only: host teardown waits.
         assert_eq!(
             runtime.host.on_menu_command(
-                MenuCommand::Native(nerust_frontend_host::commands::NativeRole::Quit),
+                MenuCommand::Native(wakui::commands::NativeRole::Quit),
                 &opener
             ),
             HostAction::Exit

@@ -1,16 +1,16 @@
 //! Toolkit-independent session event delivery and composed pause ownership.
 //! The driver borrows existing host fields; it adds no native lifetime or widget.
 
-use nerust_frontend_host::commands::SessionCommand;
-pub use nerust_frontend_host::session::{
-    CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome, ShortcutGesture,
-};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionHandle, access::SettingsResult, commands::SessionCommandOutcome,
 };
 use nerust_settings_core::model::input::ShortcutAction;
+use wakui::commands::SessionCommand;
 use wakui::pause::{PauseOwner, PausePolicy};
+pub use wakui::session::{
+    CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome, ShortcutGesture,
+};
 
 fn convert_error(error: nerust_gui_shell::session::SessionError) -> SessionError {
     SessionError(error.to_string())
@@ -184,94 +184,84 @@ macro_rules! impl_session_controls {
     ($host:ty) => {
         impl nerust_gui_shell::session::access::PauseControl for $host {
             fn pause(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::Pause,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::Pause,
+                ));
             }
             fn resume(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::Resume,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::Resume,
+                ));
             }
             fn toggle_pause(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::TogglePause,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::TogglePause,
+                ));
             }
         }
         impl nerust_gui_shell::session::access::SlotIo for $host {
             fn save_active_slot(&mut self) -> bool {
-                self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                    nerust_frontend_host::commands::SessionCommand::SaveActiveSlotOrNew,
+                self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::SaveActiveSlotOrNew,
                 ))
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn load_active_slot(&mut self) -> bool {
-                self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                    nerust_frontend_host::commands::SessionCommand::LoadActiveSlot,
+                self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::LoadActiveSlot,
                 ))
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn load_slot(&mut self, id: u64) -> bool {
-                self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                    nerust_frontend_host::commands::SessionCommand::LoadSlot(id),
+                self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::LoadSlot(id),
                 ))
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn save_slot(&mut self, id: u64) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::SaveSlot(id),
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::SaveSlot(id),
+                ));
             }
             fn delete_slot(&mut self, id: u64) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::DeleteSlot(id),
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::DeleteSlot(id),
+                ));
             }
         }
         impl nerust_gui_shell::session::access::SlotNav for $host {
             fn select_next_slot(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::SelectNextSlot,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::SelectNextSlot,
+                ));
             }
             fn select_previous_slot(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::SelectPreviousSlot,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::SelectPreviousSlot,
+                ));
             }
             fn select_slot(&mut self, id: u64) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::SelectActiveSlot(id),
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::SelectActiveSlot(id),
+                ));
             }
             fn create_slot(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::CreateSlot,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::CreateSlot,
+                ));
             }
         }
         impl nerust_gui_shell::session::access::ResetControl for $host {
             fn reset(&mut self) {
-                let _ =
-                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
-                        nerust_frontend_host::commands::SessionCommand::Reset,
-                    ));
+                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
+                    wakui::commands::SessionCommand::Reset,
+                ));
             }
         }
     };

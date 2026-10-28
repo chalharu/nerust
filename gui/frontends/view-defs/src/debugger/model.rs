@@ -380,12 +380,12 @@ impl DebuggerModel {
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
-    pub fn debugger_chrome(&self) -> nerust_frontend_host::debugger::DebuggerChrome {
+    pub fn debugger_chrome(&self) -> wakui::debugger::DebuggerChrome {
         super::debugger_chrome(self.language)
     }
 
     /// Pre-localized PPU chrome for the viewer opened from this model.
-    pub fn ppu_chrome(&self) -> nerust_frontend_host::debugger::PpuChrome {
+    pub fn ppu_chrome(&self) -> wakui::debugger::PpuChrome {
         super::ppu_chrome(self.language)
     }
 
@@ -413,7 +413,7 @@ impl DebuggerModel {
     }
 
     /// Formatted debugger rows without exposing row types or formatters.
-    pub fn debugger_rows(&self) -> nerust_frontend_host::debugger::DebuggerRows {
+    pub fn debugger_rows(&self) -> wakui::debugger::DebuggerRows {
         let coreless = self.spaces.is_empty();
         let mut rows = {
             let status_text = self.display.status.render(self.language);
@@ -433,7 +433,7 @@ impl DebuggerModel {
     }
 
     /// 2x-scaled PPU pictures without exposing the scaler.
-    pub fn ppu_pictures(&self) -> Vec<nerust_frontend_host::debugger::ScaledPicture> {
+    pub fn ppu_pictures(&self) -> Vec<wakui::debugger::ScaledPicture> {
         super::view::scaled_from_display(&self.display)
     }
 

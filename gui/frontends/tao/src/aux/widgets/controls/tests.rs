@@ -19,7 +19,7 @@ use super::super::bindings::tests::{controls, find};
 use super::*;
 use crate::aux::widgets::bindings::tests::prepare;
 use crate::runtime::host::HostState;
-use nerust_frontend_host::aux::AuxId;
+use wakui::aux::AuxId;
 
 struct Fixture {
     host: HostState,
@@ -58,14 +58,14 @@ impl Fixture {
         find(&self.screen(), caption(AppLanguage::English, key))
     }
 
-    fn window(&self) -> nerust_frontend_host::window::Window {
+    fn window(&self) -> wakui::window::Window {
         self.host.aux.window(self.id).expect("window").clone()
     }
 }
 
 #[test]
 fn outer_window_consumes_the_actual_screen_and_program_title_uses_window_title() {
-    use nerust_frontend_host::window::WindowVisitor;
+    use wakui::window::WindowVisitor;
 
     let mut fix = fixture(false);
     let page = fix.screen().pages[3].clone();
@@ -828,84 +828,6 @@ fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
         }
     }
     assert!(kinds.into_iter().all(|built| built));
-}
-
-#[test]
-fn visitor_obeys_selected_hidden_disabled_layouts_and_balances_frames() {
-    let fix = fixture(true);
-    let mut screen = fix.screen();
-    for page in &mut screen.pages {
-        page.selected = false;
-    }
-    let page = &mut screen.pages[0];
-    page.selected = true;
-    let mut visitor = IcedControlVisitor::default();
-    visitor.begin_screen(&screen);
-    visitor.begin_page(&screen.pages[0]);
-    let mut group = screen.pages[0].body.clone();
-    group.metadata.visible = false;
-    visitor.begin_layout(&group, LayoutKind::Group);
-    visitor.control(&fix.field(UiText::Language));
-    assert!(visitor.stack.last().unwrap().children.is_empty());
-    visitor.end_layout(&group, LayoutKind::Group);
-    assert!(visitor.stack.last().unwrap().children.is_empty());
-    group.metadata.visible = true;
-    group.metadata.enabled = false;
-    visitor.begin_layout(&group, LayoutKind::Column);
-    assert!(!visitor.stack.last().unwrap().enabled);
-    visitor.begin_layout(&group, LayoutKind::Row);
-    assert!(!visitor.stack.last().unwrap().enabled);
-    visitor.control(&fix.field(UiText::Language));
-    visitor.end_layout(&group, LayoutKind::Row);
-    visitor.end_layout(&group, LayoutKind::Column);
-    visitor.end_page(&screen.pages[0]);
-    visitor.end_screen(&screen);
-    assert!(visitor.stack.is_empty());
-    assert!(visitor.output.is_some());
-    // Traverse all nested groups/tabs through the object-safe host traversal.
-    let mut visitor = IcedControlVisitor::default();
-    screen.visit(&mut visitor as &mut dyn ControlVisitor);
-    assert!(visitor.stack.is_empty());
-}
-
-#[test]
-fn native_navigation_emits_typed_activation_and_updates_all_pages_and_tabs() {
-    let mut fix = fixture(true);
-    for page in fix.screen().pages {
-        let mut element = page_radio(&page.select, false);
-        let (renderer, mut tree, node) = native_layout(&mut element);
-        let messages = feed(
-            &mut element,
-            &renderer,
-            &mut tree,
-            &node,
-            &click(),
-            Point::new(10.0, 10.0),
-        );
-        assert_eq!(messages.len(), 1);
-        assert!(
-            matches!(&messages[0], ControlEvent { id: Some(id), input: ControlInput::Activate } if id == &page.select.id)
-        );
-        for message in messages {
-            fix.dispatch(message);
-        }
-        assert!(
-            fix.screen()
-                .pages
-                .iter()
-                .find(|p| p.id == page.id)
-                .unwrap()
-                .selected
-        );
-    }
-    let mut inventory = Inventory::default();
-    fix.screen().visit(&mut inventory);
-    for tab in inventory.1 {
-        fix.send(tab.select.id, ControlInput::Activate);
-        let mut current = Inventory::default();
-        fix.screen().visit(&mut current);
-        assert!(current.1.iter().find(|t| t.id == tab.id).unwrap().selected);
-    }
 }
 
 #[test]

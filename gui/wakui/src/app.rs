@@ -7,25 +7,27 @@
 
 use std::{path::Path, time::Instant};
 
-use wakui::{
+use crate::{
     control::{ControlEffect, ControlEvent, ControlScreen},
     viewport::ViewportRegion,
 };
 
 use crate::{
     aux::AuxRegistryPort,
+    focus::{AuxKind, FocusEffect, FocusEvent},
+    mailbox::WindowMailbox,
+    menu::{MenuCapabilities, Menubar},
+    osd::{ModalAdvance, ModalToken},
+    viewport::{ViewportImage, ViewportPresent},
+    window::{Window, WindowChromeSync, WindowEffects},
+};
+use crate::{
     debugger::{
         DebugHandle, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
         DebuggerLiveEffects, DebuggerScope, PpuChrome, ScaledPicture,
     },
     event::EventHandler,
-    focus::{AuxKind, FocusEffect, FocusEvent},
-    menu::{MenuCapabilities, Menubar},
-    osd::{ModalAdvance, ModalToken},
     session::{SessionError, SessionEvent, SessionOutcome},
-    viewport::{ViewportImage, ViewportPresent},
-    widget_session::WindowMailbox,
-    window::{Window, WindowChromeSync, WindowEffects},
 };
 
 /// Opaque close outcome: the native handle leaves as type-erased storage
@@ -76,8 +78,8 @@ pub trait FrontendApp: EventHandler {
     fn create_slot(&mut self);
     fn select_next_slot(&mut self);
     fn select_previous_slot(&mut self);
-    fn set_pause_owner(&mut self, owner: wakui::pause::PauseOwner, active: bool);
-    fn owns_pause(&self, owner: wakui::pause::PauseOwner) -> bool;
+    fn set_pause_owner(&mut self, owner: crate::pause::PauseOwner, active: bool);
+    fn owns_pause(&self, owner: crate::pause::PauseOwner) -> bool;
     fn pause_held(&self) -> bool;
     fn reconcile_pause(&mut self);
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError>;
@@ -132,8 +134,8 @@ pub trait FrontendApp: EventHandler {
     fn widget_submit_picker(
         &mut self,
         id: crate::aux::AuxId,
-        target: wakui::control::ControlId,
-        request: wakui::control::Id,
+        target: crate::control::ControlId,
+        request: crate::control::Id,
         payload: Option<std::path::PathBuf>,
     );
     fn widget_refresh(&mut self, id: crate::aux::AuxId);
@@ -165,7 +167,7 @@ pub trait FrontendApp: EventHandler {
     ) -> DebuggerEffects;
     fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope, need_images: bool);
     fn debug_open_refresh(&mut self, handle: DebugHandle, need_images: bool);
-    fn debug_poll(&mut self, handle: DebugHandle, ppu_open: bool) -> wakui::loop_driver::WakeNeed;
+    fn debug_poll(&mut self, handle: DebugHandle, ppu_open: bool) -> crate::loop_driver::WakeNeed;
     fn debug_poll_live(
         &mut self,
         handle: DebugHandle,

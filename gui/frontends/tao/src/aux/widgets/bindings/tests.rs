@@ -3,7 +3,7 @@ use crate::{
     aux::window::WindowProgram,
     runtime::host::{HostState, TestHost},
 };
-use nerust_frontend_host::aux::{AuxId, OpenRequest};
+use wakui::aux::{AuxId, OpenRequest};
 use wakui::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
 mod history;
@@ -20,10 +20,7 @@ pub(crate) fn screen_of(host: &HostState, id: AuxId) -> ControlScreen {
     host.core.widget_screen(id).expect("widget screen")
 }
 
-pub(crate) fn mailbox_of(
-    host: &HostState,
-    id: AuxId,
-) -> nerust_frontend_host::widget_session::WindowMailbox {
+pub(crate) fn mailbox_of(host: &HostState, id: AuxId) -> wakui::mailbox::WindowMailbox {
     host.core.widget_mailbox(id).expect("widget mailbox")
 }
 
@@ -82,14 +79,14 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
     );
     let after = screen_of(&host, id);
     let (binding, shared_screen, _queue) = ControlsBinding::new(after.clone(), AuxKind::Settings);
-    assert!(binding.initial.borrow().is_some());
+    assert!(binding.boot_pending());
     let window = host.aux.window(id).expect("reserved window").clone();
     let program = WindowProgram {
         window,
         program: binding,
     };
     let (mut state, _) = program.boot();
-    assert!(program.program.initial.borrow().is_none());
+    assert!(!program.program.boot_pending());
     assert!(Rc::ptr_eq(&shared_screen, &state.screen));
     assert_eq!(
         state
@@ -128,11 +125,11 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
     let updated = screen_of(&host, id);
     let binding = ControlsBinding::new(updated.clone(), AuxKind::Settings);
     let (state, _) = binding.0.boot();
-    assert!(binding.0.initial.borrow().is_none());
+    assert!(!binding.0.boot_pending());
     assert_eq!(*state.screen.borrow(), updated);
     assert!(matches!(
         host.aux.window(id).expect("window").contents.contents,
-        nerust_frontend_host::window::WidgetContents::Controls(_)
+        wakui::window::WidgetContents::Controls(_)
     ));
 }
 

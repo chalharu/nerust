@@ -5,12 +5,12 @@ use crate::{
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
     session::SessionEvent,
 };
-use nerust_frontend_host::debug_schedule::DebugSchedule;
 use nerust_gui_shell::{
     debug::{DebugAction, DebugDrainInput, LiveImagesFlight},
     session::{SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
+use wakui::debug_schedule::DebugSchedule;
 use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
 

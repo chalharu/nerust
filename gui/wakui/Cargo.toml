@@ -8,6 +8,7 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+log.workspace = true
 raw-window-handle.workspace = true
 serde = { features = ["derive"], workspace = true }
 

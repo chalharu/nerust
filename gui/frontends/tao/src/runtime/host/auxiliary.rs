@@ -1,13 +1,13 @@
 //! Native auxiliary creation and settings effects. Policy lives view-side;
 //! native code routes handles, screens, and mailboxes through the app trait.
 use super::HostState;
-use nerust_frontend_host::{
+use wakui::{
     aux::{AuxId, OpenRequest},
     focus::AuxKind,
 };
 
-use nerust_frontend_host::window::WindowEffects;
 use wakui::control::ControlEffect;
+use wakui::window::WindowEffects;
 
 use crate::ports::{AuxOpenParams, WindowOpener};
 

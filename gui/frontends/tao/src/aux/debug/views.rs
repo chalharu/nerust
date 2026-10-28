@@ -2,7 +2,7 @@
 //! `capture_view` is the single place that locks the bridge.
 
 use iced_tiny_skia::Renderer;
-use nerust_frontend_host::debugger::{
+use wakui::debugger::{
     DebugSnapshot, DebuggerChrome, DebuggerRows, DisasmRow, DumpRow, RegRow, pin_marker,
 };
 
