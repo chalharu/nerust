@@ -189,7 +189,7 @@ fn run_gtk_guarded(boot: wakui::bootstrap::Boot, rom_path: Option<PathBuf>) -> i
     // No dialog here: the event loop died with the panic, and stderr
     // (already logged by the guard) is the UX. Match exhaustively.
     match nerust_crash_guard::run_guarded_with(
-        || nerust_gtk::run(boot, rom_path),
+        || wakui_gtk::run(boot, rom_path),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {
@@ -215,7 +215,7 @@ fn run_tao_guarded(boot: wakui::bootstrap::Boot, rom_path: Option<PathBuf>) -> i
     // Exhaustive: a future outcome must not silently pass through.
     // Rust panic convention: a crash never exits 0.
     match nerust_crash_guard::run_guarded_with(
-        || nerust_tao::run(boot, rom_path),
+        || wakui_tao::run(boot, rom_path),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {
