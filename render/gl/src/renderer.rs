@@ -766,6 +766,11 @@ impl nerust_render_traits::renderer::PipelineFactory for GlFactory {
     ) -> Result<Box<dyn nerust_render_traits::renderer::RenderPipeline>, RendererError> {
         Ok(Box::new(Self::build(config, display_handle)?))
     }
+
+    /// Swap-interval selection honors vsync at attach; a live toggle must rebuild.
+    fn supports_vsync(&self) -> bool {
+        true
+    }
 }
 
 /// Strip source row padding into a tight destination.
@@ -791,6 +796,12 @@ mod tests {
     use super::{FrameView, pack_rows_stripped};
     use crate::{osd_view::OsdView, surface_view::SurfaceView};
     use nerust_glwrap::bindings as gl;
+
+    #[test]
+    fn factory_honors_vsync_for_live_toggle_rebuilds() {
+        use nerust_render_traits::renderer::PipelineFactory;
+        assert!(super::GlFactory.supports_vsync());
+    }
 
     #[test]
     fn palette_gate_skips_identical_upload() {
