@@ -8,13 +8,14 @@
 //! metadata, entry editing, history lifecycle, and OSD headless behavior.
 use super::renderer::{NativeControl, NativeKind, NodeId};
 use super::*;
+use crate::testkit::TestAux;
 use crate::testkit::labels;
 use crate::window::{WindowExtend, tests as windows};
+use wakui::aux::AuxId;
 use wakui::control::*;
-use wakui::{aux::AuxId, focus::AuxKind};
 
 struct Harness {
-    window: crate::window::Window,
+    window: crate::window::Window<TestAux>,
     id: AuxId,
     program: WidgetDialog,
 }
@@ -22,8 +23,8 @@ struct Harness {
 impl Harness {
     fn settings() -> Option<Self> {
         let window = windows::bound_window()?;
-        let program = windows::program(&window, AuxKind::Settings);
-        let id = windows::route(&window, AuxKind::Settings).expect("settings route");
+        let program = windows::program(&window, TestAux::Settings);
+        let id = windows::route(&window, TestAux::Settings).expect("settings route");
         Some(Self {
             window,
             id,
@@ -33,8 +34,8 @@ impl Harness {
 
     fn history() -> Option<Self> {
         let window = windows::bound_window()?;
-        let program = windows::program(&window, AuxKind::History);
-        let id = windows::route(&window, AuxKind::History).expect("history route");
+        let program = windows::program(&window, TestAux::History);
+        let id = windows::route(&window, TestAux::History).expect("history route");
         Some(Self {
             window,
             id,
@@ -167,7 +168,7 @@ fn common_renderer_uses_supplied_screen() {
     // OK submits through the close path without destroying the dialog.
     h.action(h.id(labels::OK));
     assert!(h.screen().title.contains(&title[..title.len().min(8)]));
-    assert!(windows::route(&h.window, AuxKind::Settings).is_some());
+    assert!(windows::route(&h.window, TestAux::Settings).is_some());
 }
 
 #[test]
@@ -353,8 +354,8 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
         .unwrap()
         .id;
     h.action(close);
-    assert!(windows::route(&h.window, AuxKind::History).is_none());
-    let rebuilt = windows::program(&h.window, AuxKind::History);
+    assert!(windows::route(&h.window, TestAux::History).is_none());
+    let rebuilt = windows::program(&h.window, TestAux::History);
     assert_ne!(rebuilt.dialog, h.program.dialog);
     rebuilt.dialog.destroy();
 }

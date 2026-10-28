@@ -98,11 +98,17 @@ enum State {
     Settings(Box<SettingsController>),
     History(HistorySession),
     Ppu(PpuState),
+    Debug(Box<DebugWidget>),
 }
 
 struct PpuState {
     session: RefCell<crate::ppu::PpuSession>,
     language: AppLanguage,
+}
+
+struct DebugWidget {
+    handle: wakui::debugger::DebugHandle,
+    session: RefCell<crate::debugger::DebuggerScreenSession>,
 }
 
 /// Bound history instance. Owns filter state and mailbox effects;
@@ -204,6 +210,53 @@ impl WidgetSession {
         }
     }
 
+    /// Debugger widget: projects the cached bridge snapshot as controls.
+    /// Snapshots arrive via [`Self::refresh_debug`]; gestures map via
+    /// [`Self::debug_events`] and run through the host's debug driver.
+    pub fn debug(handle: wakui::debugger::DebugHandle) -> Self {
+        let mailbox = WindowMailbox::new(HistoryDomain {
+            // Flag-only domain like PPU: no submission, only invalidation.
+            clear: Arc::new(AtomicBool::new(false)),
+        });
+        Self {
+            state: State::Debug(Box::new(DebugWidget {
+                handle,
+                session: RefCell::new(crate::debugger::DebuggerScreenSession::new()),
+            })),
+            scene: RefCell::new(Default::default()),
+            mailbox,
+            picker: None,
+        }
+    }
+
+    pub fn debug_handle(&self) -> Option<wakui::debugger::DebugHandle> {
+        match &self.state {
+            State::Debug(widget) => Some(widget.handle),
+            _ => None,
+        }
+    }
+
+    /// Replace the cached debugger snapshot and invalidate when it changed
+    /// presentation. Always invalidates on first snapshot.
+    pub fn refresh_debug(&mut self, snapshot: Option<wakui::debugger::DebugSnapshot>) {
+        if let State::Debug(widget) = &mut self.state {
+            widget.session.borrow_mut().update(snapshot);
+            self.mailbox.invalidate();
+        }
+    }
+
+    /// Map a generic control event to debugger gestures. `None` for non-debug
+    /// sessions; the host runs the gestures through its debug driver.
+    pub fn debug_events(
+        &self,
+        event: &ControlEvent,
+    ) -> Option<Vec<wakui::debugger::DebuggerEvent>> {
+        match &self.state {
+            State::Debug(widget) => Some(widget.session.borrow().events(event)),
+            _ => None,
+        }
+    }
+
     pub fn mailbox(&self) -> WindowMailbox {
         self.mailbox.clone()
     }
@@ -213,6 +266,7 @@ impl WidgetSession {
         let mut screen = match &self.state {
             State::Settings(controller) => scene.settings(&controller.screen()).0,
             State::Ppu(state) => state.session.borrow_mut().screen(),
+            State::Debug(widget) => widget.session.borrow_mut().screen(),
             State::History(session) => scene.history(&HistoryModel::build(
                 &session.lines,
                 session.language,
@@ -225,8 +279,8 @@ impl WidgetSession {
         screen
     }
 
-    pub fn window(&self) -> Window {
-        Window::controls(self.kind(), self.screen())
+    pub fn window(&self, id: wakui::aux::AuxId) -> Window {
+        Window::controls(id, self.screen())
     }
 
     pub fn kind(&self) -> AuxKind {
@@ -234,6 +288,7 @@ impl WidgetSession {
             State::Settings(_) => AuxKind::Settings,
             State::History(_) => AuxKind::History,
             State::Ppu(_) => AuxKind::Ppu,
+            State::Debug(_) => AuxKind::Debug,
         }
     }
 
@@ -328,6 +383,12 @@ impl WidgetSession {
                 if changed {
                     mailbox.invalidate();
                 }
+                Vec::new()
+            }
+            State::Debug(_) => {
+                // Debugger gestures run host-side through the debug driver
+                // (needs the bridge handle); see `debug_events`. Reaching
+                // here means the host bypassed that path: ignore.
                 Vec::new()
             }
         }

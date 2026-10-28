@@ -14,17 +14,18 @@ use super::super::bindings::tests::{controls, find};
 use super::*;
 use crate::aux::widgets::bindings::tests::prepare;
 use crate::runtime::host::HostState;
+use crate::testkit::TestAux;
 use wakui::aux::AuxId;
 
 struct Fixture {
-    host: HostState,
+    host: HostState<TestAux>,
     id: AuxId,
 }
 
 fn fixture() -> Fixture {
     let host = crate::runtime::host::TestHost::new().host;
     let mut host = host;
-    let id = prepare(&mut host, crate::aux::focus::AuxKind::Settings);
+    let id = prepare(&mut host, crate::testkit::TestAux::Settings);
     Fixture { host, id }
 }
 

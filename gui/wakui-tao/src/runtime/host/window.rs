@@ -190,7 +190,7 @@ impl WindowCluster {
 }
 
 /// Native Tao ports for the shared end-of-burst driver.
-impl LoopHost for HostState {
+impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
     type Frame = ();
 
     fn before_turn(&mut self) {
@@ -205,7 +205,8 @@ impl LoopHost for HostState {
     }
 
     fn pump_debug(&mut self) -> WakeNeed {
-        self.tick_debug_pump()
+        self.pump_debug();
+        WakeNeed::default()
     }
 
     fn pump_osd(&mut self, _ctx: &Self::Frame) -> WakeNeed {
@@ -234,7 +235,7 @@ impl LoopHost for HostState {
             loaded,
             paused,
             main_active: self.core.main_active(),
-            live_follow: self.live_follow_active(),
+            live_follow: self.debug_widget_live_follow(),
         }
     }
 
@@ -243,7 +244,7 @@ impl LoopHost for HostState {
     }
 }
 
-impl HostState {
+impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
         if self.windows.is_some() || !self.core.window_usable() {
             return;

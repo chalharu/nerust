@@ -10,12 +10,12 @@ pub use wakui::{
 
 use crate::{application::ApplicationHost, focus::AuxKind, session::SessionEffect};
 
-impl EventHandler for ApplicationHost {
+impl EventHandler<AuxKind> for ApplicationHost {
     fn handle_event(
         &mut self,
         event: EventCommand,
         settings_open: bool,
-    ) -> Result<EventOutcome, SessionError> {
+    ) -> Result<EventOutcome<AuxKind>, SessionError> {
         let guarded = settings_open || self.owns_pause(PauseOwner::Settings);
         let blocked = match event {
             EventCommand::Menu(command) => command != MenuCommand::Native(NativeRole::Quit),

@@ -17,7 +17,7 @@ use wakui::{
 };
 use wakui::{
     aux::{AuxId, AuxRegistryPort, OpenRequest},
-    focus::{AuxKind, FocusEffect, FocusEvent},
+    focus::{FocusEffect, FocusEvent},
     mailbox::WindowMailbox,
     menu::{DialogTitles, MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalPresentation, ModalToken, OsdTurn},
@@ -35,6 +35,7 @@ use wakui::{
 use super::ApplicationHost;
 use crate::{
     debugger::{DebugBridge, DebuggerDriver},
+    focus::AuxKind,
     widget_session::WidgetSession,
 };
 
@@ -45,7 +46,6 @@ pub(crate) struct DebugSession {
     pub(crate) bridge: DebugBridge,
     pub(crate) driver: DebuggerDriver,
     pub(crate) refs: usize,
-    pub(crate) ppu: std::cell::RefCell<crate::ppu::PpuSession>,
 }
 
 impl ApplicationHost {
@@ -70,7 +70,7 @@ impl ApplicationHost {
         self.debug_sessions.get(&handle.0)
     }
 
-    fn open_debug_inner(&mut self) -> DebugHandle {
+    pub(crate) fn open_debug_inner(&mut self) -> DebugHandle {
         // Single bridge shared by every native viewer; count opens so the
         // last close drops the session.
         if let Some(id) = self.debug_sessions.iter_mut().next().map(|(id, session)| {
@@ -92,21 +92,15 @@ impl ApplicationHost {
                 bridge,
                 driver: DebuggerDriver::new(),
                 refs: 1,
-                ppu: std::cell::RefCell::new(crate::ppu::PpuSession::new(
-                    crate::ppu::ppu_chrome(self.settings_snapshot().shared.general.language),
-                    Vec::new(),
-                    None,
-                    0,
-                )),
             },
         );
         let handle = DebugHandle(id);
         // Initial Pause+Refresh so an empty viewer never shows stale chrome.
-        self.debug_open_refresh_inner(handle, false);
+        self.debug_open_refresh_inner(handle);
         handle
     }
 
-    fn close_debug_inner(&mut self, handle: DebugHandle) {
+    pub(crate) fn close_debug_inner(&mut self, handle: DebugHandle) {
         let drop_now = self
             .debug_sessions
             .get_mut(&handle.0)
@@ -132,7 +126,7 @@ impl ApplicationHost {
         }
     }
 
-    fn debug_snapshot_inner(&self, handle: DebugHandle) -> Option<DebugSnapshot> {
+    pub(crate) fn debug_snapshot_inner(&self, handle: DebugHandle) -> Option<DebugSnapshot> {
         let session = self.debug_session(handle)?;
         let chrome = self.debugger_chrome();
         let rows = session.bridge.debugger_rows();
@@ -169,8 +163,8 @@ impl ApplicationHost {
         handle: DebugHandle,
         inputs: Vec<DebuggerEvent>,
         event: DebuggerEvent,
-        need_images: bool,
     ) -> DebuggerEffects {
+        let need_images = self.images_needed();
         if self.debug_reset_if_replaced_inner(handle) {
             return DebuggerEffects {
                 epoch_reset: true,
@@ -185,12 +179,8 @@ impl ApplicationHost {
             .dispatch(&self.session, &session.bridge, inputs, event, need_images)
     }
 
-    fn debug_refresh_inner(
-        &mut self,
-        handle: DebugHandle,
-        scope: DebuggerScope,
-        need_images: bool,
-    ) {
+    fn debug_refresh_inner(&mut self, handle: DebugHandle, scope: DebuggerScope) {
+        let need_images = self.images_needed();
         if self.debug_reset_if_replaced_inner(handle) {
             return;
         }
@@ -202,7 +192,8 @@ impl ApplicationHost {
             .refresh(&self.session, &session.bridge, scope, need_images);
     }
 
-    fn debug_open_refresh_inner(&mut self, handle: DebugHandle, need_images: bool) {
+    fn debug_open_refresh_inner(&mut self, handle: DebugHandle) {
+        let need_images = self.images_needed();
         if self.debug_reset_if_replaced_inner(handle) {
             return;
         }
@@ -214,7 +205,8 @@ impl ApplicationHost {
             .open_refresh(&self.session, &session.bridge, need_images);
     }
 
-    fn debug_poll_inner(&mut self, handle: DebugHandle, ppu_open: bool) -> WakeNeed {
+    fn debug_poll_inner(&mut self, handle: DebugHandle) -> WakeNeed {
+        let ppu_open = self.images_needed();
         if !self.debug_sessions.contains_key(&handle.0) {
             return WakeNeed::default();
         }
@@ -233,12 +225,8 @@ impl ApplicationHost {
         self.debug_wake(true, ppu_open, pending)
     }
 
-    fn debug_poll_live_inner(
-        &mut self,
-        handle: DebugHandle,
-        visible: bool,
-        need_images: bool,
-    ) -> DebuggerLiveEffects {
+    fn debug_poll_live_inner(&mut self, handle: DebugHandle, visible: bool) -> DebuggerLiveEffects {
+        let need_images = self.images_needed();
         let Some(session) = self.debug_sessions.get_mut(&handle.0) else {
             return DebuggerLiveEffects::default();
         };
@@ -247,7 +235,8 @@ impl ApplicationHost {
             .live_tick(&self.session, &session.bridge, visible, need_images)
     }
 
-    fn debug_live_tick_inner(&mut self, handle: DebugHandle, ppu_open: bool) {
+    fn debug_live_tick_inner(&mut self, handle: DebugHandle) {
+        let ppu_open = self.images_needed();
         let Some(entry) = self.debug_sessions.get(&handle.0) else {
             return;
         };
@@ -271,6 +260,13 @@ impl ApplicationHost {
     /// Widget session owned by id, if a prepared window holds one.
     fn widget_session(&self, id: AuxId) -> Option<&WidgetSession> {
         self.widget_sessions.get(&id)
+    }
+
+    /// Whether any prepared widget currently needs debug images (PPU open).
+    fn images_needed(&self) -> bool {
+        self.widget_sessions
+            .values()
+            .any(|session| session.kind() == crate::focus::AuxKind::Ppu)
     }
 
     fn widget_session_mut(&mut self, id: AuxId) -> Option<&mut WidgetSession> {
@@ -360,7 +356,7 @@ impl ApplicationHost {
     }
 }
 
-impl FrontendApp for ApplicationHost {
+impl FrontendApp<AuxKind> for ApplicationHost {
     fn load_rom(&mut self, path: &Path) -> Result<(), String> {
         let result = self.load_rom_inner(path);
         if result.is_ok() {
@@ -583,8 +579,8 @@ impl FrontendApp for ApplicationHost {
         ApplicationHost::note_main_departure(self);
     }
 
-    fn drive_aux_focus(&mut self, kind: AuxKind, focused: bool) -> bool {
-        ApplicationHost::drive_aux_focus(self, kind, focused)
+    fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
+        ApplicationHost::drive_aux_focus(self, id, focused)
     }
 
     fn release_focus_pause(&mut self) {
@@ -593,13 +589,13 @@ impl FrontendApp for ApplicationHost {
 
     fn reserve_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<AuxKind>,
         kind: AuxKind,
     ) -> Result<Option<OpenRequest>, String> {
         if self.close_exited() {
             return Ok(None);
         }
-        let request = registry.request_open(kind);
+        let request = registry.request_open(kind, kind.title());
         if kind == AuxKind::Settings
             && let OpenRequest::Create(id) = request
         {
@@ -618,7 +614,7 @@ impl FrontendApp for ApplicationHost {
         Ok(Some(request))
     }
 
-    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort, id: AuxId) -> bool {
+    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort<AuxKind>, id: AuxId) -> bool {
         let kind = registry.kind_of_id(id);
         if !registry.cancel_open(id) {
             return false;
@@ -631,7 +627,7 @@ impl FrontendApp for ApplicationHost {
 
     fn prepare_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<AuxKind>,
         id: AuxId,
     ) -> Result<bool, String> {
         use crate::widget_session::WidgetSession as ViewSession;
@@ -663,10 +659,25 @@ impl FrontendApp for ApplicationHost {
                     .into();
                 ViewSession::history(lines, language)
             }
+            Some(AuxKind::Ppu) => {
+                let language = self.settings_snapshot().shared.general.language;
+                let chrome = crate::ppu::ppu_chrome(language);
+                let (pictures, panels, generation) = self.ppu_contents();
+                ViewSession::ppu(chrome, pictures, panels, generation, language)
+            }
+            Some(AuxKind::Debug) => {
+                let handle = self.open_debug_inner();
+                // Initial Pause+Refresh so an empty viewer never shows stale chrome.
+                self.debug_open_refresh_inner(handle);
+                let snapshot = self.debug_snapshot_inner(handle);
+                let mut session = ViewSession::debug(handle);
+                session.refresh_debug(snapshot);
+                session
+            }
             _ => return Ok(false),
         };
         if let Some(slot) = registry.window_mut(id) {
-            *slot = session.window();
+            *slot = session.window(id);
         }
         let mailbox = session.mailbox();
         self.widget_sessions.insert(id, session);
@@ -682,7 +693,7 @@ impl FrontendApp for ApplicationHost {
     }
 
     fn widget_window(&self, id: AuxId) -> Option<Window> {
-        self.widget_session(id).map(|session| session.window())
+        self.widget_session(id).map(|session| session.window(id))
     }
 
     fn widget_mailbox(&self, id: AuxId) -> Option<WindowMailbox> {
@@ -690,6 +701,44 @@ impl FrontendApp for ApplicationHost {
     }
 
     fn widget_dispatch(&mut self, id: AuxId, event: ControlEvent) -> Vec<ControlEffect> {
+        // Debugger gestures need the bridge handle: map first, then run the
+        // existing debug driver per gesture (PPU opens route through it too).
+        if self
+            .widget_session(id)
+            .is_some_and(|session| session.kind() == AuxKind::Debug)
+        {
+            let gestures = self
+                .widget_session(id)
+                .and_then(|session| session.debug_events(&event))
+                .unwrap_or_default();
+            // Screen gating mirrors WidgetSession::dispatch (accepts check).
+            let accepted = self
+                .widget_session(id)
+                .and_then(|session| {
+                    let screen = session.screen();
+                    let target = event.id.or(screen.capture.target)?;
+                    screen
+                        .control(target)
+                        .is_some_and(|control| control.accepts(&event.input))
+                        .then_some(())
+                })
+                .is_some();
+            if accepted {
+                let handle = self
+                    .widget_session(id)
+                    .and_then(|session| session.debug_handle());
+                if let Some(handle) = handle {
+                    for gesture in gestures {
+                        let effects = self.debug_gesture(handle, vec![], gesture);
+                        if effects.open_ppu {
+                            self.request_open(AuxKind::Ppu);
+                        }
+                    }
+                    self.widget_refresh(id);
+                }
+            }
+            return Vec::new();
+        }
         self.widget_session_mut(id)
             .map(|session| session.dispatch(event))
             .unwrap_or_default()
@@ -708,19 +757,44 @@ impl FrontendApp for ApplicationHost {
     }
 
     fn widget_refresh(&mut self, id: AuxId) {
-        let language = self.settings_snapshot().shared.general.language;
-        let lines = self
-            .session
-            .notification_history_lines_cached(language)
-            .into();
-        if let Some(session) = self.widget_session_mut(id) {
-            session.refresh_history(lines, language);
+        let kind = self.widget_session(id).map(|session| session.kind());
+        match kind {
+            Some(AuxKind::History) => {
+                let language = self.settings_snapshot().shared.general.language;
+                let lines = self
+                    .session
+                    .notification_history_lines_cached(language)
+                    .into();
+                if let Some(session) = self.widget_session_mut(id) {
+                    session.refresh_history(lines, language);
+                }
+            }
+            Some(AuxKind::Ppu) => {
+                let language = self.settings_snapshot().shared.general.language;
+                let chrome = crate::ppu::ppu_chrome(language);
+                let (pictures, panels, generation) = self.ppu_contents();
+                if let Some(session) = self.widget_session_mut(id) {
+                    session.refresh_ppu(chrome, pictures, panels, generation, language);
+                }
+            }
+            Some(AuxKind::Debug) => {
+                let handle = self
+                    .widget_session(id)
+                    .and_then(|session| session.debug_handle());
+                if let Some(handle) = handle {
+                    let snapshot = self.debug_snapshot_inner(handle);
+                    if let Some(session) = self.widget_session_mut(id) {
+                        session.refresh_debug(snapshot);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
     fn close_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<AuxKind>,
         id: AuxId,
         close: bool,
     ) -> Option<WidgetCloseOutcome> {
@@ -737,7 +811,14 @@ impl FrontendApp for ApplicationHost {
             return None;
         }
         let native = if close {
+            let debug = self
+                .widget_sessions
+                .get(&id)
+                .and_then(|session| session.debug_handle());
             self.widget_sessions.remove(&id);
+            if let Some(handle) = debug {
+                self.close_debug_inner(handle);
+            }
             registry.remove_native(id)
         } else {
             None
@@ -781,69 +862,25 @@ impl FrontendApp for ApplicationHost {
         self.history_key.get().is_none()
     }
 
-    fn open_debug(&mut self) -> DebugHandle {
-        self.open_debug_inner()
-    }
-
-    fn close_debug(&mut self, handle: DebugHandle) {
-        self.close_debug_inner(handle);
+    fn settings_open(&self) -> bool {
+        self.widget_sessions
+            .values()
+            .any(|session| session.kind() == AuxKind::Settings)
     }
 
     fn close_debug_flights(&mut self) {
         ApplicationHost::close_debug_flights(self);
     }
 
-    fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot> {
-        self.debug_snapshot_inner(handle)
+    fn debug_widget(&self) -> Option<AuxId> {
+        self.widget_sessions
+            .iter()
+            .find_map(|(id, session)| (session.kind() == AuxKind::Debug).then_some(*id))
     }
 
-    fn debug_paused(&self, handle: DebugHandle) -> bool {
-        self.debug_session(handle)
-            .is_some_and(|session| session.bridge.debugger_rows().paused)
-    }
-
-    fn debug_generation(&self, handle: DebugHandle) -> u64 {
-        self.debug_session(handle)
-            .map(|session| session.bridge.images_generation())
-            .unwrap_or(0)
-    }
-
-    fn debug_aux_screen(&self, handle: DebugHandle) -> Option<ControlScreen> {
-        let session = self.debug_session(handle)?;
-        Some(session.ppu.borrow_mut().screen())
-    }
-
-    fn debug_aux_dispatch(&mut self, handle: DebugHandle, event: ControlEvent) -> bool {
-        let (screen, language) = {
-            let Some(session) = self.debug_session(handle) else {
-                return false;
-            };
-            let language = self.settings_snapshot().shared.general.language;
-            let screen = session.ppu.borrow_mut().screen();
-            (screen, language)
-        };
-        let Some(session) = self.debug_sessions.get(&handle.0) else {
-            return false;
-        };
-        session.ppu.borrow_mut().dispatch(&screen, &event, language)
-    }
-
-    fn debug_aux_refresh(&mut self, handle: DebugHandle) {
-        let language = self.settings_snapshot().shared.general.language;
-        let chrome = crate::ppu::ppu_chrome(language);
-        let Some(session) = self.debug_sessions.get(&handle.0) else {
-            return;
-        };
-        let pictures = session.bridge.scaled_pictures();
-        let panels = session
-            .bridge
-            .has_panels()
-            .then(|| session.bridge.formatted_panels());
-        let generation = session.bridge.images_generation();
-        session
-            .ppu
-            .borrow_mut()
-            .refresh(chrome, pictures, panels, generation);
+    fn debug_handle_for(&self, id: AuxId) -> Option<DebugHandle> {
+        self.widget_session(id)
+            .and_then(|session| session.debug_handle())
     }
 
     fn debug_gesture(
@@ -851,34 +888,28 @@ impl FrontendApp for ApplicationHost {
         handle: DebugHandle,
         inputs: Vec<DebuggerEvent>,
         event: DebuggerEvent,
-        need_images: bool,
     ) -> DebuggerEffects {
-        self.debug_gesture_inner(handle, inputs, event, need_images)
+        self.debug_gesture_inner(handle, inputs, event)
     }
 
-    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope, need_images: bool) {
-        self.debug_refresh_inner(handle, scope, need_images);
+    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope) {
+        self.debug_refresh_inner(handle, scope);
     }
 
-    fn debug_open_refresh(&mut self, handle: DebugHandle, need_images: bool) {
-        self.debug_open_refresh_inner(handle, need_images);
+    fn debug_open_refresh(&mut self, handle: DebugHandle) {
+        self.debug_open_refresh_inner(handle);
     }
 
-    fn debug_poll(&mut self, handle: DebugHandle, ppu_open: bool) -> WakeNeed {
-        self.debug_poll_inner(handle, ppu_open)
+    fn debug_poll(&mut self, handle: DebugHandle) -> WakeNeed {
+        self.debug_poll_inner(handle)
     }
 
-    fn debug_poll_live(
-        &mut self,
-        handle: DebugHandle,
-        visible: bool,
-        need_images: bool,
-    ) -> DebuggerLiveEffects {
-        self.debug_poll_live_inner(handle, visible, need_images)
+    fn debug_poll_live(&mut self, handle: DebugHandle, visible: bool) -> DebuggerLiveEffects {
+        self.debug_poll_live_inner(handle, visible)
     }
 
-    fn debug_live_tick(&mut self, handle: DebugHandle, ppu_open: bool) {
-        self.debug_live_tick_inner(handle, ppu_open);
+    fn debug_live_tick(&mut self, handle: DebugHandle) {
+        self.debug_live_tick_inner(handle);
     }
 
     fn debug_drain_pending(&self, handle: DebugHandle) -> bool {
@@ -890,48 +921,36 @@ impl FrontendApp for ApplicationHost {
         self.debug_reset_if_replaced_inner(handle)
     }
 
-    fn chrome_drain_due(&self, debug_open: bool) -> bool {
-        ApplicationHost::chrome_drain_due(self, debug_open)
+    fn chrome_drain_due(&self) -> bool {
+        ApplicationHost::chrome_drain_due(self, self.debug_widget().is_some())
     }
 
-    fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
-        ApplicationHost::debugger_chrome(self)
+    fn take_open_request(&mut self, kind: AuxKind) -> bool {
+        self.debug.schedule_mut().take_open_request(kind)
     }
 
-    fn debugger_window_title(&self) -> String {
-        ApplicationHost::debugger_window_title(self)
+    fn drain_open_requests(&mut self) -> Vec<AuxKind> {
+        [
+            AuxKind::Debug,
+            AuxKind::Ppu,
+            AuxKind::History,
+            AuxKind::Settings,
+        ]
+        .into_iter()
+        .filter(|kind| self.debug.schedule_mut().take_open_request(*kind))
+        .collect()
     }
 
-    fn take_debug_open_request(&mut self) -> bool {
-        self.debug.schedule_mut().take_debug_open_request()
+    fn request_open(&mut self, kind: AuxKind) {
+        self.debug.schedule_mut().request_open(kind);
     }
 
-    fn take_ppu_open_request(&mut self) -> bool {
-        self.debug.schedule_mut().take_ppu_open_request()
+    fn window_pos(&self, kind: AuxKind) -> Option<(i32, i32)> {
+        self.debug.schedule().window_pos(kind)
     }
 
-    fn request_debug_open(&mut self) {
-        self.debug.schedule_mut().request_debug_open();
-    }
-
-    fn request_ppu_open(&mut self) {
-        self.debug.schedule_mut().request_ppu_open();
-    }
-
-    fn debug_window_pos(&self) -> Option<(i32, i32)> {
-        self.debug.schedule().debug_window_pos()
-    }
-
-    fn ppu_window_pos(&self) -> Option<(i32, i32)> {
-        self.debug.schedule().ppu_window_pos()
-    }
-
-    fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
-        self.debug.schedule_mut().remember_debug_window_pos(x, y);
-    }
-
-    fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
-        self.debug.schedule_mut().remember_ppu_window_pos(x, y);
+    fn remember_window_pos(&mut self, kind: AuxKind, x: i32, y: i32) {
+        self.debug.schedule_mut().remember_window_pos(kind, x, y);
     }
 
     fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
