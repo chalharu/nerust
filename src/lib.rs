@@ -148,27 +148,36 @@ pub fn run() -> i32 {
     }
     #[cfg(not(clippy))]
     {
-        let Some(boot) = boot_frontend(ctx, supports_vsync) else {
+        let Some(boot) = boot_frontend(ctx, supports_vsync, options.rom_path) else {
             return 1;
         };
-        return run_frontend(boot, options.rom_path);
+        return run_frontend(boot);
     }
 }
 
 /// Composition-root boot: the only place that turns a [`FrontendContext`]
-/// into a frontend [`Boot`](wakui::bootstrap::Boot). Native
+/// into a frontend [`Application`](wakui::bootstrap::Application). Native
 /// frontends never name the context, session, or settings-path types.
+/// The launch document travels inside the bundle (see
+/// [`Application::builder`](wakui::bootstrap::ApplicationBuilder)), so every
+/// backend opens it the same way.
 #[cfg_attr(clippy, allow(dead_code))]
 fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
-) -> Option<wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>> {
+    initial_document: Option<PathBuf>,
+) -> Option<wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
-    match boot(ctx, backend_capabilities(true, supports_vsync), None) {
+    match boot(
+        ctx,
+        backend_capabilities(true, supports_vsync),
+        None,
+        initial_document,
+    ) {
         Ok(boot) => Some(boot),
         Err(detail) => {
             log::error!("failed to initialise frontend: {detail}");
-            // Boot died before any window existed: match the old tao
+            // The bundle died before any window existed: match the old tao
             // init-failure dialog copy (always English, stderr stays home).
             show_error_dialog("nerust", &detail);
             None
@@ -178,22 +187,24 @@ fn boot_frontend(
 
 /// Frontend dispatch: only the `run` entry point differs per frontend.
 /// Crash containment and boot failure dialogs are shared (see `run_guarded`).
+/// The launch document travels inside the bundle, so both arms are identical
+/// apart from the backend selected by feature.
 #[cfg(all(feature = "gtk", not(clippy)))]
 fn run_frontend(
-    boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
-    rom_path: Option<PathBuf>,
+    boot: wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>,
 ) -> i32 {
-    run_guarded(boot, rom_path, wakui_gtk::run)
+    run_guarded(boot, wakui_gtk::run)
 }
 
 /// Frontend dispatch: only the `run` entry point differs per frontend.
 /// Crash containment and boot failure dialogs are shared (see `run_guarded`).
+/// The launch document travels inside the bundle, so both arms are identical
+/// apart from the backend selected by feature.
 #[cfg(all(feature = "tao", not(feature = "gtk"), not(clippy)))]
 fn run_frontend(
-    boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
-    rom_path: Option<PathBuf>,
+    boot: wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>,
 ) -> i32 {
-    run_guarded(boot, rom_path, wakui_tao::run)
+    run_guarded(boot, wakui_tao::run)
 }
 
 /// Crash containment lives here, in the composition root: a crash must
@@ -201,18 +212,14 @@ fn run_frontend(
 #[cfg(all(any(feature = "gtk", feature = "tao"), not(clippy)))]
 #[allow(clippy::needless_pass_by_value)]
 fn run_guarded(
-    boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
-    rom_path: Option<PathBuf>,
-    runner: fn(
-        wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
-        Option<PathBuf>,
-    ) -> i32,
+    boot: wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>,
+    runner: fn(wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>) -> i32,
 ) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
     // Rust panic convention: a crash never exits 0.
     match nerust_crash_guard::run_guarded_with(
-        || runner(boot, rom_path),
+        || runner(boot),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {

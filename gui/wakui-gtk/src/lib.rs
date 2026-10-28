@@ -31,12 +31,7 @@ mod window;
 pub use backend::{GtkBackend, register};
 pub use message_dialog::show_message_dialog;
 
-use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
 
 use gtk::{
     gdk::prelude::SurfaceExt as _,
@@ -46,7 +41,7 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
-use wakui::bootstrap::Boot;
+use wakui::bootstrap::Application;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
@@ -58,10 +53,9 @@ pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
-    pub(crate) fn new(boot: Boot<K>) -> Self {
-        let Boot { app: host } = boot;
+    pub(crate) fn new(app: Application<K>) -> Self {
         Self {
-            host,
+            host: app.into_app(),
             renderer_reload_pending: false,
         }
     }
@@ -110,9 +104,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
 impl State<crate::testkit::TestAux> {
     /// Test-only construction over the headless [`testkit`] app.
     pub(crate) fn new_for_tests() -> Self {
-        Self::new(Boot {
-            app: Box::new(crate::testkit::FakeApp::new()),
-        })
+        Self::new(Application::new(Box::new(crate::testkit::FakeApp::new())))
     }
 }
 
@@ -161,38 +153,50 @@ fn ensure_window<K: Copy + Eq + std::hash::Hash + 'static>(
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root;
 /// see `nerust::run`.
-pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(
-    boot: Boot<K>,
-    _rom_path: Option<PathBuf>,
-) -> i32 {
-    run_inner(boot);
+///
+/// The launch document (if any) travels inside `app`: it was set by the
+/// composition root through [`Application::builder`], so `run` takes a single
+/// bundle and every backend honors it the same way.
+pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(app: Application<K>) -> i32 {
+    run_inner(app);
     0
 }
 
-fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(boot: Boot<K>) {
-    let app = gtk::Application::new(
+fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(mut app: Application<K>) {
+    // Drained once at startup: `activate` fires only when no `open` event
+    // carries files, so the launch document loads exactly once. The `open`
+    // handler drops it (OS-delivered files win there) to avoid double loads
+    // of the same CLI path forwarded by the toolkit.
+    let initial_document = Rc::new(RefCell::new(app.take_initial_document()));
+    let gtk_app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
     );
 
     let current_window = Rc::new(RefCell::new(None));
-    let state = Rc::new(RefCell::new(State::new(boot)));
+    let state = Rc::new(RefCell::new(State::new(app)));
     {
         let state = Rc::clone(&state);
         let current_window = current_window.clone();
-        let _ = app.connect_activate(move |app| {
+        let initial_document = Rc::clone(&initial_document);
+        let _ = gtk_app.connect_activate(move |app| {
             let window = ensure_window(app, &state, &current_window);
             window.window().present();
+            if let Some(path) = initial_document.borrow_mut().take() {
+                window.load_path(&path);
+            }
         });
     }
     {
         let state = Rc::clone(&state);
         let current_window = current_window.clone();
-        let _ = app.connect_open(move |app, files, _| {
+        let initial_document = Rc::clone(&initial_document);
+        let _ = gtk_app.connect_open(move |app, files, _| {
             let window = ensure_window(app, &state, &current_window);
             // Present first: a failure dialog raised by load_path must
             // stay above the main window.
             window.window().present();
+            let _ = initial_document.borrow_mut().take();
             if let Some(path) = files.iter().find_map(|file| file.path()) {
                 // One path for every open: failure dialog and action
                 // sync live in `Window::load_path`.
@@ -203,7 +207,7 @@ fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(boot: Boot<K>) {
 
     // External destruction bypasses close-request: poll the GDK flag so the app can quit.
     {
-        let app = app.clone();
+        let gtk_app = gtk_app.clone();
         let current_window = current_window.clone();
         glib::timeout_add_seconds_local(1, move || {
             let destroyed = current_window
@@ -213,7 +217,7 @@ fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(boot: Boot<K>) {
                 .is_some_and(|surface| surface.is_destroyed());
             if destroyed {
                 log::warn!("gtk: native surface destroyed externally; quitting");
-                app.quit();
+                gtk_app.quit();
                 glib::ControlFlow::Break
             } else {
                 glib::ControlFlow::Continue
@@ -221,5 +225,5 @@ fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(boot: Boot<K>) {
         });
     }
 
-    let _ = app.run();
+    let _ = gtk_app.run();
 }
