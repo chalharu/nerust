@@ -99,13 +99,15 @@ nerust_settings_core.workspace = true
 
 [features]
 default = ["nes", "gbc", "gba", "wgpu"]
+cpal = ["nerust_sound_cpal"]
+cubeb = ["nerust_sound_cubeb"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["wakui-gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_crash_guard"]
+gtk = ["wakui-gtk", "nerust_crash_guard", "rfd", "cpal", "cubeb"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "wakui-tao", "nerust_crash_guard", "rfd"]
+tao = ["wakui-tao", "nerust_crash_guard", "rfd", "cpal", "cubeb"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
