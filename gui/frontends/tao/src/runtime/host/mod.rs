@@ -6,7 +6,6 @@ use nerust_gui_shell::{
     session::{SessionHandle, session_query::WindowSize},
 };
 use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
-use nerust_settings_core::model::app_state::RememberedWindowSize;
 #[cfg(test)]
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -361,10 +360,6 @@ fn default_fit_window_size() -> TaoLogicalSize<f64> {
     TaoLogicalSize::new(DEFAULT_FIT_WINDOW_WIDTH, DEFAULT_FIT_WINDOW_HEIGHT)
 }
 
-fn logical_size_from_remembered(size: RememberedWindowSize) -> TaoLogicalSize<f64> {
-    TaoLogicalSize::new(f64::from(size.width), f64::from(size.height))
-}
-
 fn element_state_to_pressed(state: ElementState) -> Option<bool> {
     Some(match state {
         ElementState::Pressed => true,
@@ -453,11 +448,9 @@ mod tests {
     #[test]
     fn window_size_math_scales_and_falls_back() {
         use nerust_gui_shell::session::session_query::WindowSize;
-        use nerust_settings_core::model::app_state::RememberedWindowSize;
 
         use super::{
-            default_fit_window_size, fullscreen_mode, logical_size_from_remembered,
-            logical_window_size, window_surface_size,
+            default_fit_window_size, fullscreen_mode, logical_window_size, window_surface_size,
         };
         let scaled = logical_window_size(
             WindowSize {
@@ -475,10 +468,7 @@ mod tests {
             None,
         );
         assert_eq!((plain.width, plain.height), (160.0, 144.0));
-        let remembered = logical_size_from_remembered(RememberedWindowSize {
-            width: 800,
-            height: 600,
-        });
+        let remembered = TaoLogicalSize::new(800.0, 600.0);
         assert_eq!((remembered.width, remembered.height), (800.0, 600.0));
         let fit = default_fit_window_size();
         assert_eq!((fit.width, fit.height), (960.0, 720.0));
