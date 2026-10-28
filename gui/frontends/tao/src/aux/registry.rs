@@ -9,7 +9,6 @@ use nerust_frontend_host::aux::OpenRequest;
 use nerust_frontend_host::{
     application::ApplicationHost, widget_session::WindowMailbox, window::Window,
 };
-use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 
 use super::bridge::{DebugBridge, DrainSnapshot};
@@ -27,11 +26,8 @@ pub(crate) struct AuxOutcome {
     pub error: Option<String>,
 }
 
-/// Debug-drain port: batch take plus apply for one drain.
+/// Debug-drain port: apply for one drain.
 pub(crate) trait DebugDrainPort {
-    /// Debugger batch take (debug only).
-    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)>;
-
     /// Apply a finished drain (debug only).
     fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>);
 }
@@ -249,13 +245,6 @@ impl AuxRegistry {
         }
     }
 
-    /// Debugger batch take (`None` when the debugger is closed).
-    pub(crate) fn debug_take_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
-        self.entry_mut(AuxKind::Debug)
-            .and_then(AuxController::as_debug)
-            .and_then(DebugDrainPort::take_debug_requests)
-    }
-
     /// Drain snapshot (`None` when the debugger is closed).
     pub(crate) fn debug_snapshot(&self, ppu_open: bool) -> Option<DrainSnapshot> {
         // Read-only query behind a shared borrow: the snapshot clones small fields only.
@@ -352,8 +341,6 @@ pub(crate) mod test_double {
     use std::rc::Rc;
     use std::sync::Arc;
 
-    use nerust_gui_shell::debug::DebugAction;
-
     use crate::aux::bridge::{DebugBridge, DrainSnapshot};
     use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender};
@@ -369,8 +356,6 @@ pub(crate) mod test_double {
         pub live_rebuild: bool,
         pub applied_drain: Rc<Cell<bool>>,
         pub bridge: Option<Arc<DebugBridge>>,
-        pub drain_open: bool,
-        pub debug_batch: Vec<DebugAction>,
         pub reg_target: Option<&'static str>,
     }
 
@@ -384,8 +369,6 @@ pub(crate) mod test_double {
                 live_rebuild: false,
                 applied_drain: Rc::new(Cell::new(false)),
                 bridge: None,
-                drain_open: false,
-                debug_batch: Vec::new(),
                 reg_target: None,
             }
         }
@@ -425,11 +408,6 @@ pub(crate) mod test_double {
     }
 
     impl DebugDrainPort for StubAux {
-        fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
-            (self.kind == AuxKind::Debug)
-                .then(|| (self.drain_open, std::mem::take(&mut self.debug_batch)))
-        }
-
         fn apply_drain(
             &mut self,
             _display: nerust_gui_viewmodel::debugger::DisplayCache,
@@ -668,7 +646,6 @@ mod tests {
         use nerust_settings_core::model::language::AppLanguage;
         let mut registry = AuxRegistry::new();
         // Closed debugger: every port stays quiet.
-        assert!(registry.debug_take_requests().is_none());
         assert!(registry.debug_snapshot(false).is_none());
         assert!(registry.debug_bridge().is_none());
         assert!(!registry.debug_locks_free());
@@ -681,10 +658,9 @@ mod tests {
             panic!("reservation")
         };
         registry.refresh_widget(absent, &mut host);
-        // Open debugger: batch, snapshot, and bridge delegate.
+        // Open debugger: snapshot and bridge delegate; the batch flows
+        // through the entry's own bridge.
         let mut stub = StubAux::new(AuxKind::Debug);
-        stub.drain_open = true;
-        stub.debug_batch = vec![DebugAction::Refresh];
         stub.bridge = Some(Arc::new(DebugBridge::new(
             DisplayCache::default(),
             vec![(SpaceId(0), "Memory".to_string(), 0)],
@@ -693,9 +669,6 @@ mod tests {
         )));
         let applied = std::rc::Rc::clone(&stub.applied_drain);
         registry.insert(Box::new(stub));
-        let (open, batch) = registry.debug_take_requests().expect("debug routes");
-        assert!(open);
-        assert_eq!(batch.len(), 1);
         assert!(
             registry
                 .debug_snapshot(true)
@@ -721,12 +694,11 @@ mod tests {
     }
 
     #[test]
-    fn wrong_kind_never_answers_debug_batch() {
+    fn wrong_kind_never_answers_debug_ports() {
         // Kind gating (not just routing) keeps a seated settings
         // window from answering debugger-only ports.
         let mut registry = AuxRegistry::new();
         registry.insert(Box::new(StubAux::new(AuxKind::Settings)));
-        assert!(registry.debug_take_requests().is_none());
         assert!(registry.debug_snapshot(false).is_none());
         assert!(
             registry

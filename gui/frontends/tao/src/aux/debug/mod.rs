@@ -14,7 +14,6 @@ use std::sync::{
 use iced::Task;
 use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
-use nerust_gui_shell::debug::DebugAction;
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use tao::event_loop::EventLoopWindowTarget;
 
@@ -238,12 +237,13 @@ impl DebugWindowHandle {
 }
 
 /// Window-scoped shortcuts on physical codes: F6 frame, F7 instruction, F9 pause.
-fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugAction> {
+/// Dispatched as gestures so epoch retirement treats them like any other input.
+fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage> {
     use iced::keyboard::key::{Code, Physical};
     match *physical {
-        Physical::Code(Code::F6) => Some(DebugAction::StepFrame),
-        Physical::Code(Code::F7) => Some(DebugAction::StepInstr),
-        Physical::Code(Code::F9) => Some(DebugAction::TogglePause),
+        Physical::Code(Code::F6) => Some(DebugMessage::StepFramePressed),
+        Physical::Code(Code::F7) => Some(DebugMessage::StepInstrPressed),
+        Physical::Code(Code::F9) => Some(DebugMessage::TogglePausePressed),
         _ => None,
     }
 }
@@ -312,11 +312,6 @@ impl super::focus::AuxShellRef for DebugWindowHandle {
 }
 
 impl super::registry::DebugDrainPort for DebugWindowHandle {
-    fn take_debug_requests(&mut self) -> Option<(bool, Vec<DebugAction>)> {
-        use crate::aux::bridge::BridgeLock;
-        Some(self.bridge.take_debug_batch())
-    }
-
     fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>) {
         self.apply_drain_display(display, reselected);
     }
@@ -365,9 +360,9 @@ impl super::focus::AuxEvents for DebugWindowHandle {
             repeat: false,
             ..
         }) = &mapped
-            && let Some(request) = shortcut_request(physical_key)
+            && let Some(event) = shortcut_request(physical_key)
         {
-            self.bridge.push(request);
+            self.bridge.dispatch(event);
         }
         // Cursor keys page the dump; Left/Right stay with the widgets.
         let page = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
