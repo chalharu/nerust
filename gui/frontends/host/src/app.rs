@@ -78,6 +78,8 @@ pub trait FrontendApp: EventHandler {
     fn select_previous_slot(&mut self);
     fn set_pause_owner(&mut self, owner: wakui::pause::PauseOwner, active: bool);
     fn owns_pause(&self, owner: wakui::pause::PauseOwner) -> bool;
+    fn pause_held(&self) -> bool;
+    fn reconcile_pause(&mut self);
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError>;
 
     // -- chrome, menus, titles -------------------------------------------
@@ -148,6 +150,7 @@ pub trait FrontendApp: EventHandler {
     // -- debugger (handle-keyed; bridges owned view-side) ----------------
     fn open_debug(&mut self) -> DebugHandle;
     fn close_debug(&mut self, handle: DebugHandle);
+    fn close_debug_flights(&mut self);
     fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot>;
     fn debug_pictures(&self, handle: DebugHandle) -> Vec<ScaledPicture>;
     fn debug_panels(&self, handle: DebugHandle) -> Option<String>;
@@ -172,6 +175,8 @@ pub trait FrontendApp: EventHandler {
     fn debug_live_tick(&mut self, handle: DebugHandle, ppu_open: bool);
     fn debug_drain_pending(&self, handle: DebugHandle) -> bool;
     fn debug_reset_if_replaced(&mut self, handle: DebugHandle) -> bool;
+    /// Chrome gate: a pause change since the last drain needs a viewer refresh.
+    fn chrome_drain_due(&self, debug_open: bool) -> bool;
     fn debugger_chrome(&self) -> DebuggerChrome;
     fn ppu_chrome(&self) -> PpuChrome;
     fn debugger_window_title(&self) -> String;
@@ -186,6 +191,12 @@ pub trait FrontendApp: EventHandler {
     ) -> String;
     fn take_debug_open_request(&mut self) -> bool;
     fn take_ppu_open_request(&mut self) -> bool;
+    fn request_debug_open(&mut self);
+    fn request_ppu_open(&mut self);
+    fn debug_window_pos(&self) -> Option<(i32, i32)>;
+    fn ppu_window_pos(&self) -> Option<(i32, i32)>;
+    fn remember_debug_window_pos(&mut self, x: i32, y: i32);
+    fn remember_ppu_window_pos(&mut self, x: i32, y: i32);
     /// Live-tick arming for the native timer thread. The schedule lives
     /// view-side; native code parks/unparks its thread on this flag.
     fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool>;

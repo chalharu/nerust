@@ -3390,6 +3390,7 @@ dependencies = [
  "nerust_core_traits",
  "nerust_crash_guard",
  "nerust_frontend_host",
+ "nerust_frontend_viewdefs",
  "nerust_gba_core",
  "nerust_gba_factory",
  "nerust_gbc_factory",

@@ -6,7 +6,7 @@ use tao::event::KeyEvent;
 
 use nerust_frontend_host::focus::{AuxKind, FocusEvent};
 use nerust_frontend_viewdefs::{
-    event::{CommandEffect, EventHandler, EventOutcome},
+    event::{CommandEffect, EventOutcome},
     session::SessionEvent,
 };
 
@@ -31,12 +31,10 @@ impl HostState {
 
     fn dispatch_event(&mut self, event: UserEvent) -> Option<EventOutcome> {
         let settings_open = self.settings_open();
-        let handler: &mut dyn EventHandler = &mut self.core;
-        match handler.handle_event(event, settings_open) {
+        match self.core.handle_event(event, settings_open) {
             Ok(outcome) => Some(outcome),
             Err(_) => {
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, false);
+                self.sync_chrome(false);
                 None
             }
         }
@@ -69,7 +67,7 @@ impl HostState {
                     (AuxKind::Settings, Some(opener)) => self.open_settings_window(opener),
                     (AuxKind::Debug, Some(opener)) => self.open_debug_windows(opener, false),
                     (AuxKind::History, Some(opener)) => self.open_history(opener),
-                    (AuxKind::Debug, None) => self.request_debug_open(),
+                    (AuxKind::Debug, None) => self.core.request_debug_open(),
                     _ => (),
                 }
                 HostAction::None
@@ -95,8 +93,7 @@ impl HostState {
                 {
                     return HostAction::None;
                 }
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, true);
+                self.sync_chrome(true);
                 HostAction::None
             }
         }
@@ -166,13 +163,13 @@ mod tests {
     #[test]
     fn rom_filters_empty_without_cores() {
         let support = TestHost::new();
-        assert!(support.host.rom_dialog_filters().is_empty());
+        assert!(support.host.core.rom_dialog_filters().is_empty());
     }
 
     #[test]
     fn rom_filters_lead_with_unified_all_roms() {
         let support = TestHost::with_nes();
-        let filters = support.host.rom_dialog_filters();
+        let filters = support.host.core.rom_dialog_filters();
         assert_eq!(filters.len(), 2);
         assert_eq!(filters[0].0, "All ROMs");
         assert_eq!(filters[0].1, ["nes"]);
@@ -272,7 +269,7 @@ mod tests {
             HostAction::Exit
         );
         // Intent only: host teardown waits for the runtime's ordered close.
-        assert!(!host.close_exited());
+        assert!(!host.core.close_exited());
     }
 
     #[test]
@@ -285,7 +282,7 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         // Only the native registry is open: the external flag, not a Host
         // pause owner, must guard both commands and keyboard shortcuts.
-        assert!(!host.owns_pause(wakui::pause::PauseOwner::Settings));
+        assert!(!host.core.owns_pause(wakui::pause::PauseOwner::Settings));
         for event in [
             UserEvent::Menu(MenuCommand::Native(NativeRole::About)),
             UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
@@ -299,14 +296,14 @@ mod tests {
         ] {
             assert_eq!(host.on_event(event, &opener), HostAction::None);
         }
-        assert!(host.session().active_slot_id().is_none());
+        assert!(host.core.active_slot_id().is_none());
         assert!(support.menu.updates().is_empty());
         assert!(opener.calls().is_empty());
         assert_eq!(
             host.on_event(UserEvent::Focus(FocusEvent::Main(false)), &opener),
             HostAction::None
         );
-        assert!(!host.main_active());
+        assert!(!host.core.main_active());
         assert_eq!(
             host.on_event(UserEvent::LiveTick, &opener),
             HostAction::None
@@ -318,7 +315,7 @@ mod tests {
             ),
             HostAction::Exit
         );
-        assert!(!host.close_exited());
+        assert!(!host.core.close_exited());
     }
 
     #[test]
@@ -362,7 +359,7 @@ mod tests {
             HostAction::Exit
         );
         // Intent only: no teardown before the runtime's ordered close.
-        assert!(!host.close_exited());
+        assert!(!host.core.close_exited());
     }
 
     #[test]
@@ -463,50 +460,60 @@ mod tests {
 
     #[test]
     fn session_delegates_stay_total_without_core() {
-        use nerust_gui_shell::session::access::{
-            PauseControl, ResetControl, SessionControl, SlotIo, SlotNav,
-        };
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.tick().paused);
-        host.pause();
-        host.resume();
-        host.toggle_pause();
-        assert!(!host.tick().paused);
-        assert!(!host.save_active_slot());
-        assert!(!host.load_active_slot());
-        host.select_next_slot();
-        host.select_previous_slot();
-        assert!(!host.load_slot(99));
-        host.save_slot(99);
-        host.delete_slot(99);
-        host.select_slot(99);
-        host.create_slot();
-        host.reset();
-        host.unload();
-        assert!(!host.tick().loaded);
+        assert!(!host.core.tick_paused());
+        host.core.pause_session();
+        host.core.resume_session_command();
+        host.core.toggle_pause_session();
+        assert!(!host.core.tick_paused());
+        assert!(!host.core.save_active_slot());
+        assert!(!host.core.load_active_slot());
+        host.core.select_next_slot();
+        host.core.select_previous_slot();
+        assert!(!host.core.load_slot(99));
+        host.core.save_slot(99);
+        host.core.delete_slot(99);
+        host.core.select_slot(99);
+        host.core.create_slot();
+        host.core.reset_session();
+        host.core.unload();
+        assert!(!host.core.tick_loaded());
+    }
+
+    #[test]
+    fn history_key_starts_changed_and_survives_failed_save() {
+        let support = TestHost::new();
+        let host = support.host;
+        assert!(host.core.history_changed());
+    }
+
+    #[test]
+    fn apply_paths_stay_total_without_core() {
+        let support = TestHost::new();
+        let mut host = support.host;
+        let _ = host.core.persist_fullscreen_default(true);
+        assert!(!host.core.tick_loaded());
     }
 
     #[test]
     fn error_modal_returns_without_blocking() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.report_host_error("test error".into());
-        let ctx = host.frame_ctx();
-        host.poll_notifications(&ctx);
+        host.core.report_host_error("test error".into());
+        host.poll_notifications();
         // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
-        while support.dialogs.errors().is_empty() || host.osd_modal_pending() {
-            let ctx = host.frame_ctx();
-            host.poll_notifications(&ctx);
+        while support.dialogs.errors().is_empty() || host.core.osd_modal_pending() {
+            host.poll_notifications();
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("test error"));
-        assert_eq!(host.osd_pending(), 0);
-        assert!(!host.osd_modal_pending());
+        assert_eq!(host.core.osd_pending(), 0);
+        assert!(!host.core.osd_modal_pending());
     }
 
     #[test]
@@ -514,26 +521,21 @@ mod tests {
         use wakui::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
-        host.set_pause_owner(PauseOwner::Settings, true);
+        host.core.set_pause_owner(PauseOwner::Settings, true);
         // Simulate a dialog thread that died before acking: the
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
-        let ctx = host.frame_ctx();
-        host.report_host_error("disconnected dialog".into());
-        let presentation = host
-            .core
-            .pump_osd(&ctx, std::time::Instant::now())
-            .modal
-            .unwrap();
-        assert!(host.attach_osd_modal_receiver(presentation.token, rx));
-        assert!(host.owns_pause(PauseOwner::Modal));
-        host.poll_notifications(&ctx);
+        host.core.report_host_error("disconnected dialog".into());
+        let presentation = host.core.pump_osd(std::time::Instant::now()).modal.unwrap();
+        assert!(host.core.attach_osd_modal_receiver(presentation.token, rx));
+        assert!(host.core.owns_pause(PauseOwner::Modal));
+        host.poll_notifications();
         // Reaped as a failed ack: flight gone, queue unblocked.
-        assert!(!host.osd_modal_pending());
-        assert_eq!(host.osd_pending(), 0);
-        assert!(!host.owns_pause(PauseOwner::Modal));
-        assert!(host.owns_pause(PauseOwner::Settings));
+        assert!(!host.core.osd_modal_pending());
+        assert_eq!(host.core.osd_pending(), 0);
+        assert!(!host.core.owns_pause(PauseOwner::Modal));
+        assert!(host.core.owns_pause(PauseOwner::Settings));
     }
 
     #[test]
@@ -541,33 +543,28 @@ mod tests {
         use wakui::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
-        host.set_pause_owner(PauseOwner::Focus, true);
-        host.report_host_error("dead first dialog".into());
-        let ctx = host.frame_ctx();
-        let first = host
-            .core
-            .pump_osd(&ctx, std::time::Instant::now())
-            .modal
-            .unwrap();
+        host.core.set_pause_owner(PauseOwner::Focus, true);
+        host.core.report_host_error("dead first dialog".into());
+        let first = host.core.pump_osd(std::time::Instant::now()).modal.unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
-        assert!(host.attach_osd_modal_receiver(first.token, receiver));
-        host.report_host_error("chained native dialog".into());
+        assert!(host.core.attach_osd_modal_receiver(first.token, receiver));
+        host.core.report_host_error("chained native dialog".into());
         drop(sender);
 
-        host.poll_notifications(&ctx);
+        host.poll_notifications();
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("chained native dialog"));
-        assert!(host.osd_modal_pending());
-        assert!(host.osd_flight_pending());
-        assert!(host.owns_pause(PauseOwner::Modal));
-        assert!(host.owns_pause(PauseOwner::Focus));
-        assert_eq!(host.osd_pending(), 0);
+        assert!(host.core.osd_modal_pending());
+        assert!(host.core.osd_flight_pending());
+        assert!(host.core.owns_pause(PauseOwner::Modal));
+        assert!(host.core.owns_pause(PauseOwner::Focus));
+        assert_eq!(host.core.osd_pending(), 0);
 
-        host.poll_notifications(&ctx);
-        assert!(!host.osd_modal_pending());
-        assert!(!host.osd_flight_pending());
-        assert!(!host.owns_pause(PauseOwner::Modal));
-        assert!(host.owns_pause(PauseOwner::Focus));
+        host.poll_notifications();
+        assert!(!host.core.osd_modal_pending());
+        assert!(!host.core.osd_flight_pending());
+        assert!(!host.core.owns_pause(PauseOwner::Modal));
+        assert!(host.core.owns_pause(PauseOwner::Focus));
         assert_eq!(support.dialogs.errors().len(), 1);
     }
 
@@ -577,13 +574,11 @@ mod tests {
         let mut host = support.host;
         // No notifications, no windows: drain, expiry, dirty gate,
         // and the history fast path all no-op without a core.
-        let ctx = host.frame_ctx();
-        host.poll_notifications(&ctx);
-        let ctx = host.frame_ctx();
-        host.poll_notifications(&ctx);
+        host.poll_notifications();
+        host.poll_notifications();
         assert!(support.dialogs.errors().is_empty());
-        assert_eq!(host.osd_pending(), 0);
-        assert!(host.history_key().is_none());
+        assert_eq!(host.core.osd_pending(), 0);
+        assert!(host.core.history_changed());
     }
 
     #[test]
@@ -593,7 +588,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.apply_keyboard_shortcut(KeyboardShortcut::OpenDebugger);
-        assert!(host.take_debug_open_request());
+        assert!(host.core.take_debug_open_request());
         assert!(support.menu.updates().is_empty());
         host.apply_keyboard_shortcut(KeyboardShortcut::Session(ShortcutAction::TogglePause));
         host.apply_keyboard_shortcut(KeyboardShortcut::ToggleFullscreen);
@@ -604,25 +599,13 @@ mod tests {
 
     #[test]
     fn session_verbs_stay_total_without_core() {
-        use nerust_gui_shell::session::access::PauseControl;
         let support = TestHost::new();
         let mut host = support.host;
-        host.resume_session();
-        PauseControl::pause(&mut host.core);
-        host.clear_keys();
+        host.core.resume_session();
+        host.core.pause_session();
+        host.core.clear_keys();
         host.sync_fullscreen_from_settings();
-        let _ = host.persist_fullscreen_default(false);
-        assert!(!host.tick().loaded);
-    }
-
-    #[test]
-    fn apply_paths_stay_total_without_core() {
-        use nerust_gui_shell::session::access::SessionControl;
-        let support = TestHost::new();
-        let mut host = support.host;
-        let snapshot = host.settings_snapshot().clone();
-        let _ = host.apply_settings(snapshot);
-        let _ = host.set_fullscreen_default(true);
-        assert!(!host.tick().loaded);
+        let _ = host.core.persist_fullscreen_default(false);
+        assert!(!host.core.tick_loaded());
     }
 }

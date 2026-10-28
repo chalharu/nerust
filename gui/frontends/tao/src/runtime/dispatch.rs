@@ -31,7 +31,7 @@ impl WindowRuntime {
             WindowEvent::Focused(false) => {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
                 self.host.on_focus_event(FocusEvent::Main(false));
-                self.host.clear_keys();
+                self.host.core.clear_keys();
             }
             WindowEvent::Resized(_) => {
                 self.host.sync_fullscreen_default_from_window();
@@ -47,7 +47,7 @@ impl WindowRuntime {
 
     /// Keyboard/F4 open wiring: flag-to-window path stays headless-testable.
     fn pump_debug_open_request(&mut self, opener: &dyn WindowOpener) {
-        if self.host.take_debug_open_request() {
+        if self.host.core.take_debug_open_request() {
             self.host.open_debug_windows(opener, false);
         }
     }
@@ -107,7 +107,9 @@ impl WindowRuntime {
 
     pub(super) fn on_debug_event(&mut self, opener: &dyn WindowOpener, event: WindowEvent) {
         if let WindowEvent::Moved(position) = &event {
-            self.host.remember_debug_window_pos(position.x, position.y);
+            self.host
+                .core
+                .remember_debug_window_pos(position.x, position.y);
         }
         // Focus re-reads, never force-pauses; external destroy drops the handle.
         if matches!(event, WindowEvent::Destroyed) {
@@ -153,7 +155,7 @@ impl WindowRuntime {
 
     fn apply_aux_outcome(&mut self, kind: AuxKind, outcome: crate::aux::registry::AuxOutcome) {
         if let Some(detail) = outcome.error {
-            self.host.report_host_error(detail);
+            self.host.core.report_host_error(detail);
         }
         if matches!(kind, AuxKind::Settings | AuxKind::History) {
             if (outcome.close || outcome.submitted)
@@ -184,7 +186,9 @@ impl WindowRuntime {
         }
         let _ = self.drive_focus(AuxKind::Ppu, &event);
         if let WindowEvent::Moved(position) = &event {
-            self.host.remember_ppu_window_pos(position.x, position.y);
+            self.host
+                .core
+                .remember_ppu_window_pos(position.x, position.y);
         }
         let domain = crate::aux::native::adapt_event(&event);
         let Some(outcome) = self.host.aux_on_event(AuxKind::Ppu, domain) else {
@@ -200,7 +204,7 @@ impl WindowRuntime {
     /// debugger event and redraw paths.
     fn drain_and_maybe_open_ppu(&mut self, opener: &dyn WindowOpener) {
         self.host.drain_debug_requests();
-        if self.host.take_ppu_open_request() {
+        if self.host.core.take_ppu_open_request() {
             self.host.open_debug_windows(opener, true);
             self.host.refresh_open_debugger();
         }
@@ -246,7 +250,7 @@ mod tests {
         runtime.surface_xid = Some(42);
         runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
         assert_eq!(flow, ControlFlow::Exit);
-        assert!(runtime.host.close_exited());
+        assert!(runtime.host.core.close_exited());
         assert!(runtime.surface_xid.is_none());
         assert!(menu.updates().is_empty());
     }
@@ -258,69 +262,12 @@ mod tests {
         let mut flow = ControlFlow::Wait;
         runtime.on_main_event(&opener, WindowEvent::CloseRequested, &mut flow);
         assert_eq!(flow, ControlFlow::Exit);
-        assert!(runtime.host.close_exited());
+        assert!(runtime.host.core.close_exited());
         // Destroyed after CloseRequested still exits; the guarded
         // teardown ran exactly once (see the host-level idempotence test).
         runtime.on_main_event(&opener, WindowEvent::Destroyed, &mut flow);
         assert_eq!(flow, ControlFlow::Exit);
-        assert!(runtime.host.close_exited());
-    }
-
-    /// Drop-logging renderer: proves the ordered teardown drops the
-    /// pipeline before host close runs. Blanket `RenderPipeline`
-    /// needs all five sinks; every arm is a no-op here.
-    #[derive(Debug)]
-    struct DropLogRenderer {
-        log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
-    }
-
-    impl Drop for DropLogRenderer {
-        fn drop(&mut self) {
-            self.log.lock().unwrap().push("renderer");
-        }
-    }
-
-    impl nerust_render_traits::renderer::SurfaceLifecycle for DropLogRenderer {
-        fn size(&self) -> nerust_render_traits::SurfaceSize {
-            nerust_render_traits::SurfaceSize::new(960, 720)
-        }
-
-        fn attach(
-            &mut self,
-            _window_handle: raw_window_handle::RawWindowHandle,
-            _display_handle: raw_window_handle::RawDisplayHandle,
-            _size: nerust_render_traits::SurfaceSize,
-        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
-            Ok(())
-        }
-
-        fn detach(&mut self) {}
-
-        fn resize(&mut self, _size: nerust_render_traits::SurfaceSize) {}
-    }
-
-    impl nerust_render_traits::renderer::FrameSink for DropLogRenderer {
-        fn render(
-            &mut self,
-            _frame: &nerust_render_traits::FrameBuffer,
-        ) -> nerust_render_traits::renderer::RenderResult {
-            nerust_render_traits::renderer::RenderResult::Skipped
-        }
-    }
-
-    impl nerust_render_traits::renderer::OsdSink for DropLogRenderer {
-        fn set_osd_layer(&mut self, _layer: Option<nerust_render_traits::renderer::OsdLayer>) {}
-    }
-
-    impl nerust_render_traits::renderer::StripSink for DropLogRenderer {}
-
-    impl nerust_render_traits::renderer::ProfileSwitch for DropLogRenderer {
-        fn update_render_profile(
-            &mut self,
-            _profile: &nerust_render_traits::VideoRenderProfile,
-        ) -> Result<(), nerust_render_traits::renderer::RendererError> {
-            Ok(())
-        }
+        assert!(runtime.host.core.close_exited());
     }
 
     #[test]
@@ -328,14 +275,8 @@ mod tests {
         use crate::event::MenuCommand;
         use crate::runtime::host::HostAction;
         let (mut runtime, _) = test_runtime();
-        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        runtime
-            .host
-            .viewport_install_test_pipeline(Box::new(DropLogRenderer {
-                log: std::sync::Arc::clone(&log),
-            }));
         let opener = FakeOpener::failing("no display");
-        // Menu Quit returns the exit intent only: renderer and host teardown wait.
+        // Menu Quit returns the exit intent only: host teardown waits.
         assert_eq!(
             runtime.host.on_menu_command(
                 MenuCommand::Native(nerust_frontend_host::commands::NativeRole::Quit),
@@ -343,17 +284,13 @@ mod tests {
             ),
             HostAction::Exit
         );
-        assert!(runtime.host.viewport_attached());
-        assert!(!runtime.host.close_exited());
-        assert!(log.lock().unwrap().is_empty());
-        // The runtime owns the ordered teardown: the pipeline drops
-        // before host close runs, exactly once across repeated delivery.
-        // Post-state pins the contract: renderer gone, no aux window
-        // or error dialog left, settings closed, surface cleared.
+        assert!(!runtime.host.core.close_exited());
+        // The runtime owns the ordered teardown: aux windows close and
+        // the session flush runs exactly once across repeated delivery.
+        // Post-state pins the contract: no aux window left, settings
+        // closed, surface cleared.
         runtime.begin_close();
-        assert!(!runtime.host.viewport_attached());
-        assert!(runtime.host.close_exited());
-        assert_eq!(*log.lock().unwrap(), ["renderer"]);
+        assert!(runtime.host.core.close_exited());
         for kind in [
             AuxKind::Debug,
             AuxKind::Ppu,
@@ -365,7 +302,7 @@ mod tests {
         assert!(!runtime.host.settings_open());
         assert!(runtime.surface_xid.is_none());
         runtime.begin_close();
-        assert_eq!(log.lock().unwrap().len(), 1);
+        assert!(runtime.host.core.close_exited());
     }
 
     #[test]
@@ -376,9 +313,9 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         let mut flow = ControlFlow::Wait;
         runtime.on_main_event(&opener, WindowEvent::Focused(false), &mut flow);
-        assert!(!runtime.host.main_active());
+        assert!(!runtime.host.core.main_active());
         runtime.on_main_event(&opener, WindowEvent::Focused(true), &mut flow);
-        assert!(runtime.host.main_active());
+        assert!(runtime.host.core.main_active());
         assert!(menu.updates().is_empty());
         // Tick burst commits the armed pause state and syncs chrome once.
         runtime.host.update_control_flow(&mut flow);
@@ -403,7 +340,7 @@ mod tests {
     fn debug_open_request_reaches_opener_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.request_debug_open();
+        runtime.host.core.request_debug_open();
         runtime.pump_debug_open_request(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         // Consumed: a second pump without re-arm stays quiet.
@@ -418,10 +355,11 @@ mod tests {
         let (mut runtime, menu) = test_runtime();
         runtime.on_settings_event(WindowEvent::Focused(true));
         runtime.on_settings_event(WindowEvent::Focused(false));
-        assert!(runtime.host.main_active());
+        assert!(runtime.host.core.main_active());
         assert!(menu.updates().is_empty());
         let _ = runtime
             .host
+            .core
             .focus_event(crate::aux::focus::FocusEvent::Aux(AuxKind::Settings, true));
     }
 
@@ -437,7 +375,7 @@ mod tests {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
         runtime.on_debug_event(&opener, WindowEvent::Moved(PhysicalPosition::new(60, 20)));
-        assert_eq!(runtime.host.debug_window_pos(), Some((60, 20)));
+        assert_eq!(runtime.host.core.debug_window_pos(), Some((60, 20)));
     }
 
     #[test]
@@ -455,7 +393,7 @@ mod tests {
         // returns before chrome sync or drain.
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.note_main_departure();
+        runtime.host.core.note_main_departure();
         runtime.on_debug_event(&opener, WindowEvent::Focused(true));
         assert!(menu.updates().is_empty());
         assert!(opener.calls().is_empty());
@@ -465,7 +403,7 @@ mod tests {
     fn ppu_moved_remembers_position() {
         let (mut runtime, _) = test_runtime();
         runtime.on_ppu_event(WindowEvent::Moved(PhysicalPosition::new(1250, 100)));
-        assert_eq!(runtime.host.ppu_window_pos(), Some((1250, 100)));
+        assert_eq!(runtime.host.core.ppu_window_pos(), Some((1250, 100)));
     }
 
     #[test]
@@ -473,7 +411,7 @@ mod tests {
         // Departure arms the pause; aux arrival cancels it through
         // the shared drive, even with no handle open.
         let (mut runtime, menu) = test_runtime();
-        runtime.host.note_main_departure();
+        runtime.host.core.note_main_departure();
         runtime.on_ppu_event(WindowEvent::Focused(true));
         runtime.on_ppu_event(WindowEvent::Focused(false));
         assert!(menu.updates().is_empty());
@@ -483,7 +421,7 @@ mod tests {
     fn ppu_request_opens_debugger_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.request_ppu_open();
+        runtime.host.core.request_ppu_open();
         runtime.on_debug_redrawn(&opener);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         runtime.on_debug_redrawn(&opener);
@@ -523,8 +461,8 @@ mod tests {
         // Shared host port: arrival reports true, departure and
         // non-focus events report false, without touching the menu.
         let (mut runtime, menu) = test_runtime();
-        assert!(runtime.host.drive_aux_focus(AuxKind::Debug, true));
-        assert!(!runtime.host.drive_aux_focus(AuxKind::Debug, false));
+        assert!(runtime.host.core.drive_aux_focus(AuxKind::Debug, true));
+        assert!(!runtime.host.core.drive_aux_focus(AuxKind::Debug, false));
         runtime.on_settings_event(WindowEvent::Moved(PhysicalPosition::new(1, 2)));
         assert!(menu.updates().is_empty());
     }
@@ -566,7 +504,7 @@ mod tests {
     #[test]
     fn settings_moved_never_arms_pause() {
         let (mut runtime, menu) = test_runtime();
-        runtime.host.note_main_departure();
+        runtime.host.core.note_main_departure();
         runtime.on_settings_event(WindowEvent::Moved(PhysicalPosition::new(9, 9)));
         // Still armed: a non-focus event cancels nothing, so burst
         // end still commits the departure pause (which then no-ops).

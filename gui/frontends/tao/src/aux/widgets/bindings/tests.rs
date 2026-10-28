@@ -3,10 +3,7 @@ use crate::{
     aux::window::WindowProgram,
     runtime::host::{HostState, TestHost},
 };
-use nerust_frontend_host::{
-    app::FrontendApp as _,
-    aux::{AuxId, OpenRequest},
-};
+use nerust_frontend_host::aux::{AuxId, OpenRequest};
 use wakui::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
 mod history;

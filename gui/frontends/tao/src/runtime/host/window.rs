@@ -191,27 +191,25 @@ impl WindowCluster {
 
 /// Native Tao ports for the shared end-of-burst driver.
 impl LoopHost for HostState {
-    type Frame = nerust_frontend_viewdefs::frame::FrameCtx;
+    type Frame = ();
 
     fn before_turn(&mut self) {
         self.on_focus_event(nerust_frontend_host::focus::FocusEvent::BurstEnd);
     }
 
-    fn frame_ctx(&mut self) -> Self::Frame {
-        self.core.frame_ctx()
-    }
+    fn frame_ctx(&mut self) {}
 
-    fn chrome(&mut self, ctx: &Self::Frame) {
+    fn chrome(&mut self, _ctx: &Self::Frame) {
         self.tick_chrome_sync();
-        self.sync_debug_chrome(ctx);
+        self.sync_debug_chrome();
     }
 
     fn pump_debug(&mut self) -> WakeNeed {
         self.tick_debug_pump()
     }
 
-    fn pump_osd(&mut self, ctx: &Self::Frame) -> WakeNeed {
-        self.tick_osd_pump(ctx)
+    fn pump_osd(&mut self, _ctx: &Self::Frame) -> WakeNeed {
+        self.tick_osd_pump()
     }
 
     fn pump_aux(&mut self) -> WakeNeed {
@@ -235,7 +233,7 @@ impl LoopHost for HostState {
         TurnLiveness {
             loaded,
             paused,
-            main_active: self.main_active(),
+            main_active: self.core.main_active(),
             live_follow: self.live_follow_active(),
         }
     }
@@ -251,13 +249,7 @@ impl HostState {
             return;
         }
 
-        let fullscreen = self
-            .core
-            .settings_snapshot()
-            .local
-            .video
-            .window
-            .fullscreen_default;
+        let fullscreen = self.core.fullscreen_request(false).unwrap_or(false);
         self.core.refresh_window_title();
         let model = self.core.main_window().clone();
         let mut visitor = CreateMain {
@@ -282,8 +274,7 @@ impl HostState {
         self.app_menu.init_for_window(&window);
         self.windows.seat(window);
         self.sync_fullscreen_from_settings();
-        let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, true);
+        self.sync_chrome(true);
     }
 
     pub(crate) fn is_window(&self, window_id: WindowId) -> bool {
@@ -313,7 +304,7 @@ impl HostState {
 
     /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        match self.loader.load(&mut self.core, path) {
+        match self.core.load_rom(path) {
             Ok(()) => {
                 self.after_rom_load();
                 Ok(())
@@ -437,7 +428,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.prepare_close();
-        assert!(host.close_exited());
+        assert!(host.core.close_exited());
         assert!(!host.settings_open());
         // Liveness gates all dead-handle use; the native handles stay
         // for natural post-loop teardown (no re-entrant destroy).
@@ -540,12 +531,12 @@ mod tests {
         use tao::event_loop::ControlFlow;
         let support = TestHost::new();
         let mut host = support.host;
-        host.note_main_departure();
+        host.core.note_main_departure();
         let mut flow = ControlFlow::Wait;
         host.update_control_flow(&mut flow);
         assert_eq!(flow, ControlFlow::Wait);
         // Consumed: arriving now reports no resume.
-        assert!(!host.note_main_arrival());
+        assert!(!host.core.note_main_arrival());
     }
 
     #[test]
@@ -555,7 +546,7 @@ mod tests {
         assert!(host.window_surface_size().is_none());
         assert!(host.surface_target().is_none());
         assert!(host.surface_xid().is_none());
-        assert!(!host.viewport_attached());
+        assert!(!host.core.viewport_attached());
         host.update_window_size_for_scaling();
         host.remember_fit_window_size();
         host.toggle_fullscreen();
@@ -570,7 +561,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         // No pipeline headless: present is a no-op that changes nothing.
-        let before = host.redraw_needed();
+        let before = host.core.redraw_needed();
         let region = ViewportRegion {
             // Never attached: zeroed handles are only compared, never used.
             window: unsafe { std::mem::zeroed() },
@@ -578,14 +569,14 @@ mod tests {
             width: 960,
             height: 720,
         };
-        assert!(!host.viewport_attached());
+        assert!(!host.core.viewport_attached());
         assert_eq!(
-            host.viewport_present(region.width, region.height, 720),
+            host.core.viewport_present(region.width, region.height, 720),
             ViewportPresent::NoPipeline
         );
-        assert_eq!(host.redraw_needed(), before);
+        assert_eq!(host.core.redraw_needed(), before);
         host.request_redraw();
-        assert!(host.redraw_needed());
+        assert!(host.core.redraw_needed());
     }
 
     #[test]

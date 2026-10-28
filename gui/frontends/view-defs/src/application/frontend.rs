@@ -470,6 +470,14 @@ impl FrontendApp for ApplicationHost {
         ApplicationHost::owns_pause(self, owner)
     }
 
+    fn pause_held(&self) -> bool {
+        ApplicationHost::pause_held(self)
+    }
+
+    fn reconcile_pause(&mut self) {
+        ApplicationHost::reconcile_pause(self);
+    }
+
     fn dispatch(
         &mut self,
         event: nerust_frontend_host::session::SessionEvent,
@@ -761,6 +769,10 @@ impl FrontendApp for ApplicationHost {
         self.close_debug_inner(handle);
     }
 
+    fn close_debug_flights(&mut self) {
+        ApplicationHost::close_debug_flights(self);
+    }
+
     fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot> {
         self.debug_snapshot_inner(handle)
     }
@@ -835,6 +847,10 @@ impl FrontendApp for ApplicationHost {
         self.debug_reset_if_replaced_inner(handle)
     }
 
+    fn chrome_drain_due(&self, debug_open: bool) -> bool {
+        ApplicationHost::chrome_drain_due(self, debug_open)
+    }
+
     fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
         ApplicationHost::debugger_chrome(self)
     }
@@ -868,6 +884,30 @@ impl FrontendApp for ApplicationHost {
 
     fn take_ppu_open_request(&mut self) -> bool {
         self.debug.schedule_mut().take_ppu_open_request()
+    }
+
+    fn request_debug_open(&mut self) {
+        self.debug.schedule_mut().request_debug_open();
+    }
+
+    fn request_ppu_open(&mut self) {
+        self.debug.schedule_mut().request_ppu_open();
+    }
+
+    fn debug_window_pos(&self) -> Option<(i32, i32)> {
+        self.debug.schedule().debug_window_pos()
+    }
+
+    fn ppu_window_pos(&self) -> Option<(i32, i32)> {
+        self.debug.schedule().ppu_window_pos()
+    }
+
+    fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
+        self.debug.schedule_mut().remember_debug_window_pos(x, y);
+    }
+
+    fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
+        self.debug.schedule_mut().remember_ppu_window_pos(x, y);
     }
 
     fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
