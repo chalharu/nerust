@@ -14,7 +14,7 @@ use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine};
 use nerust_settings_core::model::language::AppLanguage;
 
 use crate::{
-    binding::{BindingTarget as _, ViewDefinition as _},
+    binding::{BindingTarget, ViewDefinition},
     control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
     debugger::lock_recovered,
     focus::AuxKind,
@@ -266,6 +266,21 @@ impl WidgetSession {
         }
     }
 
+    /// Generic bind+apply collector shared by every domain: resolve the
+    /// retained ID and convert the input domain-side, then run the bound
+    /// events through the target. Effect mapping stays with the caller.
+    fn drive<V, T>(view: &V, id: &V::ViewId, input: V::ViewInput, target: &mut T) -> Vec<T::Effect>
+    where
+        V: ViewDefinition,
+        T: BindingTarget<DomainEvent = V::DomainEvent>,
+    {
+        view.bind(id, input)
+            .into_iter()
+            .flatten()
+            .filter_map(|event| target.apply(event))
+            .collect()
+    }
+
     /// Resolve callbacks against current topology and metadata, not retained AST
     /// bindings. The returned effects own all data; execute after releasing borrows.
     /// Picker results never arrive here; see [`PickerSink`] instead.
@@ -288,21 +303,19 @@ impl WidgetSession {
                 let Some((_, domain_id)) = bindings.iter().find(|(token, _)| *token == id) else {
                     return Vec::new();
                 };
-                let events = SettingsScreen::convert(event.input)
-                    .and_then(|input| typed.bind(domain_id, input));
+                let Some(input) = SettingsScreen::convert(event.input) else {
+                    return Vec::new();
+                };
                 let mut effects = Vec::new();
-                for event in events.into_iter().flatten() {
-                    if let Some(SettingsEffect::BrowseStorageDirectory { title }) =
-                        controller.apply(event)
-                    {
-                        let request = crate::control::Id::fresh();
-                        self.picker = Some((id, request));
-                        effects.push(ControlEffect::PickDirectory {
-                            title,
-                            target: id,
-                            request,
-                        });
-                    }
+                for effect in Self::drive(&typed, domain_id, input, &mut **controller) {
+                    let SettingsEffect::BrowseStorageDirectory { title } = effect;
+                    let request = crate::control::Id::fresh();
+                    self.picker = Some((id, request));
+                    effects.push(ControlEffect::PickDirectory {
+                        title,
+                        target: id,
+                        request,
+                    });
                 }
                 effects
             }
@@ -311,18 +324,11 @@ impl WidgetSession {
                     Some(action) => action,
                     None => return Vec::new(),
                 };
-                let input = match HistoryModel::convert(event.input) {
-                    Some(input) => input,
-                    None => return Vec::new(),
+                let Some(input) = HistoryModel::convert(event.input) else {
+                    return Vec::new();
                 };
                 let model = HistoryModel::build(&session.lines, session.language, session.filter);
-                let events = match model.bind(&action, input) {
-                    Some(events) => events,
-                    None => return Vec::new(),
-                };
-                for event in events {
-                    let _ = session.apply(event);
-                }
+                let _ = Self::drive(&model, &action, input, session);
                 Vec::new()
             }
         }
