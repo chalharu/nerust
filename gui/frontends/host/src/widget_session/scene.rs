@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::history::{HistoryInput, HistoryModel, HistoryViewId};
+use crate::history::{HistoryModel, HistoryViewId};
 use crate::{control::*, settings::*};
 use nerust_gui_shell::session::osd::HistoryRowView;
 use nerust_gui_viewmodel::settings::dto::BindingValueView;
@@ -490,30 +490,6 @@ fn metadata(m: &SettingsMetadata) -> ControlMetadata {
         accessible_label: m.accessible_label.clone(),
         help: m.help.clone(),
     }
-}
-
-pub(super) fn settings_input(
-    input: crate::control::ControlInput,
-) -> Option<crate::settings::ControlInput> {
-    use crate::{control::ControlInput as I, settings::ControlInput as O};
-    Some(match input {
-        I::Bool(v) => O::Bool(v),
-        I::Select(v) => O::Select(v),
-        I::Number(v) => O::Number(v),
-        I::Text(v) => O::Text(v),
-        I::Activate => O::Activate,
-        I::CaptureClear => O::CaptureClear,
-        I::CaptureKey(v) => O::CaptureKey(v),
-    })
-}
-
-pub(super) fn history_input(input: crate::control::ControlInput) -> Option<HistoryInput> {
-    use crate::control::ControlInput as I;
-    Some(match input {
-        I::Select(index) => HistoryInput::Select(index),
-        I::Activate => HistoryInput::Activate,
-        _ => return None,
-    })
 }
 
 #[cfg(test)]

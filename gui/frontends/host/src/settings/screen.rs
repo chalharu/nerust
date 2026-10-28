@@ -378,6 +378,20 @@ impl crate::binding::ViewDefinition for SettingsScreen {
     type ViewInput = ControlInput;
     type DomainEvent = SettingsEvent;
 
+    /// Total 1:1 variant mapping; domain validity stays in `bind`.
+    fn convert(input: crate::control::ControlInput) -> Option<ControlInput> {
+        use crate::control::ControlInput as I;
+        Some(match input {
+            I::Bool(v) => ControlInput::Bool(v),
+            I::Select(v) => ControlInput::Select(v),
+            I::Number(v) => ControlInput::Number(v),
+            I::Text(v) => ControlInput::Text(v),
+            I::Activate => ControlInput::Activate,
+            I::CaptureClear => ControlInput::CaptureClear,
+            I::CaptureKey(v) => ControlInput::CaptureKey(v),
+        })
+    }
+
     /// Resolve retained native IDs against current values before handling input.
     fn bind(&self, id: &SettingsControlId, input: ControlInput) -> Option<Vec<SettingsEvent>> {
         self.bindings.bind(self, id, input)

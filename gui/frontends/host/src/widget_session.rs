@@ -19,7 +19,9 @@ use crate::{
     debugger::lock_recovered,
     focus::AuxKind,
     history::{HistoryEffect, HistoryEvent, HistoryModel},
-    settings::{SettingsController, SettingsEffect, SettingsEvent, SettingsMailbox},
+    settings::{
+        SettingsController, SettingsEffect, SettingsEvent, SettingsMailbox, SettingsScreen,
+    },
     window::Window,
 };
 
@@ -286,7 +288,7 @@ impl WidgetSession {
                 let Some((_, domain_id)) = bindings.iter().find(|(token, _)| *token == id) else {
                     return Vec::new();
                 };
-                let events = scene::settings_input(event.input)
+                let events = SettingsScreen::convert(event.input)
                     .and_then(|input| typed.bind(domain_id, input));
                 let mut effects = Vec::new();
                 for event in events.into_iter().flatten() {
@@ -309,7 +311,7 @@ impl WidgetSession {
                     Some(action) => action,
                     None => return Vec::new(),
                 };
-                let input = match scene::history_input(event.input) {
+                let input = match HistoryModel::convert(event.input) {
                     Some(input) => input,
                     None => return Vec::new(),
                 };
