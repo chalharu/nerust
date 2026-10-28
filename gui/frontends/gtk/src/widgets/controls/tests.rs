@@ -24,7 +24,7 @@ impl Harness {
                     nerust_nes_factory::NesFactory::boxed().into(),
                 ]));
         }
-        let mut baseline = state.borrow().settings_snapshot().clone();
+        let mut baseline = state.borrow().host.settings_snapshot().clone();
         baseline.shared.general.language = AppLanguage::English;
         baseline.local.audio.muted = false;
         state.borrow_mut().host.apply_settings(baseline).unwrap();
@@ -219,10 +219,11 @@ fn common_renderer_uses_supplied_draft_not_state_or_window_id() {
     );
     h.action(submit);
     let state = h.window.state();
-    assert!(state.borrow().settings_snapshot().local.audio.muted);
+    assert!(state.borrow().host.settings_snapshot().local.audio.muted);
     assert_eq!(
         state
             .borrow()
+            .host
             .settings_snapshot()
             .local
             .audio
@@ -721,7 +722,7 @@ fn settings_production_action_save_failure_edit_retry_closes_once() {
         paths.clone(),
     )
     .unwrap();
-    let mut baseline = state.borrow().settings_snapshot().clone();
+    let mut baseline = state.borrow().host.settings_snapshot().clone();
     baseline.shared.general.language = AppLanguage::English;
     baseline.local.audio.muted = false;
     state
@@ -745,7 +746,7 @@ fn settings_production_action_save_failure_edit_retry_closes_once() {
     assert!(h.program.dialog.is_visible());
     assert_eq!(windows::route(&h.window, AuxKind::Settings), Some(id));
     assert!(state.borrow().host.owns_pause(PauseOwner::Settings));
-    assert_eq!(state.borrow().settings_snapshot(), &baseline);
+    assert_eq!(state.borrow().host.settings_snapshot(), &baseline);
     assert!(matches!(
         h.screen().control(volume).unwrap().kind,
         ControlKind::Number { value: 23, .. }
@@ -761,7 +762,7 @@ fn settings_production_action_save_failure_edit_retry_closes_once() {
     let mut expected = baseline;
     expected.local.audio.muted = true;
     expected.local.audio.master_volume_percent = 37;
-    assert_eq!(state.borrow().settings_snapshot(), &expected);
+    assert_eq!(state.borrow().host.settings_snapshot(), &expected);
     let reloaded =
         SessionHandle::new_with_settings_paths(capabilities, registry, audio, paths).unwrap();
     assert_eq!(reloaded.settings_snapshot(), &expected);
@@ -770,7 +771,7 @@ fn settings_production_action_save_failure_edit_retry_closes_once() {
     assert!(!state.borrow().host.owns_pause(PauseOwner::Settings));
     h.program.dialog.destroy();
     h.window.window().destroy();
-    assert_eq!(state.borrow().settings_snapshot(), &expected);
+    assert_eq!(state.borrow().host.settings_snapshot(), &expected);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -801,21 +802,21 @@ fn native_close_cancel_and_parent_destroy_discard_once() {
         let mute = h.id(UiText::Mute);
         h.input(mute, ControlInput::Bool(true));
         let state = h.window.state();
-        let before = state.borrow().settings_snapshot().clone();
+        let before = state.borrow().host.settings_snapshot().clone();
         match mode {
             0 => h.program.dialog.close(),
             1 => h.action(h.id(UiText::Cancel)),
             _ => h.window.window().destroy(),
         }
         pump();
-        assert_eq!(state.borrow().settings_snapshot(), &before);
+        assert_eq!(state.borrow().host.settings_snapshot(), &before);
         assert!(
             windows::route(&h.window, AuxKind::Settings).is_none(),
             "close mode {mode} must remove the route"
         );
         assert!(!state.borrow().host.owns_pause(PauseOwner::Settings));
         h.program.dialog.destroy();
-        assert_eq!(state.borrow().settings_snapshot(), &before);
+        assert_eq!(state.borrow().host.settings_snapshot(), &before);
     }
 }
 
@@ -917,7 +918,7 @@ fn history_captions_follow_language() {
     let h = Harness::history();
     let english = h.screen();
     let state = h.window.state();
-    let mut settings = state.borrow().settings_snapshot().clone();
+    let mut settings = state.borrow().host.settings_snapshot().clone();
     settings.shared.general.language = AppLanguage::Japanese;
     state.borrow_mut().host.apply_settings(settings).unwrap();
     h.binding().sync();
@@ -1065,7 +1066,7 @@ fn native_history_title_reentry_is_borrow_free_and_latest_model_wins() {
             if called.replace(true) {
                 return;
             }
-            let mut s = state.borrow().settings_snapshot().clone();
+            let mut s = state.borrow().host.settings_snapshot().clone();
             s.shared.general.language = AppLanguage::English;
             state.borrow_mut().host.apply_settings(s).unwrap();
             state
@@ -1075,7 +1076,7 @@ fn native_history_title_reentry_is_borrow_free_and_latest_model_wins() {
             b.sync();
         }
     });
-    let mut settings = state.borrow().settings_snapshot().clone();
+    let mut settings = state.borrow().host.settings_snapshot().clone();
     settings.shared.general.language = AppLanguage::Japanese;
     state.borrow_mut().host.apply_settings(settings).unwrap();
     h.binding().sync();

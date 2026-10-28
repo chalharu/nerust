@@ -155,12 +155,6 @@ impl State {
         self.host.title_refresh_due(now)
     }
 
-    /// Native request only when the persisted target differs from
-    /// the current window state (transients suppressed in host).
-    pub(crate) fn fullscreen_request(&mut self, native: bool) -> Option<bool> {
-        self.host.fullscreen_request(native)
-    }
-
     /// Ignore intermediate native observations while awaiting the target.
     pub(crate) fn observe_fullscreen(&mut self, native: bool) -> bool {
         self.host.observe_fullscreen(native)
@@ -226,12 +220,6 @@ impl SessionControl for State {
             fullscreen_default_changed: plan.fullscreen_default_changed,
             scaling_changed: false,
         })
-    }
-}
-
-impl State {
-    pub(crate) fn settings_snapshot(&self) -> &SettingsSnapshot {
-        self.host.settings_snapshot()
     }
 }
 

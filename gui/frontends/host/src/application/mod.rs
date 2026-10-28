@@ -330,6 +330,15 @@ impl ApplicationHost {
     pub fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), SessionError> {
         Ok(self.session.update_window_size(width, height)?)
     }
+    /// Remembered main-window size as a plain tuple. Frontends convert
+    /// to their own logical-size types; the settings-core struct never
+    /// crosses the boundary.
+    pub fn remembered_window_size(&self) -> Option<(u32, u32)> {
+        self.settings_snapshot()
+            .app_state
+            .window_size("main")
+            .map(|size| (size.width, size.height))
+    }
 
     pub fn enqueue_debug(
         &mut self,
@@ -453,6 +462,30 @@ impl ApplicationHost {
                 .fullscreen_default,
         )
     }
+    /// One-shot window chrome sync: the fullscreen request plus the
+    /// remembered size to restore when the window ends up windowed.
+    /// Size restore applies in free-sizing mode only; fixed-scale modes
+    /// keep their exact pixel size. Frontends apply both verbatim and
+    /// never name `ScalingMode` themselves.
+    pub fn window_chrome_sync(&mut self, native_fullscreen: bool) -> WindowChromeSync {
+        use nerust_settings_core::model::local::ScalingMode;
+        let request = self.fullscreen_request(native_fullscreen);
+        let ends_windowed = !request.unwrap_or(native_fullscreen);
+        let snapshot = self.settings_snapshot();
+        let restore_size =
+            if ends_windowed && snapshot.local.video.window.scaling == ScalingMode::FitToWindow {
+                snapshot
+                    .app_state
+                    .window_size("main")
+                    .map(|size| (size.width as i32, size.height as i32))
+            } else {
+                None
+            };
+        WindowChromeSync {
+            restore_size,
+            set_fullscreen: request,
+        }
+    }
     pub fn pending_fullscreen(&self) -> Option<bool> {
         self.fullscreen.pending()
     }
@@ -495,6 +528,15 @@ crate::impl_session_controls!(ApplicationHost);
 pub struct MenubarUpdate {
     pub signature: MenuSig,
     pub menubar: Menubar,
+}
+
+/// Window chrome sync decision. Frontends apply `set_fullscreen` to the
+/// native window and `restore_size` via their default-size API; the
+/// scaling policy behind the restore stays in the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowChromeSync {
+    pub restore_size: Option<(i32, i32)>,
+    pub set_fullscreen: Option<bool>,
 }
 
 // Scheduling already exposes meaningful request/consume/cadence operations;

@@ -23,7 +23,6 @@ use nerust_frontend_host::{
 };
 use nerust_gui_shell::session::{SessionError, access::SessionControl};
 use nerust_render_traits::renderer::PipelineFactory;
-use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL,
@@ -870,29 +869,22 @@ impl WindowExtend for Window {
 
     fn sync_fullscreen_from_settings(&self) {
         let native = self.window().is_fullscreen();
-        let (request, scaling, size) = {
+        // Single host decision: the request gate, the steady-state
+        // restore, and the scaling policy all live in the host.
+        let sync = {
             let state = self.state();
-            let mut borrowed = state.borrow_mut();
-            let request = borrowed.fullscreen_request(native);
-            let snapshot = borrowed.settings_snapshot();
-            let scaling = snapshot.local.video.window.scaling;
-            let size = snapshot.app_state.window_size("main");
-            (request, scaling, size)
+            state.borrow_mut().host.window_chrome_sync(native)
         };
 
         // Restore remembered window size whenever the window ends up
         // windowed, even with no fullscreen transition pending: the
         // request gate returns None in the steady state, which must not
         // skip the restore.
-        if !request.unwrap_or(native)
-            && scaling == ScalingMode::FitToWindow
-            && let Some(size) = size
-        {
-            self.window()
-                .set_default_size(size.width as i32, size.height as i32);
+        if let Some((width, height)) = sync.restore_size {
+            self.window().set_default_size(width, height);
         }
 
-        if let Some(fullscreen) = request {
+        if let Some(fullscreen) = sync.set_fullscreen {
             set_window_fullscreen(&self.window(), fullscreen);
         }
     }
@@ -1670,7 +1662,7 @@ pub(crate) mod tests {
         // Auto and English may render identical strings. Establish an explicit
         // baseline so the later language change must change the visible model.
         let state = win.state();
-        let mut settings = state.borrow().settings_snapshot().clone();
+        let mut settings = state.borrow().host.settings_snapshot().clone();
         settings.shared.general.language = AppLanguage::English;
         state.borrow_mut().host.apply_settings(settings).unwrap();
         win.update_actions();
@@ -1728,7 +1720,7 @@ pub(crate) mod tests {
         );
 
         let state = win.state();
-        let mut settings = state.borrow().settings_snapshot().clone();
+        let mut settings = state.borrow().host.settings_snapshot().clone();
         settings.shared.general.language = AppLanguage::Japanese;
         state.borrow_mut().host.apply_settings(settings).unwrap();
         win.update_actions();
@@ -1830,7 +1822,7 @@ pub(crate) mod tests {
             return;
         };
         let state = win.state();
-        let mut initial = state.borrow().settings_snapshot().clone();
+        let mut initial = state.borrow().host.settings_snapshot().clone();
         initial.shared.general.language = AppLanguage::English;
         state
             .borrow_mut()
@@ -1850,7 +1842,7 @@ pub(crate) mod tests {
             let win = weak.upgrade().unwrap();
             assert!(win.try_borrow_mut().is_ok());
             let state = win.state();
-            let mut newest = state.borrow().settings_snapshot().clone();
+            let mut newest = state.borrow().host.settings_snapshot().clone();
             newest.shared.general.language = AppLanguage::English;
             let binding = newest
                 .shared
@@ -1896,7 +1888,13 @@ pub(crate) mod tests {
             "{rendered:?}"
         );
         assert_eq!(
-            state.borrow().settings_snapshot().shared.general.language,
+            state
+                .borrow()
+                .host
+                .settings_snapshot()
+                .shared
+                .general
+                .language,
             AppLanguage::English
         );
         win.update_actions();
