@@ -13,9 +13,7 @@ use std::{
 
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_frontend_viewdefs::{
-    application::ApplicationHost,
-    frame::FrameCtx,
-    osd::{ModalAdvance, ModalPresentation, ModalPresenter, OsdVisitor},
+    application::ApplicationHost, debugger::DebuggerEvent, frame::FrameCtx, osd::OsdVisitor,
 };
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
@@ -24,7 +22,7 @@ use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
 use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
 use wakui::app::FrontendApp as _;
 use wakui::commands::{CommandDescriptor, MenuCommand};
-use wakui::debugger::DebuggerEvent;
+use wakui::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 use wakui::event::{CommandEffect, EventCommand, EventHandler, EventSink};
 use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
 use wakui::menu::{
@@ -214,24 +212,22 @@ impl LoopHost for NativeAdapter {
             assert!(visitor.declarations > 0);
         }
     }
-    fn pump_debug(&mut self) -> WakeNeed {
+    fn pump_widgets(&mut self) -> WakeNeed {
         let mut state = self.common.borrow_mut();
-        // The debugger is a generic widget: refresh the cached snapshot,
+        // The polled widget is a generic widget: refresh the cached snapshot,
         // then render the projected screen like any other aux window.
-        if let Some(id) = state.app.debug_widget() {
+        if let Some(id) = state.app.polled_widget() {
             state.app.widget_refresh(id);
             if let Some(screen) = state.app.widget_screen(id) {
                 println!("native debugger: {}", screen.title);
             }
-            if let Some(handle) = state.app.debug_handle_for(id) {
-                return state.app.debug_poll(handle);
-            }
+            return state.app.poll_widget(id);
         }
         WakeNeed::default()
     }
-    fn pump_osd(&mut self, ctx: &FrameCtx) -> WakeNeed {
+    fn pump_dialog(&mut self, ctx: &FrameCtx) -> WakeNeed {
         let now = Instant::now();
-        let turn = self.common.borrow_mut().app.pump_osd(ctx, now);
+        let turn = self.common.borrow_mut().app.pump_dialog(now);
         self.deliver_modals(turn.modal);
         let update =
             self.common
@@ -243,7 +239,7 @@ impl LoopHost for NativeAdapter {
         update.visit(port);
         let state = self.common.borrow();
         WakeNeed {
-            osd_deadline: state.app.osd_wakeup(Instant::now()),
+            overlay_deadline: state.app.osd_wakeup(Instant::now()),
             flight_pending: state.app.osd_flight_pending(),
             ..Default::default()
         }

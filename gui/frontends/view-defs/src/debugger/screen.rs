@@ -7,11 +7,11 @@
 
 use std::collections::HashMap;
 
+use crate::debugger::{DebugSnapshot, DebuggerEvent};
 use wakui::control::{
     Capture, Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlKind,
     ControlMetadata, ControlScreen, IdRegistry, Layout, Node, Page,
 };
-use wakui::debugger::{DebugSnapshot, DebuggerEvent};
 
 /// Text input targets: each maps to its `*InputChanged` event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -572,7 +572,7 @@ fn placeholder(ids: &mut IdRegistry<String>) -> ControlScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wakui::debugger::{DebugInputs, DebuggerChrome, DebuggerRows, DebuggerScope};
+    use crate::debugger::{DebugInputs, DebuggerChrome, DebuggerRows, DebuggerScope};
 
     fn chrome() -> DebuggerChrome {
         DebuggerChrome {
@@ -621,18 +621,18 @@ mod tests {
         DebugSnapshot {
             chrome: chrome(),
             rows: DebuggerRows {
-                disasm: vec![wakui::debugger::DisasmRow {
+                disasm: vec![crate::debugger::DisasmRow {
                     addr: 0x8000,
                     is_pc: true,
                     text: "> 8000: NOP".into(),
                     target: Some(0x8001),
                 }],
-                dump: vec![wakui::debugger::DumpRow {
+                dump: vec![crate::debugger::DumpRow {
                     addr: 0,
                     bytes: vec![0xAB],
                 }],
                 changed_addrs: Vec::new(),
-                regs: vec![wakui::debugger::RegRow {
+                regs: vec![crate::debugger::RegRow {
                     name: "A",
                     text: "A=01".into(),
                 }],

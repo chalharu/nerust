@@ -57,8 +57,8 @@ pub(crate) fn rows_from_display(
     display: &DisplayCache,
     status_text: String,
     pending_text: Option<String>,
-) -> wakui::debugger::DebuggerRows {
-    use wakui::debugger::{DebuggerRows, DisasmRow, DumpRow, RegRow};
+) -> crate::debugger::DebuggerRows {
+    use crate::debugger::{DebuggerRows, DisasmRow, DumpRow, RegRow};
     DebuggerRows {
         watch_text: String::new(),
         freeze_text: String::new(),

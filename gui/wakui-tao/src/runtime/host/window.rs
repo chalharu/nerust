@@ -204,12 +204,12 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
         self.sync_debug_chrome();
     }
 
-    fn pump_debug(&mut self) -> WakeNeed {
+    fn pump_widgets(&mut self) -> WakeNeed {
         self.pump_debug();
         WakeNeed::default()
     }
 
-    fn pump_osd(&mut self, _ctx: &Self::Frame) -> WakeNeed {
+    fn pump_dialog(&mut self, _ctx: &Self::Frame) -> WakeNeed {
         self.tick_osd_pump()
     }
 
@@ -219,7 +219,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
             self.request_redraw();
         }
         WakeNeed {
-            osd_deadline: self
+            overlay_deadline: self
                 .aux
                 .pump_deadlines(Instant::now())
                 .into_iter()
@@ -360,10 +360,10 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         }
         self.remember_fit_window_size();
         // Renderer teardown precedes this at the runtime boundary. Retire
-        // application OSD is retired by begin_close; drop aux before debug
-        // flights, main window, and session flush.
+        // application dialogs is retired by begin_close; drop aux before
+        // background flights, main window, and session flush.
         self.aux.close_all();
-        self.core.close_debug_flights();
+        self.core.close_background_flights();
         self.windows.close_main();
         self.core.finish_close();
     }
@@ -502,7 +502,7 @@ mod tests {
         let raced = WakeNeed {
             live_tick: Some(tick),
             flight_pending: true,
-            osd_deadline: Some(soon_deadline),
+            overlay_deadline: Some(soon_deadline),
         };
         assert_eq!(earliest_wake(raced, now), Some(soon_deadline));
         // Live tick earlier than the flight backstop survives.
@@ -510,7 +510,7 @@ mod tests {
         let tick_wins = WakeNeed {
             live_tick: Some(early_tick),
             flight_pending: true,
-            osd_deadline: None,
+            overlay_deadline: None,
         };
         assert_eq!(earliest_wake(tick_wins, now), Some(early_tick));
         // Pure flow decision: any live source repaints; quiet sleeps.
@@ -608,11 +608,11 @@ mod tests {
         }
         .fold(WakeNeed {
             live_tick: Some(early),
-            osd_deadline: Some(late),
+            overlay_deadline: Some(late),
             ..WakeNeed::default()
         });
         assert_eq!(folded.live_tick, Some(early));
-        assert_eq!(folded.osd_deadline, Some(late));
+        assert_eq!(folded.overlay_deadline, Some(late));
         assert!(!folded.flight_pending);
         let pending = WakeNeed {
             flight_pending: true,

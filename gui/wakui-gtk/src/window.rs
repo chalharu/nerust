@@ -22,7 +22,6 @@ use wakui::session::SessionEvent;
 use wakui::{
     aux::{AuxId, AuxWindows, OpenRequest},
     commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
-    debugger::DebuggerScope,
     focus::FocusEvent,
     mailbox::WindowMailbox,
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
@@ -435,10 +434,10 @@ fn drain_deferred_opens<K: Copy + Eq + std::hash::Hash + 'static>(window: &Windo
     }
 }
 
-/// Per-pump debugger refresh without kinds: the widget screen is the only
-/// native view; the bridge handle behind it drives polls and live ticks.
+/// Per-pump polled-widget refresh without kinds: the widget screen is the only
+/// native view; the view-side poll behind it drives background work and ticks.
 fn pump_debug_widgets<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>) {
-    let id = match window.state().borrow().host.debug_widget() {
+    let id = match window.state().borrow().host.polled_widget() {
         Some(id) => id,
         None => return,
     };
@@ -453,38 +452,19 @@ fn pump_debug_widgets<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<
             NativeAux::Controls(program) => program.binding.refresh(),
         }
     }
-    let handle = match window.state().borrow().host.debug_handle_for(id) {
-        Some(handle) => handle,
-        None => return,
-    };
-    let _ = window
-        .state()
-        .borrow_mut()
-        .host
-        .debug_reset_if_replaced(handle);
-    let _ = window.state().borrow_mut().host.debug_poll(handle);
-    if window.state().borrow().host.chrome_drain_due() {
-        window
-            .state()
-            .borrow_mut()
-            .host
-            .debug_refresh(handle, DebuggerScope::All);
-        window.state().borrow_mut().host.widget_refresh(id);
-        if let Some(program) = window
-            .borrow()
-            .aux
-            .kind_of_id(id)
-            .and_then(|kind| window.borrow().aux.get(kind).cloned())
-        {
-            match program {
-                NativeAux::Controls(program) => program.binding.refresh(),
-            }
+    let _ = window.state().borrow_mut().host.poll_widget(id);
+    window.state().borrow_mut().host.widget_refresh(id);
+    if let Some(program) = window
+        .borrow()
+        .aux
+        .kind_of_id(id)
+        .and_then(|kind| window.borrow().aux.get(kind).cloned())
+    {
+        match program {
+            NativeAux::Controls(program) => program.binding.refresh(),
         }
     }
-    let (loaded, paused) = window.state().borrow().host.liveness_inputs();
-    if loaded && !paused {
-        window.state().borrow_mut().host.debug_live_tick(handle);
-    }
+    window.state().borrow_mut().host.tick_widget(id);
 }
 
 fn widget_callbacks<K: Copy + Eq + std::hash::Hash + 'static>(

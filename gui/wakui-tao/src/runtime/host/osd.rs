@@ -1,8 +1,8 @@
-//! Native OSD effects; ApplicationHost owns notification and rendering state.
+//! Native dialog effects; the overlay layer lives renderer-side.
 
 use std::time::Instant;
 
-use wakui::osd::{ModalPresentation, ModalPresenter};
+use wakui::dialog::{ModalPresentation, ModalPresenter};
 
 use super::HostState;
 use super::window::WakeNeed;
@@ -33,7 +33,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 
     /// Execute only native effects after the application borrow ends.
     pub(super) fn tick_osd_pump(&mut self) -> WakeNeed {
-        let turn = self.core.pump_osd(Instant::now());
+        let turn = self.core.pump_dialog(Instant::now());
         if let Some(presentation) = turn.modal {
             let token = presentation.token;
             let adapter = DialogPresenter {
@@ -42,17 +42,17 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
             };
             let presenter: &dyn ModalPresenter = &adapter;
             if let Some(receiver) = presenter.present_modal(presentation) {
-                self.core.attach_osd_modal_receiver(token, receiver);
+                self.core.attach_dialog_receiver(token, receiver);
             }
         }
         if self.core.redraw_needed() {
             self.windows.request_redraw();
         }
-        // Widget refresh runs in the aux pump (`pump_widgets`); OSD only
+        // Widget refresh runs in the aux pump (`pump_widgets`); dialog only
         // reports its own flights here.
         // Receiver attachment adds a polling flight after the core's turn capture.
         WakeNeed {
-            flight_pending: self.core.osd_flight_pending(),
+            flight_pending: self.core.dialog_flight_pending(),
             ..turn.wake
         }
     }
@@ -73,11 +73,8 @@ mod tests {
         host.core.note_main_departure();
         host.core.focus_event(FocusEvent::BurstEnd);
         let (ack, done) = std::sync::mpsc::channel();
-        let presentation = host.core.pump_osd(Instant::now()).modal.unwrap();
-        assert!(
-            host.core
-                .attach_osd_modal_receiver(presentation.token, done)
-        );
+        let presentation = host.core.pump_dialog(Instant::now()).modal.unwrap();
+        assert!(host.core.attach_dialog_receiver(presentation.token, done));
         let wake = host.tick_osd_pump();
         assert!(
             wake.flight_pending,
@@ -95,42 +92,42 @@ mod tests {
     fn idle_pump_reports_no_wake() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(host.core.osd_wakeup(std::time::Instant::now()).is_none());
+        assert!(host.core.dialog_wakeup(std::time::Instant::now()).is_none());
         let wake = host.tick_osd_pump();
-        assert!(wake.osd_deadline.is_none());
+        assert!(wake.overlay_deadline.is_none());
         assert!(wake.live_tick.is_none());
         assert!(!wake.flight_pending);
     }
 
     #[test]
     fn close_retires_owned_modal_receiver_queue() {
-        use wakui::osd::ModalAdvance;
+        use wakui::dialog::ModalAdvance;
         use wakui::pause::PauseOwner;
         let mut host = TestHost::new().host;
         host.core.set_pause_owner(PauseOwner::Settings, true);
         host.core.report_host_error("active on close".into());
-        let presentation = host.core.pump_osd(Instant::now()).modal.unwrap();
+        let presentation = host.core.pump_dialog(Instant::now()).modal.unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         assert!(
             host.core
-                .attach_osd_modal_receiver(presentation.token, receiver)
+                .attach_dialog_receiver(presentation.token, receiver)
         );
         host.core.report_host_error("queued on close".into());
-        host.core.pump_osd(Instant::now());
-        assert!(host.core.osd_modal_pending());
-        assert!(host.core.osd_flight_pending());
+        host.core.pump_dialog(Instant::now());
+        assert!(host.core.dialog_pending());
+        assert!(host.core.dialog_flight_pending());
         host.prepare_close();
         assert!(sender.send(()).is_err());
-        assert!(!host.core.osd_modal_pending());
-        assert!(!host.core.osd_flight_pending());
-        assert_eq!(host.core.osd_pending(), 0);
+        assert!(!host.core.dialog_pending());
+        assert!(!host.core.dialog_flight_pending());
+        assert_eq!(host.core.dialog_queue_len(), 0);
         assert!(!host.core.pause_held());
         assert_eq!(
-            host.core.acknowledge_osd_modal(presentation.token),
+            host.core.acknowledge_dialog(presentation.token),
             ModalAdvance::Ignored
         );
         host.prepare_close();
-        assert!(host.core.pump_osd(Instant::now()).modal.is_none());
+        assert!(host.core.pump_dialog(Instant::now()).modal.is_none());
     }
 
     #[test]

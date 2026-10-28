@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 pub struct WakeNeed {
     pub live_tick: Option<Instant>,
     pub flight_pending: bool,
-    pub osd_deadline: Option<Instant>,
+    pub overlay_deadline: Option<Instant>,
 }
 
 impl WakeNeed {
@@ -16,10 +16,10 @@ impl WakeNeed {
         Self {
             live_tick: self.live_tick.into_iter().chain(other.live_tick).min(),
             flight_pending: self.flight_pending || other.flight_pending,
-            osd_deadline: self
-                .osd_deadline
+            overlay_deadline: self
+                .overlay_deadline
                 .into_iter()
-                .chain(other.osd_deadline)
+                .chain(other.overlay_deadline)
                 .min(),
         }
     }
@@ -35,7 +35,7 @@ pub fn earliest_wake(input: WakeNeed, now: Instant) -> Option<Instant> {
     [
         input.live_tick,
         input.flight_pending.then(|| flight_backstop(now)),
-        input.osd_deadline,
+        input.overlay_deadline,
     ]
     .into_iter()
     .flatten()
@@ -82,8 +82,8 @@ pub trait LoopHost {
     fn before_turn(&mut self);
     fn frame_ctx(&mut self) -> Self::Frame;
     fn chrome(&mut self, ctx: &Self::Frame);
-    fn pump_debug(&mut self) -> WakeNeed;
-    fn pump_osd(&mut self, ctx: &Self::Frame) -> WakeNeed;
+    fn pump_widgets(&mut self) -> WakeNeed;
+    fn pump_dialog(&mut self, ctx: &Self::Frame) -> WakeNeed;
     /// Pump native auxiliary windows and collect render-retry deadlines.
     fn pump_aux(&mut self) -> WakeNeed;
     /// Must read the current session tick: drains/modal ACKs can resume it.
@@ -101,10 +101,10 @@ pub fn drive_turn(host: &mut impl LoopHost) -> TurnOutcome {
     host.before_turn();
     let ctx = host.frame_ctx();
     host.chrome(&ctx);
-    let debug = host.pump_debug();
-    let osd = host.pump_osd(&ctx);
+    let widgets = host.pump_widgets();
+    let dialog = host.pump_dialog(&ctx);
     let aux = host.pump_aux();
-    let wake = debug.fold(osd).fold(aux);
+    let wake = widgets.fold(dialog).fold(aux);
     // Never park on the captured pre-ACK pause state, nor a pre-poll clock.
     let live = host.late_liveness();
     let (deadline, wants_redraw) = update_flow(
@@ -182,7 +182,7 @@ mod tests {
             assert_eq!(*ctx, self.captured_paused);
         }
 
-        fn pump_debug(&mut self) -> WakeNeed {
+        fn pump_widgets(&mut self) -> WakeNeed {
             self.calls.push("debug");
             if let Some(paused) = self.debug_pause {
                 self.live.paused = paused;
@@ -190,7 +190,7 @@ mod tests {
             self.debug
         }
 
-        fn pump_osd(&mut self, ctx: &bool) -> WakeNeed {
+        fn pump_dialog(&mut self, ctx: &bool) -> WakeNeed {
             self.calls.push("osd");
             assert_eq!(*ctx, self.captured_paused);
             if self.acknowledge {
@@ -290,13 +290,13 @@ mod tests {
         host.debug = WakeNeed {
             live_tick: Some(now + Duration::from_millis(400)),
             flight_pending: true,
-            osd_deadline: None,
+            overlay_deadline: None,
         };
-        host.osd.osd_deadline = Some(now + Duration::from_millis(300));
-        host.aux.osd_deadline = Some(now + Duration::from_millis(120));
-        assert_eq!(drive_turn(&mut host).deadline, host.aux.osd_deadline);
+        host.osd.overlay_deadline = Some(now + Duration::from_millis(300));
+        host.aux.overlay_deadline = Some(now + Duration::from_millis(120));
+        assert_eq!(drive_turn(&mut host).deadline, host.aux.overlay_deadline);
         host.clock.set(now);
-        host.aux.osd_deadline = None;
+        host.aux.overlay_deadline = None;
         assert_eq!(
             drive_turn(&mut host).deadline,
             Some(flight_backstop(host.clock.get()))
@@ -336,17 +336,17 @@ mod tests {
         let a = WakeNeed {
             live_tick: Some(later),
             flight_pending: true,
-            osd_deadline: Some(now),
+            overlay_deadline: Some(now),
         };
         let b = WakeNeed {
             live_tick: Some(now),
             flight_pending: false,
-            osd_deadline: Some(later),
+            overlay_deadline: Some(later),
         };
         let expected = WakeNeed {
             live_tick: Some(now),
             flight_pending: true,
-            osd_deadline: Some(now),
+            overlay_deadline: Some(now),
         };
         assert_eq!(a.fold(b), expected);
         assert_eq!(b.fold(a), expected);

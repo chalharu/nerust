@@ -365,8 +365,8 @@ fn osd_viewport_sync_and_invalidate_are_headless() {
     let state = windows::model_state();
     // Viewport sync prepares and applies internally; invalidation is
     // observable only as continued total behavior headless.
-    state.borrow_mut().host.sync_osd_viewport(320, 240, 240);
-    state.borrow_mut().host.invalidate_osd();
-    state.borrow_mut().host.sync_osd_viewport(320, 240, 240);
-    state.borrow_mut().host.invalidate_osd();
+    state.borrow_mut().host.sync_overlay_viewport(320, 240, 240);
+    state.borrow_mut().host.invalidate_overlay();
+    state.borrow_mut().host.sync_overlay_viewport(320, 240, 240);
+    state.borrow_mut().host.invalidate_overlay();
 }

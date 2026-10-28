@@ -481,7 +481,7 @@ mod tests {
         host.poll_notifications();
         // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
-        while support.dialogs.errors().is_empty() || host.core.osd_modal_pending() {
+        while support.dialogs.errors().is_empty() || host.core.dialog_pending() {
             host.poll_notifications();
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
@@ -489,8 +489,8 @@ mod tests {
         }
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("test error"));
-        assert_eq!(host.core.osd_pending(), 0);
-        assert!(!host.core.osd_modal_pending());
+        assert_eq!(host.core.dialog_queue_len(), 0);
+        assert!(!host.core.dialog_pending());
     }
 
     #[test]
@@ -504,13 +504,17 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         drop(tx);
         host.core.report_host_error("disconnected dialog".into());
-        let presentation = host.core.pump_osd(std::time::Instant::now()).modal.unwrap();
-        assert!(host.core.attach_osd_modal_receiver(presentation.token, rx));
+        let presentation = host
+            .core
+            .pump_dialog(std::time::Instant::now())
+            .modal
+            .unwrap();
+        assert!(host.core.attach_dialog_receiver(presentation.token, rx));
         assert!(host.core.owns_pause(PauseOwner::Modal));
         host.poll_notifications();
         // Reaped as a failed ack: flight gone, queue unblocked.
-        assert!(!host.core.osd_modal_pending());
-        assert_eq!(host.core.osd_pending(), 0);
+        assert!(!host.core.dialog_pending());
+        assert_eq!(host.core.dialog_queue_len(), 0);
         assert!(!host.core.owns_pause(PauseOwner::Modal));
         assert!(host.core.owns_pause(PauseOwner::Settings));
     }
@@ -522,24 +526,28 @@ mod tests {
         let mut host = support.host;
         host.core.set_pause_owner(PauseOwner::Focus, true);
         host.core.report_host_error("dead first dialog".into());
-        let first = host.core.pump_osd(std::time::Instant::now()).modal.unwrap();
+        let first = host
+            .core
+            .pump_dialog(std::time::Instant::now())
+            .modal
+            .unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
-        assert!(host.core.attach_osd_modal_receiver(first.token, receiver));
+        assert!(host.core.attach_dialog_receiver(first.token, receiver));
         host.core.report_host_error("chained native dialog".into());
         drop(sender);
 
         host.poll_notifications();
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("chained native dialog"));
-        assert!(host.core.osd_modal_pending());
-        assert!(host.core.osd_flight_pending());
+        assert!(host.core.dialog_pending());
+        assert!(host.core.dialog_flight_pending());
         assert!(host.core.owns_pause(PauseOwner::Modal));
         assert!(host.core.owns_pause(PauseOwner::Focus));
-        assert_eq!(host.core.osd_pending(), 0);
+        assert_eq!(host.core.dialog_queue_len(), 0);
 
         host.poll_notifications();
-        assert!(!host.core.osd_modal_pending());
-        assert!(!host.core.osd_flight_pending());
+        assert!(!host.core.dialog_pending());
+        assert!(!host.core.dialog_flight_pending());
         assert!(!host.core.owns_pause(PauseOwner::Modal));
         assert!(host.core.owns_pause(PauseOwner::Focus));
         assert_eq!(support.dialogs.errors().len(), 1);
@@ -554,7 +562,7 @@ mod tests {
         host.poll_notifications();
         host.poll_notifications();
         assert!(support.dialogs.errors().is_empty());
-        assert_eq!(host.core.osd_pending(), 0);
+        assert_eq!(host.core.dialog_queue_len(), 0);
         assert!(host.core.history_changed());
     }
 

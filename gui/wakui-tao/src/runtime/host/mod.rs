@@ -300,7 +300,7 @@ mod tests {
         assert!(host.aux_id_of(id).is_none());
         let _ = NativeWindowId::dummy();
         assert!(host.with_main_window(|_| ()).is_none());
-        assert!(host.core.debug_widget().is_none());
+        assert!(host.core.polled_widget().is_none());
         assert!(host.core.window_pos(TestAux::Debug).is_none());
         assert!(host.core.window_pos(TestAux::Settings).is_none());
         host.core.remember_window_pos(TestAux::Debug, 3, 4);

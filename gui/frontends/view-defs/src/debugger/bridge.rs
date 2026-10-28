@@ -145,7 +145,7 @@ impl DebugBridge {
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
-    pub fn debugger_chrome(&self) -> wakui::debugger::DebuggerChrome {
+    pub fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
         debugger_chrome(self.meta.language)
     }
 
@@ -269,7 +269,7 @@ impl DebugBridge {
     /// Coreless windows never drain, so the default Empty status would sit
     /// blank forever; read coreless as paused with an explicit no-core
     /// status, the same agreement as the gtk twin.
-    pub fn debugger_rows(&self) -> wakui::debugger::DebuggerRows {
+    pub fn debugger_rows(&self) -> crate::debugger::DebuggerRows {
         let display = read_display(&self.display);
         let language = self.meta.language;
         let chrome = super::debugger_chrome(language);
@@ -451,10 +451,10 @@ impl DebugBridge {
 }
 
 /// Pre-localized debugger chrome in the view language.
-pub fn debugger_chrome(language: AppLanguage) -> wakui::debugger::DebuggerChrome {
+pub fn debugger_chrome(language: AppLanguage) -> crate::debugger::DebuggerChrome {
     use nerust_settings_core::i18n::{UiText, text as ui_text};
     let text = |key| ui_text(language, key).to_string();
-    wakui::debugger::DebuggerChrome {
+    crate::debugger::DebuggerChrome {
         debugger: text(UiText::Debugger),
         pause: text(UiText::Pause),
         resume: text(UiText::Resume),

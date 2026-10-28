@@ -105,7 +105,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     pub(super) fn after_rom_load(&mut self) {
         self.core.reconcile_pause();
         self.sync_chrome(true);
-        if self.core.debug_widget().is_some() {
+        if self.core.polled_widget().is_some() {
             self.refresh_open_debugger();
         }
     }

@@ -9,10 +9,7 @@ use std::{path::Path, time::Instant};
 use nerust_gui_shell::session::access::{PauseControl, ResetControl, SlotIo, SlotNav};
 use wakui::{
     app::{FrontendApp, WidgetCloseOutcome},
-    debugger::{
-        DebugHandle, DebugInputs, DebugSnapshot, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope,
-    },
+    dialog::{DialogTurn, ModalAdvance, ModalToken},
     session::{SessionError, SessionEvent as FrameworkEvent},
 };
 use wakui::{
@@ -20,7 +17,6 @@ use wakui::{
     focus::{FocusEffect, FocusEvent},
     mailbox::WindowMailbox,
     menu::{DialogTitles, MenuCapabilities, Menubar},
-    osd::{ModalAdvance, ModalPresentation, ModalToken, OsdTurn},
     viewport::{ViewportImage, ViewportPresent},
     window::{Window, WindowChromeSync, WindowEffects},
 };
@@ -34,7 +30,10 @@ use wakui::{
 
 use super::ApplicationHost;
 use crate::{
-    debugger::{DebugBridge, DebuggerDriver},
+    debugger::{
+        DebugBridge, DebugHandle, DebugInputs, DebugSnapshot, DebuggerDriver, DebuggerEffects,
+        DebuggerEvent, DebuggerLiveEffects, DebuggerScope,
+    },
     focus::AuxKind,
     widget_session::WidgetSession,
 };
@@ -255,6 +254,30 @@ impl ApplicationHost {
             self.rebuild_debug_bridge(handle);
         }
         replaced
+    }
+
+    /// View-side debugger gesture entry (tests, examples). Native frontends
+    /// route `widget_dispatch` instead and never name these types.
+    pub fn debug_gesture(
+        &mut self,
+        handle: DebugHandle,
+        inputs: Vec<DebuggerEvent>,
+        event: DebuggerEvent,
+    ) -> DebuggerEffects {
+        self.debug_gesture_inner(handle, inputs, event)
+    }
+
+    /// View-side drain check (tests, examples).
+    pub fn debug_drain_pending(&self, handle: DebugHandle) -> bool {
+        self.debug_session(handle)
+            .is_some_and(|session| session.driver.pending())
+    }
+
+    /// View-side handle lookup (tests, examples). Native frontends use
+    /// the generic `polled_widget`/`poll_widget` ports instead.
+    pub fn debug_handle_for(&self, id: AuxId) -> Option<DebugHandle> {
+        self.widget_session(id)
+            .and_then(|session| session.debug_handle())
     }
 
     /// Widget session owned by id, if a prepared window holds one.
@@ -868,61 +891,50 @@ impl FrontendApp<AuxKind> for ApplicationHost {
             .any(|session| session.kind() == AuxKind::Settings)
     }
 
-    fn close_debug_flights(&mut self) {
+    fn close_background_flights(&mut self) {
         ApplicationHost::close_debug_flights(self);
     }
 
-    fn debug_widget(&self) -> Option<AuxId> {
+    fn polled_widget(&self) -> Option<AuxId> {
         self.widget_sessions
             .iter()
             .find_map(|(id, session)| (session.kind() == AuxKind::Debug).then_some(*id))
     }
 
-    fn debug_handle_for(&self, id: AuxId) -> Option<DebugHandle> {
-        self.widget_session(id)
+    fn poll_widget(&mut self, id: AuxId) -> WakeNeed {
+        let Some(handle) = self
+            .widget_session(id)
             .and_then(|session| session.debug_handle())
+        else {
+            return WakeNeed::default();
+        };
+        if self.debug_reset_if_replaced_inner(handle) {
+            return self.debug_poll_inner(handle);
+        }
+        let wake = self.debug_poll_inner(handle);
+        if ApplicationHost::chrome_drain_due(self, true) {
+            self.debug_refresh_inner(handle, DebuggerScope::All);
+            let second = self.debug_poll_inner(handle);
+            self.widget_refresh(id);
+            return wake.fold(second);
+        }
+        self.widget_refresh(id);
+        wake
     }
 
-    fn debug_gesture(
-        &mut self,
-        handle: DebugHandle,
-        inputs: Vec<DebuggerEvent>,
-        event: DebuggerEvent,
-    ) -> DebuggerEffects {
-        self.debug_gesture_inner(handle, inputs, event)
-    }
-
-    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope) {
-        self.debug_refresh_inner(handle, scope);
-    }
-
-    fn debug_open_refresh(&mut self, handle: DebugHandle) {
-        self.debug_open_refresh_inner(handle);
-    }
-
-    fn debug_poll(&mut self, handle: DebugHandle) -> WakeNeed {
-        self.debug_poll_inner(handle)
-    }
-
-    fn debug_poll_live(&mut self, handle: DebugHandle, visible: bool) -> DebuggerLiveEffects {
-        self.debug_poll_live_inner(handle, visible)
-    }
-
-    fn debug_live_tick(&mut self, handle: DebugHandle) {
+    fn tick_widget(&mut self, id: AuxId) {
+        if !(self.tick_loaded() && !self.tick_paused()) {
+            return;
+        }
+        let Some(handle) = self
+            .widget_session(id)
+            .and_then(|session| session.debug_handle())
+        else {
+            return;
+        };
         self.debug_live_tick_inner(handle);
-    }
-
-    fn debug_drain_pending(&self, handle: DebugHandle) -> bool {
-        self.debug_session(handle)
-            .is_some_and(|session| session.driver.pending())
-    }
-
-    fn debug_reset_if_replaced(&mut self, handle: DebugHandle) -> bool {
-        self.debug_reset_if_replaced_inner(handle)
-    }
-
-    fn chrome_drain_due(&self) -> bool {
-        ApplicationHost::chrome_drain_due(self, self.debug_widget().is_some())
+        let _ = self.debug_poll_live_inner(handle, true);
+        self.widget_refresh(id);
     }
 
     fn take_open_request(&mut self, kind: AuxKind) -> bool {
@@ -969,58 +981,40 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         self.debug.schedule_mut().live_due(now)
     }
 
-    fn pump_osd(&mut self, now: Instant) -> OsdTurn {
+    fn pump_dialog(&mut self, now: Instant) -> DialogTurn {
         let ctx = self.frame_cache.frame_ctx(&self.session);
         let turn = ApplicationHost::pump_osd(self, &ctx, now);
-        OsdTurn {
-            modal: turn.modal.map(|presentation| ModalPresentation {
-                token: presentation.token.into_host(),
-                detail: presentation.detail,
-            }),
+        DialogTurn {
+            modal: turn.modal,
             wake: turn.wake,
-            changed: turn.changed,
         }
     }
 
-    fn attach_osd_modal_receiver(
+    fn attach_dialog_receiver(
         &mut self,
         token: ModalToken,
         receiver: std::sync::mpsc::Receiver<()>,
     ) -> bool {
-        ApplicationHost::attach_osd_modal_receiver(
-            self,
-            crate::osd::ModalToken::from_host(token),
-            receiver,
-        )
+        ApplicationHost::attach_osd_modal_receiver(self, token, receiver)
     }
 
-    fn acknowledge_osd_modal(&mut self, token: ModalToken) -> ModalAdvance {
-        match ApplicationHost::acknowledge_osd_modal(self, crate::osd::ModalToken::from_host(token))
-        {
-            crate::osd::ModalAdvance::Ignored => ModalAdvance::Ignored,
-            crate::osd::ModalAdvance::Present(presentation) => {
-                ModalAdvance::Present(ModalPresentation {
-                    token: presentation.token.into_host(),
-                    detail: presentation.detail,
-                })
-            }
-            crate::osd::ModalAdvance::Drained => ModalAdvance::Drained,
-        }
+    fn acknowledge_dialog(&mut self, token: ModalToken) -> ModalAdvance {
+        ApplicationHost::acknowledge_osd_modal(self, token)
     }
 
-    fn osd_modal_pending(&self) -> bool {
+    fn dialog_pending(&self) -> bool {
         ApplicationHost::osd_modal_pending(self)
     }
 
-    fn osd_flight_pending(&self) -> bool {
+    fn dialog_flight_pending(&self) -> bool {
         ApplicationHost::osd_flight_pending(self)
     }
 
-    fn osd_pending(&self) -> usize {
+    fn dialog_queue_len(&self) -> usize {
         ApplicationHost::osd_pending(self)
     }
 
-    fn osd_wakeup(&self, now: Instant) -> Option<Instant> {
+    fn dialog_wakeup(&self, now: Instant) -> Option<Instant> {
         ApplicationHost::osd_wakeup(self, now)
     }
 
@@ -1032,7 +1026,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::redraw_needed(self)
     }
 
-    fn invalidate_osd(&mut self) {
+    fn invalidate_overlay(&mut self) {
         ApplicationHost::invalidate_osd(self);
     }
 
@@ -1048,7 +1042,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::viewport_capture(self, width, height)
     }
 
-    fn sync_osd_viewport(&mut self, width: u32, height: u32, client_height: u32) {
+    fn sync_overlay_viewport(&mut self, width: u32, height: u32, client_height: u32) {
         let ctx = self.frame_cache.frame_ctx(&self.session);
         let update = ApplicationHost::prepare_osd_viewport(
             self,

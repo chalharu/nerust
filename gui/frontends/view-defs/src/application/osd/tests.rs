@@ -4,10 +4,9 @@ use nerust_gui_shell::session::{access::PauseControl, commands::SessionCommand};
 use nerust_render_traits::{ReservedStrip, renderer::OsdLayer};
 
 use super::*;
-use crate::{
-    application::tests::Fixture,
-    osd::{ModalPresentation, ModalPresenter, OsdLayerUpdate, OsdVisitor},
-};
+use crate::application::tests::Fixture;
+use crate::osd::{OsdLayerUpdate, OsdVisitor};
+use wakui::dialog::{ModalPresentation, ModalPresenter};
 
 fn size() -> SurfaceSize {
     SurfaceSize::new(320, 240)
@@ -298,7 +297,10 @@ fn owned_transient_expiry_arms_wake_marks_redraw_and_clears_exactly_once() {
     let now = Instant::now();
     let turn = host.pump_osd(&ctx, now);
     assert!(turn.changed && turn.modal.is_none());
-    let deadline = turn.wake.osd_deadline.expect("visible pause notification");
+    let deadline = turn
+        .wake
+        .overlay_deadline
+        .expect("visible pause notification");
     assert_eq!(host.osd_wakeup(now), Some(deadline));
     assert!(host.redraw_needed());
     assert!(matches!(
@@ -315,7 +317,7 @@ fn owned_transient_expiry_arms_wake_marks_redraw_and_clears_exactly_once() {
     host.frame_presented(0);
     let expired = host.pump_osd(&ctx, deadline);
     assert!(expired.changed && host.redraw_needed());
-    assert_eq!(expired.wake.osd_deadline, None);
+    assert_eq!(expired.wake.overlay_deadline, None);
     assert_eq!(
         host.prepare_osd(size(), 480, &ctx, deadline).layer,
         OsdLayerUpdate::Clear

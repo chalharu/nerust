@@ -380,7 +380,7 @@ impl DebuggerModel {
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
-    pub fn debugger_chrome(&self) -> wakui::debugger::DebuggerChrome {
+    pub fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
         super::debugger_chrome(self.language)
     }
 
@@ -413,7 +413,7 @@ impl DebuggerModel {
     }
 
     /// Formatted debugger rows without exposing row types or formatters.
-    pub fn debugger_rows(&self) -> wakui::debugger::DebuggerRows {
+    pub fn debugger_rows(&self) -> crate::debugger::DebuggerRows {
         let coreless = self.spaces.is_empty();
         let mut rows = {
             let status_text = self.display.status.render(self.language);

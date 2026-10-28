@@ -1,6 +1,6 @@
-//! Toolkit-independent auxiliary scheduling state: deferred open requests,
-//! remembered window positions, and live cadence. The schedule is generic
-//! over the view-side aux kind `K`; native window handles remain in the
+//! View-side auxiliary scheduling state: deferred open requests,
+//! remembered window positions, and live cadence. Generic over the
+//! view-side aux kind `K`; native window handles remain in the
 //! auxiliary-window registry.
 
 use std::collections::{HashMap, HashSet};
