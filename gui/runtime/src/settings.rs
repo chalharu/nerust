@@ -210,8 +210,10 @@ fn value_at_path_mut<'a>(
 /// Runtime apply policy, kept outside the pure settings model.
 pub use apply::{LiveStrategy, SettingsApplyPlan};
 
+/// Test fixture: capabilities of a render backend that honors vsync
+/// (live toggles rebuild the renderer).
 #[cfg(test)]
-pub(crate) fn tao_caps() -> HostBackendCapabilities {
+pub(crate) fn vsync_caps() -> HostBackendCapabilities {
     HostBackendCapabilities {
         window: HostWindowCapabilities {
             remembers_window_size: true,
@@ -224,8 +226,10 @@ pub(crate) fn tao_caps() -> HostBackendCapabilities {
     }
 }
 
+/// Test fixture: capabilities of a render backend without vsync control
+/// (live toggles are ignored until the next attach).
 #[cfg(test)]
-pub(crate) fn gtk_caps() -> HostBackendCapabilities {
+pub(crate) fn no_vsync_caps() -> HostBackendCapabilities {
     HostBackendCapabilities {
         window: HostWindowCapabilities {
             remembers_window_size: false,

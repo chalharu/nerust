@@ -12,9 +12,10 @@ use nerust_gui_shell::{context::FrontendContext, session::SessionHandle};
 use crate::application::ApplicationHost;
 
 /// Backend capabilities for the production frontends. Window chrome is
-/// identical on both; only live-tick presentation differs (`Some` enables
-/// the vsync-gated path the tao runtime drives, `None` leaves the gtk
-/// main loop in charge).
+/// identical on both; `supports_vsync` is a render-backend property
+/// (`Some` when the active pipeline honors the vsync setting at attach,
+/// so a live toggle must rebuild; `None` leaves the setting to the next
+/// attach). The composition root decides it from the render backend.
 pub fn backend_capabilities(
     remembers_window_size: bool,
     supports_vsync: Option<bool>,
