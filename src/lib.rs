@@ -161,7 +161,7 @@ fn boot_frontend(
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
     match boot(
         ctx,
-        backend_capabilities(true, frontend_supports_vsync()),
+        backend_capabilities(true, render_supports_vsync()),
         None,
     ) {
         Ok(boot) => Some(boot),
@@ -181,30 +181,42 @@ fn boot_frontend(
     }
 }
 
-/// Live-tick presentation differs per frontend by design: tao drives the
-/// vsync-gated path, gtk leaves its main loop in charge (see
-/// `backend_capabilities`). This is the only capability allowed to differ;
-/// every other behavior is shared.
-#[cfg(all(feature = "gtk", not(feature = "tao")))]
+/// Whether a live vsync toggle needs a renderer rebuild. This is a
+/// render-backend property, not a frontend one: wgpu applies vsync through
+/// its present mode and opengl through its swap interval (both read at
+/// attach time, so a toggle must rebuild), while softbuffer has no vsync
+/// control at all. `None` means vsync changes are ignored until the next
+/// attach.
+#[cfg(feature = "wgpu")]
 #[cfg_attr(clippy, allow(dead_code))]
-fn frontend_supports_vsync() -> Option<bool> {
-    None
-}
-
-/// Live-tick presentation differs per frontend by design: tao drives the
-/// vsync-gated path, gtk leaves its main loop in charge (see
-/// `backend_capabilities`). This is the only capability allowed to differ;
-/// every other behavior is shared.
-#[cfg(feature = "tao")]
-#[cfg_attr(clippy, allow(dead_code))]
-fn frontend_supports_vsync() -> Option<bool> {
+fn render_supports_vsync() -> Option<bool> {
     Some(true)
 }
 
-/// Clippy without a frontend still compiles: no capability to report.
-#[cfg(all(not(feature = "gtk"), not(feature = "tao")))]
+/// Whether a live vsync toggle needs a renderer rebuild. This is a
+/// render-backend property, not a frontend one: wgpu applies vsync through
+/// its present mode and opengl through its swap interval (both read at
+/// attach time, so a toggle must rebuild), while softbuffer has no vsync
+/// control at all. `None` means vsync changes are ignored until the next
+/// attach.
+#[cfg(feature = "opengl")]
 #[cfg_attr(clippy, allow(dead_code))]
-fn frontend_supports_vsync() -> Option<bool> {
+fn render_supports_vsync() -> Option<bool> {
+    Some(true)
+}
+
+/// Whether a live vsync toggle needs a renderer rebuild. This is a
+/// render-backend property, not a frontend one: wgpu applies vsync through
+/// its present mode and opengl through its swap interval (both read at
+/// attach time, so a toggle must rebuild), while softbuffer has no vsync
+/// control at all. `None` means vsync changes are ignored until the next
+/// attach.
+#[cfg(any(
+    feature = "softbuffer",
+    all(not(feature = "wgpu"), not(feature = "opengl"))
+))]
+#[cfg_attr(clippy, allow(dead_code))]
+fn render_supports_vsync() -> Option<bool> {
     None
 }
 
