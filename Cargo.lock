@@ -3494,6 +3494,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_frontend_kernel",
+ "nerust_frontend_viewdefs",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
@@ -3513,6 +3514,18 @@ dependencies = [
 [[package]]
 name = "nerust_frontend_kernel"
 version = "0.1.0-dev"
+
+[[package]]
+name = "nerust_frontend_viewdefs"
+version = "0.1.0-dev"
+dependencies = [
+ "nerust_core_traits",
+ "nerust_frontend_host",
+ "nerust_gui_runtime",
+ "nerust_gui_shell",
+ "nerust_settings_core",
+ "wakui",
+]
 
 [[package]]
 name = "nerust_gba_core"

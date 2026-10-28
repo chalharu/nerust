@@ -1,0 +1,18 @@
+[package]
+authors.workspace = true
+description = "Frontend view definitions over the ViewModels (settings, history, debugger views)"
+edition.workspace = true
+license.workspace = true
+name = "nerust_frontend_viewdefs"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+nerust_gui_shell.workspace = true
+nerust_settings_core.workspace = true
+wakui.workspace = true
+
+[dev-dependencies]
+nerust_core_traits.workspace = true
+nerust_frontend_host.workspace = true
+nerust_gui_runtime.workspace = true
