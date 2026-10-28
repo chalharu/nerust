@@ -14,7 +14,7 @@ use nerust_gui_viewmodel::debugger::{
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::{DebuggerEvent, DebuggerState, DebuggerUpdate, model::apply_live};
-use crate::sync::lock_recovered;
+use wakui::sync::lock_recovered;
 
 fn read_display(lock: &RwLock<Arc<DisplayCache>>) -> RwLockReadGuard<'_, Arc<DisplayCache>> {
     lock.read().unwrap_or_else(|error| {

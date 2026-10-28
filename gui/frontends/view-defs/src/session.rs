@@ -8,7 +8,7 @@ use nerust_gui_shell::session::{
 use nerust_settings_core::model::input::ShortcutAction;
 use wakui::commands::SessionCommand;
 use wakui::pause::{PauseOwner, PausePolicy};
-pub use wakui::session::{
+use wakui::session::{
     CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome, ShortcutGesture,
 };
 

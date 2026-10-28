@@ -19,13 +19,13 @@ use wakui::{
 };
 
 use wakui::mailbox::{MailboxDomain, WindowMailbox};
+use wakui::sync::lock_recovered;
+use wakui::window::Window;
 
 use crate::{
     focus::AuxKind,
     history::{HistoryEffect, HistoryEvent, HistoryModel},
     settings::{SettingsController, SettingsEffect, SettingsEvent, SettingsScreen},
-    sync::lock_recovered,
-    window::Window,
 };
 
 mod scene;

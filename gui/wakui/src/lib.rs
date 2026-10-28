@@ -23,7 +23,6 @@ pub mod app;
 pub mod aux;
 pub mod backend;
 pub mod binding;
-pub mod bootstrap;
 pub mod cache;
 pub mod commands;
 pub mod conformance;
