@@ -11,7 +11,7 @@ use std::{
 };
 
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_frontend_host::viewport::testkit::NullFactory;
+use nerust_frontend_viewdefs::viewport::testkit::NullFactory;
 use nerust_gui_shell::{context::FrontendContext, load::RomLoader, registry::SystemRegistry};
 
 static TEST_DIR_SERIAL: AtomicU64 = AtomicU64::new(0);

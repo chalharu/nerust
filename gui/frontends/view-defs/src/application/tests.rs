@@ -373,12 +373,12 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
 #[test]
 fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
     use crate::{
-        aux::{AuxWindows, OpenRequest},
         commands::MenuCommand,
         event::{CommandEffect, EventCommand, EventHandler},
         menu::MenuEntry,
         window::{WidgetContents, Window, WindowVisitor},
     };
+    use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
 
     let mut fixture = Fixture::new();
     let ctx = fixture.core.frame_ctx();

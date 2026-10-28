@@ -14,7 +14,7 @@ nerust_system_traits.workspace = true
 nerust_emu_thread.workspace = true
 nerust_settings_core.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_host_protocol.workspace = true
+nerust_frontend_host.workspace = true
 nerust_input_traits.workspace = true
 nerust_persistence.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }

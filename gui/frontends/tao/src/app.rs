@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nerust_frontend_host::bootstrap::Boot;
+use nerust_frontend_viewdefs::bootstrap::Boot;
 
 use crate::runtime::WindowRuntime;
 

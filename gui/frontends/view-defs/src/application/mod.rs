@@ -8,8 +8,8 @@ mod osd;
 mod tests;
 mod window;
 
+pub use crate::menu::{DialogTitles, MenuSig};
 pub use auxiliary::WidgetWindowClose;
-pub use chrome::{DialogTitles, MenuSig};
 use debug::DebugRuntime;
 pub use debug::DebugView;
 pub use window::MainState;
@@ -538,7 +538,7 @@ impl ApplicationHost {
                     .expect("menubar signature initialized")
                     .clone(),
             };
-        let menubar = Menubar::build(&signature, capabilities);
+        let menubar = crate::menu::build_menubar(&signature, capabilities);
         self.menu_capabilities = Some(capabilities);
         self.main_window.menu = Some(menubar.clone());
         Some(MenubarUpdate { signature, menubar })
@@ -674,7 +674,7 @@ pub struct WindowChromeSync {
 // Scheduling already exposes meaningful request/consume/cadence operations;
 // reuse that facade rather than growing a second forest of forwarding methods.
 impl std::ops::Deref for ApplicationHost {
-    type Target = crate::debug_schedule::DebugSchedule;
+    type Target = nerust_frontend_host::debug_schedule::DebugSchedule;
     fn deref(&self) -> &Self::Target {
         self.debug.schedule()
     }

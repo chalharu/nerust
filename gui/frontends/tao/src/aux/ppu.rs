@@ -12,7 +12,7 @@ use iced_winit::program::{self, Program};
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::bridge::DebugBridge;
-use nerust_frontend_host::debugger::PpuChrome;
+use nerust_frontend_viewdefs::debugger::PpuChrome;
 
 /// Poison-safe snapshot read: recovers the last snapshot after a panic.
 fn snapshot_read(

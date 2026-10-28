@@ -1,4 +1,5 @@
-use nerust_frontend_host::{application::MenubarUpdate, menu::MenuCapabilities};
+use nerust_frontend_host::menu::MenuCapabilities;
+use nerust_frontend_viewdefs::application::MenubarUpdate;
 use tao::window::Window as TaoWindow;
 
 pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
@@ -42,15 +43,14 @@ pub(crate) mod imp {
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuItem, Submenu};
     use nerust_frontend_host::{
-        application::MenubarUpdate,
         commands::{CommandDescriptor, CommandVisitor},
-        event::EventSink,
         menu::{
             MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
             NativeApplicationRole, Submenu as HostMenu,
         },
         widgets::MenuPresenter,
     };
+    use nerust_frontend_viewdefs::{application::MenubarUpdate, event::EventSink};
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
     #[cfg(any(
@@ -377,10 +377,10 @@ pub(crate) mod imp {
             use gtk::prelude::*;
             use muda::{MenuItem, MenuItemKind};
             use nerust_frontend_host::commands::SessionCommand as S;
-            use nerust_frontend_host::{
+            use nerust_frontend_host::menu::MenuId;
+            use nerust_frontend_viewdefs::{
                 application::{MenuSig, MenubarUpdate},
                 event::{EventCommand as HostEvent, EventSink},
-                menu::{MenuId, Menubar},
             };
             use nerust_gui_runtime::slots::slot_label;
             use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
@@ -494,7 +494,10 @@ pub(crate) mod imp {
                         shortcuts: shortcuts.into(),
                     };
                     menu.update(MenubarUpdate {
-                        menubar: Menubar::build(&signature, crate::menu::TAO_MENU_CAPABILITIES),
+                        menubar: nerust_frontend_viewdefs::menu::build_menubar(
+                            &signature,
+                            crate::menu::TAO_MENU_CAPABILITIES,
+                        ),
                         signature,
                     });
                     let roots = menu.menu_bar.items();
@@ -763,7 +766,10 @@ pub(crate) mod imp {
             use nerust_frontend_host::menu::{
                 NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
             };
-            let mut root = Menubar::build(&sig, crate::menu::TAO_MENU_CAPABILITIES);
+            let mut root = nerust_frontend_viewdefs::menu::build_menubar(
+                &sig,
+                crate::menu::TAO_MENU_CAPABILITIES,
+            );
             root.application_menu = Some(NativeApplicationMenu {
                 label: "Host App".into(),
                 entries: vec![A::Role(R::About), A::Separator, A::Role(R::Quit)],
@@ -835,7 +841,7 @@ pub(crate) mod imp {
 )))]
 pub(crate) mod imp {
     use super::{MenubarUpdate, TaoWindow};
-    use nerust_frontend_host::event::EventSink;
+    use nerust_frontend_viewdefs::event::EventSink;
     use std::sync::Arc;
 
     pub(crate) struct AppMenu;

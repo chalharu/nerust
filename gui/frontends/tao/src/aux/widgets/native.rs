@@ -4,11 +4,8 @@ use std::sync::{
 };
 
 use iced_winit::program;
-use nerust_frontend_host::{
-    application::ApplicationHost,
-    widget_session::{WidgetSession, WindowMailbox},
-    window::Window,
-};
+use nerust_frontend_host::{widget_session::WindowMailbox, window::Window};
+use nerust_frontend_viewdefs::{application::ApplicationHost, widget_session::WidgetSession};
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::bindings::{ControlsBinding, ControlsState, Message};

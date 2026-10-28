@@ -4,9 +4,9 @@ use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
-use nerust_frontend_host::{
+use nerust_frontend_host::focus::{AuxKind, FocusEvent};
+use nerust_frontend_viewdefs::{
     event::{CommandEffect, EventHandler, EventOutcome},
-    focus::{AuxKind, FocusEvent},
     session::SessionEvent,
 };
 
@@ -258,7 +258,8 @@ mod tests {
     #[test]
     fn canonical_events_share_external_settings_guard_and_effects() {
         use crate::event::UserEvent;
-        use nerust_frontend_host::{focus::FocusEvent, session::SessionEvent};
+        use nerust_frontend_host::focus::FocusEvent;
+        use nerust_frontend_viewdefs::session::SessionEvent;
         use nerust_gui_shell::session::KeyboardShortcut;
         let support = settings_blocked_host();
         let mut host = support.host;
@@ -302,7 +303,7 @@ mod tests {
     #[test]
     fn canonical_shortcut_effect_opens_native_debugger() {
         use crate::event::UserEvent;
-        use nerust_frontend_host::session::SessionEvent;
+        use nerust_frontend_viewdefs::session::SessionEvent;
         use nerust_gui_shell::session::KeyboardShortcut;
         let mut host = TestHost::new().host;
         let opener = FakeOpener::failing("no display");

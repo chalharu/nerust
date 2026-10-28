@@ -5,7 +5,8 @@ use nerust_frontend_host::{
     focus::AuxKind,
 };
 
-use nerust_frontend_host::{widget_session::WidgetSession, window::WindowEffects};
+use nerust_frontend_host::window::WindowEffects;
+use nerust_frontend_viewdefs::widget_session::WidgetSession;
 
 use crate::ports::{AuxOpenParams, WindowOpener};
 
@@ -116,7 +117,7 @@ impl HostState {
             .aux
             .windows
             .mailbox(id)
-            .and_then(|m| m.take_submission());
+            .and_then(|m| nerust_frontend_viewdefs::widget_session::take_submission(&m));
         let result = if close {
             let Some((handle, result)) =
                 self.core
@@ -332,9 +333,9 @@ mod tests {
         );
         let root = context.settings_root();
         let path = root.join("config").join("settings.yaml");
-        let boot = nerust_frontend_host::bootstrap::boot(
+        let boot = nerust_frontend_viewdefs::bootstrap::boot(
             context.ctx,
-            nerust_frontend_host::bootstrap::backend_capabilities(true, Some(true)),
+            nerust_frontend_viewdefs::bootstrap::backend_capabilities(true, Some(true)),
             Some(root),
         )
         .unwrap();

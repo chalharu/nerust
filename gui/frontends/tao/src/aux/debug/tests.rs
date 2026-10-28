@@ -341,7 +341,7 @@ fn view_assembles_follow_and_fixed_modes() {
 
 #[test]
 fn disasm_marker_never_double_marks_pc() {
-    use nerust_frontend_host::debugger::pin_marker;
+    use nerust_frontend_viewdefs::debugger::pin_marker;
 
     // The PC row carries exactly one `>`: the pin column contributes blanks.
     assert_eq!(pin_marker(true, true), "  ");

@@ -12,7 +12,7 @@ use std::{
 };
 
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_frontend_host::{
+use nerust_frontend_viewdefs::{
     application::ApplicationHost,
     commands::{CommandDescriptor, CommandVisitor, MenuCommand},
     debugger::{DebuggerDriver, DebuggerEvent},

@@ -3493,20 +3493,7 @@ name = "nerust_frontend_host"
 version = "0.1.0-dev"
 dependencies = [
  "log",
- "nerust_core_traits",
- "nerust_frontend_kernel",
- "nerust_frontend_viewdefs",
- "nerust_gui_runtime",
- "nerust_gui_shell",
- "nerust_gui_viewmodel",
- "nerust_host_protocol",
  "nerust_nes_factory",
- "nerust_persistence",
- "nerust_render_osd",
- "nerust_render_traits",
- "nerust_settings_core",
- "nerust_system_traits",
- "raw-window-handle",
  "wakui",
 ]
 
@@ -3524,12 +3511,14 @@ dependencies = [
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
- "nerust_host_protocol",
  "nerust_input_traits",
  "nerust_nes_factory",
  "nerust_persistence",
+ "nerust_render_osd",
+ "nerust_render_traits",
  "nerust_settings_core",
  "nerust_system_traits",
+ "raw-window-handle",
  "wakui",
 ]
 
@@ -3671,6 +3660,7 @@ dependencies = [
  "nerust_core_traits",
  "nerust_frontend_host",
  "nerust_frontend_kernel",
+ "nerust_frontend_viewdefs",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
@@ -3716,9 +3706,9 @@ dependencies = [
  "nerust_console_input",
  "nerust_core_traits",
  "nerust_emu_thread",
+ "nerust_frontend_host",
  "nerust_gui_runtime",
  "nerust_gui_viewmodel",
- "nerust_host_protocol",
  "nerust_input_traits",
  "nerust_nes_settings",
  "nerust_persistence",
@@ -3747,10 +3737,6 @@ dependencies = [
  "typetag",
  "wakui",
 ]
-
-[[package]]
-name = "nerust_host_protocol"
-version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_input_traits"
@@ -4039,6 +4025,7 @@ dependencies = [
  "nerust_core_traits",
  "nerust_frontend_host",
  "nerust_frontend_kernel",
+ "nerust_frontend_viewdefs",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
