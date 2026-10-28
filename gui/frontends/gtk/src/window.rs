@@ -5,6 +5,12 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use super::{
+    State, TITLE_UPDATE_INTERVAL,
+    surface::{Surface, SurfaceExtend},
+    surface_state::surface_gone,
+};
+use crate::widgets::controls::{Callbacks, WidgetBinding, WidgetDialog};
 use gtk::{
     gio, glib,
     glib::variant::{StaticVariantType, ToVariant},
@@ -21,14 +27,6 @@ use nerust_frontend_host::{
     widgets::MenuPresenter,
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
-use nerust_gui_shell::session::SessionError;
-
-use super::{
-    State, TITLE_UPDATE_INTERVAL,
-    surface::{Surface, SurfaceExtend},
-    surface_state::surface_gone,
-};
-use crate::widgets::controls::{Callbacks, WidgetBinding, WidgetDialog};
 
 /// Bound once via `set_menubar`; host IDs retain the same native submenus
 /// across refills because replacing the root does not update the visible bar.
@@ -1035,16 +1033,14 @@ fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
     window.set_fullscreened(fullscreen);
 }
 
-fn persist_window_fullscreen_default(
-    window: &Window,
-    fullscreen: bool,
-) -> Result<bool, SessionError> {
+fn persist_window_fullscreen_default(window: &Window, fullscreen: bool) -> Result<bool, String> {
     let state = window.state();
     let mut state = state.borrow_mut();
     let plan = state
         .host
         .session_mut()
-        .set_fullscreen_default(fullscreen)?;
+        .set_fullscreen_default(fullscreen)
+        .map_err(|error| error.to_string())?;
     if plan.renderer_rebuild_required || plan.window_settings_changed {
         state.renderer_reload_pending = true;
     }
@@ -1079,10 +1075,7 @@ fn toggle_window_fullscreen(window: &Window) {
 
 /// Use the single modal queue, including its pause ownership and acknowledgement path.
 fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State>>, detail: &str) {
-    state.borrow_mut().host.session_mut().report_external_error(
-        nerust_gui_shell::session::notification::FailureOrigin::Host,
-        detail.to_owned(),
-    );
+    state.borrow_mut().host.report_host_error(detail.to_owned());
 }
 
 #[cfg(test)]
