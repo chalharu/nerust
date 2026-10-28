@@ -352,11 +352,7 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
         let prepared = {
             let mut core = window.borrow_mut();
             let mut state = state.borrow_mut();
-            let registry = state.ctx.registry.clone();
-            let audio = state.ctx.audio_registry.clone();
-            state
-                .host
-                .prepare_widget_window(&mut core.aux, id, registry, audio)
+            state.host.prepare_widget_window(&mut core.aux, id)
         };
         match prepared {
             Ok(Some(session)) => Some(session),
@@ -1368,11 +1364,9 @@ pub(crate) mod tests {
         let session = {
             let mut core = win.borrow_mut();
             let mut state = state.borrow_mut();
-            let registry = state.ctx.registry.clone();
-            let audio = state.ctx.audio_registry.clone();
             state
                 .host
-                .prepare_widget_window(&mut core.aux, id, registry, audio)
+                .prepare_widget_window(&mut core.aux, id)
                 .unwrap()
                 .unwrap()
         };

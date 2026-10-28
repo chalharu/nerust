@@ -96,12 +96,7 @@ impl HostState {
     }
 
     pub(crate) fn prepare_widget_session(&mut self, id: AuxId) -> Option<WidgetSession> {
-        match self.core.prepare_widget_window(
-            &mut self.aux.windows,
-            id,
-            self.ctx.registry.clone(),
-            self.ctx.audio_registry.clone(),
-        ) {
+        match self.core.prepare_widget_window(&mut self.aux.windows, id) {
             Ok(session) => session,
             Err(error) => {
                 log::error!("refusing settings window: {error}");
@@ -335,15 +330,19 @@ mod tests {
         let context = crate::test_session::TestContext::with_loader(
             crate::test_session::FakeRomLoader::succeeding(),
         );
-        let paths = context.settings_paths();
-        let path = paths.settings_file.clone();
-        let mut host = super::HostState::new_with_settings_paths(
+        let root = context.settings_root();
+        let path = root.join("config").join("settings.yaml");
+        let boot = nerust_frontend_host::bootstrap::boot(
             context.ctx,
-            crate::test_menu::MenuRecorderHandle::default().into_box(),
-            std::sync::Arc::new(crate::test_dialogs::FakeDialogs::default()),
-            Some(paths),
+            nerust_frontend_host::bootstrap::backend_capabilities(true, Some(true)),
+            Some(root),
         )
         .unwrap();
+        let mut host = super::HostState::new(
+            boot,
+            crate::test_menu::MenuRecorderHandle::default().into_box(),
+            std::sync::Arc::new(crate::test_dialogs::FakeDialogs::default()),
+        );
         let (id, mut session) = prepare(&mut host, AuxKind::Settings);
         host.set_pause_owner(PauseOwner::Modal, true);
         let mute = find(&session.screen(), "Mute");

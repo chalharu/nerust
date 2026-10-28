@@ -101,10 +101,7 @@ impl TestContext {
         Self { ctx, _dir: dir }
     }
 
-    pub(crate) fn settings_paths(&self) -> nerust_gui_runtime::settings::SettingsPaths {
-        nerust_gui_runtime::settings::SettingsPaths {
-            settings_file: self._dir.join("settings.toml"),
-            central_storage_root: self._dir.join("storage"),
-        }
+    pub(crate) fn settings_root(&self) -> PathBuf {
+        self._dir.clone()
     }
 }

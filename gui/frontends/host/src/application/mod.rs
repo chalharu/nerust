@@ -95,6 +95,20 @@ impl ApplicationHost {
         &mut self.session
     }
 
+    /// Factories backing the owned session. Native adapters pass these by
+    /// inference where a host entry point still needs them; the shell and
+    /// audio types never cross the boundary by name.
+    pub fn system_registry(&self) -> std::sync::Arc<nerust_gui_shell::registry::SystemRegistry> {
+        self.session.system_registry().clone()
+    }
+
+    /// Audio backends backing the owned session, exposed for the same reason.
+    pub fn audio_registry(
+        &self,
+    ) -> std::sync::Arc<nerust_core_traits::audio::AudioBackendRegistry> {
+        self.session.audio_registry().clone()
+    }
+
     pub fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
     }

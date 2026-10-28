@@ -1,7 +1,9 @@
-use nerust_gui_runtime::settings::{
-    BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+#[cfg(test)]
+use nerust_frontend_host::bootstrap::{backend_capabilities, boot};
+use nerust_frontend_host::{
+    application::ApplicationHost,
+    bootstrap::{Boot, RomLoaderSlot},
 };
-use nerust_gui_shell::{context::FrontendContext, session::SessionHandle};
 #[cfg(test)]
 use std::path::PathBuf;
 use tao::{
@@ -14,7 +16,6 @@ use crate::menu::MenuSink;
 
 use crate::aux::focus::AuxKind;
 use crate::aux::registry::AuxRegistry;
-use nerust_frontend_host::application::ApplicationHost;
 
 mod auxiliary;
 mod commands;
@@ -50,20 +51,24 @@ impl TestHost {
     pub(crate) fn with_nes() -> Self {
         let loader = crate::test_session::FakeRomLoader::succeeding();
         let mut support = crate::test_session::TestContext::with_loader(loader.clone());
-        let paths = support.settings_paths();
+        let root = support.settings_root();
         support.ctx.registry =
             std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
                 nerust_nes_factory::NesFactory::boxed().into(),
             ]));
         let menu = crate::test_menu::MenuRecorderHandle::default();
         let dialogs = crate::test_dialogs::FakeDialogs::default();
-        let host = HostState::new_with_settings_paths(
+        let boot = boot(
             support.ctx,
-            menu.clone().into_box(),
-            std::sync::Arc::new(dialogs.clone()),
-            Some(paths),
+            backend_capabilities(true, Some(true)),
+            Some(root),
         )
         .expect("NES host");
+        let host = HostState::new(
+            boot,
+            menu.clone().into_box(),
+            std::sync::Arc::new(dialogs.clone()),
+        );
         Self {
             host,
             menu,
@@ -85,16 +90,20 @@ impl TestHost {
         pick: Option<PathBuf>,
     ) -> Self {
         let support = crate::test_session::TestContext::with_loader(loader.clone());
-        let paths = support.settings_paths();
+        let root = support.settings_root();
         let menu = crate::test_menu::MenuRecorderHandle::default();
         let dialogs = crate::test_dialogs::FakeDialogs::with_pick(pick);
-        let host = HostState::new_with_settings_paths(
+        let boot = boot(
             support.ctx,
-            menu.clone().into_box(),
-            std::sync::Arc::new(dialogs.clone()),
-            Some(paths),
+            backend_capabilities(true, Some(true)),
+            Some(root),
         )
         .expect("headless host builds on temp settings paths");
+        let host = HostState::new(
+            boot,
+            menu.clone().into_box(),
+            std::sync::Arc::new(dialogs.clone()),
+        );
         Self {
             host,
             menu,
@@ -104,24 +113,11 @@ impl TestHost {
     }
 }
 
-fn backend_capabilities() -> HostBackendCapabilities {
-    HostBackendCapabilities {
-        window: HostWindowCapabilities {
-            remembers_window_size: true,
-            supports_fullscreen_default: true,
-            supports_scaling: true,
-        },
-        presentation: Some(BackendPresentationCapabilities {
-            supports_vsync: true,
-        }),
-    }
-}
-
 pub(crate) struct HostState {
     /// Main window cluster: handle, liveness, surface target.
     pub(super) windows: WindowCluster,
     pub(super) core: ApplicationHost,
-    ctx: FrontendContext,
+    loader: RomLoaderSlot,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
@@ -184,49 +180,19 @@ impl HostState {
     }
 
     pub(crate) fn new(
-        ctx: FrontendContext,
+        boot: Boot,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
-    ) -> Result<Self, String> {
-        Self::new_with_settings_paths(ctx, app_menu, dialogs, None)
-    }
-
-    pub(crate) fn new_with_settings_paths(
-        ctx: FrontendContext,
-        app_menu: Box<dyn MenuSink>,
-        dialogs: std::sync::Arc<dyn DialogPorts>,
-        paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
-    ) -> Result<Self, String> {
-        let session = match paths {
-            Some(paths) => SessionHandle::new_with_settings_paths(
-                backend_capabilities(),
-                ctx.registry.clone(),
-                ctx.audio_registry.clone(),
-                paths,
-            ),
-            None => SessionHandle::new(
-                backend_capabilities(),
-                ctx.registry.clone(),
-                ctx.audio_registry.clone(),
-            ),
-        }
-        .map_err(|e| {
-            log::error!("failed to create core: {e}");
-            e.to_string()
-        })?;
-        let factory = ctx.gpu_factory.clone();
-        let mut core = ApplicationHost::new(session);
-        // The factory enters the view-definition side once; frontend
-        // signatures never name the pipeline type.
-        core.set_gpu_factory(factory);
-        Ok(Self {
+    ) -> Self {
+        let Boot { host: core, loader } = boot;
+        Self {
             windows: WindowCluster::new(),
             core,
-            ctx,
+            loader,
             app_menu,
             dialogs,
             aux: AuxRegistry::new(),
-        })
+        }
     }
 
     #[cfg(test)]
@@ -379,12 +345,19 @@ mod tests {
     fn production_constructor_delegates_to_temp_paths() {
         use crate::{test_menu::MenuRecorderHandle, test_session::TestContext};
         let support = TestContext::with_loader(crate::test_session::FakeRomLoader::succeeding());
-        let host = super::HostState::new(
+        let root = support.settings_root();
+        let boot = nerust_frontend_host::bootstrap::boot(
             support.ctx,
+            nerust_frontend_host::bootstrap::backend_capabilities(true, Some(true)),
+            Some(root),
+        )
+        .expect("boot on temp settings paths");
+        let host = super::HostState::new(
+            boot,
             MenuRecorderHandle::default().into_box(),
             std::sync::Arc::new(crate::ports::NativeDialogs),
         );
-        assert!(host.is_ok());
+        assert!(!host.session().tick_metrics().loaded);
     }
 
     #[test]

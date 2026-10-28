@@ -643,6 +643,17 @@ impl SessionHandle {
         &self.settings.snapshot
     }
 
+    /// Factories backing this session. Composition-root injection reads
+    /// these through the host so native frontends never name the registry.
+    pub fn system_registry(&self) -> &Arc<SystemRegistry> {
+        &self.registry
+    }
+
+    /// Audio backends backing this session, exposed for the same reason.
+    pub fn audio_registry(&self) -> &Arc<AudioBackendRegistry> {
+        &self.audio_registry
+    }
+
     /// Immutable settings identity changes only after a successful update.
     pub fn settings_arc(&self) -> Arc<SettingsSnapshot> {
         Arc::clone(&self.settings.snapshot)

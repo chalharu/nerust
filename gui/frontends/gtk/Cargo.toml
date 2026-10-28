@@ -12,13 +12,13 @@ gio.workspace = true
 gtk.workspace = true
 log.workspace = true
 nerust_frontend_host.workspace = true
-nerust_gui_runtime.workspace = true
-nerust_gui_shell.workspace = true
 wakui.workspace = true
 raw-window-handle.workspace = true
 
 [dev-dependencies]
 nerust_core_traits.workspace = true
+nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true
 nerust_frontend_kernel.workspace = true
 nerust_system_traits.workspace = true
 nerust_gui_viewmodel.workspace = true

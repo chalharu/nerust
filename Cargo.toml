@@ -77,6 +77,7 @@ log.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
+nerust_frontend_host.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard = { optional = true, workspace = true }
 rfd = { optional = true, workspace = true }

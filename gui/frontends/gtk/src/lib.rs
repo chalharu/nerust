@@ -25,12 +25,7 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
-use nerust_frontend_host::session::{SessionEvent, SessionOutcome};
-use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
-use nerust_gui_shell::{
-    context::FrontendContext,
-    session::{SessionError, SessionHandle},
-};
+use nerust_frontend_host::bootstrap::{Boot, RomLoaderSlot};
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
@@ -38,26 +33,25 @@ const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
     pub(crate) host: nerust_frontend_host::application::ApplicationHost,
-    ctx: FrontendContext,
+    loader: RomLoaderSlot,
     renderer_reload_pending: bool,
 }
 
 impl State {
-    pub(crate) fn new(ctx: FrontendContext) -> Result<Self, SessionError> {
-        let capabilities = HostBackendCapabilities {
-            window: HostWindowCapabilities {
-                remembers_window_size: true,
-                supports_fullscreen_default: true,
-                supports_scaling: true,
-            },
-            presentation: None,
-        };
-        Self::new_inner(ctx, capabilities, None)
+    pub(crate) fn new(boot: Boot) -> Self {
+        let Boot { host, loader } = boot;
+        Self {
+            host,
+            loader,
+            renderer_reload_pending: false,
+        }
     }
 
     /// Test-only construction: settings persist under a unique temp dir.
     #[cfg(test)]
-    pub(crate) fn new_for_tests(ctx: FrontendContext) -> Result<Self, SessionError> {
+    pub(crate) fn new_for_tests(
+        ctx: nerust_gui_shell::context::FrontendContext,
+    ) -> Result<Self, nerust_gui_shell::session::SessionError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static TEST_SETTINGS_SEQ: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
@@ -65,58 +59,13 @@ impl State {
             std::process::id(),
             TEST_SETTINGS_SEQ.fetch_add(1, Ordering::SeqCst)
         ));
-        let capabilities = HostBackendCapabilities {
-            window: HostWindowCapabilities {
-                remembers_window_size: false,
-                supports_fullscreen_default: true,
-                supports_scaling: true,
-            },
-            presentation: None,
-        };
-        Self::new_inner(
+        let boot = nerust_frontend_host::bootstrap::boot(
             ctx,
-            capabilities,
-            Some(nerust_gui_runtime::settings::SettingsPaths {
-                settings_file: dir.join("settings.toml"),
-                central_storage_root: dir.join("storage"),
-            }),
+            nerust_frontend_host::bootstrap::backend_capabilities(false, None),
+            Some(dir),
         )
-    }
-
-    fn new_inner(
-        ctx: FrontendContext,
-        capabilities: HostBackendCapabilities,
-        settings_paths: Option<nerust_gui_runtime::settings::SettingsPaths>,
-    ) -> Result<Self, SessionError> {
-        let session = match settings_paths {
-            Some(paths) => SessionHandle::new_with_settings_paths(
-                capabilities,
-                ctx.registry.clone(),
-                ctx.audio_registry.clone(),
-                paths,
-            ),
-            None => SessionHandle::new(
-                capabilities,
-                ctx.registry.clone(),
-                ctx.audio_registry.clone(),
-            ),
-        }
-        .map_err(|e| {
-            log::error!("failed to create core: {e}");
-            e
-        })?;
-
-        let factory = ctx.gpu_factory.clone();
-        let mut host = nerust_frontend_host::application::ApplicationHost::new(session);
-        // The factory enters the view-definition side once; frontend
-        // signatures never name the pipeline type.
-        host.set_gpu_factory(factory);
-
-        Ok(Self {
-            host,
-            ctx,
-            renderer_reload_pending: false,
-        })
+        .map_err(|_| nerust_gui_shell::session::SessionError::NoCore)?;
+        Ok(Self::new(boot))
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
@@ -126,10 +75,10 @@ impl State {
     /// Load a ROM, flagging a renderer rebuild on success.
     /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        let Self { host, ctx, .. } = self;
-        if let Err(error) = host.load_path(&mut *ctx.rom_loader, path) {
+        let Self { host, loader, .. } = self;
+        if let Err(error) = loader.load(host, path) {
             log::warn!("ROM load failed: {error}");
-            return Err(error.to_string());
+            return Err(error);
         }
         if host.tick().loaded {
             self.renderer_reload_pending = true;
@@ -161,16 +110,7 @@ impl State {
     }
 }
 
-nerust_frontend_host::impl_session_controls!(State);
-
 impl State {
-    pub(crate) fn dispatch_session(
-        &mut self,
-        event: SessionEvent,
-    ) -> Result<SessionOutcome, SessionError> {
-        self.host.dispatch(event)
-    }
-
     pub(crate) fn tick_focus_sync(&mut self) {
         use nerust_frontend_host::{
             event::{EventCommand, EventHandler},
@@ -211,25 +151,21 @@ fn ensure_window(
 }
 
 /// Exit status for the binary wrapper: the library never terminates the process.
-/// Crash containment lives in the composition root; see `nerust::run`.
-pub fn run(ctx: FrontendContext, _rom_path: Option<PathBuf>) -> i32 {
-    match run_inner(ctx) {
-        Ok(()) => 0,
-        Err(error) => {
-            log::error!("{error}");
-            1
-        }
-    }
+/// Crash containment and boot failure dialogs live in the composition root;
+/// see `nerust::run`.
+pub fn run(boot: Boot, _rom_path: Option<PathBuf>) -> i32 {
+    run_inner(boot);
+    0
 }
 
-fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
+fn run_inner(boot: Boot) {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
     );
 
     let current_window = Rc::new(RefCell::new(None));
-    let state = Rc::new(RefCell::new(State::new(ctx)?));
+    let state = Rc::new(RefCell::new(State::new(boot)));
     {
         let state = Rc::clone(&state);
         let current_window = current_window.clone();
@@ -275,7 +211,6 @@ fn run_inner(ctx: FrontendContext) -> Result<(), SessionError> {
     }
 
     let _ = app.run();
-    Ok(())
 }
 
 #[cfg(test)]

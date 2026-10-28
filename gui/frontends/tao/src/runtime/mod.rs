@@ -2,11 +2,9 @@ mod dispatch;
 mod drain;
 pub(crate) mod host;
 
-use nerust_frontend_host::{event::EventSink, viewport::ViewportPresent};
-use std::{path::Path, sync::Arc};
-
-use nerust_gui_shell::context::FrontendContext;
+use nerust_frontend_host::{bootstrap::Boot, event::EventSink, viewport::ViewportPresent};
 use raw_window_handle::HasDisplayHandle;
+use std::{path::Path, sync::Arc};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
 use tao::{
@@ -28,7 +26,7 @@ pub(crate) struct WindowRuntime {
 }
 
 impl WindowRuntime {
-    pub(crate) fn new(ctx: FrontendContext) -> Result<Self, String> {
+    pub(crate) fn new(boot: Boot) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -40,14 +38,14 @@ impl WindowRuntime {
             Arc::new(TaoEventSink(event_loop.create_proxy()));
         let app_menu = AppMenu::new(event_sink.clone());
 
-        let host = HostState::new(ctx, Box::new(app_menu), std::sync::Arc::new(NativeDialogs))?;
+        let host = HostState::new(boot, Box::new(app_menu), std::sync::Arc::new(NativeDialogs));
 
-        Ok(Self {
+        Self {
             event_loop: Some(event_loop),
             event_sink: Some(event_sink),
             host,
             surface_xid: None,
-        })
+        }
     }
 
     /// Live-follow pulse: parked with no wakeups unless a viewer
