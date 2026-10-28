@@ -22,6 +22,7 @@
 pub mod backend;
 pub mod binding;
 pub mod cache;
+pub mod conformance;
 pub mod control;
 pub mod key;
 pub mod loop_driver;
