@@ -30,6 +30,7 @@ members = [
   "gui/shell",
   "gui/viewmodel",
   "gui/wakui",
+  "gui/wakui-default",
   "gui/wakui-gtk",
   "gui/wakui-tao",
   "crash-guard",
@@ -69,11 +70,11 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+wakui-default = { optional = true, workspace = true }
 clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
-wakui-gtk = { optional = true, workspace = true }
 nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard = { optional = true, workspace = true }
@@ -90,7 +91,6 @@ nerust_render_wgpu = { optional = true, workspace = true }
 nerust_run_options.workspace = true
 nerust_sound_cpal = { optional = true, workspace = true }
 nerust_sound_cubeb = { optional = true, workspace = true }
-wakui-tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [dev-dependencies]
@@ -101,11 +101,11 @@ nerust_settings_core.workspace = true
 default = ["nes", "gbc", "gba", "wgpu"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["wakui-gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_crash_guard"]
+gtk = ["wakui-default/gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_crash_guard"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "wakui-tao", "nerust_crash_guard", "rfd"]
+tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "wakui-default/tao", "nerust_crash_guard", "rfd"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
@@ -272,6 +272,7 @@ thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }
 wakui = { path = "gui/wakui" }
+wakui-default = { path = "gui/wakui-default" }
 wakui-gtk = { path = "gui/wakui-gtk" }
 wakui-tao = { path = "gui/wakui-tao" }
 wgpu = { version = "=30.0.1" }
