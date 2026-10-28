@@ -12,10 +12,12 @@ use nerust_gui_shell::{
 };
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
 
-use super::{DebuggerEvent, DebuggerModel, DebuggerScope, DrainSnapshot};
 use crate::{
     application::ApplicationHost,
     drain::{DrainBatch, DrainEvent, DrainQueue, Flight, StartedDrain, prepare_pause_actions},
+};
+use nerust_frontend_viewdefs::debugger::{
+    DebuggerEvent, DebuggerModel, DebuggerScope, DrainSnapshot,
 };
 
 /// Owned native effects. Apply these only after releasing the controller borrow.
