@@ -119,10 +119,10 @@ impl LoopHost for ConformanceBackend {
     fn before_turn(&mut self) {}
     fn frame_ctx(&mut self) {}
     fn chrome(&mut self, _ctx: &Self::Frame) {}
-    fn pump_debug(&mut self) -> WakeNeed {
+    fn pump_widgets(&mut self) -> WakeNeed {
         WakeNeed::default()
     }
-    fn pump_osd(&mut self, _ctx: &Self::Frame) -> WakeNeed {
+    fn pump_dialog(&mut self, _ctx: &Self::Frame) -> WakeNeed {
         WakeNeed::default()
     }
     fn pump_aux(&mut self) -> WakeNeed {

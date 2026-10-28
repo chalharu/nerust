@@ -5,6 +5,7 @@ mod driver;
 mod model;
 mod screen;
 mod view;
+pub mod vocabulary;
 
 pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot};
 pub(crate) use bridge::{
@@ -14,7 +15,10 @@ pub use driver::DebuggerDriver;
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 pub use screen::DebuggerScreenSession;
 pub use view::{AppliedDrain, AppliedLive};
-use wakui::debugger::{DebuggerEvent, DebuggerScope};
+pub use vocabulary::{
+    DebugHandle, DebugInputs, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
+    DebuggerLiveEffects, DebuggerRows, DebuggerScope, DisasmRow, DumpRow, RegRow, pin_marker,
+};
 
 use nerust_gui_shell::debug::DebugAction;
 

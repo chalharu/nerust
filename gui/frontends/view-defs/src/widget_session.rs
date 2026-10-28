@@ -107,7 +107,7 @@ struct PpuState {
 }
 
 struct DebugWidget {
-    handle: wakui::debugger::DebugHandle,
+    handle: crate::debugger::DebugHandle,
     session: RefCell<crate::debugger::DebuggerScreenSession>,
 }
 
@@ -213,7 +213,7 @@ impl WidgetSession {
     /// Debugger widget: projects the cached bridge snapshot as controls.
     /// Snapshots arrive via [`Self::refresh_debug`]; gestures map via
     /// [`Self::debug_events`] and run through the host's debug driver.
-    pub fn debug(handle: wakui::debugger::DebugHandle) -> Self {
+    pub fn debug(handle: crate::debugger::DebugHandle) -> Self {
         let mailbox = WindowMailbox::new(HistoryDomain {
             // Flag-only domain like PPU: no submission, only invalidation.
             clear: Arc::new(AtomicBool::new(false)),
@@ -229,7 +229,7 @@ impl WidgetSession {
         }
     }
 
-    pub fn debug_handle(&self) -> Option<wakui::debugger::DebugHandle> {
+    pub fn debug_handle(&self) -> Option<crate::debugger::DebugHandle> {
         match &self.state {
             State::Debug(widget) => Some(widget.handle),
             _ => None,
@@ -238,7 +238,7 @@ impl WidgetSession {
 
     /// Replace the cached debugger snapshot and invalidate when it changed
     /// presentation. Always invalidates on first snapshot.
-    pub fn refresh_debug(&mut self, snapshot: Option<wakui::debugger::DebugSnapshot>) {
+    pub fn refresh_debug(&mut self, snapshot: Option<crate::debugger::DebugSnapshot>) {
         if let State::Debug(widget) = &mut self.state {
             widget.session.borrow_mut().update(snapshot);
             self.mailbox.invalidate();
@@ -250,7 +250,7 @@ impl WidgetSession {
     pub fn debug_events(
         &self,
         event: &ControlEvent,
-    ) -> Option<Vec<wakui::debugger::DebuggerEvent>> {
+    ) -> Option<Vec<crate::debugger::DebuggerEvent>> {
         match &self.state {
             State::Debug(widget) => Some(widget.session.borrow().events(event)),
             _ => None,

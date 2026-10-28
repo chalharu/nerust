@@ -11,8 +11,9 @@ use wakui::pause::PauseOwner;
 use super::ApplicationHost;
 use crate::{
     frame::FrameCtx,
-    osd::{ModalAdvance, ModalToken, OsdLayerSync, OsdNotifications, OsdTurn, OsdUpdate},
+    osd::{OsdLayerSync, OsdNotifications, OsdTurn, OsdUpdate},
 };
+use wakui::dialog::{ModalAdvance, ModalToken};
 use wakui::loop_driver::WakeNeed;
 
 #[derive(Default)]
@@ -51,11 +52,11 @@ impl ApplicationHost {
             None => self.osd.notifications.take_modal(),
         };
         let wake = WakeNeed {
-            osd_deadline: self.osd_wakeup(now),
+            overlay_deadline: self.osd_wakeup(now),
             flight_pending: self.osd_flight_pending(),
             ..Default::default()
         };
-        if report.changed || wake.osd_deadline.is_some() {
+        if report.changed || wake.overlay_deadline.is_some() {
             self.note_redraw();
         }
         OsdTurn {

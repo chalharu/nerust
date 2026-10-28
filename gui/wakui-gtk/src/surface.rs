@@ -5,14 +5,13 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
+use wakui::dialog::ModalPresentation;
 use wakui::loop_driver::{
     LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop,
 };
-use wakui::osd::ModalPresentation;
 use wakui::viewport::ViewportRegion;
 
 use super::State;
-use wakui::debugger::DebuggerScope;
 
 pub(crate) struct SurfaceCore<K: Copy + Eq + std::hash::Hash + 'static> {
     // The window owns the native frame callback, which owns Surface. Never
@@ -112,30 +111,18 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for GtkTurn<'_, K> {
         // Existing native window callbacks own title/menu synchronization.
     }
 
-    fn pump_debug(&mut self) -> WakeNeed {
-        let id = match self.state.host.debug_widget() {
-            Some(id) => id,
-            None => return WakeNeed::default(),
+    fn pump_widgets(&mut self) -> WakeNeed {
+        let Some(id) = self.state.host.polled_widget() else {
+            return WakeNeed::default();
         };
-        self.state.host.widget_refresh(id);
-        let handle = match self.state.host.debug_handle_for(id) {
-            Some(handle) => handle,
-            None => return WakeNeed::default(),
-        };
-        let _ = self.state.host.debug_reset_if_replaced(handle);
-        let wake = self.state.host.debug_poll(handle);
-        if self.state.host.chrome_drain_due() {
-            self.state.host.debug_refresh(handle, DebuggerScope::All);
-            self.state.host.widget_refresh(id);
-        }
-        wake
+        self.state.host.poll_widget(id)
     }
 
-    fn pump_osd(&mut self, _ctx: &Self::Frame) -> WakeNeed {
+    fn pump_dialog(&mut self, _ctx: &Self::Frame) -> WakeNeed {
         let now = Instant::now();
-        let turn = self.state.host.pump_osd(now);
+        let turn = self.state.host.pump_dialog(now);
         self.modal = turn.modal;
-        self.state.host.sync_osd_viewport(
+        self.state.host.sync_overlay_viewport(
             self.physical_width,
             self.physical_height,
             self.client_height,
@@ -149,7 +136,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for GtkTurn<'_, K> {
             self.core.picture.queue_draw();
         }
         WakeNeed {
-            osd_deadline: retry.deadline(),
+            overlay_deadline: retry.deadline(),
             ..WakeNeed::default()
         }
     }
@@ -364,7 +351,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> SurfaceCore<K> {
             }
         };
         if s.output_generation.replace(Some(generation)) != Some(generation) {
-            state.host.invalidate_osd();
+            state.host.invalidate_overlay();
         }
         let mut turn = GtkTurn {
             core: s,
