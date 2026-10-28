@@ -25,24 +25,22 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
-use nerust_frontend_viewdefs::bootstrap::{Boot, RomLoaderSlot};
+use nerust_frontend_host::bootstrap::Boot;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
-    pub(crate) host: nerust_frontend_viewdefs::application::ApplicationHost,
-    loader: RomLoaderSlot,
+    pub(crate) host: Box<dyn nerust_frontend_host::app::FrontendApp>,
     renderer_reload_pending: bool,
 }
 
 impl State {
     pub(crate) fn new(boot: Boot) -> Self {
-        let Boot { host, loader } = boot;
+        let Boot { app: host } = boot;
         Self {
             host,
-            loader,
             renderer_reload_pending: false,
         }
     }
@@ -75,20 +73,18 @@ impl State {
     /// Load a ROM, flagging a renderer rebuild on success.
     /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        let Self { host, loader, .. } = self;
-        if let Err(error) = loader.load(host, path) {
+        if let Err(error) = self.host.load_rom(path) {
             log::warn!("ROM load failed: {error}");
             return Err(error);
         }
-        if host.tick().loaded {
+        if self.host.tick_loaded() {
             self.renderer_reload_pending = true;
         }
         Ok(())
     }
 
     pub(crate) fn title_update(&mut self) -> Option<String> {
-        let tick = self.host.tick();
-        self.host.title_update(&tick)
+        self.host.title_update()
     }
 
     pub(crate) fn title_refresh_due(&mut self, now: std::time::Instant) -> bool {
@@ -113,9 +109,10 @@ impl State {
 impl State {
     pub(crate) fn tick_focus_sync(&mut self) {
         use nerust_frontend_host::focus::FocusEvent;
-        use nerust_frontend_viewdefs::event::{EventCommand, EventHandler};
-        let handler: &mut dyn EventHandler = &mut self.host;
-        let _ = handler.handle_event(EventCommand::Focus(FocusEvent::BurstEnd), false);
+        let _ = self.host.handle_event(
+            nerust_frontend_host::event::EventCommand::Focus(FocusEvent::BurstEnd),
+            false,
+        );
     }
 }
 
