@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use wakui::bootstrap::Boot;
+use wakui::bootstrap::Application;
 
 use crate::runtime::WindowRuntime;
 
@@ -9,9 +9,9 @@ pub struct Window<K: Copy + Eq + std::hash::Hash + 'static> {
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> Window<K> {
-    pub fn new(boot: Boot<K>) -> Self {
+    pub fn new(app: Application<K>) -> Self {
         Self {
-            runtime: Box::new(WindowRuntime::new(boot)),
+            runtime: Box::new(WindowRuntime::new(app)),
         }
     }
 

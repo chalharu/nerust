@@ -1,6 +1,7 @@
-//! Composition-root boot bundle. The composition root builds the session,
-//! factory, and loader into an opaque [`Boot`]; native frontends receive
-//! only this struct and never name shell, runtime, or render types.
+//! Composition-root launch bundle. The composition root builds the session,
+//! factory, and loader into an opaque [`Application`](wakui::bootstrap::Application);
+//! native frontends receive only this struct and never name shell, runtime,
+//! or render types.
 
 use std::path::PathBuf;
 
@@ -31,14 +32,17 @@ pub fn backend_capabilities(
     }
 }
 
-/// Build the boot bundle from the composition root's context. `settings_root`
-/// overrides the platform settings directory (`None` keeps the default);
-/// test harnesses pass a temp dir.
+/// Build the launch bundle from the composition root's context.
+/// `settings_root` overrides the platform settings directory (`None` keeps
+/// the default); test harnesses pass a temp dir. `initial_document` is the
+/// launch file (a ROM path for the emulator); it travels inside the bundle
+/// so every backend opens it the same way.
 pub fn boot(
     ctx: FrontendContext,
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
-) -> Result<wakui::bootstrap::Boot<crate::focus::AuxKind>, String> {
+    initial_document: Option<PathBuf>,
+) -> Result<wakui::bootstrap::Application<crate::focus::AuxKind>, String> {
     let FrontendContext {
         gpu_factory,
         registry,
@@ -63,7 +67,7 @@ pub fn boot(
     // signatures never name the pipeline type.
     host.set_gpu_factory(gpu_factory);
     host.set_rom_loader(rom_loader);
-    Ok(wakui::bootstrap::Boot {
-        app: Box::new(host),
-    })
+    Ok(wakui::bootstrap::Application::builder(Box::new(host))
+        .maybe_initial_document(initial_document)
+        .build())
 }
