@@ -376,7 +376,7 @@ impl HostState {
     }
     pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
         match self.core.window_scale_factor() {
-            Some(scale) => logical_window_size(self.core.session().window_size(), Some(scale)),
+            Some(scale) => logical_window_size(self.core.window_size(), Some(scale)),
             None => self
                 .core
                 .remembered_window_size()
@@ -393,10 +393,7 @@ impl HostState {
         let Some(scale) = self.core.window_scale_factor() else {
             return;
         };
-        window.set_inner_size(logical_window_size(
-            self.core.session().window_size(),
-            Some(scale),
-        ));
+        window.set_inner_size(logical_window_size(self.core.window_size(), Some(scale)));
     }
 
     pub(super) fn remember_fit_window_size(&mut self) {

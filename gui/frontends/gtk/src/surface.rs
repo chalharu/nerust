@@ -331,10 +331,9 @@ impl SurfaceCore {
                         Some(Err(error)) => error,
                         _ => "native surface/display handles unavailable".into(),
                     };
-                    state.host.session_mut().report_external_error(
-                        nerust_gui_shell::session::notification::FailureOrigin::Host,
-                        format!("GTK renderer attach failed: {detail}"),
-                    );
+                    state
+                        .host
+                        .report_host_error(format!("GTK renderer attach failed: {detail}"));
                 }
             }
         }

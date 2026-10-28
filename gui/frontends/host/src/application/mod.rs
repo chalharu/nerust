@@ -363,6 +363,13 @@ impl ApplicationHost {
     pub fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), SessionError> {
         Ok(self.session.update_window_size(width, height)?)
     }
+    /// Live media size in device pixels as a plain pair. Frontends scale
+    /// and convert to toolkit sizes themselves; the shell struct never
+    /// crosses the boundary.
+    pub fn window_size(&self) -> (f32, f32) {
+        let size = self.session.window_size();
+        (size.width, size.height)
+    }
     /// Remembered main-window size as a plain tuple. Frontends convert
     /// to their own logical-size types; the settings-core struct never
     /// crosses the boundary.
@@ -386,6 +393,14 @@ impl ApplicationHost {
     /// never name the shell registry themselves.
     pub fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
         nerust_gui_shell::registry::rom_picker_filters(self.session.factories())
+    }
+    /// Persist the fullscreen default; Ok(true) when the default changed.
+    /// Errors surface as strings for native logging; the shell result
+    /// struct never crosses the boundary.
+    pub fn persist_fullscreen_default(&mut self, fullscreen: bool) -> Result<bool, String> {
+        self.set_fullscreen_default(fullscreen)
+            .map(|plan| plan.fullscreen_default_changed)
+            .map_err(|error| error.to_string())
     }
 
     pub fn enqueue_debug(

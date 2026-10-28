@@ -2,10 +2,6 @@
 use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
 use nerust_frontend_host::frame::FrameCtx;
-use nerust_gui_shell::session::{
-    SessionError,
-    access::{SessionControl, SettingsResult},
-};
 use std::time::Instant;
 
 use nerust_frontend_host::{
@@ -44,13 +40,13 @@ impl HostState {
         if !self.core.observe_fullscreen(is_fullscreen) {
             return;
         }
-        match self.core.set_fullscreen_default(is_fullscreen) {
-            Ok(plan) if plan.fullscreen_default_changed => {
+        match self.core.persist_fullscreen_default(is_fullscreen) {
+            Ok(true) => {
                 let ctx = self.frame_ctx();
                 self.sync_chrome(&ctx, true);
                 self.refresh_window_title();
             }
-            Ok(_) => (),
+            Ok(false) => (),
             Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
         }
     }
@@ -92,14 +88,21 @@ impl HostState {
         let Some(fullscreen) = self.windows.live().map(|w| w.fullscreen().is_none()) else {
             return;
         };
-        if let Err(error) = self.persist_fullscreen_default(fullscreen) {
-            log::warn!("failed to persist fullscreen setting: {error}");
-            if let Some(window) = self.windows.live() {
-                window.set_fullscreen(
-                    fullscreen.then_some(tao::window::Fullscreen::Borderless(None)),
-                );
+        match self.core.persist_fullscreen_default(fullscreen) {
+            Ok(_) => {
+                self.sync_fullscreen_from_settings();
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, true);
             }
-            self.request_redraw();
+            Err(error) => {
+                log::warn!("failed to persist fullscreen setting: {error}");
+                if let Some(window) = self.windows.live() {
+                    window.set_fullscreen(
+                        fullscreen.then_some(tao::window::Fullscreen::Borderless(None)),
+                    );
+                }
+                self.request_redraw();
+            }
         }
     }
 
@@ -139,17 +142,6 @@ impl HostState {
         if let Some(window) = self.windows.live() {
             window.set_fullscreen(fullscreen.then_some(tao::window::Fullscreen::Borderless(None)));
         }
-    }
-
-    pub(super) fn persist_fullscreen_default(
-        &mut self,
-        fullscreen: bool,
-    ) -> Result<SettingsResult, SessionError> {
-        let plan = self.core.set_fullscreen_default(fullscreen)?;
-        self.sync_fullscreen_from_settings();
-        let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, true);
-        Ok(plan)
     }
 }
 
