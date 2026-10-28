@@ -14,7 +14,7 @@ use crate::{
 
 use crate::{
     aux::AuxRegistryPort,
-    focus::{AuxKind, FocusEffect, FocusEvent},
+    focus::{FocusEffect, FocusEvent},
     mailbox::WindowMailbox,
     menu::{MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalToken},
@@ -22,10 +22,7 @@ use crate::{
     window::{Window, WindowChromeSync, WindowEffects},
 };
 use crate::{
-    debugger::{
-        DebugHandle, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope,
-    },
+    debugger::{DebugHandle, DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope},
     event::EventHandler,
     session::{SessionError, SessionEvent, SessionOutcome},
 };
@@ -39,15 +36,16 @@ pub struct WidgetCloseOutcome {
 
 /// Built bundle handed from the composition root to a frontend. The app is
 /// already constructed (session, factory, loader); frontend entry points
-/// receive only this struct.
-pub struct Boot {
-    pub app: Box<dyn FrontendApp>,
+/// receive only this struct. `K` is the view-side aux kind.
+pub struct Boot<K: Copy + Eq + std::hash::Hash> {
+    pub app: Box<dyn FrontendApp<K>>,
 }
 
 /// The single policy owner, behind a trait object. Native adapters drive
 /// one [`Boot::app`] through these narrow ports; all ViewModel contact
-/// stays inside the implementation.
-pub trait FrontendApp: EventHandler {
+/// stays inside the implementation. `K` is the view-side aux kind
+/// (debug/settings/history/...); the framework never names it.
+pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     // -- lifecycle -------------------------------------------------------
     fn load_rom(&mut self, path: &Path) -> Result<(), String>;
     fn unload(&mut self);
@@ -111,19 +109,28 @@ pub trait FrontendApp: EventHandler {
     fn main_active(&self) -> bool;
     fn note_main_arrival(&mut self) -> bool;
     fn note_main_departure(&mut self);
-    fn drive_aux_focus(&mut self, kind: AuxKind, focused: bool) -> bool;
+    /// View-side resolves `id` to its kind and applies the resume protocol.
+    fn drive_aux_focus(&mut self, id: crate::aux::AuxId, focused: bool) -> bool;
     fn release_focus_pause(&mut self);
 
     // -- aux widget windows (id-keyed; sessions owned view-side) ---------
     fn reserve_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
-        kind: AuxKind,
+        registry: &mut dyn AuxRegistryPort<K>,
+        kind: K,
     ) -> Result<Option<crate::aux::OpenRequest>, String>;
-    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort, id: crate::aux::AuxId) -> bool;
+    /// Collect and consume deferred aux open requests (e.g. the PPU viewer
+    /// requested from a debugger gesture). Flavors open each kind through
+    /// the normal `reserve_widget`/`prepare_widget` path.
+    fn drain_open_requests(&mut self) -> Vec<K>;
+    fn cancel_widget(
+        &mut self,
+        registry: &mut dyn AuxRegistryPort<K>,
+        id: crate::aux::AuxId,
+    ) -> bool;
     fn prepare_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<K>,
         id: crate::aux::AuxId,
     ) -> Result<bool, String>;
     fn widget_screen(&self, id: crate::aux::AuxId) -> Option<ControlScreen>;
@@ -141,60 +148,49 @@ pub trait FrontendApp: EventHandler {
     fn widget_refresh(&mut self, id: crate::aux::AuxId);
     fn close_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<K>,
         id: crate::aux::AuxId,
         close: bool,
     ) -> Option<WidgetCloseOutcome>;
     fn settings_closed(&mut self) -> bool;
     fn report_host_error(&mut self, detail: String);
     fn history_changed(&self) -> bool;
+    /// Whether a settings widget is currently open. Flavors gate menus and
+    /// session commands on this without naming the settings kind.
+    fn settings_open(&self) -> bool;
 
-    // -- debugger (handle-keyed; bridges owned view-side) ----------------
-    fn open_debug(&mut self) -> DebugHandle;
-    fn close_debug(&mut self, handle: DebugHandle);
+    // -- debugger (widget window; bridge owned view-side) -------------------
+    // The debugger is a generic Controls widget like settings/history/PPU.
+    // Flavors open it via `reserve_widget`/`prepare_widget`, push
+    // `widget_screen`s, and route `widget_dispatch` events; all bridge and
+    // drain state lives view-side behind these narrow ports.
+    /// Open debugger widget id, if any.
+    fn debug_widget(&self) -> Option<crate::aux::AuxId>;
+    /// Bridge handle behind a debugger widget id, if still live.
+    fn debug_handle_for(&self, id: crate::aux::AuxId) -> Option<DebugHandle>;
     fn close_debug_flights(&mut self);
-    fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot>;
-    fn debug_paused(&self, handle: DebugHandle) -> bool;
-    fn debug_generation(&self, handle: DebugHandle) -> u64;
-    /// Generic aux viewer for a debug session (PPU pictures as Image controls).
-    /// Presentation lives in view-defs; natives render the ControlScreen verbatim.
-    fn debug_aux_screen(&self, handle: DebugHandle) -> Option<ControlScreen>;
-    /// Route a generic control event (e.g. Hover) to the debug aux viewer.
-    /// Returns true when the screen changed and should be re-pushed.
-    fn debug_aux_dispatch(&mut self, handle: DebugHandle, event: ControlEvent) -> bool;
-    /// Refresh the debug aux viewer from the latest bridge display.
-    fn debug_aux_refresh(&mut self, handle: DebugHandle);
     fn debug_gesture(
         &mut self,
         handle: DebugHandle,
         inputs: Vec<DebuggerEvent>,
         event: DebuggerEvent,
-        need_images: bool,
     ) -> DebuggerEffects;
-    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope, need_images: bool);
-    fn debug_open_refresh(&mut self, handle: DebugHandle, need_images: bool);
-    fn debug_poll(&mut self, handle: DebugHandle, ppu_open: bool) -> crate::loop_driver::WakeNeed;
-    fn debug_poll_live(
-        &mut self,
-        handle: DebugHandle,
-        visible: bool,
-        need_images: bool,
-    ) -> DebuggerLiveEffects;
-    fn debug_live_tick(&mut self, handle: DebugHandle, ppu_open: bool);
+    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope);
+    fn debug_open_refresh(&mut self, handle: DebugHandle);
+    fn debug_poll(&mut self, handle: DebugHandle) -> crate::loop_driver::WakeNeed;
+    fn debug_poll_live(&mut self, handle: DebugHandle, visible: bool) -> DebuggerLiveEffects;
+    fn debug_live_tick(&mut self, handle: DebugHandle);
     fn debug_drain_pending(&self, handle: DebugHandle) -> bool;
     fn debug_reset_if_replaced(&mut self, handle: DebugHandle) -> bool;
     /// Chrome gate: a pause change since the last drain needs a viewer refresh.
-    fn chrome_drain_due(&self, debug_open: bool) -> bool;
-    fn debugger_chrome(&self) -> DebuggerChrome;
-    fn debugger_window_title(&self) -> String;
-    fn take_debug_open_request(&mut self) -> bool;
-    fn take_ppu_open_request(&mut self) -> bool;
-    fn request_debug_open(&mut self);
-    fn request_ppu_open(&mut self);
-    fn debug_window_pos(&self) -> Option<(i32, i32)>;
-    fn ppu_window_pos(&self) -> Option<(i32, i32)>;
-    fn remember_debug_window_pos(&mut self, x: i32, y: i32);
-    fn remember_ppu_window_pos(&mut self, x: i32, y: i32);
+    fn chrome_drain_due(&self) -> bool;
+    /// Generic aux open latch + window position memory, keyed by view-side kind.
+    /// View definitions map their kinds (debugger/PPU/...) to these; native
+    /// code never names the kinds.
+    fn take_open_request(&mut self, kind: K) -> bool;
+    fn request_open(&mut self, kind: K);
+    fn window_pos(&self, kind: K) -> Option<(i32, i32)>;
+    fn remember_window_pos(&mut self, kind: K, x: i32, y: i32);
     /// Live-tick arming for the native timer thread. The schedule lives
     /// view-side; native code parks/unparks its thread on this flag.
     fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool>;

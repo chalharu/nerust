@@ -31,7 +31,7 @@ use wakui::retry::RenderRetry;
 
 use crate::{
     debugger::BridgeLock,
-    focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent},
+    focus::{FocusCoordinator, FocusEffect, FocusEvent},
     frame::{FrameCache, FrameCtx},
     menu::{MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalToken, OsdNotifications},
@@ -277,8 +277,13 @@ impl ApplicationHost {
         }
         effect
     }
-    pub fn drive_aux_focus(&mut self, kind: AuxKind, focused: bool) -> bool {
-        self.focus_event(FocusEvent::Aux(kind, focused));
+    pub fn drive_aux_focus(&mut self, id: wakui::aux::AuxId, focused: bool) -> bool {
+        let resume = self
+            .widget_sessions
+            .get(&id)
+            .map(|session| session.kind().resume_on_arrival())
+            .unwrap_or(false);
+        self.focus_event(FocusEvent::Aux { resume, focused });
         focused
     }
     pub fn tick_focus_sync(&mut self) {
@@ -702,7 +707,7 @@ pub struct MenubarUpdate {
 // Scheduling already exposes meaningful request/consume/cadence operations;
 // reuse that facade rather than growing a second forest of forwarding methods.
 impl std::ops::Deref for ApplicationHost {
-    type Target = wakui::debug_schedule::DebugSchedule;
+    type Target = wakui::debug_schedule::AuxSchedule<crate::focus::AuxKind>;
     fn deref(&self) -> &Self::Target {
         self.debug.schedule()
     }

@@ -4,12 +4,12 @@ use wakui::bootstrap::Boot;
 
 use crate::runtime::WindowRuntime;
 
-pub struct Window {
-    runtime: Box<WindowRuntime>,
+pub struct Window<K: Copy + Eq + std::hash::Hash + 'static> {
+    runtime: Box<WindowRuntime<K>>,
 }
 
-impl Window {
-    pub fn new(boot: Boot) -> Self {
+impl<K: Copy + Eq + std::hash::Hash + 'static> Window<K> {
+    pub fn new(boot: Boot<K>) -> Self {
         Self {
             runtime: Box::new(WindowRuntime::new(boot)),
         }

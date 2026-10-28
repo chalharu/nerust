@@ -100,12 +100,12 @@ mod tests {
 
     #[test]
     fn aux_ids_compare_by_value() {
-        use crate::aux::focus::AuxKind;
         use crate::aux::registry::{AuxRegistry, test_double::StubAux};
-        let mut registry = AuxRegistry::new();
-        let first = registry.insert(Box::new(StubAux::new(AuxKind::Debug)));
-        assert_eq!(registry.route_id(AuxKind::Debug), Some(first));
-        let second = registry.insert(Box::new(StubAux::new(AuxKind::Debug)));
+        use crate::testkit::TestAux;
+        let mut registry = AuxRegistry::<TestAux>::new();
+        let first = registry.insert_for_test(TestAux::Debug, Box::new(StubAux::new()));
+        assert_eq!(registry.route_id(TestAux::Debug), Some(first));
+        let second = registry.insert_for_test(TestAux::Debug, Box::new(StubAux::new()));
         assert_ne!(first, second);
     }
 

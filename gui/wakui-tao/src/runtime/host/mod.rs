@@ -8,7 +8,6 @@ use tao::{
 
 use crate::menu::MenuSink;
 
-use crate::aux::focus::AuxKind;
 use crate::aux::registry::AuxRegistry;
 
 mod auxiliary;
@@ -17,7 +16,7 @@ mod osd;
 mod presentation;
 mod window;
 
-pub(crate) use window::{WakeNeed, WindowCluster};
+pub(crate) use window::WindowCluster;
 
 use crate::ports::DialogPorts;
 
@@ -34,7 +33,7 @@ const DEFAULT_FIT_WINDOW_HEIGHT: f64 = 720.0;
 /// Headless `HostState` over the canned [`crate::testkit::FakeApp`].
 #[cfg(test)]
 pub(crate) struct TestHost {
-    pub(crate) host: HostState,
+    pub(crate) host: HostState<crate::testkit::TestAux>,
     pub(crate) menu: crate::test_menu::MenuRecorderHandle,
     pub(crate) dialogs: crate::test_dialogs::FakeDialogs,
     app: std::rc::Rc<std::cell::RefCell<crate::testkit::FakeApp>>,
@@ -81,32 +80,28 @@ impl TestHost {
     }
 }
 
-pub(crate) struct HostState {
+pub(crate) struct HostState<K: Copy + Eq + std::hash::Hash + 'static> {
     /// Main window cluster: handle, liveness, surface target.
     pub(super) windows: WindowCluster,
     /// The single policy owner, injected by the composition root.
     /// Native code drives it through the trait only.
-    pub(crate) core: Box<dyn wakui::app::FrontendApp>,
+    pub(crate) core: Box<dyn wakui::app::FrontendApp<K>>,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
-    pub(crate) aux: AuxRegistry,
-    /// App-side debug session shared by the debugger and PPU windows.
-    pub(super) debug_handle: Option<wakui::debugger::DebugHandle>,
+    pub(crate) aux: AuxRegistry<K>,
 }
 
-impl HostState {
+impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     #[cfg(test)]
     pub(crate) fn load_test_rom(&mut self) {
-        // The fake app serves a canned loaded core; reset viewer state first.
-        self.debug_handle = None;
         self.core
             .load_rom(std::path::Path::new("test.nes"))
             .unwrap();
     }
 
     pub(crate) fn new(
-        boot: wakui::bootstrap::Boot,
+        boot: wakui::bootstrap::Boot<K>,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Self {
@@ -117,7 +112,6 @@ impl HostState {
             app_menu,
             dialogs,
             aux: AuxRegistry::new(),
-            debug_handle: None,
         }
     }
 
@@ -134,68 +128,31 @@ impl HostState {
             .flatten()
     }
 
-    /// Kind of the aux window behind this id, if registered.
-    pub(super) fn aux_kind_of(&self, id: WindowId) -> Option<AuxKind> {
-        self.aux.kind_of(crate::aux::native::native_id_of(id))
+    /// Id of the aux window behind this native id, if registered.
+    pub(super) fn aux_id_of(&self, id: WindowId) -> Option<wakui::aux::AuxId> {
+        self.aux.id_of(crate::aux::native::native_id_of(id))
     }
 
     /// Pump one domain event through the matching aux entry.
     pub(super) fn aux_on_event(
         &mut self,
-        kind: AuxKind,
+        id: wakui::aux::AuxId,
         event: crate::domain::AuxNativeEvent,
     ) -> Option<crate::aux::registry::AuxOutcome> {
-        self.aux.on_event(kind, event)
+        self.aux.on_event(id, event)
     }
 
-    /// Render the aux window of this kind, if open.
-    pub(super) fn render_aux(&mut self, kind: AuxKind) -> Option<crate::aux::registry::AuxOutcome> {
-        self.aux.render_kind(kind)
+    /// Render the aux window behind this id, if open.
+    pub(super) fn render_aux(
+        &mut self,
+        id: wakui::aux::AuxId,
+    ) -> Option<crate::aux::registry::AuxOutcome> {
+        self.aux.render_id(id)
     }
 
-    /// Settings window owns the screen iff registered.
+    /// Settings window owns the screen iff the app holds a settings session.
     pub(crate) fn settings_open(&self) -> bool {
-        self.aux.contains(AuxKind::Settings)
-    }
-
-    /// Aux window of this kind still registered. Test-only read: the
-    /// ordered teardown must leave no aux window behind.
-    #[cfg(test)]
-    pub(crate) fn aux_open(&self, kind: AuxKind) -> bool {
-        self.aux.contains(kind)
-    }
-}
-
-/// Native debug and history window resources.
-impl HostState {
-    pub(crate) fn is_debug_open(&self) -> bool {
-        self.aux.contains(AuxKind::Debug)
-    }
-
-    pub(crate) fn is_ppu_open(&self) -> bool {
-        self.aux.contains(AuxKind::Ppu)
-    }
-
-    pub(super) fn drop_debug_window(&mut self) {
-        self.aux.remove_kind(AuxKind::Debug);
-        self.maybe_close_debug_session();
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn drop_ppu_window(&mut self) {
-        if let Some(id) = self.aux.route_id(AuxKind::Ppu) {
-            self.finish_widget_window(id, true);
-        } else {
-            self.aux.remove_kind(AuxKind::Ppu);
-        }
-        self.maybe_close_debug_session();
-    }
-
-    #[cfg(test)]
-    pub(super) fn drop_history_window(&mut self) {
-        if let Some(id) = self.aux.route_id(AuxKind::History) {
-            self.finish_widget_window(id, true);
-        }
+        self.core.settings_open()
     }
 }
 
@@ -340,24 +297,20 @@ mod tests {
     #[test]
     fn aux_routing_stays_total_without_windows() {
         use crate::domain::NativeWindowId;
+        use crate::testkit::TestAux;
         let support = TestHost::new();
         let mut host = support.host;
         let id = unsafe { tao::window::WindowId::dummy() };
-        assert!(host.aux_kind_of(id).is_none());
+        assert!(host.aux_id_of(id).is_none());
         let _ = NativeWindowId::dummy();
         assert!(host.with_main_window(|_| ()).is_none());
-        assert!(!host.is_debug_open());
-        assert!(!host.is_ppu_open());
-        assert!(host.debug_handle().is_none());
-        assert!(host.core.debug_window_pos().is_none());
-        assert!(host.core.ppu_window_pos().is_none());
-        host.core.remember_debug_window_pos(3, 4);
-        host.core.remember_ppu_window_pos(5, 6);
-        assert_eq!(host.core.debug_window_pos(), Some((3, 4)));
-        assert_eq!(host.core.ppu_window_pos(), Some((5, 6)));
-        host.drop_debug_window();
-        host.drop_ppu_window();
-        host.drop_history_window();
+        assert!(host.core.debug_widget().is_none());
+        assert!(host.core.window_pos(TestAux::Debug).is_none());
+        assert!(host.core.window_pos(TestAux::Settings).is_none());
+        host.core.remember_window_pos(TestAux::Debug, 3, 4);
+        host.core.remember_window_pos(TestAux::Settings, 5, 6);
+        assert_eq!(host.core.window_pos(TestAux::Debug), Some((3, 4)));
+        assert_eq!(host.core.window_pos(TestAux::Settings), Some((5, 6)));
         let armed = host.core.live_armed();
         assert!(!armed.load(std::sync::atomic::Ordering::Acquire));
         host.core.register_tick_thread(std::thread::current());
@@ -376,13 +329,15 @@ mod tests {
 
     #[test]
     fn request_flags_round_trip_without_windows() {
+        use crate::testkit::TestAux;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.request_debug_open();
-        assert!(host.core.take_debug_open_request());
-        assert!(!host.core.take_debug_open_request());
-        host.core.request_ppu_open();
-        assert!(host.core.take_ppu_open_request());
-        assert!(!host.core.take_ppu_open_request());
+        host.core.request_open(TestAux::Debug);
+        assert!(host.core.take_open_request(TestAux::Debug));
+        assert!(!host.core.take_open_request(TestAux::Debug));
+        host.core.request_open(TestAux::Ppu);
+        assert!(host.core.take_open_request(TestAux::Ppu));
+        assert!(!host.core.take_open_request(TestAux::Ppu));
+        assert!(host.core.drain_open_requests().is_empty());
     }
 }

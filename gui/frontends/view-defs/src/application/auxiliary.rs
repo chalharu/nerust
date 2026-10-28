@@ -19,12 +19,13 @@ pub type WidgetWindowClose<H> = (
 );
 
 impl ApplicationHost {
-    /// Prepare the generic control boundary for Settings, History, and PPU.
-    /// Registries come from the owned session: native adapters never pass
-    /// shell or audio types across the boundary.
+    /// Prepare the generic control boundary for every widget window
+    /// (Settings, History, PPU, Debugger). Registries come from the owned
+    /// session: native adapters never pass shell or audio types across the
+    /// boundary.
     pub fn prepare_widget_window<N: Copy + Eq + Hash, H>(
         &mut self,
-        windows: &mut AuxWindows<N, H>,
+        windows: &mut AuxWindows<AuxKind, N, H>,
         id: AuxId,
     ) -> Result<Option<WidgetSession>, String> {
         if self.close_exited() || windows.mailbox(id).is_some() {
@@ -51,14 +52,21 @@ impl ApplicationHost {
                 let (pictures, panels, generation) = self.ppu_contents();
                 WidgetSession::ppu(chrome, pictures, panels, generation, language)
             }
+            Some(AuxKind::Debug) => {
+                let handle = self.open_debug_inner();
+                let snapshot = self.debug_snapshot_inner(handle);
+                let mut session = WidgetSession::debug(handle);
+                session.refresh_debug(snapshot);
+                session
+            }
             _ => return Ok(None),
         };
-        *windows.window_mut(id).expect("current reservation") = session.window();
+        *windows.window_mut(id).expect("current reservation") = session.window(id);
         windows.set_mailbox(id, session.mailbox());
         Ok(Some(session))
     }
 
-    fn ppu_contents(&self) -> (Vec<crate::ppu::PpuPicture>, Option<String>, u64) {
+    pub(crate) fn ppu_contents(&self) -> (Vec<crate::ppu::PpuPicture>, Option<String>, u64) {
         let Some(session) = self.debug_sessions.values().next() else {
             return (Vec::new(), None, 0);
         };
@@ -83,8 +91,9 @@ impl ApplicationHost {
         (pictures, panels, generation)
     }
 
-    /// Refresh History and PPU from real session data (also after clear or
-    /// language changes). Settings keeps its one draft and is not reset.
+    /// Refresh every widget session from real session data (also after clear
+    /// or language changes, and after every debug drain for the debugger).
+    /// Settings keeps its one draft and is not reset.
     pub fn refresh_widget_session(&mut self, session: &mut WidgetSession) {
         if session.kind() == AuxKind::History {
             let language = self.settings_snapshot().shared.general.language;
@@ -98,6 +107,9 @@ impl ApplicationHost {
             let chrome = crate::ppu::ppu_chrome(language);
             let (pictures, panels, generation) = self.ppu_contents();
             session.refresh_ppu(chrome, pictures, panels, generation, language);
+        } else if let Some(handle) = session.debug_handle() {
+            let snapshot = self.debug_snapshot_inner(handle);
+            session.refresh_debug(snapshot);
         }
     }
 
@@ -106,7 +118,7 @@ impl ApplicationHost {
     /// A clone of a consumed submission cannot apply it (or a future edit) twice.
     pub fn apply_window_submission<N: Copy + Eq + Hash, H>(
         &mut self,
-        windows: &AuxWindows<N, H>,
+        windows: &AuxWindows<AuxKind, N, H>,
         id: AuxId,
         submission: WindowSubmission,
     ) -> Result<WindowEffects, crate::session::SessionError> {
@@ -182,8 +194,9 @@ impl ApplicationHost {
     /// No new pause-phase state: the existing Settings owner remains authoritative.
     pub fn close_widget_window<N: Copy + Eq + Hash, H>(
         &mut self,
-        windows: &mut AuxWindows<N, H>,
+        windows: &mut AuxWindows<AuxKind, N, H>,
         id: AuxId,
+        session: Option<&WidgetSession>,
         pending: Option<WindowSubmission>,
     ) -> Option<WidgetWindowClose<H>> {
         let kind = windows.kind_of_id(id)?;
@@ -195,6 +208,12 @@ impl ApplicationHost {
             return None;
         }
         let handle = windows.remove_id(id);
+        // Debugger widgets hold a refcounted debug session: release it here.
+        if kind == AuxKind::Debug
+            && let Some(debug) = session.and_then(|session| session.debug_handle())
+        {
+            self.close_debug_inner(debug);
+        }
         let result = if self.close_exited() {
             Ok(WindowEffects::default())
         } else {
@@ -221,13 +240,13 @@ impl ApplicationHost {
     /// settings pause again. A rejected session transition leaves no reservation.
     pub fn reserve_window<N: Copy + Eq + Hash, H>(
         &mut self,
-        windows: &mut AuxWindows<N, H>,
+        windows: &mut AuxWindows<AuxKind, N, H>,
         kind: AuxKind,
     ) -> Result<Option<OpenRequest>, crate::session::SessionError> {
         if self.close_exited() {
             return Ok(None);
         }
-        let request = windows.request_open(kind);
+        let request = windows.request_open(kind, kind.title());
         if kind == AuxKind::Settings
             && let OpenRequest::Create(id) = request
         {
@@ -250,7 +269,7 @@ impl ApplicationHost {
     /// Validation and rollback are shared by all native adapters.
     fn prepare_settings_window<N: Copy + Eq + Hash, H>(
         &mut self,
-        windows: &mut AuxWindows<N, H>,
+        windows: &mut AuxWindows<AuxKind, N, H>,
         id: AuxId,
     ) -> Result<Option<SettingsController>, String> {
         if windows.kind_of_id(id) != Some(AuxKind::Settings)
@@ -271,7 +290,7 @@ impl ApplicationHost {
     /// A stale cancellation must not release a newer settings owner's pause.
     pub fn cancel_window<N: Copy + Eq + Hash, H>(
         &mut self,
-        windows: &mut AuxWindows<N, H>,
+        windows: &mut AuxWindows<AuxKind, N, H>,
         id: AuxId,
     ) -> bool {
         let kind = windows.kind_of_id(id);

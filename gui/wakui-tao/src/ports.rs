@@ -13,11 +13,9 @@ use wakui::control::ControlScreen;
 use wakui::{
     aux::AuxId,
     mailbox::WindowMailbox,
-    window::{DebugContents, Window, WindowVisitor},
+    window::{Window, WindowVisitor},
 };
 
-#[cfg(test)]
-use crate::aux::focus::AuxKind;
 use crate::aux::registry::AuxController;
 use crate::event::UserEvent;
 
@@ -138,17 +136,14 @@ pub(crate) fn show_rom_load_error(title: String, detail: &str) {
         .show();
 }
 
-/// Aux-window open parameters: one variant per capability.
-/// View-definitions sessions stay app-side; native windows receive only
-/// handles, screens, and mailboxes.
+/// Aux-window open parameters. Every aux window is a generic controls
+/// window now; view-definitions sessions stay app-side and native windows
+/// receive only handles, screens, and mailboxes.
 pub(crate) enum AuxOpenParams {
     Controls {
         id: AuxId,
         screen: Box<ControlScreen>,
         mailbox: WindowMailbox,
-    },
-    Debug {
-        position: Option<(i32, i32)>,
     },
 }
 
@@ -214,20 +209,6 @@ impl WindowVisitor for CreateAux<'_> {
                     .map(aux_box)
                 });
     }
-    fn visit_debug(&mut self, _: &DebugContents) {
-        self.output = self
-            .params
-            .take()
-            .and_then(debug_parts)
-            .and_then(|position| {
-                crate::aux::debug::DebugWindowHandle::new(
-                    self.window.clone(),
-                    self.target,
-                    position,
-                )
-                .map(aux_box)
-            });
-    }
 }
 
 /// Box a concrete aux handle behind its capability ports.
@@ -244,19 +225,8 @@ fn controls_parts(params: AuxOpenParams) -> Option<ControlsParts> {
         id,
         screen,
         mailbox,
-    } = params
-    else {
-        return None;
-    };
+    } = params;
     Some((id, screen, mailbox))
-}
-
-/// Split one debugger open: pure variant check, display-free tests.
-fn debug_parts(params: AuxOpenParams) -> Option<Option<(i32, i32)>> {
-    let AuxOpenParams::Debug { position } = params else {
-        return None;
-    };
-    Some(position)
 }
 
 #[cfg(test)]
@@ -267,14 +237,9 @@ mod tests {
 
     /// Port owner's contract double: the trait home must not depend
     /// on the shared fake, or the test graph cycles back on itself.
-    struct ProbeAux {
-        kind: AuxKind,
-    }
+    struct ProbeAux;
 
     impl AuxIdentity for ProbeAux {
-        fn kind(&self) -> AuxKind {
-            self.kind
-        }
         fn native_id(&self) -> NativeWindowId {
             NativeWindowId::dummy()
         }
@@ -290,7 +255,7 @@ mod tests {
         fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
             None
         }
-        fn render(&mut self) -> Option<String> {
+        fn render(&mut self, _title: &str) -> Option<String> {
             None
         }
     }
@@ -304,11 +269,8 @@ mod tests {
     impl AuxController for ProbeAux {}
 
     #[test]
-    fn aux_box_preserves_kind_and_stays_quiet() {
-        let boxed = aux_box(ProbeAux {
-            kind: AuxKind::Settings,
-        });
-        assert_eq!(boxed.kind(), AuxKind::Settings);
+    fn aux_box_stays_quiet() {
+        let boxed = aux_box(ProbeAux);
         assert!(!boxed.close_requested());
     }
 
@@ -327,19 +289,16 @@ mod tests {
         // caller bug answered with `None`, never a logged mismatch.
         fn history_params() -> AuxOpenParams {
             let mut host = crate::runtime::host::TestHost::new().host;
-            let id = crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
+            let id = crate::aux::widgets::bindings::tests::prepare(
+                &mut host,
+                crate::testkit::TestAux::History,
+            );
             AuxOpenParams::Controls {
                 id,
                 screen: Box::new(host.core.widget_screen(id).expect("screen")),
                 mailbox: host.core.widget_mailbox(id).expect("mailbox"),
             }
         }
-        assert!(debug_parts(history_params()).is_none());
         assert!(controls_parts(history_params()).is_some());
-        // Own variants split cleanly.
-        assert!(controls_parts(history_params()).is_some());
-        let debug = AuxOpenParams::Debug { position: None };
-        let position = debug_parts(debug).expect("debug splits");
-        assert_eq!(position, None);
     }
 }

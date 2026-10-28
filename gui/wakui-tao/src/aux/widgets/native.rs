@@ -19,7 +19,6 @@ where
 {
     shell: AuxShell<WindowProgram<B>>,
     signals: S,
-    kind: crate::aux::focus::AuxKind,
 }
 
 pub(crate) trait WidgetSignals<B: WidgetBinding> {
@@ -42,14 +41,13 @@ where
         signals: S,
         size: (f64, f64),
     ) -> Option<Self> {
-        let kind = binding.kind();
         let surface = AuxSurface::open(
             event_loop,
             &window.title,
             size,
             None,
             None,
-            kind.log_tag(),
+            &window.title,
             Arc::clone(signals.close_flag()),
         )
         .map_err(|error| {
@@ -71,11 +69,7 @@ where
             program: binding,
         });
         let shell = AuxShell::assemble(surface, instance);
-        Some(Self {
-            shell,
-            signals,
-            kind,
-        })
+        Some(Self { shell, signals })
     }
 }
 
@@ -83,10 +77,6 @@ impl<B, S> crate::aux::focus::AuxShellRef for WidgetWindow<B, S>
 where
     B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
 {
-    fn kind(&self) -> crate::aux::focus::AuxKind {
-        self.kind
-    }
-
     fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
         &self.shell
     }
@@ -139,10 +129,10 @@ impl ControlsWindowHandle {
         mailbox: WindowMailbox,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
     ) -> Option<Self> {
-        let wakui::window::WindowId::Auxiliary(kind) = window.id else {
+        let wakui::window::WindowId::Auxiliary(_) = window.id else {
             unreachable!("widget windows are auxiliary windows");
         };
-        let (binding, screen, queue) = ControlsBinding::new(*screen, kind);
+        let (binding, screen, queue) = ControlsBinding::new(*screen);
         let signals = WindowSignals {
             screen,
             queue,
@@ -209,7 +199,7 @@ mod tests {
     fn widget_signals_keep_close_separate_from_repaint_and_clear() {
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare};
         let mut support = crate::runtime::host::TestHost::new().host;
-        let id = prepare(&mut support, crate::aux::focus::AuxKind::History);
+        let id = prepare(&mut support, crate::testkit::TestAux::History);
         let settings = WindowSignals {
             screen: std::rc::Rc::new(std::cell::RefCell::new(
                 support.core.widget_screen(id).expect("screen"),

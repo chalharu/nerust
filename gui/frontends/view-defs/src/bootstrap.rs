@@ -37,7 +37,7 @@ pub fn boot(
     ctx: FrontendContext,
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
-) -> Result<wakui::bootstrap::Boot, String> {
+) -> Result<wakui::bootstrap::Boot<crate::focus::AuxKind>, String> {
     let FrontendContext {
         gpu_factory,
         registry,

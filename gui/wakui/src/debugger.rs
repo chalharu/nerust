@@ -8,7 +8,7 @@
 pub struct DebugHandle(pub u64);
 
 /// Native adapters translate gestures into these intents, never emulator calls.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebuggerEvent {
     RefreshPressed,
     SpacePrev,

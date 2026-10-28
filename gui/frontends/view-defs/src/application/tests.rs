@@ -1,4 +1,5 @@
 use super::*;
+use crate::focus::AuxKind;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
 };
@@ -175,9 +176,10 @@ fn focus_effects_commit_before_capture_and_modal_ack_changes_late_truth() {
     let captured = fixture.core.frame_ctx();
     assert!(captured.tick().paused);
     fixture.core.set_pause_owner(PauseOwner::Modal, true);
-    fixture
-        .core
-        .focus_event(FocusEvent::Aux(AuxKind::Debug, true));
+    fixture.core.focus_event(FocusEvent::Aux {
+        resume: AuxKind::Debug.resume_on_arrival(),
+        focused: true,
+    });
     assert!(fixture.core.tick().paused);
     fixture.core.set_pause_owner(PauseOwner::Modal, false);
     assert!(!fixture.core.tick().paused);
@@ -188,8 +190,8 @@ fn focus_effects_commit_before_capture_and_modal_ack_changes_late_truth() {
 fn application_close_flushes_exactly_once_after_resource_teardown() {
     let mut fixture = Fixture::new();
     fixture.load();
-    fixture.core.request_debug_open();
-    fixture.core.request_ppu_open();
+    fixture.core.request_open(AuxKind::Debug);
+    fixture.core.request_open(AuxKind::Ppu);
     fixture.core.set_live_wanted(true);
     let flushes = std::cell::Cell::new(0);
     let flush = |session: &mut SessionHandle| {
@@ -201,8 +203,8 @@ fn application_close_flushes_exactly_once_after_resource_teardown() {
     assert!(fixture.core.begin_close());
     assert!(!fixture.core.window_usable());
     fixture.core.close_debug_flights();
-    assert!(!fixture.core.take_debug_open_request());
-    assert!(!fixture.core.take_ppu_open_request());
+    assert!(!fixture.core.take_open_request(AuxKind::Debug));
+    assert!(!fixture.core.take_open_request(AuxKind::Ppu));
     assert!(!fixture.core.live_armed().load(Ordering::Acquire));
     assert!(!fixture.core.debug_pending());
     fixture.core.finish_close_with(flush);
@@ -376,9 +378,10 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         commands::MenuCommand,
         event::{CommandEffect, EventCommand, EventHandler},
         menu::MenuEntry,
-        window::{WidgetContents, Window, WindowVisitor},
+        window::{WidgetContents, Window},
     };
     use wakui::aux::{AuxWindows, OpenRequest};
+    use wakui::window::WindowVisitor;
 
     let mut fixture = Fixture::new();
     let ctx = fixture.core.frame_ctx();
@@ -413,14 +416,14 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         panic!("expected auxiliary open");
     };
     assert_eq!(kind, AuxKind::Debug);
-    let mut windows = AuxWindows::<u64, ()>::new();
-    let OpenRequest::Create(id) = windows.request_open(kind) else {
+    let mut windows = AuxWindows::<AuxKind, u64, ()>::new();
+    let OpenRequest::Create(id) = windows.request_open(kind, kind.title()) else {
         panic!("expected creation");
     };
     assert!(windows.get(kind).is_none(), "native creation has not run");
     assert!(matches!(
         windows.window(id).unwrap().contents.contents,
-        WidgetContents::Debug(_)
+        WidgetContents::PendingControls
     ));
     struct MenuVisitor(bool);
     impl WindowVisitor for MenuVisitor {
@@ -446,7 +449,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
         event::{CommandEffect as E, EventCommand as C, EventHandler},
     };
     let mut fixture = Fixture::new();
-    let host: &mut dyn EventHandler = &mut fixture.core;
+    let host: &mut dyn EventHandler<AuxKind> = &mut fixture.core;
     for event in [
         C::Menu(M::Open),
         C::Menu(M::Close),
@@ -525,7 +528,7 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
         let event = sink.0.borrow_mut().pop().unwrap();
         let result = {
             let mut state = fixture.borrow_mut();
-            let handler: &mut dyn EventHandler = &mut state.core;
+            let handler: &mut dyn EventHandler<AuxKind> = &mut state.core;
             handler.handle_event(event, false).unwrap()
         };
         assert_eq!(result.effect, Some(effect));

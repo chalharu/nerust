@@ -48,7 +48,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxSh
         self.surface.feed_domain_event(event)
     }
 
-    fn render_tagged(&mut self, tag: &'static str) -> Option<String> {
+    fn render_tagged(&mut self, tag: &str) -> Option<String> {
         self.render(tag)
     }
 
@@ -158,7 +158,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     /// Full render through the shared pump; only the log tag differs.
-    pub(crate) fn render(&mut self, log_tag: &'static str) -> Option<String> {
+    pub(crate) fn render(&mut self, log_tag: &str) -> Option<String> {
         if !self.surface.render_ready() {
             return None;
         }
@@ -171,7 +171,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
     }
 
     /// Shared full render: Light theme, redraw pump, draw, present.
-    fn render_ui(&mut self, log_tag: &'static str) -> Option<String> {
+    fn render_ui(&mut self, log_tag: &str) -> Option<String> {
         // Nothing to draw into yet (minimize/dock transient):
         // presenting a zero-size surface panics in pixel-map creation.
         let (width, height) = self.surface.viewport();

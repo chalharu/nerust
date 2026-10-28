@@ -4,7 +4,7 @@ use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
-use wakui::focus::{AuxKind, FocusEvent};
+use wakui::focus::FocusEvent;
 use wakui::{
     event::{CommandEffect, EventOutcome},
     session::SessionEvent,
@@ -15,7 +15,7 @@ use crate::event::MenuCommand;
 use crate::event::UserEvent;
 use crate::ports::WindowOpener;
 
-impl HostState {
+impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     #[cfg(test)]
     pub(crate) fn on_menu_command(
         &mut self,
@@ -29,7 +29,7 @@ impl HostState {
         self.handle_native_event(event, Some(opener))
     }
 
-    fn dispatch_event(&mut self, event: UserEvent) -> Option<EventOutcome> {
+    fn dispatch_event(&mut self, event: UserEvent) -> Option<EventOutcome<K>> {
         let settings_open = self.settings_open();
         match self.core.handle_event(event, settings_open) {
             Ok(outcome) => Some(outcome),
@@ -63,12 +63,9 @@ impl HostState {
                 }
             }
             Some(CommandEffect::OpenAux(kind)) => {
-                match (kind, opener) {
-                    (AuxKind::Settings, Some(opener)) => self.open_settings_window(opener),
-                    (AuxKind::Debug, Some(opener)) => self.open_debug_windows(opener, false),
-                    (AuxKind::History, Some(opener)) => self.open_history(opener),
-                    (AuxKind::Debug, None) => self.core.request_debug_open(),
-                    _ => (),
+                match opener {
+                    Some(opener) => self.open_aux_window(kind, opener),
+                    None => self.core.request_open(kind),
                 }
                 HostAction::None
             }
@@ -197,10 +194,17 @@ mod tests {
     }
 
     fn settings_blocked_host() -> TestHost {
+        use crate::testkit::TestAux;
+        use wakui::aux::OpenRequest;
         let support = TestHost::new();
         let mut host = support.host;
+        let id = match host.reserve_aux_window(TestAux::Settings) {
+            Some(OpenRequest::Create(id)) => id,
+            _ => panic!("reservation"),
+        };
+        assert!(host.prepare_widget(id));
         host.aux
-            .insert(Box::new(StubAux::new(crate::aux::focus::AuxKind::Settings)));
+            .insert_for_test(TestAux::Settings, Box::new(StubAux::new()));
         assert!(host.settings_open());
         TestHost {
             host,
@@ -319,7 +323,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::History]);
-        assert!(!host.aux.contains(crate::aux::focus::AuxKind::History));
+        assert!(!host.aux.contains(crate::testkit::TestAux::History));
     }
 
     #[test]
@@ -382,7 +386,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
-        assert!(!host.settings_open());
+        assert!(host.aux.windows.ids().is_empty());
     }
 
     #[test]
@@ -395,7 +399,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
-        assert!(!host.is_debug_open());
+        assert!(host.aux.windows.ids().is_empty());
     }
 
     #[test]
@@ -556,11 +560,12 @@ mod tests {
 
     #[test]
     fn keyboard_shortcuts_route_without_keys() {
+        use crate::testkit::TestAux;
         use wakui::session::ShortcutGesture;
         let support = TestHost::new();
         let mut host = support.host;
         host.apply_keyboard_shortcut(ShortcutGesture::OpenDebugger);
-        assert!(host.core.take_debug_open_request());
+        assert!(host.core.take_open_request(TestAux::Debug));
         assert!(support.menu.updates().is_empty());
         host.apply_keyboard_shortcut(ShortcutGesture::TogglePause);
         host.apply_keyboard_shortcut(ShortcutGesture::ToggleFullscreen);

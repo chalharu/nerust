@@ -3,13 +3,13 @@
 //! Clone a window under the owner's borrow, release it, then visit the snapshot:
 //! native callbacks may synchronously reenter the host or auxiliary registry.
 
-use crate::{focus::AuxKind, menu::Menubar};
+use crate::{aux::AuxId, menu::Menubar};
 
 /// Semantic destination. Generation-sensitive callbacks must still use `AuxId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowId {
     Main,
-    Auxiliary(AuxKind),
+    Auxiliary(AuxId),
 }
 
 #[derive(Debug, Clone)]
@@ -42,23 +42,18 @@ pub enum WidgetContents {
     Controls(Box<crate::control::ControlScreen>),
     /// Reservation exists, but no generic control screen has been supplied yet.
     PendingControls,
-    Debug(DebugContents),
 }
 
 /// Grouped emulation surface. Renderer resources remain native-owned.
 #[derive(Debug, Clone, Default)]
 pub struct MainContents;
 
-/// Grouped debugger presentation, deliberately not a per-control widget tree.
-/// DebuggerDriver/models still own semantic debugger state; native controls and
-/// their opaque toolkit state remain in the adapter's existing auxiliary handle.
-#[derive(Debug, Clone, Default)]
-pub struct DebugContents;
-
 impl Window {
-    pub fn controls(kind: AuxKind, screen: crate::control::ControlScreen) -> Self {
+    /// Fully generic auxiliary window: the view definition owns the kind and
+    /// title, the framework only tracks the generation-sensitive `AuxId`.
+    pub fn controls(id: AuxId, screen: crate::control::ControlScreen) -> Self {
         Self {
-            id: WindowId::Auxiliary(kind),
+            id: WindowId::Auxiliary(id),
             title: screen.title.clone(),
             menu: None,
             contents: Widget {
@@ -79,20 +74,16 @@ impl Window {
     }
 
     /// Native creation may read this immediately after `request_open`.
-    /// Control windows replace the pending presentation with `session.window()`
-    /// before rendering; no default editor or second settings draft is created.
-    pub fn auxiliary(kind: AuxKind) -> Self {
-        let (title, contents) = match kind {
-            AuxKind::Debug => ("Debugger", WidgetContents::Debug(DebugContents)),
-            AuxKind::Ppu => ("PPU Viewer", WidgetContents::PendingControls),
-            AuxKind::History => ("Notification History", WidgetContents::PendingControls),
-            AuxKind::Settings => ("Settings", WidgetContents::PendingControls),
-        };
+    /// Control windows replace the pending presentation with their own window
+    /// before rendering; no default editor or second draft is created.
+    pub fn auxiliary(id: AuxId, title: &str) -> Self {
         Self {
-            id: WindowId::Auxiliary(kind),
+            id: WindowId::Auxiliary(id),
             title: title.into(),
             menu: None,
-            contents: Widget { contents },
+            contents: Widget {
+                contents: WidgetContents::PendingControls,
+            },
         }
     }
 
@@ -113,7 +104,6 @@ impl Widget {
             WidgetContents::Main(contents) => visitor.visit_main(contents),
             WidgetContents::Controls(screen) => visitor.visit_controls(screen),
             WidgetContents::PendingControls => visitor.visit_pending_controls(),
-            WidgetContents::Debug(contents) => visitor.visit_debug(contents),
         }
         visitor.end_widget(self);
     }
@@ -131,7 +121,6 @@ pub trait WindowVisitor {
     fn visit_main(&mut self, _contents: &MainContents) {}
     fn visit_controls(&mut self, _screen: &crate::control::ControlScreen) {}
     fn visit_pending_controls(&mut self) {}
-    fn visit_debug(&mut self, _contents: &DebugContents) {}
 }
 
 /// Window chrome sync decision. Frontends apply `set_fullscreen` to the

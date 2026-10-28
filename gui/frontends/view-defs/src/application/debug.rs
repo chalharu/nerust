@@ -1,5 +1,6 @@
 //! Stateful debug transport. UI ports receive results, never individual queue transitions.
 
+use crate::focus::AuxKind;
 use crate::{
     debugger::{AppliedLive, DebugBridge, DrainSnapshot},
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
@@ -10,12 +11,12 @@ use nerust_gui_shell::{
     session::{SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
-use wakui::debug_schedule::DebugSchedule;
+use wakui::debug_schedule::AuxSchedule;
 use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
 
 pub struct DebugRuntime {
-    schedule: DebugSchedule,
+    schedule: AuxSchedule<AuxKind>,
     drain: DrainQueue<DrainSnapshot>,
     live_flight: Option<LiveImagesFlight>,
 }
@@ -29,15 +30,15 @@ impl Default for DebugRuntime {
 impl DebugRuntime {
     pub fn new() -> Self {
         Self {
-            schedule: DebugSchedule::new(),
+            schedule: AuxSchedule::new(),
             drain: Default::default(),
             live_flight: None,
         }
     }
-    pub fn schedule(&self) -> &DebugSchedule {
+    pub fn schedule(&self) -> &AuxSchedule<AuxKind> {
         &self.schedule
     }
-    pub fn schedule_mut(&mut self) -> &mut DebugSchedule {
+    pub fn schedule_mut(&mut self) -> &mut AuxSchedule<AuxKind> {
         &mut self.schedule
     }
     pub fn pending(&self) -> bool {
@@ -48,8 +49,8 @@ impl DebugRuntime {
         self.live_flight = None;
         self.schedule.set_live_wanted(false);
         // Consume deferred opens so a queued event cannot reopen on teardown.
-        self.schedule.take_debug_open_request();
-        self.schedule.take_ppu_open_request();
+        self.schedule.take_open_request(AuxKind::Debug);
+        self.schedule.take_open_request(AuxKind::Ppu);
     }
     pub fn enqueue(
         &mut self,

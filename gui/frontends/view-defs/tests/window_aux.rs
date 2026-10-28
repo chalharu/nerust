@@ -5,10 +5,11 @@ use wakui::control::{
     Page,
 };
 
-use nerust_frontend_viewdefs::{settings::SettingsController, widget_session::WidgetSession};
+use nerust_frontend_viewdefs::{
+    focus::AuxKind, settings::SettingsController, widget_session::WidgetSession,
+};
 use wakui::{
-    aux::{AuxWindows, OpenRequest},
-    focus::AuxKind,
+    aux::{AuxId, AuxWindows, OpenRequest},
     window::*,
 };
 
@@ -22,6 +23,10 @@ fn session() -> WidgetSession {
         Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![])),
         Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
     ))
+}
+
+fn aux_id(index: u64) -> AuxId {
+    AuxId::from_raw(index)
 }
 
 #[test]
@@ -44,19 +49,22 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         fn visit_main(&mut self, _: &MainContents) {
             self.0.push("main");
         }
-        fn visit_debug(&mut self, _: &DebugContents) {
-            self.0.push("debug");
-        }
         fn visit_pending_controls(&mut self) {
             self.0.push("pending");
         }
     }
+    // All aux windows start pending; view definitions supply the screens.
+    let mut index = 0u64;
+    let mut aux = |kind: AuxKind| {
+        index += 1;
+        (Window::auxiliary(aux_id(index), kind.title()), "pending")
+    };
     for (window, group) in [
         (Window::main(), "main"),
-        (Window::auxiliary(AuxKind::Debug), "debug"),
-        (Window::auxiliary(AuxKind::Ppu), "pending"),
-        (Window::auxiliary(AuxKind::History), "pending"),
-        (Window::auxiliary(AuxKind::Settings), "pending"),
+        aux(AuxKind::Debug),
+        aux(AuxKind::Ppu),
+        aux(AuxKind::History),
+        aux(AuxKind::Settings),
     ] {
         assert!(!window.title.is_empty());
         assert!(window.menu.is_none());
@@ -80,7 +88,7 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
             self.session
                 .borrow_mut()
                 .dispatch(ControlEvent::new(self.volume, ControlInput::Number(19)));
-            let nested = self.session.borrow().window();
+            let nested = self.session.borrow().window(aux_id(7));
             assert!(matches!(
                 nested.contents.contents,
                 WidgetContents::Controls(_)
@@ -113,8 +121,8 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
     session
         .borrow_mut()
         .dispatch(ControlEvent::new(volume, ControlInput::Number(37)));
-    let window = session.borrow().window();
-    assert_eq!(window.id, WindowId::Auxiliary(AuxKind::Settings));
+    let window = session.borrow().window(aux_id(7));
+    assert_eq!(window.id, WindowId::Auxiliary(aux_id(7)));
     let WidgetContents::Controls(screen) = &window.contents.contents else {
         panic!("generic tree must be owned by the widget");
     };
@@ -132,7 +140,7 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
         screen.control(volume).unwrap().kind,
         ControlKind::Number { value: 37, .. }
     ));
-    let latest = session.borrow().window();
+    let latest = session.borrow().window(aux_id(7));
     drop(session);
     let WidgetContents::Controls(screen) = latest.contents.contents else {
         panic!()
@@ -145,29 +153,29 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
 
 #[test]
 fn reservation_owns_group_before_native_creation_and_reentrant_open() {
-    let windows = RefCell::new(AuxWindows::<u64, ()>::new());
+    let windows = RefCell::new(AuxWindows::<AuxKind, u64, ()>::new());
     for kind in [AuxKind::Debug, AuxKind::Ppu] {
-        let OpenRequest::Create(id) = windows.borrow_mut().request_open(kind) else {
+        let OpenRequest::Create(id) = windows.borrow_mut().request_open(kind, kind.title()) else {
             panic!()
         };
         let snapshot = windows.borrow().window(id).unwrap().clone();
-        assert_eq!(snapshot.id, WindowId::Auxiliary(kind));
+        assert_eq!(snapshot.id, WindowId::Auxiliary(id));
         assert!(matches!(
-            (kind, &snapshot.contents.contents),
-            (AuxKind::Debug, WidgetContents::Debug(_))
-                | (AuxKind::Ppu, WidgetContents::PendingControls)
+            snapshot.contents.contents,
+            WidgetContents::PendingControls
         ));
         struct Reenter<'a> {
-            windows: &'a RefCell<AuxWindows<u64, ()>>,
+            windows: &'a RefCell<AuxWindows<AuxKind, u64, ()>>,
             id: wakui::aux::AuxId,
         }
         impl WindowVisitor for Reenter<'_> {
             fn begin_window(&mut self, window: &Window) {
-                let WindowId::Auxiliary(kind) = window.id else {
+                let WindowId::Auxiliary(id) = window.id else {
                     panic!()
                 };
+                let kind = self.windows.borrow().kind_of_id(id).unwrap();
                 assert_eq!(
-                    self.windows.borrow_mut().request_open(kind),
+                    self.windows.borrow_mut().request_open(kind, kind.title()),
                     OpenRequest::Pending(self.id)
                 );
             }
@@ -180,7 +188,7 @@ fn reservation_owns_group_before_native_creation_and_reentrant_open() {
         assert_eq!(windows.borrow_mut().complete_open(id, None, ()), Ok(()));
         assert_eq!(windows.borrow().window(id).unwrap().title, "owned title");
         assert_eq!(
-            windows.borrow_mut().request_open(kind),
+            windows.borrow_mut().request_open(kind, kind.title()),
             OpenRequest::Present(id)
         );
     }
@@ -188,11 +196,14 @@ fn reservation_owns_group_before_native_creation_and_reentrant_open() {
 
 #[test]
 fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
-    let mut windows = AuxWindows::<u64, ()>::new();
-    let OpenRequest::Create(old) = windows.request_open(AuxKind::Settings) else {
+    let mut windows = AuxWindows::<AuxKind, u64, ()>::new();
+    let OpenRequest::Create(old) =
+        windows.request_open(AuxKind::Settings, AuxKind::Settings.title())
+    else {
         panic!()
     };
-    *windows.window_mut(old).unwrap() = session().window();
+    let id = old;
+    *windows.window_mut(old).unwrap() = session().window(id);
     assert!(matches!(
         windows.window(old).unwrap().contents.contents,
         WidgetContents::Controls(_)
@@ -200,7 +211,9 @@ fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
     assert!(windows.cancel_open(old));
     assert!(windows.window(old).is_none());
     assert!(windows.window_mut(old).is_none());
-    let OpenRequest::Create(current) = windows.request_open(AuxKind::Settings) else {
+    let OpenRequest::Create(current) =
+        windows.request_open(AuxKind::Settings, AuxKind::Settings.title())
+    else {
         panic!()
     };
     assert_ne!(old, current);
@@ -217,12 +230,14 @@ fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
     assert!(windows.window(current).is_some());
     assert_eq!(windows.remove_id(current), Some(()));
     assert!(windows.window(current).is_none());
-    let OpenRequest::Create(pending) = windows.request_open(AuxKind::Ppu) else {
+    let OpenRequest::Create(pending) = windows.request_open(AuxKind::Ppu, AuxKind::Ppu.title())
+    else {
         panic!()
     };
     windows.clear();
     assert!(windows.window(pending).is_none());
-    let OpenRequest::Create(fresh) = windows.request_open(AuxKind::Ppu) else {
+    let OpenRequest::Create(fresh) = windows.request_open(AuxKind::Ppu, AuxKind::Ppu.title())
+    else {
         panic!()
     };
     assert_ne!(fresh, pending);

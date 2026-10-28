@@ -3,6 +3,7 @@
 mod bridge;
 mod driver;
 mod model;
+mod screen;
 mod view;
 
 pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot};
@@ -11,6 +12,7 @@ pub(crate) use bridge::{
 };
 pub use driver::DebuggerDriver;
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
+pub use screen::DebuggerScreenSession;
 pub use view::{AppliedDrain, AppliedLive};
 pub use wakui::debugger::{
     DebugInputs, DebugSnapshot, DebuggerChrome, DebuggerEvent, DebuggerRows, DebuggerScope,

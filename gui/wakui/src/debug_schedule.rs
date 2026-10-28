@@ -1,22 +1,25 @@
-//! Toolkit-independent debugger and PPU-viewer scheduling state.
-//! Native window handles remain in the auxiliary-window registry.
+//! Toolkit-independent auxiliary scheduling state: deferred open requests,
+//! remembered window positions, and live cadence. The schedule is generic
+//! over the view-side aux kind `K`; native window handles remain in the
+//! auxiliary-window registry.
 
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::{Duration, Instant};
 
-/// Live PPU cadence while the core runs: images-only ticks, never full drains.
-pub const PPU_LIVE_INTERVAL: Duration = Duration::from_millis(250);
+/// Live aux cadence while the core runs: images-only ticks, never full drains.
+pub const LIVE_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Deferred open requests, remembered positions, and live debug cadence.
-pub struct DebugSchedule {
-    debug_open_requested: bool,
-    ppu_open_requested: bool,
-    debug_window_pos: Option<(i32, i32)>,
-    ppu_window_pos: Option<(i32, i32)>,
-    last_ppu_live: Option<Instant>,
+/// Deferred open requests, remembered positions, and live cadence, keyed by
+/// the view-side aux kind.
+pub struct AuxSchedule<K: Copy + Eq + Hash> {
+    open_requested: HashSet<K>,
+    window_pos: HashMap<K, (i32, i32)>,
+    last_live: Option<Instant>,
     /// Pause state at the last completed debug drain, for focus
     /// coalescing. `None` before the first drain.
     last_drain_paused: Option<bool>,
@@ -26,20 +29,18 @@ pub struct DebugSchedule {
     tick_thread: std::sync::OnceLock<std::thread::Thread>,
 }
 
-impl Default for DebugSchedule {
+impl<K: Copy + Eq + Hash> Default for AuxSchedule<K> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DebugSchedule {
+impl<K: Copy + Eq + Hash> AuxSchedule<K> {
     pub fn new() -> Self {
         Self {
-            debug_open_requested: false,
-            ppu_open_requested: false,
-            debug_window_pos: None,
-            ppu_window_pos: None,
-            last_ppu_live: None,
+            open_requested: HashSet::new(),
+            window_pos: HashMap::new(),
+            last_live: None,
             last_drain_paused: None,
             live_wanted: Arc::new(AtomicBool::new(false)),
             tick_thread: std::sync::OnceLock::new(),
@@ -67,20 +68,12 @@ impl DebugSchedule {
         }
     }
 
-    pub fn request_debug_open(&mut self) {
-        self.debug_open_requested = true;
+    pub fn request_open(&mut self, kind: K) {
+        self.open_requested.insert(kind);
     }
 
-    pub fn take_debug_open_request(&mut self) -> bool {
-        std::mem::take(&mut self.debug_open_requested)
-    }
-
-    pub fn take_ppu_open_request(&mut self) -> bool {
-        std::mem::take(&mut self.ppu_open_requested)
-    }
-
-    pub fn request_ppu_open(&mut self) {
-        self.ppu_open_requested = true;
+    pub fn take_open_request(&mut self, kind: K) -> bool {
+        self.open_requested.remove(&kind)
     }
 
     pub fn last_drain_paused(&self) -> Option<bool> {
@@ -91,38 +84,30 @@ impl DebugSchedule {
         self.last_drain_paused = Some(paused);
     }
 
-    pub fn debug_window_pos(&self) -> Option<(i32, i32)> {
-        self.debug_window_pos
+    pub fn window_pos(&self, kind: K) -> Option<(i32, i32)> {
+        self.window_pos.get(&kind).copied()
     }
 
-    pub fn ppu_window_pos(&self) -> Option<(i32, i32)> {
-        self.ppu_window_pos
+    pub fn remember_window_pos(&mut self, kind: K, x: i32, y: i32) {
+        self.window_pos.insert(kind, (x, y));
     }
 
-    pub fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
-        self.debug_window_pos = Some((x, y));
-    }
-
-    pub fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
-        self.ppu_window_pos = Some((x, y));
-    }
-
-    /// Throttle gate for the live follow: true at most once per [`PPU_LIVE_INTERVAL`].
+    /// Throttle gate for the live follow: true at most once per [`LIVE_INTERVAL`].
     pub fn live_due(&mut self, now: Instant) -> bool {
         if self
-            .last_ppu_live
-            .is_some_and(|last| now.duration_since(last) < PPU_LIVE_INTERVAL)
+            .last_live
+            .is_some_and(|last| now.duration_since(last) < LIVE_INTERVAL)
         {
             return false;
         }
-        self.last_ppu_live = Some(now);
+        self.last_live = Some(now);
         true
     }
 
     /// Next scheduled live tick, for native event-loop wait backstops.
     /// `None` before the first tick.
     pub fn next_live_tick(&self) -> Option<Instant> {
-        self.last_ppu_live.map(|last| last + PPU_LIVE_INTERVAL)
+        self.last_live.map(|last| last + LIVE_INTERVAL)
     }
 }
 
@@ -130,98 +115,104 @@ impl DebugSchedule {
 mod tests {
     use super::*;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    enum Kind {
+        First,
+        Second,
+    }
+
     #[test]
-    fn open_requests_latch_once() {
-        let mut windows = DebugSchedule::new();
-        assert!(!windows.take_debug_open_request());
-        assert!(!windows.take_ppu_open_request());
-        windows.request_debug_open();
-        windows.request_ppu_open();
-        assert!(windows.take_debug_open_request());
-        assert!(windows.take_ppu_open_request());
-        assert!(!windows.take_debug_open_request());
-        assert!(!windows.take_ppu_open_request());
+    fn open_requests_latch_once_per_kind() {
+        let mut schedule = AuxSchedule::new();
+        assert!(!schedule.take_open_request(Kind::First));
+        assert!(!schedule.take_open_request(Kind::Second));
+        schedule.request_open(Kind::First);
+        schedule.request_open(Kind::Second);
+        assert!(schedule.take_open_request(Kind::First));
+        assert!(schedule.take_open_request(Kind::Second));
+        assert!(!schedule.take_open_request(Kind::First));
+        assert!(!schedule.take_open_request(Kind::Second));
     }
 
     #[test]
     fn repeated_open_requests_coalesce_independently_of_pause_truth() {
-        let mut windows = DebugSchedule::default();
-        assert_eq!(windows.last_drain_paused(), None);
+        let mut schedule = AuxSchedule::<Kind>::default();
+        assert_eq!(schedule.last_drain_paused(), None);
         for paused in [None, Some(true), Some(false)] {
             if let Some(paused) = paused {
-                windows.set_last_drain_paused(paused);
+                schedule.set_last_drain_paused(paused);
             }
-            windows.request_debug_open();
-            windows.request_debug_open();
-            windows.request_ppu_open();
-            windows.request_ppu_open();
-            assert_eq!(windows.last_drain_paused(), paused);
-            assert!(windows.take_debug_open_request());
-            assert!(!windows.take_debug_open_request());
-            assert!(windows.take_ppu_open_request());
-            assert!(!windows.take_ppu_open_request());
-            assert_eq!(windows.last_drain_paused(), paused);
+            schedule.request_open(Kind::First);
+            schedule.request_open(Kind::First);
+            schedule.request_open(Kind::Second);
+            schedule.request_open(Kind::Second);
+            assert_eq!(schedule.last_drain_paused(), paused);
+            assert!(schedule.take_open_request(Kind::First));
+            assert!(!schedule.take_open_request(Kind::First));
+            assert!(schedule.take_open_request(Kind::Second));
+            assert!(!schedule.take_open_request(Kind::Second));
+            assert_eq!(schedule.last_drain_paused(), paused);
         }
-        windows.request_debug_open();
-        windows.request_ppu_open();
-        windows.set_last_drain_paused(true);
-        windows.set_last_drain_paused(false);
-        assert!(windows.take_debug_open_request());
-        assert!(windows.take_ppu_open_request());
-        assert_eq!(windows.last_drain_paused(), Some(false));
+        schedule.request_open(Kind::First);
+        schedule.request_open(Kind::Second);
+        schedule.set_last_drain_paused(true);
+        schedule.set_last_drain_paused(false);
+        assert!(schedule.take_open_request(Kind::First));
+        assert!(schedule.take_open_request(Kind::Second));
+        assert_eq!(schedule.last_drain_paused(), Some(false));
     }
 
     #[test]
-    fn window_positions_remember() {
-        let mut windows = DebugSchedule::new();
-        assert_eq!(windows.debug_window_pos(), None);
-        windows.remember_debug_window_pos(60, 20);
-        windows.remember_ppu_window_pos(1250, 100);
-        assert_eq!(windows.debug_window_pos(), Some((60, 20)));
-        assert_eq!(windows.ppu_window_pos(), Some((1250, 100)));
+    fn window_positions_remember_per_kind() {
+        let mut schedule = AuxSchedule::new();
+        assert_eq!(schedule.window_pos(Kind::First), None);
+        schedule.remember_window_pos(Kind::First, 60, 20);
+        schedule.remember_window_pos(Kind::Second, 1250, 100);
+        assert_eq!(schedule.window_pos(Kind::First), Some((60, 20)));
+        assert_eq!(schedule.window_pos(Kind::Second), Some((1250, 100)));
     }
 
     #[test]
     fn live_throttle_fires_at_most_once_per_interval() {
-        let mut windows = DebugSchedule::new();
-        assert_eq!(PPU_LIVE_INTERVAL, Duration::from_millis(250));
-        assert_eq!(windows.next_live_tick(), None);
+        let mut schedule = AuxSchedule::<Kind>::new();
+        assert_eq!(LIVE_INTERVAL, Duration::from_millis(250));
+        assert_eq!(schedule.next_live_tick(), None);
         let first = Instant::now();
-        assert!(windows.live_due(first));
-        assert_eq!(windows.next_live_tick(), Some(first + PPU_LIVE_INTERVAL));
+        assert!(schedule.live_due(first));
+        assert_eq!(schedule.next_live_tick(), Some(first + LIVE_INTERVAL));
         // Immediate re-checks stay quiet until the interval elapses.
-        assert!(!windows.live_due(first));
-        assert!(!windows.live_due(first + PPU_LIVE_INTERVAL - Duration::from_nanos(1)));
-        assert!(windows.live_due(first + PPU_LIVE_INTERVAL));
+        assert!(!schedule.live_due(first));
+        assert!(!schedule.live_due(first + LIVE_INTERVAL - Duration::from_nanos(1)));
+        assert!(schedule.live_due(first + LIVE_INTERVAL));
     }
 
     #[test]
     fn live_wanted_tracks_follow_interest() {
-        let windows = DebugSchedule::new();
-        let wanted = windows.live_armed();
+        let schedule = AuxSchedule::<Kind>::new();
+        let wanted = schedule.live_armed();
         assert!(!wanted.load(Ordering::Acquire));
-        windows.set_live_wanted(true);
+        schedule.set_live_wanted(true);
         assert!(wanted.load(Ordering::Acquire));
-        windows.set_live_wanted(false);
+        schedule.set_live_wanted(false);
         assert!(!wanted.load(Ordering::Acquire));
     }
 
     #[test]
     fn arming_unparks_registered_thread() {
-        let windows = DebugSchedule::new();
+        let schedule = AuxSchedule::<Kind>::new();
         let first = std::thread::current();
-        windows.register_tick_thread(first.clone());
+        schedule.register_tick_thread(first.clone());
         // No parking here: unparking a running thread only sets its
         // token, so arming stays total without a sleeper.
-        windows.set_live_wanted(true);
-        assert!(windows.live_armed().load(Ordering::Acquire));
+        schedule.set_live_wanted(true);
+        assert!(schedule.live_armed().load(Ordering::Acquire));
         // First registration wins: a second thread never replaces it.
         let second = std::thread::spawn(std::thread::current).join().unwrap();
         assert_ne!(first.id(), second.id());
-        windows.register_tick_thread(second);
-        assert_eq!(windows.tick_thread.get().unwrap().id(), first.id());
-        windows.set_live_wanted(false);
-        windows.set_live_wanted(true);
-        assert!(windows.live_armed().load(Ordering::Acquire));
+        schedule.register_tick_thread(second);
+        assert_eq!(schedule.tick_thread.get().unwrap().id(), first.id());
+        schedule.set_live_wanted(false);
+        schedule.set_live_wanted(true);
+        assert!(schedule.live_armed().load(Ordering::Acquire));
     }
 }

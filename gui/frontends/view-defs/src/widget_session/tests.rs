@@ -9,7 +9,7 @@ use wakui::{
 
 use crate::{
     settings::{SettingsControlId, SettingsSystemId},
-    window::{WidgetContents, WindowVisitor},
+    window::WidgetContents,
 };
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_shell::registry::SystemRegistry;
@@ -17,6 +17,7 @@ use nerust_settings_core::{
     editor::CaptureTarget,
     model::{input::ShortcutAction, shared::StoragePolicy},
 };
+use wakui::window::WindowVisitor;
 
 fn settings(nes: bool) -> WidgetSession {
     let mut snapshot = SettingsSnapshot {
@@ -110,7 +111,11 @@ fn both_domains_use_the_same_real_scene_interpreter_and_input() {
     send(&mut history, close, ControlInput::Activate);
     assert!(history.mailbox().close_requested());
     for session in [session, history] {
-        let WidgetContents::Controls(screen) = session.window().contents.contents else {
+        let WidgetContents::Controls(screen) = session
+            .window(wakui::aux::AuxId::from_raw(7))
+            .contents
+            .contents
+        else {
             panic!("both domains must use the generic native interpreter")
         };
         let controls = inventory(&screen);
@@ -468,7 +473,7 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
     }
     let session = RefCell::new(settings(true));
     let volume = token(&session.borrow(), SettingsControlId::Volume);
-    let window = session.borrow().window();
+    let window = session.borrow().window(wakui::aux::AuxId::from_raw(7));
     let mut visitor = Reenter {
         session: &session,
         volume,

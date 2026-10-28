@@ -1,32 +1,10 @@
 //! Toolkit-independent auxiliary-window focus and deferred auto-pause protocol.
-
-/// Which aux window changed focus. Interactive viewers may report a resume;
-/// read-only viewers (settings, history) only cancel a pending pause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AuxKind {
-    Debug,
-    Ppu,
-    History,
-    Settings,
-}
-
-impl AuxKind {
-    /// Windows whose arrival resumes a system-paused session.
-    /// Arrival anywhere else only cancels a pending auto-pause.
-    pub fn resume_on_arrival(self) -> bool {
-        matches!(self, AuxKind::Debug | AuxKind::Ppu)
-    }
-
-    /// Central log tag for every aux window.
-    pub fn log_tag(self) -> &'static str {
-        match self {
-            AuxKind::Debug => "debugger",
-            AuxKind::Ppu => "PPU viewer",
-            AuxKind::History => "history window",
-            AuxKind::Settings => "settings",
-        }
-    }
-}
+//!
+//! The framework never names concrete aux kinds: view definitions resolve
+//! their own kind to the `resume` flag before reporting focus. Arrival with
+//! `resume == true` (interactive viewers) resumes a system-paused session;
+//! arrival with `resume == false` (read-only viewers) only cancels a pending
+//! pause.
 
 /// Main-window focus truth plus the deferred auto-pause protocol.
 /// Pauses land only via burst-end commit; arrivals report a resume at most once.
@@ -87,10 +65,11 @@ impl FocusState {
 
 /// Focus-domain event: the only inputs the coordinator accepts.
 /// Native adapters translate focus callbacks and the end of an event burst.
+/// `resume` is resolved view-side from the concrete aux kind before reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusEvent {
     Main(bool),
-    Aux(AuxKind, bool),
+    Aux { resume: bool, focused: bool },
     BurstEnd,
 }
 
@@ -137,8 +116,8 @@ impl FocusCoordinator {
                 self.state.leave_main();
                 None
             }
-            FocusEvent::Aux(kind, focused) => {
-                if on_aux_focus(&mut self.state, kind, focused) {
+            FocusEvent::Aux { resume, focused } => {
+                if on_aux_focus(&mut self.state, resume, focused) {
                     Some(FocusEffect::Resume)
                 } else {
                     None
@@ -161,11 +140,11 @@ impl FocusCoordinator {
     }
 }
 
-/// Shared aux-focus step with the resume protocol chosen by window kind.
-/// Arrival resumes for debug/PPU; settings/history only cancel a pending pause.
-fn on_aux_focus(focus: &mut FocusState, kind: AuxKind, focused: bool) -> bool {
+/// Shared aux-focus step with the resume protocol resolved view-side.
+/// Arrival with `resume` resumes; without it only cancels a pending pause.
+fn on_aux_focus(focus: &mut FocusState, resume: bool, focused: bool) -> bool {
     if focused {
-        if kind.resume_on_arrival() {
+        if resume {
             focus.arrive_aux()
         } else {
             // Preserve the auto-pause flag for a later main-window arrival.
@@ -195,21 +174,34 @@ mod tests {
     fn coordinator_same_app_arrival_cancels_pause() {
         let mut coord = FocusCoordinator::new();
         assert_eq!(coord.on(FocusEvent::Main(false)), None);
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, true)), None);
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: true,
+                focused: true
+            }),
+            None
+        );
         assert_eq!(coord.on(FocusEvent::BurstEnd), None);
     }
 
     #[test]
     fn coordinator_same_burst_event_orders_preserve_last_event_protocol() {
-        for kind in [
-            AuxKind::Debug,
-            AuxKind::Ppu,
-            AuxKind::History,
-            AuxKind::Settings,
-        ] {
+        for resume in [true, false] {
             for (departure, arrival) in [
-                (FocusEvent::Main(false), FocusEvent::Aux(kind, true)),
-                (FocusEvent::Aux(kind, false), FocusEvent::Main(true)),
+                (
+                    FocusEvent::Main(false),
+                    FocusEvent::Aux {
+                        resume,
+                        focused: true,
+                    },
+                ),
+                (
+                    FocusEvent::Aux {
+                        resume,
+                        focused: false,
+                    },
+                    FocusEvent::Main(true),
+                ),
             ] {
                 for arrival_first in [false, true] {
                     let mut coord = FocusCoordinator::new();
@@ -235,7 +227,13 @@ mod tests {
     #[test]
     fn coordinator_reports_resume_exactly_once() {
         let mut coord = FocusCoordinator::new();
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, false)), None);
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: true,
+                focused: false
+            }),
+            None
+        );
         assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
         coord.note_protocol_pause();
         assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
@@ -246,8 +244,10 @@ mod tests {
     fn coordinator_requires_explicit_protocol_pause_and_consumes_it_once() {
         for arrival in [
             FocusEvent::Main(true),
-            FocusEvent::Aux(AuxKind::Debug, true),
-            FocusEvent::Aux(AuxKind::Ppu, true),
+            FocusEvent::Aux {
+                resume: true,
+                focused: true,
+            },
         ] {
             let mut coord = FocusCoordinator::default();
             assert!(coord.main_active());
@@ -264,55 +264,76 @@ mod tests {
     }
 
     #[test]
-    fn coordinator_settings_arrival_preserves_resume() {
+    fn coordinator_readonly_arrival_preserves_resume() {
         let mut coord = FocusCoordinator::new();
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Settings, false)), None);
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: false,
+                focused: false
+            }),
+            None
+        );
         assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
         coord.note_protocol_pause();
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Settings, true)), None);
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: false,
+                focused: true
+            }),
+            None
+        );
         assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
     }
 
     #[test]
-    fn aux_kind_routes_resume_protocol() {
-        for kind in [AuxKind::Debug, AuxKind::Ppu] {
-            let mut coord = FocusCoordinator::new();
-            assert_eq!(coord.on(FocusEvent::Main(false)), None);
-            assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
-            coord.note_protocol_pause();
-            assert_eq!(
-                coord.on(FocusEvent::Aux(kind, true)),
-                Some(FocusEffect::Resume)
-            );
-        }
-        for kind in [AuxKind::Settings, AuxKind::History] {
-            let mut coord = FocusCoordinator::new();
-            assert_eq!(coord.on(FocusEvent::Main(false)), None);
-            assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
-            coord.note_protocol_pause();
-            assert_eq!(coord.on(FocusEvent::Aux(kind, true)), None);
-            assert_eq!(coord.on(FocusEvent::BurstEnd), None);
-            assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
-            assert_eq!(coord.on(FocusEvent::Main(true)), None);
-        }
-    }
-
-    #[test]
-    fn aux_kind_log_tags_are_central() {
-        assert_eq!(AuxKind::Debug.log_tag(), "debugger");
-        assert_eq!(AuxKind::Ppu.log_tag(), "PPU viewer");
-        assert_eq!(AuxKind::History.log_tag(), "history window");
-        assert_eq!(AuxKind::Settings.log_tag(), "settings");
+    fn resume_flag_routes_resume_protocol() {
+        let mut coord = FocusCoordinator::new();
+        assert_eq!(coord.on(FocusEvent::Main(false)), None);
+        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
+        coord.note_protocol_pause();
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: true,
+                focused: true
+            }),
+            Some(FocusEffect::Resume)
+        );
+        let mut coord = FocusCoordinator::new();
+        assert_eq!(coord.on(FocusEvent::Main(false)), None);
+        assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
+        coord.note_protocol_pause();
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: false,
+                focused: true
+            }),
+            None
+        );
+        assert_eq!(coord.on(FocusEvent::BurstEnd), None);
+        assert_eq!(coord.on(FocusEvent::Main(true)), Some(FocusEffect::Resume));
+        assert_eq!(coord.on(FocusEvent::Main(true)), None);
     }
 
     #[test]
     fn focus_state_tracks_main_and_burst_contract() {
         let mut coord = FocusCoordinator::new();
         assert!(coord.main_active());
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Ppu, false)), None);
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: true,
+                focused: false
+            }),
+            None
+        );
         assert_eq!(coord.on(FocusEvent::Main(true)), None);
         assert!(coord.main_active());
-        assert_eq!(coord.on(FocusEvent::Aux(AuxKind::Debug, false)), None);
+        assert_eq!(
+            coord.on(FocusEvent::Aux {
+                resume: true,
+                focused: false
+            }),
+            None
+        );
         assert_eq!(coord.on(FocusEvent::BurstEnd), Some(FocusEffect::Pause));
         assert_eq!(coord.on(FocusEvent::BurstEnd), None);
     }
