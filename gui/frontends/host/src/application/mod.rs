@@ -9,7 +9,7 @@ mod tests;
 mod window;
 
 pub use auxiliary::WidgetWindowClose;
-pub use chrome::MenuSig;
+pub use chrome::{DialogTitles, MenuSig};
 use debug::DebugRuntime;
 pub use debug::DebugView;
 pub use window::MainState;
@@ -114,6 +114,11 @@ impl ApplicationHost {
     }
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
+    }
+
+    /// Pre-localized dialog titles for native file/error dialogs.
+    pub fn dialog_titles(&self) -> DialogTitles {
+        DialogTitles::new(self.settings_snapshot().shared.general.language)
     }
 
     /// Localized PPU tile hover line for raw view coordinates.

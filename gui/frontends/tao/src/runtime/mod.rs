@@ -142,7 +142,7 @@ impl WindowRuntime {
             Err(detail) => {
                 // Startup runs before the main window exists: standalone dialog only.
                 crate::ports::show_rom_load_error(
-                    self.host.settings_snapshot().shared.general.language,
+                    self.host.dialog_titles().rom_load_failed,
                     &detail,
                 );
                 false

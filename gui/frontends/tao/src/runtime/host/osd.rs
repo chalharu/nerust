@@ -16,7 +16,7 @@ use crate::ports::WindowOpener;
 
 struct DialogPresenter<'a> {
     dialogs: &'a dyn crate::ports::DialogPorts,
-    language: nerust_settings_core::model::language::AppLanguage,
+    error_title: String,
 }
 
 impl ModalPresenter for DialogPresenter<'_> {
@@ -26,7 +26,7 @@ impl ModalPresenter for DialogPresenter<'_> {
     ) -> Option<std::sync::mpsc::Receiver<()>> {
         Some(
             self.dialogs
-                .show_error_async(self.language, presentation.detail),
+                .show_error_async(self.error_title.clone(), presentation.detail),
         )
     }
 }
@@ -115,7 +115,7 @@ impl HostState {
             let token = presentation.token;
             let adapter = DialogPresenter {
                 dialogs: self.dialogs.as_ref(),
-                language: ctx.frame().language(),
+                error_title: self.core.dialog_titles().error,
             };
             let presenter: &dyn ModalPresenter = &adapter;
             if let Some(receiver) = presenter.present_modal(presentation) {
