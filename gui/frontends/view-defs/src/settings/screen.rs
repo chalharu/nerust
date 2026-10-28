@@ -373,14 +373,14 @@ impl SettingsScreen {
     }
 }
 
-impl crate::binding::ViewDefinition for SettingsScreen {
+impl wakui::binding::ViewDefinition for SettingsScreen {
     type ViewId = SettingsControlId;
     type ViewInput = ControlInput;
     type DomainEvent = SettingsEvent;
 
     /// Total 1:1 variant mapping; domain validity stays in `bind`.
-    fn convert(input: crate::control::ControlInput) -> Option<ControlInput> {
-        use crate::control::ControlInput as I;
+    fn convert(input: wakui::control::ControlInput) -> Option<ControlInput> {
+        use wakui::control::ControlInput as I;
         Some(match input {
             I::Bool(v) => ControlInput::Bool(v),
             I::Select(v) => ControlInput::Select(v),

@@ -197,7 +197,7 @@ fn latest_topology_and_navigation_bind_old_callbacks_without_reusing_tokens() {
     let slot_id = token(&session, domain.clone());
     let none = slot.choices.iter().position(|c| c.value.is_none()).unwrap();
     if let State::Settings(controller) = &mut session.state {
-        controller.input_tab = Some(crate::settings::InputTab::Shortcuts);
+        controller.input_tab = Some(nerust_frontend_viewdefs::settings::InputTab::Shortcuts);
     }
     send(&mut session, slot_id, ControlInput::Select(none));
     assert_eq!(token(&session, domain), slot_id);
@@ -205,7 +205,7 @@ fn latest_topology_and_navigation_bind_old_callbacks_without_reusing_tokens() {
     if let State::Settings(controller) = &session.state {
         assert_eq!(
             controller.input_tab,
-            Some(crate::settings::InputTab::System(0))
+            Some(nerust_frontend_viewdefs::settings::InputTab::System(0))
         );
         assert!(
             controller.vm.inputs()[0].view.get().slots[0]
@@ -239,7 +239,9 @@ fn latest_topology_and_navigation_bind_old_callbacks_without_reusing_tokens() {
 
 #[test]
 fn legacy_positional_empty_tabs_and_conflicts_use_semantic_tokens_after_reorder() {
-    use crate::settings::{SettingsControlKind, SettingsLayoutId, SettingsNode, SettingsTabId};
+    use nerust_frontend_viewdefs::settings::{
+        SettingsControlKind, SettingsLayoutId, SettingsNode, SettingsTabId,
+    };
     let session = settings(false);
     let State::Settings(controller) = &session.state else {
         panic!()
