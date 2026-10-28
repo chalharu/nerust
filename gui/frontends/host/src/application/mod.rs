@@ -377,6 +377,15 @@ impl ApplicationHost {
             .window_size("main")
             .map(|size| (size.width, size.height))
     }
+    /// Fixed-scale factor for the main window, if any. `None` means
+    /// free-sizing: frontends restore the remembered size instead.
+    /// Frontends apply the factor verbatim and never name `ScalingMode`
+    /// or the shell helper themselves.
+    pub fn window_scale_factor(&self) -> Option<u32> {
+        nerust_gui_shell::settings::scaling_factor(
+            self.settings_snapshot().local.video.window.scaling,
+        )
+    }
 
     pub fn enqueue_debug(
         &mut self,
