@@ -2,21 +2,23 @@
 
 use crate::{
     debug_schedule::DebugSchedule,
-    debugger::DrainSnapshot,
+    debugger::{AppliedDrain, AppliedLive, DrainSnapshot},
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
     loop_driver::WakeNeed,
     session::SessionEvent,
 };
 use nerust_gui_shell::{
-    debug::{DebugAction, DebugDrainInput, DebugDrainOutput, LiveImagesFlight},
-    session::{LiveImages, SessionHandle, commands::SessionCommand},
+    debug::{DebugAction, DebugDrainInput, LiveImagesFlight},
+    session::{SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
 use wakui::pause::PausePolicy;
 
+/// Native drain port. Results arrive as view-owned DTOs so adapters
+/// never name shell drain or viewmodel image types.
 pub trait DebugView {
-    fn apply_drain(&mut self, output: DebugDrainOutput);
-    fn apply_live(&mut self, live: LiveImages, running: bool);
+    fn apply_drain(&mut self, output: AppliedDrain);
+    fn apply_live(&mut self, live: AppliedLive);
 }
 
 pub struct DebugRuntime {
@@ -117,7 +119,7 @@ impl DebugRuntime {
                 DrainEvent::Pending => return true,
                 DrainEvent::Start(batch) => self.start_batch(session, pause, batch),
                 DrainEvent::Done(output, _) => {
-                    view.apply_drain(*output);
+                    view.apply_drain(AppliedDrain::from_output(*output));
                     self.schedule
                         .set_last_drain_paused(session.tick_metrics().paused);
                 }
@@ -130,7 +132,12 @@ impl DebugRuntime {
     }
     fn poll_live(&mut self, session: &SessionHandle, view: &mut impl DebugView) -> bool {
         match poll_flight(&mut self.live_flight) {
-            Poll::Ready(Some(live)) => view.apply_live(live, !session.tick_metrics().paused),
+            Poll::Ready(Some(live)) => {
+                if let Some(applied) = AppliedLive::from_live(live, !session.tick_metrics().paused)
+                {
+                    view.apply_live(applied);
+                }
+            }
             Poll::Ready(None) => {}
             Poll::Pending => return true,
         }
@@ -186,10 +193,10 @@ mod tests {
         live: usize,
     }
     impl DebugView for View {
-        fn apply_drain(&mut self, _: DebugDrainOutput) {
+        fn apply_drain(&mut self, _: AppliedDrain) {
             self.applied += 1;
         }
-        fn apply_live(&mut self, _: LiveImages, _: bool) {
+        fn apply_live(&mut self, _: AppliedLive) {
             self.live += 1;
         }
     }

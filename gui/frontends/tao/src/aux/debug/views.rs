@@ -2,9 +2,9 @@
 //! `capture_view` is the single place that locks the bridge.
 
 use iced_tiny_skia::Renderer;
-use nerust_core_traits::debugger::{DisasmLine, HexRow};
-use nerust_frontend_host::debugger::DebuggerChrome;
-use nerust_gui_viewmodel::debugger::{self as vm, StatusMessage};
+use nerust_frontend_host::debugger::{
+    DebuggerChrome, DebuggerRows, DisasmRow, DumpRow, RegRow, pin_marker,
+};
 
 use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
@@ -26,13 +26,13 @@ pub(super) struct ViewSnapshot {
     pub(super) freeze_input: String,
     pub(super) selected: Option<(u32, Option<u8>)>,
     pub(super) edit_input: String,
-    pub(super) pending: Option<vm::PendingWrite>,
+    pub(super) pending_text: Option<String>,
     pub(super) selected_name: Option<String>,
-    pub(super) regs: Vec<(&'static str, u64)>,
-    pub(super) dump_rows: Vec<HexRow>,
+    pub(super) regs: Vec<RegRow>,
+    pub(super) dump_rows: Vec<DumpRow>,
     pub(super) diff: Vec<u32>,
-    pub(super) disasm_lines: Vec<DisasmLine>,
-    pub(super) status: StatusMessage,
+    pub(super) disasm_lines: Vec<DisasmRow>,
+    pub(super) status_text: String,
     pub(super) paused: bool,
     pub(super) reg_target: Option<&'static str>,
     pub(super) reg_input: String,
@@ -47,32 +47,18 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     let view = bridge.view_snapshot();
     let nav = view.nav;
     let display = view.display;
-    let pending = display.pending;
+    // Formatted rows (view-owned DTOs): no formatter or row-type import here.
+    let rows: DebuggerRows = bridge.debugger_rows();
     let selected_name = bridge.selected_name();
-    let regs = display.regs;
-    let dump_rows = display.dump_rows;
-    let diff = display.diff;
-    let disasm_lines = display.disasm_lines;
-    let status = display.status;
     let mem_input = nav.mem_input().to_string();
     let dis_input = nav.dis_input().to_string();
     let follow_pc = nav.follow_pc();
     let back_len = nav.back_len();
     let watch_value = display.watch_value;
-    let paused = display.paused;
-    // Coreless windows never drain, so the default Empty status would sit blank forever and the
-    // toggle would offer Pause against nothing. Read coreless as paused with an explicit "no core" status — the same agreement as the gtk twin.
-    let coreless = bridge.spaces().is_empty();
-    let paused = paused || coreless;
-    let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
-        vm::StatusMessage::NoCore
-    } else {
-        status
-    };
     // Same rule as `anchor()`, computed from the snapshot above
     // instead of re-locking nav and display for a second time.
     let anchor = if follow_pc {
-        disasm_lines.first().map(|line| line.addr).unwrap_or(0)
+        rows.disasm.first().map(|line| line.addr).unwrap_or(0)
     } else {
         nav.dis_addr().unwrap_or(0)
     };
@@ -93,14 +79,14 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
         freeze_input: view.freeze_input,
         selected: view.selected,
         edit_input: view.edit_input,
-        pending,
+        pending_text: rows.pending_text,
         selected_name,
-        regs,
-        dump_rows,
-        diff,
-        disasm_lines,
-        status,
-        paused,
+        regs: rows.regs,
+        dump_rows: rows.dump,
+        diff: rows.changed_addrs,
+        disasm_lines: rows.disasm,
+        status_text: rows.status_text,
+        paused: rows.paused,
         reg_target,
         reg_input,
     }
@@ -185,7 +171,7 @@ pub(super) fn view_mem_nav(
 /// Dump rows are text-style buttons; selection inverts, changed rows carry a `*` mark. The list
 /// fills its share in a scrollable; shrunken windows scroll natively.
 pub(super) fn view_dump_col(
-    dump_rows: &[HexRow],
+    dump_rows: &[DumpRow],
     diff: &[u32],
     selected: Option<(u32, Option<u8>)>,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
@@ -197,8 +183,8 @@ pub(super) fn view_dump_col(
     for hex_row in dump_rows {
         let selected_addr = selected.map(|(a, _)| a);
         // Containing-row match: a mid-row pick still lights its row.
-        let row_hit = selected_addr
-            .is_some_and(|a| a >= hex_row.addr && a < hex_row.addr + u32::from(hex_row.valid));
+        let row_end = hex_row.addr + hex_row.bytes.len() as u32;
+        let row_hit = selected_addr.is_some_and(|a| a >= hex_row.addr && a < row_end);
         let changed = diff.contains(&hex_row.addr);
         let marker = match (row_hit, changed) {
             (true, true) => ">*",
@@ -221,9 +207,9 @@ pub(super) fn view_dump_col(
             .on_press(DebugMessage::RowSelected(hex_row.addr)),
         ]
         .spacing(2);
-        for i in 0..hex_row.valid {
-            let addr = hex_row.addr + u32::from(i);
-            let byte = hex_row.bytes[usize::from(i)];
+        for (i, byte) in hex_row.bytes.iter().enumerate() {
+            let addr = hex_row.addr + i as u32;
+            let byte = *byte;
             let is_selected = selected_addr == Some(addr);
             line_row = line_row.push(
                 button(
@@ -248,7 +234,7 @@ pub(super) fn view_dump_col(
 /// Registers flow into two clickable columns so tall lists cost half the height. Row click picks
 /// the write target; the Set row writes the parsed hex value through the drain.
 pub(super) fn view_regs_section(
-    regs: &[(&'static str, u64)],
+    regs: &[RegRow],
     reg_target: Option<&'static str>,
     reg_input: &str,
     chrome: &DebuggerChrome,
@@ -259,22 +245,18 @@ pub(super) fn view_regs_section(
     let mut halves_row = row![].spacing(16).width(Length::Fill);
     for half in [&regs[..mid], &regs[mid..]] {
         let mut col = column![].spacing(2);
-        for (name, value) in half.iter() {
-            let row_button = button(
-                text(vm::format_register(name, *value))
-                    .size(14)
-                    .font(iced::Font::MONOSPACE),
-            )
-            .padding([2, 8])
-            .width(Length::Fill);
+        for row in half.iter() {
+            let row_button = button(text(row.text.clone()).size(14).font(iced::Font::MONOSPACE))
+                .padding([2, 8])
+                .width(Length::Fill);
             col = col.push(
                 row_button
-                    .style(if Some(*name) == reg_target {
+                    .style(if Some(row.name) == reg_target {
                         button::secondary
                     } else {
                         button::text
                     })
-                    .on_press(DebugMessage::RegSelected(name)),
+                    .on_press(DebugMessage::RegSelected(row.name)),
             );
         }
         halves_row = halves_row.push(col);
@@ -338,16 +320,14 @@ pub(super) fn view_edit_row(
 }
 
 pub(super) fn view_confirm_row(
-    pending: Option<vm::PendingWrite>,
+    pending_text: Option<String>,
     chrome: &DebuggerChrome,
 ) -> Option<iced::Element<'static, DebugMessage, iced::Theme, Renderer>> {
     use iced::Length;
     use iced::widget::{button, row, text};
-    pending.map(|pending| {
+    pending_text.map(|pending| {
         row![
-            text(chrome.pending_text(Some(pending)).unwrap_or_default())
-                .size(14)
-                .width(Length::Fill),
+            text(pending).size(14).width(Length::Fill),
             button(text(chrome.confirm.clone()))
                 .style(button::primary)
                 .on_press(DebugMessage::ConfirmWrite),
@@ -401,7 +381,7 @@ pub(super) fn view_dis_nav(
 }
 
 pub(super) fn view_dis_col(
-    disasm_lines: &[nerust_core_traits::debugger::DisasmLine],
+    disasm_lines: &[DisasmRow],
     pinned: Option<u32>,
     chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
@@ -413,12 +393,12 @@ pub(super) fn view_dis_col(
         dis_col = dis_col.push(text(chrome.disassembly_hint.clone()).size(14));
     }
     for line in disasm_lines {
-        // Marker column is two chars wide for every row. The PC `>` already comes from
-        // `format_disasm_line`, so the PC row contributes blanks here; the pinned anchor row carries `@`. (Prepending another `"> "` double-marked the PC row.)
+        // Marker column is two chars wide for every row. The PC `>` already ships
+        // inside the pre-formatted line text; the pin column only marks the anchor.
         let is_pinned = pinned == Some(line.addr);
-        let marker = vm::disasm_marker(line.is_pc, is_pinned);
+        let marker = pin_marker(line.is_pc, is_pinned);
         let line_button = button(
-            text(format!("{marker}{}", vm::format_disasm_line(line)))
+            text(format!("{marker}{}", line.text))
                 .size(14)
                 .font(iced::Font::MONOSPACE),
         )

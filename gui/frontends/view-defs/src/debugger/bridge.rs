@@ -8,7 +8,9 @@ use std::sync::{
 
 use nerust_core_traits::debugger::{HexRow, SpaceId};
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, NavState, tile_hover_text};
+use nerust_gui_viewmodel::debugger::{
+    DebugImageRgba, DisplayCache, NavState, StatusMessage, tile_hover_text,
+};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::{DebuggerEvent, DebuggerState, DebuggerUpdate, model::apply_live};
@@ -230,6 +232,60 @@ impl DebugBridge {
         }
         display.restore_paused_sections(&old);
         *old = Arc::new(display);
+    }
+
+    /// Opaque drain apply for native adapters: no shell/viewmodel naming needed.
+    pub fn apply_applied_drain(&self, drain: super::view::AppliedDrain) {
+        self.apply_drain_display(drain.display, drain.reselected);
+    }
+
+    /// Opaque live apply for native adapters.
+    pub fn apply_applied_live(&self, live: super::view::AppliedLive) -> bool {
+        self.apply_live_images(live.generation, live.images, live.running)
+    }
+
+    /// 2x-scaled PPU pictures derived without exposing the scaler.
+    pub fn scaled_pictures(&self) -> Vec<super::view::ScaledPicture> {
+        super::view::scaled_from_display(&read_display(&self.display))
+    }
+
+    /// Generation of the source images behind [`Self::scaled_pictures`].
+    pub fn images_generation(&self) -> u64 {
+        read_display(&self.display).images_gen
+    }
+
+    /// Formatted panel text without exposing the panel formatter.
+    pub fn formatted_panels(&self) -> String {
+        super::view::panels_text(&read_display(&self.display))
+    }
+
+    /// Whether the system exposes observation tables.
+    pub fn has_panels(&self) -> bool {
+        !read_display(&self.display).panels.is_empty()
+    }
+
+    /// Formatted debugger rows without exposing row types or formatters.
+    /// The pin column stays native-side: rows carry no pin state.
+    /// Coreless windows never drain, so the default Empty status would sit
+    /// blank forever; read coreless as paused with an explicit no-core
+    /// status, the same agreement as the gtk twin.
+    pub fn debugger_rows(&self) -> super::view::DebuggerRows {
+        let display = read_display(&self.display);
+        let coreless = self.meta.spaces.is_empty();
+        let mut rows = {
+            let status_text = display.status.render(self.meta.language);
+            let pending_text = display
+                .pending
+                .map(|pending| pending.render(self.meta.language));
+            super::view::rows_from_display(&display, status_text, pending_text)
+        };
+        if coreless {
+            rows.paused = true;
+            if matches!(display.status, StatusMessage::Empty) {
+                rows.status_text = StatusMessage::NoCore.render(self.meta.language);
+            }
+        }
+        rows
     }
 
     /// Cold display update port, also used by native PPU-view tests.

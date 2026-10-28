@@ -25,7 +25,10 @@ mod tests {
         debug
             .as_debug()
             .expect("debug")
-            .apply_drain(DisplayCache::default(), None);
+            .apply_drain(crate::aux::bridge::AppliedDrain {
+                display: DisplayCache::default(),
+                reselected: None,
+            });
         assert!(applied.get());
 
         let mut history = StubAux::new(AuxKind::History);
@@ -42,7 +45,14 @@ mod tests {
         use nerust_gui_viewmodel::debugger::DisplayCache;
         let mut stub = StubAux::new(AuxKind::History);
         assert!(stub.debug_snapshot_of(false).is_none());
-        assert!(!LiveImagesPort::apply_live(&mut stub, 1, Vec::new(), false));
+        assert!(!LiveImagesPort::apply_live(
+            &mut stub,
+            crate::aux::bridge::AppliedLive {
+                generation: 1,
+                images: Vec::new(),
+                running: false,
+            }
+        ));
         assert!(stub.widget_mailbox().is_none());
         assert!(!stub.on_redraw().submitted);
         assert!(stub.shared_bridge().is_none());
