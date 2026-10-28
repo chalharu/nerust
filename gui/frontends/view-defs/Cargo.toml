@@ -8,11 +8,17 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+log.workspace = true
+nerust_core_traits.workspace = true
+nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
+nerust_gui_viewmodel.workspace = true
+nerust_input_traits.workspace = true
+nerust_keyboard.workspace = true
 nerust_settings_core.workspace = true
+nerust_system_traits.workspace = true
 wakui.workspace = true
 
 [dev-dependencies]
-nerust_core_traits.workspace = true
+nerust_nes_factory.workspace = true
 nerust_frontend_host.workspace = true
-nerust_gui_runtime.workspace = true
