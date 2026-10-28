@@ -12,7 +12,6 @@ use std::{
 };
 
 use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_frontend_host::{app::FrontendApp as _, debugger::DebugHandle};
 use nerust_frontend_viewdefs::{
     application::ApplicationHost,
     commands::{CommandDescriptor, CommandVisitor, MenuCommand},
@@ -29,10 +28,11 @@ use nerust_gui_runtime::settings::{
 use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
 use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
 use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
+use wakui::{app::FrontendApp as _, debugger::DebugHandle};
 
 struct Common {
     app: ApplicationHost,
-    debug: nerust_frontend_host::debugger::DebugHandle,
+    debug: wakui::debugger::DebugHandle,
 }
 
 impl Drop for Common {

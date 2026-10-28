@@ -2,7 +2,6 @@ mod dispatch;
 mod drain;
 pub(crate) mod host;
 
-use nerust_frontend_host::{bootstrap::Boot, event::EventSink, viewport::ViewportPresent};
 use raw_window_handle::HasDisplayHandle;
 use std::{path::Path, sync::Arc};
 #[cfg(target_os = "macos")]
@@ -11,6 +10,8 @@ use tao::{
     event::{Event, StartCause},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
+use wakui::viewport::ViewportPresent;
+use wakui::{bootstrap::Boot, event::EventSink};
 
 use self::host::{HostAction, HostState};
 use crate::event::{TaoEventSink, UserEvent};

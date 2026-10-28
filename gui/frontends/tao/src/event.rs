@@ -1,9 +1,9 @@
 //! Host events transported unchanged through Tao's native event loop.
 
-pub(crate) use nerust_frontend_host::commands::MenuCommand;
-pub(crate) use nerust_frontend_host::event::EventCommand as UserEvent;
-use nerust_frontend_host::event::EventSink;
 use tao::event_loop::EventLoopProxy;
+pub(crate) use wakui::commands::MenuCommand;
+pub(crate) use wakui::event::EventCommand as UserEvent;
+use wakui::event::EventSink;
 
 pub(crate) struct TaoEventSink(pub(crate) EventLoopProxy<UserEvent>);
 

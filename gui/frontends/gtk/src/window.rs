@@ -16,18 +16,18 @@ use gtk::{
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
-use nerust_frontend_host::session::SessionEvent;
-use nerust_frontend_host::{
+use wakui::control::ControlScreen;
+use wakui::event::{CommandEffect, EventCommand, EventSink};
+use wakui::session::SessionEvent;
+use wakui::{
     aux::{AuxId, AuxWindows, OpenRequest},
     commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
-    event::{CommandEffect, EventCommand, EventSink},
     focus::{AuxKind, FocusEvent},
+    mailbox::WindowMailbox,
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
-    widget_session::WindowMailbox,
-    widgets::MenuPresenter,
+    menu_presenter::MenuPresenter,
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
-use wakui::control::ControlScreen;
 
 /// Bound once via `set_menubar`; host IDs retain the same native submenus
 /// across refills because replacing the root does not update the visible bar.
@@ -1248,7 +1248,7 @@ pub(crate) mod tests {
         let mut model = win.state().borrow().host.main_window().clone();
         assert!(matches!(
             model.contents.contents,
-            nerust_frontend_host::window::WidgetContents::Main(_)
+            wakui::window::WidgetContents::Main(_)
         ));
         model.title = "owned main chrome".into();
         model.menu.as_mut().unwrap().menus[0].label = "owned main menu".into();
@@ -1278,7 +1278,7 @@ pub(crate) mod tests {
                 let model = win.borrow().aux.window(id).cloned().unwrap();
                 assert!(matches!(
                     model.contents.contents,
-                    nerust_frontend_host::window::WidgetContents::Debug(_)
+                    wakui::window::WidgetContents::Debug(_)
                 ));
                 assert_eq!(
                     win.borrow_mut().aux.request_open(AuxKind::Debug),
@@ -1340,7 +1340,7 @@ pub(crate) mod tests {
     fn common_auxiliary_contents_choose_native_groups_and_owned_titles() {
         use super::{AuxKind, HostWindow};
         use gtk::prelude::WidgetExt;
-        use nerust_frontend_host::window::WindowId;
+        use wakui::window::WindowId;
         let win = bound_window().expect("run in an isolated Xvfb process");
         let app = win.application();
         let main = win.window();
@@ -2224,8 +2224,8 @@ pub(crate) mod tests {
     #[test]
     fn generated_actions_send_typed_commands_to_dyn_sink_and_reject_bad_arguments() {
         use super::{CommandVisitor, EventCommand, EventSink, ToVariant};
-        use nerust_frontend_host::commands::{MenuCommand, SessionCommand};
         use std::{cell::RefCell, rc::Rc};
+        use wakui::commands::{MenuCommand, SessionCommand};
         #[derive(Default)]
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
@@ -2289,7 +2289,7 @@ pub(crate) mod tests {
     #[test]
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
         use super::{AuxKind, EventCommand, OpenRequest};
-        use nerust_frontend_host::commands::{MenuCommand, NativeRole};
+        use wakui::commands::{MenuCommand, NativeRole};
         use wakui::pause::PauseOwner;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
@@ -2433,8 +2433,7 @@ pub(crate) mod tests {
         win.borrow_mut().sink = sink.clone();
         win.key_event(gdk::Key::F4, KeyEventState::Press);
         win.key_event(gdk::Key::F4, KeyEventState::Release);
-        let shortcut =
-            SessionEvent::Shortcut(nerust_frontend_host::session::ShortcutGesture::OpenDebugger);
+        let shortcut = SessionEvent::Shortcut(wakui::session::ShortcutGesture::OpenDebugger);
         win.event_sink().send(EventCommand::Session(shortcut));
         assert!(matches!(
             sink.0.borrow().as_slice(),
@@ -2442,7 +2441,7 @@ pub(crate) mod tests {
                 EventCommand::Session(SessionEvent::Keyboard { pressed: true, .. }),
                 EventCommand::Session(SessionEvent::Keyboard { pressed: false, .. }),
                 EventCommand::Session(SessionEvent::Shortcut(
-                    nerust_frontend_host::session::ShortcutGesture::OpenDebugger
+                    wakui::session::ShortcutGesture::OpenDebugger
                 )),
             ]
         ));
@@ -2524,7 +2523,7 @@ pub(crate) mod tests {
         let bars = MenubarModels::new();
         let mut model = nerust_frontend_viewdefs::menu::build_menubar(&sig, GTK_MENU_CAPABILITIES);
         fn disable_items(menu: &mut super::Submenu) {
-            use nerust_frontend_host::menu::MenuEntry;
+            use wakui::menu::MenuEntry;
             for entry in &mut menu.children {
                 match entry {
                     MenuEntry::Item(item) => item.enabled = false,

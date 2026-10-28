@@ -3,12 +3,12 @@
 use super::renderer::{NativeControl, NativeKind, NodeId};
 use super::*;
 use crate::window::{MenubarModels, WindowExtend, tests as windows};
-use nerust_frontend_host::{aux::AuxId, focus::AuxKind};
 use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
 use wakui::control::*;
+use wakui::{aux::AuxId, focus::AuxKind};
 
 struct Harness {
     window: crate::window::Window,
@@ -47,7 +47,7 @@ impl Harness {
         &self.program.binding
     }
     fn screen(&self) -> ControlScreen {
-        self.binding().screen.borrow().clone()
+        self.binding().screen_snapshot()
     }
     fn id(&self, key: UiText) -> ControlId {
         let label = text(AppLanguage::English, key);
@@ -59,8 +59,7 @@ impl Harness {
     }
     fn native(&self, id: ControlId) -> Rc<NativeControl> {
         self.binding()
-            .registry
-            .borrow()
+            .registry()
             .control(&id)
             .expect("retained control")
     }
@@ -368,14 +367,9 @@ fn retained_all_pages_metadata_ranges_and_values_follow_host() {
         }
     }
     for page in &screen.pages {
-        let node = h
-            .binding()
-            .registry
-            .borrow()
-            .node(&NodeId::Page(page.id))
-            .unwrap();
+        let node = h.binding().registry().node(&NodeId::Page(page.id)).unwrap();
         assert_eq!(
-            h.binding().stack.page(&node.widget).title().as_deref(),
+            h.binding().stack().page(&node.widget).title().as_deref(),
             Some(page.label.as_str())
         );
     }
@@ -447,12 +441,11 @@ fn retained_native_stack_notebooks_and_context_reset_mirror_model() {
         .unwrap();
     let widget = h
         .binding()
-        .registry
-        .borrow()
+        .registry()
         .node(&NodeId::Page(page.id))
         .unwrap()
         .widget;
-    h.binding().stack.set_visible_child(&widget);
+    h.binding().stack().set_visible_child(&widget);
     assert!(
         h.screen()
             .pages
@@ -474,20 +467,6 @@ fn native_history_title_reentry_keeps_latest() {
         .report_host_error("newest".into());
     h.binding().sync();
     assert!(!h.screen().title.is_empty());
-}
-
-#[test]
-fn refreshing_guard_restores_previous_nested_state() {
-    let flag = Cell::new(false);
-    {
-        let _outer = FlagGuard::enter(&flag);
-        {
-            let _inner = FlagGuard::enter(&flag);
-            assert!(flag.get());
-        }
-        assert!(flag.get());
-    }
-    assert!(!flag.get());
 }
 
 fn history_choice(h: &Harness) -> ControlId {

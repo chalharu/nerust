@@ -18,7 +18,7 @@ use wakui::{
     control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
 };
 
-use nerust_frontend_host::widget_session::{MailboxDomain, WindowMailbox};
+use wakui::mailbox::{MailboxDomain, WindowMailbox};
 
 use crate::{
     focus::AuxKind,

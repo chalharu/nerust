@@ -25,14 +25,14 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
-use nerust_frontend_host::bootstrap::Boot;
+use wakui::bootstrap::Boot;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
-    pub(crate) host: Box<dyn nerust_frontend_host::app::FrontendApp>,
+    pub(crate) host: Box<dyn wakui::app::FrontendApp>,
     renderer_reload_pending: bool,
 }
 
@@ -108,9 +108,9 @@ impl State {
 
 impl State {
     pub(crate) fn tick_focus_sync(&mut self) {
-        use nerust_frontend_host::focus::FocusEvent;
+        use wakui::focus::FocusEvent;
         let _ = self.host.handle_event(
-            nerust_frontend_host::event::EventCommand::Focus(FocusEvent::BurstEnd),
+            wakui::event::EventCommand::Focus(FocusEvent::BurstEnd),
             false,
         );
     }
@@ -211,12 +211,12 @@ fn run_inner(boot: Boot) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_frontend_host::{menu::MenuId, widgets::MenuPresenter};
     use nerust_frontend_viewdefs::application::MenuSig;
     use nerust_settings_core::model::{
         input::{ShortcutAction, ShortcutBinding, default_shortcut_bindings},
         language::AppLanguage,
     };
+    use wakui::{menu::MenuId, menu_presenter::MenuPresenter};
     use window::{GTK_MENU_CAPABILITIES, GtkMenuVisitor};
 
     fn collect_labels(model: &gio::MenuModel, out: &mut Vec<String>) {

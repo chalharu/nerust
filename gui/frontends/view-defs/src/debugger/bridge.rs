@@ -140,12 +140,12 @@ impl DebugBridge {
 
     /// Pre-localized PPU viewer chrome. Frontends render these verbatim
     /// instead of calling into the i18n catalog themselves.
-    pub fn ppu_chrome(&self) -> nerust_frontend_host::debugger::PpuChrome {
+    pub fn ppu_chrome(&self) -> wakui::debugger::PpuChrome {
         ppu_chrome(self.meta.language)
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
-    pub fn debugger_chrome(&self) -> nerust_frontend_host::debugger::DebuggerChrome {
+    pub fn debugger_chrome(&self) -> wakui::debugger::DebuggerChrome {
         debugger_chrome(self.meta.language)
     }
 
@@ -245,7 +245,7 @@ impl DebugBridge {
     }
 
     /// 2x-scaled PPU pictures derived without exposing the scaler.
-    pub fn scaled_pictures(&self) -> Vec<nerust_frontend_host::debugger::ScaledPicture> {
+    pub fn scaled_pictures(&self) -> Vec<wakui::debugger::ScaledPicture> {
         super::view::scaled_from_display(&read_display(&self.display))
     }
 
@@ -269,7 +269,7 @@ impl DebugBridge {
     /// Coreless windows never drain, so the default Empty status would sit
     /// blank forever; read coreless as paused with an explicit no-core
     /// status, the same agreement as the gtk twin.
-    pub fn debugger_rows(&self) -> nerust_frontend_host::debugger::DebuggerRows {
+    pub fn debugger_rows(&self) -> wakui::debugger::DebuggerRows {
         let display = read_display(&self.display);
         let language = self.meta.language;
         let chrome = super::debugger_chrome(language);
@@ -451,9 +451,9 @@ impl DebugBridge {
 }
 
 /// Pre-localized PPU viewer chrome in the view language.
-pub fn ppu_chrome(language: AppLanguage) -> nerust_frontend_host::debugger::PpuChrome {
+pub fn ppu_chrome(language: AppLanguage) -> wakui::debugger::PpuChrome {
     use nerust_settings_core::i18n::{UiText, text as ui_text};
-    nerust_frontend_host::debugger::PpuChrome {
+    wakui::debugger::PpuChrome {
         title: ui_text(language, UiText::PpuViewer).to_string(),
         hover_empty: ui_text(language, UiText::HoverTile).to_string(),
         no_images: ui_text(language, UiText::NoImages).to_string(),
@@ -462,10 +462,10 @@ pub fn ppu_chrome(language: AppLanguage) -> nerust_frontend_host::debugger::PpuC
 }
 
 /// Pre-localized debugger chrome in the view language.
-pub fn debugger_chrome(language: AppLanguage) -> nerust_frontend_host::debugger::DebuggerChrome {
+pub fn debugger_chrome(language: AppLanguage) -> wakui::debugger::DebuggerChrome {
     use nerust_settings_core::i18n::{UiText, text as ui_text};
     let text = |key| ui_text(language, key).to_string();
-    nerust_frontend_host::debugger::DebuggerChrome {
+    wakui::debugger::DebuggerChrome {
         debugger: text(UiText::Debugger),
         pause: text(UiText::Pause),
         resume: text(UiText::Resume),

@@ -23,7 +23,6 @@ members = [
   "gui/emu-thread",
   "gui/frontends/android",
   "gui/frontends/gtk",
-  "gui/frontends/host",
   "gui/frontends/kernel",
   "gui/frontends/rom_tool",
   "gui/frontends/tao",
@@ -33,6 +32,8 @@ members = [
   "gui/shell",
   "gui/viewmodel",
   "gui/wakui",
+  "gui/wakui-gtk",
+  "gui/wakui-tao",
   "crash-guard",
   "persistence",
   "render/filters",
@@ -75,12 +76,12 @@ log.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
 nerust_gtk = { optional = true, workspace = true }
-nerust_frontend_host.workspace = true
 nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard = { optional = true, workspace = true }
 rfd = { optional = true, workspace = true }
 nerust_gui_shell.workspace = true
+wakui.workspace = true
 nerust_gbc_factory = { optional = true, workspace = true }
 nerust_gba_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
@@ -204,7 +205,6 @@ nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_frontend_kernel = { path = "gui/frontends/kernel" }
-nerust_frontend_host = { path = "gui/frontends/host" }
 nerust_frontend_viewdefs = { path = "gui/frontends/view-defs" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
@@ -276,6 +276,8 @@ thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }
 wakui = { path = "gui/wakui" }
+wakui-gtk = { path = "gui/wakui-gtk" }
+wakui-tao = { path = "gui/wakui-tao" }
 wgpu = { version = "=30.0.1" }
 winit = { version = "=0.30.13" }
 zerocopy = { features = ["derive"], version = "=0.8.63" }

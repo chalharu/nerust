@@ -4,12 +4,12 @@
 use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
-use nerust_frontend_host::debugger::{
+use wakui::aux::{AuxWindows, OpenRequest};
+use wakui::debugger::{
     DebugHandle, DebugSnapshot, DebuggerEvent, DebuggerScope, RegRow, pin_marker,
 };
-use nerust_frontend_host::focus::AuxKind;
-use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
+use wakui::focus::AuxKind;
+use wakui::window::{DebugContents, Window as HostWindow, WindowVisitor};
 
 use super::State;
 
@@ -571,10 +571,7 @@ impl DebuggerWindowCore {
         pending
     }
 
-    fn present_live_effects(
-        win: &DebuggerWindow,
-        effects: &nerust_frontend_host::debugger::DebuggerLiveEffects,
-    ) {
+    fn present_live_effects(win: &DebuggerWindow, effects: &wakui::debugger::DebuggerLiveEffects) {
         if !effects.changed {
             return;
         }

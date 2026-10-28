@@ -8,13 +8,13 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use nerust_frontend_host::{
-    aux::AuxId,
-    widget_session::WindowMailbox,
-    window::{DebugContents, PpuContents, Window, WindowVisitor},
-};
 use rfd::FileDialog;
 use wakui::control::ControlScreen;
+use wakui::{
+    aux::AuxId,
+    mailbox::WindowMailbox,
+    window::{DebugContents, PpuContents, Window, WindowVisitor},
+};
 
 #[cfg(test)]
 use crate::aux::focus::AuxKind;

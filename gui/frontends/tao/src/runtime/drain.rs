@@ -2,10 +2,8 @@
 //! Drains run app-side per debug handle; native code pushes snapshots
 //! into the aux windows and routes queued gestures into the session.
 
-use nerust_frontend_host::{
-    aux::OpenRequest,
-    debugger::{DebugHandle, DebuggerScope},
-};
+use wakui::aux::OpenRequest;
+use wakui::debugger::{DebugHandle, DebuggerScope};
 
 use super::host::{HostState, WakeNeed};
 use crate::aux::debug::views;
