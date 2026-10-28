@@ -2,8 +2,7 @@
 
 use super::HostState;
 use super::{
-    create_window_builder, default_fit_window_size, logical_size_from_remembered,
-    logical_window_size, window_surface_size,
+    create_window_builder, default_fit_window_size, logical_window_size, window_surface_size,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -12,7 +11,6 @@ use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::W
 
 use nerust_gui_shell::settings::scaling_factor;
 use nerust_render_traits::{SurfaceSize, renderer::RenderResult};
-use nerust_settings_core::model::app_state::RememberedWindowSize;
 use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
@@ -387,8 +385,9 @@ impl HostState {
         match scaling_factor(self.core.settings_snapshot().local.video.window.scaling) {
             Some(scale) => logical_window_size(self.core.session().window_size(), Some(scale)),
             None => self
-                .remembered_fit_window_size()
-                .map(logical_size_from_remembered)
+                .core
+                .remembered_window_size()
+                .map(|(width, height)| TaoLogicalSize::new(f64::from(width), f64::from(height)))
                 .unwrap_or_else(default_fit_window_size),
         }
     }
@@ -406,10 +405,6 @@ impl HostState {
             self.core.session().window_size(),
             Some(scale),
         ));
-    }
-
-    fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
-        self.core.settings_snapshot().app_state.window_size("main")
     }
 
     pub(super) fn remember_fit_window_size(&mut self) {
