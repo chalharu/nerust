@@ -457,7 +457,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
         C::Menu(M::Session(S::Pause)),
         C::Session(SessionEvent::Command(S::Resume)),
         C::Session(SessionEvent::Keyboard {
-            key: nerust_keyboard::Key::F2,
+            key: wakui::Key::F2,
             pressed: true,
         }),
         C::Session(SessionEvent::Shortcut(
