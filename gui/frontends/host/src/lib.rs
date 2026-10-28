@@ -46,22 +46,12 @@
 //! OS event pumping, toolkit controls, rendering and resource plumbing remain
 //! native responsibilities. No total frontend line-count guarantee is implied.
 
-pub mod application;
 pub mod aux;
-pub mod bootstrap;
 pub mod commands;
 pub mod debug_schedule;
-pub mod debugger;
-pub mod drain;
-pub mod event;
 pub mod focus;
-pub mod frame;
-pub mod history;
 pub mod menu;
-pub mod osd;
-pub mod session;
-pub mod settings;
-pub mod viewport;
+pub mod sync;
 pub mod widget_session;
 pub mod widgets;
 pub mod window;

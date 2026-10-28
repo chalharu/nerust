@@ -18,11 +18,13 @@ use wakui::{
     control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
 };
 
+use nerust_frontend_host::widget_session::{MailboxDomain, WindowMailbox};
+
 use crate::{
     focus::AuxKind,
     history::{HistoryEffect, HistoryEvent, HistoryModel},
     settings::{
-        SettingsController, SettingsEffect, SettingsEvent, SettingsMailbox, SettingsScreen,
+        SettingsController, SettingsEffect, SettingsEvent, SettingsScreen,
     },
     sync::lock_recovered,
     window::Window,
@@ -30,23 +32,51 @@ use crate::{
 
 mod scene;
 
-enum MailboxSource {
-    Settings(SettingsMailbox),
-    History {
-        close: AtomicBool,
-        invalidated: AtomicBool,
-        clear: AtomicBool,
-    },
+struct SettingsDomain {
+    pending: Arc<Mutex<Option<SettingsSnapshot>>>,
 }
 
-struct MailboxInner {
-    source: MailboxSource,
-    error: Mutex<Option<String>>,
+impl MailboxDomain for SettingsDomain {
+    fn has_pending(&self) -> bool {
+        lock_recovered(&self.pending).is_some()
+    }
+
+    fn take_pending(&self) -> Option<Box<dyn std::any::Any>> {
+        let snapshot = lock_recovered(&self.pending).take()?;
+        Some(Box::new(Pending::Settings(Box::new(snapshot))))
+    }
 }
 
-/// Native registries retain this handle, never SettingsSnapshot or VM state.
-#[derive(Clone)]
-pub struct WindowMailbox(Arc<MailboxInner>);
+struct HistoryDomain {
+    clear: Arc<AtomicBool>,
+}
+
+impl MailboxDomain for HistoryDomain {
+    fn has_pending(&self) -> bool {
+        self.clear.load(Ordering::Acquire)
+    }
+
+    fn take_pending(&self) -> Option<Box<dyn std::any::Any>> {
+        if !self.clear.swap(false, Ordering::AcqRel) {
+            return None;
+        }
+        Some(Box::new(Pending::ClearHistory))
+    }
+}
+
+/// Consume a pending batch from a retained handle. Native adapters call this
+/// when the matching generation can receive it; the payload stays view-side.
+pub fn take_submission(mailbox: &WindowMailbox) -> Option<WindowSubmission> {
+    let pending = mailbox
+        .take_pending_any()?
+        .downcast::<Pending>()
+        .ok()
+        .map(|boxed| *boxed)?;
+    Some(WindowSubmission {
+        mailbox: mailbox.clone(),
+        pending: Arc::new(Mutex::new(Some(pending))),
+    })
+}
 
 pub enum Pending {
     Settings(Box<SettingsSnapshot>),
@@ -66,92 +96,6 @@ impl WindowSubmission {
     }
 }
 
-impl WindowMailbox {
-    fn new(source: MailboxSource) -> Self {
-        Self(Arc::new(MailboxInner {
-            source,
-            error: Mutex::new(None),
-        }))
-    }
-
-    pub fn close_requested(&self) -> bool {
-        match &self.0.source {
-            MailboxSource::Settings(m) => m.should_close.load(Ordering::Acquire),
-            MailboxSource::History { close, .. } => close.load(Ordering::Acquire),
-        }
-    }
-
-    pub fn request_close(&self) {
-        self.set_close(true);
-    }
-
-    fn set_close(&self, value: bool) {
-        match &self.0.source {
-            MailboxSource::Settings(m) => m.should_close.store(value, Ordering::Release),
-            MailboxSource::History { close, .. } => close.store(value, Ordering::Release),
-        }
-    }
-
-    pub fn invalidate(&self) {
-        match &self.0.source {
-            MailboxSource::Settings(m) => m.view_invalidated.store(true, Ordering::Release),
-            MailboxSource::History { invalidated, .. } => {
-                invalidated.store(true, Ordering::Release)
-            }
-        }
-    }
-
-    pub fn take_invalidated(&self) -> bool {
-        match &self.0.source {
-            MailboxSource::Settings(m) => m.view_invalidated.swap(false, Ordering::AcqRel),
-            MailboxSource::History { invalidated, .. } => invalidated.swap(false, Ordering::AcqRel),
-        }
-    }
-
-    pub fn has_pending(&self) -> bool {
-        match &self.0.source {
-            MailboxSource::Settings(m) => lock_recovered(&m.pending_apply).is_some(),
-            MailboxSource::History { clear, .. } => clear.load(Ordering::Acquire),
-        }
-    }
-
-    pub fn take_submission(&self) -> Option<WindowSubmission> {
-        let pending = match &self.0.source {
-            MailboxSource::Settings(m) => Pending::Settings(Box::new(m.take_pending_apply()?)),
-            MailboxSource::History { clear, .. } => {
-                if !clear.swap(false, Ordering::AcqRel) {
-                    return None;
-                }
-                Pending::ClearHistory
-            }
-        };
-        Some(WindowSubmission {
-            mailbox: self.clone(),
-            pending: Arc::new(Mutex::new(Some(pending))),
-        })
-    }
-
-    pub fn same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-
-    pub fn apply_failed(&self, error: String) {
-        *lock_recovered(&self.0.error) = Some(error);
-        self.set_close(false);
-        self.invalidate();
-    }
-}
-
-impl wakui::binding::Invalidatable for WindowMailbox {
-    fn invalidate(&self) {
-        WindowMailbox::invalidate(self);
-    }
-
-    fn take_invalidated(&self) -> bool {
-        WindowMailbox::take_invalidated(self)
-    }
-}
-
 enum State {
     Settings(Box<SettingsController>),
     History(HistorySession),
@@ -164,6 +108,7 @@ pub(crate) struct HistorySession {
     language: AppLanguage,
     filter: HistoryFilter,
     mailbox: WindowMailbox,
+    clear: Arc<AtomicBool>,
 }
 
 impl wakui::binding::BindingTarget for HistorySession {
@@ -176,9 +121,7 @@ impl wakui::binding::BindingTarget for HistorySession {
                 self.filter = filter;
             }
             HistoryEvent::Clear => {
-                if let MailboxSource::History { clear, .. } = &self.mailbox.0.source {
-                    clear.store(true, Ordering::Release);
-                }
+                self.clear.store(true, Ordering::Release);
             }
             HistoryEvent::Close => {
                 self.mailbox.request_close();
@@ -199,8 +142,12 @@ pub struct WidgetSession {
 
 impl WidgetSession {
     /// Keep the typed draft private behind the common native boundary.
-    pub fn from_settings(controller: SettingsController) -> Self {
-        let mailbox = WindowMailbox::new(MailboxSource::Settings(controller.mailbox.clone()));
+    pub fn from_settings(mut controller: SettingsController) -> Self {
+        let mailbox = WindowMailbox::new(SettingsDomain {
+            pending: controller.mailbox.pending_apply.clone(),
+        });
+        controller.mailbox.should_close = mailbox.flags().close.clone();
+        controller.mailbox.view_invalidated = mailbox.flags().invalidated.clone();
         Self {
             state: State::Settings(Box::new(controller)),
             scene: RefCell::new(Default::default()),
@@ -210,10 +157,9 @@ impl WidgetSession {
     }
 
     pub fn history(lines: Arc<[HistoryLine]>, language: AppLanguage) -> Self {
-        let mailbox = WindowMailbox::new(MailboxSource::History {
-            close: AtomicBool::new(false),
-            invalidated: AtomicBool::new(false),
-            clear: AtomicBool::new(false),
+        let clear = Arc::new(AtomicBool::new(false));
+        let mailbox = WindowMailbox::new(HistoryDomain {
+            clear: clear.clone(),
         });
         Self {
             state: State::History(HistorySession {
@@ -221,6 +167,7 @@ impl WidgetSession {
                 language,
                 filter: HistoryFilter::All,
                 mailbox: mailbox.clone(),
+                clear,
             }),
             scene: RefCell::new(Default::default()),
             mailbox,
@@ -242,7 +189,7 @@ impl WidgetSession {
                 session.filter,
             )),
         };
-        if let Some(error) = lock_recovered(&self.mailbox.0.error).clone() {
+        if let Some(error) = lock_recovered(&self.mailbox.flags().error).clone() {
             screen.message = Some(error);
         }
         screen
@@ -281,7 +228,7 @@ impl WidgetSession {
             return Vec::new();
         }
         let mailbox = self.mailbox.clone();
-        if lock_recovered(&mailbox.0.error).take().is_some() {
+        if lock_recovered(&mailbox.flags().error).take().is_some() {
             mailbox.invalidate();
         }
         match &mut self.state {
@@ -337,7 +284,7 @@ impl wakui::binding::PickerSink<std::path::PathBuf> for WidgetSession {
         }
         self.picker = None;
         let mailbox = self.mailbox.clone();
-        if lock_recovered(&mailbox.0.error).take().is_some() {
+        if lock_recovered(&mailbox.flags().error).take().is_some() {
             mailbox.invalidate();
         }
         let screen = self.screen();

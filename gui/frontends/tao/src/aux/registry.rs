@@ -9,9 +9,8 @@ use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
 use nerust_frontend_host::aux::AuxWindows;
 #[cfg(test)]
 use nerust_frontend_host::aux::OpenRequest;
-use nerust_frontend_host::{
-    application::ApplicationHost, widget_session::WindowMailbox, window::Window,
-};
+use nerust_frontend_host::{widget_session::WindowMailbox, window::Window};
+use nerust_frontend_viewdefs::application::ApplicationHost;
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Default)]

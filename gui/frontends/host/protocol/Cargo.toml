@@ -1,8 +1,0 @@
-[package]
-authors.workspace = true
-description = "Dependency-free host session command vocabulary"
-edition.workspace = true
-license.workspace = true
-name = "nerust_host_protocol"
-rust-version.workspace = true
-version.workspace = true

@@ -136,7 +136,7 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
         self.entries.get(&self.kind_of_id(id)?)?.mailbox.clone()
     }
 
-    pub(crate) fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox) {
+    pub fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox) {
         let kind = self.kind_of_id(id).expect("current reservation");
         self.entries
             .get_mut(&kind)

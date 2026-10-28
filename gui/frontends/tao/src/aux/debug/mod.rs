@@ -28,7 +28,7 @@ pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
 /// Right state column width.
 const STATE_COLUMN_WIDTH: f32 = 340.0;
 
-pub(crate) use nerust_frontend_host::debugger::DebuggerEvent as DebugMessage;
+pub(crate) use nerust_frontend_viewdefs::debugger::DebuggerEvent as DebugMessage;
 
 pub(crate) struct DebugState {
     bridge: Arc<DebugBridge>,

@@ -9,20 +9,7 @@ version.workspace = true
 
 [dependencies]
 log.workspace = true
-nerust_core_traits.workspace = true
-nerust_frontend_kernel.workspace = true
-nerust_frontend_viewdefs.workspace = true
-nerust_gui_runtime.workspace = true
-nerust_gui_shell.workspace = true
-nerust_host_protocol.workspace = true
-nerust_gui_viewmodel.workspace = true
 wakui.workspace = true
-nerust_persistence.workspace = true
-nerust_render_osd.workspace = true
-nerust_render_traits = { features = ["renderer"], workspace = true }
-nerust_settings_core.workspace = true
-nerust_system_traits.workspace = true
-raw-window-handle.workspace = true
 
 [dev-dependencies]
 nerust_nes_factory.workspace = true
