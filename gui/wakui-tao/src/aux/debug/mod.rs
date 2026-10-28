@@ -1,0 +1,344 @@
+//! Debugger window: memory/disassembly probe plus register, watch, freeze, bookmarks.
+//! Pure view over pushed snapshots; gestures queue into the host drain.
+
+#[cfg(test)]
+mod tests;
+pub(crate) mod views;
+
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+use iced::Task;
+use iced_tiny_skia::Renderer;
+use iced_winit::program::{self, Program};
+use tao::event_loop::EventLoopWindowTarget;
+
+use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
+
+use views::ViewSnapshot;
+
+/// Initial debugger window size (verified Xvfb fit).
+pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
+/// Minimum debugger size: below this the fixed label columns and
+/// the register halves collide instead of reflowing.
+pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
+/// Right state column width.
+const STATE_COLUMN_WIDTH: f32 = 340.0;
+
+pub(crate) use wakui::debugger::DebuggerEvent as DebugMessage;
+
+/// Gesture queue: iced update/keyboard push here, the host drain consumes.
+pub(crate) type DebugQueue = Rc<RefCell<Vec<DebugMessage>>>;
+/// Pushed snapshot shared between the handle and iced state.
+pub(crate) type SharedView = Rc<RefCell<ViewSnapshot>>;
+
+pub(crate) struct DebugState {
+    view: SharedView,
+    queue: DebugQueue,
+}
+
+pub(crate) struct DebugProgram {
+    view: SharedView,
+    queue: DebugQueue,
+}
+
+impl super::window::GroupedProgram for DebugProgram {
+    const KIND: super::focus::AuxKind = super::focus::AuxKind::Debug;
+}
+
+impl Program for DebugProgram {
+    type State = DebugState;
+    type Message = DebugMessage;
+    type Theme = iced::Theme;
+    type Renderer = iced_tiny_skia::Renderer;
+    type Executor = iced_winit::futures::backend::default::Executor;
+
+    fn name() -> &'static str {
+        "nerust_debug"
+    }
+
+    fn theme(&self, _state: &Self::State, _window: iced::window::Id) -> Option<Self::Theme> {
+        aux_theme()
+    }
+
+    fn settings(&self) -> iced::Settings {
+        aux_settings()
+    }
+
+    fn window(&self) -> Option<iced::window::Settings> {
+        None
+    }
+
+    fn boot(&self) -> (Self::State, Task<Self::Message>) {
+        (
+            DebugState {
+                view: Rc::clone(&self.view),
+                queue: Rc::clone(&self.queue),
+            },
+            Task::none(),
+        )
+    }
+
+    fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+        state.queue.borrow_mut().push(message);
+        Task::none()
+    }
+
+    fn view<'a>(
+        &self,
+        state: &'a Self::State,
+        _window: iced::window::Id,
+    ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+        use iced::Length;
+        use iced::widget::lazy;
+        use iced::widget::{button, column, row, scrollable, text};
+        // Single coherent capture per rebuild; widgets read locals only.
+        // Images stay out: the debugger view never renders them.
+        let views::ViewSnapshot {
+            chrome,
+            mem_input,
+            dis_input,
+            follow_pc,
+            back_len,
+            anchor,
+            bookmarks,
+            bm_input,
+            freeze_input,
+            selected,
+            edit_input,
+            pending_text,
+            select_line,
+            watch_line,
+            freeze_line,
+            selected_name,
+            regs,
+            dump_rows,
+            diff,
+            disasm_lines,
+            status_text,
+            paused,
+            reg_target,
+            reg_input,
+            ..
+        } = state.view.borrow().clone();
+        // Button hierarchy: one primary per flow, secondary for toolbar/nav.
+        let toolbar = views::view_toolbar(paused, &chrome);
+        // Settings form language: fixed label column + stepper.
+        let space_row = views::view_space_row(selected_name.as_deref().unwrap_or(""), &chrome);
+        let mem_nav = views::view_mem_nav(&mem_input, &chrome);
+        // Heavy lists ride `lazy`; keep every visual input in the dependency tuples.
+        let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
+            views::view_dump_col(rows, diff, *selected)
+        });
+        let regs_view: iced::Element<'static, DebugMessage, iced::Theme, Renderer> = lazy(
+            (regs, reg_target, reg_input, chrome.clone()),
+            |(regs, target, input, chrome)| views::view_regs_section(regs, *target, input, chrome),
+        )
+        .into();
+        // Two-phase write: select a dump row, type the new byte,
+        // Write stages it, and the confirm row commits or cancels.
+        let edit_row = views::view_edit_row(&select_line, selected, &edit_input, &chrome);
+        // Confirm row: the one primary button in the window; Cancel is
+        // a text escape. The drain owns the authoritative text.
+        let confirm_row = views::view_confirm_row(pending_text, &chrome);
+        let dis_nav = views::view_dis_nav(follow_pc, back_len, anchor, &dis_input, &chrome);
+        // Per-line disassembly: line click pins the anchor; targets offer follow buttons.
+        let pinned = if follow_pc { None } else { Some(anchor) };
+        let dis_col = lazy(
+            (disasm_lines, pinned, chrome.clone()),
+            |(lines, pinned, chrome)| views::view_dis_col(lines, *pinned, chrome),
+        );
+        // Cross-emulator canon: execution above disassembly on the
+        // left, state on the right.
+        let left_col = column![
+            text(chrome.debugger.clone()).size(18),
+            toolbar,
+            dis_nav,
+            dis_col
+        ]
+        .spacing(12)
+        .width(Length::Fill);
+        let right_col = column![
+            text(status_text).size(14).width(Length::Fill),
+            text(chrome.registers.clone()).size(16),
+            regs_view,
+            text(chrome.watch.clone()).size(16),
+            views::view_watch_row(&watch_line, &chrome),
+            text(chrome.freeze.clone()).size(16),
+            views::view_freeze_row(&freeze_line, &freeze_input, &chrome),
+            views::view_bookmark_section(&bm_input, &bookmarks, &chrome),
+        ]
+        .spacing(12)
+        .width(Length::Fixed(STATE_COLUMN_WIDTH))
+        // Right breathing room for the overlay scrollbar: without it the
+        // rail sits on top of the register text (tall GBA lists scroll).
+        .padding(iced::Padding {
+            right: 16.0,
+            ..Default::default()
+        });
+        // Tall state scrolls inside the panes; Refresh stays pinned at the bottom.
+        let right_scroll = scrollable(right_col).height(Length::Fill);
+        let content = column![
+            row![left_col, right_scroll]
+                .spacing(16)
+                .height(Length::Fill),
+            text(chrome.memory.clone()).size(16),
+            space_row,
+            mem_nav,
+            dump_col,
+            edit_row,
+        ]
+        .spacing(10)
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill);
+        let mut content = content;
+        if let Some(confirm) = confirm_row {
+            content = content.push(confirm);
+        }
+        let content = content.push(
+            button(text(chrome.refresh.clone()))
+                .style(button::secondary)
+                .width(Length::Fill)
+                .on_press(DebugMessage::RefreshPressed),
+        );
+        content.into()
+    }
+}
+
+pub(crate) struct DebugWindowHandle {
+    shell: crate::aux::shell::AuxShell<super::window::WindowProgram<DebugProgram>>,
+    view: SharedView,
+    queue: DebugQueue,
+    invalidated: Arc<AtomicBool>,
+}
+
+impl DebugWindowHandle {
+    /// Take queued gestures for the host drain.
+    pub(crate) fn drain_queue(&mut self) -> Vec<DebugMessage> {
+        std::mem::take(&mut *self.queue.borrow_mut())
+    }
+}
+
+/// Window-scoped shortcuts on physical codes: F6 frame, F7 instruction, F9 pause.
+/// Dispatched as gestures so epoch retirement treats them like any other input.
+fn shortcut_request(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage> {
+    use iced::keyboard::key::{Code, Physical};
+    match *physical {
+        Physical::Code(Code::F6) => Some(DebugMessage::StepFramePressed),
+        Physical::Code(Code::F7) => Some(DebugMessage::StepInstrPressed),
+        Physical::Code(Code::F9) => Some(DebugMessage::TogglePausePressed),
+        _ => None,
+    }
+}
+
+/// Cursor keys page the dump (Up = toward lower addresses). Pure
+/// mapping; Left/Right stay `None` for the text inputs.
+fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage> {
+    use iced::keyboard::key::{Code, Physical};
+    match *physical {
+        Physical::Code(Code::ArrowUp) => Some(DebugMessage::MemPage(-1)),
+        Physical::Code(Code::ArrowDown) => Some(DebugMessage::MemPage(1)),
+        _ => None,
+    }
+}
+
+impl DebugWindowHandle {
+    pub(crate) fn new(
+        window: wakui::window::Window,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
+        position: Option<(i32, i32)>,
+    ) -> Option<Self> {
+        let surface = AuxSurface::open(
+            event_loop,
+            &window.title,
+            DEBUG_WINDOW_SIZE,
+            Some(DEBUG_WINDOW_MIN_SIZE),
+            position,
+            "debugger window",
+            Arc::new(AtomicBool::new(false)),
+        )
+        .map_err(|error| {
+            // Typed scaffold failure: surface the tagged native detail here.
+            log::error!("{error}");
+            error
+        })
+        .ok()?;
+        let view = Rc::new(RefCell::new(ViewSnapshot::default()));
+        let queue = Rc::new(RefCell::new(Vec::new()));
+        let program = DebugProgram {
+            view: Rc::clone(&view),
+            queue: Rc::clone(&queue),
+        };
+        let (instance, _task) =
+            program::Instance::new(super::window::WindowProgram { window, program });
+        let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
+        Some(Self {
+            shell,
+            view,
+            queue,
+            invalidated: Arc::new(AtomicBool::new(false)),
+        })
+    }
+}
+
+impl super::focus::AuxShellRef for DebugWindowHandle {
+    fn kind(&self) -> super::focus::AuxKind {
+        super::focus::AuxKind::Debug
+    }
+
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
+    }
+}
+
+impl super::registry::AuxController for DebugWindowHandle {
+    fn push_debug_snapshot(&mut self, snapshot: &ViewSnapshot) -> bool {
+        *self.view.borrow_mut() = snapshot.clone();
+        self.invalidated.store(true, Ordering::Release);
+        self.shell.process(Vec::new(), &self.invalidated);
+        true
+    }
+
+    fn drain_debug_queue(&mut self) -> Vec<DebugMessage> {
+        self.drain_queue()
+    }
+}
+
+impl super::focus::AuxEvents for DebugWindowHandle {
+    fn handle(&mut self, mapped: iced::Event) -> bool {
+        // Window-scoped shortcuts on physical codes (F6/F7/F9).
+        // Dereference `physical_key` before matching (binds by ref).
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = &mapped
+            && let Some(event) = shortcut_request(physical_key)
+        {
+            self.queue.borrow_mut().push(event);
+        }
+        // Cursor keys page the dump; Left/Right stay with the widgets.
+        let page = if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = &mapped
+        {
+            cursor_page(physical_key)
+        } else {
+            None
+        };
+        self.shell.pump_finish(mapped, page, &self.invalidated)
+    }
+}

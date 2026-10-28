@@ -1,25 +1,68 @@
-//! `wakui_tao`: wakui platform backend for iced/tao (MAUI handler role).
+//! `wakui_tao`: wakui platform frontend for iced/tao.
 //!
-//! Framework-only: depends on [`wakui`] plus the host vocabulary
-//! (`wakui` vocabulary) and the iced/tao toolkits. Never on view
-//! definitions, sessions, or settings. Native frontends render
-//! [`wakui::control::ControlScreen`] snapshots through [`controls`],
+//! Framework-only: depends on [`wakui`] plus the iced/tao toolkits.
+//! Never on view definitions, sessions, or settings. Native frontends
+//! render [`wakui::control::ControlScreen`] snapshots through [`controls`],
 //! adapt them to host windows through [`binding`], and map native input
 //! through [`keyboard`], [`tao_map`], and [`convert`].
 //!
 //! A third-party app builds UI with `wakui` plus this crate only:
-//! see `examples/backend_smoke.rs`. Window event loops stay native;
-//! this crate owns control interpretation, not the loop itself.
+//! see `examples/backend_smoke.rs`. The entry point is [`run`]; the
+//! composition root injects a boxed [`wakui::app::FrontendApp`].
 
+pub mod app;
 pub mod backend;
 pub mod binding;
 pub mod controls;
 pub mod convert;
 pub mod disabled;
 pub mod domain;
+pub mod event;
 pub mod handler;
 pub mod keyboard;
+pub mod menu;
+pub mod ports;
 pub mod tao_map;
 pub mod window;
 
+pub(crate) mod aux;
+pub(crate) mod runtime;
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+mod gtk_embed;
+
+#[cfg(test)]
+pub(crate) mod test_dialogs;
+#[cfg(test)]
+pub(crate) mod test_menu;
+#[cfg(test)]
+pub(crate) mod test_opener;
+#[cfg(test)]
+pub(crate) mod testkit;
+
 pub use backend::{TaoBackend, register};
+
+use wakui::bootstrap::Boot;
+
+/// Exit status for the binary wrapper: the library never terminates the process.
+/// Crash containment and boot failure dialogs live in the composition root.
+pub fn run(boot: Boot, rom_path: Option<std::path::PathBuf>) -> i32 {
+    run_inner(boot, rom_path);
+    0
+}
+
+fn run_inner(boot: Boot, rom_path: Option<std::path::PathBuf>) {
+    let mut window = app::Window::new(boot);
+    if let Some(path) = rom_path
+        && !window.load_path(&path)
+    {
+        log::info!("starting without a ROM (bad --rom path)");
+    }
+    window.run();
+}

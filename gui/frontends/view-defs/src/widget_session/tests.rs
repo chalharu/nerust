@@ -541,3 +541,232 @@ fn page_and_tab_activation_marks_selection() {
         assert!(probe.selected);
     }
 }
+
+fn find_by_label(screen: &ControlScreen, label: &str) -> Control {
+    inventory(screen)
+        .into_iter()
+        .find(|c| c.label == label)
+        .unwrap_or_else(|| panic!("control {label:?} not found"))
+}
+
+fn controls_in(layout: &Layout) -> Vec<Control> {
+    use wakui::control::Node;
+    layout
+        .children
+        .iter()
+        .flat_map(|node| match node {
+            Node::Control(c) => vec![c.clone()],
+            Node::Row(l) | Node::Column(l) | Node::Group(l) | Node::Table(l) => controls_in(l),
+            Node::Tabs(t) => t.tabs.iter().flat_map(|t| controls_in(&t.body)).collect(),
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct TabInventory(Vec<Tab>);
+impl ControlVisitor for TabInventory {
+    fn begin_tab(&mut self, tab: &Tab) {
+        self.0.push(tab.clone());
+    }
+}
+
+#[test]
+fn capture_key_resolves_current_capture_and_clear_reaches_model() {
+    use wakui::control::ControlEvent;
+    let mut session = settings(false);
+    let id = inventory(&session.screen())
+        .into_iter()
+        .find(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .unwrap()
+        .id;
+    session.dispatch(ControlEvent::capture_key(wakui::Key::KeyZ));
+    assert!(session.screen().capture.target.is_none());
+    send(&mut session, id, ControlInput::Activate);
+    assert_eq!(session.screen().capture.target, Some(id));
+    session.dispatch(ControlEvent::capture_key(wakui::Key::KeyZ));
+    assert!(session.screen().capture.target.is_none());
+    assert!(matches!(
+        &session.screen().control(id).unwrap().kind,
+        ControlKind::Binding { text, capturing: false, .. } if text.contains('Z')
+    ));
+    send(&mut session, id, ControlInput::CaptureClear);
+    assert!(matches!(
+        &session.screen().control(id).unwrap().kind,
+        ControlKind::Binding { text, capturing: false, .. } if !text.contains('Z')
+    ));
+}
+
+#[test]
+fn text_validation_footer_submit_and_cancel_follow_model_policy() {
+    use crate::window::Window;
+    let mut session = settings(false);
+    let policy = find_by_label(&session.screen(), "Save storage policy");
+    let ControlKind::Choice { choices, .. } = &policy.kind else {
+        unreachable!()
+    };
+    let custom = choices
+        .iter()
+        .position(|c| c.to_lowercase().contains("custom"))
+        .unwrap();
+    send(&mut session, policy.id, ControlInput::Select(custom));
+    let directory = find_by_label(&session.screen(), "Save storage directory").id;
+    let submit = find_by_label(&session.screen(), "OK").id;
+    send(&mut session, directory, ControlInput::Text(String::new()));
+    assert!(!session.screen().control(submit).unwrap().metadata.enabled);
+    assert!(session.screen().message.is_some());
+    send(&mut session, submit, ControlInput::Activate);
+    assert!(!session.mailbox().close_requested());
+    assert!(!session.mailbox().has_pending());
+    let effects = session.dispatch(ControlEvent::new(directory, ControlInput::Activate));
+    assert!(
+        matches!(effects.as_slice(), [wakui::control::ControlEffect::PickDirectory { target, .. }] if *target == directory)
+    );
+    send(&mut session, directory, ControlInput::Text("/tmp".into()));
+    assert!(session.screen().control(submit).unwrap().metadata.enabled);
+    send(&mut session, submit, ControlInput::Activate);
+    assert!(session.mailbox().close_requested());
+    assert!(session.mailbox().has_pending());
+    let mut session = settings(false);
+    let cancel = find_by_label(&session.screen(), "Cancel").id;
+    send(&mut session, cancel, ControlInput::Activate);
+    assert!(session.mailbox().close_requested());
+    assert!(!session.mailbox().has_pending());
+    let _ = Window::main();
+}
+
+#[test]
+fn topology_change_rejects_removed_binding_and_uses_latest_capture() {
+    use wakui::control::ControlEvent;
+    let mut session = settings(true);
+    let mut tabs = TabInventory::default();
+    session.screen().visit(&mut tabs);
+    let input = tabs
+        .0
+        .iter()
+        .find(|t| {
+            controls_in(&t.body).iter().any(|c| {
+                matches!(&c.kind, ControlKind::Choice { choices, .. } if choices.iter().any(|s| s.contains("None")))
+            })
+        })
+        .unwrap()
+        .clone();
+    let old: Vec<_> = controls_in(&input.body)
+        .iter()
+        .filter(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .map(|c| c.id)
+        .collect();
+    for slot in controls_in(&input.body) {
+        if let ControlKind::Choice { choices, .. } = &slot.kind
+            && let Some(none) = choices.iter().position(|c| c.contains("None"))
+        {
+            send(&mut session, slot.id, ControlInput::Select(none));
+        }
+    }
+    let removed = old
+        .into_iter()
+        .find(|id| session.screen().control(*id).is_none())
+        .unwrap();
+    let before = session.screen();
+    send(&mut session, removed, ControlInput::Activate);
+    assert_eq!(session.screen(), before);
+    assert!(session.screen().capture.target.is_none());
+    let bindings: Vec<_> = inventory(&session.screen())
+        .into_iter()
+        .filter(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .collect();
+    let first = bindings[0].id;
+    let second = bindings[1].id;
+    send(&mut session, first, ControlInput::Activate);
+    send(&mut session, second, ControlInput::Activate);
+    session.dispatch(ControlEvent::capture_key(wakui::Key::KeyZ));
+    assert!(session.screen().capture.target.is_none());
+    assert!(matches!(&session.screen().control(second).unwrap().kind,
+        ControlKind::Binding { text, capturing: false, .. } if text.contains('Z')));
+}
+
+#[test]
+fn dynamic_ids_restore_context_before_editing_instead_of_selected_target() {
+    let mut session = settings(true);
+    let screen = session.screen();
+    let mut tabs = TabInventory::default();
+    screen.visit(&mut tabs);
+    let system = tabs
+        .0
+        .iter()
+        .find(|t| t.label.contains("NES"))
+        .unwrap()
+        .clone();
+    let candidate = controls_in(&system.body)
+        .into_iter()
+        .find(|c| matches!(&c.kind, ControlKind::Choice { choices, .. } if choices.len() > 1))
+        .unwrap();
+    let ControlKind::Choice { selected, .. } = candidate.kind else {
+        unreachable!()
+    };
+    let index = usize::from(selected == Some(0));
+    send(
+        &mut session,
+        screen.pages[0].select.id,
+        ControlInput::Activate,
+    );
+    send(&mut session, candidate.id, ControlInput::Select(index));
+    assert!(
+        matches!(session.screen().control(candidate.id).unwrap().kind, ControlKind::Choice { selected: Some(i), .. } if i == index)
+    );
+    let mut current = TabInventory::default();
+    session.screen().visit(&mut current);
+    assert!(
+        current
+            .0
+            .iter()
+            .find(|tab| tab.id == system.id)
+            .unwrap()
+            .selected
+    );
+    let input = current
+        .0
+        .iter()
+        .find(|tab| {
+            controls_in(&tab.body).iter().any(|c| {
+                matches!(&c.kind, ControlKind::Choice { choices, .. }
+                    if choices.iter().any(|choice| choice.contains("None")))
+            })
+        })
+        .unwrap()
+        .clone();
+    let slot = controls_in(&input.body)
+        .into_iter()
+        .find(|c| {
+            matches!(&c.kind, ControlKind::Choice { choices, .. }
+                if choices.iter().any(|choice| choice.contains("None")))
+        })
+        .unwrap();
+    let ControlKind::Choice { choices, .. } = &slot.kind else {
+        unreachable!()
+    };
+    let none = choices
+        .iter()
+        .position(|choice| choice.contains("None"))
+        .unwrap();
+    let shortcuts = current
+        .0
+        .iter()
+        .find(|tab| tab.label.contains("Shortcut"))
+        .unwrap();
+    send(&mut session, shortcuts.select.id, ControlInput::Activate);
+    send(&mut session, slot.id, ControlInput::Select(none));
+    assert!(matches!(
+        session.screen().control(slot.id).unwrap().kind,
+        ControlKind::Choice { selected: Some(index), .. } if index == none
+    ));
+    let mut current = TabInventory::default();
+    session.screen().visit(&mut current);
+    assert!(
+        current
+            .0
+            .iter()
+            .find(|tab| tab.id == input.id)
+            .unwrap()
+            .selected
+    );
+}
