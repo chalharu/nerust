@@ -3408,8 +3408,7 @@ dependencies = [
  "rfd",
  "simple_logger",
  "wakui",
- "wakui-gtk",
- "wakui-tao",
+ "wakui-default",
 ]
 
 [[package]]
@@ -6389,6 +6388,15 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "strum",
+]
+
+[[package]]
+name = "wakui-default"
+version = "0.1.0-dev"
+dependencies = [
+ "wakui",
+ "wakui-gtk",
+ "wakui-tao",
 ]
 
 [[package]]

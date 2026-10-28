@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 FLAVORS = {
     "wakui-tao": ROOT / "gui/wakui-tao",
     "wakui-gtk": ROOT / "gui/wakui-gtk",
+    "wakui-default": ROOT / "gui/wakui-default",
 }
 
 
@@ -123,7 +124,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print("flavor policy gate OK: wakui-tao/wakui-gtk are nerust_*-free; wakui is repo-free")
+    print("flavor policy gate OK: flavors are nerust_*-free; wakui is repo-free")
     return 0
 
 

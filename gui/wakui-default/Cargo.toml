@@ -1,0 +1,25 @@
+[package]
+authors.workspace = true
+description = "wakui flavor selection: platform-default flavor plus explicit gtk/tao"
+edition.workspace = true
+license.workspace = true
+name = "wakui-default"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+wakui.workspace = true
+wakui-gtk = { workspace = true, optional = true }
+wakui-tao = { workspace = true, optional = true }
+
+# Platform default: exactly one flavor, no feature flags involved.
+# Explicit features below add the off-default flavor alongside it.
+[target.'cfg(target_os = "linux")'.dependencies]
+wakui-gtk.workspace = true
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+wakui-tao.workspace = true
+
+[features]
+gtk = ["dep:wakui-gtk"]
+tao = ["dep:wakui-tao"]
