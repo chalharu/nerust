@@ -1365,7 +1365,9 @@ pub(crate) mod tests {
             Vec::new(),
             0,
             Vec::new(),
-            nerust_settings_core::model::language::AppLanguage::English,
+            nerust_frontend_host::debugger::PpuChrome::new(
+                nerust_settings_core::model::language::AppLanguage::English,
+            ),
         )
         .expect("PPU grouped body");
         assert_eq!(
@@ -1416,7 +1418,9 @@ pub(crate) mod tests {
                 Vec::new(),
                 0,
                 Vec::new(),
-                nerust_settings_core::model::language::AppLanguage::English,
+                nerust_frontend_host::debugger::PpuChrome::new(
+                    nerust_settings_core::model::language::AppLanguage::English
+                ),
             )
             .is_none()
         );

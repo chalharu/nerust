@@ -4,7 +4,7 @@ mod bridge;
 mod driver;
 mod model;
 
-pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot, lock_recovered};
+pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot, PpuChrome, lock_recovered};
 pub use driver::{DebuggerDriver, DebuggerEffects, DebuggerLiveEffects};
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 

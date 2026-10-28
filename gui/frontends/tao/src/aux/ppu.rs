@@ -6,12 +6,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use iced::{Length, Point, Task};
+use iced::{Length, Task};
 use iced_winit::program::{self, Program};
 
 use tao::event_loop::EventLoopWindowTarget;
 
 use super::bridge::DebugBridge;
+use nerust_frontend_host::debugger::PpuChrome;
 
 /// Poison-safe snapshot read: recovers the last snapshot after a panic.
 fn snapshot_read(
@@ -44,25 +45,6 @@ use super::registry::AuxController;
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
 use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
-/// Tile hover delegates to the shared viewmodel line; tao only
-/// converts the iced point to raw coordinates at the boundary.
-fn tile_hover_text(
-    language: nerust_settings_core::model::language::AppLanguage,
-    label: &str,
-    width: u32,
-    height: u32,
-    point: Point,
-) -> String {
-    nerust_gui_viewmodel::debugger::tile_hover_text(
-        language,
-        label,
-        width,
-        height,
-        f64::from(point.x),
-        f64::from(point.y),
-    )
-}
-
 #[derive(Debug, Clone)]
 pub(crate) enum PpuMessage {
     Hovered(String),
@@ -88,17 +70,20 @@ struct PpuSnapshot {
     scaled: ScaledPictures,
     panels: Arc<str>,
     hover: Arc<str>,
+    /// Pre-localized chrome from the host bridge; refreshed on Sync.
+    chrome: PpuChrome,
     /// Generation of the source images behind `scaled`.
     /// Starts at `u64::MAX` so the first Sync always derives.
     source_gen: u64,
 }
 
 impl PpuSnapshot {
-    fn empty() -> Arc<Self> {
+    fn empty(chrome: PpuChrome) -> Arc<Self> {
         Arc::new(Self {
             scaled: Arc::from([]),
             panels: Arc::from(""),
             hover: Arc::from(""),
+            chrome,
             source_gen: u64::MAX,
         })
     }
@@ -139,7 +124,7 @@ impl Program for PpuProgram {
         (
             PpuState {
                 bridge: Arc::clone(&self.bridge),
-                snapshot: RwLock::new(PpuSnapshot::empty()),
+                snapshot: RwLock::new(PpuSnapshot::empty(self.bridge.ppu_chrome())),
             },
             Task::none(),
         )
@@ -161,6 +146,7 @@ impl Program for PpuProgram {
                     scaled: Arc::clone(&current.scaled),
                     panels: Arc::clone(&current.panels),
                     hover: Arc::from(line),
+                    chrome: current.chrome.clone(),
                     source_gen: current.source_gen,
                 });
                 bridge.ppu_invalidated.store(true, Ordering::Release);
@@ -198,6 +184,7 @@ impl Program for PpuProgram {
                     scaled,
                     panels,
                     hover: Arc::clone(&current.hover),
+                    chrome: bridge.ppu_chrome(),
                     source_gen: generation,
                 });
             }
@@ -211,20 +198,20 @@ impl Program for PpuProgram {
         _window: iced::window::Id,
     ) -> iced::Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         use iced::widget::{column, image, mouse_area, scrollable, text};
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
         // Single coherent capture: one lock, one `Arc`; scaled bytes
-        // come from the Sync cache, never re-derived here.
-        let language = state.bridge.language();
+        // come from the Sync cache, never re-derived here. All chrome
+        // strings arrive pre-localized in the snapshot.
         let snapshot = Arc::clone(&snapshot_read(&state.snapshot));
         // Borrow the scaled `Arc` (handles clone per row, cheap Arc). Cold text borrows first:
         // owned copies materialize only for shown sections, never for hidden or empty ones.
         let scaled = &snapshot.scaled;
         let hover_text: &Arc<str> = &snapshot.hover;
         let panels_text: &Arc<str> = &snapshot.panels;
+        let chrome = &snapshot.chrome;
         let mut content = column![
-            text(ui_text(language, UiText::PpuViewer)).size(18),
+            text(chrome.title.clone()).size(18),
             text(if hover_text.is_empty() {
-                ui_text(language, UiText::HoverTile).to_string()
+                chrome.hover_empty.clone()
             } else {
                 hover_text.to_string()
             })
@@ -235,29 +222,31 @@ impl Program for PpuProgram {
         .padding(16)
         .width(Length::Fill);
         if scaled.is_empty() {
-            content = content.push(text(ui_text(language, UiText::NoImages)).size(14));
+            content = content.push(text(chrome.no_images.clone()).size(14));
         }
+        let state_bridge = Arc::clone(&state.bridge);
         for (label, width, height, handle) in scaled.iter() {
             content = content.push(text(label.clone()).size(14));
             // Arc clone only: the bytes were scaled once at Sync time.
             let shown = image(handle.clone());
             let hover_label = label.clone();
+            let row_bridge = Arc::clone(&state_bridge);
             // Cache stores display size; halve back for hover math.
             let (hover_w, hover_h) = (width / 2, height / 2);
             content = content.push(mouse_area(shown).on_move(move |point| {
-                PpuMessage::Hovered(tile_hover_text(
-                    language,
+                PpuMessage::Hovered(row_bridge.hover_line(
                     &hover_label,
                     hover_w,
                     hover_h,
-                    point,
+                    f64::from(point.x),
+                    f64::from(point.y),
                 ))
             }));
         }
         // Systems without observation tables (GBA/GBC) show no
         // Panels section at all instead of a puzzling marker.
         if nerust_gui_viewmodel::debugger::panels_visible(panels_text) {
-            content = content.push(text(ui_text(language, UiText::Panels)).size(16));
+            content = content.push(text(chrome.panels_title.clone()).size(16));
             content = content.push(
                 text(panels_text.to_string())
                     .size(14)
@@ -382,27 +371,21 @@ mod tests {
 
     #[test]
     fn tile_hover_reports_index_and_offset() {
-        use nerust_settings_core::model::language::AppLanguage;
-        let line = tile_hover_text(
-            AppLanguage::English,
-            "Pattern left",
-            128,
-            128,
-            Point::new(88.0, 26.0),
-        );
+        let bridge = ppu_bridge();
+        let line = bridge.hover_line("Pattern left", 128, 128, 88.0, 26.0);
         assert_eq!(line, "Pattern left tile #21 (px 44,13, +0x0150)");
     }
 
     #[test]
     fn tile_hover_clamps_to_table() {
         use nerust_settings_core::model::language::AppLanguage;
-        let line = tile_hover_text(
+        let bridge = Arc::new(DebugBridge::new(
+            nerust_gui_viewmodel::debugger::DisplayCache::default(),
+            Vec::new(),
+            0,
             AppLanguage::Japanese,
-            "Pattern right",
-            128,
-            128,
-            Point::new(500.0, 500.0),
-        );
+        ));
+        let line = bridge.hover_line("Pattern right", 128, 128, 500.0, 500.0);
         assert!(line.starts_with("Pattern right タイル #255 "));
     }
 
@@ -430,7 +413,7 @@ mod tests {
     fn ppu_state(bridge: &Arc<DebugBridge>) -> PpuState {
         PpuState {
             bridge: Arc::clone(bridge),
-            snapshot: RwLock::new(PpuSnapshot::empty()),
+            snapshot: RwLock::new(PpuSnapshot::empty(bridge.ppu_chrome())),
         }
     }
 

@@ -937,11 +937,11 @@ impl DebuggerWindowCore {
         let images = win.borrow().data.display.images.clone();
         let images_gen = win.borrow().data.display.images_gen;
         let panels = win.borrow().data.display.panels.clone();
-        let language = win.borrow().data.language;
+        let chrome = nerust_frontend_host::debugger::PpuChrome::new(win.borrow().data.language);
         let model = win.borrow().viewers.window(id).cloned();
         let ppu = model.and_then(|model| {
             super::ppu_window::PpuWindowCore::from_window(
-                &model, &app, &main, state, images, images_gen, panels, language,
+                &model, &app, &main, state, images, images_gen, panels, chrome,
             )
         });
         let Some(ppu) = ppu else {
