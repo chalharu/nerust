@@ -202,7 +202,7 @@ impl WindowRuntime {
         self.host.drain_debug_requests();
         if self.host.take_ppu_open_request() {
             self.host.open_debug_windows(opener, true);
-            self.host.run_debug_drain(&[]);
+            self.host.refresh_open_debugger();
         }
     }
 }

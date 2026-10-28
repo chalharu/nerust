@@ -112,7 +112,11 @@ impl HostState {
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, true);
         if self.is_debug_open() {
-            self.run_debug_drain(&[nerust_gui_shell::debug::DebugAction::Refresh]);
+            if let Some(bridge) = self.debug_bridge_for_ppu() {
+                use crate::aux::debug::DebugMessage;
+                bridge.dispatch(DebugMessage::RefreshPressed);
+            }
+            self.drain_debug_requests();
         }
     }
 
