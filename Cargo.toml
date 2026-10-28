@@ -22,10 +22,8 @@ members = [
   "console/nes/settings",
   "gui/emu-thread",
   "gui/frontends/android",
-  "gui/frontends/gtk",
   "gui/frontends/kernel",
   "gui/frontends/rom_tool",
-  "gui/frontends/tao",
   "gui/frontends/view-defs",
   "gui/run-options",
   "gui/runtime",
@@ -75,7 +73,7 @@ clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
-nerust_gtk = { optional = true, workspace = true }
+wakui-gtk = { optional = true, workspace = true }
 nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard = { optional = true, workspace = true }
@@ -92,7 +90,7 @@ nerust_render_wgpu = { optional = true, workspace = true }
 nerust_run_options.workspace = true
 nerust_sound_cpal = { optional = true, workspace = true }
 nerust_sound_cubeb = { optional = true, workspace = true }
-nerust_tao = { optional = true, workspace = true }
+wakui-tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [dev-dependencies]
@@ -103,11 +101,11 @@ nerust_settings_core.workspace = true
 default = ["nes", "gbc", "gba", "wgpu"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_crash_guard"]
+gtk = ["wakui-gtk", "nerust_sound_cpal", "nerust_sound_cubeb", "nerust_crash_guard"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "nerust_tao", "nerust_crash_guard", "rfd"]
+tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "wakui-tao", "nerust_crash_guard", "rfd"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
@@ -201,7 +199,6 @@ nerust_gbc_device = { path = "console/gbc/device" }
 nerust_gbc_factory = { path = "console/gbc/factory" }
 nerust_gbc_settings = { path = "console/gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
-nerust_gtk = { path = "gui/frontends/gtk" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_frontend_kernel = { path = "gui/frontends/kernel" }
@@ -234,7 +231,6 @@ nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_cubeb = { path = "sound/cubeb" }
 nerust_sound_filter = { path = "sound/filter" }
 nerust_sound_spectrum = { path = "sound/spectrum" }
-nerust_tao = { path = "gui/frontends/tao" }
 nerust_timer = { path = "timer" }
 objc2 = { default-features = false, version = "=0.6.5" }
 objc2-app-kit = { default-features = false, features = [
