@@ -6467,10 +6467,15 @@ dependencies = [
 name = "wakui-tao"
 version = "0.1.0-dev"
 dependencies = [
+ "gdkx11",
+ "gtk",
  "iced",
  "iced_tiny_skia",
  "iced_winit",
  "log",
+ "muda",
+ "raw-window-handle",
+ "rfd",
  "strum",
  "tao",
  "wakui",

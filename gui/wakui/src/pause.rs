@@ -5,7 +5,7 @@
 //! is adopted only when acquiring the first hold, so a settings or modal
 //! hold never manifests as a user hold on release.
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PauseOwner {
     User,
     Focus,
