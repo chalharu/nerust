@@ -5,8 +5,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
-use nerust_frontend_host::debugger::{DebugHandle, PpuChrome, ScaledPicture};
-use nerust_frontend_host::window::{PpuContents, Window as HostWindow, WindowVisitor};
+use wakui::debugger::{DebugHandle, PpuChrome, ScaledPicture};
+use wakui::window::{PpuContents, Window as HostWindow, WindowVisitor};
 
 use super::State;
 

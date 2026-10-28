@@ -1,5 +1,5 @@
-use nerust_frontend_host::menu::{MenuCapabilities, Menubar};
 use tao::window::Window as TaoWindow;
+use wakui::menu::{MenuCapabilities, Menubar};
 
 pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: false,
@@ -41,15 +41,6 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuItem, Submenu};
-    use nerust_frontend_host::event::EventSink;
-    use nerust_frontend_host::{
-        commands::{CommandDescriptor, CommandVisitor},
-        menu::{
-            MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
-            NativeApplicationRole, Submenu as HostMenu,
-        },
-        widgets::MenuPresenter,
-    };
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
     #[cfg(any(
@@ -62,6 +53,15 @@ pub(crate) mod imp {
     use tao::platform::unix::WindowExtUnix;
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
+    use wakui::event::EventSink;
+    use wakui::{
+        commands::{CommandDescriptor, CommandVisitor},
+        menu::{
+            MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
+            NativeApplicationRole, Submenu as HostMenu,
+        },
+        menu_presenter::MenuPresenter,
+    };
 
     use super::TaoWindow;
     use crate::event::{MenuCommand, UserEvent};
@@ -343,8 +343,8 @@ pub(crate) mod imp {
     #[cfg(test)]
     mod tests {
         use super::{MenuCommand, try_append};
-        use nerust_frontend_host::commands::MenuCommand as EventCommand;
-        use nerust_frontend_host::commands::NativeRole;
+        use wakui::commands::MenuCommand as EventCommand;
+        use wakui::commands::NativeRole;
 
         #[test]
         fn native_commands_are_host_commands_without_conversion() {
@@ -375,8 +375,6 @@ pub(crate) mod imp {
 
             use gtk::prelude::*;
             use muda::{MenuItem, MenuItemKind};
-            use nerust_frontend_host::commands::SessionCommand as S;
-            use nerust_frontend_host::menu::MenuId;
             use nerust_frontend_viewdefs::{
                 application::MenuSig,
                 event::{EventCommand as HostEvent, EventSink},
@@ -391,6 +389,8 @@ pub(crate) mod imp {
                 },
             };
             use wakui::Key;
+            use wakui::commands::SessionCommand as S;
+            use wakui::menu::MenuId;
 
             use super::AppMenu;
 
@@ -760,7 +760,7 @@ pub(crate) mod imp {
 
             // Root structure comes from Host, even when exercising a standard
             // application menu on this test platform rather than macOS.
-            use nerust_frontend_host::menu::{
+            use wakui::menu::{
                 NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
             };
             let mut root = nerust_frontend_viewdefs::menu::build_menubar(
@@ -829,9 +829,9 @@ pub(crate) mod imp {
 )))]
 pub(crate) mod imp {
     use super::TaoWindow;
-    use nerust_frontend_host::event::EventSink;
-    use nerust_frontend_host::menu::Menubar;
     use std::sync::Arc;
+    use wakui::event::EventSink;
+    use wakui::menu::Menubar;
 
     pub(crate) struct AppMenu;
 

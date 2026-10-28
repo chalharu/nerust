@@ -11,7 +11,7 @@ use crate::{
     widget_session::{Pending, WidgetSession, WindowSubmission},
     window::WindowEffects,
 };
-use nerust_frontend_host::aux::{AuxId, AuxWindows, OpenRequest};
+use wakui::aux::{AuxId, AuxWindows, OpenRequest};
 
 pub type WidgetWindowClose<H> = (
     Option<H>,

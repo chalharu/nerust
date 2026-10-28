@@ -378,7 +378,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         menu::MenuEntry,
         window::{WidgetContents, Window, WindowVisitor},
     };
-    use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
+    use wakui::aux::{AuxWindows, OpenRequest};
 
     let mut fixture = Fixture::new();
     let ctx = fixture.core.frame_ctx();
@@ -461,7 +461,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
             pressed: true,
         }),
         C::Session(SessionEvent::Shortcut(
-            nerust_frontend_host::session::ShortcutGesture::OpenDebugger,
+            wakui::session::ShortcutGesture::OpenDebugger,
         )),
     ] {
         let result = host.handle_event(event, true).unwrap();
@@ -501,8 +501,8 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
         commands::{MenuCommand as M, NativeRole},
         event::{CommandEffect as E, EventCommand as C, EventHandler},
     };
-    use nerust_frontend_host::event::EventSink;
     use std::{cell::RefCell, rc::Rc};
+    use wakui::event::EventSink;
     struct Sink(Rc<RefCell<Vec<C>>>);
     impl EventSink for Sink {
         fn send(&self, event: C) -> bool {
@@ -535,11 +535,11 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
     let mut state = fixture.borrow_mut();
     for (shortcut, effect) in [
         (
-            nerust_frontend_host::session::ShortcutGesture::OpenDebugger,
+            wakui::session::ShortcutGesture::OpenDebugger,
             E::OpenAux(AuxKind::Debug),
         ),
         (
-            nerust_frontend_host::session::ShortcutGesture::ToggleFullscreen,
+            wakui::session::ShortcutGesture::ToggleFullscreen,
             E::ToggleFullscreen,
         ),
     ] {

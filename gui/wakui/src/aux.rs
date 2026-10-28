@@ -21,7 +21,7 @@ pub enum OpenRequest {
 struct Slot<N, H> {
     id: AuxId,
     window: Window,
-    mailbox: Option<crate::widget_session::WindowMailbox>,
+    mailbox: Option<crate::mailbox::WindowMailbox>,
     native: Option<N>,
     handle: Option<H>,
 }
@@ -132,11 +132,11 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
     }
 
     /// Opaque shared lifecycle signals, available during native creation too.
-    pub fn mailbox(&self, id: AuxId) -> Option<crate::widget_session::WindowMailbox> {
+    pub fn mailbox(&self, id: AuxId) -> Option<crate::mailbox::WindowMailbox> {
         self.entries.get(&self.kind_of_id(id)?)?.mailbox.clone()
     }
 
-    pub fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox) {
+    pub fn set_mailbox(&mut self, id: AuxId, mailbox: crate::mailbox::WindowMailbox) {
         let kind = self.kind_of_id(id).expect("current reservation");
         self.entries
             .get_mut(&kind)
@@ -193,8 +193,8 @@ pub trait AuxRegistryPort {
     fn kind_of_id(&self, id: AuxId) -> Option<AuxKind>;
     fn window(&self, id: AuxId) -> Option<&Window>;
     fn window_mut(&mut self, id: AuxId) -> Option<&mut Window>;
-    fn mailbox(&self, id: AuxId) -> Option<crate::widget_session::WindowMailbox>;
-    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox);
+    fn mailbox(&self, id: AuxId) -> Option<crate::mailbox::WindowMailbox>;
+    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::mailbox::WindowMailbox);
     fn contains(&self, kind: AuxKind) -> bool;
     fn has_native(&self, kind: AuxKind) -> bool;
     fn remove_native(&mut self, id: AuxId) -> Option<Box<dyn std::any::Any>>;
@@ -216,10 +216,10 @@ impl<N: Copy + Eq + Hash + 'static, H: 'static> AuxRegistryPort for AuxWindows<N
     fn window_mut(&mut self, id: AuxId) -> Option<&mut Window> {
         AuxWindows::window_mut(self, id)
     }
-    fn mailbox(&self, id: AuxId) -> Option<crate::widget_session::WindowMailbox> {
+    fn mailbox(&self, id: AuxId) -> Option<crate::mailbox::WindowMailbox> {
         AuxWindows::mailbox(self, id)
     }
-    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox) {
+    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::mailbox::WindowMailbox) {
         AuxWindows::set_mailbox(self, id, mailbox);
     }
     fn contains(&self, kind: AuxKind) -> bool {

@@ -37,7 +37,7 @@ pub fn boot(
     ctx: FrontendContext,
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
-) -> Result<nerust_frontend_host::bootstrap::Boot, String> {
+) -> Result<wakui::bootstrap::Boot, String> {
     let FrontendContext {
         gpu_factory,
         registry,
@@ -62,7 +62,7 @@ pub fn boot(
     // signatures never name the pipeline type.
     host.set_gpu_factory(gpu_factory);
     host.set_rom_loader(rom_loader);
-    Ok(nerust_frontend_host::bootstrap::Boot {
+    Ok(wakui::bootstrap::Boot {
         app: Box::new(host),
     })
 }

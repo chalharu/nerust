@@ -13,7 +13,7 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
 
-use nerust_frontend_host::window::{MainContents, Window, WindowVisitor};
+use wakui::window::{MainContents, Window, WindowVisitor};
 
 struct CreateMain<'a> {
     opener: &'a dyn WindowOpener,
@@ -194,7 +194,7 @@ impl LoopHost for HostState {
     type Frame = ();
 
     fn before_turn(&mut self) {
-        self.on_focus_event(nerust_frontend_host::focus::FocusEvent::BurstEnd);
+        self.on_focus_event(wakui::focus::FocusEvent::BurstEnd);
     }
 
     fn frame_ctx(&mut self) {}
