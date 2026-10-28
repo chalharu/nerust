@@ -32,11 +32,11 @@ fn create_factory() -> Box<dyn PipelineFactory> {
 }
 
 fn create_audio_registry() -> AudioBackendRegistry {
-    #[cfg_attr(not(any(feature = "gtk", feature = "tao")), allow(unused_mut))]
+    #[cfg_attr(not(any(feature = "cpal", feature = "cubeb")), allow(unused_mut))]
     let mut reg = AudioBackendRegistry::new();
-    #[cfg(any(feature = "gtk", feature = "tao"))]
+    #[cfg(feature = "cpal")]
     reg.register(0, Box::new(nerust_sound_cpal::CpalFactory));
-    #[cfg(any(feature = "gtk", feature = "tao"))]
+    #[cfg(feature = "cubeb")]
     reg.register(1, Box::new(nerust_sound_cubeb::CubebFactory));
     reg
 }
@@ -132,21 +132,9 @@ pub fn run() -> i32 {
         audio_registry,
     };
 
-    #[cfg(all(feature = "gtk", not(clippy)))]
-    {
-        let Some(boot) = boot_frontend(ctx, None) else {
-            return 1;
-        };
-        return run_gtk_guarded(boot, options.rom_path);
-    }
-    #[cfg(all(feature = "tao", not(clippy)))]
-    {
-        let Some(boot) = boot_frontend(ctx, Some(true)) else {
-            return 1;
-        };
-        return run_tao_guarded(boot, options.rom_path);
-    }
-    #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
+    #[cfg(all(feature = "gtk", feature = "tao"))]
+    compile_error!("Features 'gtk' and 'tao' are mutually exclusive. Enable only one frontend.");
+    #[cfg(all(not(feature = "gtk"), not(feature = "tao"), not(clippy)))]
     compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
     #[cfg(clippy)]
     {
@@ -154,23 +142,34 @@ pub fn run() -> i32 {
         let _ = options;
         0
     }
+    #[cfg(not(clippy))]
+    {
+        let Some(boot) = boot_frontend(ctx) else {
+            return 1;
+        };
+        return run_frontend(boot, options.rom_path);
+    }
 }
 
 /// Composition-root boot: the only place that turns a [`FrontendContext`]
 /// into a frontend [`Boot`](wakui::bootstrap::Boot). Native
 /// frontends never name the context, session, or settings-path types.
+#[cfg_attr(clippy, allow(dead_code))]
 fn boot_frontend(
     ctx: FrontendContext,
-    supports_vsync: Option<bool>,
 ) -> Option<wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
-    match boot(ctx, backend_capabilities(true, supports_vsync), None) {
+    match boot(
+        ctx,
+        backend_capabilities(true, frontend_supports_vsync()),
+        None,
+    ) {
         Ok(boot) => Some(boot),
         Err(detail) => {
             log::error!("failed to initialise frontend: {detail}");
             // Boot died before any window existed: match the old tao
             // init-failure dialog copy (always English, stderr stays home).
-            #[cfg(feature = "tao")]
+            #[cfg(feature = "rfd")]
             rfd::MessageDialog::new()
                 .set_title("nerust")
                 .set_description(&detail)
@@ -182,46 +181,70 @@ fn boot_frontend(
     }
 }
 
-/// Crash containment lives here, in the composition root: a crash must
-/// never look like a clean exit. Frontend `run` functions stay unguarded.
+/// Live-tick presentation differs per frontend by design: tao drives the
+/// vsync-gated path, gtk leaves its main loop in charge (see
+/// `backend_capabilities`). This is the only capability allowed to differ;
+/// every other behavior is shared.
+#[cfg(all(feature = "gtk", not(feature = "tao")))]
+#[cfg_attr(clippy, allow(dead_code))]
+fn frontend_supports_vsync() -> Option<bool> {
+    None
+}
+
+/// Live-tick presentation differs per frontend by design: tao drives the
+/// vsync-gated path, gtk leaves its main loop in charge (see
+/// `backend_capabilities`). This is the only capability allowed to differ;
+/// every other behavior is shared.
+#[cfg(feature = "tao")]
+#[cfg_attr(clippy, allow(dead_code))]
+fn frontend_supports_vsync() -> Option<bool> {
+    Some(true)
+}
+
+/// Clippy without a frontend still compiles: no capability to report.
+#[cfg(all(not(feature = "gtk"), not(feature = "tao")))]
+#[cfg_attr(clippy, allow(dead_code))]
+fn frontend_supports_vsync() -> Option<bool> {
+    None
+}
+
+/// Frontend dispatch: only the `run` entry point differs per frontend.
+/// Crash containment and boot failure dialogs are shared (see `run_guarded`).
 #[cfg(all(feature = "gtk", not(clippy)))]
-fn run_gtk_guarded(
+fn run_frontend(
     boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
     rom_path: Option<PathBuf>,
 ) -> i32 {
-    // No dialog here: the event loop died with the panic, and stderr
-    // (already logged by the guard) is the UX. Match exhaustively.
-    match nerust_crash_guard::run_guarded_with(
-        || wakui_gtk::run(boot, rom_path),
-        nerust_crash_guard::default_sink,
-        nerust_crash_guard::capture_backtrace,
-    ) {
-        // Rust panic convention: a crash never exits 0.
-        nerust_crash_guard::GuardOutcome::Completed(code) => code,
-        nerust_crash_guard::GuardOutcome::Crashed(report) => {
-            log::error!("{}", crash_note(report.message()));
-            101
-        }
-    }
+    run_guarded(boot, rom_path, wakui_gtk::run)
 }
 
-/// Crash log line: the guard already logged the full report; this
-/// names the missing-dialog situation for stderr readers.
-#[cfg(all(feature = "gtk", not(clippy)))]
-fn crash_note(message: &str) -> String {
-    format!("gtk frontend crashed with no dialog available: {message}")
-}
-
-#[cfg(all(feature = "tao", not(clippy)))]
-fn run_tao_guarded(
+/// Frontend dispatch: only the `run` entry point differs per frontend.
+/// Crash containment and boot failure dialogs are shared (see `run_guarded`).
+#[cfg(all(feature = "tao", not(feature = "gtk"), not(clippy)))]
+fn run_frontend(
     boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
     rom_path: Option<PathBuf>,
+) -> i32 {
+    run_guarded(boot, rom_path, wakui_tao::run)
+}
+
+/// Crash containment lives here, in the composition root: a crash must
+/// never look like a clean exit. Frontend `run` functions stay unguarded.
+#[cfg(all(any(feature = "gtk", feature = "tao"), not(clippy)))]
+#[allow(clippy::needless_pass_by_value)]
+fn run_guarded(
+    boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
+    rom_path: Option<PathBuf>,
+    runner: fn(
+        wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
+        Option<PathBuf>,
+    ) -> i32,
 ) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
     // Rust panic convention: a crash never exits 0.
     match nerust_crash_guard::run_guarded_with(
-        || wakui_tao::run(boot, rom_path),
+        || runner(boot, rom_path),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {
@@ -231,6 +254,7 @@ fn run_tao_guarded(
             // stack that may have just died. Stderr stays the log home.
             let dialog = crash_dialog_text(report.message());
             eprintln!("{dialog}");
+            #[cfg(feature = "rfd")]
             rfd::MessageDialog::new()
                 .set_title(crash_title())
                 .set_description(&dialog)
@@ -243,13 +267,13 @@ fn run_tao_guarded(
 }
 
 /// Crash dialog copy: inline literals, never the catalog.
-#[cfg(all(feature = "tao", not(clippy)))]
+#[cfg_attr(clippy, allow(dead_code))]
 fn crash_title() -> &'static str {
     "nerust"
 }
 
 /// Always English: crash copy must not depend on the settings stack.
-#[cfg(all(feature = "tao", not(clippy)))]
+#[cfg_attr(clippy, allow(dead_code))]
 fn crash_dialog_text(message: &str) -> String {
     format!("The application crashed: {message}\n\nDetails were written to the log (stderr).")
 }
@@ -490,15 +514,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "gtk", not(clippy)))]
-    fn crash_note_names_missing_dialog() {
-        let text = super::crash_note("boom");
-        assert!(text.contains("boom"), "{text}");
-        assert!(text.contains("no dialog"), "{text}");
-    }
-
-    #[test]
-    #[cfg(all(feature = "tao", not(clippy)))]
     fn crash_dialog_points_at_stderr_in_english() {
         use nerust_settings_core::{
             i18n::{UiText, text},
@@ -516,7 +531,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "tao", not(clippy)))]
     fn crash_dialog_is_english_without_language_input() {
         use nerust_settings_core::{
             i18n::{UiText, text},
