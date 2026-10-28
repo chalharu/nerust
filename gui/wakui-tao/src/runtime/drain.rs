@@ -1,6 +1,9 @@
 //! Debugger and live-follow orchestration for `HostState`.
 //! Drains run app-side per debug handle; native code pushes snapshots
 //! into the aux windows and routes queued gestures into the session.
+//! The PPU viewer is a generic widget window (ControlScreen with Image
+//! controls); its pictures refresh through `widget_refresh`, hover through
+//! `widget_dispatch`.
 
 use wakui::aux::OpenRequest;
 use wakui::debugger::{DebugHandle, DebuggerScope};
@@ -8,7 +11,7 @@ use wakui::debugger::{DebugHandle, DebuggerScope};
 use super::host::{HostState, WakeNeed};
 use crate::aux::debug::views;
 use crate::aux::focus::AuxKind;
-use crate::ports::WindowOpener;
+use crate::ports::{AuxOpenParams, WindowOpener};
 
 impl HostState {
     /// App-side session behind the open debugger/PPU windows, if any.
@@ -45,21 +48,23 @@ impl HostState {
         let Some(handle) = self.debug_handle else {
             return WakeNeed::default();
         };
-        let ppu_open = self.is_ppu_open();
+        let need_images = self.is_ppu_open();
         if self.core.debug_reset_if_replaced(handle) {
             // Stale inputs belonged to the retired epoch; the app rebuilt
             // the session, so drop queued gestures and resync everything.
             let _ = self.aux.drain_debug_queue();
         }
         for message in self.aux.drain_debug_queue() {
-            let effects = self.core.debug_gesture(handle, vec![], message, ppu_open);
+            let effects = self
+                .core
+                .debug_gesture(handle, vec![], message, need_images);
             if effects.open_ppu {
                 self.core.request_ppu_open();
             }
         }
-        let wake = self.core.debug_poll(handle, ppu_open);
+        let wake = self.core.debug_poll(handle, need_images);
         self.push_debug_snapshot(handle);
-        self.sync_ppu_from_app(handle);
+        self.sync_ppu_from_app();
         wake
     }
 
@@ -84,52 +89,29 @@ impl HostState {
         if !self.live_follow_active() {
             return;
         }
-        let ppu_open = self.is_ppu_open();
-        self.core.debug_live_tick(handle, ppu_open);
-        let _ = self.core.debug_poll_live(handle, true, ppu_open);
+        let need_images = self.is_ppu_open();
+        self.core.debug_live_tick(handle, need_images);
+        let _ = self.core.debug_poll_live(handle, true, need_images);
         self.push_debug_snapshot(handle);
-        self.sync_ppu_from_app(handle);
+        self.sync_ppu_from_app();
     }
 
-    /// Push fresh pictures when the app generation moved.
-    pub(super) fn sync_ppu_from_app(&mut self, handle: DebugHandle) {
-        if !self.is_ppu_open() {
+    /// Refresh the generic PPU widget from the view-side session.
+    /// The view definition owns pictures/panels/chrome; native only pushes
+    /// the projected ControlScreen.
+    pub(super) fn sync_ppu_from_app(&mut self) {
+        let Some(id) = self.aux.route_id(AuxKind::Ppu) else {
             return;
-        }
-        let generation = self.core.debug_generation(handle);
-        if generation == self.ppu_generation {
-            return;
-        }
-        self.ppu_generation = generation;
-        let pictures = self.core.debug_pictures(handle);
-        let panels = self.core.debug_panels(handle);
-        let has_panels = panels.is_some();
-        let chrome = self.core.ppu_chrome();
-        let payload = crate::aux::ppu::PpuPictures {
-            pictures,
-            panels: panels.unwrap_or_default(),
-            has_panels,
-            chrome,
-            generation,
         };
-        self.aux.push_ppu_pictures(payload);
-        // Hover lines queued while the viewer moved resolve app-side.
-        self.drain_ppu_hover(handle);
-    }
-
-    /// Resolve queued hover coordinates into text on the viewer.
-    pub(super) fn drain_ppu_hover(&mut self, handle: DebugHandle) {
-        let hovered = self.aux.drain_ppu_hover();
-        for at in hovered {
-            let line = self
-                .core
-                .debug_hover_line(handle, &at.label, at.width, at.height, at.x, at.y);
-            self.aux.push_ppu_hover(line);
+        self.core.widget_refresh(id);
+        if let Some(screen) = self.core.widget_screen(id) {
+            self.aux.push_widget_snapshot(id, &screen);
         }
     }
 
     /// Open the debugger (idempotent); the PPU viewer only for the toolbar button.
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
+    /// PPU opens as a generic widget window, like Settings/History.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         if let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Debug) {
             let position = self.core.debug_window_pos();
@@ -159,27 +141,42 @@ impl HostState {
             }
         }
         if focus_ppu && !self.is_ppu_open() {
-            if let Some(handle) = self.debug_handle {
-                let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Ppu) else {
-                    return;
+            // PPU needs a live debugger handle, like the old viewer path:
+            // headless Debug failure must not open a bridgeless PPU.
+            if self.debug_handle.is_none() {
+                return;
+            }
+            let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Ppu) else {
+                return;
+            };
+            if !self.prepare_widget(id) {
+                return;
+            }
+            let (screen, mailbox) =
+                match (self.core.widget_screen(id), self.core.widget_mailbox(id)) {
+                    (Some(screen), Some(mailbox)) => (screen, mailbox),
+                    _ => {
+                        self.core.cancel_widget(&mut self.aux.windows, id);
+                        return;
+                    }
                 };
-                let position = self.core.ppu_window_pos();
-                self.aux.window_mut(id).expect("PPU reservation").title =
-                    self.core.ppu_chrome().title.clone();
-                let opened = self.create_aux_window(
+            let opened = self.create_aux_window(
+                id,
+                opener,
+                AuxOpenParams::Controls {
                     id,
-                    opener,
-                    crate::ports::AuxOpenParams::Ppu { position },
-                );
-                if opened {
-                    // Populate the image cache immediately: the viewer derives on Sync.
-                    self.sync_ppu_from_app(handle);
-                    // The viewer is open now, so refresh with images:
-                    // the opening drain ran imageless.
-                    self.refresh_open_debugger();
-                } else {
-                    log::error!("failed to open PPU viewer window");
-                }
+                    screen: Box::new(screen),
+                    mailbox,
+                },
+            );
+            if opened {
+                // Populate immediately so the viewer never sits on PendingControls.
+                self.sync_ppu_from_app();
+                // The viewer is open now, so refresh with images:
+                // the opening drain ran imageless.
+                self.refresh_open_debugger();
+            } else {
+                log::error!("failed to open PPU viewer window");
             }
         } else if focus_ppu {
             // Second and later presses: the viewer exists, so take
@@ -196,7 +193,7 @@ impl HostState {
         };
         let wake = self.core.debug_poll(handle, self.is_ppu_open());
         self.push_debug_snapshot(handle);
-        self.sync_ppu_from_app(handle);
+        self.sync_ppu_from_app();
         wake.flight_pending
     }
 

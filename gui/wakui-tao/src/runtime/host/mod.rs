@@ -93,8 +93,6 @@ pub(crate) struct HostState {
     pub(crate) aux: AuxRegistry,
     /// App-side debug session shared by the debugger and PPU windows.
     pub(super) debug_handle: Option<wakui::debugger::DebugHandle>,
-    /// Last PPU generation pushed into the viewer.
-    pub(super) ppu_generation: u64,
 }
 
 impl HostState {
@@ -102,7 +100,6 @@ impl HostState {
     pub(crate) fn load_test_rom(&mut self) {
         // The fake app serves a canned loaded core; reset viewer state first.
         self.debug_handle = None;
-        self.ppu_generation = 0;
         self.core
             .load_rom(std::path::Path::new("test.nes"))
             .unwrap();
@@ -121,7 +118,6 @@ impl HostState {
             dialogs,
             aux: AuxRegistry::new(),
             debug_handle: None,
-            ppu_generation: 0,
         }
     }
 
@@ -185,8 +181,13 @@ impl HostState {
         self.maybe_close_debug_session();
     }
 
+    #[allow(dead_code)]
     pub(super) fn drop_ppu_window(&mut self) {
-        self.aux.remove_kind(AuxKind::Ppu);
+        if let Some(id) = self.aux.route_id(AuxKind::Ppu) {
+            self.finish_widget_window(id, true);
+        } else {
+            self.aux.remove_kind(AuxKind::Ppu);
+        }
         self.maybe_close_debug_session();
     }
 

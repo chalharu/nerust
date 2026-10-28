@@ -1381,31 +1381,59 @@ pub(crate) mod tests {
         );
         super::close_aux(&win, hid);
 
-        let mut ppu = HostWindow::auxiliary(AuxKind::Ppu);
-        ppu.id = WindowId::Main;
-        ppu.title = "owned PPU title".into();
-        let handle = state.borrow_mut().host.open_debug();
-        let viewer = crate::ppu_window::PpuWindowCore::from_window(
-            &ppu,
-            &app,
-            &main,
-            state.clone(),
-            handle,
-            Vec::new(),
-            0,
-            None,
-            state.borrow().host.ppu_chrome(),
-        )
-        .expect("PPU grouped body");
-        assert_eq!(
-            viewer.borrow().window.title().as_deref(),
-            Some(ppu.title.as_str())
-        );
-        assert!(viewer.borrow().window.child().is_some());
+        // PPU is now a generic widget window: the aux model starts pending,
+        // the view-side aux screen supplies the ControlScreen.
+        let ppu_model = HostWindow::auxiliary(AuxKind::Ppu);
         assert!(
-            crate::debugger::DebuggerWindowCore::from_window(&ppu, &app, &main, state.clone())
-                .is_none()
+            crate::debugger::DebuggerWindowCore::from_window(
+                &ppu_model,
+                &app,
+                &main,
+                state.clone()
+            )
+            .is_none(),
+            "PPU no longer uses the grouped debugger pipeline"
         );
+        let handle = state.borrow_mut().host.open_debug();
+        state.borrow_mut().host.debug_aux_refresh(handle);
+        let pscreen = state
+            .borrow()
+            .host
+            .debug_aux_screen(handle)
+            .expect("PPU aux screen");
+        assert_eq!(pscreen.title, "PPU Viewer");
+        // Generic controls rendering accepts the PPU screen like any other.
+        let pid = super::request_aux(&win, AuxKind::Ppu).unwrap();
+        {
+            let mut core = win.borrow_mut();
+            let pstate = core.state.clone();
+            pstate
+                .borrow_mut()
+                .host
+                .prepare_widget(&mut core.aux, pid)
+                .expect("prepare PPU widget");
+        }
+        let (pmodel, pscreen2, pmailbox) = {
+            let core = win.borrow();
+            let pstate = core.state.clone();
+            let borrowed = pstate.borrow();
+            (
+                core.aux.window(pid).cloned().expect("reserved PPU window"),
+                borrowed.host.widget_screen(pid).expect("PPU screen"),
+                borrowed.host.widget_mailbox(pid).expect("PPU mailbox"),
+            )
+        };
+        assert_eq!(pmodel.title, "PPU Viewer");
+        let Some(super::RenderedDialog::Controls(pbuilt)) =
+            super::render_dialog(&pmodel, &main, pid, pscreen2, pmailbox, inert_callbacks())
+        else {
+            panic!("PPU widget renders as generic controls");
+        };
+        assert!(pbuilt.dialog.content_area().first_child().is_some());
+        super::close_aux(&win, pid);
+        // Cleanup the debug handle opened for the aux screen.
+        state.borrow_mut().host.close_debug(handle);
+        let _ = pscreen;
 
         let id = super::request_aux(&win, AuxKind::History).unwrap();
         {
@@ -1457,22 +1485,15 @@ pub(crate) mod tests {
                 .is_none()
         );
         let pending_handle = state.borrow_mut().host.open_debug();
+        state.borrow_mut().host.debug_aux_refresh(pending_handle);
+        // Pending aux models never build debugger or PPU natives.
         assert!(
-            crate::ppu_window::PpuWindowCore::from_window(
-                &pending,
-                &app,
-                &main,
-                state.clone(),
-                pending_handle,
-                Vec::new(),
-                0,
-                None,
-                state.borrow().host.ppu_chrome(),
-            )
-            .is_none()
+            crate::debugger::DebuggerWindowCore::from_window(&pending, &app, &main, state.clone())
+                .is_none()
         );
+        state.borrow_mut().host.close_debug(pending_handle);
         built.dialog.destroy();
-        viewer.borrow().window.destroy();
+        pbuilt.dialog.destroy();
         native.destroy();
         main.destroy();
     }

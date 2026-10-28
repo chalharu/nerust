@@ -11,7 +11,7 @@ use wakui::{
     app::{FrontendApp, WidgetCloseOutcome},
     debugger::{
         DebugHandle, DebugInputs, DebugSnapshot, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope, PpuChrome, ScaledPicture,
+        DebuggerLiveEffects, DebuggerScope,
     },
     session::{SessionError, SessionEvent as FrameworkEvent},
 };
@@ -39,10 +39,13 @@ use crate::{
 };
 
 /// Owned debugger session: shared bridge plus its drain driver and open count.
+/// The PPU viewer session lives here so debugger-local natives (gtk) can
+/// project a stable generic ControlScreen without a global widget id.
 pub(crate) struct DebugSession {
-    bridge: DebugBridge,
-    driver: DebuggerDriver,
-    refs: usize,
+    pub(crate) bridge: DebugBridge,
+    pub(crate) driver: DebuggerDriver,
+    pub(crate) refs: usize,
+    pub(crate) ppu: std::cell::RefCell<crate::ppu::PpuSession>,
 }
 
 impl ApplicationHost {
@@ -89,6 +92,12 @@ impl ApplicationHost {
                 bridge,
                 driver: DebuggerDriver::new(),
                 refs: 1,
+                ppu: std::cell::RefCell::new(crate::ppu::PpuSession::new(
+                    crate::ppu::ppu_chrome(self.settings_snapshot().shared.general.language),
+                    Vec::new(),
+                    None,
+                    0,
+                )),
             },
         );
         let handle = DebugHandle(id);
@@ -788,21 +797,6 @@ impl FrontendApp for ApplicationHost {
         self.debug_snapshot_inner(handle)
     }
 
-    fn debug_pictures(&self, handle: DebugHandle) -> Vec<ScaledPicture> {
-        self.debug_session(handle)
-            .map(|session| session.bridge.scaled_pictures())
-            .unwrap_or_default()
-    }
-
-    fn debug_panels(&self, handle: DebugHandle) -> Option<String> {
-        self.debug_session(handle).and_then(|session| {
-            session
-                .bridge
-                .has_panels()
-                .then(|| session.bridge.formatted_panels())
-        })
-    }
-
     fn debug_paused(&self, handle: DebugHandle) -> bool {
         self.debug_session(handle)
             .is_some_and(|session| session.bridge.debugger_rows().paused)
@@ -812,6 +806,44 @@ impl FrontendApp for ApplicationHost {
         self.debug_session(handle)
             .map(|session| session.bridge.images_generation())
             .unwrap_or(0)
+    }
+
+    fn debug_aux_screen(&self, handle: DebugHandle) -> Option<ControlScreen> {
+        let session = self.debug_session(handle)?;
+        Some(session.ppu.borrow_mut().screen())
+    }
+
+    fn debug_aux_dispatch(&mut self, handle: DebugHandle, event: ControlEvent) -> bool {
+        let (screen, language) = {
+            let Some(session) = self.debug_session(handle) else {
+                return false;
+            };
+            let language = self.settings_snapshot().shared.general.language;
+            let screen = session.ppu.borrow_mut().screen();
+            (screen, language)
+        };
+        let Some(session) = self.debug_sessions.get(&handle.0) else {
+            return false;
+        };
+        session.ppu.borrow_mut().dispatch(&screen, &event, language)
+    }
+
+    fn debug_aux_refresh(&mut self, handle: DebugHandle) {
+        let language = self.settings_snapshot().shared.general.language;
+        let chrome = crate::ppu::ppu_chrome(language);
+        let Some(session) = self.debug_sessions.get(&handle.0) else {
+            return;
+        };
+        let pictures = session.bridge.scaled_pictures();
+        let panels = session
+            .bridge
+            .has_panels()
+            .then(|| session.bridge.formatted_panels());
+        let generation = session.bridge.images_generation();
+        session
+            .ppu
+            .borrow_mut()
+            .refresh(chrome, pictures, panels, generation);
     }
 
     fn debug_gesture(
@@ -866,27 +898,8 @@ impl FrontendApp for ApplicationHost {
         ApplicationHost::debugger_chrome(self)
     }
 
-    fn ppu_chrome(&self) -> PpuChrome {
-        crate::debugger::ppu_chrome(self.settings_snapshot().shared.general.language)
-    }
-
     fn debugger_window_title(&self) -> String {
         ApplicationHost::debugger_window_title(self)
-    }
-
-    fn debug_hover_line(
-        &self,
-        handle: DebugHandle,
-        label: &str,
-        width: u32,
-        height: u32,
-        x: f64,
-        y: f64,
-    ) -> String {
-        self.debug_session(handle).map_or_else(
-            || ApplicationHost::ppu_hover_text(self, label, width, height, x, y),
-            |session| session.bridge.hover_line(label, width, height, x, y),
-        )
     }
 
     fn take_debug_open_request(&mut self) -> bool {
