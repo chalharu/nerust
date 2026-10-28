@@ -2,9 +2,10 @@
 
 use std::time::Instant;
 
-use nerust_frontend_host::aux::OpenRequest;
+use nerust_frontend_host::app::FrontendApp as _;
+use nerust_frontend_host::aux::{AuxId, OpenRequest};
 use nerust_frontend_viewdefs::{
-    frame::{FrameCtx, FrameSnapshot},
+    frame::FrameCtx,
     osd::{ModalPresentation, ModalPresenter},
 };
 use tao::event::WindowEvent;
@@ -33,37 +34,50 @@ impl ModalPresenter for DialogPresenter<'_> {
 
 impl HostState {
     pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
-        let ctx = self.frame_ctx();
         let Some(request) = self.reserve_aux_window(AuxKind::History) else {
             return;
         };
         let id = match request {
             OpenRequest::Create(id) => id,
             OpenRequest::Present(_) => {
-                self.sync_history_window(ctx.frame());
+                if let Some(id) = self.aux.route_id(AuxKind::History) {
+                    self.sync_history_window(id);
+                }
                 return;
             }
             OpenRequest::Pending(_) => return,
         };
-        let Some(session) = self.prepare_widget_session(id) else {
+        if !self.prepare_widget(id) {
             return;
+        }
+        let (screen, mailbox) = match (self.core.widget_screen(id), self.core.widget_mailbox(id)) {
+            (Some(screen), Some(mailbox)) => (screen, mailbox),
+            _ => {
+                self.core.cancel_widget(&mut self.aux.windows, id);
+                return;
+            }
         };
         let opened = self.create_aux_window(
             id,
             opener,
-            crate::ports::AuxOpenParams::Controls { session },
+            crate::ports::AuxOpenParams::Controls {
+                id,
+                screen: Box::new(screen),
+                mailbox,
+            },
         );
         if opened {
             // Fresh window needs full content regardless of cache.
-            self.core.invalidate_history();
-            self.sync_history_window(ctx.frame());
+            self.sync_history_window(id);
         }
     }
 
-    fn sync_history_window(&mut self, frame: &FrameSnapshot) {
-        self.core.history_update(frame.language());
-        if let Some(id) = self.aux.route_id(AuxKind::History) {
-            self.aux.refresh_widget(id, &mut self.core);
+    fn sync_history_window(&mut self, id: AuxId) {
+        if self.core.history_changed() {
+            self.core.widget_refresh(id);
+        }
+        if let Some(screen) = self.core.widget_screen(id) {
+            self.aux.push_widget_snapshot(id, &screen);
         }
     }
 
@@ -92,9 +106,9 @@ impl HostState {
             return;
         }
         if outcome.submitted {
-            self.finish_widget_window(outcome.id.expect("routed generation"), false);
-            let ctx = self.frame_ctx();
-            self.sync_history_window(ctx.frame());
+            let id = outcome.id.expect("routed generation");
+            self.finish_widget_window(id, false);
+            self.sync_history_window(id);
         }
     }
 
@@ -121,8 +135,10 @@ impl HostState {
         if self.core.redraw_needed() {
             self.windows.request_redraw();
         }
-        if self.aux.contains(AuxKind::History) {
-            self.sync_history_window(ctx.frame());
+        if self.aux.contains(AuxKind::History)
+            && let Some(id) = self.aux.route_id(AuxKind::History)
+        {
+            self.sync_history_window(id);
         }
         // Receiver attachment adds a polling flight after the core's turn capture.
         WakeNeed {

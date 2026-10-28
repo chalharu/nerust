@@ -3,19 +3,39 @@ use crate::{
     aux::window::WindowProgram,
     runtime::host::{HostState, TestHost},
 };
-use nerust_frontend_host::aux::{AuxId, OpenRequest};
-use wakui::control::{Control, ControlInput, ControlVisitor};
+use nerust_frontend_host::{
+    app::FrontendApp as _,
+    aux::{AuxId, OpenRequest},
+};
+use wakui::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
 mod history;
 
-pub(crate) fn prepare(host: &mut HostState, kind: AuxKind) -> (AuxId, WidgetSession) {
+pub(crate) fn prepare(host: &mut HostState, kind: AuxKind) -> AuxId {
     let Some(OpenRequest::Create(id)) = host.reserve_aux_window(kind) else {
         panic!("reservation")
     };
-    (
-        id,
-        host.prepare_widget_session(id).expect("prepared session"),
-    )
+    assert!(host.prepare_widget(id), "prepared widget");
+    id
+}
+
+pub(crate) fn screen_of(host: &HostState, id: AuxId) -> ControlScreen {
+    host.core.widget_screen(id).expect("widget screen")
+}
+
+pub(crate) fn mailbox_of(
+    host: &HostState,
+    id: AuxId,
+) -> nerust_frontend_host::widget_session::WindowMailbox {
+    host.core.widget_mailbox(id).expect("widget mailbox")
+}
+
+pub(crate) fn dispatch(
+    host: &mut HostState,
+    id: AuxId,
+    event: ControlEvent,
+) -> Vec<wakui::control::ControlEffect> {
+    host.core.widget_dispatch(id, event)
 }
 
 pub(crate) fn controls(screen: &ControlScreen) -> Vec<Control> {
@@ -45,33 +65,39 @@ pub(crate) fn find(screen: &ControlScreen, label: &str) -> Control {
         })
 }
 
-pub(crate) fn activate(session: &mut WidgetSession, label: &str) {
-    let control = find(&session.screen(), label);
-    session.dispatch(Message::new(control.id, ControlInput::Activate));
+pub(crate) fn activate(host: &mut HostState, id: AuxId, label: &str) {
+    let screen = screen_of(host, id);
+    let control = find(&screen, label);
+    let _ = dispatch(host, id, Message::new(control.id, ControlInput::Activate));
 }
 
 #[test]
 fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen() {
     use iced_winit::program::Program;
     let mut host = TestHost::new().host;
-    let (_, mut session) = prepare(&mut host, AuxKind::Settings);
-    let before = session.screen();
+    let id = prepare(&mut host, AuxKind::Settings);
+    let before = screen_of(&host, id);
     let page = &before.pages[3];
-    session.dispatch(Message::new(page.select.id, ControlInput::Activate));
-    let window = session.window();
-    let binding = ControlsBinding::new(session);
-    let shared = binding.session();
+    let _ = dispatch(
+        &mut host,
+        id,
+        Message::new(page.select.id, ControlInput::Activate),
+    );
+    let after = screen_of(&host, id);
+    let (binding, shared_screen, _queue) = ControlsBinding::new(after.clone(), AuxKind::Settings);
+    assert!(binding.initial.borrow().is_some());
+    let window = host.aux.window(id).expect("reserved window").clone();
     let program = WindowProgram {
         window,
         program: binding,
     };
     let (mut state, _) = program.boot();
-    assert!(program.program.initial_state.borrow().is_none());
-    assert!(Rc::ptr_eq(&shared, &state));
+    assert!(program.program.initial.borrow().is_none());
+    assert!(Rc::ptr_eq(&shared_screen, &state.screen));
     assert_eq!(
         state
+            .screen
             .borrow()
-            .screen()
             .pages
             .iter()
             .find(|p| p.selected)
@@ -79,33 +105,36 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
             .id,
         page.id
     );
-    let control = find(&state.borrow().screen(), "Mute");
+    let control = find(&state.screen.borrow(), "Mute");
     drop(program.update(
         &mut state,
         Message::new(control.id, ControlInput::Bool(true)),
     ));
-    assert!(matches!(
-        state.borrow().screen().control(control.id).unwrap().kind,
-        wakui::control::ControlKind::Toggle { value: true }
-    ));
+    // Update queues for the host drain; the pushed screen still shows the old value.
+    assert!(state.screen.borrow().control(control.id).is_some());
     let id = iced::window::Id::unique();
-    assert_eq!(program.title(&state, id), state.borrow().screen().title);
+    assert_eq!(program.title(&state, id), state.screen.borrow().title);
     drop(program.view(&state, id));
 }
 
 #[test]
 fn prepared_window_contains_the_controller_moved_into_boot() {
     let mut host = TestHost::new().host;
-    let (_, mut session) = prepare(&mut host, AuxKind::Settings);
-    let page = session.screen().pages[4].clone();
-    session.dispatch(Message::new(page.select.id, ControlInput::Activate));
-    let screen = session.screen();
-    let binding = ControlsBinding::new(session);
-    let (state, _) = binding.boot();
-    assert!(binding.initial_state.borrow().is_none());
-    assert_eq!(state.borrow().screen(), screen);
+    let id = prepare(&mut host, AuxKind::Settings);
+    let screen = screen_of(&host, id);
+    let page = screen.pages[4].clone();
+    let _ = dispatch(
+        &mut host,
+        id,
+        Message::new(page.select.id, ControlInput::Activate),
+    );
+    let updated = screen_of(&host, id);
+    let binding = ControlsBinding::new(updated.clone(), AuxKind::Settings);
+    let (state, _) = binding.0.boot();
+    assert!(binding.0.initial.borrow().is_none());
+    assert_eq!(*state.screen.borrow(), updated);
     assert!(matches!(
-        state.borrow().window().contents.contents,
+        host.aux.window(id).expect("window").contents.contents,
         nerust_frontend_host::window::WidgetContents::Controls(_)
     ));
 }
@@ -117,18 +146,20 @@ fn status_area_message_reaches_viewmodel() {
         model::language::AppLanguage,
     };
     let mut host = TestHost::new().host;
-    let (_, mut session) = prepare(&mut host, AuxKind::Settings);
+    let id = prepare(&mut host, AuxKind::Settings);
     for (key, input) in [
         (UiText::NotificationStatus, ControlInput::Bool(true)),
         (UiText::NotificationPosition, ControlInput::Select(0)),
         (UiText::NotificationStatusPosition, ControlInput::Select(2)),
         (UiText::NotificationStatusAreaMode, ControlInput::Select(1)),
     ] {
-        let c = find(&session.screen(), text(AppLanguage::English, key));
-        session.dispatch(Message::new(c.id, input));
+        let screen = screen_of(&host, id);
+        let c = find(&screen, text(AppLanguage::English, key));
+        let _ = dispatch(&mut host, id, Message::new(c.id, input));
     }
+    let screen = screen_of(&host, id);
     let c = find(
-        &session.screen(),
+        &screen,
         text(AppLanguage::English, UiText::NotificationStatusAreaMode),
     );
     assert!(matches!(
@@ -138,32 +169,26 @@ fn status_area_message_reaches_viewmodel() {
             ..
         }
     ));
-    drop(super::super::controls::build_screen(&session.screen()));
+    drop(super::super::controls::build_screen(&screen));
 }
 
 #[test]
 fn program_update_and_error_paths_stay_headless() {
     let mut host = TestHost::new().host;
-    let (_, session) = prepare(&mut host, AuxKind::Settings);
-    let binding = ControlsBinding::new(session);
+    let id = prepare(&mut host, AuxKind::Settings);
+    let screen = screen_of(&host, id);
+    let kind = AuxKind::Settings;
+    let (binding, _, _) = ControlsBinding::new(screen, kind);
     let (mut state, _) = binding.boot();
-    let pages = state.borrow().screen().pages;
+    // Updates queue for the host drain; every page stays addressable.
+    let pages = state.screen.borrow().pages.clone();
     for page in pages {
         drop(binding.update(
             &mut state,
             Message::new(page.select.id, ControlInput::Activate),
         ));
-        assert!(
-            state
-                .borrow()
-                .screen()
-                .pages
-                .iter()
-                .find(|p| p.id == page.id)
-                .unwrap()
-                .selected
-        );
     }
+    assert!(!state.queue.borrow().is_empty());
     drop(binding.view(&state, iced::window::Id::unique()));
 }
 
@@ -171,18 +196,17 @@ fn program_update_and_error_paths_stay_headless() {
 fn program_boot_and_chrome_are_headless() {
     for kind in [AuxKind::Settings, AuxKind::History] {
         let mut host = TestHost::new().host;
-        let (_, session) = prepare(&mut host, kind);
-        let mailbox = session.mailbox();
-        let binding = ControlsBinding::new(session);
+        let id = prepare(&mut host, kind);
+        let screen = screen_of(&host, id);
+        let mailbox = mailbox_of(&host, id);
+        let (binding, state_screen, _) = ControlsBinding::new(screen, kind);
         let _ = binding.settings();
         let (state, _) = binding.boot();
+        assert!(Rc::ptr_eq(&state_screen, &state.screen));
         mailbox.request_close();
-        assert!(state.borrow().mailbox().close_requested());
+        assert!(mailbox.close_requested());
         assert!(binding.theme(&state, iced::window::Id::unique()).is_none());
-        assert_eq!(
-            binding.presentation(&state).unwrap().title,
-            state.borrow().screen().title
-        );
+        assert!(binding.presentation(&state).is_none());
         drop(binding.view(&state, iced::window::Id::unique()));
     }
 }
