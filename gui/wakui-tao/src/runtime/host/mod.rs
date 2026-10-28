@@ -98,8 +98,8 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
             .unwrap();
     }
 
-    pub(crate) fn new(
-        app: wakui::bootstrap::Application<K>,
+    pub(crate) fn new<A>(
+        app: wakui::bootstrap::Application<K, A>,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Self {

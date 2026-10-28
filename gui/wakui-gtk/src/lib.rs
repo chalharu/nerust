@@ -41,6 +41,7 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
+use wakui::app::LaunchArguments;
 use wakui::bootstrap::Application;
 
 use self::window::{MenubarModels, Window, WindowExtend};
@@ -53,7 +54,7 @@ pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
-    pub(crate) fn new(app: Application<K>) -> Self {
+    pub(crate) fn new<A>(app: Application<K, A>) -> Self {
         Self {
             host: app.into_app(),
             renderer_reload_pending: false,
@@ -154,20 +155,25 @@ fn ensure_window<K: Copy + Eq + std::hash::Hash + 'static>(
 /// Crash containment and boot failure dialogs live in the composition root;
 /// see `nerust::run`.
 ///
-/// The launch document (if any) travels inside `app`: it was set by the
-/// composition root through [`Application::builder`], so `run` takes a single
-/// bundle and every backend honors it the same way.
-pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(app: Application<K>) -> i32 {
+/// Launch arguments travel inside `app` (set by the composition root through
+/// [`Application::builder`]); they are opaque file operands, never
+/// interpreted here. They are handed to the toolkit as the launch command
+/// line (equivalent to reading the process argv, but explicit), so files
+/// arrive through the native open events; the `activate` path only presents
+/// the window.
+pub fn run<K: Copy + Eq + std::hash::Hash + 'static, A: LaunchArguments>(
+    app: Application<K, A>,
+) -> i32 {
     run_inner(app);
     0
 }
 
-fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(mut app: Application<K>) {
-    // Drained once at startup: `activate` fires only when no `open` event
-    // carries files, so the launch document loads exactly once. The `open`
-    // handler drops it (OS-delivered files win there) to avoid double loads
-    // of the same CLI path forwarded by the toolkit.
-    let initial_document = Rc::new(RefCell::new(app.take_initial_document()));
+fn run_inner<K: Copy + Eq + std::hash::Hash + 'static, A: LaunchArguments>(app: Application<K, A>) {
+    // Explicit launch command line: identical handling to the toolkit reading
+    // the process argv, but the composition root stays in charge of what the
+    // backend sees (its flags were already consumed, only file operands
+    // travel here). Unknown-flag rejections from the toolkit disappear.
+    let arguments = app.arguments().files();
     let gtk_app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,
@@ -178,25 +184,19 @@ fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(mut app: Application<K>) 
     {
         let state = Rc::clone(&state);
         let current_window = current_window.clone();
-        let initial_document = Rc::clone(&initial_document);
         let _ = gtk_app.connect_activate(move |app| {
             let window = ensure_window(app, &state, &current_window);
             window.window().present();
-            if let Some(path) = initial_document.borrow_mut().take() {
-                window.load_path(&path);
-            }
         });
     }
     {
         let state = Rc::clone(&state);
         let current_window = current_window.clone();
-        let initial_document = Rc::clone(&initial_document);
         let _ = gtk_app.connect_open(move |app, files, _| {
             let window = ensure_window(app, &state, &current_window);
             // Present first: a failure dialog raised by load_path must
             // stay above the main window.
             window.window().present();
-            let _ = initial_document.borrow_mut().take();
             if let Some(path) = files.iter().find_map(|file| file.path()) {
                 // One path for every open: failure dialog and action
                 // sync live in `Window::load_path`.
@@ -225,5 +225,11 @@ fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(mut app: Application<K>) 
         });
     }
 
-    let _ = gtk_app.run();
+    let program = std::env::args()
+        .next()
+        .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
+    let command_line: Vec<&str> = std::iter::once(program.as_str())
+        .chain(arguments.iter().map(String::as_str))
+        .collect();
+    let _ = gtk_app.run_with_args(&command_line);
 }

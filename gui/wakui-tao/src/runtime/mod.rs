@@ -27,7 +27,7 @@ pub(crate) struct WindowRuntime<K: Copy + Eq + std::hash::Hash + 'static> {
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
-    pub(crate) fn new(app: Application<K>) -> Self {
+    pub(crate) fn new<A>(app: Application<K, A>) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {

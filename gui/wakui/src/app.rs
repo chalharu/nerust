@@ -36,38 +36,70 @@ pub struct WidgetCloseOutcome {
 
 /// Built bundle handed from the composition root to a frontend. The app is
 /// already constructed (session, factory, loader); frontend entry points
-/// receive only this struct. `K` is the view-side aux kind.
+/// receive only this struct. `K` is the view-side aux kind, `A` the
+/// launch-arguments type.
 ///
-/// Build it with [`Application::builder`]: the launch document (a ROM path
-/// for the emulator, any file for a third-party app) travels inside the
-/// bundle, so every backend honors it the same way. The bundle is consumed
-/// once by the backend's `run`.
-pub struct Application<K: Copy + Eq + std::hash::Hash> {
+/// Build it with [`Application::builder`]: launch arguments travel inside
+/// the bundle, so no backend reads the process argv on its own. The
+/// framework never interprets them; each backend just applies its platform
+/// file-open convention through [`LaunchArguments`] (tao opens the first
+/// file at startup, gtk routes them through the toolkit open events). The
+/// bundle is consumed once by the backend's `run`.
+///
+/// `A` defaults to `()` (no arguments); apps with richer CLIs define their
+/// own arguments struct. The builder starts untyped (`()`) and each
+/// `.arguments()` call swaps to a differently-typed builder (typestate, no
+/// `Default` bound anywhere); the [`LaunchArguments`] bound is checked at
+/// the backend's `run`, so the wrong bundle never compiles.
+pub struct Application<K: Copy + Eq + std::hash::Hash, A = ()> {
     app: Box<dyn FrontendApp<K>>,
-    initial_document: Option<std::path::PathBuf>,
+    arguments: A,
 }
 
-/// Builder for [`Application`]: the single place launch options enter the
+/// Launch arguments carried in the bundle. Backends read the file operands
+/// through this trait; the framework never interprets them. Flags were
+/// already consumed upstream, so only file operands travel here.
+pub trait LaunchArguments {
+    /// File operands to open at startup.
+    fn files(&self) -> Vec<String>;
+}
+
+impl LaunchArguments for Vec<String> {
+    fn files(&self) -> Vec<String> {
+        self.clone()
+    }
+}
+
+impl LaunchArguments for () {
+    fn files(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// Builder for [`Application`]: the single place launch arguments enter the
 /// bundle. Chainable; `build()` hands the bundle to a backend's `run`.
-pub struct ApplicationBuilder<K: Copy + Eq + std::hash::Hash> {
+///
+/// Typestate: starts as `ApplicationBuilder<K, ()>`; each `.arguments()`
+/// call swaps to a differently-typed builder. No `Default` bound is needed
+/// at any step.
+pub struct ApplicationBuilder<K: Copy + Eq + std::hash::Hash, A = ()> {
     app: Box<dyn FrontendApp<K>>,
-    initial_document: Option<std::path::PathBuf>,
+    arguments: A,
 }
 
-impl<K: Copy + Eq + std::hash::Hash> Application<K> {
-    /// Start building over an already-constructed app.
-    pub fn builder(app: Box<dyn FrontendApp<K>>) -> ApplicationBuilder<K> {
-        ApplicationBuilder {
-            app,
-            initial_document: None,
-        }
+impl<K: Copy + Eq + std::hash::Hash> Application<K, ()> {
+    /// Start building over an already-constructed app, with no arguments.
+    pub fn builder(app: Box<dyn FrontendApp<K>>) -> ApplicationBuilder<K, ()> {
+        ApplicationBuilder::new(app)
     }
 
-    /// Shortcut for a builder with no launch document.
+    /// Bundle an app with no launch arguments.
     pub fn new(app: Box<dyn FrontendApp<K>>) -> Self {
-        Self::builder(app).build()
+        Self { app, arguments: () }
     }
+}
 
+impl<K: Copy + Eq + std::hash::Hash, A> Application<K, A> {
     /// Borrow the policy owner back (e.g. for pre-run probes in tests).
     pub fn app_mut(&mut self) -> &mut dyn FrontendApp<K> {
         &mut *self.app
@@ -78,48 +110,52 @@ impl<K: Copy + Eq + std::hash::Hash> Application<K> {
         self.app
     }
 
-    /// Launch document, if one was supplied.
-    pub fn initial_document(&self) -> Option<&Path> {
-        self.initial_document.as_deref()
-    }
-
-    /// Take the launch document; backends drain it once at startup.
-    pub fn take_initial_document(&mut self) -> Option<std::path::PathBuf> {
-        self.initial_document.take()
-    }
-
-    /// Replace the launch document after the build (composition-root only).
-    pub fn set_initial_document(&mut self, path: Option<std::path::PathBuf>) {
-        self.initial_document = path;
+    /// Opaque launch arguments. The framework never interprets them;
+    /// backends read them through [`LaunchArguments`].
+    pub fn arguments(&self) -> &A {
+        &self.arguments
     }
 }
 
-impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K> {
-    /// Start building over an already-constructed app.
+impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K, ()> {
+    /// Start building over an already-constructed app, with no arguments.
     pub fn new(app: Box<dyn FrontendApp<K>>) -> Self {
-        Application::<K>::builder(app)
+        Self { app, arguments: () }
     }
 
-    /// Launch document to open at startup (ROM path, project file, ...).
-    pub fn initial_document(mut self, path: impl Into<std::path::PathBuf>) -> Self {
-        self.initial_document = Some(path.into());
-        self
-    }
-
-    /// Optional launch document; `None` keeps the current value.
-    pub fn maybe_initial_document(mut self, path: Option<std::path::PathBuf>) -> Self {
-        if let Some(path) = path {
-            self.initial_document = Some(path);
+    /// Append one launch argument, swapping to `Vec<String>` arguments.
+    pub fn argument(self, argument: impl Into<String>) -> ApplicationBuilder<K, Vec<String>> {
+        ApplicationBuilder {
+            app: self.app,
+            arguments: vec![argument.into()],
         }
-        self
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash, A> ApplicationBuilder<K, A> {
+    /// Set launch arguments, swapping to a differently-typed builder. The
+    /// type initializes here (or replaces a previous value).
+    pub fn arguments<B>(self, arguments: B) -> ApplicationBuilder<K, B> {
+        ApplicationBuilder {
+            app: self.app,
+            arguments,
+        }
     }
 
     /// Hand the bundle to a backend's `run`.
-    pub fn build(self) -> Application<K> {
+    pub fn build(self) -> Application<K, A> {
         Application {
             app: self.app,
-            initial_document: self.initial_document,
+            arguments: self.arguments,
         }
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K, Vec<String>> {
+    /// Append one launch argument (file operand).
+    pub fn argument(mut self, argument: impl Into<String>) -> Self {
+        self.arguments.push(argument.into());
+        self
     }
 }
 
