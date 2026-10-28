@@ -1,17 +1,16 @@
-//! Domain-free retained controls and native lifetime. Host owns the draft.
+//! Domain-free retained controls and native lifetime. The app owns the draft;
+//! the binding holds only a screen snapshot, an event queue, and a mailbox.
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
+    path::PathBuf,
     rc::{Rc, Weak},
 };
 
 use gtk::{glib, prelude::*};
+use nerust_frontend_host::widget_session::WindowMailbox;
 use nerust_frontend_host::window::Window as HostWindow;
-use nerust_frontend_viewdefs::widget_session::{WidgetSession, WindowSubmission};
-use wakui::{
-    binding::PickerSink as _,
-    control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
-};
+use wakui::control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen};
 
 mod renderer;
 use renderer::{ControlGtkVisitor, Registry};
@@ -19,9 +18,12 @@ use renderer::{ControlGtkVisitor, Registry};
 /// Each callback completes its owner borrow before returning to native code.
 pub(crate) struct Callbacks {
     pub current: Box<dyn Fn() -> bool>,
-    pub refresh: Box<dyn Fn(&mut WidgetSession)>,
-    pub publish: Box<dyn Fn(HostWindow)>,
-    pub submit: Box<dyn Fn(WindowSubmission) -> bool>,
+    /// Pull the latest app screen; history refresh happens app-side first.
+    pub refresh: Box<dyn Fn() -> Option<ControlScreen>>,
+    /// Dispatch queued events through the app; picker effects run natively.
+    pub submit: Box<dyn Fn(Vec<ControlEvent>) -> Vec<ControlEffect>>,
+    /// Complete a native picker round-trip through the app.
+    pub submit_picker: Box<dyn Fn(ControlId, wakui::control::Id, Option<PathBuf>)>,
     pub close: Box<dyn Fn()>,
 }
 
@@ -39,7 +41,8 @@ impl Drop for FlagGuard<'_> {
 
 pub(crate) struct WidgetBinding {
     self_weak: Weak<Self>,
-    session: RefCell<WidgetSession>,
+    screen: RefCell<ControlScreen>,
+    mailbox: WindowMailbox,
     callbacks: Callbacks,
     dialog: glib::WeakRef<gtk::Dialog>,
     stack: gtk::Stack,
@@ -63,11 +66,17 @@ impl WidgetBinding {
         self.dialog.upgrade()
     }
 
-    pub(crate) fn render(&self, screen: &ControlScreen) {
+    pub(crate) fn render(&self) {
+        let screen = self.screen.borrow();
         screen.visit(&mut ControlGtkVisitor::new(self));
     }
 
-    fn new(session: WidgetSession, dialog: &gtk::Dialog, callbacks: Callbacks) -> Rc<Self> {
+    fn new(
+        screen: ControlScreen,
+        mailbox: WindowMailbox,
+        dialog: &gtk::Dialog,
+        callbacks: Callbacks,
+    ) -> Rc<Self> {
         let stack = gtk::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
@@ -90,7 +99,8 @@ impl WidgetBinding {
         content.append(&error_label);
         let binding = Rc::new_cyclic(|weak| Self {
             self_weak: weak.clone(),
-            session: RefCell::new(session),
+            screen: RefCell::new(screen),
+            mailbox,
             callbacks,
             dialog: dialog.downgrade(),
             stack: stack.clone(),
@@ -131,9 +141,9 @@ impl WidgetBinding {
             let weak = Rc::downgrade(&binding);
             move |_, key, _, _| {
                 let Some(binding) = weak.upgrade() else {
-                    return glib::Propagation::Proceed;
+                    return glib::Propagation::Stop;
                 };
-                let capturing = binding.session.borrow().screen().capture.target.is_some();
+                let capturing = binding.screen.borrow().capture.target.is_some();
                 if !capturing {
                     return glib::Propagation::Proceed;
                 }
@@ -192,40 +202,22 @@ impl WidgetBinding {
             return;
         }
         let _guard = FlagGuard::enter(&self.draining);
-        let mut effects = Vec::new();
-        loop {
-            loop {
-                let Ok(mut session) = self.session.try_borrow_mut() else {
-                    self.schedule();
-                    return;
-                };
-                let event = self.events.borrow_mut().pop_front();
-                let Some(event) = event else { break };
-                effects.extend(session.dispatch(event));
-            }
-            self.refresh();
-            if self.events.borrow().is_empty() {
-                break;
-            }
+        let events: Vec<ControlEvent> = std::mem::take(&mut *self.events.borrow_mut())
+            .into_iter()
+            .collect();
+        if events.is_empty() {
+            return;
         }
-        // Never take a batch unless the matching generation can receive it.
+        let effects = (self.callbacks.submit)(events);
+        for effect in effects {
+            self.effect(effect);
+        }
+        self.refresh();
         if !self.live() {
             return;
         }
-        let mailbox = self.session.borrow().mailbox();
-        if let Some(submission) =
-            nerust_frontend_viewdefs::widget_session::take_submission(&mailbox)
-            && !(self.callbacks.submit)(submission)
-        {
-            self.refresh();
-            return;
-        }
-        if mailbox.close_requested() {
+        if self.mailbox.close_requested() {
             self.finish();
-            return;
-        }
-        for effect in effects {
-            self.effect(effect);
         }
     }
 
@@ -237,14 +229,7 @@ impl WidgetBinding {
             self.pending.set(true);
             return;
         }
-        {
-            let Ok(mut session) = self.session.try_borrow_mut() else {
-                self.schedule();
-                return;
-            };
-            (self.callbacks.refresh)(&mut session);
-        }
-        let dirty = self.session.borrow().mailbox().take_invalidated();
+        let dirty = self.mailbox.take_invalidated();
         if dirty {
             self.refresh();
         }
@@ -261,25 +246,23 @@ impl WidgetBinding {
         let _updating = FlagGuard::enter(&self.updating);
         loop {
             self.pending.set(false);
-            let window = {
-                let Ok(mut session) = self.session.try_borrow_mut() else {
-                    self.schedule();
-                    return;
-                };
-                // This runs before native traversal, including reentrant refresh.
-                (self.callbacks.refresh)(&mut session);
-                session.window()
+            let Some(screen) = (self.callbacks.refresh)() else {
+                self.schedule();
+                return;
             };
-            (self.callbacks.publish)(window.clone());
+            *self.screen.borrow_mut() = screen;
             let _signals = FlagGuard::enter(&self.refreshing);
-            window.visit(&mut crate::window::GtkWindowRenderer::Controls(self));
-            if !self.live() || !self.pending.get() || !self.events.borrow().is_empty() {
+            self.render();
+            if !self.live() || self.pending.get() || !self.events.borrow().is_empty() {
                 break;
             }
         }
         drop(_updating);
         if !self.draining.get() && !self.events.borrow().is_empty() {
             self.drain();
+        }
+        if self.mailbox.close_requested() {
+            self.finish();
         }
     }
 
@@ -321,9 +304,7 @@ impl WidgetBinding {
                     drop(old);
                     chooser.hide();
                     if binding.live() {
-                        if let Ok(mut session) = binding.session.try_borrow_mut() {
-                            session.submit(target, request, path);
-                        }
+                        (binding.callbacks.submit_picker)(target, request, path);
                         // Mirror drain's post-dispatch repaint: picker results
                         // produce no submission or effects, only a fresh screen.
                         binding.refresh();
@@ -382,9 +363,10 @@ pub(crate) struct WidgetDialog {
 }
 
 pub(crate) fn build(
-    model: &HostWindow,
+    _model: &HostWindow,
     parent: &gtk::ApplicationWindow,
-    session: WidgetSession,
+    screen: ControlScreen,
+    mailbox: WindowMailbox,
     callbacks: Callbacks,
 ) -> WidgetDialog {
     let dialog = gtk::Dialog::builder()
@@ -393,7 +375,7 @@ pub(crate) fn build(
         .default_width(900)
         .default_height(560)
         .build();
-    let binding = WidgetBinding::new(session, &dialog, callbacks);
+    let binding = WidgetBinding::new(screen, mailbox, &dialog, callbacks);
     // GTK's destroy-with-parent does not reliably notify a retained dialog.
     // Finish the program explicitly when its parent loses the native surface.
     let weak = Rc::downgrade(&binding);
@@ -405,7 +387,7 @@ pub(crate) fn build(
     *binding.parent_finish.borrow_mut() = Some((parent.downgrade(), signal));
     {
         let _signals = FlagGuard::enter(&binding.refreshing);
-        model.visit(&mut crate::window::GtkWindowRenderer::Controls(&binding));
+        binding.render();
     }
     // The dialog keeps its program alive; the program only weakly references it.
     // Action-area buttons (footer Cancel/OK) emit ResponseType::None;

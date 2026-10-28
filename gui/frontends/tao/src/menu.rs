@@ -829,8 +829,8 @@ pub(crate) mod imp {
 )))]
 pub(crate) mod imp {
     use super::TaoWindow;
+    use nerust_frontend_host::event::EventSink;
     use nerust_frontend_host::menu::Menubar;
-    use nerust_frontend_viewdefs::event::EventSink;
     use std::sync::Arc;
 
     pub(crate) struct AppMenu;

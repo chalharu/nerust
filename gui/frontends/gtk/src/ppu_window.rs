@@ -5,8 +5,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
+use nerust_frontend_host::debugger::{DebugHandle, PpuChrome, ScaledPicture};
 use nerust_frontend_host::window::{PpuContents, Window as HostWindow, WindowVisitor};
-use nerust_frontend_viewdefs::debugger::{PpuChrome, ScaledPicture};
 
 use super::State;
 
@@ -18,6 +18,7 @@ pub(crate) struct PpuWindowCore {
     hover_label: gtk::Label,
     chrome: PpuChrome,
     state: Rc<RefCell<State>>,
+    handle: DebugHandle,
     /// Generation of the last synced images. Refresh drains re-run
     /// sync with identical generations while paused; the widget rebuild
     /// runs only on change. Starts impossibly high so the first sync
@@ -35,6 +36,7 @@ impl PpuWindowCore {
         app: &gtk::Application,
         main: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
+        handle: DebugHandle,
         images: Vec<ScaledPicture>,
         images_gen: u64,
         panels: Option<String>,
@@ -58,7 +60,9 @@ impl PpuWindowCore {
         let mut builder = Builder {
             title: String::new(),
             build: Some(|title: &str| {
-                Self::open_group(app, main, state, images, images_gen, panels, chrome, title)
+                Self::open_group(
+                    app, main, state, handle, images, images_gen, panels, chrome, title,
+                )
             }),
             result: None,
         };
@@ -73,6 +77,7 @@ impl PpuWindowCore {
         // true dialogs stay transient, tool windows do not.
         _main_window: &gtk::ApplicationWindow,
         state: Rc<RefCell<State>>,
+        handle: DebugHandle,
         images: Vec<ScaledPicture>,
         images_gen: u64,
         panels: Option<String>,
@@ -110,6 +115,7 @@ impl PpuWindowCore {
             hover_label,
             chrome,
             state,
+            handle,
             last_gen: u64::MAX,
             last_panels: None,
         }));
@@ -165,11 +171,12 @@ impl PpuWindowCore {
             let label = image.label.clone();
             let (width, height) = (image.width, image.height);
             let state = self.state.clone();
+            let handle = self.handle;
             motion.connect_motion(move |_, x, y| {
                 let line = state
                     .borrow()
                     .host
-                    .ppu_hover_text(&label, width, height, x, y);
+                    .debug_hover_line(handle, &label, width, height, x, y);
                 hover.set_label(&line);
             });
             picture.add_controller(motion);
