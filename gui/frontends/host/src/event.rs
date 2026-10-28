@@ -1,7 +1,7 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
-use nerust_frontend_kernel::pause::PauseOwner;
 use nerust_gui_shell::session::{SessionError, access::SessionControl};
+use wakui::pause::PauseOwner;
 
 use crate::{
     application::ApplicationHost,

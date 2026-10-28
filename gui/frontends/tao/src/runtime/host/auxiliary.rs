@@ -253,7 +253,7 @@ mod tests {
     fn settings_close_releases_its_owner_even_after_registry_removal() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+        host.set_pause_owner(wakui::pause::PauseOwner::Settings, true);
         host.on_settings_closed();
         assert!(!host.settings_open());
         assert!(!host.pause_held());
@@ -265,7 +265,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.aux.insert(Box::new(StubAux::new(AuxKind::Settings)));
-        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
+        host.set_pause_owner(wakui::pause::PauseOwner::Settings, true);
         assert!(host.settings_open());
         // Registry removal is the caller's job; close teardown only
         // releases its pause owner and syncs chrome while still open.
@@ -281,12 +281,12 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.aux.insert(Box::new(StubAux::new(AuxKind::Settings)));
-        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Settings, true);
-        host.set_pause_owner(nerust_frontend_kernel::pause::PauseOwner::Modal, true);
+        host.set_pause_owner(wakui::pause::PauseOwner::Settings, true);
+        host.set_pause_owner(wakui::pause::PauseOwner::Modal, true);
         host.on_settings_closed();
         assert!(host.settings_open());
-        assert!(host.owns_pause(nerust_frontend_kernel::pause::PauseOwner::Modal));
-        assert!(!host.owns_pause(nerust_frontend_kernel::pause::PauseOwner::Settings));
+        assert!(host.owns_pause(wakui::pause::PauseOwner::Modal));
+        assert!(!host.owns_pause(wakui::pause::PauseOwner::Settings));
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn stale_close_cannot_consume_reopened_settings_submission_or_release_pause() {
         use crate::aux::widgets::bindings::tests::{activate, prepare};
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
 
         let mut host = TestHost::new().host;
         let (old, _) = prepare(&mut host, AuxKind::Settings);
@@ -330,7 +330,7 @@ mod tests {
     fn failed_opaque_save_closes_and_releases_only_settings_pause() {
         use crate::aux::widgets::bindings::tests::{activate, find, prepare};
         use nerust_frontend_host::control::{ControlEvent, ControlInput};
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
 
         let context = crate::test_session::TestContext::with_loader(
             crate::test_session::FakeRomLoader::succeeding(),

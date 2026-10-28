@@ -1,7 +1,6 @@
 //! Toolkit-independent session event delivery and composed pause ownership.
 //! The driver borrows existing host fields; it adds no native lifetime or widget.
 
-use nerust_frontend_kernel::pause::{PauseOwner, PausePolicy};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionError, SessionHandle,
@@ -10,6 +9,7 @@ use nerust_gui_shell::session::{
 };
 use nerust_keyboard::Key;
 use nerust_settings_core::model::input::ShortcutAction;
+use wakui::pause::{PauseOwner, PausePolicy};
 
 #[derive(Debug, Clone, Copy)]
 pub enum SessionEvent {

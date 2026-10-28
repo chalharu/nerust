@@ -1564,8 +1564,8 @@ mod tests {
 
     #[test]
     fn worker_replacement_rejects_old_queued_pause_and_stale_ui_resume() {
-        use nerust_frontend_kernel::pause::PauseOwner;
         use nerust_system_traits::factory::{load::MediaObject, settings::FactorySettingsView};
+        use wakui::pause::PauseOwner;
         let Some((app, main, state)) = harness() else {
             return;
         };

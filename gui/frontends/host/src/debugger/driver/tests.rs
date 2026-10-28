@@ -484,7 +484,7 @@ fn settle(driver: &mut DebuggerDriver, host: &mut ApplicationHost) {
 
 #[test]
 fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
-    use nerust_frontend_kernel::pause::PauseOwner;
+    use wakui::pause::PauseOwner;
     let mut fixture = Fixture::new();
     fixture.load();
     let mut driver = DebuggerDriver::from_session(fixture.host.session());

@@ -7,12 +7,12 @@ use crate::{
     loop_driver::WakeNeed,
     session::SessionEvent,
 };
-use nerust_frontend_kernel::pause::PausePolicy;
 use nerust_gui_shell::{
     debug::{DebugAction, DebugDrainInput, DebugDrainOutput, LiveImagesFlight},
     session::{LiveImages, SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
+use wakui::pause::PausePolicy;
 
 pub trait DebugView {
     fn apply_drain(&mut self, output: DebugDrainOutput);

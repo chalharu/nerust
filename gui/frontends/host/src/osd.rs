@@ -446,7 +446,6 @@ mod tests {
     };
 
     use nerust_core_traits::audio::AudioBackendRegistry;
-    use nerust_frontend_kernel::pause::PauseOwner;
     use nerust_gui_runtime::settings::{
         HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
     };
@@ -462,6 +461,7 @@ mod tests {
         language::AppLanguage,
         local::{NotificationAreaMode, NotificationPosition},
     };
+    use wakui::pause::PauseOwner;
 
     use super::*;
     use crate::{application::ApplicationHost, frame::FrameCache};

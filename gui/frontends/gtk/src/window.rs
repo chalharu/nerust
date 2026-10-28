@@ -1481,8 +1481,8 @@ pub(crate) mod tests {
     fn common_dialog_stale_build_cannot_remove_replacement_or_release_settings_pause() {
         use super::AuxKind;
         use gtk::prelude::{ListModelExt, WidgetExt};
-        use nerust_frontend_kernel::pause::PauseOwner;
         use std::{cell::RefCell, rc::Rc};
+        use wakui::pause::PauseOwner;
         let win = bound_window().expect("isolated Xvfb process");
         for kind in [AuxKind::History, AuxKind::Settings] {
             let stale = Rc::new(RefCell::new(None));
@@ -1957,7 +1957,7 @@ pub(crate) mod tests {
     #[test]
     fn settings_identity_guards_pause_owner_and_native_finish() {
         use super::{AuxKind, NativeAux};
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2196,7 +2196,7 @@ pub(crate) mod tests {
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
         use super::{AuxKind, EventCommand, OpenRequest};
         use nerust_frontend_host::commands::{MenuCommand, NativeRole};
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
