@@ -386,6 +386,12 @@ impl ApplicationHost {
             self.settings_snapshot().local.video.window.scaling,
         )
     }
+    /// ROM-picker filters: unified "All ROMs" first, then per-core entries.
+    /// Frontends build native filter objects verbatim from these pairs and
+    /// never name the shell registry themselves.
+    pub fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
+        nerust_gui_shell::registry::rom_picker_filters(self.session.factories())
+    }
 
     pub fn enqueue_debug(
         &mut self,
