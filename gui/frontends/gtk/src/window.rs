@@ -22,7 +22,6 @@ use nerust_frontend_host::{
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
 use nerust_gui_shell::session::{SessionError, access::SessionControl};
-use nerust_render_traits::renderer::PipelineFactory;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL,
@@ -91,7 +90,7 @@ impl Drop for MainDeliveryGuard<'_> {
     }
 }
 
-type MainSurface = (gtk::Picture, Rc<RefCell<State>>, Rc<dyn PipelineFactory>);
+type MainSurface = (gtk::Picture, Rc<RefCell<State>>);
 
 pub(crate) struct MainWindowRenderer {
     menu: GtkMenuVisitor,
@@ -167,10 +166,10 @@ impl WindowVisitor for GtkWindowRenderer<'_> {
 
     fn visit_main(&mut self, _contents: &MainContents) {
         let Self::Main(main) = self else { return };
-        if let Some((picture, state, factory)) = main.surface.take() {
+        if let Some((picture, state)) = main.surface.take() {
             let window = main.menu.window.as_ref().expect("main native window");
             window.set_child(Some(&picture));
-            let _ = Surface::bind(window, &picture, state, factory);
+            let _ = Surface::bind(window, &picture, state);
         }
     }
 
@@ -590,7 +589,6 @@ pub(crate) trait WindowExtend {
         window: gtk::ApplicationWindow,
         picture: gtk::Picture,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn PipelineFactory>,
         menubar: MenubarModels,
     ) -> Window;
     fn window(&self) -> gtk::ApplicationWindow;
@@ -629,7 +627,6 @@ impl WindowExtend for Window {
         window: gtk::ApplicationWindow,
         picture: gtk::Picture,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn PipelineFactory>,
         menubar: MenubarModels,
     ) -> Window {
         let result = Rc::new_cyclic(|weak| {
@@ -650,7 +647,7 @@ impl WindowExtend for Window {
         });
         let state = result.state();
         let model = state.borrow().host.main_window().clone();
-        present_main_model(&result, model, Some((picture, state, factory)));
+        present_main_model(&result, model, Some((picture, state)));
         {
             let weak = Rc::downgrade(&result);
             let _ = window.connect_realize(move |_window| {
@@ -1179,7 +1176,6 @@ pub(crate) mod tests {
             window,
             gtk::Picture::new(),
             state,
-            std::rc::Rc::new(MockPipelineFactory),
             super::MenubarModels::new(),
         ))
     }
@@ -2035,7 +2031,10 @@ pub(crate) mod tests {
         let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let ctx = nerust_gui_shell::context::FrontendContext {
-            gpu_factory: std::rc::Rc::new(MockPipelineFactory),
+            gpu_factory: std::rc::Rc::new(NullFactory {
+                fail_create: true,
+                ..Default::default()
+            }),
             registry,
             rom_loader: Box::new(MockRomLoader),
             audio_registry: audio,
@@ -2045,24 +2044,7 @@ pub(crate) mod tests {
         ))
     }
 
-    #[derive(Debug)]
-    struct MockPipelineFactory;
-
-    impl nerust_render_traits::renderer::PipelineFactory for MockPipelineFactory {
-        fn create_pipeline(
-            &self,
-            _config: &nerust_render_traits::renderer::RendererConfig,
-            _display: raw_window_handle::RawDisplayHandle,
-        ) -> Result<
-            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
-            nerust_render_traits::renderer::RendererError,
-        > {
-            Err(nerust_render_traits::renderer::RendererError::new(
-                "test",
-                Box::new(std::io::Error::other("no renderer in tests")),
-            ))
-        }
-    }
+    use nerust_frontend_host::viewport::testkit::NullFactory;
 
     #[derive(Debug)]
     struct MockRomLoader;

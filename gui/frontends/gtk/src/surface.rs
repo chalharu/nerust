@@ -10,9 +10,9 @@ use nerust_frontend_host::{
     loop_driver::{LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop},
     osd::{ModalPresentation, OsdUpdate},
 };
-use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
+use wakui::viewport::ViewportRegion;
 
-use super::{State, renderer::GtkRenderer};
+use super::State;
 
 pub(crate) struct SurfaceCore {
     // The window owns the native frame callback, which owns Surface. Never
@@ -22,7 +22,6 @@ pub(crate) struct SurfaceCore {
     /// backends render into memory; nothing ever presents a fullscreen
     /// native surface here, so the chrome stays visible.
     picture: gtk::Picture,
-    renderer: Rc<RefCell<GtkRenderer>>,
     pub(crate) state: Rc<RefCell<State>>,
     output_generation: Cell<Option<u64>>,
     frames: RefCell<FrameCache>,
@@ -92,7 +91,8 @@ struct GtkTurn<'a> {
     core: &'a SurfaceCore,
     window: &'a gtk::ApplicationWindow,
     state: &'a mut State,
-    physical_size: SurfaceSize,
+    physical_width: u32,
+    physical_height: u32,
     client_height: u32,
     update: OsdUpdate,
     modal: Option<ModalPresentation>,
@@ -124,10 +124,13 @@ impl LoopHost for GtkTurn<'_> {
         let now = Instant::now();
         let turn = self.state.host.pump_osd(ctx, now);
         self.modal = turn.modal;
-        self.update = self
-            .state
-            .host
-            .prepare_osd(self.physical_size, self.client_height, ctx, now);
+        self.update = self.state.host.prepare_osd_viewport(
+            self.physical_width,
+            self.physical_height,
+            self.client_height,
+            ctx,
+            now,
+        );
         turn.wake
     }
 
@@ -163,7 +166,6 @@ pub(crate) trait SurfaceExtend {
         window: &gtk::ApplicationWindow,
         picture: &gtk::Picture,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn PipelineFactory>,
     ) -> Surface;
     fn tick(&self) -> bool;
 }
@@ -173,14 +175,11 @@ impl SurfaceExtend for Surface {
         window: &gtk::ApplicationWindow,
         picture: &gtk::Picture,
         state: Rc<RefCell<State>>,
-        factory: Rc<dyn PipelineFactory>,
     ) -> Surface {
         state.borrow_mut().renderer_reload_pending = true;
-        let renderer = Rc::new(RefCell::new(GtkRenderer::new(factory)));
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.downgrade(),
             picture: picture.clone(),
-            renderer,
             state,
             output_generation: Cell::new(None),
             frames: RefCell::new(FrameCache::new()),
@@ -230,27 +229,19 @@ impl SurfaceCore {
             (0, 0)
         };
         let scale = window.scale_factor().max(1) as u32;
-        let physical_size =
-            SurfaceSize::new(width.saturating_mul(scale), height.saturating_mul(scale));
+        let (physical_width, physical_height) =
+            (width.saturating_mul(scale), height.saturating_mul(scale));
         let render_frame = render_frame && width != 0 && height != 0;
 
         // Hidden windows may have no next frame-clock tick: preserve a bounded
         // retry on contention instead of dropping the expired wake.
-        let swap = match s.state.try_borrow_mut() {
+        match s.state.try_borrow_mut() {
             Ok(mut state) => {
                 // Commit an armed auto-pause once per frame, mirroring the
                 // tao burst-end commit. Arrival cancels via focus events.
                 state.tick_focus_sync();
                 if render_frame {
                     state.swap_frame_buffer();
-                    state.render_profile().map(|profile| {
-                        (
-                            profile,
-                            state.renderer_reload_pending || !s.renderer.borrow().attached(),
-                        )
-                    })
-                } else {
-                    None
                 }
             }
             Err(_) => {
@@ -262,24 +253,28 @@ impl SurfaceCore {
             }
         };
         if render_frame {
-            Self::ensure_if_due(&s, &window, swap, physical_size, Instant::now());
+            Self::ensure_if_due(&s, &window, physical_width, physical_height, Instant::now());
         }
-        let effects = Self::poll_osd(&s, &window, physical_size);
+        let effects = Self::poll_osd(&s, &window, physical_width, physical_height);
         let deadline = match &effects {
             Some((outcome, _, _)) => outcome.deadline,
             None => Some(flight_backstop(Instant::now())),
         };
         s.wake.borrow_mut().schedule(surface, deadline);
-        let renderer = s.renderer.clone();
         drop(s);
         if let Some((_, update, modal)) = effects {
-            GtkRenderer::apply_osd(&renderer, update);
+            {
+                let s = surface.borrow();
+                let mut state = s.state.borrow_mut();
+                let generation = state.host.viewport_generation();
+                state.host.viewport_apply_osd(update, generation);
+            }
             if let Some(presentation) = modal {
                 crate::native::dialog::present_modal(surface, &window, presentation);
             }
         }
         if render_frame {
-            Self::render_image_if_ready(&surface.borrow(), physical_size);
+            Self::render_image_if_ready(&surface.borrow(), physical_width, physical_height);
         }
         true
     }
@@ -292,23 +287,30 @@ impl SurfaceCore {
     fn ensure_if_due(
         s: &SurfaceCore,
         window: &gtk::ApplicationWindow,
-        swap: Option<(nerust_render_traits::VideoRenderProfile, bool)>,
-        physical_size: SurfaceSize,
+        physical_width: u32,
+        physical_height: u32,
         now: std::time::Instant,
     ) {
-        let ready = s.retry.borrow().ready(now);
-        let Some((profile, rebuild)) = swap else {
-            return;
-        };
-        if !(ready && (rebuild || !s.renderer.borrow().attached())) {
+        if !s.retry.borrow().ready(now) {
             return;
         }
+        let force = match s.state.try_borrow() {
+            Ok(state) => state.renderer_reload_pending,
+            Err(_) => return,
+        };
         let result = window.surface().and_then(|surf| {
             let display = gdk::Display::default()?;
             super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
-                s.renderer
-                    .borrow_mut()
-                    .ensure_ready(wh, dh, &profile, physical_size)
+                let region = ViewportRegion {
+                    window: wh,
+                    display: dh,
+                    width: physical_width,
+                    height: physical_height,
+                };
+                match s.state.try_borrow_mut() {
+                    Ok(mut state) => state.host.viewport_sync(region, force),
+                    Err(_) => Ok(false),
+                }
             })
         });
         let mut state = match s.state.try_borrow_mut() {
@@ -319,13 +321,14 @@ impl SurfaceCore {
             }
         };
         match result {
-            Some(Ok(())) => {
+            Some(Ok(true)) => {
                 state.renderer_reload_pending = false;
             }
+            Some(Ok(false)) => {}
             failure => {
                 if s.retry.borrow_mut().failed(now) {
                     let detail = match failure {
-                        Some(Err(error)) => error.to_string(),
+                        Some(Err(error)) => error,
                         _ => "native surface/display handles unavailable".into(),
                     };
                     state.host.session_mut().report_external_error(
@@ -341,9 +344,16 @@ impl SurfaceCore {
     fn poll_osd(
         s: &SurfaceCore,
         window: &gtk::ApplicationWindow,
-        physical_size: SurfaceSize,
+        physical_width: u32,
+        physical_height: u32,
     ) -> Option<(TurnOutcome, OsdUpdate, Option<ModalPresentation>)> {
-        let generation = s.renderer.borrow().output_generation();
+        let generation = match s.state.try_borrow() {
+            Ok(state) => state.host.viewport_generation(),
+            Err(_) => {
+                log::warn!("gtk tick: state busy before poll, skipping frame");
+                return None;
+            }
+        };
         let client_height =
             (window.height().max(0) as u32).saturating_mul(window.scale_factor().max(1) as u32);
         let mut state = match s.state.try_borrow_mut() {
@@ -360,7 +370,8 @@ impl SurfaceCore {
             core: s,
             window,
             state: &mut state,
-            physical_size,
+            physical_width,
+            physical_height,
             client_height,
             update: OsdUpdate::default(),
             modal: None,
@@ -372,18 +383,15 @@ impl SurfaceCore {
     /// Render one frame into memory and hand it to the GTK picture, which
     /// composites it under the menubar. Nothing ever presents a fullscreen
     /// native surface, so the chrome survives by construction.
-    fn render_image_if_ready(s: &SurfaceCore, physical_size: SurfaceSize) {
-        let state = match s.state.try_borrow_mut() {
+    fn render_image_if_ready(s: &SurfaceCore, physical_width: u32, physical_height: u32) {
+        let mut state = match s.state.try_borrow_mut() {
             Ok(state) => state,
             Err(_) => {
                 log::warn!("gtk tick: state busy before render, skipping frame");
                 return;
             }
         };
-        let Some(fb) = state.frame_buffer() else {
-            return;
-        };
-        let Some(image) = s.renderer.borrow_mut().render_image(fb, physical_size) else {
+        let Some(image) = state.host.viewport_capture(physical_width, physical_height) else {
             return;
         };
         let texture = gtk::gdk::MemoryTexture::new(
@@ -401,6 +409,7 @@ impl SurfaceCore {
 #[cfg(test)]
 mod wake_tests {
     use super::*;
+    use nerust_render_traits::SurfaceSize;
     use std::{cell::Cell, time::Duration};
 
     struct Harness {
@@ -420,8 +429,7 @@ mod wake_tests {
             let picture = gtk::Picture::new();
             window.set_child(Some(&picture));
             let state = crate::window::tests::model_state();
-            let factory = state.borrow().ctx.gpu_factory.clone();
-            let surface = Surface::bind(&window, &picture, state.clone(), factory);
+            let surface = Surface::bind(&window, &picture, state.clone());
             Some(Self {
                 window,
                 state,
@@ -512,12 +520,8 @@ mod wake_tests {
         fn set_osd_layer(&mut self, _: Option<nerust_render_traits::renderer::OsdLayer>) {
             let surface = self.surface.upgrade().unwrap();
             assert!(surface.try_borrow_mut().is_ok());
-            let (state, renderer) = {
-                let s = surface.borrow();
-                (s.state.clone(), s.renderer.clone())
-            };
+            let state = surface.borrow().state.clone();
             assert!(state.try_borrow_mut().is_ok());
-            assert!(renderer.try_borrow_mut().is_ok());
         }
     }
 
@@ -525,12 +529,8 @@ mod wake_tests {
         fn set_reserved_strip(&mut self, _: nerust_render_traits::ReservedStrip) {
             let surface = self.surface.upgrade().unwrap();
             assert!(surface.try_borrow_mut().is_ok());
-            let (state, renderer) = {
-                let s = surface.borrow();
-                (s.state.clone(), s.renderer.clone())
-            };
+            let state = surface.borrow().state.clone();
             assert!(state.try_borrow_mut().is_ok());
-            assert!(renderer.try_borrow_mut().is_ok());
             let before = self.strips.get();
             self.strips.set(before + 1);
             if before == 0 {
@@ -547,10 +547,10 @@ mod wake_tests {
     fn native_turn_backend_setters_are_borrow_free_and_reentrant_updates_are_delivered() {
         let Some(h) = Harness::new() else { return };
         let strips = Rc::new(Cell::new(0));
-        let renderer = h.surface.borrow().renderer.clone();
-        renderer
+        h.state
             .borrow_mut()
-            .install_test_backend(Box::new(ReentrantBackend {
+            .host
+            .viewport_install_test_pipeline(Box::new(ReentrantBackend {
                 surface: Rc::downgrade(&h.surface),
                 strips: strips.clone(),
             }));
@@ -562,9 +562,10 @@ mod wake_tests {
         );
         assert!(h.surface.tick());
         assert_eq!(strips.get(), 2, "unchanged Host output must skip setters");
-        renderer
+        h.state
             .borrow_mut()
-            .install_test_backend(Box::new(ReentrantBackend {
+            .host
+            .viewport_install_test_pipeline(Box::new(ReentrantBackend {
                 surface: Rc::downgrade(&h.surface),
                 strips: strips.clone(),
             }));
@@ -598,12 +599,8 @@ mod wake_tests {
                         move |dialog| {
                             let surface = weak.upgrade().unwrap();
                             assert!(surface.try_borrow_mut().is_ok());
-                            let (state, renderer) = {
-                                let s = surface.borrow();
-                                (s.state.clone(), s.renderer.clone())
-                            };
+                            let state = surface.borrow().state.clone();
                             assert!(state.try_borrow_mut().is_ok());
-                            assert!(renderer.try_borrow_mut().is_ok());
                             assert!(state.borrow().host.owns_pause(PauseOwner::Modal));
                             mapped.set(mapped.get() + 1);
                             dialog.response(gtk::ResponseType::Ok);
@@ -675,8 +672,8 @@ mod wake_tests {
         assert!(s.retry.borrow().deadline().is_none());
         assert!(s.wake.borrow().source.is_none());
         assert!(s.wake.borrow().deadline.is_none());
-        assert!(!s.renderer.borrow().attached());
-        assert_eq!(s.renderer.borrow().output_generation(), 0);
+        assert!(!s.state.borrow().host.viewport_attached());
+        assert_eq!(s.state.borrow().host.viewport_generation(), 0);
         assert!(s.picture.paintable().is_none());
         drop(s);
         // Frame-clock entry also pumps instead of returning early on zero size.
@@ -748,7 +745,7 @@ mod wake_tests {
         dispatch_until(|| source.is_destroyed());
         assert!(h.surface.borrow().retry.borrow().deadline().is_none());
         assert!(h.surface.borrow().wake.borrow().source.is_none());
-        assert!(!h.surface.borrow().renderer.borrow().attached());
+        assert!(!h.surface.borrow().state.borrow().host.viewport_attached());
         assert!(h.surface.borrow().picture.paintable().is_none());
     }
 
@@ -814,7 +811,7 @@ mod wake_tests {
                 .load_resolved(MediaObject::new(None, rom), request)
                 .unwrap();
             assert!(state.host.session().tick_metrics().loaded);
-            assert!(state.render_profile().is_some());
+            assert!(state.host.render_profile().is_some());
             state
                 .host
                 .session_mut()
@@ -845,8 +842,8 @@ mod wake_tests {
             s.retry.borrow().deadline().is_none(),
             "no renderer attach attempted"
         );
-        assert_eq!(s.renderer.borrow().output_generation(), 0);
-        assert!(!s.renderer.borrow().attached());
+        assert_eq!(s.state.borrow().host.viewport_generation(), 0);
+        assert!(!s.state.borrow().host.viewport_attached());
         assert!(s.picture.paintable().is_none());
         drop(s);
         h.state.borrow_mut().host.session_mut().unload().unwrap();
@@ -883,7 +880,6 @@ mod wake_tests {
                         move |_| {
                             let surface = weak.upgrade().unwrap();
                             let s = surface.borrow_mut();
-                            assert!(s.renderer.try_borrow_mut().is_ok());
                             let state = state.borrow_mut();
                             assert!(state.host.owns_pause(PauseOwner::Modal));
                             // The firing source was cleared before entering GTK.
