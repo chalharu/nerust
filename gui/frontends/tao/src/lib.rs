@@ -30,7 +30,7 @@ pub(crate) mod test_session;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-use nerust_frontend_viewdefs::bootstrap::Boot;
+use nerust_frontend_host::bootstrap::Boot;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root;

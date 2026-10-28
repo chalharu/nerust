@@ -3,7 +3,6 @@
 //! into the aux windows and routes queued gestures into the session.
 
 use nerust_frontend_host::{
-    app::FrontendApp as _,
     aux::OpenRequest,
     debugger::{DebugHandle, DebuggerScope},
 };
@@ -57,7 +56,7 @@ impl HostState {
         for message in self.aux.drain_debug_queue() {
             let effects = self.core.debug_gesture(handle, vec![], message, ppu_open);
             if effects.open_ppu {
-                self.request_ppu_open();
+                self.core.request_ppu_open();
             }
         }
         let wake = self.core.debug_poll(handle, ppu_open);
@@ -75,8 +74,7 @@ impl HostState {
         if !self.aux.push_debug_snapshot(&view) {
             return false;
         }
-        let ctx = self.core.frame_ctx();
-        self.sync_chrome(&ctx, false);
+        self.sync_chrome(false);
         true
     }
 
@@ -136,7 +134,7 @@ impl HostState {
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         if let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Debug) {
-            let position = self.debug_window_pos();
+            let position = self.core.debug_window_pos();
             let handle = match self.debug_handle {
                 Some(handle) => handle,
                 None => {
@@ -167,7 +165,7 @@ impl HostState {
                 let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Ppu) else {
                     return;
                 };
-                let position = self.ppu_window_pos();
+                let position = self.core.ppu_window_pos();
                 self.aux.window_mut(id).expect("PPU reservation").title =
                     self.core.ppu_chrome().title.clone();
                 let opened = self.create_aux_window(
@@ -221,8 +219,8 @@ impl HostState {
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; no redraw.
-    pub(crate) fn sync_debug_chrome(&mut self, ctx: &nerust_frontend_viewdefs::frame::FrameCtx) {
-        self.sync_chrome(ctx, false);
+    pub(crate) fn sync_debug_chrome(&mut self) {
+        self.sync_chrome(false);
         if self.core.chrome_drain_due(self.is_debug_open()) {
             self.refresh_open_debugger();
         }

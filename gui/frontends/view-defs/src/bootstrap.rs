@@ -1,11 +1,8 @@
-//! Composition-root boot bundle. Native frontends receive an opaque
-//! [`Boot`] instead of naming shell, runtime, or render types: the
-//! composition root (`nerust` binary) builds it from its
-//! [`FrontendContext`](nerust_gui_shell::context::FrontendContext) and
-//! hands the built bundle to `tao`/`gtk` entry points. Frontend prod code
-//! therefore names only host and `wakui` types.
+//! Composition-root boot bundle. The composition root builds the session,
+//! factory, and loader into an opaque [`Boot`]; native frontends receive
+//! only this struct and never name shell, runtime, or render types.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use nerust_gui_runtime::settings::{
     BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
@@ -13,27 +10,6 @@ use nerust_gui_runtime::settings::{
 use nerust_gui_shell::{context::FrontendContext, session::SessionHandle};
 
 use crate::application::ApplicationHost;
-
-/// Opaque ROM-loader slot. Frontends store this and load through
-/// [`RomLoaderSlot::load`], never naming the shell loader vocabulary.
-pub struct RomLoaderSlot(Box<dyn nerust_gui_shell::load::RomLoader>);
-
-impl RomLoaderSlot {
-    /// Load a ROM through the owned host. Returns the failure detail;
-    /// presenting it is the frontend's job.
-    pub fn load(&mut self, host: &mut ApplicationHost, path: &Path) -> Result<(), String> {
-        host.load_path(&mut *self.0, path)
-            .map_err(|error| error.to_string())
-    }
-}
-
-/// Built session bundle handed from the composition root to a frontend.
-/// All shell/runtime/render types are consumed inside
-/// [`boot`]; frontend signatures name only this struct.
-pub struct Boot {
-    pub host: ApplicationHost,
-    pub loader: RomLoaderSlot,
-}
 
 /// Backend capabilities for the production frontends. Window chrome is
 /// identical on both; only live-tick presentation differs (`Some` enables
@@ -61,7 +37,7 @@ pub fn boot(
     ctx: FrontendContext,
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
-) -> Result<Boot, String> {
+) -> Result<nerust_frontend_host::bootstrap::Boot, String> {
     let FrontendContext {
         gpu_factory,
         registry,
@@ -85,8 +61,8 @@ pub fn boot(
     // The factory enters the view-definition side once; frontend
     // signatures never name the pipeline type.
     host.set_gpu_factory(gpu_factory);
-    Ok(Boot {
-        host,
-        loader: RomLoaderSlot(rom_loader),
+    host.set_rom_loader(rom_loader);
+    Ok(nerust_frontend_host::bootstrap::Boot {
+        app: Box::new(host),
     })
 }

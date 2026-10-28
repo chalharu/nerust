@@ -550,8 +550,6 @@ mod tests {
 
     #[test]
     fn on_event_reports_close_and_clear_flags() {
-        use nerust_frontend_host::app::FrontendApp as _;
-
         let mut registry = AuxRegistry::new();
         let mut stub = StubAux::new(AuxKind::History);
         let mut host = crate::runtime::host::TestHost::new().host;
@@ -562,7 +560,11 @@ mod tests {
                 _ => None,
             })
             .expect("reservation");
-        assert!(host.prepare_widget(id));
+        assert!(
+            host.core
+                .prepare_widget(&mut host.aux.windows, id)
+                .expect("prepared widget")
+        );
         stub.mailbox = host.core.widget_mailbox(id);
         stub.close = true;
         registry.insert(Box::new(stub));
@@ -606,7 +608,6 @@ mod tests {
 
     #[test]
     fn widget_ports_push_and_drain_through_the_open_entry() {
-        use nerust_frontend_host::app::FrontendApp as _;
         use wakui::control::{ControlEvent, ControlInput};
 
         let mut host = crate::runtime::host::TestHost::new().host;
@@ -617,7 +618,11 @@ mod tests {
                 _ => None,
             })
             .expect("reservation");
-        assert!(host.prepare_widget(id));
+        assert!(
+            host.core
+                .prepare_widget(&mut host.aux.windows, id)
+                .expect("prepared widget")
+        );
         let screen = host.core.widget_screen(id).expect("screen");
         let control = screen
             .pages
