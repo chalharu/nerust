@@ -14,7 +14,7 @@ use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine};
 use nerust_settings_core::model::language::AppLanguage;
 
 use crate::{
-    binding::{BindingTarget, ViewDefinition},
+    binding::{BindingTarget, ViewDefinition, drive},
     control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
     debugger::lock_recovered,
     focus::AuxKind,
@@ -266,21 +266,6 @@ impl WidgetSession {
         }
     }
 
-    /// Generic bind+apply collector shared by every domain: resolve the
-    /// retained ID and convert the input domain-side, then run the bound
-    /// events through the target. Effect mapping stays with the caller.
-    fn drive<V, T>(view: &V, id: &V::ViewId, input: V::ViewInput, target: &mut T) -> Vec<T::Effect>
-    where
-        V: ViewDefinition,
-        T: BindingTarget<DomainEvent = V::DomainEvent>,
-    {
-        view.bind(id, input)
-            .into_iter()
-            .flatten()
-            .filter_map(|event| target.apply(event))
-            .collect()
-    }
-
     /// Resolve callbacks against current topology and metadata, not retained AST
     /// bindings. The returned effects own all data; execute after releasing borrows.
     /// Picker results never arrive here; see [`PickerSink`] instead.
@@ -307,7 +292,7 @@ impl WidgetSession {
                     return Vec::new();
                 };
                 let mut effects = Vec::new();
-                for effect in Self::drive(&typed, domain_id, input, &mut **controller) {
+                for effect in drive(&typed, domain_id, input, &mut **controller) {
                     let SettingsEffect::BrowseStorageDirectory { title } = effect;
                     let request = crate::control::Id::fresh();
                     self.picker = Some((id, request));
@@ -328,7 +313,7 @@ impl WidgetSession {
                     return Vec::new();
                 };
                 let model = HistoryModel::build(&session.lines, session.language, session.filter);
-                let _ = Self::drive(&model, &action, input, session);
+                let _ = drive(&model, &action, input, session);
                 Vec::new()
             }
         }
