@@ -23,9 +23,7 @@ use nerust_frontend_host::widget_session::{MailboxDomain, WindowMailbox};
 use crate::{
     focus::AuxKind,
     history::{HistoryEffect, HistoryEvent, HistoryModel},
-    settings::{
-        SettingsController, SettingsEffect, SettingsEvent, SettingsScreen,
-    },
+    settings::{SettingsController, SettingsEffect, SettingsEvent, SettingsScreen},
     sync::lock_recovered,
     window::Window,
 };

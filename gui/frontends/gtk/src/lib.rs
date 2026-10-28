@@ -214,10 +214,7 @@ fn run_inner(boot: Boot) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_frontend_host::{
-        menu::MenuId,
-        widgets::MenuPresenter,
-    };
+    use nerust_frontend_host::{menu::MenuId, widgets::MenuPresenter};
     use nerust_frontend_viewdefs::application::MenuSig;
     use nerust_settings_core::model::{
         input::{ShortcutAction, ShortcutBinding, default_shortcut_bindings},

@@ -141,3 +141,12 @@ pub trait WindowVisitor {
     fn visit_debug(&mut self, _contents: &DebugContents) {}
     fn visit_ppu(&mut self, _contents: &PpuContents) {}
 }
+
+/// Window chrome sync decision. Frontends apply `set_fullscreen` to the
+/// native window and `restore_size` via their default-size API; the scaling
+/// policy behind the restore stays view-side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowChromeSync {
+    pub restore_size: Option<(i32, i32)>,
+    pub set_fullscreen: Option<bool>,
+}

@@ -1,41 +1,20 @@
 //! Single-owner debugger execution. Native adapters own scheduling and rendering only.
 
-use std::{
-    ops::{Deref, DerefMut},
-    sync::Arc,
-    task::Poll,
-};
+use std::{sync::Arc, task::Poll};
 
+use nerust_frontend_host::debugger::{
+    DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope,
+};
 use nerust_gui_shell::{
     debug::{DebugAction, DebugDrainInput, DebugDrainOutput, DrainFlight, LiveImagesFlight},
-    session::{LiveImages, SessionHandle, access::PauseControl},
+    session::{LiveImages, SessionHandle},
 };
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
 
-use crate::debugger::{DebuggerEvent, DebuggerModel, DebuggerScope, DrainSnapshot};
 use crate::{
-    application::ApplicationHost,
+    debugger::{BridgeView, DebugBridge, DrainSnapshot},
     drain::{DrainBatch, DrainEvent, DrainQueue, Flight, StartedDrain, prepare_pause_actions},
 };
-
-/// Owned native effects. Apply these only after releasing the controller borrow.
-#[derive(Debug, Default)]
-pub struct DebuggerEffects {
-    pub scope: Option<DebuggerScope>,
-    pub open_ppu: bool,
-    /// Clear native staged inputs; the gesture belonged to the replaced model.
-    pub epoch_reset: bool,
-    /// `poll` requests another scheduled poll. Dispatch only queues work; call
-    /// `poll` after dispatch/enqueue even when this flag is false.
-    pub pending: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct DebuggerLiveEffects {
-    pub changed: bool,
-    pub running: bool,
-    pub pending: bool,
-}
 
 #[derive(Clone)]
 struct Snapshot {
@@ -43,56 +22,43 @@ struct Snapshot {
     input: DrainSnapshot,
 }
 
-/// Toolkit-free controller for an owned debugger model, FIFO drains and live images.
-/// Generic flights permit deterministic, headless protocol tests; native callers
-/// use the default shell flights. No timers, widget handles or shadow model.
+/// Toolkit-free drain orchestration over a shared bridge. The bridge owns
+/// view state (possibly shared by several native windows); the driver owns
+/// only queues, flights, and the bound epoch. Generic flights permit
+/// deterministic, headless protocol tests; native callers use the default
+/// shell flights. No timers or widget handles.
+#[derive(Default)]
 pub struct DebuggerDriver<F = DrainFlight, L = LiveImagesFlight> {
-    model: DebuggerModel,
+    epoch: Option<Arc<std::sync::atomic::AtomicBool>>,
     drain: DrainQueue<Snapshot, F>,
     live: Option<StartedDrain<(), L>>,
 }
 
-impl<F, L> Deref for DebuggerDriver<F, L> {
-    type Target = DebuggerModel;
-    fn deref(&self) -> &Self::Target {
-        &self.model
-    }
-}
-
-impl<F, L> DerefMut for DebuggerDriver<F, L> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.model
-    }
-}
-
 impl<F, L> DebuggerDriver<F, L> {
-    pub fn new(model: DebuggerModel) -> Self {
+    pub fn new() -> Self {
         Self {
-            model,
+            epoch: None,
             drain: Default::default(),
             live: None,
         }
     }
 
-    pub fn from_session(session: &SessionHandle) -> Self {
-        Self::new(DebuggerModel::from_session(session))
-    }
-
     /// Call before reading native gesture inputs. Replacement drops all old work,
     /// including live flights and persistent write targets, even for local intents.
+    /// The caller rebuilds the bridge when this reports a replacement.
     pub fn reset_replaced_epoch(&mut self, session: &SessionHandle) -> bool {
         let epoch = session.debug_epoch();
-        if Arc::ptr_eq(&self.model.epoch, &epoch) {
+        if self
+            .epoch
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &epoch))
+        {
             return false;
         }
-        self.replace_model(DebuggerModel::from_session(session));
-        true
-    }
-
-    fn replace_model(&mut self, model: DebuggerModel) {
         self.drain.clear();
         self.live = None;
-        self.model = model;
+        self.epoch = Some(epoch);
+        true
     }
 
     pub fn pending(&self) -> bool {
@@ -107,21 +73,28 @@ impl<F, L> DebuggerDriver<F, L> {
     pub fn dispatch(
         &mut self,
         session: &SessionHandle,
+        bridge: &DebugBridge,
         inputs: impl IntoIterator<Item = DebuggerEvent>,
         event: DebuggerEvent,
         need_images: bool,
     ) -> DebuggerEffects {
         if self.reset_replaced_epoch(session) {
-            self.enqueue_current(&[DebugAction::Refresh], DebuggerScope::All, need_images);
+            self.enqueue_current(
+                &session.debug_epoch(),
+                bridge,
+                &[DebugAction::Refresh],
+                DebuggerScope::All,
+                need_images,
+            );
             return DebuggerEffects {
                 epoch_reset: true,
                 ..Default::default()
             };
         }
         for input in inputs {
-            self.model.dispatch(input);
+            bridge.dispatch(input);
         }
-        let update = self.model.dispatch(event);
+        let update = bridge.dispatch(event);
         let mut effects = DebuggerEffects {
             open_ppu: update.open_ppu,
             ..Default::default()
@@ -130,7 +103,13 @@ impl<F, L> DebuggerDriver<F, L> {
             if update.actions.is_empty() {
                 effects.scope = Some(scope);
             } else {
-                self.enqueue_current(&update.actions, scope, need_images || update.open_ppu);
+                self.enqueue_current(
+                    &session.debug_epoch(),
+                    bridge,
+                    &update.actions,
+                    scope,
+                    need_images || update.open_ppu,
+                );
             }
         }
         effects
@@ -140,26 +119,45 @@ impl<F, L> DebuggerDriver<F, L> {
     pub fn enqueue(
         &mut self,
         session: &SessionHandle,
+        bridge: &DebugBridge,
         actions: &[DebugAction],
         scope: DebuggerScope,
         need_images: bool,
     ) {
         if self.reset_replaced_epoch(session) {
-            self.enqueue_current(&[DebugAction::Refresh], DebuggerScope::All, need_images);
+            self.enqueue_current(
+                &session.debug_epoch(),
+                bridge,
+                &[DebugAction::Refresh],
+                DebuggerScope::All,
+                need_images,
+            );
         } else {
-            self.enqueue_current(actions, scope, need_images);
+            self.enqueue_current(&session.debug_epoch(), bridge, actions, scope, need_images);
         }
     }
 
     /// Gesture-side refresh port: native adapters enqueue without naming actions.
-    pub fn refresh(&mut self, session: &SessionHandle, scope: DebuggerScope, need_images: bool) {
-        self.enqueue(session, &[DebugAction::Refresh], scope, need_images);
+    pub fn refresh(
+        &mut self,
+        session: &SessionHandle,
+        bridge: &DebugBridge,
+        scope: DebuggerScope,
+        need_images: bool,
+    ) {
+        self.enqueue(session, bridge, &[DebugAction::Refresh], scope, need_images);
     }
 
     /// Gesture-side open port (Pause + Refresh) without naming actions.
-    pub fn open_refresh(&mut self, session: &SessionHandle, need_images: bool) {
+    pub fn open_refresh(
+        &mut self,
+        session: &SessionHandle,
+        bridge: &DebugBridge,
+        need_images: bool,
+    ) {
         self.enqueue(
             session,
+            bridge,
             &[DebugAction::Pause, DebugAction::Refresh],
             DebuggerScope::All,
             need_images,
@@ -168,41 +166,35 @@ impl<F, L> DebuggerDriver<F, L> {
 
     fn enqueue_current(
         &mut self,
+        epoch: &Arc<std::sync::atomic::AtomicBool>,
+        bridge: &DebugBridge,
         actions: &[DebugAction],
         scope: DebuggerScope,
         need_images: bool,
     ) {
+        let view: BridgeView = bridge.view_snapshot();
         let input = DrainSnapshot {
-            space: self.model.selected_space(),
-            mem_addr: self.model.nav.mem_addr(),
-            dis_addr: self.model.nav.dis_addr(),
-            watch: self.model.watch,
-            freeze: self.model.freeze,
-            reg_target: self.model.reg_target,
-            prev_rows: self.model.display.dump_rows.clone().into(),
+            space: bridge
+                .spaces()
+                .get(view.nav.space_idx())
+                .map(|(id, _, _)| *id),
+            mem_addr: view.nav.mem_addr(),
+            dis_addr: view.nav.dis_addr(),
+            watch: view.watch,
+            freeze: view.freeze,
+            reg_target: view.reg_target,
+            prev_rows: bridge.display_snapshot().dump_rows.clone().into(),
             ppu_open: need_images,
         };
         self.drain
-            .enqueue(self.model.epoch.clone(), actions, Snapshot { scope, input });
-    }
-
-    /// Image-free rendering capture: native rebuilds may reenter the controller.
-    pub fn view_snapshot(&self) -> DebuggerModel {
-        let mut model = DebuggerModel::new(
-            self.model.display.clone_without_images(),
-            self.model.spaces.clone(),
-            self.model.nav.mem_addr(),
-            self.model.language,
-            self.model.epoch.clone(),
-        );
-        *model = (*self.model).clone();
-        model
+            .enqueue(epoch.clone(), actions, Snapshot { scope, input });
     }
 }
 
 impl<F: Flight<Output = Box<DebugDrainOutput>>, L> DebuggerDriver<F, L> {
     fn poll_with(
         &mut self,
+        bridge: &DebugBridge,
         mut begin: impl FnMut(&mut [DebugAction], &DrainSnapshot) -> F,
     ) -> DebuggerEffects {
         let mut effects = DebuggerEffects::default();
@@ -221,7 +213,7 @@ impl<F: Flight<Output = Box<DebugDrainOutput>>, L> DebuggerDriver<F, L> {
                     }
                 }
                 DrainEvent::Done(output, snapshot) => {
-                    self.model.apply_drain(output.display, output.reselected);
+                    bridge.apply_drain_display(output.display, output.reselected);
                     effects.scope = Some(union(effects.scope, snapshot.scope));
                 }
             }
@@ -230,7 +222,7 @@ impl<F: Flight<Output = Box<DebugDrainOutput>>, L> DebuggerDriver<F, L> {
 }
 
 impl<F, L: Flight<Output = LiveImages>> DebuggerDriver<F, L> {
-    fn poll_live_with(&mut self, running: bool) -> DebuggerLiveEffects {
+    fn poll_live_with(&mut self, bridge: &DebugBridge, running: bool) -> DebuggerLiveEffects {
         let mut effects = DebuggerLiveEffects {
             running,
             ..Default::default()
@@ -244,7 +236,7 @@ impl<F, L: Flight<Output = LiveImages>> DebuggerDriver<F, L> {
                 effects.pending = true;
             }
             Poll::Ready(Some(Some(batch))) => {
-                effects.changed = self.model.apply_live_images(
+                effects.changed = bridge.apply_live_images(
                     batch.generation,
                     batch
                         .images
@@ -264,9 +256,9 @@ impl<F, L: Flight<Output = LiveImages>> DebuggerDriver<F, L> {
         effects
     }
 
-    fn begin_live(&mut self, begin: impl FnOnce() -> L) {
+    fn begin_live(&mut self, epoch: Arc<std::sync::atomic::AtomicBool>, begin: impl FnOnce() -> L) {
         self.live = DrainBatch {
-            epoch: self.model.epoch.clone(),
+            epoch,
             actions: vec![],
             snapshot: (),
         }
@@ -275,16 +267,18 @@ impl<F, L: Flight<Output = LiveImages>> DebuggerDriver<F, L> {
 
     fn live_tick_with(
         &mut self,
+        bridge: &DebugBridge,
+        epoch: Arc<std::sync::atomic::AtomicBool>,
         running: bool,
         interested: bool,
         begin: impl FnOnce() -> L,
     ) -> DebuggerLiveEffects {
-        let mut effects = self.poll_live_with(running);
+        let mut effects = self.poll_live_with(bridge, running);
         if effects.pending || !interested || !running {
             return effects;
         }
-        self.begin_live(begin);
-        let next = self.poll_live_with(running);
+        self.begin_live(epoch, begin);
+        let next = self.poll_live_with(bridge, running);
         effects.changed |= next.changed;
         effects.pending = next.pending;
         effects
@@ -292,20 +286,32 @@ impl<F, L: Flight<Output = LiveImages>> DebuggerDriver<F, L> {
 }
 
 impl DebuggerDriver {
-    /// Pause ownership goes through ApplicationHost, never raw session side effects.
-    /// FIFO boundaries ensure a later resume cannot run ahead of an earlier write.
-    pub fn poll(&mut self, host: &mut ApplicationHost) -> DebuggerEffects {
-        self.poll_with(|actions, snapshot| {
+    /// Pause ownership goes through the session's pause policy, never raw
+    /// session side effects. FIFO boundaries ensure a later resume cannot
+    /// run ahead of an earlier write.
+    pub fn poll(
+        &mut self,
+        session: &mut nerust_gui_shell::session::SessionHandle,
+        pause: &mut wakui::pause::PausePolicy,
+        bridge: &DebugBridge,
+    ) -> DebuggerEffects {
+        use nerust_gui_shell::session::commands::SessionCommand;
+        self.poll_with(bridge, |actions, snapshot| {
             prepare_pause_actions(actions, |action| {
-                match action {
-                    DebugAction::Pause => host.pause(),
-                    DebugAction::Resume => host.resume(),
-                    DebugAction::TogglePause => host.toggle_pause(),
+                let command = match action {
+                    DebugAction::Pause => SessionCommand::Pause,
+                    DebugAction::Resume => SessionCommand::Resume,
+                    DebugAction::TogglePause => SessionCommand::TogglePause,
                     _ => unreachable!("pause actions only"),
-                }
-                host.tick().loaded
+                };
+                let _ = crate::session::dispatch(
+                    session,
+                    pause,
+                    crate::session::SessionEvent::Command(command),
+                );
+                session.tick_metrics().loaded
             });
-            host.session().debug_drain_begin(
+            session.debug_drain_begin(
                 actions,
                 &DebugDrainInput {
                     space: snapshot.space,
@@ -321,9 +327,13 @@ impl DebuggerDriver {
         })
     }
 
-    pub fn poll_live(&mut self, session: &SessionHandle) -> DebuggerLiveEffects {
+    pub fn poll_live(
+        &mut self,
+        session: &SessionHandle,
+        bridge: &DebugBridge,
+    ) -> DebuggerLiveEffects {
         let tick = session.tick_metrics();
-        self.poll_live_with(tick.loaded && !tick.paused)
+        self.poll_live_with(bridge, tick.loaded && !tick.paused)
     }
 
     /// Native cadence requests a turn; interest/running and single-flight policy
@@ -331,13 +341,20 @@ impl DebuggerDriver {
     pub fn live_tick(
         &mut self,
         session: &SessionHandle,
+        bridge: &DebugBridge,
         visible: bool,
         need_images: bool,
     ) -> DebuggerLiveEffects {
         let tick = session.tick_metrics();
+        let epoch_ok = self
+            .epoch
+            .as_ref()
+            .is_some_and(|epoch| Arc::ptr_eq(epoch, &session.debug_epoch()));
         self.live_tick_with(
+            bridge,
+            session.debug_epoch(),
             tick.loaded && !tick.paused,
-            visible && need_images && Arc::ptr_eq(&self.model.epoch, &session.debug_epoch()),
+            visible && need_images && epoch_ok,
             || session.debug_live_images_begin(true),
         )
     }

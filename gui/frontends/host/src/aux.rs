@@ -184,6 +184,58 @@ impl<N: Copy + Eq + Hash, H> AuxWindows<N, H> {
     }
 }
 
+/// Object-safe registry port for app operations. Frontends own typed
+/// `AuxWindows<N, H>` registries and pass them by trait object; the app
+/// never names native ids or handles.
+pub trait AuxRegistryPort {
+    fn request_open(&mut self, kind: AuxKind) -> OpenRequest;
+    fn cancel_open(&mut self, id: AuxId) -> bool;
+    fn kind_of_id(&self, id: AuxId) -> Option<AuxKind>;
+    fn window(&self, id: AuxId) -> Option<&Window>;
+    fn window_mut(&mut self, id: AuxId) -> Option<&mut Window>;
+    fn mailbox(&self, id: AuxId) -> Option<crate::widget_session::WindowMailbox>;
+    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox);
+    fn contains(&self, kind: AuxKind) -> bool;
+    fn has_native(&self, kind: AuxKind) -> bool;
+    fn remove_native(&mut self, id: AuxId) -> Option<Box<dyn std::any::Any>>;
+}
+
+impl<N: Copy + Eq + Hash + 'static, H: 'static> AuxRegistryPort for AuxWindows<N, H> {
+    fn request_open(&mut self, kind: AuxKind) -> OpenRequest {
+        AuxWindows::request_open(self, kind)
+    }
+    fn cancel_open(&mut self, id: AuxId) -> bool {
+        AuxWindows::cancel_open(self, id)
+    }
+    fn kind_of_id(&self, id: AuxId) -> Option<AuxKind> {
+        AuxWindows::kind_of_id(self, id)
+    }
+    fn window(&self, id: AuxId) -> Option<&Window> {
+        AuxWindows::window(self, id)
+    }
+    fn window_mut(&mut self, id: AuxId) -> Option<&mut Window> {
+        AuxWindows::window_mut(self, id)
+    }
+    fn mailbox(&self, id: AuxId) -> Option<crate::widget_session::WindowMailbox> {
+        AuxWindows::mailbox(self, id)
+    }
+    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::widget_session::WindowMailbox) {
+        AuxWindows::set_mailbox(self, id, mailbox);
+    }
+    fn contains(&self, kind: AuxKind) -> bool {
+        AuxWindows::contains(self, kind)
+    }
+    fn has_native(&self, kind: AuxKind) -> bool {
+        AuxWindows::get(self, kind).is_some()
+    }
+    fn remove_native(&mut self, id: AuxId) -> Option<Box<dyn std::any::Any>> {
+        AuxWindows::remove_id(self, id).map(|handle| {
+            let handle: Box<dyn std::any::Any> = Box::new(handle);
+            handle
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

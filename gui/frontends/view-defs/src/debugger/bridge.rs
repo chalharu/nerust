@@ -140,13 +140,13 @@ impl DebugBridge {
 
     /// Pre-localized PPU viewer chrome. Frontends render these verbatim
     /// instead of calling into the i18n catalog themselves.
-    pub fn ppu_chrome(&self) -> PpuChrome {
-        PpuChrome::new(self.meta.language)
+    pub fn ppu_chrome(&self) -> nerust_frontend_host::debugger::PpuChrome {
+        ppu_chrome(self.meta.language)
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
-    pub fn debugger_chrome(&self) -> DebuggerChrome {
-        DebuggerChrome::new(self.meta.language)
+    pub fn debugger_chrome(&self) -> nerust_frontend_host::debugger::DebuggerChrome {
+        debugger_chrome(self.meta.language)
     }
 
     /// Localized tile hover line for raw view coordinates. Geometry stays
@@ -245,7 +245,7 @@ impl DebugBridge {
     }
 
     /// 2x-scaled PPU pictures derived without exposing the scaler.
-    pub fn scaled_pictures(&self) -> Vec<super::view::ScaledPicture> {
+    pub fn scaled_pictures(&self) -> Vec<nerust_frontend_host::debugger::ScaledPicture> {
         super::view::scaled_from_display(&read_display(&self.display))
     }
 
@@ -269,22 +269,31 @@ impl DebugBridge {
     /// Coreless windows never drain, so the default Empty status would sit
     /// blank forever; read coreless as paused with an explicit no-core
     /// status, the same agreement as the gtk twin.
-    pub fn debugger_rows(&self) -> super::view::DebuggerRows {
+    pub fn debugger_rows(&self) -> nerust_frontend_host::debugger::DebuggerRows {
         let display = read_display(&self.display);
+        let language = self.meta.language;
+        let chrome = super::debugger_chrome(language);
         let coreless = self.meta.spaces.is_empty();
         let mut rows = {
-            let status_text = display.status.render(self.meta.language);
-            let pending_text = display
-                .pending
-                .map(|pending| pending.render(self.meta.language));
+            let status_text = super::status_text(language, &display.status);
+            let pending_text = super::pending_text(language, display.pending);
             super::view::rows_from_display(&display, status_text, pending_text)
         };
         if coreless {
             rows.paused = true;
             if matches!(display.status, StatusMessage::Empty) {
-                rows.status_text = StatusMessage::NoCore.render(self.meta.language);
+                rows.status_text = super::status_text(language, &StatusMessage::NoCore);
             }
         }
+        let selected = self.selected();
+        rows.selected_line = super::selected_row_text(&chrome.select_dump_row, language, selected);
+        rows.watch_text = super::watch_text(
+            &chrome.watch_none,
+            language,
+            self.watch(),
+            display.watch_value,
+        );
+        rows.freeze_text = super::freeze_text(&chrome.freeze_none, language, self.freeze());
         rows
     }
 
@@ -412,6 +421,10 @@ impl DebugBridge {
         lock_recovered(&self.core).ppu_hover.clone()
     }
     #[doc(hidden)]
+    pub fn test_state(&self, f: impl FnOnce(&mut DebuggerState)) {
+        f(&mut lock_recovered(&self.core));
+    }
+    #[doc(hidden)]
     pub fn set_selected_for_test(&self, selected: Option<(u32, Option<u8>)>) {
         lock_recovered(&self.core).selected = selected;
     }
@@ -437,195 +450,112 @@ impl DebugBridge {
     }
 }
 
-/// Pre-localized PPU viewer chrome. Frontends render these verbatim;
-/// only the host touches the i18n catalog for them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PpuChrome {
-    pub title: String,
-    pub hover_empty: String,
-    pub no_images: String,
-    pub panels_title: String,
-}
-
-impl PpuChrome {
-    pub fn new(language: AppLanguage) -> Self {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
-        Self {
-            title: ui_text(language, UiText::PpuViewer).to_string(),
-            hover_empty: ui_text(language, UiText::HoverTile).to_string(),
-            no_images: ui_text(language, UiText::NoImages).to_string(),
-            panels_title: ui_text(language, UiText::Panels).to_string(),
-        }
+/// Pre-localized PPU viewer chrome in the view language.
+pub fn ppu_chrome(language: AppLanguage) -> nerust_frontend_host::debugger::PpuChrome {
+    use nerust_settings_core::i18n::{UiText, text as ui_text};
+    nerust_frontend_host::debugger::PpuChrome {
+        title: ui_text(language, UiText::PpuViewer).to_string(),
+        hover_empty: ui_text(language, UiText::HoverTile).to_string(),
+        no_images: ui_text(language, UiText::NoImages).to_string(),
+        panels_title: ui_text(language, UiText::Panels).to_string(),
     }
 }
 
-/// Pre-localized debugger chrome. Frontends render these verbatim;
-/// only the host touches the i18n catalog for them. Dynamic lines
-/// (counts, addresses, status) arrive via the methods below so views
-/// never format with a language themselves.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DebuggerChrome {
-    pub debugger: String,
-    pub pause: String,
-    pub resume: String,
-    pub step_frame: String,
-    pub step_instr: String,
-    pub ppu_viewer: String,
-    pub refresh: String,
-    pub space: String,
-    pub prev: String,
-    pub next: String,
-    pub page: String,
-    pub addr_hex: String,
-    pub go: String,
-    pub back: String,
-    pub disassembly: String,
-    pub follow_pc: String,
-    pub follow_pc_tag: String,
-    pub fixed_tag: String,
-    pub no_disassembly: String,
-    pub disassembly_hint: String,
-    pub registers: String,
-    pub pick_register: String,
-    pub hex: String,
-    pub set: String,
-    pub select_dump_row: String,
-    pub write: String,
-    pub hex_byte: String,
-    pub watch: String,
-    pub freeze: String,
-    pub confirm: String,
-    pub cancel: String,
-    pub watch_none: String,
-    pub freeze_none: String,
-    pub clear: String,
-    pub bookmarks: String,
-    pub label: String,
-    pub add: String,
-    pub memory: String,
+/// Pre-localized debugger chrome in the view language.
+pub fn debugger_chrome(language: AppLanguage) -> nerust_frontend_host::debugger::DebuggerChrome {
+    use nerust_settings_core::i18n::{UiText, text as ui_text};
+    let text = |key| ui_text(language, key).to_string();
+    nerust_frontend_host::debugger::DebuggerChrome {
+        debugger: text(UiText::Debugger),
+        pause: text(UiText::Pause),
+        resume: text(UiText::Resume),
+        step_frame: text(UiText::StepFrame),
+        step_instr: text(UiText::StepInstr),
+        ppu_viewer: text(UiText::PpuViewer),
+        refresh: text(UiText::Refresh),
+        space: text(UiText::Space),
+        prev: text(UiText::Prev),
+        next: text(UiText::Next),
+        page: text(UiText::Page),
+        addr_hex: text(UiText::AddrHex),
+        go: text(UiText::Go),
+        back: text(UiText::Back),
+        disassembly: text(UiText::Disassembly),
+        follow_pc: text(UiText::FollowPc),
+        follow_pc_tag: text(UiText::FollowPcTag),
+        fixed_tag: text(UiText::FixedTag),
+        no_disassembly: text(UiText::NoDisassembly),
+        disassembly_hint: text(UiText::DisassemblyHint),
+        registers: text(UiText::Registers),
+        pick_register: text(UiText::PickRegister),
+        hex: text(UiText::Hex),
+        set: text(UiText::Set),
+        select_dump_row: text(UiText::SelectDumpRow),
+        write: text(UiText::Write),
+        hex_byte: text(UiText::HexByte),
+        watch: text(UiText::Watch),
+        freeze: text(UiText::Freeze),
+        confirm: text(UiText::Confirm),
+        cancel: text(UiText::Cancel),
+        watch_none: text(UiText::WatchNone),
+        freeze_none: text(UiText::FreezeNone),
+        clear: text(UiText::Clear),
+        bookmarks: text(UiText::Bookmarks),
+        label: text(UiText::Label),
+        add: text(UiText::Add),
+        memory: text(UiText::Memory),
+    }
+}
+
+/// Status line rendered in the view language.
+pub fn status_text(
     language: AppLanguage,
+    status: &nerust_gui_runtime::debugger::StatusMessage,
+) -> String {
+    status.render(language)
 }
 
-impl DebuggerChrome {
-    pub fn new(language: AppLanguage) -> Self {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
-        let text = |key| ui_text(language, key).to_string();
-        Self {
-            debugger: text(UiText::Debugger),
-            pause: text(UiText::Pause),
-            resume: text(UiText::Resume),
-            step_frame: text(UiText::StepFrame),
-            step_instr: text(UiText::StepInstr),
-            ppu_viewer: text(UiText::PpuViewer),
-            refresh: text(UiText::Refresh),
-            space: text(UiText::Space),
-            prev: text(UiText::Prev),
-            next: text(UiText::Next),
-            page: text(UiText::Page),
-            addr_hex: text(UiText::AddrHex),
-            go: text(UiText::Go),
-            back: text(UiText::Back),
-            disassembly: text(UiText::Disassembly),
-            follow_pc: text(UiText::FollowPc),
-            follow_pc_tag: text(UiText::FollowPcTag),
-            fixed_tag: text(UiText::FixedTag),
-            no_disassembly: text(UiText::NoDisassembly),
-            disassembly_hint: text(UiText::DisassemblyHint),
-            registers: text(UiText::Registers),
-            pick_register: text(UiText::PickRegister),
-            hex: text(UiText::Hex),
-            set: text(UiText::Set),
-            select_dump_row: text(UiText::SelectDumpRow),
-            write: text(UiText::Write),
-            hex_byte: text(UiText::HexByte),
-            watch: text(UiText::Watch),
-            freeze: text(UiText::Freeze),
-            confirm: text(UiText::Confirm),
-            cancel: text(UiText::Cancel),
-            watch_none: text(UiText::WatchNone),
-            freeze_none: text(UiText::FreezeNone),
-            clear: text(UiText::Clear),
-            bookmarks: text(UiText::Bookmarks),
-            label: text(UiText::Label),
-            add: text(UiText::Add),
-            memory: text(UiText::Memory),
-            language,
-        }
-    }
+/// Staged-write confirm line from the drain-owned text.
+pub fn pending_text(
+    language: AppLanguage,
+    pending: Option<nerust_gui_runtime::debugger::PendingWrite>,
+) -> Option<String> {
+    pending.map(|pending| pending.render(language))
+}
 
-    /// Toolbar pause toggle: resume when paused, pause otherwise.
-    pub fn pause_label(&self, paused: bool) -> &str {
-        if paused { &self.resume } else { &self.pause }
+/// Dump selection line, including the old byte when readable.
+pub fn selected_row_text(
+    select_dump_row: &str,
+    language: AppLanguage,
+    selected: Option<(u32, Option<u8>)>,
+) -> String {
+    use nerust_settings_core::i18n::selected_row;
+    match selected {
+        Some((addr, old)) => selected_row(language, addr, old),
+        None => select_dump_row.to_string(),
     }
+}
 
-    /// Back button with history depth, e.g. `Back (3)`.
-    pub fn back_label(&self, back_len: usize) -> String {
-        format!("{} ({back_len})", self.back)
+/// Watch line: live value when watched, placeholder otherwise.
+pub fn watch_text(
+    watch_none: &str,
+    language: AppLanguage,
+    watch: Option<u32>,
+    value: Option<u8>,
+) -> String {
+    use nerust_settings_core::i18n::watch_value;
+    match watch {
+        Some(addr) => watch_value(language, addr, value),
+        None => watch_none.to_string(),
     }
+}
 
-    /// Disassembly title: follow tag when tracking PC, anchored address otherwise.
-    pub fn disassembly_title(&self, follow_pc: bool, anchor: u32) -> String {
-        if follow_pc {
-            format!("{} {}", self.disassembly, self.follow_pc_tag)
-        } else {
-            format!("{} @0x{anchor:08X} {}", self.disassembly, self.fixed_tag)
-        }
-    }
-
-    /// Register target line: `Set <name>` once picked.
-    pub fn set_target_label(&self, name: Option<&str>) -> String {
-        match name {
-            Some(name) => format!("{} {name}", self.set),
-            None => self.pick_register.clone(),
-        }
-    }
-
-    /// Dump selection line, including the old byte when readable.
-    pub fn selected_row_text(&self, selected: Option<(u32, Option<u8>)>) -> String {
-        use nerust_settings_core::i18n::selected_row;
-        match selected {
-            Some((addr, old)) => selected_row(self.language, addr, old),
-            None => self.select_dump_row.clone(),
-        }
-    }
-
-    /// Write button carries its target address once a row is selected.
-    pub fn write_target_label(&self, selected: Option<(u32, Option<u8>)>) -> String {
-        match selected {
-            Some((addr, _)) => format!("{} 0x{addr:08X}", self.write),
-            None => self.write.clone(),
-        }
-    }
-
-    /// Staged-write confirm line from the drain-owned text.
-    pub fn pending_text(
-        &self,
-        pending: Option<nerust_gui_runtime::debugger::PendingWrite>,
-    ) -> Option<String> {
-        pending.map(|pending| pending.render(self.language))
-    }
-
-    /// Watch line: live value when watched, placeholder otherwise.
-    pub fn watch_text(&self, watch: Option<u32>, value: Option<u8>) -> String {
-        use nerust_settings_core::i18n::watch_value;
-        match watch {
-            Some(addr) => watch_value(self.language, addr, value),
-            None => self.watch_none.clone(),
-        }
-    }
-
-    /// Freeze line: frozen byte when set, placeholder otherwise.
-    pub fn freeze_text(&self, freeze: Option<(u32, u8)>) -> String {
-        use nerust_settings_core::i18n::frozen;
-        match freeze {
-            Some((addr, value)) => frozen(self.language, addr, value),
-            None => self.freeze_none.clone(),
-        }
-    }
-
-    /// Status line rendered in the view language.
-    pub fn status_text(&self, status: &nerust_gui_runtime::debugger::StatusMessage) -> String {
-        status.render(self.language)
+/// Freeze line: frozen byte when set, placeholder otherwise.
+pub fn freeze_text(freeze_none: &str, language: AppLanguage, freeze: Option<(u32, u8)>) -> String {
+    use nerust_settings_core::i18n::frozen;
+    match freeze {
+        Some((addr, value)) => frozen(language, addr, value),
+        None => freeze_none.to_string(),
     }
 }
 
