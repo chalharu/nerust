@@ -11,7 +11,7 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 use wakui::viewport::ViewportPresent;
-use wakui::{bootstrap::Boot, event::EventSink};
+use wakui::{bootstrap::Application, event::EventSink};
 
 use self::host::{HostAction, HostState};
 use crate::event::{TaoEventSink, UserEvent};
@@ -27,7 +27,7 @@ pub(crate) struct WindowRuntime<K: Copy + Eq + std::hash::Hash + 'static> {
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
-    pub(crate) fn new(boot: Boot<K>) -> Self {
+    pub(crate) fn new(app: Application<K>) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -39,7 +39,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
             Arc::new(TaoEventSink(event_loop.create_proxy()));
         let app_menu = AppMenu::new(event_sink.clone());
 
-        let host = HostState::new(boot, Box::new(app_menu), std::sync::Arc::new(NativeDialogs));
+        let host = HostState::new(app, Box::new(app_menu), std::sync::Arc::new(NativeDialogs));
 
         Self {
             event_loop: Some(event_loop),

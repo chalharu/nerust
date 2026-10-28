@@ -48,15 +48,16 @@ pub(crate) mod testkit;
 
 pub use backend::{TaoBackend, register};
 
-use wakui::bootstrap::Boot;
+use wakui::bootstrap::Application;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root.
-pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(
-    boot: Boot<K>,
-    rom_path: Option<std::path::PathBuf>,
-) -> i32 {
-    run_inner(boot, rom_path);
+///
+/// The launch document (if any) travels inside `app`: it was set by the
+/// composition root through [`Application::builder`], so `run` takes a single
+/// bundle and every backend honors it the same way.
+pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(app: Application<K>) -> i32 {
+    run_inner(app);
     0
 }
 
@@ -78,15 +79,44 @@ pub fn show_message_dialog(dialog: &wakui::dialog::MessageDialog) {
         .show();
 }
 
-fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(
-    boot: Boot<K>,
-    rom_path: Option<std::path::PathBuf>,
-) {
-    let mut window = app::Window::new(boot);
-    if let Some(path) = rom_path
+fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(mut app: Application<K>) {
+    let initial_document = app.take_initial_document();
+    let mut window = crate::app::Window::new(app);
+    if let Some(path) = initial_document
         && !window.load_path(&path)
     {
         log::info!("starting without a ROM (bad --rom path)");
     }
     window.run();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_carries_and_drains_launch_document() {
+        let mut app = Application::builder(Box::new(crate::testkit::FakeApp::new()))
+            .initial_document("/tmp/launch.nes")
+            .build();
+        assert_eq!(
+            app.initial_document(),
+            Some(std::path::Path::new("/tmp/launch.nes"))
+        );
+        assert_eq!(
+            app.take_initial_document(),
+            Some(std::path::PathBuf::from("/tmp/launch.nes"))
+        );
+        assert_eq!(app.initial_document(), None);
+    }
+
+    #[test]
+    fn builder_defaults_to_no_launch_document() {
+        let app = Application::new(Box::new(crate::testkit::FakeApp::new()));
+        assert_eq!(app.initial_document(), None);
+        let app = Application::builder(Box::new(crate::testkit::FakeApp::new()))
+            .maybe_initial_document(None)
+            .build();
+        assert_eq!(app.initial_document(), None);
+    }
 }
