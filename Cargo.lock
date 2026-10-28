@@ -3393,7 +3393,6 @@ dependencies = [
  "nerust_gba_core",
  "nerust_gba_factory",
  "nerust_gbc_factory",
- "nerust_gtk",
  "nerust_gui_runtime",
  "nerust_gui_shell",
  "nerust_nes_factory",
@@ -3406,10 +3405,11 @@ dependencies = [
  "nerust_sound_cpal",
  "nerust_sound_cubeb",
  "nerust_system_traits",
- "nerust_tao",
  "rfd",
  "simple_logger",
  "wakui",
+ "wakui-gtk",
+ "wakui-tao",
 ]
 
 [[package]]
@@ -3634,38 +3634,6 @@ dependencies = [
  "gl",
  "log",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "nerust_gtk"
-version = "0.1.0-dev"
-dependencies = [
- "gdk4",
- "gdk4-macos",
- "gdk4-wayland-sys",
- "gdk4-win32",
- "gdk4-x11-sys",
- "gio 0.22.10",
- "gtk4",
- "log",
- "nerust_core_traits",
- "nerust_frontend_kernel",
- "nerust_frontend_viewdefs",
- "nerust_gui_runtime",
- "nerust_gui_shell",
- "nerust_gui_viewmodel",
- "nerust_nes_factory",
- "nerust_persistence",
- "nerust_render_osd",
- "nerust_render_traits",
- "nerust_settings_core",
- "nerust_system_traits",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-quartz-core 0.3.2",
- "raw-window-handle",
- "wakui",
- "wakui-gtk",
 ]
 
 [[package]]
@@ -3999,35 +3967,6 @@ dependencies = [
  "nerust_render_traits",
  "nerust_settings_traits",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "nerust_tao"
-version = "0.1.0-dev"
-dependencies = [
- "gdkx11",
- "gtk",
- "iced",
- "iced_tiny_skia",
- "iced_winit",
- "log",
- "muda",
- "nerust_core_traits",
- "nerust_frontend_kernel",
- "nerust_frontend_viewdefs",
- "nerust_gui_runtime",
- "nerust_gui_shell",
- "nerust_gui_viewmodel",
- "nerust_nes_factory",
- "nerust_persistence",
- "nerust_render_traits",
- "nerust_settings_core",
- "nerust_system_traits",
- "raw-window-handle",
- "rfd",
- "tao",
- "wakui",
- "wakui-tao",
 ]
 
 [[package]]
