@@ -7,6 +7,7 @@
 //! frontends. Native adapters (`tao`, `gtk`) must not depend on this
 //! crate; they drive views through the host.
 
+pub mod debugger;
 pub mod history;
 pub mod settings;
 pub mod sync;
