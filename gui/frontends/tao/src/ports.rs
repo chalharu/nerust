@@ -15,10 +15,7 @@ use nerust_frontend_host::{
     window::{DebugContents, PpuContents, Window, WindowVisitor},
 };
 use nerust_gui_viewmodel::debugger::DisplayCache;
-use nerust_settings_core::{
-    i18n::{UiText, text},
-    model::language::AppLanguage,
-};
+use nerust_settings_core::model::language::AppLanguage;
 use rfd::FileDialog;
 
 use crate::aux::bridge::DebugBridge;
@@ -29,48 +26,33 @@ use crate::event::UserEvent;
 
 /// Native file/error dialogs, seamed for headless tests. Production talks to rfd; fakes return
 /// canned picks and record errors. `Send + Sync`: error dialogs run on the modal actor so the event loop never stalls behind a modal (see `ModalFlight`).
+/// Titles arrive pre-localized from the host; ports never touch the i18n catalog.
 pub(crate) trait DialogPorts: Send + Sync {
-    fn pick_rom_file(
-        &self,
-        language: AppLanguage,
-        filters: Vec<(String, Vec<String>)>,
-    ) -> Option<PathBuf>;
-    fn show_load_error(&self, language: AppLanguage, detail: &str);
+    fn pick_rom_file(&self, title: String, filters: Vec<(String, Vec<String>)>) -> Option<PathBuf>;
+    fn show_load_error(&self, title: String, detail: &str);
     /// Non-blocking error dialog: spawns the modal, returns its ack channel.
     /// A dead channel means the spawn failed; the host reaps it as a failed ack.
-    fn show_error_async(
-        &self,
-        language: AppLanguage,
-        detail: String,
-    ) -> std::sync::mpsc::Receiver<()>;
+    fn show_error_async(&self, title: String, detail: String) -> std::sync::mpsc::Receiver<()>;
 }
 
 /// Production dialogs over rfd.
 pub(crate) struct NativeDialogs;
 
 impl DialogPorts for NativeDialogs {
-    fn pick_rom_file(
-        &self,
-        language: AppLanguage,
-        filters: Vec<(String, Vec<String>)>,
-    ) -> Option<PathBuf> {
-        let mut dialog = FileDialog::new().set_title(text(language, UiText::Open));
+    fn pick_rom_file(&self, title: String, filters: Vec<(String, Vec<String>)>) -> Option<PathBuf> {
+        let mut dialog = FileDialog::new().set_title(title);
         for (name, extensions) in filters {
             dialog = dialog.add_filter(name, extensions.as_slice());
         }
         dialog.pick_file()
     }
 
-    fn show_load_error(&self, language: AppLanguage, detail: &str) {
-        show_rom_load_error(language, detail);
+    fn show_load_error(&self, title: String, detail: &str) {
+        show_rom_load_error(title, detail);
     }
 
-    fn show_error_async(
-        &self,
-        language: AppLanguage,
-        detail: String,
-    ) -> std::sync::mpsc::Receiver<()> {
-        ModalActor::show(language, detail)
+    fn show_error_async(&self, title: String, detail: String) -> std::sync::mpsc::Receiver<()> {
+        ModalActor::show(title, detail)
     }
 }
 
@@ -78,7 +60,7 @@ impl DialogPorts for NativeDialogs {
 /// Per-batch spawn-a-thread is gone; a dead worker respawns on next use,
 /// so one dialog-thread crash never disables later error modals.
 struct ModalActor {
-    tx: Option<std::sync::mpsc::Sender<(AppLanguage, String, std::sync::mpsc::Sender<()>)>>,
+    tx: Option<std::sync::mpsc::Sender<(String, String, std::sync::mpsc::Sender<()>)>>,
 }
 
 impl ModalActor {
@@ -90,14 +72,13 @@ impl ModalActor {
     }
 
     fn spawn_worker()
-    -> Option<std::sync::mpsc::Sender<(AppLanguage, String, std::sync::mpsc::Sender<()>)>> {
-        let (tx, rx) =
-            std::sync::mpsc::channel::<(AppLanguage, String, std::sync::mpsc::Sender<()>)>();
+    -> Option<std::sync::mpsc::Sender<(String, String, std::sync::mpsc::Sender<()>)>> {
+        let (tx, rx) = std::sync::mpsc::channel::<(String, String, std::sync::mpsc::Sender<()>)>();
         if let Err(error) = std::thread::Builder::new()
             .name("nerust-error-dialog".to_string())
             .spawn(move || {
-                for (language, detail, done) in rx {
-                    show_blocking(language, &detail);
+                for (title, detail, done) in rx {
+                    show_blocking(&title, &detail);
                     let _ = done.send(());
                 }
             })
@@ -110,7 +91,7 @@ impl ModalActor {
 
     /// Queue one modal: the worker shows it, then acks through the channel.
     /// A dead worker respawns once; only a spawn failure surfaces as a dead ack.
-    fn show(language: AppLanguage, detail: String) -> std::sync::mpsc::Receiver<()> {
+    fn show(title: String, detail: String) -> std::sync::mpsc::Receiver<()> {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let mut actor = Self::global()
             .lock()
@@ -121,7 +102,7 @@ impl ModalActor {
         let mut sent = actor
             .tx
             .as_ref()
-            .is_some_and(|tx| tx.send((language, detail.clone(), done_tx)).is_ok());
+            .is_some_and(|tx| tx.send((title.clone(), detail.clone(), done_tx)).is_ok());
         if !sent {
             // Worker died between health check and send: one respawn, one retry.
             actor.tx = Self::spawn_worker();
@@ -129,7 +110,7 @@ impl ModalActor {
             sent = actor
                 .tx
                 .as_ref()
-                .is_some_and(|tx| tx.send((language, detail, retry_tx)).is_ok());
+                .is_some_and(|tx| tx.send((title, detail, retry_tx)).is_ok());
             if sent {
                 return retry_rx;
             }
@@ -140,9 +121,9 @@ impl ModalActor {
 }
 
 /// Blocking modal body: runs only on the actor worker thread.
-fn show_blocking(language: AppLanguage, detail: &str) {
+fn show_blocking(title: &str, detail: &str) {
     rfd::MessageDialog::new()
-        .set_title(text(language, UiText::Error))
+        .set_title(title)
         .set_description(detail)
         .set_level(rfd::MessageLevel::Error)
         .set_buttons(rfd::MessageButtons::Ok)
@@ -151,8 +132,7 @@ fn show_blocking(language: AppLanguage, detail: &str) {
 
 /// Surface ROM load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
-pub(crate) fn show_rom_load_error(language: AppLanguage, detail: &str) {
-    let title = text(language, UiText::RomLoadFailed);
+pub(crate) fn show_rom_load_error(title: String, detail: &str) {
     rfd::MessageDialog::new()
         .set_title(title)
         .set_description(detail)

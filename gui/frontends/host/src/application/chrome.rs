@@ -3,6 +3,26 @@
 use crate::frame::FrameCtx;
 use std::sync::Arc;
 
+/// Pre-localized dialog titles. Frontends render and pass these verbatim
+/// instead of calling into the i18n catalog themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DialogTitles {
+    pub open: String,
+    pub error: String,
+    pub rom_load_failed: String,
+}
+
+impl DialogTitles {
+    pub fn new(language: nerust_settings_core::model::language::AppLanguage) -> Self {
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        Self {
+            open: ui_text(language, UiText::Open).to_string(),
+            error: ui_text(language, UiText::Error).to_string(),
+            rom_load_failed: ui_text(language, UiText::RomLoadFailed).to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MenuSig {
     pub loaded: bool,
