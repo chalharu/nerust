@@ -51,6 +51,8 @@ jobs:
             -p nerust_nes_core -p nerust_persistence \
             -p nerust_gba_core \
             -p nerust_gba_factory -p nerust_gba_device -p nerust_gba_settings
+      - name: Frontend policy gate (Phase 4 composition root)
+        run: python3 gui/frontends/check_frontend_policy.py
       - name: Save Cargo registry cache
         if: github.event_name == 'push'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
