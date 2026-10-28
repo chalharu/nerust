@@ -410,7 +410,7 @@ fn generic_picker_and_capture_results_need_no_domain_dto() {
     assert_eq!(session.screen().capture.target, Some(binding));
     assert!(
         session
-            .dispatch(ControlEvent::capture_key(nerust_keyboard::Key::Space))
+            .dispatch(ControlEvent::capture_key(wakui::Key::Space))
             .is_empty()
     );
     assert!(session.screen().capture.target.is_none());
