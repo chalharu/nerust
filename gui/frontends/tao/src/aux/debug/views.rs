@@ -2,10 +2,9 @@
 //! `capture_view` is the single place that locks the bridge.
 
 use iced_tiny_skia::Renderer;
-use nerust_frontend_host::debugger::{
-    DebuggerChrome, DisasmLine, HexRow, PendingWrite, StatusMessage, disasm_marker,
-    format_disasm_line, format_register,
-};
+use nerust_core_traits::debugger::{DisasmLine, HexRow};
+use nerust_frontend_host::debugger::DebuggerChrome;
+use nerust_gui_viewmodel::debugger::{self as vm, StatusMessage};
 
 use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
@@ -27,7 +26,7 @@ pub(super) struct ViewSnapshot {
     pub(super) freeze_input: String,
     pub(super) selected: Option<(u32, Option<u8>)>,
     pub(super) edit_input: String,
-    pub(super) pending: Option<PendingWrite>,
+    pub(super) pending: Option<vm::PendingWrite>,
     pub(super) selected_name: Option<String>,
     pub(super) regs: Vec<(&'static str, u64)>,
     pub(super) dump_rows: Vec<HexRow>,
@@ -65,8 +64,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     // toggle would offer Pause against nothing. Read coreless as paused with an explicit "no core" status — the same agreement as the gtk twin.
     let coreless = bridge.spaces().is_empty();
     let paused = paused || coreless;
-    let status = if coreless && matches!(status, StatusMessage::Empty) {
-        StatusMessage::NoCore
+    let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
+        vm::StatusMessage::NoCore
     } else {
         status
     };
@@ -262,7 +261,7 @@ pub(super) fn view_regs_section(
         let mut col = column![].spacing(2);
         for (name, value) in half.iter() {
             let row_button = button(
-                text(format_register(name, *value))
+                text(vm::format_register(name, *value))
                     .size(14)
                     .font(iced::Font::MONOSPACE),
             )
@@ -339,7 +338,7 @@ pub(super) fn view_edit_row(
 }
 
 pub(super) fn view_confirm_row(
-    pending: Option<PendingWrite>,
+    pending: Option<vm::PendingWrite>,
     chrome: &DebuggerChrome,
 ) -> Option<iced::Element<'static, DebugMessage, iced::Theme, Renderer>> {
     use iced::Length;
@@ -402,7 +401,7 @@ pub(super) fn view_dis_nav(
 }
 
 pub(super) fn view_dis_col(
-    disasm_lines: &[DisasmLine],
+    disasm_lines: &[nerust_core_traits::debugger::DisasmLine],
     pinned: Option<u32>,
     chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
@@ -417,9 +416,9 @@ pub(super) fn view_dis_col(
         // Marker column is two chars wide for every row. The PC `>` already comes from
         // `format_disasm_line`, so the PC row contributes blanks here; the pinned anchor row carries `@`. (Prepending another `"> "` double-marked the PC row.)
         let is_pinned = pinned == Some(line.addr);
-        let marker = disasm_marker(line.is_pc, is_pinned);
+        let marker = vm::disasm_marker(line.is_pc, is_pinned);
         let line_button = button(
-            text(format!("{marker}{}", format_disasm_line(line)))
+            text(format!("{marker}{}", vm::format_disasm_line(line)))
                 .size(14)
                 .font(iced::Font::MONOSPACE),
         )

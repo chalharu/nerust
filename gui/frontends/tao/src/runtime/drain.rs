@@ -85,19 +85,10 @@ impl HostState {
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
         use nerust_gui_shell::debug::DebugAction;
         if let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Debug) {
-            let spaces = self.debug_spaces();
-            if spaces.is_empty() {
-                log::warn!("debugger: no spaces (no core)");
-            }
-            let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
             let position = self.debug_window_pos();
             self.aux.window_mut(id).expect("debug reservation").title =
                 self.core.debugger_window_title();
-            let bridge = std::sync::Arc::new(self.core.new_debug_bridge(
-                Default::default(),
-                spaces,
-                mem_addr,
-            ));
+            let bridge = std::sync::Arc::new(self.core.new_debug_bridge());
             let opened = self.create_aux_window(
                 id,
                 opener,
