@@ -2,7 +2,9 @@
 //! Vocabulary (`MenuCommand`, `SessionCommand`, descriptors, visitors)
 //! lives in the framework (`wakui::commands`).
 
-pub use wakui::commands::*;
+use wakui::commands::{
+    CommandDescriptor, CommandModel, CommandParameter, DECLARATIONS, MenuCommand, NativeRole,
+};
 
 use crate::menu::MenuSig;
 
@@ -24,7 +26,7 @@ pub fn build_command_model(sig: &MenuSig) -> CommandModel {
 }
 
 pub fn command_enabled(command: MenuCommand, sig: &MenuSig) -> bool {
-    use crate::commands::SessionCommand as S;
+    use wakui::commands::SessionCommand as S;
     if command == MenuCommand::Native(NativeRole::Quit) {
         return true;
     }

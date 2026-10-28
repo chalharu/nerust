@@ -7,16 +7,13 @@ use super::ApplicationHost;
 use crate::settings::{SettingsController, find_duplicate_system_id};
 use crate::{
     focus::AuxKind,
-    session::SessionEvent,
     widget_session::{Pending, WidgetSession, WindowSubmission},
-    window::WindowEffects,
 };
 use wakui::aux::{AuxId, AuxWindows, OpenRequest};
+use wakui::session::{SessionError, SessionEvent};
+use wakui::window::WindowEffects;
 
-pub type WidgetWindowClose<H> = (
-    Option<H>,
-    Result<WindowEffects, crate::session::SessionError>,
-);
+pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>);
 
 impl ApplicationHost {
     /// Prepare the generic control boundary for every widget window
@@ -121,7 +118,7 @@ impl ApplicationHost {
         windows: &AuxWindows<AuxKind, N, H>,
         id: AuxId,
         submission: WindowSubmission,
-    ) -> Result<WindowEffects, crate::session::SessionError> {
+    ) -> Result<WindowEffects, SessionError> {
         if self.close_exited()
             || !windows
                 .mailbox(id)
@@ -135,7 +132,7 @@ impl ApplicationHost {
     fn consume_window_submission(
         &mut self,
         submission: WindowSubmission,
-    ) -> Result<WindowEffects, crate::session::SessionError> {
+    ) -> Result<WindowEffects, SessionError> {
         match submission.take() {
             Some(Pending::Settings(snapshot)) => match self.apply_settings(*snapshot) {
                 Ok(result) => {
@@ -242,7 +239,7 @@ impl ApplicationHost {
         &mut self,
         windows: &mut AuxWindows<AuxKind, N, H>,
         kind: AuxKind,
-    ) -> Result<Option<OpenRequest>, crate::session::SessionError> {
+    ) -> Result<Option<OpenRequest>, SessionError> {
         if self.close_exited() {
             return Ok(None);
         }

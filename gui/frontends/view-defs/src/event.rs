@@ -1,14 +1,15 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
 use nerust_gui_shell::session::access::SessionControl;
-pub use wakui::commands::{MenuCommand, NativeRole};
+use wakui::commands::{MenuCommand, NativeRole};
 use wakui::pause::PauseOwner;
-pub use wakui::{
-    event::{CommandEffect, EventCommand, EventHandler, EventOutcome, EventSink},
+use wakui::{
+    event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
     session::{SessionError, SessionEvent},
 };
 
-use crate::{application::ApplicationHost, focus::AuxKind, session::SessionEffect};
+use crate::{application::ApplicationHost, focus::AuxKind};
+use wakui::session::SessionEffect;
 
 impl EventHandler<AuxKind> for ApplicationHost {
     fn handle_event(

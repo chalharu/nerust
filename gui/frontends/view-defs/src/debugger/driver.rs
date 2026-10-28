@@ -305,7 +305,7 @@ impl DebuggerDriver {
                 let _ = crate::session::dispatch(
                     session,
                     pause,
-                    crate::session::SessionEvent::Command(command),
+                    wakui::session::SessionEvent::Command(command),
                 );
                 session.tick_metrics().loaded
             });

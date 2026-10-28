@@ -7,16 +7,14 @@ use wakui::{
     },
 };
 
-use crate::{
-    settings::{SettingsControlId, SettingsSystemId},
-    window::WidgetContents,
-};
+use crate::settings::{SettingsControlId, SettingsSystemId};
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::{
     editor::CaptureTarget,
     model::{input::ShortcutAction, shared::StoragePolicy},
 };
+use wakui::window::WidgetContents;
 use wakui::window::WindowVisitor;
 
 fn settings(nes: bool) -> WidgetSession {
@@ -603,7 +601,7 @@ fn capture_key_resolves_current_capture_and_clear_reaches_model() {
 
 #[test]
 fn text_validation_footer_submit_and_cancel_follow_model_policy() {
-    use crate::window::Window;
+    use wakui::window::Window;
     let mut session = settings(false);
     let policy = find_by_label(&session.screen(), "Save storage policy");
     let ControlKind::Choice { choices, .. } = &policy.kind else {

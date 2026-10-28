@@ -4,6 +4,7 @@ use nerust_settings_core::model::{
     input::{ShortcutBinding, default_shortcut_bindings},
     language::AppLanguage,
 };
+use wakui::menu::{CommandVisitor, MenuModel, MenuVisitor, find_menu};
 
 const CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: true,
@@ -211,7 +212,7 @@ struct Recorder {
     rebuilds: Vec<MenuId>,
     root_rebuild: bool,
     commands: Vec<Option<MenuCommand>>,
-    declarations: Vec<crate::commands::CommandId>,
+    declarations: Vec<wakui::commands::CommandId>,
 }
 
 impl MenuVisitor for Recorder {
@@ -242,7 +243,7 @@ impl MenuVisitor for Recorder {
 }
 
 impl CommandVisitor for Recorder {
-    fn command(&mut self, command: &crate::commands::CommandDescriptor) {
+    fn command(&mut self, command: &wakui::commands::CommandDescriptor) {
         assert!(self.root_open, "root precedes declarations");
         assert!(self.stack.is_empty(), "declarations precede menus");
         self.declarations.push(command.id);

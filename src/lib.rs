@@ -177,19 +177,17 @@ impl wakui::app::LaunchArguments for EmulatorArguments {
 }
 
 /// Composition-root boot: the only place that turns a [`FrontendContext`]
-/// into a frontend [`Application`](wakui::bootstrap::Application). Native
+/// into a frontend [`Application`](wakui::app::Application). Native
 /// frontends never name the context, session, or settings-path types.
 /// The composition root's own arguments type travels inside the bundle (see
-/// [`Application::builder`](wakui::bootstrap::ApplicationBuilder)); neither
+/// [`Application::builder`](wakui::app::ApplicationBuilder)); neither
 /// the framework nor the backends interpret it beyond file operands.
 #[cfg_attr(clippy, allow(dead_code))]
 fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
     arguments: EmulatorArguments,
-) -> Option<
-    wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
-> {
+) -> Option<wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
     match boot(
         ctx,
@@ -214,10 +212,7 @@ fn boot_frontend(
 /// apart from the backend selected by feature.
 #[cfg(all(feature = "gtk", not(clippy)))]
 fn run_frontend(
-    boot: wakui::bootstrap::Application<
-        nerust_frontend_viewdefs::focus::AuxKind,
-        EmulatorArguments,
-    >,
+    boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
 ) -> i32 {
     run_guarded(boot, wakui_gtk::run)
 }
@@ -228,10 +223,7 @@ fn run_frontend(
 /// apart from the backend selected by feature.
 #[cfg(all(feature = "tao", not(feature = "gtk"), not(clippy)))]
 fn run_frontend(
-    boot: wakui::bootstrap::Application<
-        nerust_frontend_viewdefs::focus::AuxKind,
-        EmulatorArguments,
-    >,
+    boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
 ) -> i32 {
     run_guarded(boot, wakui_tao::run)
 }
@@ -241,12 +233,9 @@ fn run_frontend(
 #[cfg(all(any(feature = "gtk", feature = "tao"), not(clippy)))]
 #[allow(clippy::needless_pass_by_value)]
 fn run_guarded(
-    boot: wakui::bootstrap::Application<
-        nerust_frontend_viewdefs::focus::AuxKind,
-        EmulatorArguments,
-    >,
+    boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
     runner: fn(
-        wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+        wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
     ) -> i32,
 ) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.

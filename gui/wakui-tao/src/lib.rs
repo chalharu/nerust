@@ -48,8 +48,8 @@ pub(crate) mod testkit;
 
 pub use backend::{TaoBackend, register};
 
+use wakui::app::Application;
 use wakui::app::LaunchArguments;
-use wakui::bootstrap::Application;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root.

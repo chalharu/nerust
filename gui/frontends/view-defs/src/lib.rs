@@ -21,8 +21,6 @@ pub mod osd;
 pub mod ppu;
 pub mod session;
 pub mod settings;
-pub mod sync;
 pub mod viewport;
 pub mod widget_session;
-pub mod widgets;
 pub mod window;

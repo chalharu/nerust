@@ -1,7 +1,7 @@
 //! Framework app implementation: [`FrontendApp`] over the owned session.
 //!
 //! Native frontends hold the app behind `Box<dyn FrontendApp>` (see
-//! [`host::bootstrap`](wakui::bootstrap)) and never name
+//! [`Application`](wakui::app::Application)) and never name
 //! shell, runtime, or ViewModel types. All ViewModel contact lives here.
 
 use std::{path::Path, time::Instant};

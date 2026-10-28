@@ -4,7 +4,6 @@ use crate::focus::AuxKind;
 use crate::{
     debugger::{AppliedLive, DebugBridge, DrainSnapshot},
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
-    session::SessionEvent,
 };
 use nerust_gui_shell::{
     debug::{DebugAction, DebugDrainInput, LiveImagesFlight},
@@ -14,6 +13,7 @@ use std::{task::Poll, time::Instant};
 use wakui::debug_schedule::AuxSchedule;
 use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
+use wakui::session::SessionEvent;
 
 pub struct DebugRuntime {
     schedule: AuxSchedule<AuxKind>,
