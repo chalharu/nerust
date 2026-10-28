@@ -3405,7 +3405,6 @@ dependencies = [
  "nerust_sound_cpal",
  "nerust_sound_cubeb",
  "nerust_system_traits",
- "rfd",
  "simple_logger",
  "wakui",
  "wakui-gtk",

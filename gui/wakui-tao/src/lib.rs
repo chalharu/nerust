@@ -60,6 +60,24 @@ pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(
     0
 }
 
+/// Standalone blocking message dialog for boot-failure and crash paths.
+/// No event loop is running here (or it just died); `rfd` is an internal
+/// detail of this flavor, never named by the composition root.
+pub fn show_message_dialog(dialog: &wakui::dialog::MessageDialog) {
+    rfd::MessageDialog::new()
+        .set_title(&dialog.title)
+        .set_description(&dialog.description)
+        .set_level(match dialog.level {
+            wakui::dialog::MessageLevel::Info => rfd::MessageLevel::Info,
+            wakui::dialog::MessageLevel::Warning => rfd::MessageLevel::Warning,
+            wakui::dialog::MessageLevel::Error => rfd::MessageLevel::Error,
+        })
+        .set_buttons(match dialog.buttons {
+            wakui::dialog::MessageButtons::Ok => rfd::MessageButtons::Ok,
+        })
+        .show();
+}
+
 fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(
     boot: Boot<K>,
     rom_path: Option<std::path::PathBuf>,

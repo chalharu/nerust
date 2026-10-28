@@ -77,7 +77,6 @@ wakui-gtk = { optional = true, workspace = true }
 nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard = { optional = true, workspace = true }
-rfd = { optional = true, workspace = true }
 nerust_gui_shell.workspace = true
 wakui.workspace = true
 nerust_gbc_factory = { optional = true, workspace = true }
@@ -103,11 +102,11 @@ cpal = ["nerust_sound_cpal"]
 cubeb = ["nerust_sound_cubeb"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["wakui-gtk", "nerust_crash_guard", "rfd", "cpal", "cubeb"]
+gtk = ["wakui-gtk", "nerust_crash_guard", "cpal", "cubeb"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["wakui-tao", "nerust_crash_guard", "rfd", "cpal", "cubeb"]
+tao = ["wakui-tao", "nerust_crash_guard", "cpal", "cubeb"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
