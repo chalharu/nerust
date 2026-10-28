@@ -5,7 +5,7 @@ use crate::{
     widget_session::WidgetSession,
     window::WidgetContents,
 };
-use nerust_frontend_kernel::pause::PauseOwner;
+use wakui::pause::PauseOwner;
 
 fn prepare(
     host: &mut ApplicationHost,

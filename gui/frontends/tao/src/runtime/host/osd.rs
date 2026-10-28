@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let mut host = TestHost::with_nes().host;
         host.load_test_rom();
         host.report_host_error("parked modal".into());
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn close_retires_owned_modal_receiver_queue_and_layer() {
         use nerust_frontend_host::osd::ModalAdvance;
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let mut host = TestHost::new().host;
         host.set_pause_owner(PauseOwner::Settings, true);
         host.report_host_error("active on close".into());

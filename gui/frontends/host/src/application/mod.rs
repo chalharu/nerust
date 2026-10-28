@@ -16,7 +16,6 @@ pub use window::MainState;
 
 use std::{path::Path, time::Instant};
 
-use nerust_frontend_kernel::pause::{PauseOwner, PausePolicy};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{
     load::{RomLoader, RomLoaderError},
@@ -27,6 +26,7 @@ use nerust_gui_shell::{
     },
 };
 use nerust_gui_viewmodel::debugger::tile_hover_text;
+use wakui::pause::{PauseOwner, PausePolicy};
 use wakui::retry::RenderRetry;
 
 use crate::{

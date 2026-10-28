@@ -579,7 +579,7 @@ mod wake_tests {
 
     #[test]
     fn native_modal_can_ack_synchronously_during_map_without_retaining_surface() {
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let Some(h) = Harness::new() else { return };
         let mapped = Rc::new(Cell::new(0));
         let dialogs = Rc::new(RefCell::new(Vec::<gtk::MessageDialog>::new()));
@@ -852,8 +852,8 @@ mod wake_tests {
 
     #[test]
     fn native_modal_map_can_borrow_state_surface_and_renderer_then_ack() {
-        use nerust_frontend_kernel::pause::PauseOwner;
         use nerust_gui_shell::session::notification::FailureOrigin;
+        use wakui::pause::PauseOwner;
 
         let Some(h) = Harness::new() else { return };
         h.state
