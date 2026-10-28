@@ -1484,24 +1484,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct MockPipelineFactory;
-
-    impl nerust_render_traits::renderer::PipelineFactory for MockPipelineFactory {
-        fn create_pipeline(
-            &self,
-            _config: &nerust_render_traits::renderer::RendererConfig,
-            _display: raw_window_handle::RawDisplayHandle,
-        ) -> Result<
-            Box<dyn nerust_render_traits::renderer::RenderPipeline>,
-            nerust_render_traits::renderer::RendererError,
-        > {
-            Err(nerust_render_traits::renderer::RendererError::new(
-                "test",
-                Box::new(std::io::Error::other("no renderer in tests")),
-            ))
-        }
-    }
+    use nerust_frontend_host::viewport::testkit::NullFactory;
 
     #[derive(Debug)]
     struct MockRomLoader;
@@ -1534,7 +1517,10 @@ mod tests {
         let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(Vec::new()));
         let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new());
         let ctx = nerust_gui_shell::context::FrontendContext {
-            gpu_factory: Rc::new(MockPipelineFactory),
+            gpu_factory: Rc::new(NullFactory {
+                fail_create: true,
+                ..Default::default()
+            }),
             registry,
             rom_loader: Box::new(MockRomLoader),
             audio_registry: audio,

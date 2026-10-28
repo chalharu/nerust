@@ -44,7 +44,7 @@ use crate::{
 /// transitions. Raw session access remains available for shell integration, but
 /// must not bypass pause ownership or debugger epoch guards.
 pub struct ApplicationHost {
-    session: SessionHandle,
+    pub(crate) session: SessionHandle,
     pause_policy: PausePolicy,
     focus: FocusCoordinator,
     frame_cache: FrameCache,
@@ -56,6 +56,7 @@ pub struct ApplicationHost {
     main_window: crate::window::Window,
     menu_capabilities: Option<MenuCapabilities>,
     fullscreen: window::FullscreenSync,
+    pub(crate) viewport: crate::viewport::RenderDriver,
     close: MainState,
     flushed: bool,
     shell: nerust_gui_runtime::shell::NativeShellState,
@@ -80,6 +81,7 @@ impl ApplicationHost {
             main_window: crate::window::Window::main(),
             menu_capabilities: None,
             fullscreen: Default::default(),
+            viewport: crate::viewport::RenderDriver::new(),
             close: MainState::new(),
             flushed: false,
             shell: Default::default(),
