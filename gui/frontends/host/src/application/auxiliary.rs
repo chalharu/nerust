@@ -1,10 +1,9 @@
 //! Auxiliary lifecycle policy over the caller's generational native registry.
 //! No additional dialog phase or settings draft is stored here.
 
-use std::{hash::Hash, sync::Arc};
+use std::hash::Hash;
 
-use nerust_core_traits::audio::AudioBackendRegistry;
-use nerust_gui_shell::{registry::SystemRegistry, session::SessionError};
+use nerust_gui_shell::session::SessionError;
 
 use super::ApplicationHost;
 use crate::{
@@ -20,21 +19,19 @@ pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>)
 
 impl ApplicationHost {
     /// Prepare the generic control boundary for both Settings and History.
+    /// Registries come from the owned session: native adapters never pass
+    /// shell or audio types across the boundary.
     pub fn prepare_widget_window<N: Copy + Eq + Hash, H>(
         &mut self,
         windows: &mut AuxWindows<N, H>,
         id: AuxId,
-        registry: Arc<SystemRegistry>,
-        audio: Arc<AudioBackendRegistry>,
     ) -> Result<Option<WidgetSession>, String> {
         if self.close_exited() || windows.mailbox(id).is_some() {
             return Ok(None);
         }
         let session = match windows.kind_of_id(id) {
             Some(AuxKind::Settings) => {
-                let Some(controller) =
-                    self.prepare_settings_window(windows, id, registry, audio)?
-                else {
+                let Some(controller) = self.prepare_settings_window(windows, id)? else {
                     return Ok(None);
                 };
                 WidgetSession::from_settings(controller)
@@ -218,18 +215,18 @@ impl ApplicationHost {
         &mut self,
         windows: &mut AuxWindows<N, H>,
         id: AuxId,
-        registry: Arc<SystemRegistry>,
-        audio: Arc<AudioBackendRegistry>,
     ) -> Result<Option<SettingsController>, String> {
         if windows.kind_of_id(id) != Some(AuxKind::Settings)
             || windows.get(AuxKind::Settings).is_some()
         {
             return Ok(None);
         }
+        let registry = self.session.system_registry().clone();
         if let Some(duplicate) = find_duplicate_system_id(&registry) {
             self.cancel_window(windows, id);
             return Err(format!("duplicate SystemId '{duplicate}'"));
         }
+        let audio = self.session.audio_registry().clone();
         let controller = SettingsController::new(self.settings_snapshot(), registry, audio);
         Ok(Some(controller))
     }

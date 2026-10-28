@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nerust_gui_shell::context::FrontendContext;
+use nerust_frontend_host::bootstrap::Boot;
 
 use crate::runtime::WindowRuntime;
 
@@ -9,10 +9,10 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(ctx: FrontendContext) -> Result<Self, String> {
-        Ok(Self {
-            runtime: Box::new(WindowRuntime::new(ctx)?),
-        })
+    pub fn new(boot: Boot) -> Self {
+        Self {
+            runtime: Box::new(WindowRuntime::new(boot)),
+        }
     }
 
     pub fn load_path(&mut self, path: &Path) -> bool {

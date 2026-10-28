@@ -133,9 +133,19 @@ pub fn run() -> i32 {
     };
 
     #[cfg(all(feature = "gtk", not(clippy)))]
-    return run_gtk_guarded(ctx, options.rom_path);
+    {
+        let Some(boot) = boot_frontend(ctx, None) else {
+            return 1;
+        };
+        return run_gtk_guarded(boot, options.rom_path);
+    }
     #[cfg(all(feature = "tao", not(clippy)))]
-    return run_tao_guarded(ctx, options.rom_path);
+    {
+        let Some(boot) = boot_frontend(ctx, Some(true)) else {
+            return 1;
+        };
+        return run_tao_guarded(boot, options.rom_path);
+    }
     #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
     compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
     #[cfg(clippy)]
@@ -146,14 +156,40 @@ pub fn run() -> i32 {
     }
 }
 
+/// Composition-root boot: the only place that turns a [`FrontendContext`]
+/// into a frontend [`Boot`](nerust_frontend_host::bootstrap::Boot). Native
+/// frontends never name the context, session, or settings-path types.
+fn boot_frontend(
+    ctx: FrontendContext,
+    supports_vsync: Option<bool>,
+) -> Option<nerust_frontend_host::bootstrap::Boot> {
+    use nerust_frontend_host::bootstrap::{backend_capabilities, boot};
+    match boot(ctx, backend_capabilities(true, supports_vsync), None) {
+        Ok(boot) => Some(boot),
+        Err(detail) => {
+            log::error!("failed to initialise frontend: {detail}");
+            // Boot died before any window existed: match the old tao
+            // init-failure dialog copy (always English, stderr stays home).
+            #[cfg(feature = "tao")]
+            rfd::MessageDialog::new()
+                .set_title("nerust")
+                .set_description(&detail)
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+            None
+        }
+    }
+}
+
 /// Crash containment lives here, in the composition root: a crash must
 /// never look like a clean exit. Frontend `run` functions stay unguarded.
 #[cfg(all(feature = "gtk", not(clippy)))]
-fn run_gtk_guarded(ctx: FrontendContext, rom_path: Option<PathBuf>) -> i32 {
+fn run_gtk_guarded(boot: nerust_frontend_host::bootstrap::Boot, rom_path: Option<PathBuf>) -> i32 {
     // No dialog here: the event loop died with the panic, and stderr
     // (already logged by the guard) is the UX. Match exhaustively.
     match nerust_crash_guard::run_guarded_with(
-        || nerust_gtk::run(ctx, rom_path),
+        || nerust_gtk::run(boot, rom_path),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {
@@ -174,12 +210,12 @@ fn crash_note(message: &str) -> String {
 }
 
 #[cfg(all(feature = "tao", not(clippy)))]
-fn run_tao_guarded(ctx: FrontendContext, rom_path: Option<PathBuf>) -> i32 {
+fn run_tao_guarded(boot: nerust_frontend_host::bootstrap::Boot, rom_path: Option<PathBuf>) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
     // Rust panic convention: a crash never exits 0.
     match nerust_crash_guard::run_guarded_with(
-        || nerust_tao::run(ctx, rom_path),
+        || nerust_tao::run(boot, rom_path),
         nerust_crash_guard::default_sink,
         nerust_crash_guard::capture_backtrace,
     ) {

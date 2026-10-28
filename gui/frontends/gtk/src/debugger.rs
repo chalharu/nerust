@@ -2300,8 +2300,6 @@ mod tests {
         let mut windows = nerust_frontend_host::aux::AuxWindows::<u64, ()>::new();
         let (id, session) = {
             let mut state = state.borrow_mut();
-            let registry = state.ctx.registry.clone();
-            let audio = state.ctx.audio_registry.clone();
             let Some(OpenRequest::Create(id)) = state
                 .host
                 .reserve_window(&mut windows, AuxKind::Settings)
@@ -2311,7 +2309,7 @@ mod tests {
             };
             let session = state
                 .host
-                .prepare_widget_window(&mut windows, id, registry, audio)
+                .prepare_widget_window(&mut windows, id)
                 .unwrap()
                 .unwrap();
             (id, session)
