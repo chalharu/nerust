@@ -21,7 +21,7 @@ use nerust_frontend_host::{
     widgets::MenuPresenter,
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
-use nerust_gui_shell::session::{SessionError, access::SessionControl};
+use nerust_gui_shell::session::SessionError;
 
 use super::{
     State, TITLE_UPDATE_INTERVAL,
@@ -1040,10 +1040,15 @@ fn persist_window_fullscreen_default(
     fullscreen: bool,
 ) -> Result<bool, SessionError> {
     let state = window.state();
-    Ok(state
-        .borrow_mut()
-        .set_fullscreen_default(fullscreen)?
-        .fullscreen_default_changed)
+    let mut state = state.borrow_mut();
+    let plan = state
+        .host
+        .session_mut()
+        .set_fullscreen_default(fullscreen)?;
+    if plan.renderer_rebuild_required || plan.window_settings_changed {
+        state.renderer_reload_pending = true;
+    }
+    Ok(plan.fullscreen_default_changed)
 }
 
 fn sync_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
