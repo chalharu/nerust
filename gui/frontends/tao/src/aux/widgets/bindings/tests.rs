@@ -3,10 +3,8 @@ use crate::{
     aux::window::WindowProgram,
     runtime::host::{HostState, TestHost},
 };
-use nerust_frontend_host::{
-    aux::{AuxId, OpenRequest},
-    control::{Control, ControlInput, ControlVisitor},
-};
+use nerust_frontend_host::aux::{AuxId, OpenRequest};
+use wakui::control::{Control, ControlInput, ControlVisitor};
 
 mod history;
 
@@ -88,7 +86,7 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
     ));
     assert!(matches!(
         state.borrow().screen().control(control.id).unwrap().kind,
-        nerust_frontend_host::control::ControlKind::Toggle { value: true }
+        wakui::control::ControlKind::Toggle { value: true }
     ));
     let id = iced::window::Id::unique();
     assert_eq!(program.title(&state, id), state.borrow().screen().title);
@@ -135,7 +133,7 @@ fn status_area_message_reaches_viewmodel() {
     );
     assert!(matches!(
         c.kind,
-        nerust_frontend_host::control::ControlKind::Choice {
+        wakui::control::ControlKind::Choice {
             selected: Some(1),
             ..
         }

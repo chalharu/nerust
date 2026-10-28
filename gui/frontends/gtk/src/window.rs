@@ -171,7 +171,7 @@ impl WindowVisitor for GtkWindowRenderer<'_> {
         }
     }
 
-    fn visit_controls(&mut self, screen: &nerust_frontend_host::control::ControlScreen) {
+    fn visit_controls(&mut self, screen: &wakui::control::ControlScreen) {
         match self {
             Self::Controls(binding) => binding.render(screen),
             Self::Build(builder) => {

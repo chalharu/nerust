@@ -2,10 +2,10 @@
 
 use iced_winit::program::Program;
 use nerust_frontend_host::{
-    control::ControlScreen,
     focus::AuxKind,
     window::{DebugContents, PpuContents, Window, WindowVisitor},
 };
+use wakui::control::ControlScreen;
 
 pub(crate) trait GroupedProgram: Program {
     const KIND: AuxKind;

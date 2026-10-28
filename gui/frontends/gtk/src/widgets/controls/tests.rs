@@ -3,11 +3,12 @@
 use super::renderer::{NativeControl, NativeKind, NodeId};
 use super::*;
 use crate::window::{WindowExtend, tests as windows};
-use nerust_frontend_host::{control::*, focus::AuxKind};
+use nerust_frontend_host::focus::AuxKind;
 use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
+use wakui::control::*;
 
 struct Harness {
     window: crate::window::Window,

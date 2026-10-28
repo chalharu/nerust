@@ -7,7 +7,7 @@ use iced::{
         text_input,
     },
 };
-use nerust_frontend_host::{
+use wakui::{
     control::{
         Control, ControlDisplay, ControlInput, ControlKind, ControlMetadata, ControlScreen,
         ControlVisitor, Layout, LayoutKind, Page, Tab, Tabs,
