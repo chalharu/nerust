@@ -5,17 +5,17 @@ use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
-use wakui::control::{ControlKind, Layout, LayoutKind};
+use wakui::control::{ControlInput, ControlKind, Layout, LayoutKind};
 
-fn fixture() -> (HostState, AuxId, WidgetSession) {
+fn fixture() -> (HostState, AuxId) {
     let mut host = TestHost::new().host;
     host.report_host_error("history test error".into());
-    let (id, session) = prepare(&mut host, AuxKind::History);
-    (host, id, session)
+    let id = prepare(&mut host, AuxKind::History);
+    (host, id)
 }
 
-fn notes(session: &WidgetSession) -> Vec<String> {
-    controls(&session.screen())
+fn notes(host: &HostState, id: AuxId) -> Vec<String> {
+    controls(&screen_of(host, id))
         .into_iter()
         .filter_map(|c| match c.kind {
             ControlKind::Note { text } => Some(text),
@@ -24,71 +24,88 @@ fn notes(session: &WidgetSession) -> Vec<String> {
         .collect()
 }
 
-fn filter(session: &mut WidgetSession, index: usize) {
-    let control = controls(&session.screen())
+fn filter(host: &mut HostState, id: AuxId, index: usize) {
+    let screen = screen_of(host, id);
+    let control = controls(&screen)
         .into_iter()
         .find(|c| matches!(c.kind, ControlKind::Choice { .. }))
         .unwrap();
-    session.dispatch(Message::new(control.id, ControlInput::Select(index)));
+    let _ = dispatch(
+        host,
+        id,
+        Message::new(control.id, ControlInput::Select(index)),
+    );
 }
 
 #[test]
 fn outer_history_window_uses_common_title_and_controls_pipeline() {
     use iced_winit::program::Program;
-    let (_, _, session) = fixture();
+    let (host, id) = fixture();
     assert!(
-        notes(&session)
+        notes(&host, id)
             .iter()
             .any(|t| t.contains("history test error"))
     );
+    let screen = screen_of(&host, id);
+    let window = host.aux.window(id).expect("reserved window").clone();
+    let (binding, _, _) = ControlsBinding::new(screen, AuxKind::History);
     let program = WindowProgram {
-        window: session.window(),
-        program: ControlsBinding::new(session),
+        window: window.clone(),
+        program: binding,
     };
     let (state, _) = program.boot();
-    let id = iced::window::Id::unique();
-    assert_eq!(program.title(&state, id), state.borrow().screen().title);
-    drop(program.view(&state, id));
+    let id_iced = iced::window::Id::unique();
+    assert_eq!(program.title(&state, id_iced), window.title);
+    drop(program.view(&state, id_iced));
 }
 
 #[test]
 fn history_view_builds_empty_and_filtered() {
     let mut host = TestHost::new().host;
-    let (_, mut session) = prepare(&mut host, AuxKind::History);
-    drop(build_screen(&session.screen()));
-    filter(&mut session, 1);
+    let id = prepare(&mut host, AuxKind::History);
+    let screen = screen_of(&host, id);
+    drop(build_screen(&screen));
+    filter(&mut host, id, 1);
     assert!(
-        notes(&session)
+        notes(&host, id)
             .iter()
             .any(|t| t.contains("No notifications"))
     );
-    drop(build_screen(&session.screen()));
+    drop(build_screen(&screen_of(&host, id)));
 }
 
 #[test]
 fn history_sync_sets_lines_language_and_preserves_filter() {
-    let (mut host, _, mut session) = fixture();
-    filter(&mut session, 3);
-    let english = session.screen().title;
-    let (settings_id, mut settings) = prepare(&mut host, AuxKind::Settings);
-    let language = find(
-        &settings.screen(),
-        text(AppLanguage::English, UiText::Language),
-    );
+    let (mut host, id) = fixture();
+    filter(&mut host, id, 3);
+    let english = screen_of(&host, id).title;
+    let settings_id = prepare(&mut host, AuxKind::Settings);
+    let screen = screen_of(&host, settings_id);
+    let language = find(&screen, text(AppLanguage::English, UiText::Language));
     let ControlKind::Choice { choices, .. } = language.kind else {
         unreachable!()
     };
     let japanese = choices.iter().position(|c| c.contains("日本")).unwrap();
-    settings.dispatch(Message::new(language.id, ControlInput::Select(japanese)));
-    let submit = controls(&settings.screen())
+    let _ = dispatch(
+        &mut host,
+        settings_id,
+        Message::new(language.id, ControlInput::Select(japanese)),
+    );
+    let settings_screen = screen_of(&host, settings_id);
+    let submit = controls(&settings_screen)
         .into_iter()
         .find(|c| c.display == wakui::control::ControlDisplay::Primary)
         .unwrap();
-    settings.dispatch(Message::new(submit.id, ControlInput::Activate));
-    host.finish_widget_window(settings_id, true);
-    host.refresh_widget_session(&mut session);
-    assert_ne!(session.screen().title, english);
-    assert!(controls(&session.screen()).iter().any(|c| matches!(
+    let _ = dispatch(
+        &mut host,
+        settings_id,
+        Message::new(submit.id, ControlInput::Activate),
+    );
+    assert!(!host.finish_widget_window(settings_id, true));
+    host.core.widget_refresh(id);
+    let updated = screen_of(&host, id);
+    assert_ne!(updated.title, english);
+    assert!(controls(&updated).iter().any(|c| matches!(
         c.kind,
         ControlKind::Choice {
             selected: Some(3),
@@ -96,7 +113,7 @@ fn history_sync_sets_lines_language_and_preserves_filter() {
         }
     )));
     assert!(
-        notes(&session)
+        notes(&host, id)
             .iter()
             .any(|t| t.contains("history test error"))
     );
@@ -104,38 +121,40 @@ fn history_sync_sets_lines_language_and_preserves_filter() {
 
 #[test]
 fn history_view_builds_without_a_window() {
-    let (mut host, _, mut session) = fixture();
-    let binding = ControlsBinding::new(session);
+    let (mut host, id) = fixture();
+    let screen = screen_of(&host, id);
+    let (binding, _, _) = ControlsBinding::new(screen, AuxKind::History);
     let (state, _) = binding.boot();
     drop(binding.view(&state, iced::window::Id::unique()));
     host.report_host_error("new history row".into());
-    host.refresh_widget_session(&mut state.borrow_mut());
-    session = Rc::try_unwrap(state).ok().unwrap().into_inner();
-    assert!(
-        notes(&session)
-            .iter()
-            .any(|t| t.contains("new history row"))
-    );
-    filter(&mut session, 3);
-    drop(build_screen(&session.screen()));
+    host.core.widget_refresh(id);
+    let updated = screen_of(&host, id);
+    assert!(controls(&updated).iter().any(|t| matches!(
+        &t.kind,
+        ControlKind::Note { text } if text.contains("new history row")
+    )));
+    filter(&mut host, id, 3);
+    drop(build_screen(&screen_of(&host, id)));
 }
 
 #[test]
 fn history_clear_applies_without_close_and_refreshes_same_filter() {
-    let (mut host, id, mut session) = fixture();
-    filter(&mut session, 3);
-    activate(&mut session, "Clear History");
-    assert!(session.mailbox().has_pending());
-    assert!(!session.mailbox().close_requested());
+    let (mut host, id) = fixture();
+    filter(&mut host, id, 3);
+    activate(&mut host, id, "Clear History");
+    let mailbox = mailbox_of(&host, id);
+    assert!(mailbox.has_pending());
+    assert!(!mailbox.close_requested());
     assert!(!host.finish_widget_window(id, false));
-    assert!(!session.mailbox().has_pending());
-    host.refresh_widget_session(&mut session);
+    assert!(!mailbox.has_pending());
+    host.core.widget_refresh(id);
+    let screen = screen_of(&host, id);
     assert!(
-        !notes(&session)
+        !notes(&host, id)
             .iter()
             .any(|t| t.contains("history test error"))
     );
-    assert!(controls(&session.screen()).iter().any(|c| matches!(
+    assert!(controls(&screen).iter().any(|c| matches!(
         c.kind,
         ControlKind::Choice {
             selected: Some(3),
@@ -143,23 +162,27 @@ fn history_clear_applies_without_close_and_refreshes_same_filter() {
         }
     )));
     assert!(
-        host.prepare_widget_session(id).is_none(),
+        !host.prepare_widget(id),
         "original reservation/session survives clear"
     );
 }
 
 #[test]
 fn sync_consumes_refresh_flag_not_close_flag() {
-    let (mut host, _, mut session) = fixture();
-    let mailbox = session.mailbox();
+    let (mut host, id) = fixture();
+    let mailbox = mailbox_of(&host, id);
     mailbox.request_close();
     mailbox.invalidate();
     host.report_host_error("latest refresh".into());
-    host.refresh_widget_session(&mut session);
+    host.core.widget_refresh(id);
     assert!(mailbox.take_invalidated());
     assert!(!mailbox.take_invalidated());
     assert!(mailbox.close_requested());
-    assert!(notes(&session).iter().any(|t| t.contains("latest refresh")));
+    assert!(
+        notes(&host, id)
+            .iter()
+            .any(|t| t.contains("latest refresh"))
+    );
 }
 
 #[test]
@@ -169,7 +192,7 @@ fn merged_history_line_carries_single_count_suffix() {
         osd::{history_lines, history_row_view},
     };
     use wakui::control::Node;
-    let (_, _, session) = fixture();
+    let (host, id) = fixture();
     for language in [AppLanguage::English, AppLanguage::Japanese] {
         let notification = UiNotification {
             level: NotificationLevel::Info,
@@ -189,7 +212,7 @@ fn merged_history_line_carries_single_count_suffix() {
 
         // The native interpreter receives only the owned cell text: it must
         // not append the count again or require a History-specific binding.
-        let mut screen = session.screen();
+        let mut screen = screen_of(&host, id);
         let mut cell = controls(&screen)
             .into_iter()
             .find(|c| matches!(c.kind, ControlKind::Note { .. }))
@@ -222,10 +245,10 @@ fn shared_scene_drives_native_view_and_balanced_visitor_order() {
             self.controls += 1;
         }
     }
-    let (_, _, mut session) = fixture();
+    let (mut host, id) = fixture();
     for index in [0, 3] {
-        filter(&mut session, index);
-        let screen = session.screen();
+        filter(&mut host, id, index);
+        let screen = screen_of(&host, id);
         let mut probe = Probe {
             depth: 0,
             tables: 0,

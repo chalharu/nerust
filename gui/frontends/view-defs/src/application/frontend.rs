@@ -142,6 +142,9 @@ impl ApplicationHost {
                 freeze_input: view.freeze_input,
                 edit_input: view.edit_input,
                 reg_input: view.reg_input,
+                watch: view.watch,
+                watch_value: view.display.watch_value,
+                freeze: view.freeze,
             },
             selected: session.bridge.selected(),
             reg_target: session.bridge.reg_target(),
@@ -865,6 +868,22 @@ impl FrontendApp for ApplicationHost {
 
     fn take_ppu_open_request(&mut self) -> bool {
         self.debug.schedule_mut().take_ppu_open_request()
+    }
+
+    fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.debug.schedule().live_armed()
+    }
+
+    fn register_tick_thread(&mut self, thread: std::thread::Thread) {
+        self.debug.schedule().register_tick_thread(thread);
+    }
+
+    fn next_live_tick(&self) -> Option<std::time::Instant> {
+        self.debug.schedule().next_live_tick()
+    }
+
+    fn live_due(&mut self, now: std::time::Instant) -> bool {
+        self.debug.schedule_mut().live_due(now)
     }
 
     fn pump_osd(&mut self, now: Instant) -> OsdTurn {

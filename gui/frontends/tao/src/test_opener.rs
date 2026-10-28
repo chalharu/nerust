@@ -70,23 +70,27 @@ mod tests {
 
     #[test]
     fn fake_opener_records_each_aux_kind() {
+        use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let opener = FakeOpener::failing("no display");
         let mut host = crate::runtime::host::TestHost::new().host;
-        let (_, session) =
-            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
+        let id = prepare(&mut host, AuxKind::History);
         assert!(
             opener
-                .create_aux(session.window(), AuxOpenParams::Controls { session })
+                .create_aux(
+                    host.aux.window(id).expect("window").clone(),
+                    AuxOpenParams::Controls {
+                        id,
+                        screen: Box::new(screen_of(&host, id)),
+                        mailbox: mailbox_of(&host, id),
+                    }
+                )
                 .is_none()
         );
         assert!(
             opener
                 .create_aux(
                     nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug),
-                    AuxOpenParams::Debug {
-                        bridge: std::sync::Arc::new(host.new_debug_bridge()),
-                        position: None,
-                    }
+                    AuxOpenParams::Debug { position: None }
                 )
                 .is_none()
         );
@@ -105,23 +109,26 @@ mod tests {
     #[test]
     fn fake_opener_records_remaining_aux_kinds() {
         let opener = FakeOpener::failing("no display");
+        use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let mut host = crate::runtime::host::TestHost::new().host;
-        let (_, session) =
-            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
+        let id = prepare(&mut host, AuxKind::Settings);
         assert!(
             opener
-                .create_aux(session.window(), AuxOpenParams::Controls { session })
+                .create_aux(
+                    host.aux.window(id).expect("window").clone(),
+                    AuxOpenParams::Controls {
+                        id,
+                        screen: Box::new(screen_of(&host, id)),
+                        mailbox: mailbox_of(&host, id),
+                    }
+                )
                 .is_none()
         );
-        let bridge = std::sync::Arc::new(host.new_debug_bridge());
         assert!(
             opener
                 .create_aux(
                     nerust_frontend_host::window::Window::auxiliary(AuxKind::Ppu),
-                    AuxOpenParams::Ppu {
-                        bridge,
-                        position: None
-                    }
+                    AuxOpenParams::Ppu { position: None }
                 )
                 .is_none()
         );

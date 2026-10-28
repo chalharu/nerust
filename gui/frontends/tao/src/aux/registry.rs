@@ -1,16 +1,14 @@
 //! Aux-window route table: one entry per secondary window.
 //! Dispatch resolves native ids once; every entry pumps domain events.
 
-use std::sync::Arc;
-
-use super::bridge::{AppliedDrain, AppliedLive, DebugBridge, DrainSnapshot};
+use super::debug::{DebugMessage, views::ViewSnapshot};
 use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
 use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
 use nerust_frontend_host::aux::AuxWindows;
 #[cfg(test)]
 use nerust_frontend_host::aux::OpenRequest;
-use nerust_frontend_host::{widget_session::WindowMailbox, window::Window};
-use nerust_frontend_viewdefs::application::ApplicationHost;
+use nerust_frontend_host::widget_session::WindowMailbox;
+use wakui::control::{ControlEvent, ControlScreen};
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Default)]
@@ -23,22 +21,13 @@ pub(crate) struct AuxOutcome {
     pub error: Option<String>,
 }
 
-/// Debug-drain port: apply for one drain.
-pub(crate) trait DebugDrainPort {
-    /// Apply a finished drain (debug only).
-    fn apply_drain(&mut self, drain: AppliedDrain);
-}
-
-/// Live-images port: finished live fetches land here.
-/// Only the debugger implements this; see `AuxController::as_live`.
-pub(crate) trait LiveImagesPort {
-    /// Apply finished live images (debug only).
-    fn apply_live(&mut self, live: AppliedLive) -> bool;
-}
-
-/// Generic session capability; native code never sees a domain controller.
+/// Generic widget capability: the host pushes screens, native drains events.
+/// Native code never sees a domain controller or session.
 pub(crate) trait WidgetSessionPort {
-    fn refresh_widget(&mut self, host: &mut ApplicationHost) -> Window;
+    /// Push the latest app screen; rebuild the native view from it.
+    fn push_snapshot(&mut self, screen: &ControlScreen);
+    /// Take queued control events for the host drain.
+    fn drain_events(&mut self) -> Vec<ControlEvent>;
 }
 
 /// Uniform aux controller: identity plus render plus capability queries.
@@ -69,40 +58,26 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
         }
     }
 
-    /// Rebuild the view from the bridge (debug/PPU only).
-    fn sync_view(&mut self) {}
-
-    /// Debug-drain capability (debugger only).
-    fn as_debug(&mut self) -> Option<&mut dyn DebugDrainPort> {
-        None
+    /// Push the latest debugger snapshot (debug only).
+    fn push_debug_snapshot(&mut self, _snapshot: &ViewSnapshot) -> bool {
+        false
     }
 
-    /// Read-only drain snapshot (`None` unless debugger).
-    fn debug_snapshot_of(&self, _ppu_open: bool) -> Option<DrainSnapshot> {
-        None
-    }
-
-    /// Live-images capability (debugger only).
-    fn as_live(&mut self) -> Option<&mut dyn LiveImagesPort> {
-        None
+    /// Take queued debugger gestures for the host drain (debug only).
+    fn drain_debug_queue(&mut self) -> Vec<DebugMessage> {
+        Vec::new()
     }
 
     fn as_widget(&mut self) -> Option<&mut dyn WidgetSessionPort> {
         None
     }
 
+    fn as_ppu(&mut self) -> Option<&mut super::ppu::PpuWindowHandle> {
+        None
+    }
+
     fn widget_mailbox(&self) -> Option<WindowMailbox> {
         None
-    }
-
-    /// Share the debugger bridge for viewer creation (debug only).
-    fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
-        None
-    }
-
-    /// Contended lock names, if any (debug only).
-    fn debug_lock_audit(&self) -> Vec<&'static str> {
-        Vec::new()
     }
 }
 
@@ -237,77 +212,70 @@ impl AuxRegistry {
         }
     }
 
-    /// Drain snapshot (`None` when the debugger is closed).
-    pub(crate) fn debug_snapshot(&self, ppu_open: bool) -> Option<DrainSnapshot> {
-        // Read-only query behind a shared borrow: the snapshot clones small fields only.
-        self.windows
-            .get(AuxKind::Debug)
-            .and_then(|entry| entry.debug_snapshot_of(ppu_open))
+    /// Push the latest debugger snapshot into the open debug window.
+    pub(crate) fn push_debug_snapshot(&mut self, snapshot: &ViewSnapshot) -> bool {
+        self.entry_mut(AuxKind::Debug)
+            .map(|entry| entry.push_debug_snapshot(snapshot))
+            .unwrap_or(false)
     }
 
-    /// Apply a finished drain, then rebuild the viewers.
-    pub(crate) fn debug_apply(&mut self, drain: AppliedDrain) {
-        if let Some(port) = self
-            .entry_mut(AuxKind::Debug)
-            .and_then(AuxController::as_debug)
+    /// Take queued debugger gestures from the open debug window.
+    pub(crate) fn drain_debug_queue(&mut self) -> Vec<DebugMessage> {
+        self.entry_mut(AuxKind::Debug)
+            .map(|entry| entry.drain_debug_queue())
+            .unwrap_or_default()
+    }
+
+    /// Push staged pictures into the open PPU viewer.
+    pub(crate) fn push_ppu_pictures(&mut self, pictures: super::ppu::PpuPictures) {
+        if let Some(entry) = self
+            .entry_mut(AuxKind::Ppu)
+            .and_then(|entry| entry.as_ppu())
         {
-            port.apply_drain(drain);
-        }
-        self.debug_sync();
-        self.ppu_sync();
-    }
-
-    /// Apply finished live images; true when the viewer needs a rebuild.
-    pub(crate) fn debug_apply_live(&mut self, live: AppliedLive) -> bool {
-        let rebuilt = self
-            .entry_mut(AuxKind::Debug)
-            .and_then(AuxController::as_live)
-            .is_some_and(|entry| entry.apply_live(live));
-        if rebuilt {
-            self.debug_sync();
-        }
-        rebuilt
-    }
-
-    /// Rebuild the debugger view from the bridge.
-    pub(crate) fn debug_sync(&mut self) {
-        if let Some(entry) = self.entry_mut(AuxKind::Debug) {
-            entry.sync_view();
+            entry.push_pictures(pictures);
         }
     }
 
-    /// Share the debugger bridge for viewer creation.
-    pub(crate) fn debug_bridge(&self) -> Option<Arc<DebugBridge>> {
-        self.entry(AuxKind::Debug)
-            .and_then(AuxController::shared_bridge)
+    /// Take queued hover coordinates from the open PPU viewer.
+    pub(crate) fn drain_ppu_hover(&mut self) -> Vec<super::ppu::HoverAt> {
+        self.entry_mut(AuxKind::Ppu)
+            .and_then(|entry| entry.as_ppu())
+            .map(|viewer| viewer.drain_hover())
+            .unwrap_or_default()
     }
 
-    /// Rebuild the PPU viewer from the bridge.
-    pub(crate) fn ppu_sync(&mut self) {
-        if let Some(entry) = self.entry_mut(AuxKind::Ppu) {
-            entry.sync_view();
+    /// Show app-formatted hover text on the open PPU viewer.
+    pub(crate) fn push_ppu_hover(&mut self, line: String) {
+        if let Some(entry) = self
+            .entry_mut(AuxKind::Ppu)
+            .and_then(|entry| entry.as_ppu())
+        {
+            entry.push_hover(line);
         }
     }
 
-    pub(crate) fn refresh_widget(&mut self, id: AuxId, host: &mut ApplicationHost) {
+    /// Push the latest widget screen into the open widget window.
+    pub(crate) fn push_widget_snapshot(&mut self, id: AuxId, screen: &ControlScreen) -> bool {
         let Some(kind) = self.windows.kind_of_id(id) else {
-            return;
+            return false;
         };
-        let window = self
-            .entry_mut(kind)
+        self.entry_mut(kind)
             .and_then(AuxController::as_widget)
-            .map(|port| port.refresh_widget(host));
-        if let Some(window) = window
-            && let Some(current) = self.window_mut(id)
-        {
-            *current = window;
-        }
+            .map(|port| {
+                port.push_snapshot(screen);
+            })
+            .is_some()
     }
 
-    /// Contended bridge locks, if any (debug only).
-    pub(crate) fn debug_locks_free(&self) -> bool {
-        self.entry(AuxKind::Debug)
-            .is_some_and(|entry| entry.debug_lock_audit().is_empty())
+    /// Take queued control events from the open widget window.
+    pub(crate) fn drain_widget_events(&mut self, id: AuxId) -> Vec<ControlEvent> {
+        let Some(kind) = self.windows.kind_of_id(id) else {
+            return Vec::new();
+        };
+        self.entry_mut(kind)
+            .and_then(AuxController::as_widget)
+            .map(|port| port.drain_events())
+            .unwrap_or_default()
     }
 
     /// Bring the window of this kind to the front, if open.
@@ -322,23 +290,25 @@ impl AuxRegistry {
 pub(crate) mod test_double {
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::sync::Arc;
 
-    use crate::aux::bridge::{AppliedDrain, AppliedLive, DebugBridge, DrainSnapshot};
     use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender};
 
-    use super::{AuxController, DebugDrainPort, LiveImagesPort, WindowMailbox};
+    use super::{AuxController, WidgetSessionPort};
+    use crate::aux::debug::views::ViewSnapshot;
+    use nerust_frontend_host::widget_session::WindowMailbox;
+    use wakui::control::{ControlEvent, ControlScreen};
+
     /// Configurable stub aux: answers only the capability its kind owns.
     pub(crate) struct StubAux {
         pub kind: AuxKind,
         pub nid: NativeWindowId,
         pub close: bool,
         pub mailbox: Option<WindowMailbox>,
-        pub live_rebuild: bool,
-        pub applied_drain: Rc<Cell<bool>>,
-        pub bridge: Option<Arc<DebugBridge>>,
-        pub reg_target: Option<&'static str>,
+        pub pushed_snapshot: Rc<Cell<bool>>,
+        pub pushed_screen: Rc<Cell<bool>>,
+        pub debug_queue: Vec<super::DebugMessage>,
+        pub widget_queue: Vec<ControlEvent>,
     }
 
     impl StubAux {
@@ -348,10 +318,10 @@ pub(crate) mod test_double {
                 nid: NativeWindowId::dummy(),
                 close: false,
                 mailbox: None,
-                live_rebuild: false,
-                applied_drain: Rc::new(Cell::new(false)),
-                bridge: None,
-                reg_target: None,
+                pushed_snapshot: Rc::new(Cell::new(false)),
+                pushed_screen: Rc::new(Cell::new(false)),
+                debug_queue: Vec::new(),
+                widget_queue: Vec::new(),
             }
         }
     }
@@ -389,50 +359,39 @@ pub(crate) mod test_double {
         }
     }
 
-    impl DebugDrainPort for StubAux {
-        fn apply_drain(&mut self, _drain: AppliedDrain) {
-            self.applied_drain.set(true);
+    impl WidgetSessionPort for StubAux {
+        fn push_snapshot(&mut self, _screen: &ControlScreen) {
+            self.pushed_screen.set(true);
         }
-    }
 
-    impl LiveImagesPort for StubAux {
-        fn apply_live(&mut self, _live: AppliedLive) -> bool {
-            self.live_rebuild
+        fn drain_events(&mut self) -> Vec<ControlEvent> {
+            std::mem::take(&mut self.widget_queue)
         }
     }
 
     impl AuxController for StubAux {
-        fn as_debug(&mut self) -> Option<&mut dyn DebugDrainPort> {
-            (self.kind == AuxKind::Debug).then_some(self as &mut dyn DebugDrainPort)
+        fn push_debug_snapshot(&mut self, _snapshot: &ViewSnapshot) -> bool {
+            if self.kind != AuxKind::Debug {
+                return false;
+            }
+            self.pushed_snapshot.set(true);
+            true
         }
 
-        fn debug_snapshot_of(&self, ppu_open: bool) -> Option<DrainSnapshot> {
-            (self.kind == AuxKind::Debug).then(|| DrainSnapshot {
-                space: None,
-                mem_addr: 0,
-                dis_addr: None,
-                watch: None,
-                freeze: None,
-                reg_target: self.reg_target,
-                prev_rows: Arc::from([]),
-                ppu_open,
-            })
+        fn drain_debug_queue(&mut self) -> Vec<super::DebugMessage> {
+            if self.kind != AuxKind::Debug {
+                return Vec::new();
+            }
+            std::mem::take(&mut self.debug_queue)
         }
 
-        fn as_live(&mut self) -> Option<&mut dyn LiveImagesPort> {
-            (self.kind == AuxKind::Debug).then_some(self as &mut dyn LiveImagesPort)
+        fn as_widget(&mut self) -> Option<&mut dyn WidgetSessionPort> {
+            (self.kind == AuxKind::Settings || self.kind == AuxKind::History)
+                .then_some(self as &mut dyn WidgetSessionPort)
         }
 
         fn widget_mailbox(&self) -> Option<WindowMailbox> {
             self.mailbox.clone()
-        }
-
-        fn shared_bridge(&self) -> Option<Arc<DebugBridge>> {
-            (self.kind == AuxKind::Debug).then(|| self.bridge.clone())?
-        }
-
-        fn debug_lock_audit(&self) -> Vec<&'static str> {
-            Vec::new()
         }
     }
 }
@@ -441,8 +400,6 @@ pub(crate) mod test_double {
 mod tests {
     use super::test_double::StubAux;
     use super::*;
-    use nerust_core_traits::debugger::SpaceId;
-    use nerust_gui_viewmodel::debugger::DisplayCache;
 
     #[test]
     fn reserved_window_snapshot_allows_reentry_and_stale_ids_cannot_touch_reopen() {
@@ -515,12 +472,12 @@ mod tests {
             panic!("expected debugger reservation");
         };
         assert!(registry.contains(AuxKind::Debug));
-        assert!(registry.debug_snapshot(false).is_none());
         assert!(registry.render_kind(AuxKind::Debug).is_none());
         assert_eq!(
             registry.request_open(AuxKind::Debug),
             OpenRequest::Pending(debug)
         );
+        assert!(registry.drain_debug_queue().is_empty());
         let wrong = Box::new(StubAux::new(AuxKind::Ppu));
         let wrong_native = wrong.nid;
         let rejected = registry.complete_open(debug, wrong).err().unwrap();
@@ -593,96 +550,106 @@ mod tests {
 
     #[test]
     fn on_event_reports_close_and_clear_flags() {
+        use nerust_frontend_host::app::FrontendApp as _;
+
         let mut registry = AuxRegistry::new();
         let mut stub = StubAux::new(AuxKind::History);
         let mut host = crate::runtime::host::TestHost::new().host;
-        let (_, mut session) =
-            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
-        crate::aux::widgets::bindings::tests::activate(&mut session, "Clear History");
-        stub.mailbox = Some(session.mailbox());
+        let id = host
+            .reserve_aux_window(AuxKind::History)
+            .and_then(|request| match request {
+                OpenRequest::Create(id) => Some(id),
+                _ => None,
+            })
+            .expect("reservation");
+        assert!(host.prepare_widget(id));
+        stub.mailbox = host.core.widget_mailbox(id);
         stub.close = true;
         registry.insert(Box::new(stub));
         let outcome = registry
             .on_event(AuxKind::History, AuxNativeEvent::Focused(true))
             .expect("history routes");
         assert!(outcome.close);
-        assert!(outcome.submitted);
         // Default controller hooks stay quiet.
         registry.render_kind(AuxKind::History);
         registry.focus_kind(AuxKind::History);
         let mut bare = StubAux::new(AuxKind::History);
-        bare.sync_view();
         AuxController::on_redraw(&mut bare);
     }
 
     #[test]
     fn debug_ports_delegate_to_the_open_entry() {
-        use nerust_settings_core::model::language::AppLanguage;
+        use crate::aux::debug::{DebugMessage, views::ViewSnapshot};
+
         let mut registry = AuxRegistry::new();
         // Closed debugger: every port stays quiet.
-        assert!(registry.debug_snapshot(false).is_none());
-        assert!(registry.debug_bridge().is_none());
-        assert!(!registry.debug_locks_free());
-        assert!(!registry.debug_apply_live(AppliedLive {
-            generation: 1,
-            images: Vec::new(),
-            running: false,
-        }));
-        registry.debug_apply(AppliedDrain {
-            display: DisplayCache::default(),
-            reselected: None,
-        });
-        registry.debug_sync();
-        registry.ppu_sync();
-        let mut host = crate::runtime::host::TestHost::new().host;
-        let OpenRequest::Create(absent) = host.reserve_aux_window(AuxKind::History).unwrap() else {
-            panic!("reservation")
-        };
-        registry.refresh_widget(absent, &mut host);
-        // Open debugger: snapshot and bridge delegate; the batch flows
-        // through the entry's own bridge.
+        assert!(registry.drain_debug_queue().is_empty());
+        assert!(!registry.push_debug_snapshot(&ViewSnapshot::default()));
+        // Open debugger: queue delegates; snapshots fan out.
         let mut stub = StubAux::new(AuxKind::Debug);
-        stub.bridge = Some(Arc::new(DebugBridge::new(
-            DisplayCache::default(),
-            vec![(SpaceId(0), "Memory".to_string(), 0)],
-            0,
-            AppLanguage::English,
-        )));
-        let applied = std::rc::Rc::clone(&stub.applied_drain);
+        stub.debug_queue.push(DebugMessage::RefreshPressed);
+        let pushed = stub.pushed_snapshot.clone();
         registry.insert(Box::new(stub));
-        assert!(
-            registry
-                .debug_snapshot(true)
-                .expect("debug routes")
-                .ppu_open
-        );
-        assert!(registry.debug_bridge().is_some());
-        assert!(registry.debug_locks_free());
-        // Apply lands on the entry, then fans out to the PPU sync.
-        registry.debug_apply(AppliedDrain {
-            display: DisplayCache::default(),
-            reselected: Some((0x10, None)),
-        });
-        assert!(applied.get());
-        // Live apply rebuilds only when the entry says so.
-        assert!(!registry.debug_apply_live(AppliedLive {
-            generation: 2,
-            images: Vec::new(),
-            running: false,
-        }));
+        assert!(matches!(
+            registry.drain_debug_queue().as_slice(),
+            [DebugMessage::RefreshPressed]
+        ));
+        assert!(registry.drain_debug_queue().is_empty());
+        assert!(registry.push_debug_snapshot(&ViewSnapshot::default()));
+        assert!(pushed.get());
+        // Kind gating: a settings stub never answers debug ports.
+        let mut settings = AuxRegistry::new();
+        settings.insert(Box::new(StubAux::new(AuxKind::Settings)));
+        assert!(settings.drain_debug_queue().is_empty());
+        assert!(!settings.push_debug_snapshot(&ViewSnapshot::default()));
     }
 
     #[test]
-    fn debug_apply_live_rebuilds_through_sync() {
+    fn widget_ports_push_and_drain_through_the_open_entry() {
+        use nerust_frontend_host::app::FrontendApp as _;
+        use wakui::control::{ControlEvent, ControlInput};
+
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let id = host
+            .reserve_aux_window(AuxKind::History)
+            .and_then(|request| match request {
+                OpenRequest::Create(id) => Some(id),
+                _ => None,
+            })
+            .expect("reservation");
+        assert!(host.prepare_widget(id));
+        let screen = host.core.widget_screen(id).expect("screen");
+        let control = screen
+            .pages
+            .iter()
+            .flat_map(|page| [&page.select])
+            .next()
+            .expect("history has a filter control");
         let mut registry = AuxRegistry::new();
-        let mut stub = StubAux::new(AuxKind::Debug);
-        stub.live_rebuild = true;
-        registry.insert(Box::new(stub));
-        assert!(registry.debug_apply_live(AppliedLive {
-            generation: 7,
-            images: Vec::new(),
-            running: true,
-        }));
+        let mut stub = StubAux::new(AuxKind::History);
+        stub.widget_queue
+            .push(ControlEvent::new(control.id, ControlInput::Activate));
+        let pushed = stub.pushed_screen.clone();
+        let seat = registry.insert(Box::new(stub));
+        assert_eq!(
+            registry.drain_widget_events(seat).len(),
+            1,
+            "queued widget event drains"
+        );
+        assert!(registry.drain_widget_events(seat).is_empty());
+        assert!(registry.push_widget_snapshot(seat, &screen));
+        assert!(pushed.get());
+        // Kind gating (not just routing) keeps a seated settings
+        // window from answering debugger-only ports.
+        let mut other = AuxRegistry::new();
+        other.insert(Box::new(StubAux::new(AuxKind::Settings)));
+        assert!(other.drain_debug_queue().is_empty());
+        assert!(
+            other
+                .windows
+                .mailbox(other.route_id(AuxKind::Settings).unwrap())
+                .is_none()
+        );
     }
 
     #[test]
@@ -691,7 +658,7 @@ mod tests {
         // window from answering debugger-only ports.
         let mut registry = AuxRegistry::new();
         registry.insert(Box::new(StubAux::new(AuxKind::Settings)));
-        assert!(registry.debug_snapshot(false).is_none());
+        assert!(registry.drain_debug_queue().is_empty());
         assert!(
             registry
                 .windows

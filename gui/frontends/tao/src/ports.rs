@@ -8,12 +8,14 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use nerust_frontend_host::window::{DebugContents, PpuContents, Window, WindowVisitor};
-use nerust_frontend_viewdefs::widget_session::WidgetSession;
+use nerust_frontend_host::{
+    aux::AuxId,
+    widget_session::WindowMailbox,
+    window::{DebugContents, PpuContents, Window, WindowVisitor},
+};
 use rfd::FileDialog;
 use wakui::control::ControlScreen;
 
-use crate::aux::bridge::DebugBridge;
 #[cfg(test)]
 use crate::aux::focus::AuxKind;
 use crate::aux::registry::AuxController;
@@ -137,16 +139,18 @@ pub(crate) fn show_rom_load_error(title: String, detail: &str) {
 }
 
 /// Aux-window open parameters: one variant per capability.
+/// View-definitions sessions stay app-side; native windows receive only
+/// handles, screens, and mailboxes.
 pub(crate) enum AuxOpenParams {
     Controls {
-        session: WidgetSession,
+        id: AuxId,
+        screen: Box<ControlScreen>,
+        mailbox: WindowMailbox,
     },
     Debug {
-        bridge: Arc<DebugBridge>,
         position: Option<(i32, i32)>,
     },
     Ppu {
-        bridge: Arc<DebugBridge>,
         position: Option<(i32, i32)>,
     },
 }
@@ -199,28 +203,28 @@ struct CreateAux<'a> {
 
 impl WindowVisitor for CreateAux<'_> {
     fn visit_controls(&mut self, _: &ControlScreen) {
-        self.output = self
-            .params
-            .take()
-            .and_then(controls_parts)
-            .and_then(|session| {
-                crate::aux::widgets::native::ControlsWindowHandle::new(
-                    self.window.clone(),
-                    session,
-                    self.target,
-                )
-                .map(aux_box)
-            });
+        self.output =
+            self.params
+                .take()
+                .and_then(controls_parts)
+                .and_then(|(_id, screen, mailbox)| {
+                    crate::aux::widgets::native::ControlsWindowHandle::new(
+                        self.window.clone(),
+                        screen,
+                        mailbox,
+                        self.target,
+                    )
+                    .map(aux_box)
+                });
     }
     fn visit_debug(&mut self, _: &DebugContents) {
         self.output = self
             .params
             .take()
             .and_then(debug_parts)
-            .and_then(|(bridge, position)| {
+            .and_then(|position| {
                 crate::aux::debug::DebugWindowHandle::new(
                     self.window.clone(),
-                    bridge,
                     self.target,
                     position,
                 )
@@ -228,19 +232,10 @@ impl WindowVisitor for CreateAux<'_> {
             });
     }
     fn visit_ppu(&mut self, _: &PpuContents) {
-        self.output = self
-            .params
-            .take()
-            .and_then(ppu_parts)
-            .and_then(|(bridge, position)| {
-                crate::aux::ppu::PpuWindowHandle::new(
-                    self.window.clone(),
-                    bridge,
-                    self.target,
-                    position,
-                )
+        self.output = self.params.take().and_then(ppu_parts).and_then(|position| {
+            crate::aux::ppu::PpuWindowHandle::new(self.window.clone(), self.target, position)
                 .map(aux_box)
-            });
+        });
     }
 }
 
@@ -251,31 +246,34 @@ fn aux_box<T: AuxController + 'static>(handle: T) -> Box<dyn AuxController> {
 
 /// Split one controls open: the variant check is pure, so tests cover
 /// foreign-variant rejection without a display.
-fn controls_parts(params: AuxOpenParams) -> Option<WidgetSession> {
-    let AuxOpenParams::Controls { session } = params else {
+type ControlsParts = (AuxId, Box<ControlScreen>, WindowMailbox);
+
+fn controls_parts(params: AuxOpenParams) -> Option<ControlsParts> {
+    let AuxOpenParams::Controls {
+        id,
+        screen,
+        mailbox,
+    } = params
+    else {
         return None;
     };
-    Some(session)
+    Some((id, screen, mailbox))
 }
 
 /// Split one debugger open: pure variant check, display-free tests.
-type DebugParts = (Arc<DebugBridge>, Option<(i32, i32)>);
-
-fn debug_parts(params: AuxOpenParams) -> Option<DebugParts> {
-    let AuxOpenParams::Debug { bridge, position } = params else {
+fn debug_parts(params: AuxOpenParams) -> Option<Option<(i32, i32)>> {
+    let AuxOpenParams::Debug { position } = params else {
         return None;
     };
-    Some((bridge, position))
+    Some(position)
 }
 
 /// Split one viewer open: pure variant check, display-free tests.
-type PpuParts = (Arc<DebugBridge>, Option<(i32, i32)>);
-
-fn ppu_parts(params: AuxOpenParams) -> Option<PpuParts> {
-    let AuxOpenParams::Ppu { bridge, position } = params else {
+fn ppu_parts(params: AuxOpenParams) -> Option<Option<(i32, i32)>> {
+    let AuxOpenParams::Ppu { position } = params else {
         return None;
     };
-    Some((bridge, position))
+    Some(position)
 }
 
 #[cfg(test)]
@@ -345,37 +343,27 @@ mod tests {
         // Kind routing guarantees the variant; a foreign variant is a
         // caller bug answered with `None`, never a logged mismatch.
         fn history_params() -> AuxOpenParams {
+            use nerust_frontend_host::app::FrontendApp as _;
             let mut host = crate::runtime::host::TestHost::new().host;
-            let (_, session) =
-                crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
-            AuxOpenParams::Controls { session }
+            let id = crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
+            AuxOpenParams::Controls {
+                id,
+                screen: Box::new(host.core.widget_screen(id).expect("screen")),
+                mailbox: host.core.widget_mailbox(id).expect("mailbox"),
+            }
         }
         assert!(debug_parts(history_params()).is_none());
         assert!(ppu_parts(history_params()).is_none());
         assert!(controls_parts(history_params()).is_some());
         // Own variants split cleanly.
-        let mut host = crate::runtime::host::TestHost::new().host;
-        let (_, session) =
-            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
-        assert!(controls_parts(AuxOpenParams::Controls { session }).is_some());
-        let bridge = std::sync::Arc::new(
-            crate::runtime::host::TestHost::new()
-                .host
-                .new_debug_bridge(),
-        );
-        let debug = AuxOpenParams::Debug {
-            bridge: std::sync::Arc::clone(&bridge),
-            position: None,
-        };
-        let (back_debug_bridge, position) = debug_parts(debug).expect("debug splits");
-        assert!(std::sync::Arc::ptr_eq(&back_debug_bridge, &bridge));
+        assert!(controls_parts(history_params()).is_some());
+        let debug = AuxOpenParams::Debug { position: None };
+        let position = debug_parts(debug).expect("debug splits");
         assert_eq!(position, None);
-        let (back_bridge, back_pos) = ppu_parts(AuxOpenParams::Ppu {
-            bridge: std::sync::Arc::clone(&bridge),
+        let back_pos = ppu_parts(AuxOpenParams::Ppu {
             position: Some((8, 16)),
         })
         .expect("ppu splits");
-        assert!(std::sync::Arc::ptr_eq(&back_bridge, &bridge));
         assert_eq!(back_pos, Some((8, 16)));
     }
 }

@@ -32,6 +32,7 @@
 
 pub mod app;
 pub mod aux;
+pub mod bootstrap;
 pub mod commands;
 pub mod debug_schedule;
 pub mod debugger;
