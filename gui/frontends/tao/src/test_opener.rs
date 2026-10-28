@@ -67,7 +67,6 @@ mod tests {
     use super::*;
     use crate::aux::focus::AuxKind;
     use crate::ports::{AuxOpenParams, WindowOpener};
-    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn fake_opener_records_each_aux_kind() {
@@ -85,10 +84,11 @@ mod tests {
                 .create_aux(
                     nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug),
                     AuxOpenParams::Debug {
-                        display: Default::default(),
-                        spaces: Vec::new(),
-                        mem_addr: 0,
-                        language: AppLanguage::English,
+                        bridge: std::sync::Arc::new(host.new_debug_bridge(
+                            Default::default(),
+                            Vec::new(),
+                            0,
+                        )),
                         position: None,
                     }
                 )
@@ -108,8 +108,6 @@ mod tests {
 
     #[test]
     fn fake_opener_records_remaining_aux_kinds() {
-        use crate::aux::bridge::DebugBridge;
-        use nerust_gui_viewmodel::debugger::DisplayCache;
         let opener = FakeOpener::failing("no display");
         let mut host = crate::runtime::host::TestHost::new().host;
         let (_, session) =
@@ -119,12 +117,7 @@ mod tests {
                 .create_aux(session.window(), AuxOpenParams::Controls { session })
                 .is_none()
         );
-        let bridge = std::sync::Arc::new(DebugBridge::new(
-            DisplayCache::default(),
-            Vec::new(),
-            0,
-            AppLanguage::English,
-        ));
+        let bridge = std::sync::Arc::new(host.new_debug_bridge(Default::default(), Vec::new(), 0));
         assert!(
             opener
                 .create_aux(

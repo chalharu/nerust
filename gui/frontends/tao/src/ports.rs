@@ -8,14 +8,11 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use nerust_core_traits::debugger::SpaceId;
 use nerust_frontend_host::{
     control::ControlScreen,
     widget_session::WidgetSession,
     window::{DebugContents, PpuContents, Window, WindowVisitor},
 };
-use nerust_gui_viewmodel::debugger::DisplayCache;
-use nerust_settings_core::model::language::AppLanguage;
 use rfd::FileDialog;
 
 use crate::aux::bridge::DebugBridge;
@@ -147,10 +144,7 @@ pub(crate) enum AuxOpenParams {
         session: WidgetSession,
     },
     Debug {
-        display: Box<DisplayCache>,
-        spaces: Vec<(SpaceId, String, u32)>,
-        mem_addr: u32,
-        language: AppLanguage,
+        bridge: Arc<DebugBridge>,
         position: Option<(i32, i32)>,
     },
     Ppu {
@@ -221,20 +215,19 @@ impl WindowVisitor for CreateAux<'_> {
             });
     }
     fn visit_debug(&mut self, _: &DebugContents) {
-        self.output = self.params.take().and_then(debug_parts).and_then(
-            |(display, spaces, mem_addr, language, position)| {
+        self.output = self
+            .params
+            .take()
+            .and_then(debug_parts)
+            .and_then(|(bridge, position)| {
                 crate::aux::debug::DebugWindowHandle::new(
                     self.window.clone(),
-                    display,
-                    spaces,
-                    mem_addr,
-                    language,
+                    bridge,
                     self.target,
                     position,
                 )
                 .map(aux_box)
-            },
-        );
+            });
     }
     fn visit_ppu(&mut self, _: &PpuContents) {
         self.output = self
@@ -268,27 +261,13 @@ fn controls_parts(params: AuxOpenParams) -> Option<WidgetSession> {
 }
 
 /// Split one debugger open: pure variant check, display-free tests.
-/// Split debugger inputs: display, spaces, address, language, position.
-type DebugParts = (
-    DisplayCache,
-    Vec<(SpaceId, String, u32)>,
-    u32,
-    AppLanguage,
-    Option<(i32, i32)>,
-);
+type DebugParts = (Arc<DebugBridge>, Option<(i32, i32)>);
 
 fn debug_parts(params: AuxOpenParams) -> Option<DebugParts> {
-    let AuxOpenParams::Debug {
-        display,
-        spaces,
-        mem_addr,
-        language,
-        position,
-    } = params
-    else {
+    let AuxOpenParams::Debug { bridge, position } = params else {
         return None;
     };
-    Some((*display, spaces, mem_addr, language, position))
+    Some((bridge, position))
 }
 
 /// Split one viewer open: pure variant check, display-free tests.
@@ -381,27 +360,19 @@ mod tests {
         let (_, session) =
             crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
         assert!(controls_parts(AuxOpenParams::Controls { session }).is_some());
+        let bridge =
+            std::sync::Arc::new(crate::runtime::host::TestHost::new().host.new_debug_bridge(
+                Default::default(),
+                Vec::new(),
+                0,
+            ));
         let debug = AuxOpenParams::Debug {
-            display: Default::default(),
-            spaces: Vec::new(),
-            mem_addr: 0,
-            language: AppLanguage::English,
+            bridge: std::sync::Arc::clone(&bridge),
             position: None,
         };
-        let (display, spaces, mem_addr, language, position) =
-            debug_parts(debug).expect("debug splits");
-        assert_eq!(
-            (mem_addr, language, position),
-            (0, AppLanguage::English, None)
-        );
-        assert!(spaces.is_empty());
-        let _ = display;
-        let bridge = std::sync::Arc::new(DebugBridge::new(
-            Default::default(),
-            Vec::new(),
-            0,
-            AppLanguage::English,
-        ));
+        let (back_debug_bridge, position) = debug_parts(debug).expect("debug splits");
+        assert!(std::sync::Arc::ptr_eq(&back_debug_bridge, &bridge));
+        assert_eq!(position, None);
         let (back_bridge, back_pos) = ppu_parts(AuxOpenParams::Ppu {
             bridge: std::sync::Arc::clone(&bridge),
             position: Some((8, 16)),
