@@ -163,7 +163,7 @@ fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
 ) -> Option<nerust_frontend_host::bootstrap::Boot> {
-    use nerust_frontend_host::bootstrap::{backend_capabilities, boot};
+    use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
     match boot(ctx, backend_capabilities(true, supports_vsync), None) {
         Ok(boot) => Some(boot),
         Err(detail) => {

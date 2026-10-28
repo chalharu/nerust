@@ -208,7 +208,6 @@ mod tests {
     #[test]
     fn widget_signals_keep_close_separate_from_repaint_and_clear() {
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare};
-        use nerust_frontend_host::app::FrontendApp as _;
         let mut support = crate::runtime::host::TestHost::new().host;
         let id = prepare(&mut support, crate::aux::focus::AuxKind::History);
         let settings = WindowSignals {

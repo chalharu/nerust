@@ -2,12 +2,8 @@
 
 use std::time::Instant;
 
-use nerust_frontend_host::app::FrontendApp as _;
 use nerust_frontend_host::aux::{AuxId, OpenRequest};
-use nerust_frontend_viewdefs::{
-    frame::FrameCtx,
-    osd::{ModalPresentation, ModalPresenter},
-};
+use nerust_frontend_host::osd::{ModalPresentation, ModalPresenter};
 use tao::event::WindowEvent;
 
 use super::HostState;
@@ -114,13 +110,13 @@ impl HostState {
 
     /// A fresh destination has neither the layer nor the reserved strip.
     #[cfg(test)]
-    pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
-        self.tick_osd_pump(ctx);
+    pub(crate) fn poll_notifications(&mut self) {
+        self.tick_osd_pump();
     }
 
     /// Execute only native effects after the application borrow ends.
-    pub(super) fn tick_osd_pump(&mut self, ctx: &FrameCtx) -> WakeNeed {
-        let turn = self.core.pump_osd(ctx, Instant::now());
+    pub(super) fn tick_osd_pump(&mut self) -> WakeNeed {
+        let turn = self.core.pump_osd(Instant::now());
         if let Some(presentation) = turn.modal {
             let token = presentation.token;
             let adapter = DialogPresenter {
@@ -146,217 +142,81 @@ impl HostState {
             ..turn.wake
         }
     }
-
-    /// Wake the loop for OSD expiry while labels are visible.
-    #[cfg(test)]
-    pub(crate) fn osd_wakeup(&self) -> Option<Instant> {
-        self.core.osd_wakeup(Instant::now())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::host::TestHost;
-    use nerust_render_traits::{
-        FrameBuffer, ReservedStrip, SurfaceSize,
-        renderer::{
-            FrameSink, OsdLayer, OsdSink, ProfileSwitch, RenderResult, RendererError, StripSink,
-            SurfaceLifecycle,
-        },
-    };
-    use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+    use nerust_frontend_host::focus::FocusEvent;
 
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
         use wakui::pause::PauseOwner;
         let mut host = TestHost::with_nes().host;
         host.load_test_rom();
-        host.report_host_error("parked modal".into());
-        host.note_main_departure();
-        host.tick_focus_sync();
+        host.core.report_host_error("parked modal".into());
+        host.core.note_main_departure();
+        host.core.focus_event(FocusEvent::BurstEnd);
         let (ack, done) = std::sync::mpsc::channel();
-        let ctx = host.frame_ctx();
-        let presentation = host.core.pump_osd(&ctx, Instant::now()).modal.unwrap();
-        assert!(host.attach_osd_modal_receiver(presentation.token, done));
-        let wake = host.tick_osd_pump(&ctx);
+        let presentation = host.core.pump_osd(Instant::now()).modal.unwrap();
+        assert!(
+            host.core
+                .attach_osd_modal_receiver(presentation.token, done)
+        );
+        let wake = host.tick_osd_pump();
         assert!(
             wake.flight_pending,
             "ACK must wake a paused, unfocused loop"
         );
         ack.send(()).unwrap();
-        host.tick_osd_pump(&ctx);
-        assert!(host.session().tick_metrics().paused, "focus still holds");
-        assert!(!host.owns_pause(PauseOwner::Modal));
-        host.release_focus_pause();
-        assert!(!host.session().tick_metrics().paused);
-    }
-
-    #[derive(Debug, Default)]
-    struct StubRenderer {
-        layers: Vec<bool>,
-        strips: Vec<ReservedStrip>,
-    }
-
-    impl SurfaceLifecycle for StubRenderer {
-        fn size(&self) -> SurfaceSize {
-            SurfaceSize::new(960, 720)
-        }
-
-        fn attach(
-            &mut self,
-            _window_handle: RawWindowHandle,
-            _display_handle: RawDisplayHandle,
-            _size: SurfaceSize,
-        ) -> Result<(), RendererError> {
-            Ok(())
-        }
-
-        fn detach(&mut self) {}
-
-        fn resize(&mut self, _size: SurfaceSize) {}
-    }
-
-    impl FrameSink for StubRenderer {
-        fn render(&mut self, _frame: &FrameBuffer) -> RenderResult {
-            RenderResult::Skipped
-        }
-    }
-
-    impl OsdSink for StubRenderer {
-        fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
-            self.layers.push(layer.is_some());
-        }
-    }
-
-    impl StripSink for StubRenderer {
-        fn set_reserved_strip(&mut self, strip: ReservedStrip) {
-            self.strips.push(strip);
-        }
-    }
-
-    impl ProfileSwitch for StubRenderer {
-        fn update_render_profile(
-            &mut self,
-            _profile: &nerust_render_traits::VideoRenderProfile,
-        ) -> Result<(), RendererError> {
-            Ok(())
-        }
-    }
-
-    fn surface() -> (u32, u32) {
-        (960, 720)
+        host.tick_osd_pump();
+        assert!(host.core.tick_paused(), "focus still holds");
+        assert!(!host.core.owns_pause(PauseOwner::Modal));
+        host.core.release_focus_pause();
+        assert!(!host.core.tick_paused());
     }
 
     #[test]
-    fn sync_gate_covers_all_cheap_inputs() {
+    fn idle_pump_reports_no_wake() {
         let support = TestHost::new();
         let mut host = support.host;
-        let chrome = *host.frame_ctx().frame().chrome();
-        assert!(!chrome.status_enabled);
-        // Idle: same generation, nothing visible, status off, no
-        // geometry move -- the presenter stays untouched.
-        assert!(
-            !host
-                .osd_layer()
-                .is_due(host.osd_notifications().manager(), false, false)
-        );
-        // Status liveness and geometry moves each pass alone.
-        assert!(
-            host.osd_layer()
-                .is_due(host.osd_notifications().manager(), true, false)
-        );
-        assert!(
-            host.osd_layer()
-                .is_due(host.osd_notifications().manager(), false, true)
-        );
+        assert!(host.core.osd_wakeup(std::time::Instant::now()).is_none());
+        let wake = host.tick_osd_pump();
+        assert!(wake.osd_deadline.is_none());
+        assert!(wake.live_tick.is_none());
+        assert!(!wake.flight_pending);
     }
 
     #[test]
-    fn idle_sync_pushes_no_layer() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        let mut renderer = StubRenderer::default();
-        // Nothing showing, status off: only the initial strip reservation
-        // is delivered; subsequent frames leave the renderer untouched.
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert!(renderer.layers.is_empty());
-        assert_eq!(renderer.strips, [ReservedStrip::default()]);
-        assert!(!host.osd_layer_live());
-    }
-
-    #[test]
-    fn status_toggle_renders_then_clears() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        let mut on = host.settings_snapshot().clone();
-        on.local.notifications.status_enabled = true;
-        host.apply_settings(on).expect("headless settings apply");
-        let mut renderer = StubRenderer::default();
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert_eq!(renderer.layers, [true]);
-        assert!(host.osd_layer_live());
-        // Steady second frame reuses the layer: no re-push.
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert_eq!(renderer.layers, [true]);
-        // Toggle off: one Clear lands, then idle skips again.
-        let mut off = host.settings_snapshot().clone();
-        off.local.notifications.status_enabled = false;
-        host.apply_settings(off).expect("headless settings apply");
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert_eq!(renderer.layers, [true, false]);
-        assert!(!host.osd_layer_live());
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert_eq!(renderer.layers, [true, false]);
+    fn close_retires_owned_modal_receiver_queue() {
+        use nerust_frontend_host::osd::ModalAdvance;
+        use wakui::pause::PauseOwner;
+        let mut host = TestHost::new().host;
+        host.core.set_pause_owner(PauseOwner::Settings, true);
+        host.core.report_host_error("active on close".into());
+        let presentation = host.core.pump_osd(Instant::now()).modal.unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        assert!(
+            host.core
+                .attach_osd_modal_receiver(presentation.token, receiver)
+        );
+        host.core.report_host_error("queued on close".into());
+        host.core.pump_osd(Instant::now());
+        assert!(host.core.osd_modal_pending());
+        assert!(host.core.osd_flight_pending());
+        host.prepare_close();
+        assert!(sender.send(()).is_err());
+        assert!(!host.core.osd_modal_pending());
+        assert!(!host.core.osd_flight_pending());
+        assert_eq!(host.core.osd_pending(), 0);
+        assert!(!host.core.pause_held());
+        assert_eq!(
+            host.core.acknowledge_osd_modal(presentation.token),
+            ModalAdvance::Ignored
+        );
+        host.prepare_close();
+        assert!(host.core.pump_osd(Instant::now()).modal.is_none());
     }
 
     #[test]
@@ -370,7 +230,7 @@ mod tests {
         host.open_history(&opener);
         assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
         assert!(!host.aux.contains(AuxKind::History));
-        assert!(host.history_key().is_none());
+        assert!(host.core.history_changed());
     }
 
     #[test]
@@ -378,13 +238,13 @@ mod tests {
         use crate::test_opener::FakeOpener;
         let mut host = TestHost::new().host;
         let OpenRequest::Create(id) = host.aux.request_open(AuxKind::History) else {
-            panic!("expected reservation");
+            panic!("expected reservation")
         };
         let opener = FakeOpener::failing("no display");
         host.open_history(&opener);
         assert!(opener.calls().is_empty());
         assert_eq!(host.aux.route_id(AuxKind::History), Some(id));
-        assert!(host.history_key().is_none());
+        assert!(host.core.history_changed());
     }
 
     #[test]
@@ -395,156 +255,7 @@ mod tests {
         host.on_history_event(WindowEvent::Destroyed);
         host.on_history_event(WindowEvent::Focused(true));
         host.on_history_event(WindowEvent::Focused(false));
-        assert!(host.history_key().is_none());
+        assert!(host.core.history_changed());
         assert!(support.menu.updates().is_empty());
-    }
-
-    #[test]
-    fn renderer_replace_repushes_without_layer() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        let mut renderer = StubRenderer::default();
-        host.invalidate_osd();
-        // Invalidated presenter re-runs the decision; with nothing
-        // visible the outcome is still Skip, so no layer lands.
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert!(renderer.layers.is_empty());
-        assert_eq!(renderer.strips, [ReservedStrip::default()]);
-        assert!(!host.osd_layer_live());
-    }
-
-    #[test]
-    fn idle_pump_reports_no_wake() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        assert!(host.osd_wakeup().is_none());
-        let ctx = host.frame_ctx();
-        let wake = host.tick_osd_pump(&ctx);
-        assert!(wake.osd_deadline.is_none());
-        assert!(wake.live_tick.is_none());
-        assert!(!wake.flight_pending);
-    }
-
-    #[test]
-    fn close_retires_owned_modal_receiver_queue_and_layer() {
-        use nerust_frontend_viewdefs::osd::ModalAdvance;
-        use wakui::pause::PauseOwner;
-        let mut host = TestHost::new().host;
-        host.set_pause_owner(PauseOwner::Settings, true);
-        host.report_host_error("active on close".into());
-        let ctx = host.frame_ctx();
-        let presentation = host.core.pump_osd(&ctx, Instant::now()).modal.unwrap();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        assert!(host.attach_osd_modal_receiver(presentation.token, receiver));
-        host.report_host_error("queued on close".into());
-        host.core.pump_osd(&ctx, Instant::now());
-        assert!(host.osd_modal_pending());
-        assert!(host.osd_flight_pending());
-        host.prepare_close();
-        assert!(sender.send(()).is_err());
-        assert!(!host.osd_modal_pending());
-        assert!(!host.osd_flight_pending());
-        assert!(!host.osd_layer_live());
-        assert_eq!(host.osd_pending(), 0);
-        assert!(!host.pause_held());
-        assert_eq!(
-            host.acknowledge_osd_modal(presentation.token),
-            ModalAdvance::Ignored
-        );
-        let mut renderer = StubRenderer::default();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert!(renderer.strips.is_empty());
-        assert!(renderer.layers.is_empty());
-        host.prepare_close();
-        assert!(host.core.pump_osd(&ctx, Instant::now()).modal.is_none());
-    }
-
-    #[test]
-    fn frame_render_applies_strip_once() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        let mut renderer = StubRenderer::default();
-        // First frame records the strip; the repeat reuses the memo.
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        let ctx = host.frame_ctx();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut renderer);
-        assert!(renderer.layers.is_empty());
-        assert_eq!(renderer.strips.len(), 1);
-    }
-
-    #[test]
-    fn renderer_replacement_repushes_strip_and_visible_layer() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        let mut settings = host.settings_snapshot().clone();
-        settings.local.notifications.status_enabled = true;
-        host.apply_settings(settings)
-            .expect("headless settings apply");
-        let ctx = host.frame_ctx();
-        let mut old = StubRenderer::default();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut old);
-        assert_eq!(old.layers, [true]);
-        assert_eq!(old.strips.len(), 1);
-
-        host.invalidate_osd();
-        assert!(!host.osd_layer_live());
-        let mut fresh = StubRenderer::default();
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut fresh);
-        assert_eq!(fresh.strips, old.strips);
-        assert_eq!(fresh.layers, [true]);
-        host.prepare_osd_viewport(
-            surface().0,
-            surface().1,
-            720,
-            &ctx,
-            std::time::Instant::now(),
-        )
-        .apply(&mut fresh);
-        assert_eq!(fresh.strips.len(), 1);
-        assert_eq!(fresh.layers, [true]);
     }
 }

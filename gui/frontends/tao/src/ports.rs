@@ -343,7 +343,6 @@ mod tests {
         // Kind routing guarantees the variant; a foreign variant is a
         // caller bug answered with `None`, never a logged mismatch.
         fn history_params() -> AuxOpenParams {
-            use nerust_frontend_host::app::FrontendApp as _;
             let mut host = crate::runtime::host::TestHost::new().host;
             let id = crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
             AuxOpenParams::Controls {

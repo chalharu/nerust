@@ -1,5 +1,4 @@
-use nerust_frontend_host::menu::MenuCapabilities;
-use nerust_frontend_viewdefs::application::MenubarUpdate;
+use nerust_frontend_host::menu::{MenuCapabilities, Menubar};
 use tao::window::Window as TaoWindow;
 
 pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
@@ -12,7 +11,7 @@ pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
 /// native menubar, test recorders observe the syncs. Object-safe so
 /// `HostState` holds it behind `Box<dyn MenuSink>`.
 pub(crate) trait MenuSink {
-    fn update(&mut self, menu: MenubarUpdate);
+    fn update(&mut self, loaded: bool, paused: bool, settings_open: bool, menu: &Menubar);
     fn init_for_window(&self, window: &TaoWindow);
     fn clear_event_handler(&self);
 }
@@ -42,6 +41,7 @@ pub(crate) mod imp {
     ))]
     use gtk::prelude::WidgetExt;
     use muda::{Menu, MenuEvent, MenuItem, Submenu};
+    use nerust_frontend_host::event::EventSink;
     use nerust_frontend_host::{
         commands::{CommandDescriptor, CommandVisitor},
         menu::{
@@ -50,7 +50,6 @@ pub(crate) mod imp {
         },
         widgets::MenuPresenter,
     };
-    use nerust_frontend_viewdefs::{application::MenubarUpdate, event::EventSink};
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
     #[cfg(any(
@@ -147,9 +146,9 @@ pub(crate) mod imp {
             }
         }
 
-        pub(crate) fn update(&mut self, update: MenubarUpdate) {
+        pub(crate) fn update(&mut self, menu: &Menubar) {
             let presenter = self.presenter.clone();
-            let mut next = presenter.submit(update.menubar);
+            let mut next = presenter.submit(menu.clone());
             while let Some(plan) = next {
                 plan.visit(&mut NativeVisitor {
                     native: self,
@@ -320,7 +319,7 @@ pub(crate) mod imp {
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, menu: MenubarUpdate) {
+        fn update(&mut self, _loaded: bool, _paused: bool, _settings_open: bool, menu: &Menubar) {
             AppMenu::update(self, menu);
         }
 
@@ -379,7 +378,7 @@ pub(crate) mod imp {
             use nerust_frontend_host::commands::SessionCommand as S;
             use nerust_frontend_host::menu::MenuId;
             use nerust_frontend_viewdefs::{
-                application::{MenuSig, MenubarUpdate},
+                application::MenuSig,
                 event::{EventCommand as HostEvent, EventSink},
             };
             use nerust_gui_runtime::slots::slot_label;
@@ -493,13 +492,11 @@ pub(crate) mod imp {
                         language: sig.language,
                         shortcuts: shortcuts.into(),
                     };
-                    menu.update(MenubarUpdate {
-                        menubar: nerust_frontend_viewdefs::menu::build_menubar(
-                            &signature,
-                            crate::menu::TAO_MENU_CAPABILITIES,
-                        ),
-                        signature,
-                    });
+                    let menubar = nerust_frontend_viewdefs::menu::build_menubar(
+                        &signature,
+                        crate::menu::TAO_MENU_CAPABILITIES,
+                    );
+                    menu.update(&menubar);
                     let roots = menu.menu_bar.items();
                     assert_eq!(roots.len(), 2);
                     for (root, id) in roots.iter().zip([MenuId::File, MenuId::Emulation]) {
@@ -774,10 +771,7 @@ pub(crate) mod imp {
                 label: "Host App".into(),
                 entries: vec![A::Role(R::About), A::Separator, A::Role(R::Quit)],
             });
-            menu.update(MenubarUpdate {
-                signature: sig.clone(),
-                menubar: root.clone(),
-            });
+            menu.update(&root.clone());
             let app = menu.application_menu.as_ref().unwrap().0.clone();
             let app_id = app.id().clone();
             let native_ids = app
@@ -792,10 +786,7 @@ pub(crate) mod imp {
                 menu.menus[&MenuId::File].id()
             );
             root.application_menu.as_mut().unwrap().label = "Relabeled App".into();
-            menu.update(MenubarUpdate {
-                signature: sig.clone(),
-                menubar: root.clone(),
-            });
+            menu.update(&root.clone());
             let app = &menu.application_menu.as_ref().unwrap().0;
             assert_eq!(app.id(), &app_id);
             assert_eq!(app.text(), "Relabeled App");
@@ -811,10 +802,7 @@ pub(crate) mod imp {
             // from previously retained native widgets.
             root.application_menu = None;
             root.menus.clear();
-            menu.update(MenubarUpdate {
-                signature: sig.clone(),
-                menubar: root,
-            });
+            menu.update(&root);
             assert!(menu.menu_bar.items().is_empty());
             assert!(menu.application_menu.is_none());
             assert!(menu.menus.is_empty());
@@ -840,7 +828,8 @@ pub(crate) mod imp {
     target_os = "windows"
 )))]
 pub(crate) mod imp {
-    use super::{MenubarUpdate, TaoWindow};
+    use super::TaoWindow;
+    use nerust_frontend_host::menu::Menubar;
     use nerust_frontend_viewdefs::event::EventSink;
     use std::sync::Arc;
 
@@ -853,13 +842,20 @@ pub(crate) mod imp {
 
         pub(crate) fn init_for_window(&self, _window: &TaoWindow) {}
 
-        pub(crate) fn update(&mut self, _menu: MenubarUpdate) {}
+        pub(crate) fn update(
+            &mut self,
+            _loaded: bool,
+            _paused: bool,
+            _settings_open: bool,
+            _menu: &Menubar,
+        ) {
+        }
 
         pub(crate) fn clear_event_handler(&self) {}
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, menu: MenubarUpdate) {
+        fn update(&mut self, _loaded: bool, _paused: bool, _settings_open: bool, menu: &Menubar) {
             AppMenu::update(self, menu);
         }
 

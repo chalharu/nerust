@@ -1,9 +1,5 @@
 #[cfg(test)]
 use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
-use nerust_frontend_viewdefs::{
-    application::ApplicationHost,
-    bootstrap::{Boot, RomLoaderSlot},
-};
 #[cfg(test)]
 use std::path::PathBuf;
 use tao::{
@@ -116,8 +112,9 @@ impl TestHost {
 pub(crate) struct HostState {
     /// Main window cluster: handle, liveness, surface target.
     pub(super) windows: WindowCluster,
-    pub(crate) core: ApplicationHost,
-    loader: RomLoaderSlot,
+    /// The single policy owner, injected by the composition root.
+    /// Native code drives it through the trait only.
+    pub(crate) core: Box<dyn nerust_frontend_host::app::FrontendApp>,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
@@ -128,71 +125,43 @@ pub(crate) struct HostState {
     pub(super) ppu_generation: u64,
 }
 
-impl std::ops::Deref for HostState {
-    type Target = ApplicationHost;
-    fn deref(&self) -> &Self::Target {
-        &self.core
-    }
-}
-
-impl std::ops::DerefMut for HostState {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.core
-    }
-}
-
 impl HostState {
     #[cfg(test)]
     pub(crate) fn load_test_rom(&mut self) {
-        struct TestRomLoader;
-        impl nerust_gui_shell::load::RomLoader for TestRomLoader {
-            fn load_rom(
-                &mut self,
-                _: &std::path::Path,
-                target: &mut dyn nerust_gui_shell::load::RomLoadTarget,
-            ) -> Result<(), nerust_gui_shell::load::RomLoaderError> {
-                use nerust_system_traits::factory::settings::FactorySettingsView;
-                let factory = nerust_nes_factory::NesFactory::boxed();
-                let view = FactorySettingsView {
-                    language: Default::default(),
-                    system_config: factory
-                        .as_system_defaults()
-                        .unwrap()
-                        .default_system_settings(),
-                };
-                let resolved = factory
-                    .resolve_load_request(&view, factory.default_load_options())
-                    .unwrap();
-                target
-                    .set_active_system(factory.system_id().as_ref())
-                    .unwrap();
-                let mut rom = vec![0u8; 16 + 16384 + 8192];
-                rom[..6].copy_from_slice(&[b'N', b'E', b'S', 0x1a, 1, 1]);
-                rom[16..19].copy_from_slice(&[0x4c, 0x00, 0x80]);
-                for vector in [0x3ffa, 0x3ffc, 0x3ffe] {
-                    rom[16 + vector..18 + vector].copy_from_slice(&[0x00, 0x80]);
-                }
-                target.load_resolved(
-                    nerust_system_traits::factory::load::MediaObject::new(None, rom),
-                    resolved,
-                )
-            }
-        }
+        // Rebuild the core around a loader that installs a canned NES ROM:
+        // the standard TestContext loader records paths but loads nothing.
+        use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
+        let mut support = crate::test_session::TestContext::with_loader(
+            crate::test_session::FakeRomLoader::loading_nes(),
+        );
+        support.ctx.registry =
+            std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+                nerust_nes_factory::NesFactory::boxed().into(),
+            ]));
+        let root = support.settings_root();
+        let boot = boot(
+            support.ctx,
+            backend_capabilities(true, Some(true)),
+            Some(root),
+        )
+        .expect("NES test core");
+        self.core = boot.app;
+        self.debug_handle = None;
+        self.ppu_generation = 0;
         self.core
-            .load_path(&mut TestRomLoader, std::path::Path::new("test.nes"))
+            .load_rom(std::path::Path::new("test.nes"))
             .unwrap();
     }
 
     pub(crate) fn new(
-        boot: Boot,
+        boot: nerust_frontend_host::bootstrap::Boot,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Self {
-        let Boot { host: core, loader } = boot;
+        let nerust_frontend_host::bootstrap::Boot { app: core } = boot;
         Self {
             windows: WindowCluster::new(),
             core,
-            loader,
             app_menu,
             dialogs,
             aux: AuxRegistry::new(),
@@ -328,9 +297,8 @@ mod tests {
     fn host_accessors_expose_session_and_factory() {
         let support = TestHost::new();
         let mut host = support.host;
-        let tick = host.frame_ctx().tick();
-        let _ = host.cached_title(&tick);
-        assert!(!host.session().tick_metrics().loaded);
+        let _ = host.core.refresh_window_title();
+        assert!(!host.core.tick_loaded());
     }
 
     #[test]
@@ -349,16 +317,15 @@ mod tests {
             MenuRecorderHandle::default().into_box(),
             std::sync::Arc::new(crate::ports::NativeDialogs),
         );
-        assert!(!host.session().tick_metrics().loaded);
+        assert!(!host.core.tick_loaded());
     }
 
     #[test]
     fn headless_host_builds_and_syncs_menu() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.session().tick_metrics().loaded);
-        let ctx = host.frame_ctx();
-        host.sync_menu_state(&ctx);
+        assert!(!host.core.tick_loaded());
+        host.sync_menu_state();
         assert_eq!(
             support.menu.updates(),
             [crate::test_menu::MenuSyncSnapshot {
@@ -431,22 +398,19 @@ mod tests {
         assert!(!host.is_debug_open());
         assert!(!host.is_ppu_open());
         assert!(host.debug_handle().is_none());
-        assert!(host.debug_window_pos().is_none());
-        assert!(host.ppu_window_pos().is_none());
-        host.remember_debug_window_pos(3, 4);
-        host.remember_ppu_window_pos(5, 6);
-        assert_eq!(host.debug_window_pos(), Some((3, 4)));
-        assert_eq!(host.ppu_window_pos(), Some((5, 6)));
+        assert!(host.core.debug_window_pos().is_none());
+        assert!(host.core.ppu_window_pos().is_none());
+        host.core.remember_debug_window_pos(3, 4);
+        host.core.remember_ppu_window_pos(5, 6);
+        assert_eq!(host.core.debug_window_pos(), Some((3, 4)));
+        assert_eq!(host.core.ppu_window_pos(), Some((5, 6)));
         host.drop_debug_window();
         host.drop_ppu_window();
         host.drop_history_window();
-        assert!(host.last_drain_paused().is_none());
-        host.set_last_drain_paused(true);
-        assert_eq!(host.last_drain_paused(), Some(true));
-        let armed = host.live_armed();
+        let armed = host.core.live_armed();
         assert!(!armed.load(std::sync::atomic::Ordering::Acquire));
-        host.register_tick_thread(std::thread::current());
-        assert!(host.next_live_tick().is_none());
+        host.core.register_tick_thread(std::thread::current());
+        assert!(host.core.next_live_tick().is_none());
     }
 
     #[test]
@@ -454,20 +418,20 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let now = std::time::Instant::now();
-        assert!(host.live_due(now));
-        assert!(host.next_live_tick().is_some());
-        assert!(!host.live_due(std::time::Instant::now()));
+        assert!(host.core.live_due(now));
+        assert!(host.core.next_live_tick().is_some());
+        assert!(!host.core.live_due(std::time::Instant::now()));
     }
 
     #[test]
     fn request_flags_round_trip_without_windows() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.request_debug_open();
-        assert!(host.take_debug_open_request());
-        assert!(!host.take_debug_open_request());
-        host.request_ppu_open();
-        assert!(host.take_ppu_open_request());
-        assert!(!host.take_ppu_open_request());
+        host.core.request_debug_open();
+        assert!(host.core.take_debug_open_request());
+        assert!(!host.core.take_debug_open_request());
+        host.core.request_ppu_open();
+        assert!(host.core.take_ppu_open_request());
+        assert!(!host.core.take_ppu_open_request());
     }
 }
