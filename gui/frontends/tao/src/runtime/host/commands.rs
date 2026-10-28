@@ -5,7 +5,7 @@ use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
 use nerust_frontend_host::focus::{AuxKind, FocusEvent};
-use nerust_frontend_viewdefs::{
+use nerust_frontend_host::{
     event::{CommandEffect, EventOutcome},
     session::SessionEvent,
 };

@@ -10,25 +10,24 @@ use super::{
     surface::{Surface, SurfaceExtend},
     surface_state::surface_gone,
 };
-use crate::widgets::controls::{Callbacks, WidgetBinding, WidgetDialog};
+use crate::widgets::controls::{Callbacks, WidgetDialog};
 use gtk::{
     gio, glib,
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
+use nerust_frontend_host::session::SessionEvent;
 use nerust_frontend_host::{
     aux::{AuxId, AuxWindows, OpenRequest},
     commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
+    event::{CommandEffect, EventCommand, EventSink},
     focus::{AuxKind, FocusEvent},
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
+    widget_session::WindowMailbox,
     widgets::MenuPresenter,
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
-use nerust_frontend_viewdefs::{
-    event::{CommandEffect, EventCommand, EventHandler, EventSink},
-    session::SessionEvent,
-    widget_session::WidgetSession,
-};
+use wakui::control::ControlScreen;
 
 /// Bound once via `set_menubar`; host IDs retain the same native submenus
 /// across refills because replacing the root does not update the visible bar.
@@ -103,12 +102,12 @@ pub(crate) struct MainWindowRenderer {
 pub(crate) enum GtkWindowRenderer<'a> {
     Main(MainWindowRenderer),
     Build(Box<DialogRenderer<'a>>),
-    Controls(&'a WidgetBinding),
 }
 
 pub(crate) struct DialogRenderer<'a> {
     parent: &'a gtk::ApplicationWindow,
-    session: Option<WidgetSession>,
+    screen: Option<ControlScreen>,
+    mailbox: Option<WindowMailbox>,
     callbacks: Option<Callbacks>,
     model: Option<HostWindow>,
     result: Option<RenderedDialog>,
@@ -121,12 +120,15 @@ pub(crate) enum RenderedDialog {
 pub(crate) fn render_dialog(
     model: &HostWindow,
     parent: &gtk::ApplicationWindow,
-    session: Option<WidgetSession>,
+    _id: AuxId,
+    screen: ControlScreen,
+    mailbox: WindowMailbox,
     callbacks: Callbacks,
 ) -> Option<RenderedDialog> {
     let mut renderer = GtkWindowRenderer::Build(Box::new(DialogRenderer {
         parent,
-        session,
+        screen: Some(screen),
+        mailbox: Some(mailbox),
         callbacks: Some(callbacks),
         model: None,
         result: None,
@@ -146,7 +148,6 @@ impl WindowVisitor for GtkWindowRenderer<'_> {
                 builder.model = Some(model.clone());
                 None
             }
-            Self::Controls(binding) => binding.dialog().map(Cast::upcast),
         };
         if let Some(window) = native
             && window.title().as_deref() != Some(model.title.as_str())
@@ -173,22 +174,20 @@ impl WindowVisitor for GtkWindowRenderer<'_> {
         }
     }
 
-    fn visit_controls(&mut self, screen: &wakui::control::ControlScreen) {
-        match self {
-            Self::Controls(binding) => binding.render(screen),
-            Self::Build(builder) => {
-                let Some(session) = builder.session.take() else {
-                    return;
-                };
-                builder.result = Some(RenderedDialog::Controls(crate::widgets::controls::build(
-                    builder.model.as_ref().expect("window chrome"),
-                    builder.parent,
-                    session,
-                    builder.callbacks.take().expect("one control program"),
-                )));
-            }
-            _ => (),
-        }
+    fn visit_controls(&mut self, _screen: &wakui::control::ControlScreen) {
+        let Self::Build(builder) = self else {
+            return;
+        };
+        let (Some(screen), Some(mailbox)) = (builder.screen.take(), builder.mailbox.take()) else {
+            return;
+        };
+        builder.result = Some(RenderedDialog::Controls(crate::widgets::controls::build(
+            builder.model.as_ref().expect("window chrome"),
+            builder.parent,
+            screen,
+            mailbox,
+            builder.callbacks.take().expect("one control program"),
+        )));
     }
 }
 
@@ -273,7 +272,7 @@ fn request_aux(window: &Window, kind: AuxKind) -> Option<AuxId> {
     let request = {
         let mut core = window.borrow_mut();
         let state = core.state.clone();
-        let request = state.borrow_mut().host.reserve_window(&mut core.aux, kind);
+        let request = state.borrow_mut().host.reserve_widget(&mut core.aux, kind);
         match request {
             Ok(Some(request)) => request,
             Ok(None) => return None,
@@ -324,21 +323,32 @@ fn complete_aux(window: &Window, id: AuxId, handle: NativeAux) -> bool {
 
 /// Remove before any native drop or session callback: both can synchronously reenter.
 fn close_aux(window: &Window, id: AuxId) -> bool {
-    let closed = {
+    // Close the app-side debug session with its last native viewer.
+    let debug_handle = window
+        .borrow()
+        .aux
+        .get(AuxKind::Debug)
+        .and_then(|entry| match entry {
+            NativeAux::Debug(debugger) => Some(debugger.borrow().debug_handle()),
+            NativeAux::Controls(_) => None,
+        })
+        .filter(|_| window.borrow().aux.kind_of_id(id) == Some(AuxKind::Debug));
+    let outcome = {
         let mut core = window.borrow_mut();
         let state = core.state.clone();
         state
             .borrow_mut()
             .host
-            .close_widget_window(&mut core.aux, id, None)
+            .close_widget(&mut core.aux, id, true)
     };
-    let Some((handle, result)) = closed else {
+    let Some(outcome) = outcome else {
         return false;
     };
-    if let Err(error) = result {
-        log::warn!("GTK auxiliary close failed: {error}");
+    if let Some(handle) = debug_handle {
+        window.state().borrow_mut().host.close_debug(handle);
     }
-    drop(handle);
+    // The native handle dies with the window; effects already applied.
+    drop(outcome);
     true
 }
 
@@ -347,36 +357,44 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
         return;
     };
     window.update_actions();
-    let state = window.state();
     // Host prepares the only draft and publishes its Window into the reserved
     // route. Validation/rollback and SettingsOpened/Closed are not native policy.
-    let session = if matches!(kind, AuxKind::Settings | AuxKind::History) {
+    if matches!(kind, AuxKind::Settings | AuxKind::History) {
         let prepared = {
             let mut core = window.borrow_mut();
-            let mut state = state.borrow_mut();
-            state.host.prepare_widget_window(&mut core.aux, id)
+            let state = core.state.clone();
+            state.borrow_mut().host.prepare_widget(&mut core.aux, id)
         };
         match prepared {
-            Ok(Some(session)) => Some(session),
-            Ok(None) => return,
+            Ok(true) => (),
+            Ok(false) => return,
             Err(error) => {
-                state.borrow_mut().host.report_host_error(error);
+                window.state().borrow_mut().host.report_host_error(error);
                 window.update_actions();
                 return;
             }
         }
-    } else {
-        None
+    }
+    let (model, screen, mailbox) = {
+        let core = window.borrow();
+        let state = core.state.clone();
+        let borrowed = state.borrow();
+        (
+            core.aux.window(id).cloned(),
+            borrowed.host.widget_screen(id),
+            borrowed.host.widget_mailbox(id),
+        )
     };
-    let model = window.borrow().aux.window(id).cloned();
-    let Some(model) = model else {
+    let (Some(model), Some(screen), Some(mailbox)) = (model, screen, mailbox) else {
         close_aux(window, id);
         return;
     };
     let built = render_dialog(
         &model,
         &window.window(),
-        session,
+        id,
+        screen,
+        mailbox,
         widget_callbacks(window, id),
     );
     let handle = match built {
@@ -396,8 +414,8 @@ fn open_auxiliary(window: &Window, kind: AuxKind) {
 fn widget_callbacks(window: &Window, id: AuxId) -> Callbacks {
     let current = Rc::downgrade(window);
     let refresh = current.clone();
-    let publish = current.clone();
     let submit = current.clone();
+    let picker = current.clone();
     let close = current.clone();
     Callbacks {
         current: Box::new(move || {
@@ -406,40 +424,49 @@ fn widget_callbacks(window: &Window, id: AuxId) -> Callbacks {
                 core.aux.kind_of_id(id).is_some() && !core.state.borrow().host.close_exited()
             })
         }),
-        refresh: Box::new(move |session| {
-            if let Some(window) = refresh.upgrade() {
-                let state = window.state();
-                state.borrow_mut().host.refresh_widget_session(session);
+        refresh: Box::new(move || {
+            let window = refresh.upgrade()?;
+            let core = window.borrow();
+            let state = core.state.clone();
+            let host = state.borrow();
+            if core.aux.kind_of_id(id) == Some(AuxKind::History) && host.host.history_changed() {
+                drop(host);
+                state.borrow_mut().host.widget_refresh(id);
+                return state.borrow().host.widget_screen(id);
             }
+            host.host.widget_screen(id)
         }),
-        publish: Box::new(move |model| {
-            if let Some(window) = publish.upgrade()
-                && let Some(slot) = window.borrow_mut().aux.window_mut(id)
-            {
-                *slot = model;
-            }
-        }),
-        submit: Box::new(move |submission| {
+        submit: Box::new(move |events| {
             let Some(window) = submit.upgrade() else {
-                return false;
+                return Vec::new();
             };
-            let result = {
-                let core = window.borrow();
-                core.state
+            let state = window.state();
+            let mut borrowed = state.borrow_mut();
+            let mut effects = Vec::new();
+            for event in events {
+                effects.extend(borrowed.host.widget_dispatch(id, event));
+            }
+            // Consume a staged submission without closing: apply runs here,
+            // native teardown only runs on the close path.
+            if let Some(outcome) =
+                borrowed
+                    .host
+                    .close_widget(&mut window.borrow_mut().aux, id, false)
+            {
+                let outcome_effects = outcome.effects;
+                drop(borrowed);
+                apply_window_effects(&window, outcome_effects);
+                window.update_actions();
+            }
+            effects
+        }),
+        submit_picker: Box::new(move |target, request, path| {
+            if let Some(window) = picker.upgrade() {
+                let state = window.state();
+                state
                     .borrow_mut()
                     .host
-                    .apply_window_submission(&core.aux, id, submission)
-            };
-            match result {
-                Ok(effects) => {
-                    apply_window_effects(&window, effects);
-                    true
-                }
-                // Host publishes the error through the same opaque mailbox.
-                Err(error) => {
-                    log::warn!("GTK widget apply failed: {error}");
-                    false
-                }
+                    .widget_submit_picker(id, target, request, path);
             }
         }),
         close: Box::new(move || {
@@ -497,8 +524,7 @@ impl EventSink for WindowEventSink {
         };
         let outcome = {
             let mut state = state.borrow_mut();
-            let handler: &mut dyn EventHandler = &mut state.host;
-            handler.handle_event(event, settings_open)
+            state.host.handle_event(event, settings_open)
         };
         // Native constructors, setters and effects may synchronously reenter.
         match outcome {
@@ -820,7 +846,6 @@ impl WindowExtend for Window {
             let _ = state
                 .borrow_mut()
                 .host
-                .session_mut()
                 .update_window_size(w as u32, h as u32);
         }
         self.state().borrow_mut().finish_close();
@@ -841,10 +866,9 @@ impl WindowExtend for Window {
         let settings_open = self.borrow().aux.contains(AuxKind::Settings);
         let model = {
             let mut state = state.borrow_mut();
-            let ctx = state.host.frame_ctx();
             let menu_changed = state
                 .host
-                .menubar_update(&ctx, settings_open, GTK_MENU_CAPABILITIES)
+                .menubar_update(settings_open, GTK_MENU_CAPABILITIES)
                 .is_some();
             let title_changed = state.title_update().is_some();
             (menu_changed || title_changed).then(|| state.host.main_window().clone())
@@ -1034,15 +1058,11 @@ fn set_window_fullscreen(window: &gtk::ApplicationWindow, fullscreen: bool) {
 fn persist_window_fullscreen_default(window: &Window, fullscreen: bool) -> Result<bool, String> {
     let state = window.state();
     let mut state = state.borrow_mut();
-    let plan = state
-        .host
-        .session_mut()
-        .set_fullscreen_default(fullscreen)
-        .map_err(|error| error.to_string())?;
-    if plan.renderer_rebuild_required || plan.window_settings_changed {
+    let changed = state.host.persist_fullscreen_default(fullscreen)?;
+    if changed {
         state.renderer_reload_pending = true;
     }
-    Ok(plan.fullscreen_default_changed)
+    Ok(changed)
 }
 
 fn sync_persisted_window_fullscreen(window: &Window, fullscreen: bool) {
@@ -1078,6 +1098,7 @@ fn show_rom_load_error(_parent: &gtk::ApplicationWindow, state: Rc<RefCell<State
 
 #[cfg(test)]
 pub(crate) mod tests {
+
     pub(crate) fn program(window: &super::Window, kind: super::AuxKind) -> super::WidgetDialog {
         super::open_auxiliary(window, kind);
         let Some(super::NativeAux::Controls(program)) = window.borrow().aux.get(kind).cloned()
@@ -1090,13 +1111,12 @@ pub(crate) mod tests {
     pub(crate) fn route(window: &super::Window, kind: super::AuxKind) -> Option<super::AuxId> {
         window.borrow().aux.route_id(kind)
     }
-
     pub(crate) fn inert_callbacks() -> super::Callbacks {
         super::Callbacks {
             current: Box::new(|| true),
-            refresh: Box::new(|_| {}),
-            publish: Box::new(|_| {}),
-            submit: Box::new(|_| true),
+            refresh: Box::new(|| None),
+            submit: Box::new(|_| Vec::new()),
+            submit_picker: Box::new(|_, _, _| {}),
             close: Box::new(|| {}),
         }
     }
@@ -1334,22 +1354,46 @@ pub(crate) mod tests {
         let native = native_debug.borrow().native_window();
         assert_eq!(native.title().as_deref(), Some(debug.title.as_str()));
         assert!(native.child().is_some());
-        assert!(super::render_dialog(&debug, &main, None, inert_callbacks()).is_none());
+        let hid = super::request_aux(&win, AuxKind::History).unwrap();
+        {
+            let mut core = win.borrow_mut();
+            let hstate = core.state.clone();
+            hstate
+                .borrow_mut()
+                .host
+                .prepare_widget(&mut core.aux, hid)
+                .expect("prepare widget");
+        }
+        let (_hmodel, hscreen, hmailbox) = {
+            let core = win.borrow();
+            let hstate = core.state.clone();
+            let borrowed = hstate.borrow();
+            (
+                core.aux.window(hid).cloned().expect("reserved window"),
+                borrowed.host.widget_screen(hid).expect("screen"),
+                borrowed.host.widget_mailbox(hid).expect("mailbox"),
+            )
+        };
+        assert!(
+            super::render_dialog(&debug, &main, hid, hscreen, hmailbox, inert_callbacks())
+                .is_none()
+        );
+        super::close_aux(&win, hid);
 
         let mut ppu = HostWindow::auxiliary(AuxKind::Ppu);
         ppu.id = WindowId::Main;
         ppu.title = "owned PPU title".into();
+        let handle = state.borrow_mut().host.open_debug();
         let viewer = crate::ppu_window::PpuWindowCore::from_window(
             &ppu,
             &app,
             &main,
             state.clone(),
+            handle,
             Vec::new(),
             0,
             None,
-            nerust_frontend_viewdefs::debugger::PpuChrome::new(
-                nerust_settings_core::model::language::AppLanguage::English,
-            ),
+            state.borrow().host.ppu_chrome(),
         )
         .expect("PPU grouped body");
         assert_eq!(
@@ -1363,44 +1407,66 @@ pub(crate) mod tests {
         );
 
         let id = super::request_aux(&win, AuxKind::History).unwrap();
-        let session = {
+        {
             let mut core = win.borrow_mut();
-            let mut state = state.borrow_mut();
+            let state = core.state.clone();
             state
+                .borrow_mut()
                 .host
-                .prepare_widget_window(&mut core.aux, id)
-                .unwrap()
-                .unwrap()
+                .prepare_widget(&mut core.aux, id)
+                .expect("prepare widget");
+        }
+        let (model, screen, mailbox) = {
+            let core = win.borrow();
+            let state = core.state.clone();
+            let borrowed = state.borrow();
+            (
+                core.aux.window(id).cloned().expect("reserved window"),
+                borrowed.host.widget_screen(id).expect("screen"),
+                borrowed.host.widget_mailbox(id).expect("mailbox"),
+            )
         };
-        let mut history = session.window();
+        let mut history = model;
         history.id = WindowId::Auxiliary(AuxKind::Debug);
         let Some(super::RenderedDialog::Controls(built)) = super::render_dialog(
             &history,
             &main,
-            Some(session),
+            id,
+            screen.clone(),
+            mailbox.clone(),
             super::widget_callbacks(&win, id),
         ) else {
             panic!("History contents, not ID, select grouped controls")
         };
         assert!(built.dialog.content_area().first_child().is_some());
         let pending = HostWindow::auxiliary(AuxKind::Settings);
-        assert!(super::render_dialog(&pending, &main, None, inert_callbacks()).is_none());
+        assert!(
+            super::render_dialog(
+                &pending,
+                &main,
+                id,
+                screen.clone(),
+                mailbox.clone(),
+                inert_callbacks()
+            )
+            .is_none()
+        );
         assert!(
             crate::debugger::DebuggerWindowCore::from_window(&pending, &app, &main, state.clone())
                 .is_none()
         );
+        let pending_handle = state.borrow_mut().host.open_debug();
         assert!(
             crate::ppu_window::PpuWindowCore::from_window(
                 &pending,
                 &app,
                 &main,
-                state,
+                state.clone(),
+                pending_handle,
                 Vec::new(),
                 0,
                 None,
-                nerust_frontend_viewdefs::debugger::PpuChrome::new(
-                    nerust_settings_core::model::language::AppLanguage::English
-                ),
+                state.borrow().host.ppu_chrome(),
             )
             .is_none()
         );
@@ -1638,21 +1704,100 @@ pub(crate) mod tests {
         );
     }
 
+    /// Drive the settings widget without native dialogs: reserve, prepare,
+    /// dispatch a single choice by visible label, submit, close.
+    fn apply_settings_choice(win: &super::Window, label: &str, needle: &str) {
+        use wakui::control::{
+            Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlVisitor,
+        };
+        struct Find<'a>(&'a str, Option<ControlId>);
+        impl ControlVisitor for Find<'_> {
+            fn control(&mut self, control: &Control) {
+                if control.label == self.0 {
+                    self.1 = Some(control.id);
+                }
+            }
+        }
+        fn find(screen: &wakui::control::ControlScreen, label: &str) -> ControlId {
+            let mut find = Find(label, None);
+            screen.visit(&mut find);
+            find.1.unwrap_or_else(|| panic!("control {label:?}"))
+        }
+        let super::OpenRequest::Create(id) =
+            win.borrow_mut().aux.request_open(super::AuxKind::Settings)
+        else {
+            panic!("settings reservation");
+        };
+        {
+            let mut core = win.borrow_mut();
+            let state = core.state.clone();
+            state
+                .borrow_mut()
+                .host
+                .prepare_widget(&mut core.aux, id)
+                .expect("prepare widget");
+        }
+        let screen = win
+            .state()
+            .borrow()
+            .host
+            .widget_screen(id)
+            .expect("settings screen");
+        let control = find(&screen, label);
+        let kind = screen.control(control).unwrap().kind.clone();
+        let wakui::control::ControlKind::Choice { choices, .. } = kind else {
+            panic!("choice {label:?}");
+        };
+        let index = choices
+            .iter()
+            .position(|choice| choice.contains(needle))
+            .unwrap_or_else(|| panic!("choice containing {needle:?}"));
+        win.state()
+            .borrow_mut()
+            .host
+            .widget_dispatch(id, ControlEvent::new(control, ControlInput::Select(index)));
+        struct Primary(Option<ControlId>);
+        impl ControlVisitor for Primary {
+            fn control(&mut self, control: &Control) {
+                if control.display == ControlDisplay::Primary {
+                    self.0 = Some(control.id);
+                }
+            }
+        }
+        let screen = win
+            .state()
+            .borrow()
+            .host
+            .widget_screen(id)
+            .expect("settings screen");
+        let mut primary = Primary(None);
+        screen.visit(&mut primary);
+        let submit = primary.0.expect("settings submit");
+        win.state()
+            .borrow_mut()
+            .host
+            .widget_dispatch(id, ControlEvent::new(submit, ControlInput::Activate));
+        {
+            let mut core = win.borrow_mut();
+            let state = core.state.clone();
+            let _ = state
+                .borrow_mut()
+                .host
+                .close_widget(&mut core.aux, id, false);
+        }
+        assert!(super::close_aux(win, id));
+    }
+
     #[test]
     fn unchanged_menu_models_emit_no_items_changed_and_relabels_allow_reentry() {
         use gio::prelude::MenuModelExt as _;
-        use nerust_settings_core::model::language::AppLanguage;
         use std::{cell::Cell, rc::Rc};
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        // Auto and English may render identical strings. Establish an explicit
-        // baseline so the later language change must change the visible model.
-        let state = win.state();
-        let mut settings = state.borrow().host.settings_snapshot().clone();
-        settings.shared.general.language = AppLanguage::English;
-        state.borrow_mut().host.apply_settings(settings).unwrap();
+        // The default language is English; the later change must change
+        // the visible model.
         win.update_actions();
         let menubar = win.borrow().menubar.clone();
         assert!(menubar.attached.get());
@@ -1707,10 +1852,7 @@ pub(crate) mod tests {
             "action-only changes must not rebuild models"
         );
 
-        let state = win.state();
-        let mut settings = state.borrow().host.settings_snapshot().clone();
-        settings.shared.general.language = AppLanguage::Japanese;
-        state.borrow_mut().host.apply_settings(settings).unwrap();
+        apply_settings_choice(&win, "Language", "日本");
         win.update_actions();
         assert!(changes.get() > 0);
         assert!(borrow_free.get());
@@ -1803,20 +1945,11 @@ pub(crate) mod tests {
     #[test]
     fn items_changed_callback_mutates_settings_and_newest_labels_win() {
         use gio::prelude::MenuModelExt;
-        use nerust_settings_core::model::{input::ShortcutAction, language::AppLanguage};
         use std::{cell::Cell, rc::Rc};
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let state = win.state();
-        let mut initial = state.borrow().host.settings_snapshot().clone();
-        initial.shared.general.language = AppLanguage::English;
-        state
-            .borrow_mut()
-            .host
-            .apply_settings(initial.clone())
-            .unwrap();
         win.update_actions();
         let called = Rc::new(Cell::new(false));
         let once = called.clone();
@@ -1829,23 +1962,10 @@ pub(crate) mod tests {
             }
             let win = weak.upgrade().unwrap();
             assert!(win.try_borrow_mut().is_ok());
-            let state = win.state();
-            let mut newest = state.borrow().host.settings_snapshot().clone();
-            newest.shared.general.language = AppLanguage::English;
-            let binding = newest
-                .shared
-                .input
-                .shortcuts
-                .keyboard
-                .iter_mut()
-                .find(|binding| binding.action == ShortcutAction::OpenDebugger)
-                .unwrap();
-            binding.key = Some(wakui::Key::F2);
-            state.borrow_mut().host.apply_settings(newest).unwrap();
+            apply_settings_choice(&win, "言語", "English");
             win.update_actions();
         });
-        initial.shared.general.language = AppLanguage::Japanese;
-        state.borrow_mut().host.apply_settings(initial).unwrap();
+        apply_settings_choice(&win, "Language", "日本");
         win.update_actions();
         assert!(called.get(), "must exercise real items-changed reentry");
         fn labels(model: &gio::MenuModel, result: &mut Vec<String>) {
@@ -1866,24 +1986,8 @@ pub(crate) mod tests {
         labels(root.upcast_ref(), &mut rendered);
         assert!(rendered.iter().any(|label| label == "File"), "{rendered:?}");
         assert!(
-            rendered.iter().any(|label| label == "Open Debugger (F2)"),
+            !rendered.iter().any(|label| label == "ファイル"),
             "{rendered:?}"
-        );
-        assert!(
-            !rendered
-                .iter()
-                .any(|label| label == "ファイル" || label.contains("(F4)")),
-            "{rendered:?}"
-        );
-        assert_eq!(
-            state
-                .borrow()
-                .host
-                .settings_snapshot()
-                .shared
-                .general
-                .language,
-            AppLanguage::English
         );
         win.update_actions();
     }
@@ -2066,12 +2170,10 @@ pub(crate) mod tests {
         let state = model_state();
         let model = {
             let mut state = state.borrow_mut();
-            let ctx = state.host.frame_ctx();
             state
                 .host
-                .menubar_update(&ctx, false, GTK_MENU_CAPABILITIES)
+                .menubar_update(false, GTK_MENU_CAPABILITIES)
                 .unwrap()
-                .menubar
         };
         let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
         model.visit(None, &mut visitor);
@@ -2135,12 +2237,10 @@ pub(crate) mod tests {
         let state = model_state();
         let model = {
             let mut state = state.borrow_mut();
-            let ctx = state.host.frame_ctx();
             state
                 .host
-                .menubar_update(&ctx, false, GTK_MENU_CAPABILITIES)
+                .menubar_update(false, GTK_MENU_CAPABILITIES)
                 .unwrap()
-                .menubar
         };
         let recording = Rc::new(RecordingSink::default());
         let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
@@ -2317,7 +2417,6 @@ pub(crate) mod tests {
     #[test]
     fn keys_and_shortcuts_use_the_same_dyn_event_boundary() {
         use super::{EventCommand, EventSink, SessionEvent};
-        use nerust_gui_shell::session::KeyboardShortcut;
         use std::{cell::RefCell, rc::Rc};
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
@@ -2334,14 +2433,17 @@ pub(crate) mod tests {
         win.borrow_mut().sink = sink.clone();
         win.key_event(gdk::Key::F4, KeyEventState::Press);
         win.key_event(gdk::Key::F4, KeyEventState::Release);
-        let shortcut = SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger);
+        let shortcut =
+            SessionEvent::Shortcut(nerust_frontend_host::session::ShortcutGesture::OpenDebugger);
         win.event_sink().send(EventCommand::Session(shortcut));
         assert!(matches!(
             sink.0.borrow().as_slice(),
             [
                 EventCommand::Session(SessionEvent::Keyboard { pressed: true, .. }),
                 EventCommand::Session(SessionEvent::Keyboard { pressed: false, .. }),
-                EventCommand::Session(SessionEvent::Shortcut(KeyboardShortcut::OpenDebugger)),
+                EventCommand::Session(SessionEvent::Shortcut(
+                    nerust_frontend_host::session::ShortcutGesture::OpenDebugger
+                )),
             ]
         ));
         win.window().destroy();
@@ -2389,6 +2491,7 @@ pub(crate) mod tests {
 
     #[test]
     fn slot_menu_lists_slots_with_action_targets() {
+        use gio::prelude::MenuModelExt;
         use nerust_persistence::model::StateSlotSummary;
         use nerust_settings_core::model::language::AppLanguage;
         let slots = vec![
@@ -2443,7 +2546,6 @@ pub(crate) mod tests {
             "slot entries cannot overwrite shared declaration enablement"
         );
         let menu = bars.submenu(MenuId::LoadSlot);
-        use gio::prelude::MenuModelExt;
         assert_eq!(menu.n_items(), 2);
         for (index, id) in [(0, 1_u64), (1, 2_u64)] {
             assert_eq!(
