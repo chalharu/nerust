@@ -24,7 +24,7 @@ use crate::{
 use crate::{
     debugger::{
         DebugHandle, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope, PpuChrome, ScaledPicture,
+        DebuggerLiveEffects, DebuggerScope,
     },
     event::EventHandler,
     session::{SessionError, SessionEvent, SessionOutcome},
@@ -154,10 +154,16 @@ pub trait FrontendApp: EventHandler {
     fn close_debug(&mut self, handle: DebugHandle);
     fn close_debug_flights(&mut self);
     fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot>;
-    fn debug_pictures(&self, handle: DebugHandle) -> Vec<ScaledPicture>;
-    fn debug_panels(&self, handle: DebugHandle) -> Option<String>;
     fn debug_paused(&self, handle: DebugHandle) -> bool;
     fn debug_generation(&self, handle: DebugHandle) -> u64;
+    /// Generic aux viewer for a debug session (PPU pictures as Image controls).
+    /// Presentation lives in view-defs; natives render the ControlScreen verbatim.
+    fn debug_aux_screen(&self, handle: DebugHandle) -> Option<ControlScreen>;
+    /// Route a generic control event (e.g. Hover) to the debug aux viewer.
+    /// Returns true when the screen changed and should be re-pushed.
+    fn debug_aux_dispatch(&mut self, handle: DebugHandle, event: ControlEvent) -> bool;
+    /// Refresh the debug aux viewer from the latest bridge display.
+    fn debug_aux_refresh(&mut self, handle: DebugHandle);
     fn debug_gesture(
         &mut self,
         handle: DebugHandle,
@@ -180,17 +186,7 @@ pub trait FrontendApp: EventHandler {
     /// Chrome gate: a pause change since the last drain needs a viewer refresh.
     fn chrome_drain_due(&self, debug_open: bool) -> bool;
     fn debugger_chrome(&self) -> DebuggerChrome;
-    fn ppu_chrome(&self) -> PpuChrome;
     fn debugger_window_title(&self) -> String;
-    fn debug_hover_line(
-        &self,
-        handle: DebugHandle,
-        label: &str,
-        width: u32,
-        height: u32,
-        x: f64,
-        y: f64,
-    ) -> String;
     fn take_debug_open_request(&mut self) -> bool;
     fn take_ppu_open_request(&mut self) -> bool;
     fn request_debug_open(&mut self);

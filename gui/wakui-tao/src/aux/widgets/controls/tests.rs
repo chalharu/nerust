@@ -799,8 +799,22 @@ fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
     let fix = fixture();
     let mut inventory = Inventory::default();
     fix.screen().visit(&mut inventory);
-    let mut kinds = [false; 7];
-    for mut control in inventory.0 {
+    let mut controls = inventory.0;
+    // Settings screens carry no raster images; synthesize one so the
+    // generic Image path is covered without a PPU fixture.
+    controls.push(Control {
+        id: ControlId::fresh(),
+        label: "Tiles".to_string(),
+        metadata: ControlMetadata::new("Tiles"),
+        display: ControlDisplay::Standard,
+        kind: ControlKind::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![0xff; 2 * 2 * 4],
+        },
+    });
+    let mut kinds = [false; 8];
+    for mut control in controls {
         kinds[match control.kind {
             ControlKind::Toggle { .. } => 0,
             ControlKind::Choice { .. } => 1,
@@ -809,6 +823,7 @@ fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
             ControlKind::Binding { .. } => 4,
             ControlKind::Action => 5,
             ControlKind::Note { .. } => 6,
+            ControlKind::Image { .. } => 7,
         }] = true;
         for enabled in [true, false] {
             control.metadata.enabled = enabled;

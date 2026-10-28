@@ -13,7 +13,7 @@ use wakui::control::ControlScreen;
 use wakui::{
     aux::AuxId,
     mailbox::WindowMailbox,
-    window::{DebugContents, PpuContents, Window, WindowVisitor},
+    window::{DebugContents, Window, WindowVisitor},
 };
 
 #[cfg(test)]
@@ -150,9 +150,6 @@ pub(crate) enum AuxOpenParams {
     Debug {
         position: Option<(i32, i32)>,
     },
-    Ppu {
-        position: Option<(i32, i32)>,
-    },
 }
 
 /// Window creation surface: main plus one capability-routed aux entry.
@@ -231,12 +228,6 @@ impl WindowVisitor for CreateAux<'_> {
                 .map(aux_box)
             });
     }
-    fn visit_ppu(&mut self, _: &PpuContents) {
-        self.output = self.params.take().and_then(ppu_parts).and_then(|position| {
-            crate::aux::ppu::PpuWindowHandle::new(self.window.clone(), self.target, position)
-                .map(aux_box)
-        });
-    }
 }
 
 /// Box a concrete aux handle behind its capability ports.
@@ -263,14 +254,6 @@ fn controls_parts(params: AuxOpenParams) -> Option<ControlsParts> {
 /// Split one debugger open: pure variant check, display-free tests.
 fn debug_parts(params: AuxOpenParams) -> Option<Option<(i32, i32)>> {
     let AuxOpenParams::Debug { position } = params else {
-        return None;
-    };
-    Some(position)
-}
-
-/// Split one viewer open: pure variant check, display-free tests.
-fn ppu_parts(params: AuxOpenParams) -> Option<Option<(i32, i32)>> {
-    let AuxOpenParams::Ppu { position } = params else {
         return None;
     };
     Some(position)
@@ -352,17 +335,11 @@ mod tests {
             }
         }
         assert!(debug_parts(history_params()).is_none());
-        assert!(ppu_parts(history_params()).is_none());
         assert!(controls_parts(history_params()).is_some());
         // Own variants split cleanly.
         assert!(controls_parts(history_params()).is_some());
         let debug = AuxOpenParams::Debug { position: None };
         let position = debug_parts(debug).expect("debug splits");
         assert_eq!(position, None);
-        let back_pos = ppu_parts(AuxOpenParams::Ppu {
-            position: Some((8, 16)),
-        })
-        .expect("ppu splits");
-        assert_eq!(back_pos, Some((8, 16)));
     }
 }
