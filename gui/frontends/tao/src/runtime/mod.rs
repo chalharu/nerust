@@ -2,14 +2,10 @@ mod dispatch;
 mod drain;
 pub(crate) mod host;
 
-use nerust_frontend_host::event::EventSink;
+use nerust_frontend_host::{event::EventSink, viewport::ViewportPresent};
 use std::{path::Path, sync::Arc};
 
 use nerust_gui_shell::context::FrontendContext;
-use nerust_render_traits::{
-    SurfaceSize,
-    renderer::{RenderPipeline, RendererConfig},
-};
 use raw_window_handle::HasDisplayHandle;
 #[cfg(target_os = "macos")]
 use tao::platform::macos::EventLoopExtMacOS;
@@ -27,7 +23,6 @@ pub(crate) struct WindowRuntime {
     event_loop: Option<EventLoop<UserEvent>>,
     event_sink: Option<Arc<dyn EventSink + Send + Sync>>,
     host: HostState,
-    renderer: Option<Box<dyn RenderPipeline>>,
     /// Native target the surface is attached to (`None` = toplevel).
     surface_xid: Option<u64>,
 }
@@ -51,7 +46,6 @@ impl WindowRuntime {
             event_loop: Some(event_loop),
             event_sink: Some(event_sink),
             host,
-            renderer: None,
             surface_xid: None,
         })
     }
@@ -78,59 +72,6 @@ impl WindowRuntime {
             }
         });
         thread_rx.recv().ok()
-    }
-
-    /// Pipeline for the live profile; reports creation faults to the host.
-    /// `None` keeps the previous renderer instead of a half-built one.
-    fn create_pipeline(
-        &mut self,
-        raw_display_handle: raw_window_handle::RawDisplayHandle,
-    ) -> Option<Box<dyn RenderPipeline>> {
-        let render_profile = self.host.render_profile()?;
-        let config = RendererConfig {
-            render_profile,
-            vsync: self.host.settings_snapshot().local.video.presentation.vsync,
-            max_osd_upload_retries: nerust_render_traits::renderer::DEFAULT_OSD_UPLOAD_RETRIES,
-        };
-        // Drop the old renderer before the new attach makes its own context current.
-        self.renderer = None;
-        match self
-            .host
-            .gpu_factory()
-            .create_pipeline(&config, raw_display_handle)
-        {
-            Ok(renderer) => Some(renderer),
-            Err(e) => {
-                log::error!("failed to create renderer: {e}");
-                self.host
-                    .render_failed(format!("Failed to create renderer: {e}"));
-                None
-            }
-        }
-    }
-
-    fn build_renderer_and_surface(
-        &mut self,
-        raw_display_handle: raw_window_handle::RawDisplayHandle,
-    ) -> Option<()> {
-        let (raw_window_handle, size, xid) = self.host.surface_target()?;
-        let mut renderer = self.create_pipeline(raw_display_handle)?;
-        if let Err(e) = renderer.attach(
-            raw_window_handle,
-            raw_display_handle,
-            SurfaceSize::new(size.width, size.height),
-        ) {
-            log::error!("failed to attach renderer: {e}");
-            self.host
-                .render_failed(format!("Failed to attach renderer: {e}"));
-            return None;
-        }
-        self.surface_xid = xid;
-        self.renderer = Some(renderer);
-        // Fresh view holds no layer; re-push on the next sync
-        // instead of skipping on a stale fingerprint.
-        self.host.note_renderer_replaced();
-        Some(())
     }
 
     pub(crate) fn load_path(&mut self, path: &Path) -> bool {
@@ -219,18 +160,15 @@ impl WindowRuntime {
         if !self.host.render_ready() {
             return;
         }
-        if self.renderer.is_none() {
+        if !self.host.viewport_attached() {
             self.recreate_renderer();
         }
-        let Some(window_size) = self.host.window_surface_size() else {
+        let Some((width, height)) = self.host.window_surface_size() else {
             return;
         };
-        if window_size.width == 0 || window_size.height == 0 {
+        if width == 0 || height == 0 {
             return;
         }
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
 
         // Keep the output sized to the current target: target change needs a full recreate.
         let current_xid = self.host.surface_xid();
@@ -238,49 +176,61 @@ impl WindowRuntime {
             self.recreate_renderer();
             return;
         }
-        if renderer.size() != window_size {
-            renderer.resize(window_size);
-        }
-
         // No notification drain here: `update_control_flow` drains every pass.
-        // One capture for the whole redraw: strips and layer sync share the frame.
-        let ctx = self.host.frame_ctx();
-        let osd = self.host.prepare_osd_frame(window_size, &ctx);
-        osd.apply(renderer.as_mut());
-
-        self.host.swap_frame_buffer();
-        if let Some(fb) = self.host.frame_buffer() {
-            let frame_counter = ctx.tick().frame_counter;
-            let result = renderer.render(fb);
-            self.host.on_render_result(result, frame_counter);
-            if matches!(result, nerust_render_traits::renderer::RenderResult::Error) {
-                self.renderer = None;
+        let client_height = self.host.client_height();
+        match self.host.viewport_present(width, height, client_height) {
+            ViewportPresent::Presented => {
+                self.host.refresh_title_after_present();
             }
+            ViewportPresent::NoPipeline => {
+                self.recreate_renderer();
+            }
+            ViewportPresent::Skipped => {}
         }
     }
 
     fn recreate_renderer(&mut self) {
-        self.renderer = None;
         if !self.host.render_ready() {
             return;
         }
-        // Owned display handle out; the attach below only borrows the host.
+        // Owned display handle out; the surface target below only borrows the host.
         let display = self
             .host
             .with_main_window(|window| window.display_handle().ok().map(|handle| handle.as_raw()));
-        if let Some(Some(raw_display)) = display {
-            self.build_renderer_and_surface(raw_display);
-        } else if display.is_some() {
-            log::error!("failed to get display handle");
-            self.host
-                .render_failed("Failed to get display handle".into());
+        let Some(Some(raw_display)) = display else {
+            if display.is_some() {
+                log::error!("failed to get display handle");
+                self.host
+                    .render_failed("Failed to get display handle".into());
+            }
+            return;
+        };
+        let Some((raw_window, (width, height), xid)) = self.host.surface_target() else {
+            return;
+        };
+        let region = wakui::viewport::ViewportRegion {
+            window: raw_window,
+            display: raw_display,
+            width,
+            height,
+        };
+        match self.host.viewport_sync(region, true) {
+            Ok(true) => {
+                self.surface_xid = xid;
+            }
+            Ok(false) => {}
+            Err(detail) => {
+                log::error!("failed to create renderer: {detail}");
+                self.host
+                    .render_failed(format!("Failed to create renderer: {detail}"));
+            }
         }
     }
 }
 
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
-        self.renderer = None;
+        self.host.viewport_drop();
     }
 }
 
@@ -288,7 +238,7 @@ impl WindowRuntime {
     /// Ordered exit teardown: the surface dies before the native owner it
     /// borrows, on every close path. Idempotent via `prepare_close`.
     fn begin_close(&mut self) {
-        self.renderer = None;
+        self.host.viewport_drop();
         self.host.prepare_close();
         self.surface_xid = None;
     }
