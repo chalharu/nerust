@@ -20,13 +20,8 @@ use nerust_render_traits::{
 use wakui::cache::Versioned;
 
 use crate::frame::FrameCtx;
+use wakui::dialog::{ModalAdvance, ModalPresentation, ModalToken};
 use wakui::loop_driver::WakeNeed;
-
-/// Native presentation runs only after the application borrow has ended.
-/// Callback-based dialogs return None; worker dialogs return their ACK receiver.
-pub trait ModalPresenter {
-    fn present_modal(&self, presentation: ModalPresentation) -> Option<Receiver<()>>;
-}
 
 #[derive(Debug, Default)]
 pub struct OsdTurn {
@@ -85,36 +80,6 @@ impl<S: OsdSink + StripSink + ?Sized> OsdVisitor for SinkVisitor<'_, S> {
     fn layer(&mut self, layer: Option<OsdLayer>) {
         self.0.set_osd_layer(layer);
     }
-}
-
-/// Process-unique dialog identity, including across runtime replacement/close.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModalToken(u64);
-
-impl ModalToken {
-    pub(crate) fn into_host(self) -> wakui::osd::ModalToken {
-        wakui::osd::ModalToken(self.0)
-    }
-
-    pub(crate) fn from_host(token: wakui::osd::ModalToken) -> Self {
-        Self(token.0)
-    }
-}
-
-/// Owned native effect. Take it under the host borrow, present only after release.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ModalPresentation {
-    pub token: ModalToken,
-    pub detail: String,
-}
-
-/// ACK outcome shared by threaded dialogs and native widget callbacks.
-/// ApplicationHost commits pause release before returning this owned effect.
-#[derive(Debug, PartialEq, Eq)]
-pub enum ModalAdvance {
-    Ignored,
-    Present(ModalPresentation),
-    Drained,
 }
 
 #[derive(Default)]

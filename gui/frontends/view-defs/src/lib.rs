@@ -8,6 +8,7 @@
 //! crate; they drive views through the host.
 
 pub mod application;
+pub mod aux_schedule;
 pub mod bootstrap;
 pub mod commands;
 pub mod debugger;
