@@ -118,6 +118,14 @@ pub enum ControlKind {
     Note {
         text: String,
     },
+    /// Generic raster image (RGBA8, row-major). View definitions supply
+    /// the bytes; backends render verbatim and report pointer positions
+    /// as [`ControlInput::Hover`]. Any view may show images.
+    Image {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +167,7 @@ impl Control {
                 },
                 ControlInput::CaptureKey(_),
             ) => true,
+            (ControlKind::Image { .. }, ControlInput::Hover { .. }) => true,
             _ => false,
         }
     }
@@ -173,6 +182,12 @@ pub enum ControlInput {
     Activate,
     CaptureClear,
     CaptureKey(Key),
+    /// Pointer position over an [`ControlKind::Image`], in image pixels.
+    /// Integer to keep `Eq`; natives floor their float coordinates.
+    Hover {
+        x: u32,
+        y: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

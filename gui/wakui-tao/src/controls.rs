@@ -3,8 +3,8 @@
 use iced::{
     Alignment, Length,
     widget::{
-        button, checkbox, column, container, pick_list, radio, row, scrollable, slider, text,
-        text_input,
+        button, checkbox, column, container, image as iced_image, mouse_area, pick_list, radio,
+        row, scrollable, slider, text, text_input,
     },
 };
 use wakui::{
@@ -526,6 +526,23 @@ pub fn control_element(control: &Control, parent_enabled: bool, font: iced::Font
             } else {
                 row![label_text(), note].spacing(12).into()
             }
+        }
+        ControlKind::Image {
+            width,
+            height,
+            rgba,
+        } => {
+            let handle = iced::widget::image::Handle::from_rgba(*width, *height, rgba.clone());
+            let shown = iced_image(handle);
+            // Hover positions arrive as image pixels; floor the float point.
+            mouse_area(shown)
+                .on_move(move |point| {
+                    input(ControlInput::Hover {
+                        x: point.x.max(0.0) as u32,
+                        y: point.y.max(0.0) as u32,
+                    })
+                })
+                .into()
         }
     };
     // Help surfaces as hover tooltips in GTK; Tao has no hover affordance,

@@ -157,7 +157,7 @@ impl WindowRuntime {
         if let Some(detail) = outcome.error {
             self.host.core.report_host_error(detail);
         }
-        if matches!(kind, AuxKind::Settings | AuxKind::History) {
+        if matches!(kind, AuxKind::Settings | AuxKind::History | AuxKind::Ppu) {
             if (outcome.close || outcome.submitted)
                 && let Some(id) = outcome.id
                 && self.host.finish_widget_window(id, outcome.close)
@@ -171,16 +171,19 @@ impl WindowRuntime {
         }
         match kind {
             AuxKind::Debug => self.host.drop_debug_window(),
-            AuxKind::Ppu => self.host.drop_ppu_window(),
-            AuxKind::Settings | AuxKind::History => unreachable!(),
+            AuxKind::Ppu | AuxKind::Settings | AuxKind::History => unreachable!(),
         }
     }
 
     pub(super) fn on_ppu_event(&mut self, event: WindowEvent) {
-        // Same external-destroy guard as the debugger: a dead
-        // handle must not linger and block reopening.
+        // Generic widget window, like Settings/History: external destroy
+        // runs the normal close path, focus drives the shared protocol.
         if matches!(event, WindowEvent::Destroyed) {
-            self.host.drop_ppu_window();
+            if let Some(id) = self.host.aux.route_id(AuxKind::Ppu)
+                && self.host.finish_widget_window(id, true)
+            {
+                self.recreate_renderer();
+            }
             self.host.request_redraw();
             return;
         }
@@ -194,9 +197,11 @@ impl WindowRuntime {
         let Some(outcome) = self.host.aux_on_event(AuxKind::Ppu, domain) else {
             return;
         };
-        if outcome.close {
-            self.host.drop_ppu_window();
-            self.host.request_redraw();
+        if (outcome.close || outcome.submitted)
+            && let Some(id) = outcome.id
+            && self.host.finish_widget_window(id, outcome.close)
+        {
+            self.recreate_renderer();
         }
     }
 

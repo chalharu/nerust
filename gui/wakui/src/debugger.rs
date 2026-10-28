@@ -159,15 +159,6 @@ impl DebuggerChrome {
     }
 }
 
-/// Pre-localized PPU viewer chrome for the viewer opened from a session.
-#[derive(Debug, Clone, Default)]
-pub struct PpuChrome {
-    pub title: String,
-    pub hover_empty: String,
-    pub no_images: String,
-    pub panels_title: String,
-}
-
 /// One disassembly row: pre-formatted line plus navigation addresses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DisasmRow {
@@ -209,15 +200,6 @@ pub struct DebuggerRows {
     pub freeze_text: String,
     /// Dump selection line, including the old byte when readable.
     pub selected_line: String,
-}
-
-/// One 2x-scaled PPU picture with its display size.
-#[derive(Debug, Clone)]
-pub struct ScaledPicture {
-    pub label: String,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
 }
 
 /// Owned navigation and input snapshot: every text field a native rebuild

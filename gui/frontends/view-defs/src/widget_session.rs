@@ -97,6 +97,12 @@ impl WindowSubmission {
 enum State {
     Settings(Box<SettingsController>),
     History(HistorySession),
+    Ppu(PpuState),
+}
+
+struct PpuState {
+    session: RefCell<crate::ppu::PpuSession>,
+    language: AppLanguage,
 }
 
 /// Bound history instance. Owns filter state and mailbox effects;
@@ -173,6 +179,31 @@ impl WidgetSession {
         }
     }
 
+    pub fn ppu(
+        chrome: crate::ppu::PpuChrome,
+        pictures: Vec<crate::ppu::PpuPicture>,
+        panels: Option<String>,
+        generation: u64,
+        language: AppLanguage,
+    ) -> Self {
+        let mailbox = WindowMailbox::new(HistoryDomain {
+            // Reuse the flag-only domain: PPU has no pending submission,
+            // only invalidation on refresh/hover.
+            clear: Arc::new(AtomicBool::new(false)),
+        });
+        Self {
+            state: State::Ppu(PpuState {
+                session: RefCell::new(crate::ppu::PpuSession::new(
+                    chrome, pictures, panels, generation,
+                )),
+                language,
+            }),
+            scene: RefCell::new(Default::default()),
+            mailbox,
+            picker: None,
+        }
+    }
+
     pub fn mailbox(&self) -> WindowMailbox {
         self.mailbox.clone()
     }
@@ -181,6 +212,7 @@ impl WidgetSession {
         let mut scene = self.scene.borrow_mut();
         let mut screen = match &self.state {
             State::Settings(controller) => scene.settings(&controller.screen()).0,
+            State::Ppu(state) => state.session.borrow_mut().screen(),
             State::History(session) => scene.history(&HistoryModel::build(
                 &session.lines,
                 session.language,
@@ -201,6 +233,27 @@ impl WidgetSession {
         match self.state {
             State::Settings(_) => AuxKind::Settings,
             State::History(_) => AuxKind::History,
+            State::Ppu(_) => AuxKind::Ppu,
+        }
+    }
+
+    pub fn refresh_ppu(
+        &mut self,
+        chrome: crate::ppu::PpuChrome,
+        pictures: Vec<crate::ppu::PpuPicture>,
+        panels: Option<String>,
+        generation: u64,
+        language: AppLanguage,
+    ) {
+        if let State::Ppu(state) = &mut self.state {
+            state.language = language;
+            if state
+                .session
+                .borrow_mut()
+                .refresh(chrome, pictures, panels, generation)
+            {
+                self.mailbox.invalidate();
+            }
         }
     }
 
@@ -262,6 +315,19 @@ impl WidgetSession {
                 };
                 let model = HistoryModel::build(&session.lines, session.language, session.filter);
                 let _ = drive(&model, &action, input, session);
+                Vec::new()
+            }
+            State::Ppu(state) => {
+                // Hover is the only PPU input; formatting lives in the
+                // view definition, natives only route positions.
+                let language = state.language;
+                let changed = state
+                    .session
+                    .borrow_mut()
+                    .dispatch(&screen, &event, language);
+                if changed {
+                    mailbox.invalidate();
+                }
                 Vec::new()
             }
         }

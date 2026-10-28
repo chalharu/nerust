@@ -25,7 +25,7 @@ use wakui::{
     },
     debugger::{
         DebugHandle, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope, PpuChrome, ScaledPicture,
+        DebuggerLiveEffects, DebuggerScope,
     },
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
     focus::{AuxKind, FocusEffect, FocusEvent},
@@ -1300,14 +1300,6 @@ impl FrontendApp for FakeApp {
         self.debug_open.then(|| debug_snapshot(self.debug_paused))
     }
 
-    fn debug_pictures(&self, _handle: DebugHandle) -> Vec<ScaledPicture> {
-        Vec::new()
-    }
-
-    fn debug_panels(&self, _handle: DebugHandle) -> Option<String> {
-        None
-    }
-
     fn debug_paused(&self, _handle: DebugHandle) -> bool {
         self.debug_paused
     }
@@ -1335,6 +1327,16 @@ impl FrontendApp for FakeApp {
     fn debug_refresh(&mut self, _handle: DebugHandle, _scope: DebuggerScope, _need_images: bool) {}
 
     fn debug_open_refresh(&mut self, _handle: DebugHandle, _need_images: bool) {}
+
+    fn debug_aux_screen(&self, _handle: DebugHandle) -> Option<ControlScreen> {
+        None
+    }
+
+    fn debug_aux_dispatch(&mut self, _handle: DebugHandle, _event: ControlEvent) -> bool {
+        false
+    }
+
+    fn debug_aux_refresh(&mut self, _handle: DebugHandle) {}
 
     fn debug_poll(&mut self, _handle: DebugHandle, _ppu_open: bool) -> WakeNeed {
         WakeNeed::default()
@@ -1367,29 +1369,8 @@ impl FrontendApp for FakeApp {
         chrome("Debugger")
     }
 
-    fn ppu_chrome(&self) -> PpuChrome {
-        PpuChrome {
-            title: "PPU Viewer".to_string(),
-            hover_empty: "hover".to_string(),
-            no_images: "no images".to_string(),
-            panels_title: "Panels".to_string(),
-        }
-    }
-
     fn debugger_window_title(&self) -> String {
         "Debugger".to_string()
-    }
-
-    fn debug_hover_line(
-        &self,
-        _handle: DebugHandle,
-        label: &str,
-        _width: u32,
-        _height: u32,
-        _x: f64,
-        _y: f64,
-    ) -> String {
-        format!("hover {label}")
     }
 
     fn take_debug_open_request(&mut self) -> bool {
@@ -1882,12 +1863,6 @@ impl FrontendApp for SharedApp {
     fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot> {
         self.inner.borrow().debug_snapshot(handle)
     }
-    fn debug_pictures(&self, handle: DebugHandle) -> Vec<ScaledPicture> {
-        self.inner.borrow().debug_pictures(handle)
-    }
-    fn debug_panels(&self, handle: DebugHandle) -> Option<String> {
-        self.inner.borrow().debug_panels(handle)
-    }
     fn debug_paused(&self, handle: DebugHandle) -> bool {
         self.inner.borrow().debug_paused(handle)
     }
@@ -1914,6 +1889,15 @@ impl FrontendApp for SharedApp {
         self.inner
             .borrow_mut()
             .debug_open_refresh(handle, need_images)
+    }
+    fn debug_aux_screen(&self, handle: DebugHandle) -> Option<ControlScreen> {
+        self.inner.borrow().debug_aux_screen(handle)
+    }
+    fn debug_aux_dispatch(&mut self, handle: DebugHandle, event: ControlEvent) -> bool {
+        self.inner.borrow_mut().debug_aux_dispatch(handle, event)
+    }
+    fn debug_aux_refresh(&mut self, handle: DebugHandle) {
+        self.inner.borrow_mut().debug_aux_refresh(handle)
     }
     fn debug_poll(&mut self, handle: DebugHandle, ppu_open: bool) -> WakeNeed {
         self.inner.borrow_mut().debug_poll(handle, ppu_open)
@@ -1943,24 +1927,8 @@ impl FrontendApp for SharedApp {
     fn debugger_chrome(&self) -> DebuggerChrome {
         self.inner.borrow().debugger_chrome()
     }
-    fn ppu_chrome(&self) -> PpuChrome {
-        self.inner.borrow().ppu_chrome()
-    }
     fn debugger_window_title(&self) -> String {
         self.inner.borrow().debugger_window_title()
-    }
-    fn debug_hover_line(
-        &self,
-        handle: DebugHandle,
-        label: &str,
-        width: u32,
-        height: u32,
-        x: f64,
-        y: f64,
-    ) -> String {
-        self.inner
-            .borrow()
-            .debug_hover_line(handle, label, width, height, x, y)
     }
     fn take_debug_open_request(&mut self) -> bool {
         self.inner.borrow_mut().take_debug_open_request()

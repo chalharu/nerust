@@ -4,8 +4,7 @@
 
 use nerust_gui_shell::session::LiveImages;
 use nerust_gui_viewmodel::debugger::{
-    DebugImageRgba, DisplayCache, format_disasm_line, format_panels, format_register,
-    scale2x_nearest,
+    DebugImageRgba, DisplayCache, format_disasm_line, format_register,
 };
 
 /// Finished drain transport. Field types stay private to this crate's
@@ -98,21 +97,4 @@ pub(crate) fn rows_from_display(
         paused: display.paused,
         pending_text,
     }
-}
-
-pub(crate) fn scaled_from_display(display: &DisplayCache) -> Vec<wakui::debugger::ScaledPicture> {
-    display
-        .images
-        .iter()
-        .map(|image| wakui::debugger::ScaledPicture {
-            label: image.label.clone(),
-            width: image.width * 2,
-            height: image.height * 2,
-            rgba: scale2x_nearest(&image.rgba, image.width, image.height),
-        })
-        .collect()
-}
-
-pub(crate) fn panels_text(display: &DisplayCache) -> String {
-    format_panels(&display.panels)
 }

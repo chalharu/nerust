@@ -81,6 +81,7 @@ pub enum NativeKind {
     Binding(gtk::Label, gtk::Button, gtk::Button),
     Action(gtk::Button),
     Note(gtk::Label),
+    Image(gtk::Picture),
 }
 
 #[derive(Default)]
@@ -100,6 +101,7 @@ impl NativeControl {
                 | (NativeKind::Binding(..), ControlKind::Binding { .. })
                 | (NativeKind::Action(_), ControlKind::Action)
                 | (NativeKind::Note(_), ControlKind::Note { .. })
+                | (NativeKind::Image(_), ControlKind::Image { .. })
         )
     }
 
@@ -202,6 +204,30 @@ impl NativeControl {
                 note.set_xalign(0.0);
                 note.set_wrap(true);
                 (note.clone().upcast(), NativeKind::Note(note))
+            }
+            ControlKind::Image {
+                width,
+                height,
+                rgba,
+            } => {
+                let picture = paintable_image(*width, *height, rgba);
+                let motion = gtk::EventControllerMotion::new();
+                {
+                    let weak = binding.self_weak.clone();
+                    motion.connect_motion(move |_, x, y| {
+                        if let Some(binding) = weak.upgrade() {
+                            binding.input(
+                                id,
+                                ControlInput::Hover {
+                                    x: x.max(0.0) as u32,
+                                    y: y.max(0.0) as u32,
+                                },
+                            );
+                        }
+                    });
+                }
+                picture.add_controller(motion);
+                (picture.clone().upcast(), NativeKind::Image(picture))
             }
         };
         match &kind {
@@ -395,9 +421,43 @@ impl NativeControl {
             }
             (NativeKind::Action(button), ControlKind::Action) => button.set_label(&control.label),
             (NativeKind::Note(label), ControlKind::Note { text }) => label.set_text(text),
+            (
+                NativeKind::Image(picture),
+                ControlKind::Image {
+                    width,
+                    height,
+                    rgba,
+                },
+            ) => {
+                let stride = (*width as usize).saturating_mul(4);
+                let texture = gtk::gdk::MemoryTexture::new(
+                    *width as i32,
+                    *height as i32,
+                    gtk::gdk::MemoryFormat::R8g8b8a8,
+                    &gtk::glib::Bytes::from(rgba),
+                    stride,
+                );
+                picture.set_paintable(Some(&texture));
+                picture.set_size_request(*width as i32, *height as i32);
+            }
             _ => unreachable!("control kind checked on lookup"),
         }
     }
+}
+
+fn paintable_image(width: u32, height: u32, rgba: &[u8]) -> gtk::Picture {
+    let stride = (width as usize).saturating_mul(4);
+    let texture = gtk::gdk::MemoryTexture::new(
+        width as i32,
+        height as i32,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &gtk::glib::Bytes::from(rgba),
+        stride,
+    );
+    let picture = gtk::Picture::for_paintable(&texture);
+    picture.set_can_shrink(false);
+    picture.set_size_request(width as i32, height as i32);
+    picture
 }
 
 fn action_button(binding: &WidgetBinding, id: ControlId, input: ControlInput) -> gtk::Button {

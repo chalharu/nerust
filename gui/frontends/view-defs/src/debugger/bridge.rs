@@ -138,10 +138,10 @@ impl DebugBridge {
         self.meta.language
     }
 
-    /// Pre-localized PPU viewer chrome. Frontends render these verbatim
-    /// instead of calling into the i18n catalog themselves.
-    pub fn ppu_chrome(&self) -> wakui::debugger::PpuChrome {
-        ppu_chrome(self.meta.language)
+    /// Pre-localized PPU viewer chrome. Widget sessions render it verbatim
+    /// through [`crate::ppu::ppu_chrome`].
+    pub fn ppu_chrome(&self) -> crate::ppu::PpuChrome {
+        crate::ppu::ppu_chrome(self.meta.language)
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
@@ -244,9 +244,9 @@ impl DebugBridge {
         self.apply_live_images(live.generation, live.images, live.running)
     }
 
-    /// 2x-scaled PPU pictures derived without exposing the scaler.
-    pub fn scaled_pictures(&self) -> Vec<wakui::debugger::ScaledPicture> {
-        super::view::scaled_from_display(&read_display(&self.display))
+    /// 2x-scaled PPU pictures for the widget session (view-owned DTO).
+    pub fn scaled_pictures(&self) -> Vec<crate::ppu::PpuPicture> {
+        crate::ppu::scaled_pictures(&read_display(&self.display))
     }
 
     /// Generation of the source images behind [`Self::scaled_pictures`].
@@ -256,7 +256,7 @@ impl DebugBridge {
 
     /// Formatted panel text without exposing the panel formatter.
     pub fn formatted_panels(&self) -> String {
-        super::view::panels_text(&read_display(&self.display))
+        crate::ppu::panels_text(&read_display(&self.display))
     }
 
     /// Whether the system exposes observation tables.
@@ -447,17 +447,6 @@ impl DebugBridge {
     #[doc(hidden)]
     pub fn navigate(&self, anchor: u32, addr: u32) {
         lock_recovered(&self.core).nav.navigate(anchor, addr);
-    }
-}
-
-/// Pre-localized PPU viewer chrome in the view language.
-pub fn ppu_chrome(language: AppLanguage) -> wakui::debugger::PpuChrome {
-    use nerust_settings_core::i18n::{UiText, text as ui_text};
-    wakui::debugger::PpuChrome {
-        title: ui_text(language, UiText::PpuViewer).to_string(),
-        hover_empty: ui_text(language, UiText::HoverTile).to_string(),
-        no_images: ui_text(language, UiText::NoImages).to_string(),
-        panels_title: ui_text(language, UiText::Panels).to_string(),
     }
 }
 

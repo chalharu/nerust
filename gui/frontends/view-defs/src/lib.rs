@@ -18,6 +18,7 @@ pub mod frame;
 pub mod history;
 pub mod menu;
 pub mod osd;
+pub mod ppu;
 pub mod session;
 pub mod settings;
 pub mod sync;

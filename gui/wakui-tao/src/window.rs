@@ -5,7 +5,7 @@ use iced_winit::program::Program;
 use wakui::control::ControlScreen;
 use wakui::{
     focus::AuxKind,
-    window::{DebugContents, PpuContents, Window, WindowVisitor},
+    window::{DebugContents, Window, WindowVisitor},
 };
 
 pub trait GroupedProgram: Program {
@@ -122,8 +122,5 @@ impl<P: WidgetBinding> WindowVisitor for GroupedView<'_, '_, P> {
     }
     fn visit_debug(&mut self, _: &DebugContents) {
         self.grouped(AuxKind::Debug);
-    }
-    fn visit_ppu(&mut self, _: &PpuContents) {
-        self.grouped(AuxKind::Ppu);
     }
 }

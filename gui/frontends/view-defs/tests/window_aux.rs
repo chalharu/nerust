@@ -47,9 +47,6 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         fn visit_debug(&mut self, _: &DebugContents) {
             self.0.push("debug");
         }
-        fn visit_ppu(&mut self, _: &PpuContents) {
-            self.0.push("ppu");
-        }
         fn visit_pending_controls(&mut self) {
             self.0.push("pending");
         }
@@ -57,7 +54,7 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
     for (window, group) in [
         (Window::main(), "main"),
         (Window::auxiliary(AuxKind::Debug), "debug"),
-        (Window::auxiliary(AuxKind::Ppu), "ppu"),
+        (Window::auxiliary(AuxKind::Ppu), "pending"),
         (Window::auxiliary(AuxKind::History), "pending"),
         (Window::auxiliary(AuxKind::Settings), "pending"),
     ] {
@@ -157,7 +154,8 @@ fn reservation_owns_group_before_native_creation_and_reentrant_open() {
         assert_eq!(snapshot.id, WindowId::Auxiliary(kind));
         assert!(matches!(
             (kind, &snapshot.contents.contents),
-            (AuxKind::Debug, WidgetContents::Debug(_)) | (AuxKind::Ppu, WidgetContents::Ppu(_))
+            (AuxKind::Debug, WidgetContents::Debug(_))
+                | (AuxKind::Ppu, WidgetContents::PendingControls)
         ));
         struct Reenter<'a> {
             windows: &'a RefCell<AuxWindows<u64, ()>>,

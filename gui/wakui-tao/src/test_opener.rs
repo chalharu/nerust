@@ -124,11 +124,16 @@ mod tests {
                 )
                 .is_none()
         );
+        let ppu_id = prepare(&mut host, AuxKind::Ppu);
         assert!(
             opener
                 .create_aux(
-                    wakui::window::Window::auxiliary(AuxKind::Ppu),
-                    AuxOpenParams::Ppu { position: None }
+                    host.aux.window(ppu_id).expect("window").clone(),
+                    AuxOpenParams::Controls {
+                        id: ppu_id,
+                        screen: Box::new(screen_of(&host, ppu_id)),
+                        mailbox: mailbox_of(&host, ppu_id),
+                    }
                 )
                 .is_none()
         );
