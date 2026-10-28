@@ -29,13 +29,17 @@ impl HostState {
         self.handle_native_event(event, Some(opener))
     }
 
-    fn dispatch_event(
-        &mut self,
-        event: UserEvent,
-    ) -> Result<EventOutcome, nerust_gui_shell::session::SessionError> {
+    fn dispatch_event(&mut self, event: UserEvent) -> Option<EventOutcome> {
         let settings_open = self.settings_open();
         let handler: &mut dyn EventHandler = &mut self.core;
-        handler.handle_event(event, settings_open)
+        match handler.handle_event(event, settings_open) {
+            Ok(outcome) => Some(outcome),
+            Err(_) => {
+                let ctx = self.frame_ctx();
+                self.sync_chrome(&ctx, false);
+                None
+            }
+        }
     }
 
     pub(crate) fn on_focus_event(&mut self, event: FocusEvent) {
@@ -48,13 +52,9 @@ impl HostState {
         opener: Option<&dyn WindowOpener>,
     ) -> HostAction {
         let outcome = match self.dispatch_event(event) {
-            Ok(outcome) if !outcome.handled => return HostAction::None,
-            Ok(outcome) => outcome,
-            Err(_) => {
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, false);
-                return HostAction::None;
-            }
+            Some(outcome) if !outcome.handled => return HostAction::None,
+            Some(outcome) => outcome,
+            None => return HostAction::None,
         };
         match outcome.effect {
             Some(CommandEffect::OpenRom) => {
