@@ -20,23 +20,7 @@ use wakui::viewport::ViewportRegion;
 
 use crate::{application::ApplicationHost, frame::FrameCtx, osd::OsdUpdate};
 
-/// Composited frame for frontends that blend themselves (GTK picture):
-/// plain pixels, no render vocabulary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ViewportImage {
-    pub width: u32,
-    pub height: u32,
-    pub stride_bytes: usize,
-    pub pixels: Vec<u8>,
-}
-
-/// Direct-present outcome (native swapchain path).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ViewportPresent {
-    Presented,
-    Skipped,
-    NoPipeline,
-}
+pub use nerust_frontend_host::viewport::{ViewportImage, ViewportPresent};
 
 /// Pipeline ownership plus attach/generation bookkeeping. Profile, frames,
 /// and OSD content arrive from `ApplicationHost`; the driver never touches

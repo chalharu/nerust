@@ -54,58 +54,16 @@ impl AppliedLive {
     }
 }
 
-/// One disassembly row: pre-formatted line plus navigation addresses.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DisasmRow {
-    pub addr: u32,
-    pub is_pc: bool,
-    pub text: String,
-    pub target: Option<u32>,
-}
-
-/// One hex-dump row: address plus owned bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DumpRow {
-    pub addr: u32,
-    pub bytes: Vec<u8>,
-}
-
-/// One register row: pre-formatted text plus write-target name.
-/// Names are static register identifiers; only the text is localized.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RegRow {
-    pub name: &'static str,
-    pub text: String,
-}
-
-/// Formatted debugger rows. Frontends render strings and route addresses
-/// back as gestures; no formatter or row-type import needed.
-#[derive(Debug, Clone, Default)]
-pub struct DebuggerRows {
-    pub disasm: Vec<DisasmRow>,
-    pub dump: Vec<DumpRow>,
-    pub changed_addrs: Vec<u32>,
-    pub regs: Vec<RegRow>,
-    pub status_text: String,
-    pub paused: bool,
-    pub pending_text: Option<String>,
-}
-
-/// One 2x-scaled PPU picture with its display size.
-#[derive(Debug, Clone)]
-pub struct ScaledPicture {
-    pub label: String,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
-
 pub(crate) fn rows_from_display(
     display: &DisplayCache,
     status_text: String,
     pending_text: Option<String>,
-) -> DebuggerRows {
+) -> nerust_frontend_host::debugger::DebuggerRows {
+    use nerust_frontend_host::debugger::{DebuggerRows, DisasmRow, DumpRow, RegRow};
     DebuggerRows {
+        watch_text: String::new(),
+        freeze_text: String::new(),
+        selected_line: String::new(),
         disasm: display
             .disasm_lines
             .iter()
@@ -142,11 +100,13 @@ pub(crate) fn rows_from_display(
     }
 }
 
-pub(crate) fn scaled_from_display(display: &DisplayCache) -> Vec<ScaledPicture> {
+pub(crate) fn scaled_from_display(
+    display: &DisplayCache,
+) -> Vec<nerust_frontend_host::debugger::ScaledPicture> {
     display
         .images
         .iter()
-        .map(|image| ScaledPicture {
+        .map(|image| nerust_frontend_host::debugger::ScaledPicture {
             label: image.label.clone(),
             width: image.width * 2,
             height: image.height * 2,
@@ -157,11 +117,4 @@ pub(crate) fn scaled_from_display(display: &DisplayCache) -> Vec<ScaledPicture> 
 
 pub(crate) fn panels_text(display: &DisplayCache) -> String {
     format_panels(&display.panels)
-}
-
-/// Pin-column marker without naming the formatter crate.
-/// Mirrors the canonical rule: a pinned PC row keeps blanks because the
-/// PC `>` already ships inside [`DisasmRow::text`].
-pub fn pin_marker(is_pc: bool, is_pinned: bool) -> &'static str {
-    if !is_pc && is_pinned { "@ " } else { "  " }
 }

@@ -12,10 +12,11 @@ use std::{
 };
 
 use nerust_core_traits::audio::AudioBackendRegistry;
+use nerust_frontend_host::{app::FrontendApp as _, debugger::DebugHandle};
 use nerust_frontend_viewdefs::{
     application::ApplicationHost,
     commands::{CommandDescriptor, CommandVisitor, MenuCommand},
-    debugger::{DebuggerDriver, DebuggerEvent},
+    debugger::DebuggerEvent,
     event::{CommandEffect, EventCommand, EventHandler, EventSink},
     frame::FrameCtx,
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
@@ -31,7 +32,7 @@ use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
 
 struct Common {
     app: ApplicationHost,
-    debugger: DebuggerDriver,
+    debug: nerust_frontend_host::debugger::DebugHandle,
 }
 
 impl Drop for Common {
@@ -212,20 +213,14 @@ impl LoopHost for NativeAdapter {
         }
     }
     fn pump_debug(&mut self) -> WakeNeed {
-        let (effects, view) = {
-            let mut state = self.common.borrow_mut();
-            let Common { app, debugger, .. } = &mut *state;
-            let effects = debugger.poll(app);
-            let view = effects.scope.map(|_| debugger.view_snapshot());
-            (effects, view)
-        };
-        if let Some(view) = view {
-            println!("native debugger: {:?}", view.display.status);
+        let mut state = self.common.borrow_mut();
+        let handle = state.debug;
+        let wake = state.app.debug_poll(handle, false);
+        if let Some(snapshot) = state.app.debug_snapshot(handle) {
+            println!("native debugger: {}", snapshot.rows.status_text);
         }
-        WakeNeed {
-            flight_pending: effects.pending,
-            ..Default::default()
-        }
+        drop(state);
+        wake
     }
     fn pump_osd(&mut self, ctx: &FrameCtx) -> WakeNeed {
         let now = Instant::now();
@@ -303,17 +298,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(AudioBackendRegistry::new()),
         SettingsPaths::from_root(root.0.clone()),
     )?;
-    let debugger = DebuggerDriver::from_session(&session);
     let mut native = NativeAdapter {
         common: Rc::new(RefCell::new(Common {
             app: ApplicationHost::new(session),
-            debugger,
+            debug: DebugHandle(0),
         })),
         redraws: 0,
         modals: 0,
         menus: MenuPresenter::default(),
         menu_items: 0,
     };
+    let handle = native.common.borrow_mut().app.open_debug();
+    native.common.borrow_mut().debug = handle;
     let events = NativeEvents(Rc::new(RefCell::new(Vec::new())));
     let sink: &dyn EventSink = &events;
     assert!(sink.send(EventCommand::Menu(MenuCommand::Open)));
@@ -334,17 +330,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let menu_items = native.menu_items;
     {
         let mut state = native.common.borrow_mut();
-        let Common { app, debugger, .. } = &mut *state;
-        let effects = debugger.dispatch(app.session(), [], DebuggerEvent::RefreshPressed, false);
+        let handle = state.debug;
+        let effects = state
+            .app
+            .debug_gesture(handle, vec![], DebuggerEvent::RefreshPressed, false);
         assert!(!effects.open_ppu && !effects.epoch_reset);
-        assert!(debugger.pending()); // Dispatch queues; the next turn polls.
-        app.report_host_error("Example host error (no native dialog created)".into());
+        assert!(state.app.debug_drain_pending(handle)); // Dispatch queues; the next turn polls.
+        state
+            .app
+            .report_host_error("Example host error (no native dialog created)".into());
     }
     drive_turn(&mut native); // Coreless debugger settles without waiting or sleeping.
     assert_eq!(native.modals, 1);
     {
         let state = native.common.borrow();
-        assert!(!state.debugger.pending());
+        assert!(!state.app.debug_drain_pending(state.debug));
         assert!(!state.app.tick().loaded);
         assert!(!state.app.osd_modal_pending());
         assert!(!state.app.pause_held());

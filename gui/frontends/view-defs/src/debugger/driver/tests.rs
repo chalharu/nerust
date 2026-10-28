@@ -9,6 +9,7 @@ use nerust_gui_viewmodel::debugger::{DisplayCache, StatusMessage};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::*;
+use crate::{application::ApplicationHost, debugger::DebugBridge};
 
 struct Probe<T> {
     ready: Rc<Cell<bool>>,
@@ -40,14 +41,17 @@ impl<T> Flight for Probe<T> {
 
 type Driver = DebuggerDriver<Probe<Box<DebugDrainOutput>>, Probe<LiveImages>>;
 
-fn model() -> DebuggerModel {
-    DebuggerModel::new(
+fn bridge() -> DebugBridge {
+    DebugBridge::new(
         DisplayCache::default(),
         vec![(SpaceId(0), "Memory".into(), 0)],
         0,
         AppLanguage::English,
-        Arc::new(AtomicBool::new(true)),
     )
+}
+
+fn test_epoch() -> Arc<AtomicBool> {
+    Arc::new(AtomicBool::new(true))
 }
 
 fn output() -> Box<DebugDrainOutput> {
@@ -62,11 +66,17 @@ fn output() -> Box<DebugDrainOutput> {
 
 #[test]
 fn in_flight_fifo_retains_actions_and_gesture_snapshot_across_pause_boundaries() {
-    let mut driver = Driver::new(model());
-    driver.freeze = Some((0x12, 0x42));
-    driver.reg_target = Some("a");
-    driver.nav.go_mem(0x100);
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
+    bridge.test_state(|core| {
+        core.freeze = Some((0x12, 0x42));
+        core.reg_target = Some("a");
+        core.nav.go_mem(0x100);
+    });
     driver.enqueue_current(
+        &epoch,
+        &bridge,
         &[
             DebugAction::SelectRow(0x12),
             DebugAction::EditStage(0x42),
@@ -80,7 +90,7 @@ fn in_flight_fifo_retains_actions_and_gesture_snapshot_across_pause_boundaries()
     let flight = Probe::new(output(), false);
     let ready = flight.ready.clone();
     let mut flight = Some(flight);
-    let first = driver.poll_with(|actions, snapshot| {
+    let first = driver.poll_with(&bridge, |actions, snapshot| {
         assert!(matches!(
             actions,
             [DebugAction::SelectRow(0x12), DebugAction::EditStage(0x42)]
@@ -92,18 +102,26 @@ fn in_flight_fifo_retains_actions_and_gesture_snapshot_across_pause_boundaries()
     });
     assert!(first.pending);
     assert_eq!(first.scope, None);
-    driver.nav.go_mem(0x200);
-    driver.freeze = None;
-    driver.reg_target = None;
-    driver.enqueue_current(&[DebugAction::WriteConfirm], DebuggerScope::State, false);
+    bridge.test_state(|core| {
+        core.nav.go_mem(0x200);
+        core.freeze = None;
+        core.reg_target = None;
+    });
+    driver.enqueue_current(
+        &epoch,
+        &bridge,
+        &[DebugAction::WriteConfirm],
+        DebuggerScope::State,
+        false,
+    );
     assert!(
         driver
-            .poll_with(|_, _| panic!("must wait for first flight"))
+            .poll_with(&bridge, |_, _| panic!("must wait for first flight"))
             .pending
     );
     ready.set(true);
     let mut started = 0;
-    let effects = driver.poll_with(|actions, snapshot| {
+    let effects = driver.poll_with(&bridge, |actions, snapshot| {
         match started {
             0 => {
                 assert!(matches!(
@@ -128,23 +146,25 @@ fn in_flight_fifo_retains_actions_and_gesture_snapshot_across_pause_boundaries()
     assert_eq!(started, 3);
     assert!(!effects.pending);
     assert_eq!(effects.scope, Some(DebuggerScope::Dump));
-    assert_eq!(driver.selected, Some((0x12, Some(0xab))));
+    assert_eq!(bridge.selected(), Some((0x12, Some(0xab))));
 }
 
 #[test]
 fn completed_scopes_union_even_when_the_next_flight_is_pending() {
-    let mut driver = Driver::new(model());
-    driver.enqueue_current(&[], DebuggerScope::Disasm, false);
-    driver.enqueue_current(&[], DebuggerScope::Dump, false);
-    driver.enqueue_current(&[], DebuggerScope::State, false);
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
+    driver.enqueue_current(&epoch, &bridge, &[], DebuggerScope::Disasm, false);
+    driver.enqueue_current(&epoch, &bridge, &[], DebuggerScope::Dump, false);
+    driver.enqueue_current(&epoch, &bridge, &[], DebuggerScope::State, false);
     let mut starts = 0;
-    let effects = driver.poll_with(|_, _| {
+    let effects = driver.poll_with(&bridge, |_, _| {
         starts += 1;
         Probe::new(output(), starts < 3)
     });
     assert!(effects.pending);
     assert_eq!(effects.scope, Some(DebuggerScope::All));
-    assert_eq!(driver.selected, Some((0x12, Some(0xab))));
+    assert_eq!(bridge.selected(), Some((0x12, Some(0xab))));
     assert_eq!(
         union(Some(DebuggerScope::Dump), DebuggerScope::Edit),
         DebuggerScope::Dump
@@ -157,8 +177,12 @@ fn completed_scopes_union_even_when_the_next_flight_is_pending() {
 
 #[test]
 fn retired_epoch_drops_pending_output_and_queued_pause_without_polling() {
-    let mut driver = Driver::new(model());
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
     driver.enqueue_current(
+        &epoch,
+        &bridge,
         &[DebugAction::StepInstr, DebugAction::Resume],
         DebuggerScope::All,
         false,
@@ -166,12 +190,16 @@ fn retired_epoch_drops_pending_output_and_queued_pause_without_polling() {
     let flight = Probe::new(output(), false);
     let polls = flight.polls.clone();
     let mut flight = Some(flight);
-    assert!(driver.poll_with(|_, _| flight.take().unwrap()).pending);
-    driver.epoch.store(false, Ordering::Release);
-    let effects = driver.poll_with(|_, _| panic!("old pause cannot begin"));
+    assert!(
+        driver
+            .poll_with(&bridge, |_, _| flight.take().unwrap())
+            .pending
+    );
+    epoch.store(false, Ordering::Release);
+    let effects = driver.poll_with(&bridge, |_, _| panic!("old pause cannot begin"));
     assert!(!effects.pending);
     assert_eq!(effects.scope, None);
-    assert!(driver.selected.is_none());
+    assert!(bridge.selected().is_none());
     assert_eq!(polls.get(), 1);
 }
 
@@ -207,113 +235,165 @@ fn live(generation: u64) -> LiveImages {
 
 #[test]
 fn live_interest_single_flight_and_paused_late_reply_preserve_inspection() {
-    let mut driver = Driver::new(model());
-    driver.display.paused = true;
-    driver.display.status = StatusMessage::Paused;
-    driver.display.dump_rows = vec![HexRow {
-        addr: 0,
-        bytes: [0xab; 16],
-        valid: 16,
-    }];
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
+    bridge.update_display(|display| {
+        display.paused = true;
+        display.status = StatusMessage::Paused;
+        display.dump_rows = vec![HexRow {
+            addr: 0,
+            bytes: [0xab; 16],
+            valid: 16,
+        }];
+    });
     for (running, interested) in [(false, true), (true, false), (false, false)] {
-        let effects = driver.live_tick_with(running, interested, || panic!("not interested"));
+        let effects = driver.live_tick_with(&bridge, epoch.clone(), running, interested, || {
+            panic!("not interested")
+        });
         assert!(!effects.pending);
         assert!(!effects.changed);
     }
     let flight = Probe::new(live(4), false);
     let ready = flight.ready.clone();
-    assert!(driver.live_tick_with(true, true, || flight).pending);
     assert!(
         driver
-            .live_tick_with(true, true, || panic!("single flight"))
+            .live_tick_with(&bridge, epoch.clone(), true, true, || flight)
+            .pending
+    );
+    assert!(
+        driver
+            .live_tick_with(&bridge, epoch.clone(), true, true, || panic!(
+                "single flight"
+            ))
             .pending
     );
     ready.set(true);
-    let effects = driver.live_tick_with(false, true, || panic!("now paused"));
+    let effects =
+        driver.live_tick_with(&bridge, epoch.clone(), false, true, || panic!("now paused"));
     assert!(effects.changed);
     assert!(!effects.pending);
-    assert!(driver.display.paused);
-    assert_eq!(driver.display.status, StatusMessage::Paused);
-    assert_eq!(driver.display.images[0].rgba, vec![1u8, 2, 3, 255]);
-    assert_eq!(driver.display.dump_rows[0].bytes, [0xab; 16]);
+    assert!(bridge.display_snapshot().paused);
+    assert_eq!(bridge.display_snapshot().status, StatusMessage::Paused);
+    assert_eq!(
+        bridge.display_snapshot().images[0].rgba,
+        vec![1u8, 2, 3, 255]
+    );
+    assert_eq!(bridge.display_snapshot().dump_rows[0].bytes, [0xab; 16]);
     assert!(
         !driver
-            .live_tick_with(true, true, || Probe::new(live(4), true))
+            .live_tick_with(&bridge, epoch.clone(), true, true, || Probe::new(
+                live(4),
+                true
+            ))
             .changed
     );
     assert!(
-        driver.display.paused,
+        bridge.display_snapshot().paused,
         "duplicate generation must not change chrome"
     );
     assert!(
         driver
-            .live_tick_with(true, true, || Probe::new(live(5), true))
+            .live_tick_with(&bridge, epoch.clone(), true, true, || Probe::new(
+                live(5),
+                true
+            ))
             .changed
     );
-    assert_eq!(driver.display.status, StatusMessage::Running);
-    assert_eq!(driver.display.dump_rows[0].bytes, [0xab; 16]);
+    assert_eq!(bridge.display_snapshot().status, StatusMessage::Running);
+    assert_eq!(bridge.display_snapshot().dump_rows[0].bytes, [0xab; 16]);
 }
 
 #[test]
 fn retirement_and_replacement_drop_live_and_all_mutation_state() {
-    let mut driver = Driver::new(model());
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
     let flight = Probe::new(live(9), false);
     let polls = flight.polls.clone();
-    driver.begin_live(|| flight);
-    driver.epoch.store(false, Ordering::Release);
-    assert!(!driver.poll_live_with(true).changed);
+    driver.begin_live(epoch.clone(), || flight);
+    epoch.store(false, Ordering::Release);
+    assert!(!driver.poll_live_with(&bridge, true).changed);
     assert_eq!(polls.get(), 0);
     assert!(!driver.live_pending());
-    driver.watch = Some(1);
-    driver.freeze = Some((1, 0xff));
-    driver.reg_target = Some("a");
-    driver.selected = Some((1, None));
-    driver.bookmarks.push((1, "old".into()));
-    driver.enqueue_current(&[DebugAction::WriteConfirm], DebuggerScope::All, false);
-    driver.replace_model(model());
+    bridge.test_state(|core| {
+        core.watch = Some(1);
+        core.freeze = Some((1, 0xff));
+        core.reg_target = Some("a");
+        core.selected = Some((1, None));
+        core.bookmarks.push((1, "old".into()));
+    });
+    let live_epoch = test_epoch();
+    driver.enqueue_current(
+        &live_epoch,
+        &bridge,
+        &[DebugAction::WriteConfirm],
+        DebuggerScope::All,
+        false,
+    );
+    assert!(driver.pending());
+    // A fresh session epoch retires flights and queued batches; the app
+    // rebuilds the bridge, so the queued mutation never reaches a display.
+    let fixture = Fixture::new();
+    assert!(driver.reset_replaced_epoch(fixture.host.session()));
     assert!(!driver.pending());
     assert!(!driver.live_pending());
-    assert!(driver.watch.is_none());
-    assert!(driver.freeze.is_none());
-    assert!(driver.reg_target.is_none());
-    assert!(driver.selected.is_none());
-    assert!(driver.bookmarks.is_empty());
-    assert_eq!(driver.display.images_gen, 0);
+    assert!(!driver.reset_replaced_epoch(fixture.host.session()));
+    assert_eq!(bridge.display_snapshot().images_gen, 0);
 }
 
 #[test]
 fn imageless_live_completion_releases_the_single_flight_slot() {
-    let mut driver = Driver::new(model());
-    driver.display.status = StatusMessage::Paused;
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
+    bridge.update_display(|display| {
+        display.status = StatusMessage::Paused;
+    });
     let flight = Probe::new(None, false);
     let ready = flight.ready.clone();
-    assert!(driver.live_tick_with(true, true, || flight).pending);
+    assert!(
+        driver
+            .live_tick_with(&bridge, epoch.clone(), true, true, || flight)
+            .pending
+    );
     ready.set(true);
-    let effects = driver.live_tick_with(false, false, || panic!("no interest"));
+    let effects = driver.live_tick_with(&bridge, epoch.clone(), false, false, || {
+        panic!("no interest")
+    });
     assert!(!effects.pending);
     assert!(!effects.changed);
     assert!(!driver.live_pending());
-    assert_eq!(driver.display.status, StatusMessage::Paused);
+    assert_eq!(bridge.display_snapshot().status, StatusMessage::Paused);
     assert!(
         driver
-            .live_tick_with(true, true, || Probe::new(live(7), true))
+            .live_tick_with(&bridge, epoch.clone(), true, true, || Probe::new(
+                live(7),
+                true
+            ))
             .changed
     );
 }
 
 #[test]
 fn running_drain_preserves_inspection_and_publishes_running_images() {
-    let mut driver = Driver::new(model());
-    driver.display.paused = true;
-    driver.display.regs = vec![("a", 7)];
-    driver.display.dump_rows = vec![HexRow {
-        addr: 0x10,
-        bytes: [0xab; 16],
-        valid: 16,
-    }];
-    driver.live_tick_with(true, true, || Probe::new(live(8), true));
-    driver.enqueue_current(&[], DebuggerScope::Header, false);
-    let effects = driver.poll_with(|_, snapshot| {
+    let bridge = bridge();
+    let epoch = test_epoch();
+    let mut driver = Driver::new();
+    bridge.update_display(|display| {
+        display.paused = true;
+        display.regs = vec![("a", 7)];
+        display.dump_rows = vec![HexRow {
+            addr: 0x10,
+            bytes: [0xab; 16],
+            valid: 16,
+        }];
+    });
+    driver.live_tick_with(&bridge, epoch.clone(), true, true, || {
+        Probe::new(live(8), true)
+    });
+    driver.enqueue_current(&epoch, &bridge, &[], DebuggerScope::Header, false);
+    let effects = driver.poll_with(&bridge, |_, snapshot| {
         assert_eq!(snapshot.prev_rows[0].addr, 0x10);
         Probe::new(
             Box::new(DebugDrainOutput {
@@ -335,12 +415,15 @@ fn running_drain_preserves_inspection_and_publishes_running_images() {
         )
     });
     assert_eq!(effects.scope, Some(DebuggerScope::Header));
-    assert!(!driver.display.paused);
-    assert_eq!(driver.display.regs, vec![("a", 7)]);
-    assert_eq!(driver.display.dump_rows[0].addr, 0x10);
-    assert_eq!(driver.display.images_gen, 9);
-    assert_eq!(driver.display.images[0].rgba, vec![4u8, 5, 6, 255]);
-    assert_eq!(driver.selected, Some((0x12, Some(0xab))));
+    assert!(!bridge.display_snapshot().paused);
+    assert_eq!(bridge.display_snapshot().regs, vec![("a", 7)]);
+    assert_eq!(bridge.display_snapshot().dump_rows[0].addr, 0x10);
+    assert_eq!(bridge.display_snapshot().images_gen, 9);
+    assert_eq!(
+        bridge.display_snapshot().images[0].rgba,
+        vec![4u8, 5, 6, 255]
+    );
+    assert_eq!(bridge.selected(), Some((0x12, Some(0xab))));
 }
 
 struct Fixture {
@@ -408,26 +491,47 @@ impl Drop for Fixture {
 fn replacement_rejects_stale_local_gesture_and_input_echo_then_refreshes() {
     let mut fixture = Fixture::new();
     fixture.load();
-    let mut driver = Driver::from_session(fixture.host.session());
-    driver.watch = Some(0);
-    driver.freeze = Some((0, 0xff));
-    driver.enqueue_current(&[DebugAction::Resume], DebuggerScope::All, false);
-    driver.begin_live(|| Probe::new(live(4), false));
+    let bridge = fixture.host.new_debug_bridge();
+    let mut driver = Driver::new();
+    assert!(driver.reset_replaced_epoch(fixture.host.session()));
+    bridge.test_state(|core| {
+        core.watch = Some(0);
+        core.freeze = Some((0, 0xff));
+    });
+    {
+        let epoch = fixture.host.session().debug_epoch();
+        driver.enqueue_current(
+            &epoch,
+            &bridge,
+            &[DebugAction::Resume],
+            DebuggerScope::All,
+            false,
+        );
+    }
+    driver.begin_live(fixture.host.session().debug_epoch(), || {
+        Probe::new(live(4), false)
+    });
     fixture.load();
     let effects = driver.dispatch(
         fixture.host.session(),
+        &bridge,
         [DebuggerEvent::BookmarkInputChanged("stale".into())],
         DebuggerEvent::BookmarkAdd,
         false,
     );
     assert!(effects.epoch_reset);
     assert!(!effects.open_ppu);
-    assert!(driver.bookmarks.is_empty());
-    assert!(driver.bm_input.is_empty());
-    assert!(driver.freeze.is_none());
+    // The app rebuilds the bridge on replacement; stale input never survives.
+    let bridge = fixture.host.new_debug_bridge();
+    bridge.bind_epoch(fixture.host.session().debug_epoch());
+    bridge.test_state(|core| {
+        assert!(core.bookmarks.is_empty());
+        assert!(core.bm_input.is_empty());
+        assert!(core.freeze.is_none());
+    });
     assert!(!driver.live_pending());
     let mut starts = 0;
-    let effects = driver.poll_with(|actions, _| {
+    let effects = driver.poll_with(&bridge, |actions, _| {
         starts += 1;
         assert!(matches!(actions, [DebugAction::Refresh]));
         Probe::new(output(), true)
@@ -438,11 +542,12 @@ fn replacement_rejects_stale_local_gesture_and_input_echo_then_refreshes() {
     fixture.load();
     driver.enqueue(
         fixture.host.session(),
+        &bridge,
         &[DebugAction::Resume, DebugAction::WriteConfirm],
         DebuggerScope::Edit,
         false,
     );
-    driver.poll_with(|actions, _| {
+    driver.poll_with(&bridge, |actions, _| {
         assert!(matches!(actions, [DebugAction::Refresh]));
         Probe::new(output(), true)
     });
@@ -451,9 +556,12 @@ fn replacement_rejects_stale_local_gesture_and_input_echo_then_refreshes() {
 #[test]
 fn ppu_open_captures_image_interest_and_typing_never_drains() {
     let fixture = Fixture::new();
-    let mut driver = Driver::from_session(fixture.host.session());
+    let bridge = fixture.host.new_debug_bridge();
+    let mut driver = Driver::new();
+    assert!(driver.reset_replaced_epoch(fixture.host.session()));
     let effects = driver.dispatch(
         fixture.host.session(),
+        &bridge,
         [],
         DebuggerEvent::EditInputChanged("42".into()),
         false,
@@ -462,21 +570,22 @@ fn ppu_open_captures_image_interest_and_typing_never_drains() {
     assert!(!driver.pending());
     let effects = driver.dispatch(
         fixture.host.session(),
+        &bridge,
         [],
         DebuggerEvent::PpuOpenPressed,
         false,
     );
     assert!(effects.open_ppu);
-    driver.poll_with(|actions, snapshot| {
+    driver.poll_with(&bridge, |actions, snapshot| {
         assert!(matches!(actions, [DebugAction::Refresh]));
         assert!(snapshot.ppu_open);
         Probe::new(output(), true)
     });
 }
 
-fn settle(driver: &mut DebuggerDriver, host: &mut ApplicationHost) {
+fn settle(driver: &mut DebuggerDriver, bridge: &DebugBridge, host: &mut ApplicationHost) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-    while driver.poll(host).pending {
+    while host.poll_driver_with(driver, bridge) {
         assert!(std::time::Instant::now() < deadline);
         std::thread::yield_now();
     }
@@ -487,40 +596,46 @@ fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
     use wakui::pause::PauseOwner;
     let mut fixture = Fixture::new();
     fixture.load();
-    let mut driver = DebuggerDriver::from_session(fixture.host.session());
+    let bridge = fixture.host.new_debug_bridge();
+    let mut driver = DebuggerDriver::new();
+    assert!(driver.reset_replaced_epoch(fixture.host.session()));
     driver.enqueue(
         fixture.host.session(),
+        &bridge,
         &[DebugAction::Pause, DebugAction::Refresh],
         DebuggerScope::All,
         false,
     );
-    settle(&mut driver, &mut fixture.host);
+    settle(&mut driver, &bridge, &mut fixture.host);
     assert!(fixture.host.owns_pause(PauseOwner::User));
     fixture.host.set_pause_owner(PauseOwner::Modal, true);
     driver.dispatch(
         fixture.host.session(),
+        &bridge,
         [],
         DebuggerEvent::TogglePausePressed,
         false,
     );
-    settle(&mut driver, &mut fixture.host);
+    settle(&mut driver, &bridge, &mut fixture.host);
     assert!(!fixture.host.owns_pause(PauseOwner::User));
     assert!(fixture.host.tick().paused, "modal still owns pause");
     driver.enqueue(
         fixture.host.session(),
+        &bridge,
         &[DebugAction::Pause],
         DebuggerScope::All,
         false,
     );
-    settle(&mut driver, &mut fixture.host);
+    settle(&mut driver, &bridge, &mut fixture.host);
     fixture.load();
     driver.dispatch(
         fixture.host.session(),
+        &bridge,
         [],
         DebuggerEvent::TogglePausePressed,
         false,
     );
-    settle(&mut driver, &mut fixture.host);
+    settle(&mut driver, &bridge, &mut fixture.host);
     fixture.host.set_pause_owner(PauseOwner::Modal, false);
     assert!(fixture.host.owns_pause(PauseOwner::User));
     assert!(
@@ -532,24 +647,29 @@ fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
 #[test]
 fn coreless_pause_keeps_shell_status_and_render_snapshot_excludes_images() {
     let mut fixture = Fixture::new();
-    let mut driver = DebuggerDriver::from_session(fixture.host.session());
+    let bridge = fixture.host.new_debug_bridge();
+    let mut driver = DebuggerDriver::new();
+    assert!(driver.reset_replaced_epoch(fixture.host.session()));
     driver.enqueue(
         fixture.host.session(),
+        &bridge,
         &[DebugAction::Pause],
         DebuggerScope::All,
         false,
     );
-    settle(&mut driver, &mut fixture.host);
-    assert_eq!(driver.display.status, StatusMessage::NoCore);
-    driver.display.images = vec![DebugImageRgba {
-        label: "Tiles".into(),
-        width: 1,
-        height: 1,
-        rgba: vec![0u8; 4],
-    }];
-    driver.edit_input = "42".into();
-    let snapshot = driver.view_snapshot();
+    settle(&mut driver, &bridge, &mut fixture.host);
+    assert_eq!(bridge.display_snapshot().status, StatusMessage::NoCore);
+    bridge.update_display(|display| {
+        display.images = vec![DebugImageRgba {
+            label: "Tiles".into(),
+            width: 1,
+            height: 1,
+            rgba: vec![0u8; 4],
+        }];
+    });
+    bridge.set_edit_input("42".into());
+    let snapshot = bridge.view_snapshot();
     assert!(snapshot.display.images.is_empty());
     assert_eq!(snapshot.edit_input, "42");
-    assert_eq!(driver.display.images.len(), 1);
+    assert_eq!(bridge.display_snapshot().images.len(), 1);
 }

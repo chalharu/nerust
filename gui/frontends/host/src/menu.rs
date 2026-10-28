@@ -166,3 +166,12 @@ impl Menubar {
         visitor.end_menubar();
     }
 }
+
+/// Pre-localized dialog titles. Frontends render and pass these verbatim
+/// instead of calling into the i18n catalog themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DialogTitles {
+    pub open: String,
+    pub error: String,
+    pub rom_load_failed: String,
+}

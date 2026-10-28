@@ -5,65 +5,17 @@ mod driver;
 mod model;
 mod view;
 
-pub use bridge::{BridgeLock, BridgeView, DebugBridge, DebuggerChrome, DrainSnapshot, PpuChrome};
-pub use driver::{DebuggerDriver, DebuggerEffects, DebuggerLiveEffects};
-pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
-pub use view::{
-    AppliedDrain, AppliedLive, DebuggerRows, DisasmRow, DumpRow, RegRow, ScaledPicture, pin_marker,
+pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot};
+pub(crate) use bridge::{
+    debugger_chrome, freeze_text, pending_text, ppu_chrome, selected_row_text, status_text,
+    watch_text,
 };
+pub use driver::DebuggerDriver;
+pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
+pub use nerust_frontend_host::debugger::{DebuggerChrome, DebuggerEvent, DebuggerScope, PpuChrome};
+pub use view::{AppliedDrain, AppliedLive};
 
 use nerust_gui_shell::debug::DebugAction;
-
-/// Native adapters translate gestures into these intents, never emulator calls.
-#[derive(Debug, Clone)]
-pub enum DebuggerEvent {
-    RefreshPressed,
-    SpacePrev,
-    SpaceNext,
-    TogglePausePressed,
-    StepFramePressed,
-    StepInstrPressed,
-    PpuOpenPressed,
-    MemInputChanged(String),
-    MemGo,
-    MemPage(i32),
-    DisInputChanged(String),
-    DisGo,
-    FollowPcToggle,
-    DisLineClicked(u32),
-    FollowTarget(u32),
-    DisBack,
-    BookmarkInputChanged(String),
-    BookmarkAdd,
-    BookmarkJump(u32),
-    BookmarkDelete(u32),
-    WatchSet,
-    WatchClear,
-    FreezeInputChanged(String),
-    FreezeSet,
-    EditFreezeSet,
-    FreezeClear,
-    RowSelected(u32),
-    EditInputChanged(String),
-    EditWrite,
-    ConfirmWrite,
-    CancelWrite,
-    RegSelected(&'static str),
-    RegInputChanged(String),
-    RegSet,
-}
-
-/// Minimum view sections affected by an intent (header accompanies every scope).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DebuggerScope {
-    All,
-    Dump,
-    Disasm,
-    State,
-    Edit,
-    Bookmarks,
-    Header,
-}
 
 /// One ordered action batch and its native presentation effects.
 /// Input echoes have neither actions nor a rebuild scope.

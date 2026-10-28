@@ -3,6 +3,7 @@
 mod auxiliary;
 mod chrome;
 mod debug;
+mod frontend;
 mod osd;
 #[cfg(test)]
 mod tests;
@@ -11,7 +12,6 @@ mod window;
 pub use crate::menu::{DialogTitles, MenuSig};
 pub use auxiliary::WidgetWindowClose;
 use debug::DebugRuntime;
-pub use debug::DebugView;
 pub use window::MainState;
 
 use std::{path::Path, time::Instant};
@@ -35,7 +35,7 @@ use crate::{
     frame::{FrameCache, FrameCtx},
     menu::{MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalToken, OsdNotifications},
-    session::{SessionEvent, SessionOutcome},
+    session::SessionEvent,
 };
 
 /// One session and one source of truth for its application-level policies.
@@ -49,6 +49,13 @@ pub struct ApplicationHost {
     frame_cache: FrameCache,
     render_retry: RenderRetry,
     debug: DebugRuntime,
+    debug_sessions: std::collections::HashMap<u64, frontend::DebugSession>,
+    debug_next: u64,
+    widget_sessions: std::collections::HashMap<
+        nerust_frontend_host::aux::AuxId,
+        crate::widget_session::WidgetSession,
+    >,
+    loader: Option<Box<dyn nerust_gui_shell::load::RomLoader>>,
     osd: osd::OsdRuntime,
     chrome: chrome::ChromeSync,
     menubar_chrome: chrome::ChromeSync,
@@ -71,6 +78,10 @@ impl ApplicationHost {
             frame_cache: FrameCache::new(),
             render_retry: Default::default(),
             debug: DebugRuntime::new(),
+            debug_sessions: std::collections::HashMap::new(),
+            debug_next: 0,
+            widget_sessions: std::collections::HashMap::new(),
+            loader: None,
             osd: Default::default(),
             chrome: Default::default(),
             menubar_chrome: Default::default(),
@@ -109,12 +120,18 @@ impl ApplicationHost {
         self.session.audio_registry().clone()
     }
 
-    pub fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
+    pub fn dispatch(
+        &mut self,
+        event: crate::session::SessionEvent,
+    ) -> Result<crate::session::SessionOutcome, crate::session::SessionError> {
         crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
     }
 
-    // The shared narrow-port macro uses this spelling, also used by older adapters.
-    fn dispatch_session(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
+    // The shared narrow-shell port macro uses this spelling, also used by older adapters.
+    fn dispatch_session(
+        &mut self,
+        event: crate::session::SessionEvent,
+    ) -> Result<crate::session::SessionOutcome, crate::session::SessionError> {
         self.dispatch(event)
     }
 
@@ -130,7 +147,7 @@ impl ApplicationHost {
 
     /// Pre-localized dialog titles for native file/error dialogs.
     pub fn dialog_titles(&self) -> DialogTitles {
-        DialogTitles::new(self.settings_snapshot().shared.general.language)
+        crate::menu::dialog_titles(self.settings_snapshot().shared.general.language)
     }
 
     /// Pre-localized debugger window title. Frontends render it verbatim
@@ -141,7 +158,7 @@ impl ApplicationHost {
 
     /// Pre-localized debugger chrome for the debugger window.
     pub fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
-        crate::debugger::DebuggerChrome::new(self.settings_snapshot().shared.general.language)
+        crate::debugger::debugger_chrome(self.settings_snapshot().shared.general.language)
     }
 
     /// New debug bridge with the session language baked in. Frontends
@@ -236,8 +253,10 @@ impl ApplicationHost {
     pub fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_shell::session::access::SettingsResult, SessionError> {
+    ) -> Result<nerust_gui_shell::session::access::SettingsResult, crate::session::SessionError>
+    {
         crate::session::apply_settings(&mut self.session, &self.pause_policy, settings)
+            .map_err(|error| crate::session::SessionError(error.to_string()))
     }
     pub fn release_focus_pause(&mut self) {
         self.set_pause_owner(PauseOwner::Focus, false);
@@ -467,24 +486,41 @@ impl ApplicationHost {
         }
         self.enqueue_debug(&[], snapshot);
     }
-    pub fn poll_debug(&mut self, view: &mut impl DebugView) -> bool {
+    pub fn poll_debug(&mut self, bridge: &crate::debugger::DebugBridge) -> bool {
         self.debug
-            .poll(&mut self.session, &mut self.pause_policy, view)
+            .poll(&mut self.session, &mut self.pause_policy, bridge)
     }
-    pub fn pump_live_debug(&mut self, debug_open: bool, ppu_open: bool, view: &mut impl DebugView) {
+    pub fn pump_live_debug(
+        &mut self,
+        debug_open: bool,
+        ppu_open: bool,
+        bridge: &crate::debugger::DebugBridge,
+    ) {
         self.debug
-            .pump_live(&self.session, debug_open, ppu_open, view, Instant::now());
+            .pump_live(&self.session, debug_open, ppu_open, bridge, Instant::now());
     }
     /// One debug turn. Wake interest observes pause changes from the drain,
     /// not the frame captured before it. Native ports only publish outputs.
+    /// Test-only driver pump: tests own their drain queue and bridge.
+    #[cfg(test)]
+    pub(crate) fn poll_driver_with(
+        &mut self,
+        driver: &mut crate::debugger::DebuggerDriver,
+        bridge: &crate::debugger::DebugBridge,
+    ) -> bool {
+        driver
+            .poll(&mut self.session, &mut self.pause_policy, bridge)
+            .pending
+    }
+
     pub fn pump_debug(
         &mut self,
         debug_open: bool,
         ppu_open: bool,
-        view: &mut impl DebugView,
+        bridge: &crate::debugger::DebugBridge,
     ) -> wakui::loop_driver::WakeNeed {
-        self.pump_live_debug(debug_open, ppu_open, view);
-        let pending = self.poll_debug(view);
+        self.pump_live_debug(debug_open, ppu_open, bridge);
+        let pending = self.poll_debug(bridge);
         self.debug_wake(debug_open, ppu_open, pending)
     }
     pub fn live_follow_active(&self, debug_open: bool, ppu_open: bool) -> bool {
@@ -599,7 +635,10 @@ impl ApplicationHost {
     /// Size restore applies in free-sizing mode only; fixed-scale modes
     /// keep their exact pixel size. Frontends apply both verbatim and
     /// never name `ScalingMode` themselves.
-    pub fn window_chrome_sync(&mut self, native_fullscreen: bool) -> WindowChromeSync {
+    pub fn window_chrome_sync(
+        &mut self,
+        native_fullscreen: bool,
+    ) -> nerust_frontend_host::window::WindowChromeSync {
         use nerust_settings_core::model::local::ScalingMode;
         let request = self.fullscreen_request(native_fullscreen);
         let ends_windowed = !request.unwrap_or(native_fullscreen);
@@ -613,7 +652,7 @@ impl ApplicationHost {
             } else {
                 None
             };
-        WindowChromeSync {
+        nerust_frontend_host::window::WindowChromeSync {
             restore_size,
             set_fullscreen: request,
         }
@@ -660,15 +699,6 @@ crate::impl_session_controls!(ApplicationHost);
 pub struct MenubarUpdate {
     pub signature: MenuSig,
     pub menubar: Menubar,
-}
-
-/// Window chrome sync decision. Frontends apply `set_fullscreen` to the
-/// native window and `restore_size` via their default-size API; the
-/// scaling policy behind the restore stays in the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct WindowChromeSync {
-    pub restore_size: Option<(i32, i32)>,
-    pub set_fullscreen: Option<bool>,
 }
 
 // Scheduling already exposes meaningful request/consume/cadence operations;
