@@ -240,8 +240,8 @@ mod tests {
 
     use super::{
         super::{
-            SettingsApplyPlan, SettingsSnapshot, gtk_caps, tao_caps, test_local_defaults,
-            test_root, test_shared_defaults,
+            SettingsApplyPlan, SettingsSnapshot, no_vsync_caps, test_local_defaults, test_root,
+            test_shared_defaults, vsync_caps,
         },
         derive_apply_plan, validate_shared_settings,
     };
@@ -258,7 +258,7 @@ mod tests {
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert_eq!(
             plan,
@@ -290,7 +290,7 @@ mod tests {
         let mut after = before.clone();
         after.local.audio.master_volume_percent = 10;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.visual_changed);
         assert!(!plan.audio_backend_changed);
@@ -327,7 +327,7 @@ mod tests {
                         nes.video.filter = NesVideoFilter::NtscRgb;
                     }
                     let plan =
-                        derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+                        derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
                     assert_eq!(plan.audio_backend_changed, audio);
                     assert_eq!(plan.visual_changed, visual);
                     assert_eq!(plan.audio_volume_changed, volume);
@@ -366,7 +366,7 @@ mod tests {
             .unwrap();
         nes.video.filter = NesVideoFilter::NtscRgb;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.visual_changed);
     }
@@ -387,13 +387,13 @@ mod tests {
             .unwrap();
         nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.visual_changed);
     }
 
     #[test]
-    fn gtk_opengl_ignores_backend_presentation_changes() {
+    fn backend_without_vsync_ignores_presentation_changes() {
         let before = SettingsSnapshot {
             shared: test_shared_defaults(),
             local: test_local_defaults(),
@@ -402,7 +402,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&gtk_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&no_vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn tao_wgpu_rebuilds_renderer_for_vsync_changes() {
+    fn backend_with_vsync_rebuilds_renderer_for_vsync_changes() {
         let before = SettingsSnapshot {
             shared: test_shared_defaults(),
             local: test_local_defaults(),
@@ -419,7 +419,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -436,7 +436,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -459,7 +459,7 @@ mod tests {
             .systems
             .insert(Box::new(DummyOtherSystemId) as Box<_>, Box::new(inactive));
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.visual_changed);
         assert!(!plan.renderer_rebuild_required);
