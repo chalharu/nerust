@@ -492,6 +492,13 @@ pub trait PipelineFactory: std::fmt::Debug {
         config: &RendererConfig,
         display_handle: RawDisplayHandle,
     ) -> Result<Box<dyn RenderPipeline>, RendererError>;
+
+    /// Whether this pipeline honors `RendererConfig::vsync` at attach, so a
+    /// live toggle must rebuild the renderer. Defaults to `false`: backends
+    /// without vsync control ignore the setting until the next attach.
+    fn supports_vsync(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

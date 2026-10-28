@@ -324,10 +324,21 @@ impl nerust_render_traits::renderer::PipelineFactory for WgpuFactory {
     ) -> Result<Box<dyn nerust_render_traits::renderer::RenderPipeline>, RendererError> {
         Ok(Box::new(Self::build(config)?))
     }
+
+    /// Present-mode selection honors vsync; a live toggle must rebuild.
+    fn supports_vsync(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn factory_honors_vsync_for_live_toggle_rebuilds() {
+        use nerust_render_traits::renderer::PipelineFactory;
+        assert!(super::WgpuFactory.supports_vsync());
+    }
+
     #[test]
     fn surface_loss_requests_host_recovery_and_success_clears_error() {
         use crate::renderer::RenderOutcome;

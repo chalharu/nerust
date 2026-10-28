@@ -108,6 +108,9 @@ pub fn run() -> i32 {
         .unwrap();
 
     let gpu_factory = create_factory();
+    // Capability query on the factory object, not a feature flag: the
+    // active pipeline decides whether a live vsync toggle must rebuild.
+    let supports_vsync = gpu_factory.supports_vsync().then_some(true);
     let factories: Vec<Arc<dyn CoreFactory>> = vec![
         #[cfg(feature = "nes")]
         Arc::new(nerust_nes_factory::NesFactory),
@@ -140,11 +143,12 @@ pub fn run() -> i32 {
     {
         let _ = ctx;
         let _ = options;
+        let _ = supports_vsync;
         0
     }
     #[cfg(not(clippy))]
     {
-        let Some(boot) = boot_frontend(ctx) else {
+        let Some(boot) = boot_frontend(ctx, supports_vsync) else {
             return 1;
         };
         return run_frontend(boot, options.rom_path);
@@ -157,13 +161,10 @@ pub fn run() -> i32 {
 #[cfg_attr(clippy, allow(dead_code))]
 fn boot_frontend(
     ctx: FrontendContext,
+    supports_vsync: Option<bool>,
 ) -> Option<wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
-    match boot(
-        ctx,
-        backend_capabilities(true, render_supports_vsync()),
-        None,
-    ) {
+    match boot(ctx, backend_capabilities(true, supports_vsync), None) {
         Ok(boot) => Some(boot),
         Err(detail) => {
             log::error!("failed to initialise frontend: {detail}");
@@ -173,45 +174,6 @@ fn boot_frontend(
             None
         }
     }
-}
-
-/// Whether a live vsync toggle needs a renderer rebuild. This is a
-/// render-backend property, not a frontend one: wgpu applies vsync through
-/// its present mode and opengl through its swap interval (both read at
-/// attach time, so a toggle must rebuild), while softbuffer has no vsync
-/// control at all. `None` means vsync changes are ignored until the next
-/// attach.
-#[cfg(feature = "wgpu")]
-#[cfg_attr(clippy, allow(dead_code))]
-fn render_supports_vsync() -> Option<bool> {
-    Some(true)
-}
-
-/// Whether a live vsync toggle needs a renderer rebuild. This is a
-/// render-backend property, not a frontend one: wgpu applies vsync through
-/// its present mode and opengl through its swap interval (both read at
-/// attach time, so a toggle must rebuild), while softbuffer has no vsync
-/// control at all. `None` means vsync changes are ignored until the next
-/// attach.
-#[cfg(feature = "opengl")]
-#[cfg_attr(clippy, allow(dead_code))]
-fn render_supports_vsync() -> Option<bool> {
-    Some(true)
-}
-
-/// Whether a live vsync toggle needs a renderer rebuild. This is a
-/// render-backend property, not a frontend one: wgpu applies vsync through
-/// its present mode and opengl through its swap interval (both read at
-/// attach time, so a toggle must rebuild), while softbuffer has no vsync
-/// control at all. `None` means vsync changes are ignored until the next
-/// attach.
-#[cfg(any(
-    feature = "softbuffer",
-    all(not(feature = "wgpu"), not(feature = "opengl"))
-))]
-#[cfg_attr(clippy, allow(dead_code))]
-fn render_supports_vsync() -> Option<bool> {
-    None
 }
 
 /// Frontend dispatch: only the `run` entry point differs per frontend.

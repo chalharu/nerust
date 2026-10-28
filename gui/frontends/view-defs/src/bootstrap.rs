@@ -15,7 +15,7 @@ use crate::application::ApplicationHost;
 /// identical on both; `supports_vsync` is a render-backend property
 /// (`Some` when the active pipeline honors the vsync setting at attach,
 /// so a live toggle must rebuild; `None` leaves the setting to the next
-/// attach). The composition root decides it from the render backend.
+/// attach). The composition root queries it from the active render factory.
 pub fn backend_capabilities(
     remembers_window_size: bool,
     supports_vsync: Option<bool>,
