@@ -21,7 +21,7 @@ use wakui::{
     },
     debugger::{
         DebugHandle, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope, PpuChrome, ScaledPicture,
+        DebuggerLiveEffects, DebuggerScope,
     },
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
     focus::{AuxKind, FocusEffect, FocusEvent},
@@ -1595,14 +1595,6 @@ impl FrontendApp for FakeApp {
         })
     }
 
-    fn debug_pictures(&self, _handle: DebugHandle) -> Vec<ScaledPicture> {
-        Vec::new()
-    }
-
-    fn debug_panels(&self, _handle: DebugHandle) -> Option<String> {
-        None
-    }
-
     fn debug_paused(&self, _handle: DebugHandle) -> bool {
         self.debug_paused
     }
@@ -1610,6 +1602,16 @@ impl FrontendApp for FakeApp {
     fn debug_generation(&self, _handle: DebugHandle) -> u64 {
         0
     }
+
+    fn debug_aux_screen(&self, _handle: DebugHandle) -> Option<ControlScreen> {
+        None
+    }
+
+    fn debug_aux_dispatch(&mut self, _handle: DebugHandle, _event: ControlEvent) -> bool {
+        false
+    }
+
+    fn debug_aux_refresh(&mut self, _handle: DebugHandle) {}
 
     fn debug_gesture(
         &mut self,
@@ -1674,29 +1676,8 @@ impl FrontendApp for FakeApp {
         chrome("Debugger")
     }
 
-    fn ppu_chrome(&self) -> PpuChrome {
-        PpuChrome {
-            title: "PPU Viewer".to_string(),
-            hover_empty: "hover".to_string(),
-            no_images: "no images".to_string(),
-            panels_title: "Panels".to_string(),
-        }
-    }
-
     fn debugger_window_title(&self) -> String {
         "Debugger".to_string()
-    }
-
-    fn debug_hover_line(
-        &self,
-        _handle: DebugHandle,
-        label: &str,
-        _width: u32,
-        _height: u32,
-        _x: f64,
-        _y: f64,
-    ) -> String {
-        format!("hover {label}")
     }
 
     fn take_debug_open_request(&mut self) -> bool {

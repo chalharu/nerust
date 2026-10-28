@@ -76,11 +76,6 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxSh
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShell<P> {
-    /// Bring this window to the front.
-    pub(crate) fn focus_window(&self) {
-        self.surface.focus_window();
-    }
-
     /// Pump one converted event through the retained tree.
     /// Reuses `out` to avoid a per-event alloc.
     pub(crate) fn pump_frame(

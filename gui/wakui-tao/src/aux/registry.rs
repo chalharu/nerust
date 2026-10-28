@@ -72,10 +72,6 @@ pub(crate) trait AuxController: AuxIdentity + AuxRender + AuxEvents {
         None
     }
 
-    fn as_ppu(&mut self) -> Option<&mut super::ppu::PpuWindowHandle> {
-        None
-    }
-
     fn widget_mailbox(&self) -> Option<WindowMailbox> {
         None
     }
@@ -223,34 +219,6 @@ impl AuxRegistry {
             .unwrap_or_default()
     }
 
-    /// Push staged pictures into the open PPU viewer.
-    pub(crate) fn push_ppu_pictures(&mut self, pictures: super::ppu::PpuPictures) {
-        if let Some(entry) = self
-            .entry_mut(AuxKind::Ppu)
-            .and_then(|entry| entry.as_ppu())
-        {
-            entry.push_pictures(pictures);
-        }
-    }
-
-    /// Take queued hover coordinates from the open PPU viewer.
-    pub(crate) fn drain_ppu_hover(&mut self) -> Vec<super::ppu::HoverAt> {
-        self.entry_mut(AuxKind::Ppu)
-            .and_then(|entry| entry.as_ppu())
-            .map(|viewer| viewer.drain_hover())
-            .unwrap_or_default()
-    }
-
-    /// Show app-formatted hover text on the open PPU viewer.
-    pub(crate) fn push_ppu_hover(&mut self, line: String) {
-        if let Some(entry) = self
-            .entry_mut(AuxKind::Ppu)
-            .and_then(|entry| entry.as_ppu())
-        {
-            entry.push_hover(line);
-        }
-    }
-
     /// Push the latest widget screen into the open widget window.
     pub(crate) fn push_widget_snapshot(&mut self, id: AuxId, screen: &ControlScreen) -> bool {
         let Some(kind) = self.windows.kind_of_id(id) else {
@@ -383,7 +351,9 @@ pub(crate) mod test_double {
         }
 
         fn as_widget(&mut self) -> Option<&mut dyn WidgetSessionPort> {
-            (self.kind == AuxKind::Settings || self.kind == AuxKind::History)
+            (self.kind == AuxKind::Settings
+                || self.kind == AuxKind::History
+                || self.kind == AuxKind::Ppu)
                 .then_some(self as &mut dyn WidgetSessionPort)
         }
 

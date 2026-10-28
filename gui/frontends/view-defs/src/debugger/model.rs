@@ -385,8 +385,8 @@ impl DebuggerModel {
     }
 
     /// Pre-localized PPU chrome for the viewer opened from this model.
-    pub fn ppu_chrome(&self) -> wakui::debugger::PpuChrome {
-        super::ppu_chrome(self.language)
+    pub fn ppu_chrome(&self) -> crate::ppu::PpuChrome {
+        crate::ppu::ppu_chrome(self.language)
     }
 
     /// Status line in the view language. Coreless windows read as
@@ -433,14 +433,14 @@ impl DebuggerModel {
     }
 
     /// 2x-scaled PPU pictures without exposing the scaler.
-    pub fn ppu_pictures(&self) -> Vec<wakui::debugger::ScaledPicture> {
-        super::view::scaled_from_display(&self.display)
+    pub fn ppu_pictures(&self) -> Vec<crate::ppu::PpuPicture> {
+        crate::ppu::scaled_pictures(&self.display)
     }
 
     /// Formatted panel text (`None` when the system has no tables).
     pub fn ppu_panels_text(&self) -> Option<String> {
         self.has_panels()
-            .then(|| super::view::panels_text(&self.display))
+            .then(|| crate::ppu::panels_text(&self.display))
     }
 
     /// Whether the system exposes observation tables.

@@ -19,7 +19,7 @@ pub type WidgetWindowClose<H> = (
 );
 
 impl ApplicationHost {
-    /// Prepare the generic control boundary for both Settings and History.
+    /// Prepare the generic control boundary for Settings, History, and PPU.
     /// Registries come from the owned session: native adapters never pass
     /// shell or audio types across the boundary.
     pub fn prepare_widget_window<N: Copy + Eq + Hash, H>(
@@ -45,6 +45,12 @@ impl ApplicationHost {
                     .into();
                 WidgetSession::history(lines, language)
             }
+            Some(AuxKind::Ppu) => {
+                let language = self.settings_snapshot().shared.general.language;
+                let chrome = crate::ppu::ppu_chrome(language);
+                let (pictures, panels, generation) = self.ppu_contents();
+                WidgetSession::ppu(chrome, pictures, panels, generation, language)
+            }
             _ => return Ok(None),
         };
         *windows.window_mut(id).expect("current reservation") = session.window();
@@ -52,8 +58,33 @@ impl ApplicationHost {
         Ok(Some(session))
     }
 
-    /// Refresh History from real session data (also after clear or language
-    /// changes). Settings keeps its one draft and is intentionally not reset.
+    fn ppu_contents(&self) -> (Vec<crate::ppu::PpuPicture>, Option<String>, u64) {
+        let Some(session) = self.debug_sessions.values().next() else {
+            return (Vec::new(), None, 0);
+        };
+        let bridge = &session.bridge;
+        let pictures = bridge
+            .display_snapshot()
+            .images
+            .iter()
+            .map(|image| {
+                use nerust_gui_viewmodel::debugger::scale2x_nearest;
+                let rgba = scale2x_nearest(&image.rgba, image.width, image.height);
+                crate::ppu::PpuPicture {
+                    label: image.label.clone(),
+                    width: image.width * 2,
+                    height: image.height * 2,
+                    rgba,
+                }
+            })
+            .collect();
+        let panels = bridge.has_panels().then(|| bridge.formatted_panels());
+        let generation = bridge.images_generation();
+        (pictures, panels, generation)
+    }
+
+    /// Refresh History and PPU from real session data (also after clear or
+    /// language changes). Settings keeps its one draft and is not reset.
     pub fn refresh_widget_session(&mut self, session: &mut WidgetSession) {
         if session.kind() == AuxKind::History {
             let language = self.settings_snapshot().shared.general.language;
@@ -62,6 +93,11 @@ impl ApplicationHost {
                 .notification_history_lines_cached(language)
                 .into();
             session.refresh_history(lines, language);
+        } else if session.kind() == AuxKind::Ppu {
+            let language = self.settings_snapshot().shared.general.language;
+            let chrome = crate::ppu::ppu_chrome(language);
+            let (pictures, panels, generation) = self.ppu_contents();
+            session.refresh_ppu(chrome, pictures, panels, generation, language);
         }
     }
 

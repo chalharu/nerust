@@ -389,6 +389,8 @@ impl wakui::binding::ViewDefinition for SettingsScreen {
             I::Activate => ControlInput::Activate,
             I::CaptureClear => ControlInput::CaptureClear,
             I::CaptureKey(v) => ControlInput::CaptureKey(v),
+            // Settings has no raster images; hover never binds here.
+            I::Hover { .. } => return None,
         })
     }
 

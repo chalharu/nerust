@@ -7,15 +7,14 @@ mod view;
 
 pub use bridge::{BridgeLock, BridgeView, DebugBridge, DrainSnapshot};
 pub(crate) use bridge::{
-    debugger_chrome, freeze_text, pending_text, ppu_chrome, selected_row_text, status_text,
-    watch_text,
+    debugger_chrome, freeze_text, pending_text, selected_row_text, status_text, watch_text,
 };
 pub use driver::DebuggerDriver;
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 pub use view::{AppliedDrain, AppliedLive};
 pub use wakui::debugger::{
     DebugInputs, DebugSnapshot, DebuggerChrome, DebuggerEvent, DebuggerRows, DebuggerScope,
-    DisasmRow, DumpRow, PpuChrome, RegRow, ScaledPicture, pin_marker,
+    DisasmRow, DumpRow, RegRow, pin_marker,
 };
 
 use nerust_gui_shell::debug::DebugAction;

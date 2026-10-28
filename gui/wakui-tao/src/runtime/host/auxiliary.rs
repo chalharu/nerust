@@ -112,8 +112,9 @@ impl HostState {
 
     /// Pump one widget turn: drain queued control events through the app,
     /// run picker dialogs natively, then push the latest screen.
+    /// PPU hover arrives as generic Hover input; pictures refresh below.
     pub(crate) fn pump_widgets(&mut self) {
-        let ids: Vec<AuxId> = [AuxKind::Settings, AuxKind::History]
+        let ids: Vec<AuxId> = [AuxKind::Settings, AuxKind::History, AuxKind::Ppu]
             .into_iter()
             .filter_map(|kind| self.aux.route_id(kind))
             .collect();

@@ -43,7 +43,6 @@ pub enum WidgetContents {
     /// Reservation exists, but no generic control screen has been supplied yet.
     PendingControls,
     Debug(DebugContents),
-    Ppu(PpuContents),
 }
 
 /// Grouped emulation surface. Renderer resources remain native-owned.
@@ -55,11 +54,6 @@ pub struct MainContents;
 /// their opaque toolkit state remain in the adapter's existing auxiliary handle.
 #[derive(Debug, Clone, Default)]
 pub struct DebugContents;
-
-/// Grouped PPU presentation. Probe/model state stays in the existing debugger
-/// pipeline; textures and toolkit state stay in the native auxiliary handle.
-#[derive(Debug, Clone, Default)]
-pub struct PpuContents;
 
 impl Window {
     pub fn controls(kind: AuxKind, screen: crate::control::ControlScreen) -> Self {
@@ -90,7 +84,7 @@ impl Window {
     pub fn auxiliary(kind: AuxKind) -> Self {
         let (title, contents) = match kind {
             AuxKind::Debug => ("Debugger", WidgetContents::Debug(DebugContents)),
-            AuxKind::Ppu => ("PPU Viewer", WidgetContents::Ppu(PpuContents)),
+            AuxKind::Ppu => ("PPU Viewer", WidgetContents::PendingControls),
             AuxKind::History => ("Notification History", WidgetContents::PendingControls),
             AuxKind::Settings => ("Settings", WidgetContents::PendingControls),
         };
@@ -120,7 +114,6 @@ impl Widget {
             WidgetContents::Controls(screen) => visitor.visit_controls(screen),
             WidgetContents::PendingControls => visitor.visit_pending_controls(),
             WidgetContents::Debug(contents) => visitor.visit_debug(contents),
-            WidgetContents::Ppu(contents) => visitor.visit_ppu(contents),
         }
         visitor.end_widget(self);
     }
@@ -139,7 +132,6 @@ pub trait WindowVisitor {
     fn visit_controls(&mut self, _screen: &crate::control::ControlScreen) {}
     fn visit_pending_controls(&mut self) {}
     fn visit_debug(&mut self, _contents: &DebugContents) {}
-    fn visit_ppu(&mut self, _contents: &PpuContents) {}
 }
 
 /// Window chrome sync decision. Frontends apply `set_fullscreen` to the

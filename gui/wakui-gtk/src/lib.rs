@@ -20,7 +20,6 @@ pub mod keyboard;
 mod debugger;
 mod gdk_raw;
 mod native;
-mod ppu_window;
 mod surface;
 mod surface_state;
 #[cfg(test)]

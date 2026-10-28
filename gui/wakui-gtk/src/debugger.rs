@@ -5,10 +5,12 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use wakui::aux::{AuxWindows, OpenRequest};
+use wakui::control::ControlEvent;
 use wakui::debugger::{
     DebugHandle, DebugSnapshot, DebuggerEvent, DebuggerScope, RegRow, pin_marker,
 };
 use wakui::focus::AuxKind;
+use wakui::mailbox::{MailboxDomain, WindowMailbox};
 use wakui::window::{DebugContents, Window as HostWindow, WindowVisitor};
 
 use super::State;
@@ -21,7 +23,7 @@ pub(crate) struct DebuggerWindowCore {
     window: gtk::ApplicationWindow,
     state: Rc<RefCell<State>>,
     handle: DebugHandle,
-    viewers: AuxWindows<u64, super::ppu_window::PpuWindow>,
+    viewers: AuxWindows<u64, super::controls::WidgetDialog>,
     widgets: DebuggerWidgets,
 }
 
@@ -733,8 +735,24 @@ impl DebuggerWindowCore {
         self.window.clone()
     }
 
-    fn ppu_window(&self) -> Option<super::ppu_window::PpuWindow> {
+    fn ppu_window(&self) -> Option<super::controls::WidgetDialog> {
         self.viewers.get(AuxKind::Ppu).cloned()
+    }
+
+    /// Dummy mailbox domain for the debugger-local PPU viewer: no picker,
+    /// no pending submission, only invalidation on hover/refresh.
+    /// Close is driven by the dialog lifecycle, not by submissions.
+    fn ppu_mailbox() -> WindowMailbox {
+        struct Empty;
+        impl MailboxDomain for Empty {
+            fn has_pending(&self) -> bool {
+                false
+            }
+            fn take_pending(&self) -> Option<Box<dyn std::any::Any>> {
+                None
+            }
+        }
+        WindowMailbox::new(Empty)
     }
 
     /// True when the native surface is gone (external destruction skips
@@ -932,8 +950,8 @@ impl DebuggerWindowCore {
             let this = win.borrow();
             this.viewers.route_id(AuxKind::Ppu).zip(this.ppu_window())
         };
-        if let Some((id, ppu)) = existing
-            && super::surface_state::surface_gone(&ppu.borrow().window)
+        if let Some((id, dialog)) = existing
+            && super::surface_state::surface_gone(&dialog.dialog)
         {
             let removed = win.borrow_mut().viewers.remove_id(id);
             drop(removed);
@@ -943,9 +961,8 @@ impl DebuggerWindowCore {
         let id = match request {
             OpenRequest::Create(id) => id,
             OpenRequest::Present(_) => {
-                let ppu = win.borrow().ppu_window();
-                if let Some(ppu) = ppu {
-                    ppu.borrow().present();
+                if let Some(dialog) = win.borrow().ppu_window() {
+                    dialog.dialog.present();
                 }
                 return;
             }
@@ -961,27 +978,71 @@ impl DebuggerWindowCore {
             let this = win.borrow();
             (this.state.clone(), this.handle)
         };
-        let host = state.borrow();
-        let images = host.host.debug_pictures(handle);
-        let images_gen = host.host.debug_generation(handle);
-        let panels = host.host.debug_panels(handle);
-        let chrome = host.host.ppu_chrome();
-        drop(host);
-        let model = win.borrow().viewers.window(id).cloned();
-        let ppu = model.and_then(|model| {
-            super::ppu_window::PpuWindowCore::from_window(
-                &model, &app, &main, state, handle, images, images_gen, panels, chrome,
-            )
-        });
-        let Some(ppu) = ppu else {
+        // Generic ControlScreen from the view-side PPU session; no PPU
+        // vocabulary crosses here.
+        let screen = {
+            let mut borrowed = state.borrow_mut();
+            borrowed.host.debug_aux_refresh(handle);
+            borrowed.host.debug_aux_screen(handle)
+        };
+        let Some(screen) = screen else {
             win.borrow_mut().viewers.cancel_open(id);
             return;
         };
-        let completed = win.borrow_mut().viewers.complete_open(id, None, ppu);
-        if let Err(ppu) = completed {
-            // Destruction can emit callbacks: never retain the registry borrow.
-            let native = ppu.borrow().window.clone();
-            native.destroy();
+        let model = win.borrow().viewers.window(id).cloned().map(|mut window| {
+            window.contents.contents =
+                wakui::window::WidgetContents::Controls(Box::new(screen.clone()));
+            window.title = screen.title.clone();
+            window
+        });
+        let Some(model) = model else {
+            win.borrow_mut().viewers.cancel_open(id);
+            return;
+        };
+        let state_for_refresh = state.clone();
+        let state_for_submit = state.clone();
+        let callbacks = super::controls::Callbacks {
+            current: Box::new(|| true),
+            refresh: Box::new(move || {
+                let borrowed = state_for_refresh.borrow();
+                borrowed.host.debug_aux_screen(handle)
+            }),
+            submit: Box::new(move |events: Vec<ControlEvent>| {
+                let mut changed = false;
+                for event in events {
+                    if state_for_submit
+                        .borrow_mut()
+                        .host
+                        .debug_aux_dispatch(handle, event)
+                    {
+                        changed = true;
+                    }
+                }
+                if changed {
+                    // Pull the hover-updated screen immediately.
+                    let _ = state_for_submit.borrow().host.debug_aux_screen(handle);
+                }
+                Vec::new()
+            }),
+            submit_picker: Box::new(move |_, _, _| {}),
+            close: Box::new({
+                let win = Rc::clone(win);
+                move || {
+                    if let Some(id) = win.borrow().viewers.route_id(AuxKind::Ppu) {
+                        let removed = win.borrow_mut().viewers.remove_id(id);
+                        drop(removed);
+                    }
+                }
+            }),
+        };
+        let dialog = super::controls::build(&model, &main, screen, Self::ppu_mailbox(), callbacks);
+        // The debugger-local registry tracks by u64 ticket; the dialog
+        // presents immediately like the old viewer.
+        dialog.dialog.present();
+        let _ = app;
+        let completed = win.borrow_mut().viewers.complete_open(id, None, dialog);
+        if let Err(dialog) = completed {
+            dialog.dialog.destroy();
         }
     }
 
@@ -1120,26 +1181,19 @@ impl DebuggerWindowCore {
     }
 
     fn sync_ppu(win: &DebuggerWindow) {
-        let (ppu, images, generation, panels) = {
+        let (dialog, state, handle) = {
             let this = win.borrow();
-            let Some(ppu) = this.ppu_window() else {
+            let Some(dialog) = this.ppu_window() else {
                 return;
             };
-            let state = this.state.clone();
-            let handle = this.handle;
-            let host = state.borrow();
-            (
-                ppu,
-                host.host.debug_pictures(handle),
-                host.host.debug_generation(handle),
-                host.host.debug_panels(handle),
-            )
+            (dialog, this.state.clone(), this.handle)
         };
-        let native = ppu.borrow().window.clone();
-        if !super::surface_state::surface_gone(&native) {
-            ppu.borrow_mut()
-                .sync(&images, generation, panels.as_deref());
+        if super::surface_state::surface_gone(&dialog.dialog) {
+            return;
         }
+        // Refresh view-side pictures, then rebuild retained widgets.
+        state.borrow_mut().host.debug_aux_refresh(handle);
+        dialog.binding.refresh();
     }
 
     /// Snapshot helper: the app owns the bridge; native code renders copies.
@@ -1593,9 +1647,9 @@ mod tests {
         DebuggerWindowCore::open_ppu(&win);
         assert!(win.borrow().ppu_window().is_some());
         DebuggerWindowCore::open_ppu(&win);
-        // Same independence as the debugger above.
-        let ppu = win.borrow().ppu_window().expect("ppu open");
-        assert!(ppu.borrow().window.transient_for().is_none());
+        // PPU is now a generic widget dialog transient for the debugger.
+        let dialog = win.borrow().ppu_window().expect("ppu open");
+        assert!(dialog.dialog.transient_for().is_some());
     }
 
     #[test]
@@ -1607,14 +1661,14 @@ mod tests {
         assert_eq!(win.borrow().native_window(), win.borrow().window);
         DebuggerWindowCore::open_ppu(&win);
         let old = win.borrow().viewers.route_id(AuxKind::Ppu).unwrap();
-        let ppu = win.borrow().ppu_window().unwrap();
-        let native = ppu.borrow().window.clone();
+        let dialog = win.borrow().ppu_window().unwrap();
+        let native = dialog.dialog.clone();
         native.close();
         assert!(!native.is_visible());
         assert!(!super::super::surface_state::surface_gone(&native));
         DebuggerWindowCore::open_ppu(&win);
         assert_eq!(win.borrow().viewers.route_id(AuxKind::Ppu), Some(old));
-        assert!(Rc::ptr_eq(&ppu, &win.borrow().ppu_window().unwrap()));
+        assert!(win.borrow().ppu_window().is_some());
         assert!(native.is_visible());
 
         native.destroy();
@@ -1623,15 +1677,10 @@ mod tests {
         let current = win.borrow().viewers.route_id(AuxKind::Ppu).unwrap();
         let replacement = win.borrow().ppu_window().unwrap();
         assert_ne!(current, old);
-        assert!(!Rc::ptr_eq(&ppu, &replacement));
         let removed = win.borrow_mut().viewers.remove_id(old);
         assert!(removed.is_none());
         assert_eq!(win.borrow().viewers.route_id(AuxKind::Ppu), Some(current));
-        assert!(Rc::ptr_eq(
-            &replacement,
-            &win.borrow().ppu_window().unwrap()
-        ));
-        assert!(replacement.borrow().window.is_visible());
+        assert!(replacement.dialog.is_visible());
     }
 
     #[test]
@@ -1693,7 +1742,7 @@ mod tests {
         let stale = stale_native.borrow().clone().unwrap();
         assert!(super::super::surface_state::surface_gone(&stale));
         let current = win.borrow().ppu_window().unwrap();
-        assert!(current.borrow().window.is_visible());
-        assert_ne!(current.borrow().window.upcast_ref::<gtk::Window>(), &stale);
+        assert!(current.dialog.is_visible());
+        assert_ne!(current.dialog.upcast_ref::<gtk::Window>(), &stale);
     }
 }
