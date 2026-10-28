@@ -461,7 +461,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
             pressed: true,
         }),
         C::Session(SessionEvent::Shortcut(
-            nerust_gui_shell::session::KeyboardShortcut::OpenDebugger,
+            nerust_frontend_host::session::ShortcutGesture::OpenDebugger,
         )),
     ] {
         let result = host.handle_event(event, true).unwrap();
@@ -499,8 +499,9 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
 fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
     use crate::{
         commands::{MenuCommand as M, NativeRole},
-        event::{CommandEffect as E, EventCommand as C, EventHandler, EventSink},
+        event::{CommandEffect as E, EventCommand as C, EventHandler},
     };
+    use nerust_frontend_host::event::EventSink;
     use std::{cell::RefCell, rc::Rc};
     struct Sink(Rc<RefCell<Vec<C>>>);
     impl EventSink for Sink {
@@ -534,11 +535,11 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
     let mut state = fixture.borrow_mut();
     for (shortcut, effect) in [
         (
-            nerust_gui_shell::session::KeyboardShortcut::OpenDebugger,
+            nerust_frontend_host::session::ShortcutGesture::OpenDebugger,
             E::OpenAux(AuxKind::Debug),
         ),
         (
-            nerust_gui_shell::session::KeyboardShortcut::ToggleFullscreen,
+            nerust_frontend_host::session::ShortcutGesture::ToggleFullscreen,
             E::ToggleFullscreen,
         ),
     ] {
@@ -571,12 +572,13 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
         .handle_event(C::Menu(M::Session(S::SelectActiveSlot(73))), false)
         .unwrap();
     assert_eq!(fixture.core.session().active_slot_id(), Some(73));
-    assert!(matches!(
-        fixture
-            .core
-            .handle_event(C::Menu(M::Session(S::Reset)), false),
-        Err(SessionError::NoCore)
-    ));
+    let Err(error) = fixture
+        .core
+        .handle_event(C::Menu(M::Session(S::Reset)), false)
+    else {
+        panic!("reset without a core must fail");
+    };
+    assert_eq!(error.0, "no emulation core active");
     let load = fixture
         .core
         .handle_event(C::Menu(M::Session(S::LoadActiveSlot)), false)

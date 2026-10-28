@@ -3,9 +3,9 @@
 //! (`nerust_frontend_host::menu`).
 
 pub use nerust_frontend_host::menu::{
-    CommandModel, CommandVisitor, MenuCapabilities, MenuEntry, MenuId, MenuItem, MenuModel,
-    MenuVisitor, Menubar, NativeApplicationEntry, NativeApplicationMenu, NativeApplicationRole,
-    Submenu, find_menu,
+    CommandModel, CommandVisitor, DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem,
+    MenuModel, MenuVisitor, Menubar, NativeApplicationEntry, NativeApplicationMenu,
+    NativeApplicationRole, Submenu, find_menu,
 };
 
 use crate::commands::{
@@ -18,23 +18,15 @@ use nerust_settings_core::{
     model::input::ShortcutAction,
 };
 
-/// Pre-localized dialog titles. Frontends render and pass these verbatim
-/// instead of calling into the i18n catalog themselves.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DialogTitles {
-    pub open: String,
-    pub error: String,
-    pub rom_load_failed: String,
-}
-
-impl DialogTitles {
-    pub fn new(language: nerust_settings_core::model::language::AppLanguage) -> Self {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
-        Self {
-            open: ui_text(language, UiText::Open).to_string(),
-            error: ui_text(language, UiText::Error).to_string(),
-            rom_load_failed: ui_text(language, UiText::RomLoadFailed).to_string(),
-        }
+/// Dialog titles in the view language.
+pub fn dialog_titles(
+    language: nerust_settings_core::model::language::AppLanguage,
+) -> crate::menu::DialogTitles {
+    use nerust_settings_core::i18n::{UiText, text as ui_text};
+    crate::menu::DialogTitles {
+        open: ui_text(language, UiText::Open).to_string(),
+        error: ui_text(language, UiText::Error).to_string(),
+        rom_load_failed: ui_text(language, UiText::RomLoadFailed).to_string(),
     }
 }
 

@@ -1,7 +1,7 @@
 //! Stateful debug transport. UI ports receive results, never individual queue transitions.
 
 use crate::{
-    debugger::{AppliedDrain, AppliedLive, DrainSnapshot},
+    debugger::{AppliedLive, DebugBridge, DrainSnapshot},
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
     session::SessionEvent,
 };
@@ -13,13 +13,6 @@ use nerust_gui_shell::{
 use std::{task::Poll, time::Instant};
 use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
-
-/// Native drain port. Results arrive as view-owned DTOs so adapters
-/// never name shell drain or viewmodel image types.
-pub trait DebugView {
-    fn apply_drain(&mut self, output: AppliedDrain);
-    fn apply_live(&mut self, live: AppliedLive);
-}
 
 pub struct DebugRuntime {
     schedule: DebugSchedule,
@@ -111,7 +104,7 @@ impl DebugRuntime {
         &mut self,
         session: &mut SessionHandle,
         pause: &mut PausePolicy,
-        view: &mut impl DebugView,
+        bridge: &DebugBridge,
     ) -> bool {
         loop {
             match self.drain.poll() {
@@ -119,7 +112,7 @@ impl DebugRuntime {
                 DrainEvent::Pending => return true,
                 DrainEvent::Start(batch) => self.start_batch(session, pause, batch),
                 DrainEvent::Done(output, _) => {
-                    view.apply_drain(AppliedDrain::from_output(*output));
+                    bridge.apply_drain_display(output.display, output.reselected);
                     self.schedule
                         .set_last_drain_paused(session.tick_metrics().paused);
                 }
@@ -130,12 +123,12 @@ impl DebugRuntime {
         let tick = session.tick_metrics();
         debug_open && ppu_open && tick.loaded && !tick.paused
     }
-    fn poll_live(&mut self, session: &SessionHandle, view: &mut impl DebugView) -> bool {
+    fn poll_live(&mut self, session: &SessionHandle, bridge: &DebugBridge) -> bool {
         match poll_flight(&mut self.live_flight) {
             Poll::Ready(Some(live)) => {
                 if let Some(applied) = AppliedLive::from_live(live, !session.tick_metrics().paused)
                 {
-                    view.apply_live(applied);
+                    bridge.apply_applied_live(applied);
                 }
             }
             Poll::Ready(None) => {}
@@ -148,17 +141,17 @@ impl DebugRuntime {
         session: &SessionHandle,
         debug_open: bool,
         ppu_open: bool,
-        view: &mut impl DebugView,
+        bridge: &DebugBridge,
         now: Instant,
     ) {
-        if self.poll_live(session, view)
+        if self.poll_live(session, bridge)
             || !Self::live_follow_active(session, debug_open, ppu_open)
             || !self.schedule.live_due(now)
         {
             return;
         }
         self.live_flight = Some(session.debug_live_images_begin(true));
-        self.poll_live(session, view);
+        self.poll_live(session, bridge);
     }
     pub fn wake(
         &mut self,
@@ -187,18 +180,11 @@ mod tests {
     use crate::drain::DrainBatch;
     use nerust_gui_shell::session::access::PauseControl;
 
-    #[derive(Default)]
-    struct View {
-        applied: usize,
-        live: usize,
-    }
-    impl DebugView for View {
-        fn apply_drain(&mut self, _: AppliedDrain) {
-            self.applied += 1;
-        }
-        fn apply_live(&mut self, _: AppliedLive) {
-            self.live += 1;
-        }
+    /// Real bridge sink for drain tests: assertions read the applied display.
+    fn bridge(core: &ApplicationHost) -> DebugBridge {
+        let bridge = core.new_debug_bridge();
+        bridge.bind_epoch(core.session.debug_epoch());
+        bridge
     }
     fn snapshot(core: &ApplicationHost, freeze: u8) -> DrainSnapshot {
         DrainSnapshot {
@@ -224,14 +210,13 @@ mod tests {
             },
         );
     }
-    fn settle(core: &mut ApplicationHost, view: &mut View) {
+    fn settle(core: &mut ApplicationHost, bridge: &DebugBridge) {
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
-        while core.poll_debug(view) {
+        while core.poll_debug(bridge) {
             assert!(Instant::now() < deadline, "worker did not settle");
             std::thread::yield_now();
         }
     }
-
     #[test]
     fn replacement_discards_waiting_old_epoch_batches_before_pause_or_write() {
         let mut fixture = Fixture::new();
@@ -253,13 +238,14 @@ mod tests {
         );
         fixture.load();
         assert!(!old.load(std::sync::atomic::Ordering::Acquire));
-        let mut view = View::default();
-        assert!(!fixture.core.poll_debug(&mut view));
+        let bridge = bridge(&fixture.core);
+        assert!(!fixture.core.poll_debug(&bridge));
         assert!(!fixture.core.tick().paused);
         assert!(!fixture.core.debug_pending());
         assert_eq!(
-            view.applied, 0,
-            "old output must never reach replacement UI"
+            bridge.display_snapshot().status,
+            nerust_gui_viewmodel::debugger::StatusMessage::Empty,
+            "old output must never reach the replacement display"
         );
         fixture.core.pause();
         let current = fixture.core.session().debug_snapshot(
@@ -294,11 +280,14 @@ mod tests {
             1,
             "chrome may not replace pending drain"
         );
-        let mut view = View::default();
-        settle(&mut fixture.core, &mut view);
+        let bridge = bridge(&fixture.core);
+        settle(&mut fixture.core, &bridge);
         assert!(!fixture.core.tick().paused);
         assert!(!fixture.core.debug_pending());
-        assert_eq!(view.applied, 2);
+        assert!(
+            !bridge.display_snapshot().disasm_lines.is_empty(),
+            "settled drains land on the bridge display"
+        );
         fixture.core.pause();
         assert_eq!(fixture.core.session().debug_read_byte(space, 0), Some(0x5a));
         let current = fixture.core.session().debug_snapshot(
@@ -354,7 +343,7 @@ mod tests {
                 .live_armed()
                 .load(std::sync::atomic::Ordering::Acquire)
         );
-        assert!(!fixture.core.poll_debug(&mut View::default()));
+        assert!(!fixture.core.poll_debug(&bridge(&fixture.core)));
         assert!(fixture.core.tick().paused, "cancelled resume never starts");
     }
 
@@ -362,8 +351,8 @@ mod tests {
     fn live_cadence_and_late_pause_truth_are_common_owned() {
         let mut fixture = Fixture::new();
         fixture.load();
-        let mut view = View::default();
-        fixture.core.pump_live_debug(true, true, &mut view);
+        let bridge = bridge(&fixture.core);
+        fixture.core.pump_live_debug(true, true, &bridge);
         let due = fixture.core.next_live_tick().unwrap();
         assert!(
             !fixture
@@ -410,9 +399,9 @@ mod tests {
             .enqueue_debug(&[DebugAction::Resume], Some(snapshot));
         let captured = fixture.core.frame_ctx();
         let deadline = Instant::now() + std::time::Duration::from_secs(3);
-        let mut view = View::default();
+        let bridge = bridge(&fixture.core);
         loop {
-            let wake = fixture.core.pump_debug(true, true, &mut view);
+            let wake = fixture.core.pump_debug(true, true, &bridge);
             assert!(Instant::now() < deadline, "worker did not settle");
             if !fixture.core.debug_pending() {
                 assert!(!fixture.core.tick().paused);
@@ -423,7 +412,11 @@ mod tests {
                         .live_armed()
                         .load(std::sync::atomic::Ordering::Acquire)
                 );
-                assert_eq!(view.applied, 1);
+                assert_eq!(
+                    bridge.display_snapshot().status,
+                    nerust_gui_viewmodel::debugger::StatusMessage::Running,
+                    "the resume drain lands on the bridge display"
+                );
                 assert_eq!(wake.live_tick, fixture.core.next_live_tick());
                 break;
             }
