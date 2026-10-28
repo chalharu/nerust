@@ -14,6 +14,10 @@ use wakui::window::Window as HostWindow;
 
 #[path = "renderer.rs"]
 pub mod renderer;
+
+#[cfg(test)]
+#[path = "controls_tests.rs"]
+mod controls_tests;
 use renderer::{ControlGtkVisitor, Registry};
 
 /// Each callback completes its owner borrow before returning to native code.
@@ -274,7 +278,7 @@ impl WidgetBinding {
             *self.screen.borrow_mut() = screen;
             let _signals = FlagGuard::enter(&self.refreshing);
             self.render();
-            if !self.live() || self.pending.get() || !self.events.borrow().is_empty() {
+            if !self.live() || !self.pending.get() || !self.events.borrow().is_empty() {
                 break;
             }
         }
