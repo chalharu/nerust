@@ -2,7 +2,7 @@
 //! Immutable metadata never needs a lock; typing never copies the display.
 
 use std::sync::{
-    Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -12,14 +12,7 @@ use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, NavState, til
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::{DebuggerEvent, DebuggerState, DebuggerUpdate, model::apply_live};
-
-/// Recover the inner value after poisoning; it may be stale until the next drain.
-pub fn lock_recovered<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|error| {
-        log::warn!("mutex recovered after poisoning; state may be stale");
-        error.into_inner()
-    })
-}
+use nerust_frontend_viewdefs::sync::lock_recovered;
 
 fn read_display(lock: &RwLock<Arc<DisplayCache>>) -> RwLockReadGuard<'_, Arc<DisplayCache>> {
     lock.read().unwrap_or_else(|error| {

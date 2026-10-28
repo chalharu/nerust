@@ -14,10 +14,8 @@ use nerust_settings_core::{
 };
 
 use super::*;
-use crate::{
-    binding::ViewDefinition,
-    settings::{InputPageSection, InputTab, SettingsEvent as E},
-};
+use crate::settings::{InputPageSection, InputTab, SettingsEvent as E};
+use wakui::binding::ViewDefinition;
 
 type Id = SettingsControlId;
 type Kind = SettingsControlKind;
