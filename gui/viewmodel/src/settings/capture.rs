@@ -1,8 +1,8 @@
-use nerust_keyboard::Key;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
 };
+use wakui::Key;
 
 use super::{
     dto::CaptureStateView,
@@ -82,8 +82,8 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
 
 #[cfg(test)]
 mod tests {
-    use nerust_keyboard::Key;
     use nerust_settings_core::model::input::ShortcutAction;
+    use wakui::Key;
 
     use super::CaptureTarget;
     use crate::settings::test_support::test_vm;

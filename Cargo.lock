@@ -3695,7 +3695,6 @@ dependencies = [
  "directories",
  "log",
  "nerust_core_traits",
- "nerust_keyboard",
  "nerust_nes_settings",
  "nerust_persistence",
  "nerust_settings_core",
@@ -3704,6 +3703,7 @@ dependencies = [
  "serde-saphyr",
  "serde-value",
  "thiserror 2.0.21",
+ "wakui",
 ]
 
 [[package]]
@@ -3720,7 +3720,6 @@ dependencies = [
  "nerust_gui_viewmodel",
  "nerust_host_protocol",
  "nerust_input_traits",
- "nerust_keyboard",
  "nerust_nes_settings",
  "nerust_persistence",
  "nerust_render_traits",
@@ -3731,6 +3730,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "time",
+ "wakui",
 ]
 
 [[package]]
@@ -3740,12 +3740,12 @@ dependencies = [
  "nerust_core_traits",
  "nerust_gui_runtime",
  "nerust_input_traits",
- "nerust_keyboard",
  "nerust_settings_core",
  "nerust_system_traits",
  "serde",
  "thiserror 2.0.21",
  "typetag",
+ "wakui",
 ]
 
 [[package]]
@@ -3758,13 +3758,6 @@ version = "0.1.0-dev"
 dependencies = [
  "downcast-rs 2.0.2",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "nerust_keyboard"
-version = "0.1.0-dev"
-dependencies = [
- "wakui",
 ]
 
 [[package]]
@@ -3969,12 +3962,12 @@ version = "0.1.0-dev"
 dependencies = [
  "nerust_core_traits",
  "nerust_input_traits",
- "nerust_keyboard",
  "nerust_settings_traits",
  "nerust_system_traits",
  "serde",
  "serde-saphyr",
  "typetag",
+ "wakui",
 ]
 
 [[package]]
