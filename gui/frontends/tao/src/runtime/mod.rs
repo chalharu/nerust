@@ -2,7 +2,7 @@ mod dispatch;
 mod drain;
 pub(crate) mod host;
 
-use nerust_frontend_viewdefs::{bootstrap::Boot, event::EventSink, viewport::ViewportPresent};
+use nerust_frontend_host::{bootstrap::Boot, event::EventSink, viewport::ViewportPresent};
 use raw_window_handle::HasDisplayHandle;
 use std::{path::Path, sync::Arc};
 #[cfg(target_os = "macos")]
@@ -81,7 +81,7 @@ impl WindowRuntime {
             Err(detail) => {
                 // Startup runs before the main window exists: standalone dialog only.
                 crate::ports::show_rom_load_error(
-                    self.host.dialog_titles().rom_load_failed,
+                    self.host.core.dialog_titles().rom_load_failed,
                     &detail,
                 );
                 false
@@ -90,7 +90,7 @@ impl WindowRuntime {
     }
 
     pub(crate) fn run(mut self) {
-        self.host.resume_session();
+        self.host.core.resume_session();
         let event_loop = self
             .event_loop
             .take()
@@ -98,9 +98,9 @@ impl WindowRuntime {
 
         if let Some(thread) = Self::spawn_tick_thread(
             self.event_sink.take().expect("native event sink"),
-            self.host.live_armed(),
+            self.host.core.live_armed(),
         ) {
-            self.host.register_tick_thread(thread);
+            self.host.core.register_tick_thread(thread);
         }
 
         event_loop.run(move |event, event_loop, control_flow| match event {
@@ -155,10 +155,10 @@ impl WindowRuntime {
     }
 
     fn on_update(&mut self) {
-        if !self.host.render_ready() {
+        if !self.host.core.render_ready() {
             return;
         }
-        if !self.host.viewport_attached() {
+        if !self.host.core.viewport_attached() {
             self.recreate_renderer();
         }
         let Some((width, height)) = self.host.window_surface_size() else {
@@ -176,7 +176,11 @@ impl WindowRuntime {
         }
         // No notification drain here: `update_control_flow` drains every pass.
         let client_height = self.host.client_height();
-        match self.host.viewport_present(width, height, client_height) {
+        match self
+            .host
+            .core
+            .viewport_present(width, height, client_height)
+        {
             ViewportPresent::Presented => {
                 self.host.refresh_title_after_present();
             }
@@ -188,7 +192,7 @@ impl WindowRuntime {
     }
 
     fn recreate_renderer(&mut self) {
-        if !self.host.render_ready() {
+        if !self.host.core.render_ready() {
             return;
         }
         // Owned display handle out; the surface target below only borrows the host.
@@ -199,6 +203,7 @@ impl WindowRuntime {
             if display.is_some() {
                 log::error!("failed to get display handle");
                 self.host
+                    .core
                     .render_failed("Failed to get display handle".into());
             }
             return;
@@ -212,7 +217,7 @@ impl WindowRuntime {
             width,
             height,
         };
-        match self.host.viewport_sync(region, true) {
+        match self.host.core.viewport_sync(region, true) {
             Ok(true) => {
                 self.surface_xid = xid;
             }
@@ -220,6 +225,7 @@ impl WindowRuntime {
             Err(detail) => {
                 log::error!("failed to create renderer: {detail}");
                 self.host
+                    .core
                     .render_failed(format!("Failed to create renderer: {detail}"));
             }
         }
@@ -228,7 +234,7 @@ impl WindowRuntime {
 
 impl Drop for WindowRuntime {
     fn drop(&mut self) {
-        self.host.viewport_drop();
+        self.host.core.viewport_drop();
     }
 }
 
@@ -236,7 +242,7 @@ impl WindowRuntime {
     /// Ordered exit teardown: the surface dies before the native owner it
     /// borrows, on every close path. Idempotent via `prepare_close`.
     fn begin_close(&mut self) {
-        self.host.viewport_drop();
+        self.host.core.viewport_drop();
         self.host.prepare_close();
         self.surface_xid = None;
     }

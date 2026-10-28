@@ -19,7 +19,7 @@ use super::super::bindings::tests::{controls, find};
 use super::*;
 use crate::aux::widgets::bindings::tests::prepare;
 use crate::runtime::host::HostState;
-use nerust_frontend_host::{app::FrontendApp as _, aux::AuxId};
+use nerust_frontend_host::aux::AuxId;
 
 struct Fixture {
     host: HostState,

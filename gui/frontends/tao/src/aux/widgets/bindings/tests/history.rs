@@ -9,7 +9,7 @@ use wakui::control::{ControlInput, ControlKind, Layout, LayoutKind};
 
 fn fixture() -> (HostState, AuxId) {
     let mut host = TestHost::new().host;
-    host.report_host_error("history test error".into());
+    host.core.report_host_error("history test error".into());
     let id = prepare(&mut host, AuxKind::History);
     (host, id)
 }
@@ -126,7 +126,7 @@ fn history_view_builds_without_a_window() {
     let (binding, _, _) = ControlsBinding::new(screen, AuxKind::History);
     let (state, _) = binding.boot();
     drop(binding.view(&state, iced::window::Id::unique()));
-    host.report_host_error("new history row".into());
+    host.core.report_host_error("new history row".into());
     host.core.widget_refresh(id);
     let updated = screen_of(&host, id);
     assert!(controls(&updated).iter().any(|t| matches!(
@@ -173,7 +173,7 @@ fn sync_consumes_refresh_flag_not_close_flag() {
     let mailbox = mailbox_of(&host, id);
     mailbox.request_close();
     mailbox.invalidate();
-    host.report_host_error("latest refresh".into());
+    host.core.report_host_error("latest refresh".into());
     host.core.widget_refresh(id);
     assert!(mailbox.take_invalidated());
     assert!(!mailbox.take_invalidated());

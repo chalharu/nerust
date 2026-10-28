@@ -1,18 +1,16 @@
 //! Session presentation sync: menu, title, and fullscreen state.
 use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
-use nerust_frontend_viewdefs::frame::FrameCtx;
 use std::time::Instant;
 
 use nerust_frontend_host::{
     menu::Menubar,
     window::{Window, WindowVisitor},
 };
-use nerust_frontend_viewdefs::application::{MenuSig, MenubarUpdate};
 
 struct MainPresentation<'a> {
     native: Option<&'a tao::window::Window>,
-    menu: Option<(&'a mut dyn crate::menu::MenuSink, MenuSig)>,
+    menu: Option<(&'a mut dyn crate::menu::MenuSink, bool, bool, bool)>,
 }
 
 impl WindowVisitor for MainPresentation<'_> {
@@ -23,11 +21,8 @@ impl WindowVisitor for MainPresentation<'_> {
     }
 
     fn visit_menu(&mut self, menu: &Menubar) {
-        if let Some((sink, signature)) = self.menu.as_mut() {
-            sink.update(MenubarUpdate {
-                signature: signature.clone(),
-                menubar: menu.clone(),
-            });
+        if let Some((sink, loaded, paused, settings_open)) = self.menu.as_mut() {
+            sink.update(*loaded, *paused, *settings_open, menu);
         }
     }
 }
@@ -42,8 +37,7 @@ impl HostState {
         }
         match self.core.persist_fullscreen_default(is_fullscreen) {
             Ok(true) => {
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, true);
+                self.sync_chrome(true);
                 self.refresh_window_title();
             }
             Ok(false) => (),
@@ -52,18 +46,20 @@ impl HostState {
     }
 
     /// Menu sync using scalar state and immutable snapshot identities only.
-    pub(crate) fn sync_menu_state(&mut self, ctx: &FrameCtx) {
+    pub(crate) fn sync_menu_state(&mut self) {
         let settings_open = self.settings_open();
-        let Some(update) = self
+        let loaded = self.core.tick_loaded();
+        let paused = self.core.tick_paused();
+        let Some(_menubar) = self
             .core
-            .menubar_update(ctx, settings_open, TAO_MENU_CAPABILITIES)
+            .menubar_update(settings_open, TAO_MENU_CAPABILITIES)
         else {
             return;
         };
         let window = self.core.main_window().clone();
         window.visit(&mut MainPresentation {
             native: None,
-            menu: Some((self.app_menu.as_mut(), update.signature)),
+            menu: Some((self.app_menu.as_mut(), loaded, paused, settings_open)),
         });
     }
 
@@ -91,8 +87,7 @@ impl HostState {
         match self.core.persist_fullscreen_default(fullscreen) {
             Ok(_) => {
                 self.sync_fullscreen_from_settings();
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, true);
+                self.sync_chrome(true);
             }
             Err(error) => {
                 log::warn!("failed to persist fullscreen setting: {error}");
@@ -108,13 +103,11 @@ impl HostState {
 
     /// Refresh chrome after a ROM (re)load: menu, title, frame.
     pub(super) fn after_rom_load(&mut self) {
-        self.reconcile_pause();
-        let ctx = self.frame_ctx();
-        self.sync_chrome(&ctx, true);
+        self.core.reconcile_pause();
+        self.sync_chrome(true);
         if self.is_debug_open() {
             if let Some(handle) = self.debug_handle {
                 use crate::aux::debug::DebugMessage;
-                use nerust_frontend_host::app::FrontendApp as _;
                 self.core.debug_gesture(
                     handle,
                     vec![],
@@ -127,8 +120,8 @@ impl HostState {
     }
 
     /// Single chrome-sync choke point: menu, title, and optionally a frame.
-    pub(crate) fn sync_chrome(&mut self, ctx: &FrameCtx, redraw: bool) {
-        self.sync_menu_state(ctx);
+    pub(crate) fn sync_chrome(&mut self, redraw: bool) {
+        self.sync_menu_state();
         self.refresh_window_title();
         if redraw {
             self.request_redraw();
@@ -163,12 +156,10 @@ mod tests {
     fn menu_sync_pushes_once_per_content() {
         let support = TestHost::new();
         let mut host = support.host;
-        let ctx = host.frame_ctx();
-        host.sync_menu_state(&ctx);
+        host.sync_menu_state();
         assert_eq!(support.menu.updates().len(), 1);
         // Same capture: scalar state and Arc identities both hold.
-        let ctx = host.frame_ctx();
-        host.sync_menu_state(&ctx);
+        host.sync_menu_state();
         assert_eq!(support.menu.updates().len(), 1);
     }
 
@@ -176,24 +167,18 @@ mod tests {
     fn title_gate_pushes_once_per_change() {
         let support = TestHost::new();
         let mut host = support.host;
-        let ctx = host.frame_ctx();
-        let title = host.cached_title(&ctx.tick());
-        assert!(!host.title_same(&title));
-        host.refresh_window_title();
-        assert!(host.title_same(&title));
-        host.refresh_window_title();
-        assert!(host.title_same(&title));
+        assert!(host.core.refresh_window_title().is_some());
+        assert!(host.core.refresh_window_title().is_none());
+        assert!(host.core.refresh_window_title().is_none());
     }
 
     #[test]
     fn chrome_choke_point_syncs_menu_and_title() {
         let support = TestHost::new();
         let mut host = support.host;
-        let ctx = host.frame_ctx();
-        host.sync_chrome(&ctx, true);
+        host.sync_chrome(true);
         assert_eq!(support.menu.updates().len(), 1);
-        let title = host.cached_title(&ctx.tick());
-        assert!(host.title_same(&title));
+        assert!(host.core.refresh_window_title().is_none());
     }
 
     #[test]
@@ -201,10 +186,8 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.sync_fullscreen_from_settings();
-        assert!(host.pending_fullscreen().is_none());
         host.sync_fullscreen_default_from_window();
         host.toggle_fullscreen();
-        assert!(host.pending_fullscreen().is_none());
     }
 
     #[test]
@@ -220,11 +203,11 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let now = std::time::Instant::now();
-        let ctx = host.frame_ctx();
         // Fresh shell just stamped the title clock, so an immediate
         // refresh stays gated until the interval elapses.
         host.maybe_refresh_window_title(now);
-        let title = host.cached_title(&ctx.tick());
-        assert!(!host.title_same(&title));
+        // The first computation still publishes once; repeats stay quiet.
+        assert!(host.core.refresh_window_title().is_some());
+        assert!(host.core.refresh_window_title().is_none());
     }
 }

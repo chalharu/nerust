@@ -2,7 +2,6 @@
 //! native code routes handles, screens, and mailboxes through the app trait.
 use super::HostState;
 use nerust_frontend_host::{
-    app::FrontendApp as _,
     aux::{AuxId, OpenRequest},
     focus::AuxKind,
 };
@@ -62,8 +61,7 @@ impl HostState {
             ));
         }
         if effects.refresh_chrome {
-            let ctx = self.frame_ctx();
-            self.sync_chrome(&ctx, effects.redraw);
+            self.sync_chrome(effects.redraw);
         } else if effects.redraw {
             self.request_redraw();
         }
@@ -95,11 +93,9 @@ impl HostState {
         );
         if !opened {
             log::error!("failed to open settings window");
-            let ctx = self.frame_ctx();
-            self.sync_chrome(&ctx, false);
+            self.sync_chrome(false);
         } else {
-            let ctx = self.frame_ctx();
-            self.sync_menu_state(&ctx);
+            self.sync_menu_state();
         }
     }
 
@@ -108,8 +104,7 @@ impl HostState {
             Ok(prepared) => prepared,
             Err(error) => {
                 log::error!("refusing settings window: {error}");
-                let ctx = self.frame_ctx();
-                self.sync_chrome(&ctx, false);
+                self.sync_chrome(false);
                 false
             }
         }
