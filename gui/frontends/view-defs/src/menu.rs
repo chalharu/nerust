@@ -2,15 +2,14 @@
 //! Schema (ids, models, visitors) lives in the framework
 //! (`wakui::menu`).
 
-pub use wakui::menu::{
-    CommandModel, CommandVisitor, DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem,
-    MenuModel, MenuVisitor, Menubar, NativeApplicationEntry, NativeApplicationMenu,
-    NativeApplicationRole, Submenu, find_menu,
+use wakui::menu::{
+    DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar, NativeApplicationEntry,
+    NativeApplicationMenu, NativeApplicationRole, Submenu,
 };
 
-use crate::commands::{
-    MenuCommand, NativeRole, SessionCommand, build_command_model, command_enabled,
-};
+use wakui::commands::{MenuCommand, NativeRole, SessionCommand};
+
+use crate::commands::{build_command_model, command_enabled};
 
 use nerust_gui_runtime::{menu_labels::shortcut_hint, slots::slot_label};
 use nerust_settings_core::{
@@ -19,11 +18,9 @@ use nerust_settings_core::{
 };
 
 /// Dialog titles in the view language.
-pub fn dialog_titles(
-    language: nerust_settings_core::model::language::AppLanguage,
-) -> crate::menu::DialogTitles {
+pub fn dialog_titles(language: nerust_settings_core::model::language::AppLanguage) -> DialogTitles {
     use nerust_settings_core::i18n::{UiText, text as ui_text};
-    crate::menu::DialogTitles {
+    DialogTitles {
         open: ui_text(language, UiText::Open).to_string(),
         error: ui_text(language, UiText::Error).to_string(),
         rom_load_failed: ui_text(language, UiText::RomLoadFailed).to_string(),

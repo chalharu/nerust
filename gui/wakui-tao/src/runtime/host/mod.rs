@@ -49,7 +49,7 @@ impl TestHost {
         let menu = crate::test_menu::MenuRecorderHandle::default();
         let dialogs = crate::test_dialogs::FakeDialogs::with_pick(pick);
         let host = HostState::new(
-            wakui::bootstrap::Application::new(Box::new(SharedApp::new(std::rc::Rc::clone(&app)))),
+            wakui::app::Application::new(Box::new(SharedApp::new(std::rc::Rc::clone(&app)))),
             menu.clone().into_box(),
             std::sync::Arc::new(dialogs.clone()),
         );
@@ -99,7 +99,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     pub(crate) fn new<A>(
-        app: wakui::bootstrap::Application<K, A>,
+        app: wakui::app::Application<K, A>,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Self {
@@ -215,8 +215,7 @@ mod tests {
     #[test]
     fn production_constructor_delegates_to_temp_paths() {
         use crate::test_menu::MenuRecorderHandle;
-        let boot =
-            wakui::bootstrap::Application::new(Box::new(crate::testkit::SharedApp::for_test()));
+        let boot = wakui::app::Application::new(Box::new(crate::testkit::SharedApp::for_test()));
         let host = super::HostState::new(
             boot,
             MenuRecorderHandle::default().into_box(),

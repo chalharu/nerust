@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use wakui::bootstrap::Application;
+use wakui::app::Application;
 
 use crate::runtime::WindowRuntime;
 

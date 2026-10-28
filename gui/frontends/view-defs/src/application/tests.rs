@@ -306,7 +306,7 @@ fn render_retry_and_notification_pause_are_owned_by_application() {
 #[test]
 fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
     let mut fixture = Fixture::new();
-    let caps = crate::menu::MenuCapabilities {
+    let caps = wakui::menu::MenuCapabilities {
         about: false,
         dialog_ellipsis: false,
         application_menu: false,
@@ -321,7 +321,7 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
         fixture.core.main_window().menu.as_ref().unwrap()
     ));
     assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
-    let app_caps = crate::menu::MenuCapabilities {
+    let app_caps = wakui::menu::MenuCapabilities {
         application_menu: true,
         ..caps
     };
@@ -343,7 +343,7 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
     let ctx = fixture.core.frame_ctx();
     let replaced = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
     assert_eq!(replaced.menubar, unguarded.menubar);
-    let presenter = crate::widgets::MenuPresenter::default();
+    let presenter = wakui::menu_presenter::MenuPresenter::default();
     let plan = presenter.submit(unguarded.menubar).unwrap();
     assert!(presenter.complete(plan).is_none());
     assert!(presenter.submit(replaced.menubar).is_none());
@@ -353,7 +353,7 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
 #[test]
 fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
     let mut fixture = Fixture::new();
-    let caps = crate::menu::MenuCapabilities {
+    let caps = wakui::menu::MenuCapabilities {
         about: false,
         dialog_ellipsis: true,
         application_menu: false,
@@ -363,7 +363,7 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
     fixture
         .core
         .dispatch(SessionEvent::Command(
-            crate::commands::SessionCommand::SelectActiveSlot(73),
+            wakui::commands::SessionCommand::SelectActiveSlot(73),
         ))
         .unwrap();
     let update = fixture.core.menubar_update(&ctx, false, caps).unwrap();
@@ -374,14 +374,14 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
 
 #[test]
 fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
-    use crate::{
+    use wakui::aux::{AuxWindows, OpenRequest};
+    use wakui::window::WindowVisitor;
+    use wakui::{
         commands::MenuCommand,
         event::{CommandEffect, EventCommand, EventHandler},
         menu::MenuEntry,
         window::{WidgetContents, Window},
     };
-    use wakui::aux::{AuxWindows, OpenRequest};
-    use wakui::window::WindowVisitor;
 
     let mut fixture = Fixture::new();
     let ctx = fixture.core.frame_ctx();
@@ -433,7 +433,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         fn visit_menu(&mut self, _: &Menubar) {
             self.0 = true;
         }
-        fn visit_main(&mut self, _: &crate::window::MainContents) {
+        fn visit_main(&mut self, _: &wakui::window::MainContents) {
             assert!(self.0, "menu is visited before contents");
         }
     }
@@ -444,7 +444,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
 
 #[test]
 fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() {
-    use crate::{
+    use wakui::{
         commands::{MenuCommand as M, NativeRole, SessionCommand as S},
         event::{CommandEffect as E, EventCommand as C, EventHandler},
     };
@@ -500,12 +500,12 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
 
 #[test]
 fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
-    use crate::{
+    use std::{cell::RefCell, rc::Rc};
+    use wakui::event::EventSink;
+    use wakui::{
         commands::{MenuCommand as M, NativeRole},
         event::{CommandEffect as E, EventCommand as C, EventHandler},
     };
-    use std::{cell::RefCell, rc::Rc};
-    use wakui::event::EventSink;
     struct Sink(Rc<RefCell<Vec<C>>>);
     impl EventSink for Sink {
         fn send(&self, event: C) -> bool {
@@ -565,7 +565,7 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
 
 #[test]
 fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
-    use crate::{
+    use wakui::{
         commands::{MenuCommand as M, SessionCommand as S},
         event::{EventCommand as C, EventHandler},
     };
