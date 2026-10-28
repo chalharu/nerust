@@ -11,8 +11,8 @@ use crate::surface::{Surface, SurfaceCore};
 
 /// Only translates the host token into a native response. Host retains the
 /// queue, pause ownership and stale-ACK checks; there is no native ModalState.
-pub(crate) fn present_modal(
-    surface: &Surface,
+pub(crate) fn present_modal<K: Copy + Eq + std::hash::Hash + 'static>(
+    surface: &Surface<K>,
     window: &gtk::ApplicationWindow,
     presentation: ModalPresentation,
 ) {
@@ -20,9 +20,9 @@ pub(crate) fn present_modal(
         surface: Rc::downgrade(surface),
         window: window.downgrade(),
     };
-    let presenter: &dyn ModalPresenter = &port;
+    let presenter: GtkModalPresenter<K> = port;
     let token = presentation.token;
-    if let Some(receiver) = presenter.present_modal(presentation) {
+    if let Some(receiver) = ModalPresenter::present_modal(&presenter, presentation) {
         let state = surface.borrow().state.clone();
         state
             .borrow_mut()
@@ -31,12 +31,12 @@ pub(crate) fn present_modal(
     }
 }
 
-struct GtkModalPresenter {
-    surface: Weak<RefCell<SurfaceCore>>,
+struct GtkModalPresenter<K: Copy + Eq + std::hash::Hash + 'static> {
+    surface: Weak<RefCell<SurfaceCore<K>>>,
     window: glib::WeakRef<gtk::ApplicationWindow>,
 }
 
-impl ModalPresenter for GtkModalPresenter {
+impl<K: Copy + Eq + std::hash::Hash + 'static> ModalPresenter for GtkModalPresenter<K> {
     fn present_modal(&self, presentation: ModalPresentation) -> Option<Receiver<()>> {
         let window = self.window.upgrade()?;
         let dialog = gtk::MessageDialog::new(

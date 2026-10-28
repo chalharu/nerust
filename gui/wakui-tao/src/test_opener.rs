@@ -47,15 +47,17 @@ impl crate::ports::WindowOpener for FakeOpener {
         window: wakui::window::Window,
         _params: crate::ports::AuxOpenParams,
     ) -> Option<Box<dyn crate::aux::registry::AuxController>> {
-        use crate::aux::focus::AuxKind;
-        let wakui::window::WindowId::Auxiliary(kind) = window.id else {
+        use crate::testkit::TestAux;
+        let wakui::window::WindowId::Auxiliary(_) = window.id else {
             return None;
         };
-        let call = match kind {
-            AuxKind::Settings => OpenerCall::Settings,
-            AuxKind::Debug => OpenerCall::Debug,
-            AuxKind::Ppu => OpenerCall::Ppu,
-            AuxKind::History => OpenerCall::History,
+        // Titles are view-side; the headless fake maps them back to calls.
+        let call = match window.title.as_str() {
+            title if title == TestAux::Settings.title() => OpenerCall::Settings,
+            title if title == TestAux::Debug.title() => OpenerCall::Debug,
+            title if title == TestAux::Ppu.title() => OpenerCall::Ppu,
+            title if title == TestAux::History.title() => OpenerCall::History,
+            _ => return None,
         };
         crate::aux::bridge::lock_recovered(&self.calls).push(call);
         None
@@ -65,15 +67,15 @@ impl crate::ports::WindowOpener for FakeOpener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aux::focus::AuxKind;
     use crate::ports::{AuxOpenParams, WindowOpener};
+    use crate::testkit::TestAux;
 
     #[test]
     fn fake_opener_records_each_aux_kind() {
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let opener = FakeOpener::failing("no display");
         let mut host = crate::runtime::host::TestHost::new().host;
-        let id = prepare(&mut host, AuxKind::History);
+        let id = prepare(&mut host, TestAux::History);
         assert!(
             opener
                 .create_aux(
@@ -86,11 +88,16 @@ mod tests {
                 )
                 .is_none()
         );
+        let debug_id = prepare(&mut host, TestAux::Debug);
         assert!(
             opener
                 .create_aux(
-                    wakui::window::Window::auxiliary(AuxKind::Debug),
-                    AuxOpenParams::Debug { position: None }
+                    host.aux.window(debug_id).expect("window").clone(),
+                    AuxOpenParams::Controls {
+                        id: debug_id,
+                        screen: Box::new(screen_of(&host, debug_id)),
+                        mailbox: mailbox_of(&host, debug_id),
+                    }
                 )
                 .is_none()
         );
@@ -111,7 +118,7 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let mut host = crate::runtime::host::TestHost::new().host;
-        let id = prepare(&mut host, AuxKind::Settings);
+        let id = prepare(&mut host, TestAux::Settings);
         assert!(
             opener
                 .create_aux(
@@ -124,7 +131,7 @@ mod tests {
                 )
                 .is_none()
         );
-        let ppu_id = prepare(&mut host, AuxKind::Ppu);
+        let ppu_id = prepare(&mut host, TestAux::Ppu);
         assert!(
             opener
                 .create_aux(

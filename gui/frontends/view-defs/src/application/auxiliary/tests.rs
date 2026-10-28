@@ -10,7 +10,7 @@ use wakui::pause::PauseOwner;
 
 fn prepare(
     host: &mut ApplicationHost,
-    windows: &mut AuxWindows<u64, ()>,
+    windows: &mut AuxWindows<AuxKind, u64, ()>,
     kind: AuxKind,
 ) -> (AuxId, WidgetSession) {
     let Some(OpenRequest::Create(id)) = host.reserve_window(windows, kind).unwrap() else {
@@ -125,7 +125,7 @@ fn opaque_submission_returns_real_effects_and_clones_cannot_consume_future_draft
         "old clone must not steal next submission"
     );
     let (handle, result) = host
-        .close_widget_window(&mut windows, id, take_submission(&mailbox))
+        .close_widget_window(&mut windows, id, None, take_submission(&mailbox))
         .unwrap();
     assert_eq!(handle, Some(()));
     assert!(result.is_ok());
@@ -185,7 +185,7 @@ fn save_failure_rolls_back_but_preserves_window_draft_and_pause_for_retry() {
     );
     assert!(session.screen().message.is_none());
     assert!(
-        host.close_widget_window(&mut windows, id, None)
+        host.close_widget_window(&mut windows, id, None, None)
             .unwrap()
             .1
             .is_ok()
@@ -230,7 +230,7 @@ fn generic_history_filter_clear_close_mutate_real_session_and_publish_rows() {
     host.refresh_widget_session(&mut session);
     assert!(mailbox.take_invalidated());
     assert!(matches!(
-        session.window().contents.contents,
+        session.window(id).contents.contents,
         WidgetContents::Controls(_)
     ));
     let close_label =
@@ -242,7 +242,7 @@ fn generic_history_filter_clear_close_mutate_real_session_and_publish_rows() {
     );
     assert!(mailbox.close_requested());
     assert!(
-        host.close_widget_window(&mut windows, id, None)
+        host.close_widget_window(&mut windows, id, None, None)
             .unwrap()
             .1
             .is_ok()
@@ -260,15 +260,18 @@ fn generation_and_mailbox_identity_guard_native_close_and_stale_submission() {
     volume(&mut old_session, 12);
     submit(&mut old_session);
     let stale = take_submission(&old_session.mailbox()).unwrap();
-    assert!(host.close_widget_window(&mut windows, old, None).is_some());
+    assert!(
+        host.close_widget_window(&mut windows, old, None, None)
+            .is_some()
+    );
     let (current, _) = prepare(host, &mut windows, AuxKind::Settings);
     assert_ne!(old, current);
     assert!(
-        host.close_widget_window(&mut windows, old, Some(stale.clone()))
+        host.close_widget_window(&mut windows, old, None, Some(stale.clone()))
             .is_none()
     );
     assert!(
-        host.close_widget_window(&mut windows, current, Some(stale.clone()))
+        host.close_widget_window(&mut windows, current, None, Some(stale.clone()))
             .is_none()
     );
     assert_eq!(
@@ -286,7 +289,7 @@ fn generation_and_mailbox_identity_guard_native_close_and_stale_submission() {
         12
     );
     assert!(
-        host.close_widget_window(&mut windows, current, None)
+        host.close_widget_window(&mut windows, current, None, None)
             .is_some()
     );
     assert!(!host.owns_pause(PauseOwner::Settings));
@@ -314,7 +317,7 @@ fn close_before_apply_failure_releases_only_settings_and_retires_generation() {
     let pending = take_submission(&session.mailbox()).unwrap();
     let duplicate = pending.clone();
     let (handle, result) = host
-        .close_widget_window(&mut windows, id, Some(pending))
+        .close_widget_window(&mut windows, id, None, Some(pending))
         .unwrap();
     assert_eq!(handle, Some(()));
     assert!(result.is_err());
@@ -325,13 +328,13 @@ fn close_before_apply_failure_releases_only_settings_and_retires_generation() {
     assert!(host.tick().paused);
     assert_eq!(host.settings_snapshot(), &original);
     assert!(
-        host.close_widget_window(&mut windows, id, Some(duplicate))
+        host.close_widget_window(&mut windows, id, None, Some(duplicate))
             .is_none()
     );
     std::fs::remove_dir(&path).unwrap();
 }
 
-fn reserve(host: &mut ApplicationHost, windows: &mut AuxWindows<u64, ()>) -> AuxId {
+fn reserve(host: &mut ApplicationHost, windows: &mut AuxWindows<AuxKind, u64, ()>) -> AuxId {
     let Some(OpenRequest::Create(id)) = host.reserve_window(windows, AuxKind::Settings).unwrap()
     else {
         panic!("expected fresh settings reservation");
@@ -351,12 +354,12 @@ fn shared_success_applies_before_release_and_preserves_modal_owner() {
         .prepare_widget_window(&mut windows, id)
         .unwrap()
         .unwrap();
-    assert_eq!(windows.window(id).unwrap().title, session.window().title);
+    assert_eq!(windows.window(id).unwrap().title, session.window(id).title);
     assert!(windows.complete_open(id, Some(1), ()).is_ok());
     host.set_pause_owner(PauseOwner::Modal, true);
     submit(&mut session);
     let (handle, result) = host
-        .close_widget_window(&mut windows, id, take_submission(&session.mailbox()))
+        .close_widget_window(&mut windows, id, None, take_submission(&session.mailbox()))
         .unwrap();
     assert_eq!(handle, Some(()));
     assert!(result.unwrap().refresh_chrome);
@@ -381,7 +384,10 @@ fn pending_present_failure_and_stale_callbacks_do_not_touch_new_owner() {
     let current = reserve(host, &mut windows);
     assert_ne!(old, current);
     assert!(!host.cancel_window(&mut windows, old));
-    assert!(host.close_widget_window(&mut windows, old, None).is_none());
+    assert!(
+        host.close_widget_window(&mut windows, old, None, None)
+            .is_none()
+    );
     assert!(host.owns_pause(PauseOwner::Settings));
     assert!(windows.complete_open(current, Some(2), ()).is_ok());
     assert_eq!(
@@ -392,7 +398,7 @@ fn pending_present_failure_and_stale_callbacks_do_not_touch_new_owner() {
     assert!(!host.cancel_window(&mut windows, current));
     assert!(host.owns_pause(PauseOwner::Settings));
     assert!(
-        host.close_widget_window(&mut windows, current, None)
+        host.close_widget_window(&mut windows, current, None, None)
             .unwrap()
             .1
             .unwrap()
@@ -447,7 +453,9 @@ fn invalid_draft_cannot_submit_and_cancel_releases_only_settings_pause() {
     assert!(session.screen().message.is_some());
     assert!(!session.mailbox().has_pending());
     assert!(!session.mailbox().close_requested());
-    let (_, result) = host.close_widget_window(&mut windows, id, None).unwrap();
+    let (_, result) = host
+        .close_widget_window(&mut windows, id, None, None)
+        .unwrap();
     assert!(result.is_ok());
     assert_eq!(host.settings_snapshot(), &original);
     assert!(!host.owns_pause(PauseOwner::Settings));

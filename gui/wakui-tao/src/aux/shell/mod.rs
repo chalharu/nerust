@@ -7,7 +7,7 @@ pub(crate) trait AuxShellOps {
     fn request_redraw(&self);
     fn handle_common(&mut self, event: &crate::domain::AuxNativeEvent);
     fn feed_event(&mut self, event: crate::domain::AuxNativeEvent) -> Option<iced::Event>;
-    fn render_tagged(&mut self, tag: &'static str) -> Option<String>;
+    fn render_tagged(&mut self, tag: &str) -> Option<String>;
     fn wake_deadline(&self) -> Option<std::time::Instant> {
         None
     }
@@ -19,4 +19,4 @@ mod pump;
 mod surface;
 
 pub(crate) use presenter::AuxShell;
-pub(crate) use surface::{AuxSurface, aux_settings, aux_theme};
+pub(crate) use surface::AuxSurface;

@@ -17,7 +17,6 @@ pub mod controls;
 pub mod dialog;
 pub mod keyboard;
 
-mod debugger;
 mod gdk_raw;
 mod native;
 mod surface;
@@ -51,26 +50,18 @@ use self::window::{MenubarModels, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
-pub(crate) struct State {
-    pub(crate) host: Box<dyn wakui::app::FrontendApp>,
+pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
+    pub(crate) host: Box<dyn wakui::app::FrontendApp<K>>,
     renderer_reload_pending: bool,
 }
 
-impl State {
-    pub(crate) fn new(boot: Boot) -> Self {
+impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
+    pub(crate) fn new(boot: Boot<K>) -> Self {
         let Boot { app: host } = boot;
         Self {
             host,
             renderer_reload_pending: false,
         }
-    }
-
-    /// Test-only construction over the headless [`testkit`] app.
-    #[cfg(test)]
-    pub(crate) fn new_for_tests() -> Self {
-        Self::new(Boot {
-            app: Box::new(crate::testkit::FakeApp::new()),
-        })
     }
 
     pub(crate) fn swap_frame_buffer(&mut self) {
@@ -113,7 +104,17 @@ impl State {
     }
 }
 
-impl State {
+#[cfg(test)]
+impl State<crate::testkit::TestAux> {
+    /// Test-only construction over the headless [`testkit`] app.
+    pub(crate) fn new_for_tests() -> Self {
+        Self::new(Boot {
+            app: Box::new(crate::testkit::FakeApp::new()),
+        })
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
     pub(crate) fn tick_focus_sync(&mut self) {
         use wakui::focus::FocusEvent;
         let _ = self.host.handle_event(
@@ -123,7 +124,10 @@ impl State {
     }
 }
 
-fn build_window(app: &gtk::Application, state: Rc<RefCell<State>>) -> Window {
+fn build_window<K: Copy + Eq + std::hash::Hash + 'static>(
+    app: &gtk::Application,
+    state: Rc<RefCell<State<K>>>,
+) -> Window<K> {
     let builder = gtk::Builder::from_string(include_str!("../resources/ui.xml"));
     let window: gtk::ApplicationWindow = builder.object("window").unwrap();
     let menubar = MenubarModels::new();
@@ -138,11 +142,11 @@ fn build_window(app: &gtk::Application, state: Rc<RefCell<State>>) -> Window {
     Window::bind(app.clone(), window, picture, state, menubar)
 }
 
-fn ensure_window(
+fn ensure_window<K: Copy + Eq + std::hash::Hash + 'static>(
     app: &gtk::Application,
-    state: &Rc<RefCell<State>>,
-    current_window: &Rc<RefCell<Option<Window>>>,
-) -> Window {
+    state: &Rc<RefCell<State<K>>>,
+    current_window: &Rc<RefCell<Option<Window<K>>>>,
+) -> Window<K> {
     if let Some(window) = current_window.borrow().as_ref().cloned() {
         return window;
     }
@@ -155,12 +159,15 @@ fn ensure_window(
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root;
 /// see `nerust::run`.
-pub fn run(boot: Boot, _rom_path: Option<PathBuf>) -> i32 {
+pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(
+    boot: Boot<K>,
+    _rom_path: Option<PathBuf>,
+) -> i32 {
     run_inner(boot);
     0
 }
 
-fn run_inner(boot: Boot) {
+fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(boot: Boot<K>) {
     let app = gtk::Application::new(
         Some("com.github.chalharu"),
         gio::ApplicationFlags::HANDLES_OPEN,

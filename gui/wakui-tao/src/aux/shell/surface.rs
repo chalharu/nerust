@@ -23,21 +23,6 @@ use tao::platform::macos::WindowBuilderExtMacOS;
 
 use crate::{convert::default_font, event::UserEvent};
 
-/// Light theme for OS light-theme nativeness. Every auxiliary
-/// program shares it (the flagged duplication was five copies).
-pub(crate) fn aux_theme() -> Option<iced::Theme> {
-    Some(iced::Theme::Light)
-}
-
-/// Shared program settings: one default font and text size.
-pub(crate) fn aux_settings() -> iced::Settings {
-    iced::Settings {
-        default_font: default_font(),
-        default_text_size: iced::Pixels(16.0),
-        ..Default::default()
-    }
-}
-
 /// Window creation plus the live window system in one surface.
 /// Programs and UI instances stay per-window in [`UiShell`].
 pub(crate) struct AuxSurface {
@@ -62,7 +47,7 @@ pub(crate) struct AuxSurface {
 /// Why an aux window failed to open: which window plus the native error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ScaffoldError {
-    BuildWindow { tag: &'static str, detail: String },
+    BuildWindow { tag: String, detail: String },
 }
 
 impl core::fmt::Display for ScaffoldError {
@@ -82,7 +67,7 @@ impl AuxSurface {
         size: (f64, f64),
         min_size: Option<(f64, f64)>,
         position: Option<(i32, i32)>,
-        log_tag: &'static str,
+        log_tag: &str,
         should_close: Arc<AtomicBool>,
     ) -> Result<Self, ScaffoldError> {
         let mut builder = WindowBuilder::new()
@@ -103,7 +88,7 @@ impl AuxSurface {
             Err(error) => {
                 log::error!("failed to create {log_tag}: {error}");
                 return Err(ScaffoldError::BuildWindow {
-                    tag: log_tag,
+                    tag: log_tag.to_string(),
                     detail: error.to_string(),
                 });
             }
@@ -253,7 +238,7 @@ impl AuxSurface {
     }
 
     /// Self-healing scale: re-query the live factor and relayout on drift.
-    pub(super) fn heal_scale(&mut self, log_tag: &'static str, relayout: &mut impl FnMut(Size)) {
+    pub(super) fn heal_scale(&mut self, log_tag: &str, relayout: &mut impl FnMut(Size)) {
         let live_scale = self.window.scale_factor() as f32;
         if live_scale != self.scale_factor {
             log::debug!(
@@ -270,7 +255,7 @@ impl AuxSurface {
         &mut self,
         viewport: &Viewport,
         background_color: iced::Color,
-        log_tag: &'static str,
+        log_tag: &str,
     ) -> Option<String> {
         if let Err(error) = self.compositor.present(
             &mut self.backend,
@@ -355,16 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn shared_chrome_helpers_are_stable() {
-        assert!(matches!(aux_theme(), Some(iced::Theme::Light)));
-        let settings = aux_settings();
-        assert_eq!(settings.default_text_size, iced::Pixels(16.0));
-    }
-
-    #[test]
     fn scaffold_error_names_window_and_detail() {
         let error = ScaffoldError::BuildWindow {
-            tag: "history window",
+            tag: "history window".to_string(),
             detail: "no display".to_string(),
         };
         assert_eq!(

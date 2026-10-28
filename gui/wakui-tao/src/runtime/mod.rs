@@ -18,16 +18,16 @@ use crate::event::{TaoEventSink, UserEvent};
 use crate::menu::imp::AppMenu;
 use crate::ports::{NativeDialogs, TaoWindowOpener};
 
-pub(crate) struct WindowRuntime {
+pub(crate) struct WindowRuntime<K: Copy + Eq + std::hash::Hash + 'static> {
     event_loop: Option<EventLoop<UserEvent>>,
     event_sink: Option<Arc<dyn EventSink + Send + Sync>>,
-    host: HostState,
+    host: HostState<K>,
     /// Native target the surface is attached to (`None` = toplevel).
     surface_xid: Option<u64>,
 }
 
-impl WindowRuntime {
-    pub(crate) fn new(boot: Boot) -> Self {
+impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
+    pub(crate) fn new(boot: Boot<K>) -> Self {
         let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
         #[cfg(target_os = "macos")]
         let event_loop = {
@@ -120,21 +120,16 @@ impl WindowRuntime {
             Event::WindowEvent {
                 event, window_id, ..
             } => {
-                if let Some(kind) = self.host.aux_kind_of(window_id) {
+                if let Some(id) = self.host.aux_id_of(window_id) {
                     let opener = TaoWindowOpener::new(event_loop);
-                    self.on_aux_event(kind, event, &opener);
+                    self.on_aux_event(id, event, &opener);
                 }
             }
             Event::RedrawRequested(window_id) if self.host.is_window(window_id) => self.on_update(),
             Event::RedrawRequested(window_id) => {
-                // Debugger redraws also drain; the rest only render.
-                if let Some(kind) = self.host.aux_kind_of(window_id) {
-                    if kind == crate::aux::focus::AuxKind::Debug {
-                        let opener = TaoWindowOpener::new(event_loop);
-                        self.on_debug_redrawn(&opener);
-                    } else {
-                        self.on_aux_redrawn(kind);
-                    }
+                if let Some(id) = self.host.aux_id_of(window_id) {
+                    let opener = TaoWindowOpener::new(event_loop);
+                    self.on_aux_redrawn(id, &opener);
                 }
             }
             Event::MainEventsCleared => self.host.update_control_flow(control_flow),
@@ -233,13 +228,13 @@ impl WindowRuntime {
     }
 }
 
-impl Drop for WindowRuntime {
+impl<K: Copy + Eq + std::hash::Hash + 'static> Drop for WindowRuntime<K> {
     fn drop(&mut self) {
         self.host.core.viewport_drop();
     }
 }
 
-impl WindowRuntime {
+impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
     /// Ordered exit teardown: the surface dies before the native owner it
     /// borrows, on every close path. Idempotent via `prepare_close`.
     fn begin_close(&mut self) {

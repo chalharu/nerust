@@ -6,7 +6,7 @@
 //! snapshots, the handler produces native elements.
 
 use wakui::control::ControlScreen;
-use wakui::{focus::AuxKind, window::Window};
+use wakui::window::Window;
 
 pub trait WidgetBinding {
     type State;
@@ -14,7 +14,6 @@ pub trait WidgetBinding {
     type Theme: iced::theme::Base;
     type Renderer: iced_winit::program::Renderer;
     type Executor: iced::Executor;
-    fn kind(&self) -> AuxKind;
 
     fn settings(&self) -> iced::Settings;
     fn boot(&self) -> (Self::State, iced::Task<Self::Message>);
