@@ -136,14 +136,23 @@ impl ApplicationHost {
 
     /// New debug bridge with the session language baked in. Frontends
     /// supply spaces and the anchor; the language never crosses the boundary.
-    pub fn new_debug_bridge(
-        &self,
-        display: nerust_gui_viewmodel::debugger::DisplayCache,
-        spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)>,
-        mem_addr: u32,
-    ) -> crate::debugger::DebugBridge {
+    /// New debug bridge with session inputs baked in: spaces and the anchor
+    /// come from the live session, the display starts empty, and the language
+    /// comes from the snapshot. Frontends name no view-data types to open one.
+    /// Mirrors `DebuggerModel::from_session` for the split-lock bridge.
+    pub fn new_debug_bridge(&self) -> crate::debugger::DebugBridge {
+        let spaces: Vec<_> = self
+            .session
+            .debug_spaces()
+            .iter()
+            .map(|info| (info.id, info.name.to_string(), *info.range.start()))
+            .collect();
+        if spaces.is_empty() {
+            log::warn!("debugger: no spaces (no core)");
+        }
+        let mem_addr = spaces.first().map(|(_, _, start)| *start).unwrap_or(0);
         crate::debugger::DebugBridge::new(
-            display,
+            Default::default(),
             spaces,
             mem_addr,
             self.settings_snapshot().shared.general.language,

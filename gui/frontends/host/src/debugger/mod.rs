@@ -10,16 +10,6 @@ pub use bridge::{
 pub use driver::{DebuggerDriver, DebuggerEffects, DebuggerLiveEffects};
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 
-/// View-data vocabulary re-exported so native binders name only the host:
-/// row/space types come from the core debugger model, display/formatters
-/// from the debugger ViewModel. The host is the single policy owner for
-/// both; frontends must not depend on those crates directly.
-pub use nerust_core_traits::debugger::{DebugPanel, DisasmLine, HexRow, SpaceId};
-pub use nerust_gui_viewmodel::debugger::{
-    DebugImageRgba, DisplayCache, PendingWrite, StatusMessage, disasm_marker, format_disasm_line,
-    format_panels, format_register, panels_visible, scale2x_nearest,
-};
-
 use nerust_gui_shell::debug::DebugAction;
 
 /// Native adapters translate gestures into these intents, never emulator calls.

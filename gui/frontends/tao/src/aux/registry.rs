@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use nerust_core_traits::debugger::SpaceId;
 use nerust_frontend_host::aux::AuxWindows;
 #[cfg(test)]
 use nerust_frontend_host::aux::OpenRequest;
@@ -347,17 +346,6 @@ impl AuxRegistry {
     }
 }
 
-/// Debug spaces for viewer creation: ids plus ranges.
-pub(crate) fn debug_spaces(
-    session: &nerust_gui_shell::session::SessionHandle,
-) -> Vec<(SpaceId, String, u32)> {
-    session
-        .debug_spaces()
-        .into_iter()
-        .map(|info| (info.id, info.name.to_string(), *info.range.start()))
-        .collect()
-}
-
 #[cfg(test)]
 pub(crate) mod test_double {
     use std::cell::Cell;
@@ -502,6 +490,7 @@ pub(crate) mod test_double {
 mod tests {
     use super::test_double::StubAux;
     use super::*;
+    use nerust_core_traits::debugger::SpaceId;
 
     #[test]
     fn reserved_window_snapshot_allows_reentry_and_stale_ids_cannot_touch_reopen() {
