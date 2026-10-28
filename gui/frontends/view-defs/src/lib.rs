@@ -9,7 +9,11 @@
 
 pub mod commands;
 pub mod debugger;
+pub mod focus;
 pub mod history;
 pub mod menu;
 pub mod settings;
 pub mod sync;
+pub mod widget_session;
+pub mod widgets;
+pub mod window;
