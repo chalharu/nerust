@@ -25,14 +25,14 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
-use nerust_frontend_host::bootstrap::{Boot, RomLoaderSlot};
+use nerust_frontend_viewdefs::bootstrap::{Boot, RomLoaderSlot};
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State {
-    pub(crate) host: nerust_frontend_host::application::ApplicationHost,
+    pub(crate) host: nerust_frontend_viewdefs::application::ApplicationHost,
     loader: RomLoaderSlot,
     renderer_reload_pending: bool,
 }
@@ -59,9 +59,9 @@ impl State {
             std::process::id(),
             TEST_SETTINGS_SEQ.fetch_add(1, Ordering::SeqCst)
         ));
-        let boot = nerust_frontend_host::bootstrap::boot(
+        let boot = nerust_frontend_viewdefs::bootstrap::boot(
             ctx,
-            nerust_frontend_host::bootstrap::backend_capabilities(false, None),
+            nerust_frontend_viewdefs::bootstrap::backend_capabilities(false, None),
             Some(dir),
         )
         .map_err(|_| nerust_gui_shell::session::SessionError::NoCore)?;
@@ -112,10 +112,8 @@ impl State {
 
 impl State {
     pub(crate) fn tick_focus_sync(&mut self) {
-        use nerust_frontend_host::{
-            event::{EventCommand, EventHandler},
-            focus::FocusEvent,
-        };
+        use nerust_frontend_host::focus::FocusEvent;
+        use nerust_frontend_viewdefs::event::{EventCommand, EventHandler};
         let handler: &mut dyn EventHandler = &mut self.host;
         let _ = handler.handle_event(EventCommand::Focus(FocusEvent::BurstEnd), false);
     }
@@ -217,10 +215,10 @@ fn run_inner(boot: Boot) {
 mod tests {
     use super::*;
     use nerust_frontend_host::{
-        application::MenuSig,
-        menu::{MenuId, MenuModel},
+        menu::MenuId,
         widgets::MenuPresenter,
     };
+    use nerust_frontend_viewdefs::application::MenuSig;
     use nerust_settings_core::model::{
         input::{ShortcutAction, ShortcutBinding, default_shortcut_bindings},
         language::AppLanguage,
@@ -246,7 +244,7 @@ mod tests {
         use gio::glib::object::Cast;
         let bars = MenubarModels::new();
         let sig = menu_signature(language, shortcuts);
-        MenuModel::build(&sig, GTK_MENU_CAPABILITIES)
+        nerust_frontend_viewdefs::menu::build_menubar(&sig, GTK_MENU_CAPABILITIES)
             .visit(None, &mut GtkMenuVisitor::new(bars.clone()));
         let mut labels = Vec::new();
         collect_labels(bars.menu_model.upcast_ref::<gio::MenuModel>(), &mut labels);
@@ -292,7 +290,10 @@ mod tests {
         let presenter = MenuPresenter::default();
         let mut visitor = GtkMenuVisitor::new(bars.clone());
         let plan = presenter
-            .submit(MenuModel::build(&sig, GTK_MENU_CAPABILITIES))
+            .submit(nerust_frontend_viewdefs::menu::build_menubar(
+                &sig,
+                GTK_MENU_CAPABILITIES,
+            ))
             .unwrap();
         plan.visit(&mut visitor);
         assert!(presenter.complete(plan).is_none());
@@ -365,7 +366,10 @@ mod tests {
         // Same objects, new language: the runtime path calls no set_menubar.
         sig.language = AppLanguage::Japanese;
         let plan = presenter
-            .submit(MenuModel::build(&sig, GTK_MENU_CAPABILITIES))
+            .submit(nerust_frontend_viewdefs::menu::build_menubar(
+                &sig,
+                GTK_MENU_CAPABILITIES,
+            ))
             .unwrap();
         plan.visit(&mut visitor);
         assert!(presenter.complete(plan).is_none());

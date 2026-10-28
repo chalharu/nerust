@@ -5,11 +5,11 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
-use nerust_frontend_host::debugger::{
-    DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope, pin_marker,
-};
 use nerust_frontend_host::focus::AuxKind;
 use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
+use nerust_frontend_viewdefs::debugger::{
+    DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope, pin_marker,
+};
 
 use super::State;
 
@@ -1282,7 +1282,7 @@ impl DebuggerWindowCore {
     fn fill_reg_list(
         win: &DebuggerWindow,
         list: &gtk::ListBox,
-        regs: &[nerust_frontend_host::debugger::RegRow],
+        regs: &[nerust_frontend_viewdefs::debugger::RegRow],
         target: Option<&'static str>,
     ) {
         clear_list(list);
@@ -1455,7 +1455,7 @@ mod tests {
         }
     }
 
-    use nerust_frontend_host::viewport::testkit::NullFactory;
+    use nerust_frontend_viewdefs::viewport::testkit::NullFactory;
 
     #[derive(Debug)]
     struct MockRomLoader;

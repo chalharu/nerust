@@ -55,7 +55,7 @@ fn command_item(model: &MenuModel, command: MenuCommand) -> &MenuItem {
 
 #[test]
 fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
-    let model = MenuModel::build(&sig(), CAPABILITIES);
+    let model = build_menubar(&sig(), CAPABILITIES);
     assert_eq!(
         model.menus.iter().map(|menu| menu.id).collect::<Vec<_>>(),
         [MenuId::File, MenuId::Emulation, MenuId::Help]
@@ -91,7 +91,7 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
             text(AppLanguage::English, UiText::NoSaveSlots)
         );
     }
-    let tao = MenuModel::build(
+    let tao = build_menubar(
         &sig(),
         MenuCapabilities {
             about: false,
@@ -109,7 +109,7 @@ fn translation_shortcut_and_slot_labels_have_typed_commands() {
     sig.loaded = true;
     sig.slots = vec![slot(42)].into();
     sig.active_slot = Some(42);
-    let model = MenuModel::build(&sig, CAPABILITIES);
+    let model = build_menubar(&sig, CAPABILITIES);
     assert_eq!(
         command_item(&model, MenuCommand::Debugger).label,
         "Open Debugger (F4)"
@@ -138,7 +138,7 @@ fn translation_shortcut_and_slot_labels_have_typed_commands() {
         key: None,
     }]
     .into();
-    let japanese = MenuModel::build(&sig, CAPABILITIES);
+    let japanese = build_menubar(&sig, CAPABILITIES);
     assert_eq!(japanese.menus[0].label, "ファイル");
     assert_eq!(
         command_item(&japanese, MenuCommand::Debugger).label,
@@ -151,7 +151,7 @@ fn coreless_debugger_history_and_settings_guard_including_quit() {
     let mut sig = sig();
     sig.slots = vec![slot(1)].into();
     sig.active_slot = Some(1);
-    let model = MenuModel::build(&sig, CAPABILITIES);
+    let model = build_menubar(&sig, CAPABILITIES);
     for item in model.menus.iter().flat_map(items) {
         assert_eq!(
             item.enabled,
@@ -169,7 +169,7 @@ fn coreless_debugger_history_and_settings_guard_including_quit() {
     }
     sig.loaded = true;
     sig.settings_open = true;
-    let model = MenuModel::build(&sig, CAPABILITIES);
+    let model = build_menubar(&sig, CAPABILITIES);
     for item in model.menus.iter().flat_map(items) {
         assert_eq!(
             item.enabled,
@@ -183,7 +183,7 @@ fn coreless_debugger_history_and_settings_guard_including_quit() {
 fn pause_and_active_slot_gates_preserve_save_without_existing_slot() {
     let mut sig = sig();
     sig.loaded = true;
-    let model = MenuModel::build(&sig, CAPABILITIES);
+    let model = build_menubar(&sig, CAPABILITIES);
     assert!(command_item(&model, MenuCommand::Session(SessionCommand::Pause)).enabled);
     assert!(!command_item(&model, MenuCommand::Session(SessionCommand::Resume)).enabled);
     assert!(
@@ -197,7 +197,7 @@ fn pause_and_active_slot_gates_preserve_save_without_existing_slot() {
     sig.paused = true;
     sig.active_slot = Some(1);
     sig.slots = vec![slot(1)].into();
-    let model = MenuModel::build(&sig, CAPABILITIES);
+    let model = build_menubar(&sig, CAPABILITIES);
     assert!(!command_item(&model, MenuCommand::Session(SessionCommand::Pause)).enabled);
     assert!(command_item(&model, MenuCommand::Session(SessionCommand::Resume)).enabled);
     assert!(command_item(&model, MenuCommand::Session(SessionCommand::LoadActiveSlot)).enabled);
@@ -252,7 +252,7 @@ impl CommandVisitor for Recorder {
 #[test]
 fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     let mut sig = sig();
-    let first = MenuModel::build(&sig, CAPABILITIES);
+    let first = build_menubar(&sig, CAPABILITIES);
     let mut record = Recorder::default();
     first.visit(None, &mut record);
     assert_eq!(record.declarations.len(), first.commands.definitions.len());
@@ -273,13 +273,13 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     assert!(record.root_rebuild);
     sig.loaded = true;
     sig.settings_open = true;
-    let next = MenuModel::build(&sig, CAPABILITIES);
+    let next = build_menubar(&sig, CAPABILITIES);
     let mut record = Recorder::default();
     next.visit(Some(&first), &mut record);
     assert!(record.rebuilds.is_empty());
     assert!(!record.root_rebuild);
     sig.slots = vec![slot(1)].into();
-    let slots = MenuModel::build(&sig, CAPABILITIES);
+    let slots = build_menubar(&sig, CAPABILITIES);
     let mut record = Recorder::default();
     slots.visit(Some(&next), &mut record);
     assert_eq!(
@@ -293,11 +293,11 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     );
     assert!(!record.root_rebuild);
     sig.slots = sig.slots.to_vec().into();
-    let reallocated = MenuModel::build(&sig, CAPABILITIES);
+    let reallocated = build_menubar(&sig, CAPABILITIES);
     assert_eq!(reallocated, slots);
     sig.shortcuts = Vec::new().into();
     let mut record = Recorder::default();
-    MenuModel::build(&sig, CAPABILITIES).visit(Some(&slots), &mut record);
+    build_menubar(&sig, CAPABILITIES).visit(Some(&slots), &mut record);
     assert_eq!(record.rebuilds, [MenuId::Emulation, MenuId::States]);
     assert!(!record.root_rebuild);
 }
@@ -306,9 +306,9 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
 fn application_menu_is_host_owned_and_part_of_root_diff_through_dyn_visitor() {
     use NativeApplicationEntry::{Role, Separator};
     use NativeApplicationRole as R;
-    let first = Menubar::build(&sig(), CAPABILITIES);
+    let first = build_menubar(&sig(), CAPABILITIES);
     assert!(first.application_menu.is_none());
-    let next = Menubar::build(
+    let next = build_menubar(
         &sig(),
         MenuCapabilities {
             application_menu: true,

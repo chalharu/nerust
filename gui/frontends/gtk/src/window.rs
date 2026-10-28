@@ -19,13 +19,15 @@ use gtk::{
 use nerust_frontend_host::{
     aux::{AuxId, AuxWindows, OpenRequest},
     commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
-    event::{CommandEffect, EventCommand, EventHandler, EventSink},
     focus::{AuxKind, FocusEvent},
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
-    session::SessionEvent,
-    widget_session::WidgetSession,
     widgets::MenuPresenter,
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
+};
+use nerust_frontend_viewdefs::{
+    event::{CommandEffect, EventCommand, EventHandler, EventSink},
+    session::SessionEvent,
+    widget_session::WidgetSession,
 };
 
 /// Bound once via `set_menubar`; host IDs retain the same native submenus
@@ -1108,7 +1110,7 @@ pub(crate) mod tests {
         CommandId, GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenuId, MenubarModels,
         WindowExtend, key_event_pressed,
     };
-    use nerust_frontend_host::{application::MenuSig, menu::MenuModel};
+    use nerust_frontend_viewdefs::application::MenuSig;
 
     use crate::surface_state::surface_gone;
 
@@ -1345,7 +1347,7 @@ pub(crate) mod tests {
             Vec::new(),
             0,
             None,
-            nerust_frontend_host::debugger::PpuChrome::new(
+            nerust_frontend_viewdefs::debugger::PpuChrome::new(
                 nerust_settings_core::model::language::AppLanguage::English,
             ),
         )
@@ -1396,7 +1398,7 @@ pub(crate) mod tests {
                 Vec::new(),
                 0,
                 None,
-                nerust_frontend_host::debugger::PpuChrome::new(
+                nerust_frontend_viewdefs::debugger::PpuChrome::new(
                     nerust_settings_core::model::language::AppLanguage::English
                 ),
             )
@@ -2034,7 +2036,7 @@ pub(crate) mod tests {
         ))
     }
 
-    use nerust_frontend_host::viewport::testkit::NullFactory;
+    use nerust_frontend_viewdefs::viewport::testkit::NullFactory;
 
     #[derive(Debug)]
     struct MockRomLoader;
@@ -2359,7 +2361,7 @@ pub(crate) mod tests {
             shortcuts: Vec::new().into(),
         };
         let bars = MenubarModels::new();
-        let model = MenuModel::build(&sig, GTK_MENU_CAPABILITIES);
+        let model = nerust_frontend_viewdefs::menu::build_menubar(&sig, GTK_MENU_CAPABILITIES);
         let mut visitor = GtkMenuVisitor::new(bars.clone());
         model.visit(None, &mut visitor);
         for descriptor in &model.commands.definitions {
@@ -2417,7 +2419,7 @@ pub(crate) mod tests {
             shortcuts: Vec::new().into(),
         };
         let bars = MenubarModels::new();
-        let mut model = MenuModel::build(&sig, GTK_MENU_CAPABILITIES);
+        let mut model = nerust_frontend_viewdefs::menu::build_menubar(&sig, GTK_MENU_CAPABILITIES);
         fn disable_items(menu: &mut super::Submenu) {
             use nerust_frontend_host::menu::MenuEntry;
             for entry in &mut menu.children {

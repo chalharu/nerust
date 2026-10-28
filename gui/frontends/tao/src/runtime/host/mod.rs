@@ -1,6 +1,6 @@
 #[cfg(test)]
-use nerust_frontend_host::bootstrap::{backend_capabilities, boot};
-use nerust_frontend_host::{
+use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
+use nerust_frontend_viewdefs::{
     application::ApplicationHost,
     bootstrap::{Boot, RomLoaderSlot},
 };
@@ -346,9 +346,9 @@ mod tests {
         use crate::{test_menu::MenuRecorderHandle, test_session::TestContext};
         let support = TestContext::with_loader(crate::test_session::FakeRomLoader::succeeding());
         let root = support.settings_root();
-        let boot = nerust_frontend_host::bootstrap::boot(
+        let boot = nerust_frontend_viewdefs::bootstrap::boot(
             support.ctx,
-            nerust_frontend_host::bootstrap::backend_capabilities(true, Some(true)),
+            nerust_frontend_viewdefs::bootstrap::backend_capabilities(true, Some(true)),
             Some(root),
         )
         .expect("boot on temp settings paths");

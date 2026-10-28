@@ -58,7 +58,7 @@ fn osd_new_and_invalidate_are_headless() {
     }
     let state = crate::window::tests::model_state();
     let ctx =
-        nerust_frontend_host::frame::FrameCache::new().frame_ctx(state.borrow().host.session());
+        nerust_frontend_viewdefs::frame::FrameCache::new().frame_ctx(state.borrow().host.session());
     let mut sink = Sink::default();
     let size = nerust_render_traits::SurfaceSize::new(320, 240);
     let now = std::time::Instant::now();

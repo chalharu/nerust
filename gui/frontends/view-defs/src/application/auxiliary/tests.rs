@@ -1,5 +1,6 @@
 use super::*;
 use crate::application::tests::Fixture;
+use crate::widget_session::take_submission;
 use crate::{widget_session::WidgetSession, window::WidgetContents};
 use nerust_gui_shell::registry::SystemRegistry;
 use wakui::control::{
@@ -87,7 +88,7 @@ fn opaque_submission_returns_real_effects_and_clones_cannot_consume_future_draft
     submit(&mut session);
     let mailbox = windows.mailbox(id).unwrap();
     assert!(mailbox.close_requested());
-    let submission = mailbox.take_submission().unwrap();
+    let submission = take_submission(&mailbox).unwrap();
     let duplicate = submission.clone();
     let effects = host
         .apply_window_submission(&windows, id, submission)
@@ -124,7 +125,7 @@ fn opaque_submission_returns_real_effects_and_clones_cannot_consume_future_draft
         "old clone must not steal next submission"
     );
     let (handle, result) = host
-        .close_widget_window(&mut windows, id, mailbox.take_submission())
+        .close_widget_window(&mut windows, id, take_submission(&mailbox))
         .unwrap();
     assert_eq!(handle, Some(()));
     assert!(result.is_ok());
@@ -153,7 +154,7 @@ fn save_failure_rolls_back_but_preserves_window_draft_and_pause_for_retry() {
     volume(&mut session, 26);
     submit(&mut session);
     let mailbox = session.mailbox();
-    let pending = mailbox.take_submission().unwrap();
+    let pending = take_submission(&mailbox).unwrap();
     assert!(host.apply_window_submission(&windows, id, pending).is_err());
     assert_eq!(host.settings_snapshot(), &original);
     assert!(windows.contains(AuxKind::Settings));
@@ -172,7 +173,7 @@ fn save_failure_rolls_back_but_preserves_window_draft_and_pause_for_retry() {
     )));
     std::fs::remove_dir(&path).unwrap();
     submit(&mut session);
-    let pending = mailbox.take_submission().unwrap();
+    let pending = take_submission(&mailbox).unwrap();
     assert!(
         host.apply_window_submission(&windows, id, pending)
             .unwrap()
@@ -222,7 +223,7 @@ fn generic_history_filter_clear_close_mutate_real_session_and_publish_rows() {
     );
     let mailbox = windows.mailbox(id).unwrap();
     let effects = host
-        .apply_window_submission(&windows, id, mailbox.take_submission().unwrap())
+        .apply_window_submission(&windows, id, take_submission(&mailbox).unwrap())
         .unwrap();
     assert!(effects.redraw);
     assert_eq!(host.session().notification_history().count(), 0);
@@ -258,7 +259,7 @@ fn generation_and_mailbox_identity_guard_native_close_and_stale_submission() {
     let (old, mut old_session) = prepare(host, &mut windows, AuxKind::Settings);
     volume(&mut old_session, 12);
     submit(&mut old_session);
-    let stale = old_session.mailbox().take_submission().unwrap();
+    let stale = take_submission(&old_session.mailbox()).unwrap();
     assert!(host.close_widget_window(&mut windows, old, None).is_some());
     let (current, _) = prepare(host, &mut windows, AuxKind::Settings);
     assert_ne!(old, current);
@@ -310,7 +311,7 @@ fn close_before_apply_failure_releases_only_settings_and_retires_generation() {
     assert!(host.owns_pause(PauseOwner::Focus));
     volume(&mut session, 13);
     submit(&mut session);
-    let pending = session.mailbox().take_submission().unwrap();
+    let pending = take_submission(&session.mailbox()).unwrap();
     let duplicate = pending.clone();
     let (handle, result) = host
         .close_widget_window(&mut windows, id, Some(pending))
@@ -355,7 +356,7 @@ fn shared_success_applies_before_release_and_preserves_modal_owner() {
     host.set_pause_owner(PauseOwner::Modal, true);
     submit(&mut session);
     let (handle, result) = host
-        .close_widget_window(&mut windows, id, session.mailbox().take_submission())
+        .close_widget_window(&mut windows, id, take_submission(&session.mailbox()))
         .unwrap();
     assert_eq!(handle, Some(()));
     assert!(result.unwrap().refresh_chrome);

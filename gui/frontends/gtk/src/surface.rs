@@ -5,7 +5,7 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use nerust_frontend_host::{
+use nerust_frontend_viewdefs::{
     frame::{FrameCache, FrameCtx},
     osd::{ModalPresentation, OsdUpdate},
 };

@@ -1,14 +1,14 @@
 //! Session presentation sync: menu, title, and fullscreen state.
 use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
-use nerust_frontend_host::frame::FrameCtx;
+use nerust_frontend_viewdefs::frame::FrameCtx;
 use std::time::Instant;
 
 use nerust_frontend_host::{
-    application::{MenuSig, MenubarUpdate},
     menu::Menubar,
     window::{Window, WindowVisitor},
 };
+use nerust_frontend_viewdefs::application::{MenuSig, MenubarUpdate};
 
 struct MainPresentation<'a> {
     native: Option<&'a tao::window::Window>,

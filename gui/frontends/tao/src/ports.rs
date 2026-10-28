@@ -8,10 +8,8 @@ use tao::{
     window::{Window as TaoWindow, WindowBuilder},
 };
 
-use nerust_frontend_host::{
-    widget_session::WidgetSession,
-    window::{DebugContents, PpuContents, Window, WindowVisitor},
-};
+use nerust_frontend_host::window::{DebugContents, PpuContents, Window, WindowVisitor};
+use nerust_frontend_viewdefs::widget_session::WidgetSession;
 use rfd::FileDialog;
 use wakui::control::ControlScreen;
 

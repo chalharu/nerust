@@ -1,11 +1,11 @@
 //! Stateful debug transport. UI ports receive results, never individual queue transitions.
 
 use crate::{
-    debug_schedule::DebugSchedule,
     debugger::{AppliedDrain, AppliedLive, DrainSnapshot},
     drain::{DrainEvent, DrainQueue, poll_flight, prepare_pause_actions},
     session::SessionEvent,
 };
+use nerust_frontend_host::debug_schedule::DebugSchedule;
 use nerust_gui_shell::{
     debug::{DebugAction, DebugDrainInput, LiveImagesFlight},
     session::{SessionHandle, commands::SessionCommand},

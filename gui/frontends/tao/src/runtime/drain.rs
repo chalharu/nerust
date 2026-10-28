@@ -1,9 +1,9 @@
 //! Debugger and live-follow orchestration for `HostState`.
 //! Drains, flights, aux-window management, and live PPU follow.
 
-use nerust_frontend_host::application::DebugView;
 use nerust_frontend_host::aux::OpenRequest;
-use nerust_frontend_host::debugger::{AppliedDrain, AppliedLive};
+use nerust_frontend_viewdefs::application::DebugView;
+use nerust_frontend_viewdefs::debugger::{AppliedDrain, AppliedLive};
 
 use super::host::{HostState, WakeNeed};
 use crate::aux::focus::AuxKind;
@@ -158,7 +158,7 @@ impl HostState {
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; no redraw.
-    pub(crate) fn sync_debug_chrome(&mut self, ctx: &nerust_frontend_host::frame::FrameCtx) {
+    pub(crate) fn sync_debug_chrome(&mut self, ctx: &nerust_frontend_viewdefs::frame::FrameCtx) {
         self.sync_chrome(ctx, false);
         if self.core.chrome_drain_due(self.is_debug_open()) {
             self.refresh_open_debugger();
@@ -510,7 +510,7 @@ mod tests {
     fn live_images_without_payload_stay_total() {
         let support = TestHost::new();
         let mut host = support.host;
-        use nerust_frontend_host::application::DebugView;
+        use nerust_frontend_viewdefs::application::DebugView;
         let mut view = super::NativeDebugView {
             aux: &mut host.aux,
             applied: false,

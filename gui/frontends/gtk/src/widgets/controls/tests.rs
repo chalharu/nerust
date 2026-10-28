@@ -32,7 +32,7 @@ impl Harness {
             let _ = std::fs::create_dir_all(root.join("storage"));
             *state.borrow_mut().host.session_mut() =
                 nerust_gui_shell::session::SessionHandle::new_with_settings_paths(
-                    nerust_frontend_host::bootstrap::backend_capabilities(false, None),
+                    nerust_frontend_viewdefs::bootstrap::backend_capabilities(false, None),
                     std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
                         nerust_nes_factory::NesFactory::boxed().into(),
                     ])),
@@ -1016,7 +1016,7 @@ fn history_dialog_shows_new_sorted_rows_and_retains_existing_rows() {
             text.clone()
         })
         .collect();
-    let model = nerust_frontend_host::history::HistoryModel::build(
+    let model = nerust_frontend_viewdefs::history::HistoryModel::build(
         state
             .borrow_mut()
             .host

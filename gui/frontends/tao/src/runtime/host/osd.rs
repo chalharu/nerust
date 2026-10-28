@@ -2,8 +2,8 @@
 
 use std::time::Instant;
 
-use nerust_frontend_host::{
-    aux::OpenRequest,
+use nerust_frontend_host::aux::OpenRequest;
+use nerust_frontend_viewdefs::{
     frame::{FrameCtx, FrameSnapshot},
     osd::{ModalPresentation, ModalPresenter},
 };
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn close_retires_owned_modal_receiver_queue_and_layer() {
-        use nerust_frontend_host::osd::ModalAdvance;
+        use nerust_frontend_viewdefs::osd::ModalAdvance;
         use wakui::pause::PauseOwner;
         let mut host = TestHost::new().host;
         host.set_pause_owner(PauseOwner::Settings, true);

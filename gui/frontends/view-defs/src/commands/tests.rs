@@ -51,7 +51,7 @@ fn every_command_round_trips_with_unique_stable_declarations() {
         ]
         .map(MenuCommand::Session),
     );
-    let model = CommandModel::build(&signature());
+    let model = build_command_model(&signature());
     assert_eq!(commands.len(), model.definitions.len());
     let mut names = std::collections::HashSet::new();
     let mut ids = std::collections::HashSet::new();
@@ -61,7 +61,7 @@ fn every_command_round_trips_with_unique_stable_declarations() {
         assert!(ids.insert(id));
         let descriptor = model.get(id).unwrap();
         assert_eq!(descriptor.bind(arg), Some(command));
-        assert_eq!(descriptor.enabled, command.enabled(&signature()));
+        assert_eq!(descriptor.enabled, command_enabled(command, &signature()));
         assert!(
             descriptor
                 .bind(if arg.is_some() { None } else { Some(42) })
@@ -123,7 +123,10 @@ fn declarations_gate_slot_parameters_but_direct_commands_validate_the_slot() {
         CommandId::LoadSlot,
         CommandId::DeleteSlot,
     ];
-    assert!(!MenuCommand::Session(SessionCommand::SaveSlot(99)).enabled(&sig));
+    assert!(!command_enabled(
+        MenuCommand::Session(SessionCommand::SaveSlot(99)),
+        &sig
+    ));
     for (loaded, settings_open, nonempty) in [
         (true, false, true),
         (true, false, false),
@@ -137,7 +140,7 @@ fn declarations_gate_slot_parameters_but_direct_commands_validate_the_slot() {
         } else {
             Vec::new().into()
         };
-        let model = CommandModel::build(&sig);
+        let model = build_command_model(&sig);
         for descriptor in &model.definitions {
             if slots.contains(&descriptor.id) {
                 assert_eq!(descriptor.enabled, loaded && !settings_open && nonempty);
@@ -157,7 +160,7 @@ fn command_visitor_is_object_safe() {
             self.0 += 1;
         }
     }
-    let model = CommandModel::build(&signature());
+    let model = build_command_model(&signature());
     let mut count = Count(0);
     let visitor: &mut dyn CommandVisitor = &mut count;
     model.visit(visitor);

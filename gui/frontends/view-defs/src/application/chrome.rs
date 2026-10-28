@@ -3,7 +3,7 @@
 use crate::frame::FrameCtx;
 use std::sync::Arc;
 
-pub use nerust_frontend_viewdefs::menu::{DialogTitles, MenuSig};
+use crate::menu::MenuSig;
 
 #[derive(Default)]
 pub(super) struct ChromeSync {

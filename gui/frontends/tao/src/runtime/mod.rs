@@ -2,7 +2,7 @@ mod dispatch;
 mod drain;
 pub(crate) mod host;
 
-use nerust_frontend_host::{bootstrap::Boot, event::EventSink, viewport::ViewportPresent};
+use nerust_frontend_viewdefs::{bootstrap::Boot, event::EventSink, viewport::ViewportPresent};
 use raw_window_handle::HasDisplayHandle;
 use std::{path::Path, sync::Arc};
 #[cfg(target_os = "macos")]

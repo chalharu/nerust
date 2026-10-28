@@ -8,10 +8,9 @@ use wakui::control::{
 use nerust_frontend_host::{
     aux::{AuxWindows, OpenRequest},
     focus::AuxKind,
-    settings::SettingsController,
-    widget_session::WidgetSession,
     window::*,
 };
+use nerust_frontend_viewdefs::{settings::SettingsController, widget_session::WidgetSession};
 
 fn session() -> WidgetSession {
     WidgetSession::from_settings(SettingsController::new(

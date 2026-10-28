@@ -6,14 +6,14 @@ use std::hash::Hash;
 use nerust_gui_shell::session::SessionError;
 
 use super::ApplicationHost;
+use crate::settings::{SettingsController, find_duplicate_system_id};
 use crate::{
-    aux::{AuxId, AuxWindows, OpenRequest},
     focus::AuxKind,
     session::SessionEvent,
     widget_session::{Pending, WidgetSession, WindowSubmission},
     window::WindowEffects,
 };
-use nerust_frontend_viewdefs::settings::{SettingsController, find_duplicate_system_id};
+use nerust_frontend_host::aux::{AuxId, AuxWindows, OpenRequest};
 
 pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>);
 

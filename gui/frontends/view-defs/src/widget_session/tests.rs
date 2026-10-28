@@ -103,7 +103,7 @@ fn both_domains_use_the_same_real_scene_interpreter_and_input() {
     send(&mut history, clear, ControlInput::Activate);
     assert!(history.mailbox().has_pending());
     assert!(matches!(
-        history.mailbox().take_submission().unwrap().take(),
+        take_submission(&history.mailbox()).unwrap().take(),
         Some(Pending::ClearHistory)
     ));
     let close = history.scene.borrow_mut().history_close();

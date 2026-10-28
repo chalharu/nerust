@@ -8,7 +8,7 @@ use iced::{
     },
     keyboard::{self, key},
 };
-use nerust_frontend_host::widget_session::WidgetSession;
+use nerust_frontend_viewdefs::widget_session::WidgetSession;
 use nerust_settings_core::{
     i18n::{UiText, text as caption},
     model::language::AppLanguage,
