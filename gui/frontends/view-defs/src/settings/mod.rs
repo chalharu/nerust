@@ -38,7 +38,7 @@ use nerust_system_traits::factory::{
 };
 use wakui::Key;
 
-use crate::sync::lock_recovered;
+use wakui::sync::lock_recovered;
 
 mod screen;
 pub use screen::*;

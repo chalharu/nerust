@@ -9,9 +9,10 @@ mod osd;
 mod tests;
 mod window;
 
-pub use crate::menu::{DialogTitles, MenuSig};
+pub use crate::menu::MenuSig;
 pub use auxiliary::WidgetWindowClose;
 use debug::DebugRuntime;
+pub use wakui::menu::DialogTitles;
 pub use window::MainState;
 
 use std::{path::Path, time::Instant};
@@ -29,13 +30,15 @@ use nerust_gui_viewmodel::debugger::tile_hover_text;
 use wakui::pause::{PauseOwner, PausePolicy};
 use wakui::retry::RenderRetry;
 
+use wakui::focus::{FocusCoordinator, FocusEffect, FocusEvent};
+use wakui::menu::{MenuCapabilities, Menubar};
+use wakui::session::{SessionEvent, SessionOutcome};
+use wakui::window::Window;
+
 use crate::{
     debugger::BridgeLock,
-    focus::{FocusCoordinator, FocusEffect, FocusEvent},
     frame::{FrameCache, FrameCtx},
-    menu::{MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalToken, OsdNotifications},
-    session::SessionEvent,
 };
 
 /// One session and one source of truth for its application-level policies.
@@ -57,7 +60,7 @@ pub struct ApplicationHost {
     osd: osd::OsdRuntime,
     chrome: chrome::ChromeSync,
     menubar_chrome: chrome::ChromeSync,
-    main_window: crate::window::Window,
+    main_window: Window,
     menu_capabilities: Option<MenuCapabilities>,
     fullscreen: window::FullscreenSync,
     pub(crate) viewport: crate::viewport::RenderDriver,
@@ -83,7 +86,7 @@ impl ApplicationHost {
             osd: Default::default(),
             chrome: Default::default(),
             menubar_chrome: Default::default(),
-            main_window: crate::window::Window::main(),
+            main_window: Window::main(),
             menu_capabilities: None,
             fullscreen: Default::default(),
             viewport: crate::viewport::RenderDriver::new(),
@@ -120,16 +123,16 @@ impl ApplicationHost {
 
     pub fn dispatch(
         &mut self,
-        event: crate::session::SessionEvent,
-    ) -> Result<crate::session::SessionOutcome, crate::session::SessionError> {
+        event: SessionEvent,
+    ) -> Result<SessionOutcome, wakui::session::SessionError> {
         crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
     }
 
     // The shared narrow-shell port macro uses this spelling, also used by older adapters.
     fn dispatch_session(
         &mut self,
-        event: crate::session::SessionEvent,
-    ) -> Result<crate::session::SessionOutcome, crate::session::SessionError> {
+        event: SessionEvent,
+    ) -> Result<SessionOutcome, wakui::session::SessionError> {
         self.dispatch(event)
     }
 
@@ -155,7 +158,7 @@ impl ApplicationHost {
     }
 
     /// Pre-localized debugger chrome for the debugger window.
-    pub fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
+    pub fn debugger_chrome(&self) -> wakui::debugger::DebuggerChrome {
         crate::debugger::debugger_chrome(self.settings_snapshot().shared.general.language)
     }
 
@@ -251,10 +254,10 @@ impl ApplicationHost {
     pub fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_shell::session::access::SettingsResult, crate::session::SessionError>
+    ) -> Result<nerust_gui_shell::session::access::SettingsResult, wakui::session::SessionError>
     {
         crate::session::apply_settings(&mut self.session, &self.pause_policy, settings)
-            .map_err(|error| crate::session::SessionError(error.to_string()))
+            .map_err(|error| wakui::session::SessionError(error.to_string()))
     }
     pub fn release_focus_pause(&mut self) {
         self.set_pause_owner(PauseOwner::Focus, false);
@@ -583,7 +586,7 @@ impl ApplicationHost {
         Some(MenubarUpdate { signature, menubar })
     }
 
-    pub fn main_window(&self) -> &crate::window::Window {
+    pub fn main_window(&self) -> &Window {
         &self.main_window
     }
 

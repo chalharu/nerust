@@ -14,13 +14,8 @@ use std::{
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_frontend_viewdefs::{
     application::ApplicationHost,
-    commands::{CommandDescriptor, CommandVisitor, MenuCommand},
-    debugger::DebuggerEvent,
-    event::{CommandEffect, EventCommand, EventHandler, EventSink},
     frame::FrameCtx,
-    menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
     osd::{ModalAdvance, ModalPresentation, ModalPresenter, OsdVisitor},
-    widgets::MenuPresenter,
 };
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
@@ -28,7 +23,14 @@ use nerust_gui_runtime::settings::{
 use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
 use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
 use wakui::app::FrontendApp as _;
+use wakui::commands::{CommandDescriptor, MenuCommand};
+use wakui::debugger::DebuggerEvent;
+use wakui::event::{CommandEffect, EventCommand, EventHandler, EventSink};
 use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
+use wakui::menu::{
+    CommandVisitor, MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu,
+};
+use wakui::menu_presenter::MenuPresenter;
 
 struct Common {
     app: ApplicationHost,

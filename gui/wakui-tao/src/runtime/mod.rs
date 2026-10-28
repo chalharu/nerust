@@ -11,7 +11,7 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 use wakui::viewport::ViewportPresent;
-use wakui::{bootstrap::Application, event::EventSink};
+use wakui::{app::Application, event::EventSink};
 
 use self::host::{HostAction, HostState};
 use crate::event::{TaoEventSink, UserEvent};

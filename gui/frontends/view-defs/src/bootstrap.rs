@@ -1,5 +1,5 @@
 //! Composition-root launch bundle. The composition root builds the session,
-//! factory, and loader into an opaque [`Application`](wakui::bootstrap::Application);
+//! factory, and loader into an opaque [`Application`](wakui::app::Application);
 //! native frontends receive only this struct and never name shell, runtime,
 //! or render types.
 
@@ -43,7 +43,7 @@ pub fn boot<A: wakui::app::LaunchArguments>(
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
     arguments: A,
-) -> Result<wakui::bootstrap::Application<crate::focus::AuxKind, A>, String> {
+) -> Result<wakui::app::Application<crate::focus::AuxKind, A>, String> {
     let FrontendContext {
         gpu_factory,
         registry,
@@ -68,7 +68,7 @@ pub fn boot<A: wakui::app::LaunchArguments>(
     // signatures never name the pipeline type.
     host.set_gpu_factory(gpu_factory);
     host.set_rom_loader(rom_loader);
-    Ok(wakui::bootstrap::Application::builder(Box::new(host))
+    Ok(wakui::app::Application::builder(Box::new(host))
         .arguments(arguments)
         .build())
 }

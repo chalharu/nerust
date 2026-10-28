@@ -14,10 +14,7 @@ pub use driver::DebuggerDriver;
 pub use model::{DebuggerModel, DebuggerReduction, DebuggerState};
 pub use screen::DebuggerScreenSession;
 pub use view::{AppliedDrain, AppliedLive};
-pub use wakui::debugger::{
-    DebugInputs, DebugSnapshot, DebuggerChrome, DebuggerEvent, DebuggerRows, DebuggerScope,
-    DisasmRow, DumpRow, RegRow, pin_marker,
-};
+use wakui::debugger::{DebuggerEvent, DebuggerScope};
 
 use nerust_gui_shell::debug::DebugAction;
 

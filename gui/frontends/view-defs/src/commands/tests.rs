@@ -1,5 +1,6 @@
 use super::*;
 use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
+use wakui::commands::{CommandDescriptor, CommandId, CommandVisitor, MenuCommand, SessionCommand};
 
 fn signature() -> MenuSig {
     MenuSig {

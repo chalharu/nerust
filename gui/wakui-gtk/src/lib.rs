@@ -41,8 +41,8 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
+use wakui::app::Application;
 use wakui::app::LaunchArguments;
-use wakui::bootstrap::Application;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 

@@ -1,7 +1,7 @@
 //! Window helpers over the generic framework windows. Identity and contents
 //! stay framework-owned; titles and kind mapping are view definitions.
 
-pub use wakui::window::{MainContents, Widget, WidgetContents, Window, WindowEffects, WindowId};
+use wakui::window::Window;
 
 use crate::focus::AuxKind;
 use wakui::aux::AuxId;

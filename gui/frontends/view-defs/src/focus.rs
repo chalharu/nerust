@@ -2,8 +2,6 @@
 //! [`FocusEvent`](wakui::focus::FocusEvent) carries only a `resume` flag;
 //! this module resolves the concrete kind to that flag and to log tags.
 
-pub use wakui::focus::{FocusCoordinator, FocusEffect, FocusEvent};
-
 /// Which aux window changed focus. Interactive viewers may report a resume;
 /// read-only viewers (settings, history) only cancel a pending pause.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

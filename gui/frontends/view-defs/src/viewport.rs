@@ -20,7 +20,7 @@ use wakui::viewport::ViewportRegion;
 
 use crate::{application::ApplicationHost, frame::FrameCtx, osd::OsdUpdate};
 
-pub use wakui::viewport::{ViewportImage, ViewportPresent};
+pub(crate) use wakui::viewport::{ViewportImage, ViewportPresent};
 
 /// Pipeline ownership plus attach/generation bookkeeping. Profile, frames,
 /// and OSD content arrive from `ApplicationHost`; the driver never touches
