@@ -865,6 +865,12 @@ impl PipelineFactory for SoftbufferFactory {
             config.upload_budget(),
         )))
     }
+
+    /// No vsync control: `config.vsync` is never read, so live toggles are
+    /// ignored until the next attach. Explicit `false` documents the choice.
+    fn supports_vsync(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -876,6 +882,12 @@ mod tests {
     };
     use nerust_render_traits::filter::BLACK_PALETTE_INDEX;
     use nerust_render_traits::{VideoFrameFormat, logical::LogicalSize, physical::PhysicalSize};
+
+    #[test]
+    fn factory_ignores_vsync_without_swap_control() {
+        use nerust_render_traits::renderer::PipelineFactory;
+        assert!(!super::SoftbufferFactory.supports_vsync());
+    }
 
     #[test]
     fn render_image_returns_rgba_without_a_surface() {
