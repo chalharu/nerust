@@ -18,6 +18,7 @@ pub mod dialog;
 pub mod keyboard;
 
 mod gdk_raw;
+mod message_dialog;
 mod native;
 mod surface;
 mod surface_state;
@@ -28,6 +29,7 @@ pub(crate) mod testkit;
 mod window;
 
 pub use backend::{GtkBackend, register};
+pub use message_dialog::show_message_dialog;
 
 use std::{
     cell::RefCell,
