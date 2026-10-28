@@ -1,11 +1,10 @@
 use super::*;
 use crate::application::tests::Fixture;
-use crate::{
-    control::{Control, ControlDisplay, ControlEvent, ControlInput, ControlKind, ControlVisitor},
-    widget_session::WidgetSession,
-    window::WidgetContents,
-};
+use crate::{widget_session::WidgetSession, window::WidgetContents};
 use nerust_gui_shell::registry::SystemRegistry;
+use wakui::control::{
+    Control, ControlDisplay, ControlEvent, ControlInput, ControlKind, ControlVisitor,
+};
 use wakui::pause::PauseOwner;
 
 fn prepare(

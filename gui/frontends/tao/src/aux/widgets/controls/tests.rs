@@ -8,15 +8,13 @@ use iced::{
     },
     keyboard::{self, key},
 };
-use nerust_frontend_host::{
-    control::{Control, ControlEvent, ControlId, ControlKind, ControlVisitor, Tab},
-    widget_session::WidgetSession,
-};
+use nerust_frontend_host::widget_session::WidgetSession;
 use nerust_settings_core::{
     i18n::{UiText, text as caption},
     model::language::AppLanguage,
 };
 use wakui::Key;
+use wakui::control::{Control, ControlEvent, ControlId, ControlKind, ControlVisitor, Tab};
 
 use super::super::bindings::tests::{controls, find, prepare};
 use super::*;
@@ -86,8 +84,8 @@ fn native_layout(element: &mut El<'static>) -> (iced_tiny_skia::Renderer, Tree, 
 }
 
 // Domain-free scenes: no history/settings presenter or content-specific widths.
-fn table_layout(children: Vec<nerust_frontend_host::control::Node>) -> super::Layout {
-    let mut ids = nerust_frontend_host::control::IdRegistry::default();
+fn table_layout(children: Vec<wakui::control::Node>) -> super::Layout {
+    let mut ids = wakui::control::IdRegistry::default();
     super::Layout {
         id: ids.id(()),
         label: String::new(),
@@ -100,7 +98,7 @@ fn table_layout(children: Vec<nerust_frontend_host::control::Node>) -> super::La
 }
 
 fn table_note(value: &str, heading: bool) -> Control {
-    let mut ids = nerust_frontend_host::control::IdRegistry::default();
+    let mut ids = wakui::control::IdRegistry::default();
     Control {
         id: ids.id(()),
         label: String::new(),
@@ -114,8 +112,8 @@ fn table_note(value: &str, heading: bool) -> Control {
     }
 }
 
-fn table_row(values: &[&str], heading: bool) -> nerust_frontend_host::control::Node {
-    use nerust_frontend_host::control::Node;
+fn table_row(values: &[&str], heading: bool) -> wakui::control::Node {
+    use wakui::control::Node;
     Node::Row(table_layout(
         values
             .iter()
@@ -125,7 +123,7 @@ fn table_row(values: &[&str], heading: bool) -> nerust_frontend_host::control::N
 }
 
 fn table_screen(body: super::Layout) -> ControlScreen {
-    let mut ids = nerust_frontend_host::control::IdRegistry::default();
+    let mut ids = wakui::control::IdRegistry::default();
     ControlScreen {
         title: "Generic controls".into(),
         pages: vec![Page {
@@ -140,7 +138,7 @@ fn table_screen(body: super::Layout) -> ControlScreen {
         }],
         footer: table_layout(vec![]),
         message: None,
-        capture: nerust_frontend_host::control::Capture {
+        capture: wakui::control::Capture {
             target: None,
             prompt: String::new(),
         },
@@ -163,7 +161,7 @@ fn horizontal_rows<'a>(node: Layout<'a>, columns: usize, rows: &mut Vec<Layout<'
 
 #[test]
 fn generic_table_shares_real_column_offsets_and_wraps_variable_content() {
-    use nerust_frontend_host::control::Node;
+    use wakui::control::Node;
     let long = "a long message with variable content ".repeat(80);
     let mut table = table_layout(vec![
         table_row(&["Time", "Severity", "Source", "Message"], true),
@@ -212,7 +210,7 @@ fn generic_table_shares_real_column_offsets_and_wraps_variable_content() {
 
 #[test]
 fn generic_table_preserves_nested_layouts_headers_visibility_and_disabled_input() {
-    use nerust_frontend_host::control::Node;
+    use wakui::control::Node;
     let mut action = table_note("Action", false);
     action.label = "Action".into();
     action.kind = ControlKind::Action;
@@ -976,8 +974,8 @@ fn dynamic_ids_restore_context_before_editing_instead_of_using_selected_target()
     );
 }
 
-fn controls_in(layout: &nerust_frontend_host::control::Layout) -> Vec<Control> {
-    use nerust_frontend_host::control::Node;
+fn controls_in(layout: &wakui::control::Layout) -> Vec<Control> {
+    use wakui::control::Node;
     layout
         .children
         .iter()
@@ -1076,7 +1074,7 @@ fn text_validation_footer_submit_and_cancel_use_model_policy() {
     assert!(!state.mailbox().has_pending());
     let effects = state.dispatch(Message::new(directory, ControlInput::Activate));
     assert!(
-        matches!(effects.as_slice(), [nerust_frontend_host::control::ControlEffect::PickDirectory { target, .. }] if *target == directory)
+        matches!(effects.as_slice(), [wakui::control::ControlEffect::PickDirectory { target, .. }] if *target == directory)
     );
     send(&mut state, directory, ControlInput::Text("/tmp".into()));
     assert!(state.screen().control(submit).unwrap().metadata.enabled);

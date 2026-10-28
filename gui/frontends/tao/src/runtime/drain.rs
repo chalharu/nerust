@@ -281,7 +281,7 @@ mod tests {
             };
             if let Some(session) = session.as_mut() {
                 use crate::aux::widgets::bindings::tests::{activate, controls};
-                use nerust_frontend_host::control::{ControlEvent, ControlInput, ControlKind};
+                use wakui::control::{ControlEvent, ControlInput, ControlKind};
                 host.report_host_error("native history before clear".into());
                 host.refresh_widget_session(session);
                 let filter = controls(&session.screen())
@@ -341,7 +341,7 @@ mod tests {
             }));
             if kind == AuxKind::History {
                 use crate::aux::widgets::bindings::tests::controls;
-                use nerust_frontend_host::control::ControlKind;
+                use wakui::control::ControlKind;
                 assert!(outcome.submitted);
                 assert_eq!(outcome.id, Some(id));
                 assert!(!host.finish_widget_window(id, false));

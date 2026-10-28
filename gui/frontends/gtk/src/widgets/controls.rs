@@ -7,10 +7,12 @@ use std::{
 
 use gtk::{glib, prelude::*};
 use nerust_frontend_host::{
-    binding::PickerSink as _,
-    control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
     widget_session::{WidgetSession, WindowSubmission},
     window::Window as HostWindow,
+};
+use wakui::{
+    binding::PickerSink as _,
+    control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen},
 };
 
 mod renderer;

@@ -5,7 +5,7 @@
 //!
 //! - Own an [`application::ApplicationHost`]; translate native callbacks into
 //!   its policy-aware operations rather than duplicating controller state.
-//! - Implement [`loop_driver::LoopHost`] and call [`loop_driver::drive_turn`]
+//! - Implement [`wakui::loop_driver::LoopHost`] and call [`wakui::loop_driver::drive_turn`]
 //!   at the end of an event burst. Map its deadline/redraw result to the OS pump.
 //! - Let [`application::ApplicationHost`] own OSD state. Call
 //!   [`application::ApplicationHost::pump_osd`] and
@@ -48,10 +48,8 @@
 
 pub mod application;
 pub mod aux;
-pub mod binding;
 pub mod bootstrap;
 pub mod commands;
-pub mod control;
 pub mod debug_schedule;
 pub mod debugger;
 pub mod drain;
@@ -59,8 +57,6 @@ pub mod event;
 pub mod focus;
 pub mod frame;
 pub mod history;
-pub mod loop_driver;
-pub mod mapper;
 pub mod menu;
 pub mod osd;
 pub mod session;
