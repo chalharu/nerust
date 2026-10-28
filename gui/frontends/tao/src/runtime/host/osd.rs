@@ -5,7 +5,7 @@ use std::time::Instant;
 use nerust_frontend_host::{
     aux::OpenRequest,
     frame::{FrameCtx, FrameSnapshot},
-    osd::{ModalPresentation, ModalPresenter, OsdUpdate},
+    osd::{ModalPresentation, ModalPresenter},
 };
 use tao::event::WindowEvent;
 
@@ -99,10 +99,6 @@ impl HostState {
     }
 
     /// A fresh destination has neither the layer nor the reserved strip.
-    pub(crate) fn note_renderer_replaced(&mut self) {
-        self.core.invalidate_osd();
-    }
-
     #[cfg(test)]
     pub(crate) fn poll_notifications(&mut self, ctx: &FrameCtx) {
         self.tick_osd_pump(ctx);
@@ -133,16 +129,6 @@ impl HostState {
             flight_pending: self.core.osd_flight_pending(),
             ..turn.wake
         }
-    }
-
-    /// Return owned output for delivery outside the host borrow.
-    pub(crate) fn prepare_osd_frame(
-        &mut self,
-        size: nerust_render_traits::SurfaceSize,
-        ctx: &FrameCtx,
-    ) -> OsdUpdate {
-        self.core
-            .prepare_osd(size, self.windows.client_height(), ctx, Instant::now())
     }
 
     /// Wake the loop for OSD expiry while labels are visible.
@@ -242,8 +228,8 @@ mod tests {
         }
     }
 
-    fn surface() -> SurfaceSize {
-        SurfaceSize::new(960, 720)
+    fn surface() -> (u32, u32) {
+        (960, 720)
     }
 
     #[test]
@@ -278,9 +264,23 @@ mod tests {
         // Nothing showing, status off: only the initial strip reservation
         // is delivered; subsequent frames leave the renderer untouched.
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert!(renderer.layers.is_empty());
         assert_eq!(renderer.strips, [ReservedStrip::default()]);
         assert!(!host.osd_layer_live());
@@ -295,23 +295,51 @@ mod tests {
         host.apply_settings(on).expect("headless settings apply");
         let mut renderer = StubRenderer::default();
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert_eq!(renderer.layers, [true]);
         assert!(host.osd_layer_live());
         // Steady second frame reuses the layer: no re-push.
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert_eq!(renderer.layers, [true]);
         // Toggle off: one Clear lands, then idle skips again.
         let mut off = host.settings_snapshot().clone();
         off.local.notifications.status_enabled = false;
         host.apply_settings(off).expect("headless settings apply");
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert_eq!(renderer.layers, [true, false]);
         assert!(!host.osd_layer_live());
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert_eq!(renderer.layers, [true, false]);
     }
 
@@ -360,11 +388,18 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let mut renderer = StubRenderer::default();
-        host.note_renderer_replaced();
+        host.invalidate_osd();
         // Invalidated presenter re-runs the decision; with nothing
         // visible the outcome is still Skip, so no layer lands.
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert!(renderer.layers.is_empty());
         assert_eq!(renderer.strips, [ReservedStrip::default()]);
         assert!(!host.osd_layer_live());
@@ -409,7 +444,14 @@ mod tests {
             ModalAdvance::Ignored
         );
         let mut renderer = StubRenderer::default();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert!(renderer.strips.is_empty());
         assert!(renderer.layers.is_empty());
         host.prepare_close();
@@ -423,9 +465,23 @@ mod tests {
         let mut renderer = StubRenderer::default();
         // First frame records the strip; the repeat reuses the memo.
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         let ctx = host.frame_ctx();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut renderer);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut renderer);
         assert!(renderer.layers.is_empty());
         assert_eq!(renderer.strips.len(), 1);
     }
@@ -440,17 +496,38 @@ mod tests {
             .expect("headless settings apply");
         let ctx = host.frame_ctx();
         let mut old = StubRenderer::default();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut old);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut old);
         assert_eq!(old.layers, [true]);
         assert_eq!(old.strips.len(), 1);
 
-        host.note_renderer_replaced();
+        host.invalidate_osd();
         assert!(!host.osd_layer_live());
         let mut fresh = StubRenderer::default();
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut fresh);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut fresh);
         assert_eq!(fresh.strips, old.strips);
         assert_eq!(fresh.layers, [true]);
-        host.prepare_osd_frame(surface(), &ctx).apply(&mut fresh);
+        host.prepare_osd_viewport(
+            surface().0,
+            surface().1,
+            720,
+            &ctx,
+            std::time::Instant::now(),
+        )
+        .apply(&mut fresh);
         assert_eq!(fresh.strips.len(), 1);
         assert_eq!(fresh.layers, [true]);
     }

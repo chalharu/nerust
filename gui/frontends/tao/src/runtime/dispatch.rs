@@ -223,7 +223,6 @@ mod tests {
             event_loop: None,
             event_sink: None,
             host: support.host,
-            renderer: None,
             surface_xid: None,
         };
         (runtime, menu)
@@ -330,9 +329,11 @@ mod tests {
         use crate::runtime::host::HostAction;
         let (mut runtime, _) = test_runtime();
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        runtime.renderer = Some(Box::new(DropLogRenderer {
-            log: std::sync::Arc::clone(&log),
-        }));
+        runtime
+            .host
+            .viewport_install_test_pipeline(Box::new(DropLogRenderer {
+                log: std::sync::Arc::clone(&log),
+            }));
         let opener = FakeOpener::failing("no display");
         // Menu Quit returns the exit intent only: renderer and host teardown wait.
         assert_eq!(
@@ -342,7 +343,7 @@ mod tests {
             ),
             HostAction::Exit
         );
-        assert!(runtime.renderer.is_some());
+        assert!(runtime.host.viewport_attached());
         assert!(!runtime.host.close_exited());
         assert!(log.lock().unwrap().is_empty());
         // The runtime owns the ordered teardown: the pipeline drops
@@ -350,7 +351,7 @@ mod tests {
         // Post-state pins the contract: renderer gone, no aux window
         // or error dialog left, settings closed, surface cleared.
         runtime.begin_close();
-        assert!(runtime.renderer.is_none());
+        assert!(!runtime.host.viewport_attached());
         assert!(runtime.host.close_exited());
         assert_eq!(*log.lock().unwrap(), ["renderer"]);
         for kind in [
