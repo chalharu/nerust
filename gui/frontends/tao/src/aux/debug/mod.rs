@@ -14,11 +14,8 @@ use std::sync::{
 use iced::Task;
 use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
-use nerust_core_traits::debugger::SpaceId;
+use nerust_frontend_host::debugger::{DebugImageRgba, DisplayCache};
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
-use nerust_settings_core::i18n::{UiText, text as ui_text};
-use nerust_settings_core::model::language::AppLanguage;
 use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
@@ -95,7 +92,7 @@ impl Program for DebugProgram {
         // Single coherent capture per rebuild; widgets read locals only.
         // Images stay out: the debugger view never renders them.
         let views::ViewSnapshot {
-            language,
+            chrome,
             mem_input,
             dis_input,
             follow_pc,
@@ -121,38 +118,36 @@ impl Program for DebugProgram {
             reg_input,
         } = views::capture_view(&state.bridge);
         // Button hierarchy: one primary per flow, secondary for toolbar/nav.
-        let toolbar = views::view_toolbar(paused, language);
+        let toolbar = views::view_toolbar(paused, &chrome);
         // Settings form language: fixed label column + stepper.
-        let space_row = views::view_space_row(selected_name.as_deref().unwrap_or(""), language);
-        let mem_nav = views::view_mem_nav(&mem_input, language);
+        let space_row = views::view_space_row(selected_name.as_deref().unwrap_or(""), &chrome);
+        let mem_nav = views::view_mem_nav(&mem_input, &chrome);
         // Heavy lists ride `lazy`; keep every visual input in the dependency tuples.
         let dump_col = lazy((dump_rows, diff, selected), |(rows, diff, selected)| {
             views::view_dump_col(rows, diff, *selected)
         });
         let regs_view: iced::Element<'static, DebugMessage, iced::Theme, Renderer> = lazy(
-            (regs, reg_target, reg_input, language),
-            |(regs, target, input, language)| {
-                views::view_regs_section(regs, *target, input, *language)
-            },
+            (regs, reg_target, reg_input, chrome.clone()),
+            |(regs, target, input, chrome)| views::view_regs_section(regs, *target, input, chrome),
         )
         .into();
         // Two-phase write: select a dump row, type the new byte,
         // Write stages it, and the confirm row commits or cancels.
-        let edit_row = views::view_edit_row(selected, &edit_input, language);
+        let edit_row = views::view_edit_row(selected, &edit_input, &chrome);
         // Confirm row: the one primary button in the window; Cancel is
         // a text escape. The drain owns the authoritative text.
-        let confirm_row = views::view_confirm_row(pending, language);
-        let dis_nav = views::view_dis_nav(follow_pc, back_len, anchor, &dis_input, language);
+        let confirm_row = views::view_confirm_row(pending, &chrome);
+        let dis_nav = views::view_dis_nav(follow_pc, back_len, anchor, &dis_input, &chrome);
         // Per-line disassembly: line click pins the anchor; targets offer follow buttons.
         let pinned = if follow_pc { None } else { Some(anchor) };
         let dis_col = lazy(
-            (disasm_lines, pinned, language),
-            |(lines, pinned, language)| views::view_dis_col(lines, *pinned, *language),
+            (disasm_lines, pinned, chrome.clone()),
+            |(lines, pinned, chrome)| views::view_dis_col(lines, *pinned, chrome),
         );
         // Cross-emulator canon: execution above disassembly on the
         // left, state on the right.
         let left_col = column![
-            text(ui_text(language, UiText::Debugger)).size(18),
+            text(chrome.debugger.clone()).size(18),
             toolbar,
             dis_nav,
             dis_col
@@ -160,14 +155,16 @@ impl Program for DebugProgram {
         .spacing(12)
         .width(Length::Fill);
         let right_col = column![
-            text(status.render(language)).size(14).width(Length::Fill),
-            text(ui_text(language, UiText::Registers)).size(16),
+            text(chrome.status_text(&status))
+                .size(14)
+                .width(Length::Fill),
+            text(chrome.registers.clone()).size(16),
             regs_view,
-            text(ui_text(language, UiText::Watch)).size(16),
-            views::view_watch_row(watch, watch_value, language),
-            text(ui_text(language, UiText::Freeze)).size(16),
-            views::view_freeze_row(freeze, &freeze_input, language),
-            views::view_bookmark_section(&bm_input, &bookmarks, language),
+            text(chrome.watch.clone()).size(16),
+            views::view_watch_row(watch, watch_value, &chrome),
+            text(chrome.freeze.clone()).size(16),
+            views::view_freeze_row(freeze, &freeze_input, &chrome),
+            views::view_bookmark_section(&bm_input, &bookmarks, &chrome),
         ]
         .spacing(12)
         .width(Length::Fixed(STATE_COLUMN_WIDTH))
@@ -183,7 +180,7 @@ impl Program for DebugProgram {
             row![left_col, right_scroll]
                 .spacing(16)
                 .height(Length::Fill),
-            text(ui_text(language, UiText::Memory)).size(16),
+            text(chrome.memory.clone()).size(16),
             space_row,
             mem_nav,
             dump_col,
@@ -198,7 +195,7 @@ impl Program for DebugProgram {
             content = content.push(confirm);
         }
         let content = content.push(
-            button(text(ui_text(language, UiText::Refresh)))
+            button(text(chrome.refresh.clone()))
                 .style(button::secondary)
                 .width(Length::Fill)
                 .on_press(DebugMessage::RefreshPressed),
@@ -265,14 +262,10 @@ fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage>
 impl DebugWindowHandle {
     pub(crate) fn new(
         window: nerust_frontend_host::window::Window,
-        display: DisplayCache,
-        spaces: Vec<(SpaceId, String, u32)>,
-        mem_addr: u32,
-        language: AppLanguage,
+        bridge: Arc<DebugBridge>,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
-        let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
         let surface = AuxSurface::open(
             event_loop,
             &window.title,

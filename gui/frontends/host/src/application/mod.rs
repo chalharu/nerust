@@ -123,6 +123,33 @@ impl ApplicationHost {
         DialogTitles::new(self.settings_snapshot().shared.general.language)
     }
 
+    /// Pre-localized debugger window title. Frontends render it verbatim
+    /// instead of calling into the i18n catalog themselves.
+    pub fn debugger_window_title(&self) -> String {
+        self.debugger_chrome().debugger
+    }
+
+    /// Pre-localized debugger chrome for the debugger window.
+    pub fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
+        crate::debugger::DebuggerChrome::new(self.settings_snapshot().shared.general.language)
+    }
+
+    /// New debug bridge with the session language baked in. Frontends
+    /// supply spaces and the anchor; the language never crosses the boundary.
+    pub fn new_debug_bridge(
+        &self,
+        display: nerust_gui_viewmodel::debugger::DisplayCache,
+        spaces: Vec<(nerust_core_traits::debugger::SpaceId, String, u32)>,
+        mem_addr: u32,
+    ) -> crate::debugger::DebugBridge {
+        crate::debugger::DebugBridge::new(
+            display,
+            spaces,
+            mem_addr,
+            self.settings_snapshot().shared.general.language,
+        )
+    }
+
     /// Localized PPU tile hover line for raw view coordinates.
     /// Geometry stays view-side; the language comes from the snapshot.
     pub fn ppu_hover_text(&self, label: &str, width: u32, height: u32, x: f64, y: f64) -> String {

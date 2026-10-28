@@ -1,7 +1,8 @@
 use super::views::*;
 use super::*;
-use nerust_core_traits::debugger::HexRow;
+use nerust_core_traits::debugger::{HexRow, SpaceId};
 use nerust_gui_viewmodel::debugger::{self as vm, StatusMessage};
+use nerust_settings_core::model::language::AppLanguage;
 
 fn freeze_bridge() -> Arc<DebugBridge> {
     let bridge = Arc::new(DebugBridge::new(
@@ -288,41 +289,41 @@ fn update_drives_write_and_register_flow() {
 #[test]
 fn view_builders_construct_every_section() {
     let bridge = full_bridge();
-    let language = AppLanguage::English;
+    let chrome = bridge.debugger_chrome();
     let display = bridge.display_snapshot().clone_without_images();
     let selected = bridge.selected();
-    let _ = view_toolbar(true, language);
-    let _ = view_toolbar(false, language);
-    let _ = view_space_row("Memory", language);
-    let _ = view_mem_nav("0x00000100", language);
+    let _ = view_toolbar(true, &chrome);
+    let _ = view_toolbar(false, &chrome);
+    let _ = view_space_row("Memory", &chrome);
+    let _ = view_mem_nav("0x00000100", &chrome);
     // Mid-row byte selection still lights its row.
     let _ = view_dump_col(&display.dump_rows, &display.diff, Some((0x102, Some(9))));
     let _ = view_dump_col(&display.dump_rows, &[], None);
-    let _ = view_regs_section(&display.regs, Some("r0"), "7", language);
-    let _ = view_regs_section(&display.regs, None, "", language);
-    let _ = view_regs_section(&[], None, "", language);
-    let _ = view_edit_row(selected, "42", language);
-    let _ = view_edit_row(None, "", language);
+    let _ = view_regs_section(&display.regs, Some("r0"), "7", &chrome);
+    let _ = view_regs_section(&display.regs, None, "", &chrome);
+    let _ = view_regs_section(&[], None, "", &chrome);
+    let _ = view_edit_row(selected, "42", &chrome);
+    let _ = view_edit_row(None, "", &chrome);
     let _ = view_confirm_row(
         Some(vm::PendingWrite {
             addr: 0x100,
             old: Some(0xAB),
             value: 0x42,
         }),
-        language,
+        &chrome,
     );
-    let _ = view_confirm_row(None, language);
-    let _ = view_dis_nav(true, 0, 0x0800_27D2, "", language);
-    let _ = view_dis_nav(false, 2, 0x300, "0x00000300", language);
-    let _ = view_dis_col(&[], None, language);
-    let _ = view_dis_col(&display.disasm_lines, None, language);
-    let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), language);
-    let _ = view_watch_row(Some(0x100), Some(0xAB), language);
-    let _ = view_freeze_row(Some((0x100, 0xFF)), "FF", language);
-    let _ = view_bookmark_section("tag", &[(0x200, "BM1".to_string())], language);
-    let _ = view_watch_row(None, None, language);
-    let _ = view_freeze_row(None, "", language);
-    let _ = view_bookmark_section("", &[], language);
+    let _ = view_confirm_row(None, &chrome);
+    let _ = view_dis_nav(true, 0, 0x0800_27D2, "", &chrome);
+    let _ = view_dis_nav(false, 2, 0x300, "0x00000300", &chrome);
+    let _ = view_dis_col(&[], None, &chrome);
+    let _ = view_dis_col(&display.disasm_lines, None, &chrome);
+    let _ = view_dis_col(&display.disasm_lines, Some(0x0800_27D2E), &chrome);
+    let _ = view_watch_row(Some(0x100), Some(0xAB), &chrome);
+    let _ = view_freeze_row(Some((0x100, 0xFF)), "FF", &chrome);
+    let _ = view_bookmark_section("tag", &[(0x200, "BM1".to_string())], &chrome);
+    let _ = view_watch_row(None, None, &chrome);
+    let _ = view_freeze_row(None, "", &chrome);
+    let _ = view_bookmark_section("", &[], &chrome);
     // Disassembly lines exercise the target follow button.
     assert_eq!(display.disasm_lines.len(), 2);
 }
