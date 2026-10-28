@@ -58,10 +58,7 @@ pub struct ApplicationHost {
     close: MainState,
     flushed: bool,
     shell: nerust_gui_runtime::shell::NativeShellState,
-    history_key: nerust_frontend_kernel::Versioned<(
-        u64,
-        nerust_settings_core::model::language::AppLanguage,
-    )>,
+    history_key: wakui::cache::Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
 }
 
 impl ApplicationHost {

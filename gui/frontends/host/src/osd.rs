@@ -9,7 +9,6 @@ use std::{
     time::Instant,
 };
 
-use nerust_frontend_kernel::Versioned;
 use nerust_gui_shell::session::{
     SessionHandle,
     osd::{OsdChrome, OsdManager, OsdPresenter, OsdSync, OsdSyncInput, PumpReport, PushInput},
@@ -18,6 +17,7 @@ use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     renderer::{OsdLayer, OsdSink, StripSink, strip_pixels},
 };
+use wakui::cache::Versioned;
 
 use crate::{frame::FrameCtx, loop_driver::WakeNeed};
 
