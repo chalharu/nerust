@@ -148,31 +148,54 @@ pub fn run() -> i32 {
     }
     #[cfg(not(clippy))]
     {
-        let Some(boot) = boot_frontend(ctx, supports_vsync, options.rom_path) else {
+        // File operands only; flags were already consumed by the CLI parse.
+        // Backends apply their platform file-open convention to these.
+        let arguments = EmulatorArguments(
+            options
+                .rom_path
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        );
+        let Some(boot) = boot_frontend(ctx, supports_vsync, arguments) else {
             return 1;
         };
         return run_frontend(boot);
     }
 }
 
+/// Composition-root launch arguments: file operands with flags already
+/// consumed by the CLI parse. Its own type rather than a bare `Vec<String>`,
+/// so the backend `run` bound ([`LaunchArguments`](wakui::app::LaunchArguments))
+/// checks the bundle at compile time: the wrong arguments never mix in.
+struct EmulatorArguments(Vec<String>);
+
+impl wakui::app::LaunchArguments for EmulatorArguments {
+    fn files(&self) -> Vec<String> {
+        self.0.clone()
+    }
+}
+
 /// Composition-root boot: the only place that turns a [`FrontendContext`]
 /// into a frontend [`Application`](wakui::bootstrap::Application). Native
 /// frontends never name the context, session, or settings-path types.
-/// The launch document travels inside the bundle (see
-/// [`Application::builder`](wakui::bootstrap::ApplicationBuilder)), so every
-/// backend opens it the same way.
+/// The composition root's own arguments type travels inside the bundle (see
+/// [`Application::builder`](wakui::bootstrap::ApplicationBuilder)); neither
+/// the framework nor the backends interpret it beyond file operands.
 #[cfg_attr(clippy, allow(dead_code))]
 fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
-    initial_document: Option<PathBuf>,
-) -> Option<wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>> {
+    arguments: EmulatorArguments,
+) -> Option<
+    wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
     match boot(
         ctx,
         backend_capabilities(true, supports_vsync),
         None,
-        initial_document,
+        arguments,
     ) {
         Ok(boot) => Some(boot),
         Err(detail) => {
@@ -187,22 +210,28 @@ fn boot_frontend(
 
 /// Frontend dispatch: only the `run` entry point differs per frontend.
 /// Crash containment and boot failure dialogs are shared (see `run_guarded`).
-/// The launch document travels inside the bundle, so both arms are identical
+/// Opaque launch arguments travel inside the bundle, so both arms are identical
 /// apart from the backend selected by feature.
 #[cfg(all(feature = "gtk", not(clippy)))]
 fn run_frontend(
-    boot: wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>,
+    boot: wakui::bootstrap::Application<
+        nerust_frontend_viewdefs::focus::AuxKind,
+        EmulatorArguments,
+    >,
 ) -> i32 {
     run_guarded(boot, wakui_gtk::run)
 }
 
 /// Frontend dispatch: only the `run` entry point differs per frontend.
 /// Crash containment and boot failure dialogs are shared (see `run_guarded`).
-/// The launch document travels inside the bundle, so both arms are identical
+/// Opaque launch arguments travel inside the bundle, so both arms are identical
 /// apart from the backend selected by feature.
 #[cfg(all(feature = "tao", not(feature = "gtk"), not(clippy)))]
 fn run_frontend(
-    boot: wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>,
+    boot: wakui::bootstrap::Application<
+        nerust_frontend_viewdefs::focus::AuxKind,
+        EmulatorArguments,
+    >,
 ) -> i32 {
     run_guarded(boot, wakui_tao::run)
 }
@@ -212,8 +241,13 @@ fn run_frontend(
 #[cfg(all(any(feature = "gtk", feature = "tao"), not(clippy)))]
 #[allow(clippy::needless_pass_by_value)]
 fn run_guarded(
-    boot: wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>,
-    runner: fn(wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind>) -> i32,
+    boot: wakui::bootstrap::Application<
+        nerust_frontend_viewdefs::focus::AuxKind,
+        EmulatorArguments,
+    >,
+    runner: fn(
+        wakui::bootstrap::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+    ) -> i32,
 ) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
@@ -495,6 +529,14 @@ mod tests {
             registry.detect(&gba_media).unwrap().unwrap().system_id(),
             gba_id
         );
+    }
+
+    #[test]
+    fn emulator_arguments_expose_only_file_operands() {
+        use wakui::app::LaunchArguments as _;
+        let arguments = super::EmulatorArguments(vec!["game.nes".to_string()]);
+        assert_eq!(arguments.files(), ["game.nes"]);
+        assert!(super::EmulatorArguments(Vec::new()).files().is_empty());
     }
 
     #[test]

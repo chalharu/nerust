@@ -34,15 +34,16 @@ pub fn backend_capabilities(
 
 /// Build the launch bundle from the composition root's context.
 /// `settings_root` overrides the platform settings directory (`None` keeps
-/// the default); test harnesses pass a temp dir. `initial_document` is the
-/// launch file (a ROM path for the emulator); it travels inside the bundle
-/// so every backend opens it the same way.
-pub fn boot(
+/// the default); test harnesses pass a temp dir. `arguments` travel inside
+/// the bundle for the backends' platform file-open convention; their type
+/// is the composition root's own (see [`LaunchArguments`](wakui::app::LaunchArguments)),
+/// never interpreted here.
+pub fn boot<A: wakui::app::LaunchArguments>(
     ctx: FrontendContext,
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
-    initial_document: Option<PathBuf>,
-) -> Result<wakui::bootstrap::Application<crate::focus::AuxKind>, String> {
+    arguments: A,
+) -> Result<wakui::bootstrap::Application<crate::focus::AuxKind, A>, String> {
     let FrontendContext {
         gpu_factory,
         registry,
@@ -68,6 +69,6 @@ pub fn boot(
     host.set_gpu_factory(gpu_factory);
     host.set_rom_loader(rom_loader);
     Ok(wakui::bootstrap::Application::builder(Box::new(host))
-        .maybe_initial_document(initial_document)
+        .arguments(arguments)
         .build())
 }
