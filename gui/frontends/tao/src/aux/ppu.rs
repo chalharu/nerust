@@ -43,7 +43,6 @@ use super::focus::{AuxRender as _, AuxShellRef};
 use super::registry::AuxController;
 #[cfg(test)]
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
-use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 #[derive(Debug, Clone)]
 pub(crate) enum PpuMessage {
@@ -152,26 +151,24 @@ impl Program for PpuProgram {
                 bridge.ppu_invalidated.store(true, Ordering::Release);
             }
             PpuMessage::Sync => {
-                // `Arc::clone` under a read guard, then scale lock-free:
-                // the 2x derivation must never hold the display guard.
-                let display = bridge.display_snapshot();
-                let generation = display.images_gen;
-                let panels = nerust_gui_viewmodel::debugger::format_panels(&display.panels);
+                // View-owned derivation: scaling and panel text live in
+                // view-defs, so no formatter or image-type import is needed.
+                let generation = bridge.images_generation();
+                let panels = bridge.formatted_panels();
                 let current = Arc::clone(&snapshot_read(&state.snapshot));
                 // Sync swaps once per drain: scaled re-derived only on
                 // generation change, hover preserved as-is.
                 let scaled: ScaledPictures = if current.source_gen != generation {
-                    let mut scaled = Vec::with_capacity(display.images.len());
-                    for image in &display.images {
-                        let bytes = scale2x_nearest(&image.rgba, image.width, image.height);
+                    let mut scaled = Vec::new();
+                    for image in bridge.scaled_pictures() {
                         scaled.push((
-                            image.label.clone(),
-                            image.width * 2,
-                            image.height * 2,
+                            image.label,
+                            image.width,
+                            image.height,
                             iced::widget::image::Handle::from_rgba(
-                                image.width * 2,
-                                image.height * 2,
-                                bytes,
+                                image.width,
+                                image.height,
+                                image.rgba,
                             ),
                         ));
                     }
@@ -245,7 +242,7 @@ impl Program for PpuProgram {
         }
         // Systems without observation tables (GBA/GBC) show no
         // Panels section at all instead of a puzzling marker.
-        if nerust_gui_viewmodel::debugger::panels_visible(panels_text) {
+        if state.bridge.has_panels() {
             content = content.push(text(chrome.panels_title.clone()).size(16));
             content = content.push(
                 text(panels_text.to_string())

@@ -3,17 +3,15 @@
 
 use std::sync::Arc;
 
+use super::bridge::{AppliedDrain, AppliedLive, DebugBridge, DrainSnapshot};
+use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
+use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
 use nerust_frontend_host::aux::AuxWindows;
 #[cfg(test)]
 use nerust_frontend_host::aux::OpenRequest;
 use nerust_frontend_host::{
     application::ApplicationHost, widget_session::WindowMailbox, window::Window,
 };
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
-
-use super::bridge::{DebugBridge, DrainSnapshot};
-use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
-use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Default)]
@@ -29,19 +27,14 @@ pub(crate) struct AuxOutcome {
 /// Debug-drain port: apply for one drain.
 pub(crate) trait DebugDrainPort {
     /// Apply a finished drain (debug only).
-    fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>);
+    fn apply_drain(&mut self, drain: AppliedDrain);
 }
 
 /// Live-images port: finished live fetches land here.
 /// Only the debugger implements this; see `AuxController::as_live`.
 pub(crate) trait LiveImagesPort {
     /// Apply finished live images (debug only).
-    fn apply_live(
-        &mut self,
-        _generation: u64,
-        _images: Vec<DebugImageRgba>,
-        _running: bool,
-    ) -> bool;
+    fn apply_live(&mut self, live: AppliedLive) -> bool;
 }
 
 /// Generic session capability; native code never sees a domain controller.
@@ -254,32 +247,23 @@ impl AuxRegistry {
     }
 
     /// Apply a finished drain, then rebuild the viewers.
-    pub(crate) fn debug_apply(
-        &mut self,
-        display: DisplayCache,
-        reselected: Option<(u32, Option<u8>)>,
-    ) {
+    pub(crate) fn debug_apply(&mut self, drain: AppliedDrain) {
         if let Some(port) = self
             .entry_mut(AuxKind::Debug)
             .and_then(AuxController::as_debug)
         {
-            port.apply_drain(display, reselected);
+            port.apply_drain(drain);
         }
         self.debug_sync();
         self.ppu_sync();
     }
 
     /// Apply finished live images; true when the viewer needs a rebuild.
-    pub(crate) fn debug_apply_live(
-        &mut self,
-        generation: u64,
-        images: Vec<DebugImageRgba>,
-        running: bool,
-    ) -> bool {
+    pub(crate) fn debug_apply_live(&mut self, live: AppliedLive) -> bool {
         let rebuilt = self
             .entry_mut(AuxKind::Debug)
             .and_then(AuxController::as_live)
-            .is_some_and(|entry| entry.apply_live(generation, images, running));
+            .is_some_and(|entry| entry.apply_live(live));
         if rebuilt {
             self.debug_sync();
         }
@@ -341,10 +325,9 @@ pub(crate) mod test_double {
     use std::rc::Rc;
     use std::sync::Arc;
 
-    use crate::aux::bridge::{DebugBridge, DrainSnapshot};
+    use crate::aux::bridge::{AppliedDrain, AppliedLive, DebugBridge, DrainSnapshot};
     use crate::aux::domain::{AuxNativeEvent, NativeWindowId};
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender};
-    use nerust_gui_viewmodel::debugger::DebugImageRgba;
 
     use super::{AuxController, DebugDrainPort, LiveImagesPort, WindowMailbox};
     /// Configurable stub aux: answers only the capability its kind owns.
@@ -408,22 +391,13 @@ pub(crate) mod test_double {
     }
 
     impl DebugDrainPort for StubAux {
-        fn apply_drain(
-            &mut self,
-            _display: nerust_gui_viewmodel::debugger::DisplayCache,
-            _reselected: Option<(u32, Option<u8>)>,
-        ) {
+        fn apply_drain(&mut self, _drain: AppliedDrain) {
             self.applied_drain.set(true);
         }
     }
 
     impl LiveImagesPort for StubAux {
-        fn apply_live(
-            &mut self,
-            _generation: u64,
-            _images: Vec<DebugImageRgba>,
-            _running: bool,
-        ) -> bool {
+        fn apply_live(&mut self, _live: AppliedLive) -> bool {
             self.live_rebuild
         }
     }
@@ -469,6 +443,7 @@ mod tests {
     use super::test_double::StubAux;
     use super::*;
     use nerust_core_traits::debugger::SpaceId;
+    use nerust_gui_viewmodel::debugger::DisplayCache;
 
     #[test]
     fn reserved_window_snapshot_allows_reentry_and_stale_ids_cannot_touch_reopen() {
@@ -649,8 +624,15 @@ mod tests {
         assert!(registry.debug_snapshot(false).is_none());
         assert!(registry.debug_bridge().is_none());
         assert!(!registry.debug_locks_free());
-        assert!(!registry.debug_apply_live(1, Vec::new(), false));
-        registry.debug_apply(DisplayCache::default(), None);
+        assert!(!registry.debug_apply_live(AppliedLive {
+            generation: 1,
+            images: Vec::new(),
+            running: false,
+        }));
+        registry.debug_apply(AppliedDrain {
+            display: DisplayCache::default(),
+            reselected: None,
+        });
         registry.debug_sync();
         registry.ppu_sync();
         let mut host = crate::runtime::host::TestHost::new().host;
@@ -678,10 +660,17 @@ mod tests {
         assert!(registry.debug_bridge().is_some());
         assert!(registry.debug_locks_free());
         // Apply lands on the entry, then fans out to the PPU sync.
-        registry.debug_apply(DisplayCache::default(), Some((0x10, None)));
+        registry.debug_apply(AppliedDrain {
+            display: DisplayCache::default(),
+            reselected: Some((0x10, None)),
+        });
         assert!(applied.get());
         // Live apply rebuilds only when the entry says so.
-        assert!(!registry.debug_apply_live(2, Vec::new(), false));
+        assert!(!registry.debug_apply_live(AppliedLive {
+            generation: 2,
+            images: Vec::new(),
+            running: false,
+        }));
     }
 
     #[test]
@@ -690,7 +679,11 @@ mod tests {
         let mut stub = StubAux::new(AuxKind::Debug);
         stub.live_rebuild = true;
         registry.insert(Box::new(stub));
-        assert!(registry.debug_apply_live(7, Vec::new(), true));
+        assert!(registry.debug_apply_live(AppliedLive {
+            generation: 7,
+            images: Vec::new(),
+            running: true,
+        }));
     }
 
     #[test]

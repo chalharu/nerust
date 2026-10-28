@@ -1348,7 +1348,7 @@ pub(crate) mod tests {
             state.clone(),
             Vec::new(),
             0,
-            Vec::new(),
+            None,
             nerust_frontend_host::debugger::PpuChrome::new(
                 nerust_settings_core::model::language::AppLanguage::English,
             ),
@@ -1401,7 +1401,7 @@ pub(crate) mod tests {
                 state,
                 Vec::new(),
                 0,
-                Vec::new(),
+                None,
                 nerust_frontend_host::debugger::PpuChrome::new(
                     nerust_settings_core::model::language::AppLanguage::English
                 ),

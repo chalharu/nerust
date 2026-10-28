@@ -153,6 +153,21 @@ impl<F, L> DebuggerDriver<F, L> {
         }
     }
 
+    /// Gesture-side refresh port: native adapters enqueue without naming actions.
+    pub fn refresh(&mut self, session: &SessionHandle, scope: DebuggerScope, need_images: bool) {
+        self.enqueue(session, &[DebugAction::Refresh], scope, need_images);
+    }
+
+    /// Gesture-side open port (Pause + Refresh) without naming actions.
+    pub fn open_refresh(&mut self, session: &SessionHandle, need_images: bool) {
+        self.enqueue(
+            session,
+            &[DebugAction::Pause, DebugAction::Refresh],
+            DebuggerScope::All,
+            need_images,
+        );
+    }
+
     fn enqueue_current(
         &mut self,
         actions: &[DebugAction],
