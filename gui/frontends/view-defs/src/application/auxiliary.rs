@@ -3,8 +3,6 @@
 
 use std::hash::Hash;
 
-use nerust_gui_shell::session::SessionError;
-
 use super::ApplicationHost;
 use crate::settings::{SettingsController, find_duplicate_system_id};
 use crate::{
@@ -15,7 +13,10 @@ use crate::{
 };
 use nerust_frontend_host::aux::{AuxId, AuxWindows, OpenRequest};
 
-pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>);
+pub type WidgetWindowClose<H> = (
+    Option<H>,
+    Result<WindowEffects, crate::session::SessionError>,
+);
 
 impl ApplicationHost {
     /// Prepare the generic control boundary for both Settings and History.
@@ -72,7 +73,7 @@ impl ApplicationHost {
         windows: &AuxWindows<N, H>,
         id: AuxId,
         submission: WindowSubmission,
-    ) -> Result<WindowEffects, SessionError> {
+    ) -> Result<WindowEffects, crate::session::SessionError> {
         if self.close_exited()
             || !windows
                 .mailbox(id)
@@ -86,7 +87,7 @@ impl ApplicationHost {
     fn consume_window_submission(
         &mut self,
         submission: WindowSubmission,
-    ) -> Result<WindowEffects, SessionError> {
+    ) -> Result<WindowEffects, crate::session::SessionError> {
         match submission.take() {
             Some(Pending::Settings(snapshot)) => match self.apply_settings(*snapshot) {
                 Ok(result) => {
@@ -186,7 +187,7 @@ impl ApplicationHost {
         &mut self,
         windows: &mut AuxWindows<N, H>,
         kind: AuxKind,
-    ) -> Result<Option<OpenRequest>, SessionError> {
+    ) -> Result<Option<OpenRequest>, crate::session::SessionError> {
         if self.close_exited() {
             return Ok(None);
         }

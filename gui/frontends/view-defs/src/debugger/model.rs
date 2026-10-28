@@ -380,13 +380,13 @@ impl DebuggerModel {
     }
 
     /// Pre-localized debugger chrome. Frontends render it verbatim.
-    pub fn debugger_chrome(&self) -> super::DebuggerChrome {
-        super::DebuggerChrome::new(self.language)
+    pub fn debugger_chrome(&self) -> nerust_frontend_host::debugger::DebuggerChrome {
+        super::debugger_chrome(self.language)
     }
 
     /// Pre-localized PPU chrome for the viewer opened from this model.
-    pub fn ppu_chrome(&self) -> super::PpuChrome {
-        super::PpuChrome::new(self.language)
+    pub fn ppu_chrome(&self) -> nerust_frontend_host::debugger::PpuChrome {
+        super::ppu_chrome(self.language)
     }
 
     /// Status line in the view language. Coreless windows read as
@@ -413,7 +413,7 @@ impl DebuggerModel {
     }
 
     /// Formatted debugger rows without exposing row types or formatters.
-    pub fn debugger_rows(&self) -> super::view::DebuggerRows {
+    pub fn debugger_rows(&self) -> nerust_frontend_host::debugger::DebuggerRows {
         let coreless = self.spaces.is_empty();
         let mut rows = {
             let status_text = self.display.status.render(self.language);
@@ -433,7 +433,7 @@ impl DebuggerModel {
     }
 
     /// 2x-scaled PPU pictures without exposing the scaler.
-    pub fn ppu_pictures(&self) -> Vec<super::view::ScaledPicture> {
+    pub fn ppu_pictures(&self) -> Vec<nerust_frontend_host::debugger::ScaledPicture> {
         super::view::scaled_from_display(&self.display)
     }
 

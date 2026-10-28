@@ -1,45 +1,36 @@
 //! Toolkit-independent session event delivery and composed pause ownership.
 //! The driver borrows existing host fields; it adds no native lifetime or widget.
 
+use nerust_frontend_host::commands::SessionCommand;
+pub use nerust_frontend_host::session::{
+    CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome, ShortcutGesture,
+};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionError, SessionHandle,
-    access::SettingsResult,
-    commands::{SessionCommand, SessionCommandOutcome},
+    KeyboardShortcut, SessionHandle, access::SettingsResult, commands::SessionCommandOutcome,
 };
 use nerust_settings_core::model::input::ShortcutAction;
-use wakui::Key;
 use wakui::pause::{PauseOwner, PausePolicy};
 
-#[derive(Debug, Clone, Copy)]
-pub enum SessionEvent {
-    Command(SessionCommand),
-    Keyboard {
-        key: Key,
-        pressed: bool,
-    },
-    Shortcut(KeyboardShortcut),
-    ClearInput,
-    /// Acquire before native creation; duplicate acquisition is a no-op.
-    SettingsOpened,
-    /// Roll back an unsuccessful native creation, just like a normal close.
-    SettingsOpenFailed,
-    SettingsClosed,
+fn convert_error(error: nerust_gui_shell::session::SessionError) -> SessionError {
+    SessionError(error.to_string())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionEffect {
-    NativeOpenDebugger,
-    ToggleFullscreen,
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SessionOutcome {
-    pub command: Option<SessionCommandOutcome>,
-    pub effect: Option<SessionEffect>,
-    /// Whether this event acquired/released the Settings owner. Native chrome
-    /// can skip duplicate close notifications without consulting its registry.
-    pub settings_changed: bool,
+fn gesture(shortcut: KeyboardShortcut) -> ShortcutGesture {
+    match shortcut {
+        KeyboardShortcut::OpenDebugger => ShortcutGesture::OpenDebugger,
+        KeyboardShortcut::ToggleFullscreen => ShortcutGesture::ToggleFullscreen,
+        KeyboardShortcut::Session(action) => match action {
+            ShortcutAction::TogglePause => ShortcutGesture::TogglePause,
+            ShortcutAction::SaveActiveSlot => ShortcutGesture::SaveActiveSlot,
+            ShortcutAction::LoadActiveSlot => ShortcutGesture::LoadActiveSlot,
+            ShortcutAction::SelectNextSlot => ShortcutGesture::SelectNextSlot,
+            ShortcutAction::SelectPreviousSlot => ShortcutGesture::SelectPreviousSlot,
+            ShortcutAction::Reset => ShortcutGesture::Reset,
+            ShortcutAction::OpenDebugger => ShortcutGesture::OpenDebugger,
+            ShortcutAction::ToggleFullscreen => ShortcutGesture::ToggleFullscreen,
+        },
+    }
 }
 
 pub struct SessionDriver<'a> {
@@ -56,7 +47,7 @@ impl<'a> SessionDriver<'a> {
         let mut outcome = SessionOutcome::default();
         match event {
             SessionEvent::Command(command) => {
-                outcome.command = Some(match command {
+                let executed = match command {
                     SessionCommand::Pause
                     | SessionCommand::Resume
                     | SessionCommand::TogglePause => {
@@ -67,38 +58,46 @@ impl<'a> SessionDriver<'a> {
                         };
                         set_pause_owner(self.session, self.policy, PauseOwner::User, active)
                     }
-                    command => self.session.run_command(command)?,
+                    command => self.session.run_command(command).map_err(convert_error)?,
+                };
+                outcome.command = Some(CommandOutcome {
+                    executed: executed.executed,
+                    needs_redraw: executed.needs_redraw,
                 });
             }
             SessionEvent::Keyboard { key, pressed } => {
                 if !self.policy.owns(PauseOwner::Settings)
                     && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
                 {
-                    return self.dispatch(SessionEvent::Shortcut(shortcut));
+                    return self.dispatch(SessionEvent::Shortcut(gesture(shortcut)));
                 }
             }
-            SessionEvent::Shortcut(shortcut) => match shortcut {
-                KeyboardShortcut::OpenDebugger
-                | KeyboardShortcut::Session(ShortcutAction::OpenDebugger) => {
+            SessionEvent::Shortcut(gesture) => match gesture {
+                ShortcutGesture::OpenDebugger => {
                     outcome.effect = Some(SessionEffect::NativeOpenDebugger);
                 }
-                KeyboardShortcut::ToggleFullscreen
-                | KeyboardShortcut::Session(ShortcutAction::ToggleFullscreen) => {
+                ShortcutGesture::ToggleFullscreen => {
                     outcome.effect = Some(SessionEffect::ToggleFullscreen);
                 }
-                KeyboardShortcut::Session(action) => {
-                    let command = match action {
-                        ShortcutAction::TogglePause => SessionCommand::TogglePause,
-                        ShortcutAction::SaveActiveSlot => SessionCommand::SaveActiveSlotOrNew,
-                        ShortcutAction::LoadActiveSlot => SessionCommand::LoadActiveSlot,
-                        ShortcutAction::SelectNextSlot => SessionCommand::SelectNextSlot,
-                        ShortcutAction::SelectPreviousSlot => SessionCommand::SelectPreviousSlot,
-                        ShortcutAction::Reset => SessionCommand::Reset,
-                        ShortcutAction::OpenDebugger | ShortcutAction::ToggleFullscreen => {
-                            unreachable!()
-                        }
-                    };
-                    return self.dispatch(SessionEvent::Command(command));
+                ShortcutGesture::TogglePause => {
+                    return self.dispatch(SessionEvent::Command(SessionCommand::TogglePause));
+                }
+                ShortcutGesture::SaveActiveSlot => {
+                    return self
+                        .dispatch(SessionEvent::Command(SessionCommand::SaveActiveSlotOrNew));
+                }
+                ShortcutGesture::LoadActiveSlot => {
+                    return self.dispatch(SessionEvent::Command(SessionCommand::LoadActiveSlot));
+                }
+                ShortcutGesture::SelectNextSlot => {
+                    return self.dispatch(SessionEvent::Command(SessionCommand::SelectNextSlot));
+                }
+                ShortcutGesture::SelectPreviousSlot => {
+                    return self
+                        .dispatch(SessionEvent::Command(SessionCommand::SelectPreviousSlot));
+                }
+                ShortcutGesture::Reset => {
+                    return self.dispatch(SessionEvent::Command(SessionCommand::Reset));
                 }
             },
             SessionEvent::ClearInput => self.session.clear_input(),
@@ -166,7 +165,7 @@ pub fn apply_settings(
     session: &mut SessionHandle,
     policy: &PausePolicy,
     settings: SettingsSnapshot,
-) -> Result<SettingsResult, SessionError> {
+) -> Result<SettingsResult, nerust_gui_shell::session::SessionError> {
     reconcile_pause(session, policy);
     let result = session.apply_settings(settings);
     reconcile_pause(session, policy);
@@ -185,84 +184,94 @@ macro_rules! impl_session_controls {
     ($host:ty) => {
         impl nerust_gui_shell::session::access::PauseControl for $host {
             fn pause(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::Pause,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::Pause,
+                    ));
             }
             fn resume(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::Resume,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::Resume,
+                    ));
             }
             fn toggle_pause(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::TogglePause,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::TogglePause,
+                    ));
             }
         }
         impl nerust_gui_shell::session::access::SlotIo for $host {
             fn save_active_slot(&mut self) -> bool {
-                self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::SaveActiveSlotOrNew,
+                self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                    nerust_frontend_host::commands::SessionCommand::SaveActiveSlotOrNew,
                 ))
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn load_active_slot(&mut self) -> bool {
-                self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::LoadActiveSlot,
+                self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                    nerust_frontend_host::commands::SessionCommand::LoadActiveSlot,
                 ))
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn load_slot(&mut self, id: u64) -> bool {
-                self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::LoadSlot(id),
+                self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                    nerust_frontend_host::commands::SessionCommand::LoadSlot(id),
                 ))
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn save_slot(&mut self, id: u64) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::SaveSlot(id),
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::SaveSlot(id),
+                    ));
             }
             fn delete_slot(&mut self, id: u64) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::DeleteSlot(id),
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::DeleteSlot(id),
+                    ));
             }
         }
         impl nerust_gui_shell::session::access::SlotNav for $host {
             fn select_next_slot(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::SelectNextSlot,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::SelectNextSlot,
+                    ));
             }
             fn select_previous_slot(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::SelectPreviousSlot,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::SelectPreviousSlot,
+                    ));
             }
             fn select_slot(&mut self, id: u64) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::SelectActiveSlot(id),
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::SelectActiveSlot(id),
+                    ));
             }
             fn create_slot(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::CreateSlot,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::CreateSlot,
+                    ));
             }
         }
         impl nerust_gui_shell::session::access::ResetControl for $host {
             fn reset(&mut self) {
-                let _ = self.dispatch_session($crate::session::SessionEvent::Command(
-                    nerust_gui_shell::session::commands::SessionCommand::Reset,
-                ));
+                let _ =
+                    self.dispatch_session(nerust_frontend_host::session::SessionEvent::Command(
+                        nerust_frontend_host::commands::SessionCommand::Reset,
+                    ));
             }
         }
     };
@@ -282,6 +291,7 @@ mod tests {
             atomic::{AtomicU64, Ordering},
         },
     };
+    use wakui::Key;
 
     struct TestHost {
         session: SessionHandle,
