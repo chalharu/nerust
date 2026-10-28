@@ -29,6 +29,7 @@ use nerust_gui_shell::{
         osd::TickMetrics,
     },
 };
+use nerust_gui_viewmodel::debugger::tile_hover_text;
 
 use crate::{
     focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent},
@@ -113,6 +114,19 @@ impl ApplicationHost {
     }
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
         self.session.settings_snapshot()
+    }
+
+    /// Localized PPU tile hover line for raw view coordinates.
+    /// Geometry stays view-side; the language comes from the snapshot.
+    pub fn ppu_hover_text(&self, label: &str, width: u32, height: u32, x: f64, y: f64) -> String {
+        tile_hover_text(
+            self.settings_snapshot().shared.general.language,
+            label,
+            width,
+            height,
+            x,
+            y,
+        )
     }
     pub fn render_profile(&self) -> Option<nerust_render_traits::VideoRenderProfile> {
         self.session.render_profile().cloned()

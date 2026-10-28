@@ -6,11 +6,11 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::DebugPanel;
-use nerust_frontend_host::window::{PpuContents, Window as HostWindow, WindowVisitor};
-use nerust_gui_viewmodel::debugger::tile_hover_text;
+use nerust_frontend_host::{
+    debugger::PpuChrome,
+    window::{PpuContents, Window as HostWindow, WindowVisitor},
+};
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, format_panels, scale2x_nearest};
-use nerust_settings_core::i18n::{UiText, text};
-use nerust_settings_core::model::language::AppLanguage;
 
 use super::State;
 
@@ -20,7 +20,8 @@ pub(crate) struct PpuWindowCore {
     pub(crate) window: gtk::ApplicationWindow,
     images_box: gtk::Box,
     hover_label: gtk::Label,
-    language: AppLanguage,
+    chrome: PpuChrome,
+    state: Rc<RefCell<State>>,
     /// Generation of the last synced images. Refresh drains re-run
     /// sync with identical generations while paused; the 2x scale
     /// and widget rebuild run only on change. Starts impossibly high
@@ -41,7 +42,7 @@ impl PpuWindowCore {
         images: Vec<DebugImageRgba>,
         images_gen: u64,
         panels: Vec<DebugPanel>,
-        language: AppLanguage,
+        chrome: PpuChrome,
     ) -> Option<PpuWindow> {
         struct Builder<F> {
             title: String,
@@ -61,9 +62,7 @@ impl PpuWindowCore {
         let mut builder = Builder {
             title: String::new(),
             build: Some(|title: &str| {
-                Self::open_group(
-                    app, main, state, images, images_gen, panels, language, title,
-                )
+                Self::open_group(app, main, state, images, images_gen, panels, chrome, title)
             }),
             result: None,
         };
@@ -77,11 +76,11 @@ impl PpuWindowCore {
         // Independent toplevel like the tao twin (see the debugger):
         // true dialogs stay transient, tool windows do not.
         _main_window: &gtk::ApplicationWindow,
-        _state: Rc<RefCell<State>>,
+        state: Rc<RefCell<State>>,
         images: Vec<DebugImageRgba>,
         images_gen: u64,
         panels: Vec<DebugPanel>,
-        language: AppLanguage,
+        chrome: PpuChrome,
         title: &str,
     ) -> PpuWindow {
         let window = gtk::ApplicationWindow::builder()
@@ -95,7 +94,7 @@ impl PpuWindowCore {
         images_box.set_margin_bottom(16);
         images_box.set_margin_start(16);
         images_box.set_margin_end(16);
-        let hover_label = gtk::Label::new(Some(text(language, UiText::HoverTile)));
+        let hover_label = gtk::Label::new(Some(chrome.hover_empty.as_str()));
         hover_label.set_xalign(0.0);
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_overlay_scrolling(false);
@@ -113,7 +112,8 @@ impl PpuWindowCore {
             window: window.clone(),
             images_box,
             hover_label,
-            language,
+            chrome,
+            state,
             last_gen: u64::MAX,
             last_panels: Vec::new(),
         }));
@@ -147,7 +147,7 @@ impl PpuWindowCore {
             self.images_box.remove(&child);
         }
         if images.is_empty() {
-            let empty = gtk::Label::new(Some(text(self.language, UiText::NoImages)));
+            let empty = gtk::Label::new(Some(self.chrome.no_images.as_str()));
             empty.set_xalign(0.0);
             self.images_box.append(&empty);
         }
@@ -171,9 +171,13 @@ impl PpuWindowCore {
             let hover = self.hover_label.clone();
             let label = image.label.clone();
             let (width, height) = (image.width, image.height);
-            let language = self.language;
+            let state = self.state.clone();
             motion.connect_motion(move |_, x, y| {
-                hover.set_label(&tile_hover_text(language, &label, width, height, x, y));
+                let line = state
+                    .borrow()
+                    .host
+                    .ppu_hover_text(&label, width, height, x, y);
+                hover.set_label(&line);
             });
             picture.add_controller(motion);
             self.images_box.append(&picture);
@@ -183,7 +187,7 @@ impl PpuWindowCore {
         // Systems without observation tables show no Panels section
         // at all instead of a puzzling marker.
         if !panels.is_empty() {
-            let panels_title = gtk::Label::new(Some(text(self.language, UiText::Panels)));
+            let panels_title = gtk::Label::new(Some(self.chrome.panels_title.as_str()));
             panels_title.set_xalign(0.0);
             self.images_box.append(&panels_title);
             let panels_label = gtk::Label::new(Some(&format_panels(panels)));
@@ -197,7 +201,7 @@ impl PpuWindowCore {
 /// Tile hover line shared via viewmodel (`tile_hover_text`).
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn tile_hover_matches_tao_geometry() {
