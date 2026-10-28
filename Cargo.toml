@@ -28,6 +28,7 @@ members = [
   "gui/frontends/kernel",
   "gui/frontends/rom_tool",
   "gui/frontends/tao",
+  "gui/frontends/view-defs",
   "gui/run-options",
   "gui/runtime",
   "gui/shell",
@@ -204,6 +205,7 @@ nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
 nerust_frontend_kernel = { path = "gui/frontends/kernel" }
 nerust_frontend_host = { path = "gui/frontends/host" }
+nerust_frontend_viewdefs = { path = "gui/frontends/view-defs" }
 nerust_host_protocol = { path = "gui/frontends/host/protocol" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
