@@ -12,7 +12,7 @@ use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, NavState, til
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::{DebuggerEvent, DebuggerState, DebuggerUpdate, model::apply_live};
-use nerust_frontend_viewdefs::sync::lock_recovered;
+use crate::sync::lock_recovered;
 
 fn read_display(lock: &RwLock<Arc<DisplayCache>>) -> RwLockReadGuard<'_, Arc<DisplayCache>> {
     lock.read().unwrap_or_else(|error| {
