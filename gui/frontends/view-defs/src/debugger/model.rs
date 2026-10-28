@@ -389,6 +389,70 @@ impl DebuggerModel {
         super::PpuChrome::new(self.language)
     }
 
+    /// Status line in the view language. Coreless windows read as
+    /// paused with an explicit no-core status (gtk/tao agreement).
+    pub fn status_line(&self) -> String {
+        let coreless = self.spaces.is_empty();
+        if coreless && matches!(self.display.status, StatusMessage::Empty) {
+            StatusMessage::NoCore.render(self.language)
+        } else {
+            self.display.status.render(self.language)
+        }
+    }
+
+    /// Paused-aware status: coreless windows read as paused.
+    pub fn paused_line(&self) -> bool {
+        self.display.paused || self.spaces.is_empty()
+    }
+
+    /// Pending-write line, if a write is staged.
+    pub fn pending_line(&self) -> Option<String> {
+        self.display
+            .pending
+            .map(|pending| pending.render(self.language))
+    }
+
+    /// Formatted debugger rows without exposing row types or formatters.
+    pub fn debugger_rows(&self) -> super::view::DebuggerRows {
+        let coreless = self.spaces.is_empty();
+        let mut rows = {
+            let status_text = self.display.status.render(self.language);
+            let pending_text = self
+                .display
+                .pending
+                .map(|pending| pending.render(self.language));
+            super::view::rows_from_display(&self.display, status_text, pending_text)
+        };
+        if coreless {
+            rows.paused = true;
+            if matches!(self.display.status, StatusMessage::Empty) {
+                rows.status_text = StatusMessage::NoCore.render(self.language);
+            }
+        }
+        rows
+    }
+
+    /// 2x-scaled PPU pictures without exposing the scaler.
+    pub fn ppu_pictures(&self) -> Vec<super::view::ScaledPicture> {
+        super::view::scaled_from_display(&self.display)
+    }
+
+    /// Formatted panel text (`None` when the system has no tables).
+    pub fn ppu_panels_text(&self) -> Option<String> {
+        self.has_panels()
+            .then(|| super::view::panels_text(&self.display))
+    }
+
+    /// Whether the system exposes observation tables.
+    pub fn has_panels(&self) -> bool {
+        !self.display.panels.is_empty()
+    }
+
+    /// Generation of the source images behind [`Self::ppu_pictures`].
+    pub fn images_generation(&self) -> u64 {
+        self.display.images_gen
+    }
+
     pub fn apply_drain(
         &mut self,
         mut display: DisplayCache,

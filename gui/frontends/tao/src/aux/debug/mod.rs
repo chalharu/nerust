@@ -14,12 +14,11 @@ use std::sync::{
 use iced::Task;
 use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};
 
-use super::bridge::DebugBridge;
+use super::bridge::{AppliedDrain, AppliedLive, DebugBridge};
 
 /// Initial debugger window size (verified Xvfb fit).
 pub(crate) const DEBUG_WINDOW_SIZE: (f64, f64) = (1100.0, 800.0);
@@ -105,13 +104,13 @@ impl Program for DebugProgram {
             freeze_input,
             selected,
             edit_input,
-            pending,
+            pending_text,
             selected_name,
             regs,
             dump_rows,
             diff,
             disasm_lines,
-            status,
+            status_text,
             paused,
             reg_target,
             reg_input,
@@ -135,7 +134,7 @@ impl Program for DebugProgram {
         let edit_row = views::view_edit_row(selected, &edit_input, &chrome);
         // Confirm row: the one primary button in the window; Cancel is
         // a text escape. The drain owns the authoritative text.
-        let confirm_row = views::view_confirm_row(pending, &chrome);
+        let confirm_row = views::view_confirm_row(pending_text, &chrome);
         let dis_nav = views::view_dis_nav(follow_pc, back_len, anchor, &dis_input, &chrome);
         // Per-line disassembly: line click pins the anchor; targets offer follow buttons.
         let pinned = if follow_pc { None } else { Some(anchor) };
@@ -154,9 +153,7 @@ impl Program for DebugProgram {
         .spacing(12)
         .width(Length::Fill);
         let right_col = column![
-            text(chrome.status_text(&status))
-                .size(14)
-                .width(Length::Fill),
+            text(status_text).size(14).width(Length::Fill),
             text(chrome.registers.clone()).size(16),
             regs_view,
             text(chrome.watch.clone()).size(16),
@@ -211,13 +208,8 @@ pub(crate) struct DebugWindowHandle {
 impl DebugWindowHandle {
     /// Narrow live-images apply for the PPU follow tick: images land when newer.
     /// Returns whether the viewer needs a rebuild.
-    pub(crate) fn apply_live(
-        &mut self,
-        generation: u64,
-        images: Vec<DebugImageRgba>,
-        running: bool,
-    ) -> bool {
-        self.bridge.apply_live_images(generation, images, running)
+    pub(crate) fn apply_live(&mut self, live: AppliedLive) -> bool {
+        self.bridge.apply_applied_live(live)
     }
 
     /// Share the bridge for PPU-viewer creation. Narrow: creation only, never display locks.
@@ -227,12 +219,8 @@ impl DebugWindowHandle {
 
     /// Narrow selection write + paused-section restore for a finished
     /// drain. The host never holds a `display` guard itself.
-    pub(crate) fn apply_drain_display(
-        &mut self,
-        display: DisplayCache,
-        reselected: Option<(u32, Option<u8>)>,
-    ) {
-        self.bridge.apply_drain_display(display, reselected);
+    pub(crate) fn apply_drain_display(&mut self, drain: AppliedDrain) {
+        self.bridge.apply_applied_drain(drain);
     }
 }
 
@@ -312,14 +300,14 @@ impl super::focus::AuxShellRef for DebugWindowHandle {
 }
 
 impl super::registry::DebugDrainPort for DebugWindowHandle {
-    fn apply_drain(&mut self, display: DisplayCache, reselected: Option<(u32, Option<u8>)>) {
-        self.apply_drain_display(display, reselected);
+    fn apply_drain(&mut self, drain: AppliedDrain) {
+        self.apply_drain_display(drain);
     }
 }
 
 impl super::registry::LiveImagesPort for DebugWindowHandle {
-    fn apply_live(&mut self, generation: u64, images: Vec<DebugImageRgba>, running: bool) -> bool {
-        self.apply_live(generation, images, running)
+    fn apply_live(&mut self, live: AppliedLive) -> bool {
+        self.apply_live(live)
     }
 }
 

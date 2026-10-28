@@ -6,12 +6,10 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 use gtk::{gdk, glib, prelude::*};
 use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
 use nerust_frontend_host::debugger::{
-    DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope,
+    DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope, pin_marker,
 };
 use nerust_frontend_host::focus::AuxKind;
 use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
-use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger as vm;
 
 use super::State;
 
@@ -484,7 +482,7 @@ impl DebuggerWindowCore {
             window.set_visible(false);
             glib::Propagation::Stop
         });
-        Self::act(&result, &[DebugAction::Pause, DebugAction::Refresh]);
+        Self::open_refresh(&result);
         // Live PPU follow while the core runs. Images-only, never a full drain:
         // the paused-gated inspect refuses while running and would blank the lists.
         let weak = Rc::downgrade(&result);
@@ -567,9 +565,7 @@ impl DebuggerWindowCore {
         let widgets = win.borrow().widgets.clone();
         if effects.running {
             // Images and chrome only: never touch the scrolling lists or inputs.
-            let chrome = win.borrow().data.debugger_chrome();
-            widgets.pause_button.set_label(chrome.pause.as_str());
-            let status = chrome.status_text(&win.borrow().data.display.status);
+            let status = win.borrow().data.status_line();
             widgets.status_label.set_label(&status);
         }
         Self::sync_ppu(win);
@@ -579,7 +575,7 @@ impl DebuggerWindowCore {
     fn present_live_images(
         win: &DebuggerWindow,
         generation: u64,
-        images: Vec<vm::DebugImageRgba>,
+        images: Vec<nerust_gui_viewmodel::debugger::DebugImageRgba>,
         running: bool,
     ) {
         let changed = win
@@ -765,7 +761,7 @@ impl DebuggerWindowCore {
             ] {
                 entry.set_text("");
             }
-            Self::act(win, &[DebugAction::Refresh]);
+            Self::refresh_all(win);
             return;
         }
         // Echo on gesture rather than changed: typing is entirely local, and
@@ -820,22 +816,37 @@ impl DebuggerWindowCore {
         this.data.reset_replaced_epoch(state.host.session())
     }
 
-    /// Run actions through an async drain flight, then rebuild from the new display.
+    /// Refresh through an async drain flight, then rebuild from the new display.
     /// Inputs are copied out first so the window borrow never spans the round-trip.
-    fn act(win: &DebuggerWindow, actions: &[DebugAction]) {
-        Self::act_scoped(win, actions, RebuildScope::All);
+    fn refresh_all(win: &DebuggerWindow) {
+        Self::refresh_scope(win, RebuildScope::All);
     }
 
-    /// [`DebuggerWindowCore::act`] with a rebuild scope: the finished drain
-    /// refreshes only the sections its data moved.
-    fn act_scoped(win: &DebuggerWindow, actions: &[DebugAction], scope: RebuildScope) {
+    /// Gesture-side open port (Pause + Refresh) without naming shell actions.
+    fn open_refresh(win: &DebuggerWindow) {
         let was_pending = win.borrow().data.pending();
         {
             let mut this = win.borrow_mut();
             let state = this.state.clone();
             let need_images = this.viewers.get(AuxKind::Ppu).is_some();
             this.data
-                .enqueue(state.borrow().host.session(), actions, scope, need_images);
+                .open_refresh(state.borrow().host.session(), need_images);
+        }
+        if Self::poll_flight(win) && !was_pending {
+            Self::watch_flight(win);
+        }
+    }
+
+    /// [`DebuggerWindowCore::refresh_all`] with a rebuild scope: the finished
+    /// drain refreshes only the sections its data moved.
+    fn refresh_scope(win: &DebuggerWindow, scope: RebuildScope) {
+        let was_pending = win.borrow().data.pending();
+        {
+            let mut this = win.borrow_mut();
+            let state = this.state.clone();
+            let need_images = this.viewers.get(AuxKind::Ppu).is_some();
+            this.data
+                .refresh(state.borrow().host.session(), scope, need_images);
         }
         if Self::poll_flight(win) && !was_pending {
             Self::watch_flight(win);
@@ -927,9 +938,9 @@ impl DebuggerWindowCore {
             .expect("debugger has an application");
         let main = win.borrow().window.clone();
         let state = win.borrow().state.clone();
-        let images = win.borrow().data.display.images.clone();
-        let images_gen = win.borrow().data.display.images_gen;
-        let panels = win.borrow().data.display.panels.clone();
+        let images = win.borrow().data.ppu_pictures();
+        let images_gen = win.borrow().data.images_generation();
+        let panels = win.borrow().data.ppu_panels_text();
         let chrome = win.borrow().data.ppu_chrome();
         let model = win.borrow().viewers.window(id).cloned();
         let ppu = model.and_then(|model| {
@@ -1090,19 +1101,19 @@ impl DebuggerWindowCore {
         let snapshot = {
             let this = win.borrow();
             this.ppu_window().map(|ppu| {
-                let display = &this.data.display;
                 (
                     ppu,
-                    display.images.clone(),
-                    display.images_gen,
-                    display.panels.clone(),
+                    this.data.ppu_pictures(),
+                    this.data.images_generation(),
+                    this.data.ppu_panels_text(),
                 )
             })
         };
         if let Some((ppu, images, generation, panels)) = snapshot {
             let native = ppu.borrow().window.clone();
             if !super::surface_state::surface_gone(&native) {
-                ppu.borrow_mut().sync(&images, generation, &panels);
+                ppu.borrow_mut()
+                    .sync(&images, generation, panels.as_deref());
             }
         }
     }
@@ -1114,8 +1125,7 @@ impl DebuggerWindowCore {
         let chrome = this.data.debugger_chrome();
         this.pause_button
             .set_label(chrome.pause_label(display.paused));
-        this.status_label
-            .set_label(&chrome.status_text(&display.status));
+        this.status_label.set_label(&this.data.status_line());
         // The title names the anchor: clicks pin it visibly instead
         // of silently moving the window.
         let dis_title = chrome.disassembly_title(nav.follow_pc(), this.data.anchor());
@@ -1132,7 +1142,7 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_disasm(win: &DebuggerWindow, this: &DebuggerView) {
-        let display = &this.data.display;
+        let rows = this.data.debugger_rows();
         let chrome = this.data.debugger_chrome();
         // Pinned anchor rows carry `@` like the tao viewer so a line click
         // reads back visibly even off-PC. Nothing pinned in follow-PC mode.
@@ -1142,21 +1152,20 @@ impl DebuggerWindowCore {
             Some(this.data.anchor())
         };
         clear_list(&this.disasm_list);
-        if display.disasm_lines.is_empty() {
+        if rows.disasm.is_empty() {
             this.disasm_list.append(&static_row(&chrome.no_disassembly));
             this.disasm_list
                 .append(&static_row(&chrome.disassembly_hint));
         }
-        for line in &display.disasm_lines {
+        for line in &rows.disasm {
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
             // The PC row carries a `>` marker like the dump
             // selection: the current position reads at a glance.
             let is_pinned = pinned == Some(line.addr);
-            let marker = vm::disasm_marker(line.is_pc, is_pinned);
-            let button =
-                gtk::Button::with_label(&format!("{marker}{}", vm::format_disasm_line(line)));
+            let marker = pin_marker(line.is_pc, is_pinned);
+            let button = gtk::Button::with_label(&format!("{marker}{}", line.text));
             button.add_css_class("monospace");
             left_align(&button);
             button.set_hexpand(true);
@@ -1185,16 +1194,16 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_dump(win: &DebuggerWindow, this: &DebuggerView) {
-        let display = &this.data.display;
+        let rows = this.data.debugger_rows();
         clear_list(&this.dump_list);
         // Byte-precise selection like the tao viewer: every byte is its own
         // button, so the write target reads exactly.
-        for hex_row in &display.dump_rows {
+        for hex_row in &rows.dump {
             let selected_addr = this.data.selected.map(|(a, _)| a);
             // Containing-row match: a mid-row pick still lights its row.
-            let row_hit = selected_addr
-                .is_some_and(|a| a >= hex_row.addr && a < hex_row.addr + u32::from(hex_row.valid));
-            let changed = display.diff.contains(&hex_row.addr);
+            let row_end = hex_row.addr + hex_row.bytes.len() as u32;
+            let row_hit = selected_addr.is_some_and(|a| a >= hex_row.addr && a < row_end);
+            let changed = rows.changed_addrs.contains(&hex_row.addr);
             let marker = match (row_hit, changed) {
                 (true, true) => ">*",
                 (true, false) => "> ",
@@ -1216,9 +1225,9 @@ impl DebuggerWindowCore {
             let head_clicked = Rc::clone(win);
             head.connect_clicked(move |_| Self::row_selected(&head_clicked, base));
             hbox.append(&head);
-            for i in 0..hex_row.valid {
-                let addr = hex_row.addr + u32::from(i);
-                let byte = hex_row.bytes[usize::from(i)];
+            for (i, byte) in hex_row.bytes.iter().enumerate() {
+                let addr = hex_row.addr + i as u32;
+                let byte = *byte;
                 let button = gtk::Button::with_label(&format!("{byte:02X}"));
                 button.add_css_class("monospace");
                 if selected_addr == Some(addr) {
@@ -1236,7 +1245,6 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_edit_row(this: &DebuggerView) {
-        let display = &this.data.display;
         let chrome = this.data.debugger_chrome();
         let select_text = chrome.selected_row_text(this.data.selected);
         this.select_label.set_label(&select_text);
@@ -1244,10 +1252,9 @@ impl DebuggerWindowCore {
         // selected row, never on the page anchor.
         this.write_button
             .set_label(&chrome.write_target_label(this.data.selected));
-        match &display.pending {
-            Some(pending) => {
-                this.confirm_label
-                    .set_label(&chrome.pending_text(Some(*pending)).unwrap_or_default());
+        match this.data.pending_line() {
+            Some(line) => {
+                this.confirm_label.set_label(&line);
                 this.confirm_row.set_visible(true);
             }
             None => this.confirm_row.set_visible(false),
@@ -1255,11 +1262,12 @@ impl DebuggerWindowCore {
     }
 
     fn rebuild_state(win: &DebuggerWindow, this: &DebuggerView) {
+        let rows = this.data.debugger_rows();
         let display = &this.data.display;
         let chrome = this.data.debugger_chrome();
         // Registers flow into two clickable columns: the kernel order is kept,
-        // the view only halves the list. Lines format here from the snapshot.
-        let regs = &display.regs;
+        // the view only halves the list. Lines arrive pre-formatted.
+        let regs = &rows.regs;
         let mid = regs.len().div_ceil(2).min(regs.len());
         Self::fill_reg_list(win, &this.regs_left, &regs[..mid], this.data.reg_target);
         Self::fill_reg_list(win, &this.regs_right, &regs[mid..], this.data.reg_target);
@@ -1274,14 +1282,15 @@ impl DebuggerWindowCore {
     fn fill_reg_list(
         win: &DebuggerWindow,
         list: &gtk::ListBox,
-        regs: &[(&'static str, u64)],
+        regs: &[nerust_frontend_host::debugger::RegRow],
         target: Option<&'static str>,
     ) {
         clear_list(list);
-        for &(name, value) in regs.iter() {
+        for row_data in regs.iter() {
+            let name = row_data.name;
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
-            let button = gtk::Button::with_label(&vm::format_register(name, value));
+            let button = gtk::Button::with_label(&row_data.text);
             button.add_css_class("monospace");
             left_align(&button);
             button.set_hexpand(true);
@@ -1346,6 +1355,7 @@ fn key_action(key: gdk::Key) -> Option<DebuggerKey> {
 mod tests {
     use super::*;
     use nerust_core_traits::debugger::SpaceId;
+    use nerust_gui_shell::debug::DebugAction;
     use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, StatusMessage};
     use nerust_settings_core::i18n::{UiText, text};
     use nerust_settings_core::model::language::AppLanguage;
@@ -1554,7 +1564,7 @@ mod tests {
             paused: true,
             reg_names: vec!["cpsr", "r0", "r1"],
             status: StatusMessage::Paused,
-            pending: Some(vm::PendingWrite {
+            pending: Some(nerust_gui_viewmodel::debugger::PendingWrite {
                 addr: 0x100,
                 old: Some(0xAB),
                 value: 0x42,
