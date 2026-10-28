@@ -2,10 +2,10 @@
 //! `capture_view` is the single place that locks the bridge.
 
 use iced_tiny_skia::Renderer;
-use nerust_core_traits::debugger::{DisasmLine, HexRow};
-use nerust_gui_viewmodel::debugger::{self as vm, PendingWrite, StatusMessage};
-use nerust_settings_core::i18n::{self as ui_msg, UiText, text as ui_text};
-use nerust_settings_core::model::language::AppLanguage;
+use nerust_frontend_host::debugger::{
+    DebuggerChrome, DisasmLine, HexRow, PendingWrite, StatusMessage, disasm_marker,
+    format_disasm_line, format_register,
+};
 
 use super::DebugMessage;
 use crate::aux::bridge::DebugBridge;
@@ -13,7 +13,7 @@ use crate::aux::bridge::DebugBridge;
 /// Owned per-rebuild snapshot: widgets read locals, never the live bridge. Locks are sequential, so
 /// it is one consistent read in practice, strictly more coherent than per-widget locking.
 pub(super) struct ViewSnapshot {
-    pub(super) language: AppLanguage,
+    pub(super) chrome: DebuggerChrome,
     pub(super) mem_input: String,
     pub(super) dis_input: String,
     pub(super) follow_pc: bool,
@@ -42,7 +42,7 @@ pub(super) struct ViewSnapshot {
 /// Lock the bridge once and clone an owned snapshot out of it.
 /// No widget code runs here; see `anchor()` for the anchor rule.
 pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
-    let language = bridge.language();
+    let chrome = bridge.debugger_chrome();
     // One coherent pass: core fields clone under one guard, images
     // ride the display `Arc` and clone lock-free below.
     let view = bridge.view_snapshot();
@@ -65,8 +65,8 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     // toggle would offer Pause against nothing. Read coreless as paused with an explicit "no core" status — the same agreement as the gtk twin.
     let coreless = bridge.spaces().is_empty();
     let paused = paused || coreless;
-    let status = if coreless && matches!(status, vm::StatusMessage::Empty) {
-        vm::StatusMessage::NoCore
+    let status = if coreless && matches!(status, StatusMessage::Empty) {
+        StatusMessage::NoCore
     } else {
         status
     };
@@ -80,7 +80,7 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
     let reg_target = view.reg_target;
     let reg_input = view.reg_input;
     ViewSnapshot {
-        language,
+        chrome,
         mem_input,
         dis_input,
         follow_pc,
@@ -111,24 +111,20 @@ pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
 /// capture-and-assemble pass). The toolbar carries a single Pause/Resume toggle following the drained pause.
 pub(super) fn view_toolbar(
     paused: bool,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text};
     row![
-        button(text(if paused {
-            ui_text(language, UiText::Resume)
-        } else {
-            ui_text(language, UiText::Pause)
-        }))
-        .style(button::secondary)
-        .on_press(DebugMessage::TogglePausePressed),
-        button(text(ui_text(language, UiText::StepFrame)))
+        button(text(chrome.pause_label(paused).to_owned()))
+            .style(button::secondary)
+            .on_press(DebugMessage::TogglePausePressed),
+        button(text(chrome.step_frame.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::StepFramePressed),
-        button(text(ui_text(language, UiText::StepInstr)))
+        button(text(chrome.step_instr.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::StepInstrPressed),
-        button(text(ui_text(language, UiText::PpuViewer)))
+        button(text(chrome.ppu_viewer.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::PpuOpenPressed),
     ]
@@ -139,17 +135,17 @@ pub(super) fn view_toolbar(
 
 pub(super) fn view_space_row(
     selected_name: &str,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text};
     row![
-        text(ui_text(language, UiText::Space)).width(Length::Fixed(150.0)),
-        button(text(ui_text(language, UiText::Prev)))
+        text(chrome.space.clone()).width(Length::Fixed(150.0)),
+        button(text(chrome.prev.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::SpacePrev),
         text(selected_name.to_owned()).size(14).width(Length::Fill),
-        button(text(ui_text(language, UiText::Next)))
+        button(text(chrome.next.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::SpaceNext),
     ]
@@ -160,25 +156,25 @@ pub(super) fn view_space_row(
 
 pub(super) fn view_mem_nav(
     mem_input: &str,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text, text_input};
     row![
-        text(ui_text(language, UiText::Page)).width(Length::Fixed(150.0)),
-        button(text(ui_text(language, UiText::Prev)))
+        text(chrome.page.clone()).width(Length::Fixed(150.0)),
+        button(text(chrome.prev.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::MemPage(-1)),
-        button(text(ui_text(language, UiText::Next)))
+        button(text(chrome.next.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::MemPage(1)),
-        text_input(ui_text(language, UiText::AddrHex), mem_input)
+        text_input(&chrome.addr_hex, mem_input)
             .on_input(DebugMessage::MemInputChanged)
             .on_submit(DebugMessage::MemGo)
             // Wide enough for the longest placeholder in either
             // language (JA "アドレス16進" clips at 120).
             .width(150),
-        button(text(ui_text(language, UiText::Go)))
+        button(text(chrome.go.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::MemGo),
     ]
@@ -256,7 +252,7 @@ pub(super) fn view_regs_section(
     regs: &[(&'static str, u64)],
     reg_target: Option<&'static str>,
     reg_input: &str,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, column, row, text, text_input};
@@ -266,7 +262,7 @@ pub(super) fn view_regs_section(
         let mut col = column![].spacing(2);
         for (name, value) in half.iter() {
             let row_button = button(
-                text(vm::format_register(name, *value))
+                text(format_register(name, *value))
                     .size(14)
                     .font(iced::Font::MONOSPACE),
             )
@@ -285,16 +281,16 @@ pub(super) fn view_regs_section(
         halves_row = halves_row.push(col);
     }
     let target_text = match reg_target {
-        Some(name) => format!("{} {name}", ui_text(language, UiText::Set)),
-        None => ui_text(language, UiText::PickRegister).to_string(),
+        Some(name) => chrome.set_target_label(Some(name)),
+        None => chrome.set_target_label(None),
     };
     let edit = row![
         text(target_text).size(14).width(Length::Fixed(140.0)),
-        text_input(ui_text(language, UiText::Hex), reg_input)
+        text_input(&chrome.hex, reg_input)
             .on_input(DebugMessage::RegInputChanged)
             .on_submit(DebugMessage::RegSet)
             .width(100),
-        button(text(ui_text(language, UiText::Set)))
+        button(text(chrome.set.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::RegSet),
     ]
@@ -306,34 +302,34 @@ pub(super) fn view_regs_section(
 pub(super) fn view_edit_row(
     selected: Option<(u32, Option<u8>)>,
     edit_input: &str,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, row, text, text_input};
     // The target rides on the label and the button: writes always
     // land on the selected row, never on the page anchor.
     let select_text = match selected {
-        Some((addr, old)) => ui_msg::selected_row(language, addr, old),
-        None => ui_text(language, UiText::SelectDumpRow).to_string(),
+        Some((addr, old)) => chrome.selected_row_text(Some((addr, old))),
+        None => chrome.selected_row_text(None),
     };
     // The target rides on the button: writes always land on the
     // selected row, never on the page anchor.
     let write_label = match selected {
-        Some((addr, _)) => format!("{} 0x{addr:08X}", ui_text(language, UiText::Write)),
-        None => ui_text(language, UiText::Write).to_string(),
+        Some((addr, _)) => chrome.write_target_label(Some((addr, None))),
+        None => chrome.write_target_label(None),
     };
     row![
         text(select_text).size(14).width(Length::Fixed(240.0)),
-        text_input(ui_text(language, UiText::HexByte), edit_input)
+        text_input(&chrome.hex_byte, edit_input)
             .on_input(DebugMessage::EditInputChanged)
             .width(100),
         button(text(write_label))
             .style(button::secondary)
             .on_press(DebugMessage::EditWrite),
-        button(text(ui_text(language, UiText::Watch)))
+        button(text(chrome.watch.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::WatchSet),
-        button(text(ui_text(language, UiText::Freeze)))
+        button(text(chrome.freeze.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::EditFreezeSet),
     ]
@@ -343,18 +339,20 @@ pub(super) fn view_edit_row(
 }
 
 pub(super) fn view_confirm_row(
-    pending: Option<vm::PendingWrite>,
-    language: AppLanguage,
+    pending: Option<PendingWrite>,
+    chrome: &DebuggerChrome,
 ) -> Option<iced::Element<'static, DebugMessage, iced::Theme, Renderer>> {
     use iced::Length;
     use iced::widget::{button, row, text};
     pending.map(|pending| {
         row![
-            text(pending.render(language)).size(14).width(Length::Fill),
-            button(text(ui_text(language, UiText::Confirm)))
+            text(chrome.pending_text(Some(pending)).unwrap_or_default())
+                .size(14)
+                .width(Length::Fill),
+            button(text(chrome.confirm.clone()))
                 .style(button::primary)
                 .on_press(DebugMessage::ConfirmWrite),
-            button(text(ui_text(language, UiText::Cancel)))
+            button(text(chrome.cancel.clone()))
                 .style(button::text)
                 .on_press(DebugMessage::CancelWrite),
         ]
@@ -368,31 +366,15 @@ pub(super) fn view_dis_nav(
     back_len: usize,
     anchor: u32,
     dis_input: &str,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text, text_input};
     let follow_button =
-        button(text(ui_text(language, UiText::FollowPc))).on_press(DebugMessage::FollowPcToggle);
-    let back_button = button(text(format!(
-        "{} ({back_len})",
-        ui_text(language, UiText::Back)
-    )))
-    .on_press(DebugMessage::DisBack);
+        button(text(chrome.follow_pc.clone())).on_press(DebugMessage::FollowPcToggle);
+    let back_button = button(text(chrome.back_label(back_len))).on_press(DebugMessage::DisBack);
     // The title names the anchor: clicks pin it visibly instead of
     // silently moving the window.
-    let title = if follow_pc {
-        format!(
-            "{} {}",
-            ui_text(language, UiText::Disassembly),
-            ui_text(language, UiText::FollowPcTag)
-        )
-    } else {
-        format!(
-            "{} @0x{anchor:08X} {}",
-            ui_text(language, UiText::Disassembly),
-            ui_text(language, UiText::FixedTag)
-        )
-    };
+    let title = chrome.disassembly_title(follow_pc, anchor);
     row![
         text(title),
         if follow_pc {
@@ -400,12 +382,12 @@ pub(super) fn view_dis_nav(
         } else {
             follow_button.style(button::text)
         },
-        text_input(ui_text(language, UiText::AddrHex), dis_input)
+        text_input(&chrome.addr_hex, dis_input)
             .on_input(DebugMessage::DisInputChanged)
             .on_submit(DebugMessage::DisGo)
             // Same JA placeholder width as the memory input above.
             .width(150),
-        button(text(ui_text(language, UiText::Go)))
+        button(text(chrome.go.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::DisGo),
         if back_len > 0 {
@@ -420,24 +402,24 @@ pub(super) fn view_dis_nav(
 }
 
 pub(super) fn view_dis_col(
-    disasm_lines: &[nerust_core_traits::debugger::DisasmLine],
+    disasm_lines: &[DisasmLine],
     pinned: Option<u32>,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::Length;
     use iced::widget::{button, column, row, scrollable, text};
     let mut dis_col = column![].spacing(2);
     if disasm_lines.is_empty() {
-        dis_col = dis_col.push(text(ui_text(language, UiText::NoDisassembly)).size(14));
-        dis_col = dis_col.push(text(ui_text(language, UiText::DisassemblyHint)).size(14));
+        dis_col = dis_col.push(text(chrome.no_disassembly.clone()).size(14));
+        dis_col = dis_col.push(text(chrome.disassembly_hint.clone()).size(14));
     }
     for line in disasm_lines {
         // Marker column is two chars wide for every row. The PC `>` already comes from
         // `format_disasm_line`, so the PC row contributes blanks here; the pinned anchor row carries `@`. (Prepending another `"> "` double-marked the PC row.)
         let is_pinned = pinned == Some(line.addr);
-        let marker = vm::disasm_marker(line.is_pc, is_pinned);
+        let marker = disasm_marker(line.is_pc, is_pinned);
         let line_button = button(
-            text(format!("{marker}{}", vm::format_disasm_line(line)))
+            text(format!("{marker}{}", format_disasm_line(line)))
                 .size(14)
                 .font(iced::Font::MONOSPACE),
         )
@@ -468,20 +450,16 @@ pub(super) fn view_dis_col(
 pub(super) fn view_watch_row(
     watch: Option<u32>,
     watch_value: Option<u8>,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text};
-    let watch_text = match (watch, watch_value) {
-        (Some(addr), Some(value)) => ui_msg::watch_value(language, addr, Some(value)),
-        (Some(addr), None) => ui_msg::watch_value(language, addr, None),
-        (None, _) => ui_text(language, UiText::WatchNone).to_string(),
-    };
+    let watch_text = chrome.watch_text(watch, watch_value);
     row![
-        button(text(ui_text(language, UiText::Watch)))
+        button(text(chrome.watch.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::WatchSet),
         text(watch_text).size(14).width(iced::Length::Fill),
-        button(text(ui_text(language, UiText::Clear)))
+        button(text(chrome.clear.clone()))
             .style(button::text)
             .on_press(DebugMessage::WatchClear),
     ]
@@ -493,22 +471,19 @@ pub(super) fn view_watch_row(
 pub(super) fn view_freeze_row(
     freeze: Option<(u32, u8)>,
     freeze_input: &str,
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text, text_input};
-    let freeze_text = match freeze {
-        Some((addr, value)) => ui_msg::frozen(language, addr, value),
-        None => ui_text(language, UiText::FreezeNone).to_string(),
-    };
+    let freeze_text = chrome.freeze_text(freeze);
     row![
-        text_input(ui_text(language, UiText::HexByte), freeze_input)
+        text_input(&chrome.hex_byte, freeze_input)
             .on_input(DebugMessage::FreezeInputChanged)
             .width(100),
-        button(text(ui_text(language, UiText::Freeze)))
+        button(text(chrome.freeze.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::FreezeSet),
         text(freeze_text).size(14).width(iced::Length::Fill),
-        button(text(ui_text(language, UiText::Clear)))
+        button(text(chrome.clear.clone()))
             .style(button::text)
             .on_press(DebugMessage::FreezeClear),
     ]
@@ -520,7 +495,7 @@ pub(super) fn view_freeze_row(
 pub(super) fn view_bookmark_section(
     bm_input: &str,
     bookmarks: &[(u32, String)],
-    language: AppLanguage,
+    chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, column, row, text, text_input};
     let mut bookmarks_col = column![].spacing(2);
@@ -545,13 +520,13 @@ pub(super) fn view_bookmark_section(
         );
     }
     column![
-        text(ui_text(language, UiText::Bookmarks)).size(16),
+        text(chrome.bookmarks.clone()).size(16),
         row![
-            text_input(ui_text(language, UiText::Label), bm_input)
+            text_input(&chrome.label, bm_input)
                 .on_input(DebugMessage::BookmarkInputChanged)
                 .on_submit(DebugMessage::BookmarkAdd)
                 .width(iced::Length::Fill),
-            button(text(ui_text(language, UiText::Add)))
+            button(text(chrome.add.clone()))
                 .style(button::secondary)
                 .on_press(DebugMessage::BookmarkAdd),
         ]

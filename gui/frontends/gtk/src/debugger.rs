@@ -5,14 +5,13 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
+use nerust_frontend_host::debugger as vm;
 use nerust_frontend_host::debugger::{
     DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope,
 };
 use nerust_frontend_host::focus::AuxKind;
 use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger as vm;
-use nerust_settings_core::i18n::{self as ui_msg, UiText, text};
 
 use super::State;
 
@@ -183,7 +182,7 @@ impl DebuggerWindowCore {
         title: &str,
     ) -> DebuggerWindow {
         let data = DebuggerDriver::from_session(state.borrow().host.session());
-        let language = data.language;
+        let chrome = data.debugger_chrome();
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title(title)
@@ -193,22 +192,22 @@ impl DebuggerWindowCore {
             .default_height(920)
             .build();
 
-        let pause_button = action_button(text(language, UiText::Pause));
+        let pause_button = action_button(chrome.pause.as_str());
         let status_label = gtk::Label::new(None);
         status_label.set_xalign(0.0);
-        let disasm_title = gtk::Label::new(Some(text(language, UiText::Disassembly)));
+        let disasm_title = gtk::Label::new(Some(chrome.disassembly.as_str()));
         disasm_title.set_xalign(0.0);
         let disasm_list = gtk::ListBox::new();
-        let dis_input = entry(Some(text(language, UiText::AddrHex)));
-        let back_button = action_button(&format!("{} (0)", text(language, UiText::Back)));
+        let dis_input = entry(Some(chrome.addr_hex.as_str()));
+        let back_button = action_button(&chrome.back_label(0));
         let space_label = gtk::Label::new(None);
         space_label.set_xalign(0.0);
         space_label.set_hexpand(true);
-        let mem_input = entry(Some(text(language, UiText::AddrHex)));
+        let mem_input = entry(Some(chrome.addr_hex.as_str()));
         let dump_list = gtk::ListBox::new();
-        let select_label = gtk::Label::new(Some(text(language, UiText::SelectDumpRow)));
+        let select_label = gtk::Label::new(Some(chrome.select_dump_row.as_str()));
         select_label.set_xalign(0.0);
-        let edit_input = entry(Some(text(language, UiText::HexByte)));
+        let edit_input = entry(Some(chrome.hex_byte.as_str()));
         let confirm_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         let confirm_label = gtk::Label::new(None);
         confirm_label.set_xalign(0.0);
@@ -219,22 +218,22 @@ impl DebuggerWindowCore {
         regs_left.set_selection_mode(gtk::SelectionMode::None);
         let regs_right = gtk::ListBox::new();
         regs_right.set_selection_mode(gtk::SelectionMode::None);
-        let reg_target_label = gtk::Label::new(Some(text(language, UiText::PickRegister)));
+        let reg_target_label = gtk::Label::new(Some(chrome.pick_register.as_str()));
         reg_target_label.set_xalign(0.0);
-        let reg_input = entry(Some(text(language, UiText::Hex)));
+        let reg_input = entry(Some(chrome.hex.as_str()));
         let regs_row = gtk::Box::new(gtk::Orientation::Horizontal, 16);
         regs_row.append(&regs_left);
         regs_row.append(&regs_right);
-        let watch_label = gtk::Label::new(Some(text(language, UiText::WatchNone)));
+        let watch_label = gtk::Label::new(Some(chrome.watch_none.as_str()));
         watch_label.set_xalign(0.0);
         watch_label.set_hexpand(true);
-        let freeze_input = entry(Some(text(language, UiText::HexByte)));
-        let freeze_label = gtk::Label::new(Some(text(language, UiText::FreezeNone)));
+        let freeze_input = entry(Some(chrome.hex_byte.as_str()));
+        let freeze_label = gtk::Label::new(Some(chrome.freeze_none.as_str()));
         freeze_label.set_xalign(0.0);
         freeze_label.set_hexpand(true);
-        let bookmark_input = entry(Some(text(language, UiText::Label)));
+        let bookmark_input = entry(Some(chrome.label.as_str()));
         let bookmark_list = gtk::ListBox::new();
-        let write_button = action_button(text(language, UiText::Write));
+        let write_button = action_button(chrome.write.as_str());
 
         let result: DebuggerWindow = Rc::new(RefCell::new(Self {
             window: window.clone(),
@@ -279,28 +278,22 @@ impl DebuggerWindowCore {
             });
         }
         for (label, action) in [
-            (
-                text(language, UiText::StepFrame),
-                DebuggerEvent::StepFramePressed,
-            ),
-            (
-                text(language, UiText::StepInstr),
-                DebuggerEvent::StepInstrPressed,
-            ),
+            (chrome.step_frame.as_str(), DebuggerEvent::StepFramePressed),
+            (chrome.step_instr.as_str(), DebuggerEvent::StepInstrPressed),
         ] {
             let button = action_button(label);
             let win = result.clone();
             button.connect_clicked(move |_| Self::dispatch(&win, action.clone()));
             toolbar.append(&button);
         }
-        let ppu_button = action_button(text(language, UiText::PpuViewer));
+        let ppu_button = action_button(chrome.ppu_viewer.as_str());
         Self::wire_toolbar(&result, &ppu_button);
         toolbar.append(&ppu_button);
 
         // Disassembly header: title, Follow PC, addr entry, Go, Back.
         let dis_nav = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let follow_button = action_button(text(language, UiText::FollowPc));
-        let go_button = action_button(text(language, UiText::Go));
+        let follow_button = action_button(chrome.follow_pc.as_str());
+        let go_button = action_button(chrome.go.as_str());
         Self::wire_dis_nav(
             &result,
             &follow_button,
@@ -329,7 +322,7 @@ impl DebuggerWindowCore {
         let left_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
         left_col.set_hexpand(true);
         left_col.set_vexpand(true);
-        let title = gtk::Label::new(Some(text(language, UiText::Debugger)));
+        let title = gtk::Label::new(Some(chrome.debugger.as_str()));
         title.set_xalign(0.0);
         left_col.append(&title);
         left_col.append(&toolbar);
@@ -339,28 +332,28 @@ impl DebuggerWindowCore {
         // Right state column (scrolls independently; PPU panels are long).
         let right_col = gtk::Box::new(gtk::Orientation::Vertical, 12);
         right_col.append(&status_label);
-        right_col.append(&section(text(language, UiText::Registers)));
+        right_col.append(&section(chrome.registers.as_str()));
         right_col.append(&regs_row);
         let reg_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         reg_target_label.set_size_request(140, -1);
-        let reg_set = action_button(text(language, UiText::Set));
+        let reg_set = action_button(chrome.set.as_str());
         Self::wire_reg_row(&result, &reg_set, &reg_input);
         reg_row.append(&reg_target_label);
         reg_row.append(&reg_input);
         reg_row.append(&reg_set);
         right_col.append(&reg_row);
-        right_col.append(&section(text(language, UiText::Watch)));
+        right_col.append(&section(chrome.watch.as_str()));
         let watch_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let watch_button = action_button(text(language, UiText::Watch));
-        let watch_clear = action_button(text(language, UiText::Clear));
+        let watch_button = action_button(chrome.watch.as_str());
+        let watch_clear = action_button(chrome.clear.as_str());
         watch_row.append(&watch_button);
         watch_row.append(&watch_label);
         watch_row.append(&watch_clear);
         right_col.append(&watch_row);
-        right_col.append(&section(text(language, UiText::Freeze)));
+        right_col.append(&section(chrome.freeze.as_str()));
         let freeze_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let freeze_button = action_button(text(language, UiText::Freeze));
-        let freeze_clear = action_button(text(language, UiText::Clear));
+        let freeze_button = action_button(chrome.freeze.as_str());
+        let freeze_clear = action_button(chrome.clear.as_str());
         Self::wire_watch_freeze(
             &result,
             &watch_button,
@@ -373,10 +366,10 @@ impl DebuggerWindowCore {
         freeze_row.append(&freeze_label);
         freeze_row.append(&freeze_clear);
         right_col.append(&freeze_row);
-        right_col.append(&section(text(language, UiText::Bookmarks)));
+        right_col.append(&section(chrome.bookmarks.as_str()));
         let bm_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         bookmark_input.set_hexpand(true);
-        let bm_add = action_button(text(language, UiText::Add));
+        let bm_add = action_button(chrome.add.as_str());
         Self::wire_bookmarks(&result, &bm_add, &bookmark_input);
         bm_row.append(&bookmark_input);
         bm_row.append(&bm_add);
@@ -402,13 +395,13 @@ impl DebuggerWindowCore {
         // window, so resizing grows viewports instead of stranding dead space.
         let memory = gtk::Box::new(gtk::Orientation::Vertical, 8);
         memory.set_vexpand(true);
-        memory.append(&section(text(language, UiText::Memory)));
+        memory.append(&section(chrome.memory.as_str()));
         let space_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let space_title = gtk::Label::new(Some(text(language, UiText::Space)));
+        let space_title = gtk::Label::new(Some(chrome.space.as_str()));
         space_title.set_size_request(150, -1);
         space_title.set_xalign(0.0);
-        let space_prev = action_button(text(language, UiText::Prev));
-        let space_next = action_button(text(language, UiText::Next));
+        let space_prev = action_button(chrome.prev.as_str());
+        let space_next = action_button(chrome.next.as_str());
         Self::wire_space_prev_next(&result, &space_prev, &space_next);
         space_row.append(&space_title);
         space_row.append(&space_prev);
@@ -416,12 +409,12 @@ impl DebuggerWindowCore {
         space_row.append(&space_next);
         memory.append(&space_row);
         let mem_nav = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-        let page_title = gtk::Label::new(Some(text(language, UiText::Page)));
+        let page_title = gtk::Label::new(Some(chrome.page.as_str()));
         page_title.set_size_request(150, -1);
         page_title.set_xalign(0.0);
-        let mem_prev = action_button(text(language, UiText::Prev));
-        let mem_next = action_button(text(language, UiText::Next));
-        let mem_go = action_button(text(language, UiText::Go));
+        let mem_prev = action_button(chrome.prev.as_str());
+        let mem_next = action_button(chrome.next.as_str());
+        let mem_go = action_button(chrome.go.as_str());
         Self::wire_mem_nav(&result, &mem_prev, &mem_next, &mem_go, &mem_input);
         mem_nav.append(&page_title);
         mem_nav.append(&mem_prev);
@@ -443,13 +436,13 @@ impl DebuggerWindowCore {
         // Edit row + confirm row + Refresh.
         let edit_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         select_label.set_size_request(240, -1);
-        let edit_watch = action_button(text(language, UiText::Watch));
-        let edit_freeze = action_button(text(language, UiText::Freeze));
-        let confirm_button = action_button(text(language, UiText::Confirm));
+        let edit_watch = action_button(chrome.watch.as_str());
+        let edit_freeze = action_button(chrome.freeze.as_str());
+        let confirm_button = action_button(chrome.confirm.as_str());
         confirm_button.add_css_class("suggested-action");
-        let cancel_button = action_button(text(language, UiText::Cancel));
+        let cancel_button = action_button(chrome.cancel.as_str());
         cancel_button.add_css_class("flat");
-        let refresh_button = action_button(text(language, UiText::Refresh));
+        let refresh_button = action_button(chrome.refresh.as_str());
         Self::wire_edit_row(
             &result,
             &write_button,
@@ -571,13 +564,13 @@ impl DebuggerWindowCore {
         if !effects.changed {
             return;
         }
-        let language = win.borrow().data.language;
-        let chrome = win.borrow().widgets.clone();
+        let widgets = win.borrow().widgets.clone();
         if effects.running {
             // Images and chrome only: never touch the scrolling lists or inputs.
-            chrome.pause_button.set_label(text(language, UiText::Pause));
-            let status = win.borrow().data.display.status.render(language);
-            chrome.status_label.set_label(&status);
+            let chrome = win.borrow().data.debugger_chrome();
+            widgets.pause_button.set_label(chrome.pause.as_str());
+            let status = chrome.status_text(&win.borrow().data.display.status);
+            widgets.status_label.set_label(&status);
         }
         Self::sync_ppu(win);
     }
@@ -937,7 +930,7 @@ impl DebuggerWindowCore {
         let images = win.borrow().data.display.images.clone();
         let images_gen = win.borrow().data.display.images_gen;
         let panels = win.borrow().data.display.panels.clone();
-        let chrome = nerust_frontend_host::debugger::PpuChrome::new(win.borrow().data.language);
+        let chrome = win.borrow().data.ppu_chrome();
         let model = win.borrow().viewers.window(id).cloned();
         let ppu = model.and_then(|model| {
             super::ppu_window::PpuWindowCore::from_window(
@@ -1118,36 +1111,17 @@ impl DebuggerWindowCore {
     fn rebuild_header(this: &DebuggerView) {
         let display = &this.data.display;
         let nav = &this.data.nav;
-        let language = this.data.language;
-        this.pause_button.set_label(if display.paused {
-            text(language, UiText::Resume)
-        } else {
-            text(language, UiText::Pause)
-        });
+        let chrome = this.data.debugger_chrome();
+        this.pause_button
+            .set_label(chrome.pause_label(display.paused));
         this.status_label
-            .set_label(&display.status.render(language));
+            .set_label(&chrome.status_text(&display.status));
         // The title names the anchor: clicks pin it visibly instead
         // of silently moving the window.
-        let dis_title = if nav.follow_pc() {
-            format!(
-                "{} {}",
-                text(language, UiText::Disassembly),
-                text(language, UiText::FollowPcTag)
-            )
-        } else {
-            format!(
-                "{} @0x{:08X} {}",
-                text(language, UiText::Disassembly),
-                this.data.anchor(),
-                text(language, UiText::FixedTag)
-            )
-        };
+        let dis_title = chrome.disassembly_title(nav.follow_pc(), this.data.anchor());
         this.disasm_title.set_label(&dis_title);
-        this.back_button.set_label(&format!(
-            "{} ({})",
-            text(language, UiText::Back),
-            nav.back_len()
-        ));
+        this.back_button
+            .set_label(&chrome.back_label(nav.back_len()));
         this.space_label.set_label(&this.data.selected_name());
         if this.mem_input.text() != nav.mem_input() {
             this.mem_input.set_text(nav.mem_input());
@@ -1159,7 +1133,7 @@ impl DebuggerWindowCore {
 
     fn rebuild_disasm(win: &DebuggerWindow, this: &DebuggerView) {
         let display = &this.data.display;
-        let language = this.data.language;
+        let chrome = this.data.debugger_chrome();
         // Pinned anchor rows carry `@` like the tao viewer so a line click
         // reads back visibly even off-PC. Nothing pinned in follow-PC mode.
         let pinned = if this.data.nav.follow_pc() {
@@ -1169,10 +1143,9 @@ impl DebuggerWindowCore {
         };
         clear_list(&this.disasm_list);
         if display.disasm_lines.is_empty() {
+            this.disasm_list.append(&static_row(&chrome.no_disassembly));
             this.disasm_list
-                .append(&static_row(text(language, UiText::NoDisassembly)));
-            this.disasm_list
-                .append(&static_row(text(language, UiText::DisassemblyHint)));
+                .append(&static_row(&chrome.disassembly_hint));
         }
         for line in &display.disasm_lines {
             let row = gtk::ListBoxRow::new();
@@ -1264,21 +1237,17 @@ impl DebuggerWindowCore {
 
     fn rebuild_edit_row(this: &DebuggerView) {
         let display = &this.data.display;
-        let language = this.data.language;
-        let select_text = match this.data.selected {
-            Some((addr, old)) => ui_msg::selected_row(language, addr, old),
-            None => text(language, UiText::SelectDumpRow).to_string(),
-        };
+        let chrome = this.data.debugger_chrome();
+        let select_text = chrome.selected_row_text(this.data.selected);
         this.select_label.set_label(&select_text);
         // The target rides on the button: writes always land on the
         // selected row, never on the page anchor.
-        this.write_button.set_label(&match this.data.selected {
-            Some((addr, _)) => format!("{} 0x{addr:08X}", text(language, UiText::Write)),
-            None => text(language, UiText::Write).to_string(),
-        });
+        this.write_button
+            .set_label(&chrome.write_target_label(this.data.selected));
         match &display.pending {
             Some(pending) => {
-                this.confirm_label.set_label(&pending.render(language));
+                this.confirm_label
+                    .set_label(&chrome.pending_text(Some(*pending)).unwrap_or_default());
                 this.confirm_row.set_visible(true);
             }
             None => this.confirm_row.set_visible(false),
@@ -1287,7 +1256,7 @@ impl DebuggerWindowCore {
 
     fn rebuild_state(win: &DebuggerWindow, this: &DebuggerView) {
         let display = &this.data.display;
-        let language = this.data.language;
+        let chrome = this.data.debugger_chrome();
         // Registers flow into two clickable columns: the kernel order is kept,
         // the view only halves the list. Lines format here from the snapshot.
         let regs = &display.regs;
@@ -1295,19 +1264,10 @@ impl DebuggerWindowCore {
         Self::fill_reg_list(win, &this.regs_left, &regs[..mid], this.data.reg_target);
         Self::fill_reg_list(win, &this.regs_right, &regs[mid..], this.data.reg_target);
         this.reg_target_label
-            .set_label(&match this.data.reg_target {
-                Some(name) => format!("{} {name}", text(language, UiText::Set)),
-                None => text(language, UiText::PickRegister).to_string(),
-            });
-        let watch_text = match (this.data.watch, display.watch_value) {
-            (Some(addr), value) => ui_msg::watch_value(language, addr, value),
-            (None, _) => text(language, UiText::WatchNone).to_string(),
-        };
+            .set_label(&chrome.set_target_label(this.data.reg_target));
+        let watch_text = chrome.watch_text(this.data.watch, display.watch_value);
         this.watch_label.set_label(&watch_text);
-        let freeze_text = match this.data.freeze {
-            Some((addr, value)) => ui_msg::frozen(language, addr, value),
-            None => text(language, UiText::FreezeNone).to_string(),
-        };
+        let freeze_text = chrome.freeze_text(this.data.freeze);
         this.freeze_label.set_label(&freeze_text);
     }
 
@@ -1387,6 +1347,7 @@ mod tests {
     use super::*;
     use nerust_core_traits::debugger::SpaceId;
     use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, StatusMessage};
+    use nerust_settings_core::i18n::{UiText, text};
     use nerust_settings_core::model::language::AppLanguage;
 
     fn validation_model() -> DebuggerModel {
