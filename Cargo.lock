@@ -6457,9 +6457,17 @@ name = "wakui-gtk"
 version = "0.1.0-dev"
 dependencies = [
  "gdk4",
+ "gdk4-macos",
+ "gdk4-wayland-sys",
+ "gdk4-win32",
+ "gdk4-x11-sys",
  "gio 0.22.10",
  "gtk4",
  "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "raw-window-handle",
  "wakui",
 ]
 
