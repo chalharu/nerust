@@ -2,7 +2,6 @@
 use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
 use nerust_frontend_host::frame::FrameCtx;
-use nerust_gui_shell::session::osd::TickMetrics;
 use nerust_gui_shell::session::{
     SessionError,
     access::{SessionControl, SettingsResult},
@@ -49,7 +48,7 @@ impl HostState {
             Ok(plan) if plan.fullscreen_default_changed => {
                 let ctx = self.frame_ctx();
                 self.sync_chrome(&ctx, true);
-                self.refresh_window_title(&ctx.tick());
+                self.refresh_window_title();
             }
             Ok(_) => (),
             Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
@@ -73,8 +72,8 @@ impl HostState {
     }
 
     /// Title-only gate over the cached session title: one format per change.
-    pub(crate) fn refresh_window_title(&mut self, tick: &TickMetrics) {
-        if self.core.title_update(tick).is_some() {
+    pub(crate) fn refresh_window_title(&mut self) {
+        if self.core.refresh_window_title().is_some() {
             let window = self.core.main_window().clone();
             window.visit(&mut MainPresentation {
                 native: self.windows.live().map(AsRef::as_ref),
@@ -83,9 +82,9 @@ impl HostState {
         }
     }
 
-    pub(super) fn maybe_refresh_window_title(&mut self, ctx: &FrameCtx, now: Instant) {
+    pub(super) fn maybe_refresh_window_title(&mut self, now: Instant) {
         if self.core.title_refresh_due(now) {
-            self.refresh_window_title(&ctx.tick());
+            self.refresh_window_title();
         }
     }
 
@@ -117,16 +116,16 @@ impl HostState {
     /// Single chrome-sync choke point: menu, title, and optionally a frame.
     pub(crate) fn sync_chrome(&mut self, ctx: &FrameCtx, redraw: bool) {
         self.sync_menu_state(ctx);
-        self.refresh_window_title(&ctx.tick());
+        self.refresh_window_title();
         if redraw {
             self.request_redraw();
         }
     }
 
     /// Chrome pump for the control-flow pass: native state plus throttled title.
-    pub(super) fn tick_chrome_sync(&mut self, ctx: &FrameCtx) {
+    pub(super) fn tick_chrome_sync(&mut self) {
         self.sync_fullscreen_default_from_window();
-        self.maybe_refresh_window_title(ctx, Instant::now());
+        self.maybe_refresh_window_title(Instant::now());
     }
 
     pub(super) fn sync_fullscreen_from_settings(&mut self) {
@@ -178,9 +177,9 @@ mod tests {
         let ctx = host.frame_ctx();
         let title = host.cached_title(&ctx.tick());
         assert!(!host.title_same(&title));
-        host.refresh_window_title(&ctx.tick());
+        host.refresh_window_title();
         assert!(host.title_same(&title));
-        host.refresh_window_title(&ctx.tick());
+        host.refresh_window_title();
         assert!(host.title_same(&title));
     }
 
@@ -222,7 +221,7 @@ mod tests {
         let ctx = host.frame_ctx();
         // Fresh shell just stamped the title clock, so an immediate
         // refresh stays gated until the interval elapses.
-        host.maybe_refresh_window_title(&ctx, now);
+        host.maybe_refresh_window_title(now);
         let title = host.cached_title(&ctx.tick());
         assert!(!host.title_same(&title));
     }
