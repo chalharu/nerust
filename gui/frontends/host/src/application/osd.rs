@@ -5,8 +5,8 @@ mod tests;
 
 use std::{sync::mpsc::Receiver, time::Instant};
 
-use nerust_frontend_kernel::pause::PauseOwner;
 use nerust_render_traits::SurfaceSize;
+use wakui::pause::PauseOwner;
 
 use super::ApplicationHost;
 use crate::{

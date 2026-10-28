@@ -25,6 +25,7 @@ pub mod control;
 pub mod key;
 pub mod loop_driver;
 pub mod mapper;
+pub mod pause;
 pub mod retry;
 pub mod viewport;
 

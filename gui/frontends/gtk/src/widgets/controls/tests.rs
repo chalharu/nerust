@@ -693,11 +693,11 @@ fn retained_scheduled_dispatch_defers_and_weak_idle_does_not_retain_binding() {
 #[test]
 #[ignore = "needs display; CI-only under xvfb"]
 fn settings_production_action_save_failure_edit_retry_closes_once() {
-    use nerust_frontend_kernel::pause::PauseOwner;
     use nerust_gui_runtime::settings::{
         HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
     };
     use nerust_gui_shell::session::SessionHandle;
+    use wakui::pause::PauseOwner;
     let window = windows::bound_window().expect("Xvfb");
     let state = window.state();
     let root = std::env::temp_dir().join(format!("nerust-generic-retry-{}", std::process::id()));
@@ -796,7 +796,7 @@ fn native_finish_runs_once_even_when_close_reenters() {
 #[test]
 #[ignore = "needs display; CI-only under xvfb"]
 fn native_close_cancel_and_parent_destroy_discard_once() {
-    use nerust_frontend_kernel::pause::PauseOwner;
+    use wakui::pause::PauseOwner;
     for mode in 0..3 {
         let h = Harness::new(false);
         let mute = h.id(UiText::Mute);
