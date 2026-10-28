@@ -8,10 +8,12 @@ version.workspace = true
 
 [dependencies]
 log.workspace = true
-raw-window-handle = { optional = true, workspace = true }
 serde = { features = ["derive"], workspace = true }
+wakui.workspace = true
 
 [features]
 default = ["renderer"]
 # Core frame/profile/color data can be used without native-window interfaces.
-renderer = ["dep:raw-window-handle"]
+# The renderer vocabulary now lives in wakui; this feature only gates the
+# engine-side re-export module for existing import paths.
+renderer = []
