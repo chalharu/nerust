@@ -3,11 +3,9 @@
 
 use std::rc::Rc;
 
-use nerust_gui_shell::debug::DebugAction;
-
 use crate::aux::domain::AuxNativeEvent;
 use crate::aux::focus::AuxKind;
-use crate::aux::registry::{AuxController, DebugDrainPort, LiveImagesPort};
+use crate::aux::registry::{AuxController, LiveImagesPort};
 
 pub(crate) use crate::aux::registry::test_double::StubAux;
 #[cfg(test)]
@@ -18,7 +16,6 @@ mod tests {
     fn stub_answers_only_its_own_kind() {
         use nerust_gui_viewmodel::debugger::DisplayCache;
         let mut debug = StubAux::new(AuxKind::Debug);
-        debug.debug_batch = vec![DebugAction::Refresh];
         assert!(debug.as_debug().is_some());
         assert!(debug.as_live().is_some());
         assert!(debug.as_widget().is_none());
@@ -44,7 +41,6 @@ mod tests {
     fn stub_ports_default_to_closed_quiet() {
         use nerust_gui_viewmodel::debugger::DisplayCache;
         let mut stub = StubAux::new(AuxKind::History);
-        assert!(DebugDrainPort::take_debug_requests(&mut stub).is_none());
         assert!(stub.debug_snapshot_of(false).is_none());
         assert!(!LiveImagesPort::apply_live(&mut stub, 1, Vec::new(), false));
         assert!(stub.widget_mailbox().is_none());

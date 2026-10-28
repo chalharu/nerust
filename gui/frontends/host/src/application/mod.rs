@@ -30,6 +30,7 @@ use wakui::pause::{PauseOwner, PausePolicy};
 use wakui::retry::RenderRetry;
 
 use crate::{
+    debugger::BridgeLock,
     focus::{AuxKind, FocusCoordinator, FocusEffect, FocusEvent},
     frame::{FrameCache, FrameCtx},
     menu::{MenuCapabilities, Menubar},
@@ -409,6 +410,48 @@ impl ApplicationHost {
         snapshot: Option<crate::debugger::DrainSnapshot>,
     ) {
         self.debug.enqueue(&self.session, requests, snapshot);
+    }
+    /// Take one debugger batch from the bridge and enqueue it, returning
+    /// whether the PPU viewer was requested. Empty batches skip the drain;
+    /// native code polls the flight and opens aux windows itself.
+    pub fn take_debug_requests(
+        &mut self,
+        bridge: &crate::debugger::DebugBridge,
+        snapshot: Option<crate::debugger::DrainSnapshot>,
+    ) -> bool {
+        bridge.bind_epoch(self.session.debug_epoch());
+        let (open_ppu, requests) = bridge.take_debug_batch();
+        if !requests.is_empty() {
+            self.enqueue_debug(&requests, snapshot);
+        }
+        open_ppu
+    }
+    /// Enqueue the fixed open-debugger batch (Pause + Refresh).
+    pub fn open_debug_drain(
+        &mut self,
+        bridge: &crate::debugger::DebugBridge,
+        snapshot: Option<crate::debugger::DrainSnapshot>,
+    ) {
+        bridge.bind_epoch(self.session.debug_epoch());
+        self.enqueue_debug(
+            &[
+                nerust_gui_shell::debug::DebugAction::Pause,
+                nerust_gui_shell::debug::DebugAction::Refresh,
+            ],
+            snapshot,
+        );
+    }
+    /// Enqueue an imageless refresh for the open viewer. Bridgeless
+    /// windows still enqueue so the chrome gate observes the drain.
+    pub fn refresh_debug_drain(
+        &mut self,
+        bridge: Option<&crate::debugger::DebugBridge>,
+        snapshot: Option<crate::debugger::DrainSnapshot>,
+    ) {
+        if let Some(bridge) = bridge {
+            bridge.bind_epoch(self.session.debug_epoch());
+        }
+        self.enqueue_debug(&[], snapshot);
     }
     pub fn poll_debug(&mut self, view: &mut impl DebugView) -> bool {
         self.debug
