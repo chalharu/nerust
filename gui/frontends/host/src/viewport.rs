@@ -45,6 +45,9 @@ pub struct RenderDriver {
     factory: Option<Rc<dyn PipelineFactory>>,
     pipeline: Option<Box<dyn RenderPipeline>>,
     attached_profile: Option<VideoRenderProfile>,
+    /// Handles of the current attach; presents reuse them so frontends
+    /// supply the region once at sync time.
+    region: Option<ViewportRegion>,
     attached: bool,
     output_generation: u64,
 }
@@ -55,6 +58,7 @@ impl RenderDriver {
             factory: None,
             pipeline: None,
             attached_profile: None,
+            region: None,
             attached: false,
             output_generation: 0,
         }
@@ -102,6 +106,7 @@ impl RenderDriver {
             .map_err(|error| error.to_string())?;
         self.pipeline = Some(pipeline);
         self.attached_profile = Some(profile.clone());
+        self.region = Some(region);
         self.attached = true;
         self.output_generation = self.output_generation.wrapping_add(1);
         Ok(true)
@@ -150,6 +155,16 @@ impl RenderDriver {
         }
     }
 
+    /// Drop the pipeline without touching the factory: teardown and
+    /// target-change paths use this so GPU resources release before
+    /// the native owner they borrow.
+    fn drop_pipeline(&mut self) {
+        self.attached = false;
+        self.pipeline = None;
+        self.attached_profile = None;
+        self.region = None;
+    }
+
     /// Test seam: install a stub pipeline without a GPU factory.
     #[doc(hidden)]
     pub fn install_test_pipeline(&mut self, pipeline: Box<dyn RenderPipeline>) {
@@ -187,17 +202,19 @@ impl ApplicationHost {
 
     /// Direct-present one frame on the native swapchain: resize, OSD,
     /// swap, render, and result bookkeeping, all inside the host borrow.
+    /// Handles come from the last successful sync; sizes refresh per frame.
     pub fn viewport_present(
         &mut self,
-        region: ViewportRegion,
+        width: u32,
+        height: u32,
         client_height: u32,
     ) -> ViewportPresent {
         if !self.viewport.attached {
             return ViewportPresent::NoPipeline;
         }
-        self.viewport.resize_if_needed(region.width, region.height);
+        self.viewport.resize_if_needed(width, height);
         let ctx = self.frame_ctx();
-        let size = SurfaceSize::new(region.width, region.height);
+        let size = SurfaceSize::new(width, height);
         let update = self.prepare_osd(size, client_height, &ctx, Instant::now());
         if let Some(pipeline) = self.viewport.pipeline.as_mut() {
             update.apply(pipeline.as_mut());
@@ -265,6 +282,12 @@ impl ApplicationHost {
     #[doc(hidden)]
     pub fn viewport_install_test_pipeline(&mut self, pipeline: Box<dyn RenderPipeline>) {
         self.viewport.install_test_pipeline(pipeline);
+    }
+
+    /// Drop the attached pipeline, if any. Teardown and target-change
+    /// paths call this so GPU resources release before their native owner.
+    pub fn viewport_drop(&mut self) {
+        self.viewport.drop_pipeline();
     }
 
     pub fn viewport_attached(&self) -> bool {

@@ -10,7 +10,6 @@ use std::time::Instant;
 use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::WindowId};
 
 use nerust_gui_shell::settings::scaling_factor;
-use nerust_render_traits::{SurfaceSize, renderer::RenderResult};
 use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
@@ -67,7 +66,7 @@ impl WindowCluster {
         let Some((_, content, _)) = self.content_target() else {
             return 0.0;
         };
-        f64::from(window.inner_size().height.saturating_sub(content.height)) / window.scale_factor()
+        f64::from(window.inner_size().height.saturating_sub(content.1)) / window.scale_factor()
     }
 
     pub(super) fn new() -> Self {
@@ -118,7 +117,7 @@ impl WindowCluster {
 
     /// Native attach target for the game renderer: content area below the menubar, else toplevel.
     /// The xid tags the target so a target change recreates the surface.
-    pub(super) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+    pub(super) fn surface_target(&self) -> Option<(RawWindowHandle, (u32, u32), Option<u64>)> {
         let (handle, size, xid) = self.attach_target()?;
         Some((handle, size, xid))
     }
@@ -149,7 +148,7 @@ impl WindowCluster {
     }
 
     /// Shared attach-target resolution: content area below the menubar, else toplevel.
-    fn attach_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+    fn attach_target(&self) -> Option<(RawWindowHandle, (u32, u32), Option<u64>)> {
         let window = self.window.as_ref()?;
         if let Some((handle, size, xid)) = self.content_target() {
             return Some((handle, size, Some(xid)));
@@ -168,7 +167,7 @@ impl WindowCluster {
         target_os = "netbsd",
         target_os = "openbsd"
     ))]
-    fn content_target(&self) -> Option<(RawWindowHandle, SurfaceSize, u64)> {
+    fn content_target(&self) -> Option<(RawWindowHandle, (u32, u32), u64)> {
         self.content_area.as_ref()?.target()
     }
 
@@ -180,7 +179,7 @@ impl WindowCluster {
         target_os = "netbsd",
         target_os = "openbsd"
     )))]
-    fn content_target(&self) -> Option<(RawWindowHandle, SurfaceSize, u64)> {
+    fn content_target(&self) -> Option<(RawWindowHandle, (u32, u32), u64)> {
         None
     }
 
@@ -292,13 +291,13 @@ impl HostState {
         self.windows.is_window(window_id)
     }
 
-    pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
+    pub(crate) fn window_surface_size(&self) -> Option<(u32, u32)> {
         self.surface_target().map(|(_, size, _)| size)
     }
 
     /// Native attach target for the game renderer: content area below the menubar, else toplevel.
     /// The xid tags the target so a target change recreates the surface.
-    pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
+    pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, (u32, u32), Option<u64>)> {
         self.core
             .window_usable()
             .then(|| self.windows.surface_target())
@@ -340,19 +339,16 @@ impl HostState {
             .map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
     }
 
-    pub(crate) fn on_render_result(&mut self, result: RenderResult, frame_counter: u64) {
-        match result {
-            RenderResult::Presented => {
-                self.core.render_succeeded();
-                self.core.frame_presented(frame_counter);
-                let ctx = self.frame_ctx();
-                self.maybe_refresh_window_title(&ctx, Instant::now());
-            }
-            RenderResult::Error => {
-                self.render_failed("Rendering failed; retrying with backoff".into());
-            }
-            RenderResult::Skipped => {}
-        }
+    /// Client height in physical pixels for OSD strip math.
+    pub(crate) fn client_height(&self) -> u32 {
+        self.windows.client_height()
+    }
+
+    /// Title refresh after the host presented a frame. Result bookkeeping
+    /// itself lives in the host; only the native title stays here.
+    pub(crate) fn refresh_title_after_present(&mut self) {
+        let ctx = self.frame_ctx();
+        self.maybe_refresh_window_title(&ctx, Instant::now());
     }
 
     pub(crate) fn clear_event_handler(&self) {
@@ -562,30 +558,40 @@ mod tests {
 
     #[test]
     fn window_helpers_stay_total_without_window() {
-        use nerust_render_traits::renderer::RenderResult;
         let support = TestHost::new();
         let mut host = support.host;
         assert!(host.window_surface_size().is_none());
         assert!(host.surface_target().is_none());
         assert!(host.surface_xid().is_none());
+        assert!(!host.viewport_attached());
         host.update_window_size_for_scaling();
         host.remember_fit_window_size();
         host.toggle_fullscreen();
-        host.on_render_result(RenderResult::Presented, 0);
-        host.on_render_result(RenderResult::Skipped, 0);
-        host.on_render_result(RenderResult::Error, 0);
         assert!(host.startup_window_size().width > 0.0);
         assert!(support.menu.updates().is_empty());
     }
 
     #[test]
     fn redraw_flag_sets_without_native_window() {
-        use nerust_render_traits::renderer::RenderResult;
+        use nerust_frontend_host::viewport::ViewportPresent;
+        use wakui::viewport::ViewportRegion;
         let support = TestHost::new();
         let mut host = support.host;
-        // Presented clears the flag; the headless redraw re-arms it.
-        host.on_render_result(RenderResult::Presented, 0);
-        assert!(!host.redraw_needed());
+        // No pipeline headless: present is a no-op that changes nothing.
+        let before = host.redraw_needed();
+        let region = ViewportRegion {
+            // Never attached: zeroed handles are only compared, never used.
+            window: unsafe { std::mem::zeroed() },
+            display: unsafe { std::mem::zeroed() },
+            width: 960,
+            height: 720,
+        };
+        assert!(!host.viewport_attached());
+        assert_eq!(
+            host.viewport_present(region.width, region.height, 720),
+            ViewportPresent::NoPipeline
+        );
+        assert_eq!(host.redraw_needed(), before);
         host.request_redraw();
         assert!(host.redraw_needed());
     }
