@@ -487,6 +487,18 @@ impl ApplicationHost {
         self.main_window.title.clone_from(&title);
         self.chrome.title_update(title)
     }
+    /// Title refresh without shell vocabulary: reads the live tick
+    /// internally and publishes a new main-window title when changed.
+    /// Frontends apply the returned title to the native window verbatim.
+    pub fn refresh_window_title(&mut self) -> Option<String> {
+        let tick = self.session.tick_metrics();
+        self.title_update(&tick)
+    }
+    /// Turn-liveness inputs without shell vocabulary: `(loaded, paused)`.
+    pub fn liveness_inputs(&self) -> (bool, bool) {
+        let tick = self.session.tick_metrics();
+        (tick.loaded, tick.paused)
+    }
     pub fn title_same(&self, title: &str) -> bool {
         self.chrome.title_same(title)
     }
