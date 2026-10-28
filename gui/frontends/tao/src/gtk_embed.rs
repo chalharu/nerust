@@ -6,7 +6,6 @@
 use std::sync::Arc;
 
 use gtk::prelude::*;
-use nerust_render_traits::SurfaceSize;
 use raw_window_handle::{RawWindowHandle, XlibWindowHandle};
 use tao::window::Window as TaoWindow;
 
@@ -46,7 +45,7 @@ impl ContentArea {
 
     /// Native target (child XID plus its physical size), or `None`
     /// when unavailable. Pure query: safe to call every frame.
-    pub(crate) fn target(&self) -> Option<(RawWindowHandle, SurfaceSize, u64)> {
+    pub(crate) fn target(&self) -> Option<(RawWindowHandle, (u32, u32), u64)> {
         let gwin = self.area.window()?;
         let width = gwin.width();
         let height = gwin.height();
@@ -55,7 +54,7 @@ impl ContentArea {
         }
         let xid = x11_xid(&gwin)?;
         let handle = RawWindowHandle::Xlib(XlibWindowHandle::new(xid));
-        let size = SurfaceSize::new(width as u32, height as u32);
+        let size = (width as u32, height as u32);
         Some((handle, size, xid))
     }
 }

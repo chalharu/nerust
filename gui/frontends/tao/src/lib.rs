@@ -22,8 +22,6 @@ pub(crate) mod runtime;
 #[cfg(test)]
 pub(crate) mod test_dialogs;
 #[cfg(test)]
-pub(crate) mod test_gpu;
-#[cfg(test)]
 pub(crate) mod test_menu;
 #[cfg(test)]
 pub(crate) mod test_opener;

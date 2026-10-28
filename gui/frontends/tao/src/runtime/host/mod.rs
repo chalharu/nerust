@@ -5,10 +5,8 @@ use nerust_gui_shell::{
     context::FrontendContext,
     session::{SessionHandle, session_query::WindowSize},
 };
-use nerust_render_traits::{SurfaceSize, renderer::PipelineFactory};
 #[cfg(test)]
 use std::path::PathBuf;
-use std::rc::Rc;
 use tao::{
     dpi::{LogicalSize as TaoLogicalSize, PhysicalSize as TaoPhysicalSize},
     event::ElementState,
@@ -219,18 +217,19 @@ impl HostState {
             log::error!("failed to create core: {e}");
             e.to_string()
         })?;
+        let factory = ctx.gpu_factory.clone();
+        let mut core = ApplicationHost::new(session);
+        // The factory enters the view-definition side once; frontend
+        // signatures never name the pipeline type.
+        core.set_gpu_factory(factory);
         Ok(Self {
             windows: WindowCluster::new(),
-            core: ApplicationHost::new(session),
+            core,
             ctx,
             app_menu,
             dialogs,
             aux: AuxRegistry::new(),
         })
-    }
-
-    pub(crate) fn gpu_factory(&self) -> &Rc<dyn PipelineFactory> {
-        &self.ctx.gpu_factory
     }
 
     /// Mapped debugger spaces for aux open.
@@ -340,8 +339,8 @@ fn fullscreen_mode(fullscreen: bool) -> Option<Fullscreen> {
     fullscreen.then_some(Fullscreen::Borderless(None))
 }
 
-fn window_surface_size(size: TaoPhysicalSize<u32>) -> SurfaceSize {
-    SurfaceSize::new(size.width, size.height)
+fn window_surface_size(size: TaoPhysicalSize<u32>) -> (u32, u32) {
+    (size.width, size.height)
 }
 
 fn logical_window_size(size: WindowSize, scaling: Option<u32>) -> TaoLogicalSize<f64> {
@@ -379,7 +378,6 @@ mod tests {
     fn host_accessors_expose_session_and_factory() {
         let support = TestHost::new();
         let mut host = support.host;
-        let _ = host.gpu_factory();
         let tick = host.frame_ctx().tick();
         let _ = host.cached_title(&tick);
         assert!(!host.session().tick_metrics().loaded);
@@ -475,7 +473,7 @@ mod tests {
         assert!(fullscreen_mode(true).is_some());
         assert!(fullscreen_mode(false).is_none());
         let surface = window_surface_size(tao::dpi::PhysicalSize::new(960, 720));
-        assert_eq!((surface.width, surface.height), (960, 720));
+        assert_eq!(surface, (960, 720));
     }
 
     #[test]
