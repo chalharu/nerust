@@ -265,7 +265,7 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         // Only the native registry is open: the external flag, not a Host
         // pause owner, must guard both commands and keyboard shortcuts.
-        assert!(!host.owns_pause(nerust_frontend_kernel::pause::PauseOwner::Settings));
+        assert!(!host.owns_pause(wakui::pause::PauseOwner::Settings));
         for event in [
             UserEvent::Menu(MenuCommand::Native(NativeRole::About)),
             UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn dead_dialog_thread_unwedges_the_queue() {
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
         host.set_pause_owner(PauseOwner::Settings, true);
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn disconnected_dialog_chains_through_native_presenter_before_modal_release() {
-        use nerust_frontend_kernel::pause::PauseOwner;
+        use wakui::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
         host.set_pause_owner(PauseOwner::Focus, true);
