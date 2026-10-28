@@ -295,7 +295,6 @@ impl SettingsManager {
 mod tests {
     use std::{collections::HashMap, fs};
 
-    use nerust_keyboard::Key;
     use nerust_nes_settings::NesVideoFilter;
     use nerust_settings_core::model::{
         app_state::{DesktopAppState, RememberedWindowSize},
@@ -305,6 +304,7 @@ mod tests {
         },
         language::AppLanguage,
     };
+    use wakui::Key;
 
     use crate::test::DummySystemId;
 

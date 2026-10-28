@@ -107,15 +107,12 @@ impl<T: CoreFactory> CoreFactory for FailingOnceFactory<T> {
 fn shortcut_key_returns_shortcut_action_without_controller_event() {
     let mut session = test_session();
     assert_eq!(
-        session.handle_keyboard_key(nerust_keyboard::Key::Space, true),
+        session.handle_keyboard_key(wakui::Key::Space, true),
         Some(KeyboardShortcut::Session(
             nerust_settings_core::model::input::ShortcutAction::TogglePause
         )),
     );
-    assert_eq!(
-        session.handle_keyboard_key(nerust_keyboard::Key::Space, true),
-        None
-    );
+    assert_eq!(session.handle_keyboard_key(wakui::Key::Space, true), None);
 }
 
 #[test]
@@ -659,7 +656,7 @@ fn failed_rebuild_restores_input_peripherals_and_running_state() {
 #[test]
 fn set_fullscreen_default_updates_snapshot_and_plan() {
     let mut session = test_session();
-    session.handle_keyboard_key(nerust_keyboard::Key::KeyZ, true);
+    session.handle_keyboard_key(wakui::Key::KeyZ, true);
     let plan = session
         .set_fullscreen_default(true)
         .expect("set_fullscreen_default should succeed");

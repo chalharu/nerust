@@ -1,4 +1,4 @@
-use nerust_keyboard::Key;
+use wakui::Key;
 
 use crate::model::{
     app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},
