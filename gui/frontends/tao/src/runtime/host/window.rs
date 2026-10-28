@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tao::{dpi::LogicalSize as TaoLogicalSize, event_loop::ControlFlow, window::WindowId};
 
-use nerust_gui_shell::settings::scaling_factor;
 use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
@@ -378,7 +377,7 @@ impl HostState {
         self.core.finish_close();
     }
     pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
-        match scaling_factor(self.core.settings_snapshot().local.video.window.scaling) {
+        match self.core.window_scale_factor() {
             Some(scale) => logical_window_size(self.core.session().window_size(), Some(scale)),
             None => self
                 .core
@@ -393,8 +392,7 @@ impl HostState {
         let Some(window) = self.windows.live() else {
             return;
         };
-        let Some(scale) = scaling_factor(self.core.settings_snapshot().local.video.window.scaling)
-        else {
+        let Some(scale) = self.core.window_scale_factor() else {
             return;
         };
         window.set_inner_size(logical_window_size(
@@ -407,9 +405,7 @@ impl HostState {
         let Some(window) = self.windows.live() else {
             return;
         };
-        if window.fullscreen().is_some()
-            || scaling_factor(self.core.settings_snapshot().local.video.window.scaling).is_some()
-        {
+        if window.fullscreen().is_some() || self.core.window_scale_factor().is_some() {
             return;
         }
 
