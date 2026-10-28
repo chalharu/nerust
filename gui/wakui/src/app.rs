@@ -1,7 +1,7 @@
 //! Framework app boundary: the single policy owner as a trait.
 //!
 //! View definitions implement [`FrontendApp`] over the session; native
-//! frontends hold it behind [`Boot`] and never name app, shell, or
+//! frontends hold it behind [`Application`] and never name app, shell, or
 //! ViewModel types. Every method is object-safe so the composition root
 //! can inject the concrete app as a trait object.
 
@@ -37,12 +37,94 @@ pub struct WidgetCloseOutcome {
 /// Built bundle handed from the composition root to a frontend. The app is
 /// already constructed (session, factory, loader); frontend entry points
 /// receive only this struct. `K` is the view-side aux kind.
-pub struct Boot<K: Copy + Eq + std::hash::Hash> {
-    pub app: Box<dyn FrontendApp<K>>,
+///
+/// Build it with [`Application::builder`]: the launch document (a ROM path
+/// for the emulator, any file for a third-party app) travels inside the
+/// bundle, so every backend honors it the same way. The bundle is consumed
+/// once by the backend's `run`.
+pub struct Application<K: Copy + Eq + std::hash::Hash> {
+    app: Box<dyn FrontendApp<K>>,
+    initial_document: Option<std::path::PathBuf>,
+}
+
+/// Builder for [`Application`]: the single place launch options enter the
+/// bundle. Chainable; `build()` hands the bundle to a backend's `run`.
+pub struct ApplicationBuilder<K: Copy + Eq + std::hash::Hash> {
+    app: Box<dyn FrontendApp<K>>,
+    initial_document: Option<std::path::PathBuf>,
+}
+
+impl<K: Copy + Eq + std::hash::Hash> Application<K> {
+    /// Start building over an already-constructed app.
+    pub fn builder(app: Box<dyn FrontendApp<K>>) -> ApplicationBuilder<K> {
+        ApplicationBuilder {
+            app,
+            initial_document: None,
+        }
+    }
+
+    /// Shortcut for a builder with no launch document.
+    pub fn new(app: Box<dyn FrontendApp<K>>) -> Self {
+        Self::builder(app).build()
+    }
+
+    /// Borrow the policy owner back (e.g. for pre-run probes in tests).
+    pub fn app_mut(&mut self) -> &mut dyn FrontendApp<K> {
+        &mut *self.app
+    }
+
+    /// Release the policy owner; the backend calls this once at startup.
+    pub fn into_app(self) -> Box<dyn FrontendApp<K>> {
+        self.app
+    }
+
+    /// Launch document, if one was supplied.
+    pub fn initial_document(&self) -> Option<&Path> {
+        self.initial_document.as_deref()
+    }
+
+    /// Take the launch document; backends drain it once at startup.
+    pub fn take_initial_document(&mut self) -> Option<std::path::PathBuf> {
+        self.initial_document.take()
+    }
+
+    /// Replace the launch document after the build (composition-root only).
+    pub fn set_initial_document(&mut self, path: Option<std::path::PathBuf>) {
+        self.initial_document = path;
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K> {
+    /// Start building over an already-constructed app.
+    pub fn new(app: Box<dyn FrontendApp<K>>) -> Self {
+        Application::<K>::builder(app)
+    }
+
+    /// Launch document to open at startup (ROM path, project file, ...).
+    pub fn initial_document(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.initial_document = Some(path.into());
+        self
+    }
+
+    /// Optional launch document; `None` keeps the current value.
+    pub fn maybe_initial_document(mut self, path: Option<std::path::PathBuf>) -> Self {
+        if let Some(path) = path {
+            self.initial_document = Some(path);
+        }
+        self
+    }
+
+    /// Hand the bundle to a backend's `run`.
+    pub fn build(self) -> Application<K> {
+        Application {
+            app: self.app,
+            initial_document: self.initial_document,
+        }
+    }
 }
 
 /// The single policy owner, behind a trait object. Native adapters drive
-/// one [`Boot::app`] through these narrow ports; all ViewModel contact
+/// one [`Application::into_app`] through these narrow ports; all ViewModel contact
 /// stays inside the implementation. `K` is the view-side aux kind
 /// (debug/settings/history/...); the framework never names it.
 pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
