@@ -84,11 +84,7 @@ mod tests {
                 .create_aux(
                     nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug),
                     AuxOpenParams::Debug {
-                        bridge: std::sync::Arc::new(host.new_debug_bridge(
-                            Default::default(),
-                            Vec::new(),
-                            0,
-                        )),
+                        bridge: std::sync::Arc::new(host.new_debug_bridge()),
                         position: None,
                     }
                 )
@@ -117,7 +113,7 @@ mod tests {
                 .create_aux(session.window(), AuxOpenParams::Controls { session })
                 .is_none()
         );
-        let bridge = std::sync::Arc::new(host.new_debug_bridge(Default::default(), Vec::new(), 0));
+        let bridge = std::sync::Arc::new(host.new_debug_bridge());
         assert!(
             opener
                 .create_aux(

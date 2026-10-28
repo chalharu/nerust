@@ -42,8 +42,8 @@ use super::focus::{AuxRender as _, AuxShellRef};
 
 use super::registry::AuxController;
 #[cfg(test)]
-use nerust_frontend_host::debugger::DebugImageRgba;
-use nerust_frontend_host::debugger::scale2x_nearest;
+use nerust_gui_viewmodel::debugger::DebugImageRgba;
+use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
 #[derive(Debug, Clone)]
 pub(crate) enum PpuMessage {
@@ -156,7 +156,7 @@ impl Program for PpuProgram {
                 // the 2x derivation must never hold the display guard.
                 let display = bridge.display_snapshot();
                 let generation = display.images_gen;
-                let panels = nerust_frontend_host::debugger::format_panels(&display.panels);
+                let panels = nerust_gui_viewmodel::debugger::format_panels(&display.panels);
                 let current = Arc::clone(&snapshot_read(&state.snapshot));
                 // Sync swaps once per drain: scaled re-derived only on
                 // generation change, hover preserved as-is.
@@ -245,7 +245,7 @@ impl Program for PpuProgram {
         }
         // Systems without observation tables (GBA/GBC) show no
         // Panels section at all instead of a puzzling marker.
-        if nerust_frontend_host::debugger::panels_visible(panels_text) {
+        if nerust_gui_viewmodel::debugger::panels_visible(panels_text) {
             content = content.push(text(chrome.panels_title.clone()).size(16));
             content = content.push(
                 text(panels_text.to_string())

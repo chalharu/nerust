@@ -360,12 +360,11 @@ mod tests {
         let (_, session) =
             crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
         assert!(controls_parts(AuxOpenParams::Controls { session }).is_some());
-        let bridge =
-            std::sync::Arc::new(crate::runtime::host::TestHost::new().host.new_debug_bridge(
-                Default::default(),
-                Vec::new(),
-                0,
-            ));
+        let bridge = std::sync::Arc::new(
+            crate::runtime::host::TestHost::new()
+                .host
+                .new_debug_bridge(),
+        );
         let debug = AuxOpenParams::Debug {
             bridge: std::sync::Arc::clone(&bridge),
             position: None,

@@ -232,11 +232,6 @@ impl HostState {
         })
     }
 
-    /// Mapped debugger spaces for aux open.
-    pub(crate) fn debug_spaces(&self) -> Vec<(nerust_core_traits::debugger::SpaceId, String, u32)> {
-        crate::aux::registry::debug_spaces(self.core.session())
-    }
-
     #[cfg(test)]
     pub(crate) fn window(&self) -> Option<&std::sync::Arc<tao::window::Window>> {
         self.windows.live()

@@ -5,13 +5,13 @@ use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_frontend_host::aux::{AuxWindows, OpenRequest};
-use nerust_frontend_host::debugger as vm;
 use nerust_frontend_host::debugger::{
     DebuggerDriver, DebuggerEvent, DebuggerLiveEffects, DebuggerModel, DebuggerScope,
 };
 use nerust_frontend_host::focus::AuxKind;
 use nerust_frontend_host::window::{DebugContents, Window as HostWindow, WindowVisitor};
 use nerust_gui_shell::debug::DebugAction;
+use nerust_gui_viewmodel::debugger as vm;
 
 use super::State;
 

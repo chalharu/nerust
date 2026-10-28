@@ -14,8 +14,8 @@ use std::sync::{
 use iced::Task;
 use iced_tiny_skia::Renderer;
 use iced_winit::program::{self, Program};
-use nerust_frontend_host::debugger::{DebugImageRgba, DisplayCache};
 use nerust_gui_shell::debug::DebugAction;
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache};
 use tao::event_loop::EventLoopWindowTarget;
 
 use crate::aux::shell::{AuxSurface, aux_settings, aux_theme};

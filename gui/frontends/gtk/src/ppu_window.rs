@@ -5,10 +5,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
+use nerust_core_traits::debugger::DebugPanel;
 use nerust_frontend_host::{
-    debugger::{DebugImageRgba, DebugPanel, PpuChrome, format_panels, scale2x_nearest},
+    debugger::PpuChrome,
     window::{PpuContents, Window as HostWindow, WindowVisitor},
 };
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, format_panels, scale2x_nearest};
 
 use super::State;
 
