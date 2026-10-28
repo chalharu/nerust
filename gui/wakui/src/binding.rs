@@ -28,6 +28,21 @@ pub trait BindingTarget {
     fn apply(&mut self, event: Self::DomainEvent) -> Option<Self::Effect>;
 }
 
+/// Generic bind+apply collector shared by every domain: resolve the
+/// retained ID and convert the input domain-side, then run the bound
+/// events through the target. Effect mapping stays with the caller.
+pub fn drive<V, T>(view: &V, id: &V::ViewId, input: V::ViewInput, target: &mut T) -> Vec<T::Effect>
+where
+    V: ViewDefinition,
+    T: BindingTarget<DomainEvent = V::DomainEvent>,
+{
+    view.bind(id, input)
+        .into_iter()
+        .flatten()
+        .filter_map(|event| target.apply(event))
+        .collect()
+}
+
 /// Reverse notification: the instance tells views their snapshot is stale.
 /// Native registries poll this instead of borrowing controller state.
 pub trait Invalidatable {
