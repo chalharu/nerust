@@ -1,14 +1,16 @@
 use std::{cell::RefCell, sync::Arc};
 
-use super::*;
-use crate::{
+use wakui::control::{
+    Control, ControlEvent, ControlId, ControlInput, ControlKind, ControlScreen, ControlVisitor,
+    Page,
+};
+
+use nerust_frontend_host::{
     aux::{AuxWindows, OpenRequest},
-    control::{
-        Control, ControlEvent, ControlId, ControlInput, ControlKind, ControlScreen, ControlVisitor,
-        Page,
-    },
+    focus::AuxKind,
     settings::SettingsController,
     widget_session::WidgetSession,
+    window::*,
 };
 
 fn session() -> WidgetSession {
@@ -160,7 +162,7 @@ fn reservation_owns_group_before_native_creation_and_reentrant_open() {
         ));
         struct Reenter<'a> {
             windows: &'a RefCell<AuxWindows<u64, ()>>,
-            id: crate::aux::AuxId,
+            id: nerust_frontend_host::aux::AuxId,
         }
         impl WindowVisitor for Reenter<'_> {
             fn begin_window(&mut self, window: &Window) {
