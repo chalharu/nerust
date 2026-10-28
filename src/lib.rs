@@ -169,13 +169,7 @@ fn boot_frontend(
             log::error!("failed to initialise frontend: {detail}");
             // Boot died before any window existed: match the old tao
             // init-failure dialog copy (always English, stderr stays home).
-            #[cfg(feature = "rfd")]
-            rfd::MessageDialog::new()
-                .set_title("nerust")
-                .set_description(&detail)
-                .set_level(rfd::MessageLevel::Error)
-                .set_buttons(rfd::MessageButtons::Ok)
-                .show();
+            show_error_dialog("nerust", &detail);
             None
         }
     }
@@ -266,16 +260,25 @@ fn run_guarded(
             // stack that may have just died. Stderr stays the log home.
             let dialog = crash_dialog_text(report.message());
             eprintln!("{dialog}");
-            #[cfg(feature = "rfd")]
-            rfd::MessageDialog::new()
-                .set_title(crash_title())
-                .set_description(&dialog)
-                .set_level(rfd::MessageLevel::Error)
-                .set_buttons(rfd::MessageButtons::Ok)
-                .show();
+            show_error_dialog(crash_title(), &dialog);
             101
         }
     }
+}
+
+/// Native error dialog on boot-failure/crash paths. Blocking; safe with no
+/// event loop running. stderr already carries the message, so a missing
+/// display degrades to the log. Only the `show_message_dialog` entry point
+/// differs per flavor; vocabulary lives in `wakui::dialog`.
+#[cfg_attr(clippy, allow(dead_code))]
+fn show_error_dialog(title: &str, detail: &str) {
+    let dialog = wakui::dialog::MessageDialog::error(title, detail);
+    #[cfg(feature = "gtk")]
+    wakui_gtk::show_message_dialog(&dialog);
+    #[cfg(all(feature = "tao", not(feature = "gtk")))]
+    wakui_tao::show_message_dialog(&dialog);
+    #[cfg(all(not(feature = "gtk"), not(feature = "tao")))]
+    let _ = dialog;
 }
 
 /// Crash dialog copy: inline literals, never the catalog.

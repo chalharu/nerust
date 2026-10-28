@@ -30,6 +30,7 @@ pub mod conformance;
 pub mod control;
 pub mod debug_schedule;
 pub mod debugger;
+pub mod dialog;
 pub mod event;
 pub mod focus;
 pub mod key;
