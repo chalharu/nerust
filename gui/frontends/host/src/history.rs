@@ -124,6 +124,16 @@ impl crate::binding::ViewDefinition for HistoryModel {
     type ViewInput = HistoryInput;
     type DomainEvent = HistoryEvent;
 
+    /// Partial: history controls accept only Select/Activate.
+    fn convert(input: crate::control::ControlInput) -> Option<HistoryInput> {
+        use crate::control::ControlInput as I;
+        Some(match input {
+            I::Select(index) => HistoryInput::Select(index),
+            I::Activate => HistoryInput::Activate,
+            _ => return None,
+        })
+    }
+
     fn bind(&self, id: &HistoryViewId, input: HistoryInput) -> Option<Vec<HistoryEvent>> {
         match (id, input) {
             (HistoryViewId::Filter, HistoryInput::Select(index)) => {

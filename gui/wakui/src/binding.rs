@@ -3,7 +3,7 @@
 //! bound instances (`SettingsController`, `HistorySession`) and native
 //! picker sinks. See the `wakui` separation design for the full picture.
 
-use crate::control::{ControlId, Id};
+use crate::control::{ControlId, ControlInput, Id};
 
 /// Pure view side: input validation and domain-event mapping.
 /// Native code and controller ownership never appear here.
@@ -13,6 +13,10 @@ pub trait ViewDefinition {
     type ViewId: Clone + Eq;
     type ViewInput;
     type DomainEvent;
+    /// Convert a retained-control input into domain input before binding.
+    /// Partial: return `None` for inputs the view does not handle, so a
+    /// generic dispatcher can reject before resolving any domain state.
+    fn convert(input: ControlInput) -> Option<Self::ViewInput>;
     /// Resolve a retained ID against current values before handling input.
     fn bind(&self, id: &Self::ViewId, input: Self::ViewInput) -> Option<Vec<Self::DomainEvent>>;
 }
