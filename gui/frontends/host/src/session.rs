@@ -7,8 +7,8 @@ use nerust_gui_shell::session::{
     access::SettingsResult,
     commands::{SessionCommand, SessionCommandOutcome},
 };
-use nerust_keyboard::Key;
 use nerust_settings_core::model::input::ShortcutAction;
+use wakui::Key;
 use wakui::pause::{PauseOwner, PausePolicy};
 
 #[derive(Debug, Clone, Copy)]

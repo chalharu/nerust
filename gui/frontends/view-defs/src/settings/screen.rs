@@ -8,9 +8,9 @@ use nerust_gui_viewmodel::settings::{
     dto::{BindingValueView, CaptureStateView},
 };
 use nerust_input_traits::AttachmentId;
-use nerust_keyboard::Key;
 use nerust_settings_core::{editor::CaptureTarget, model::language::AppLanguage};
 use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
+use wakui::Key;
 
 use super::{SettingsController, SettingsEvent, SettingsPage};
 

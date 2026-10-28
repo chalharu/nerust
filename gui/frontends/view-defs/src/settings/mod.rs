@@ -23,7 +23,6 @@ use nerust_gui_viewmodel::settings::{
     dto::ChoiceView,
 };
 use nerust_input_traits::AttachmentId;
-use nerust_keyboard::Key;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
@@ -37,6 +36,7 @@ use nerust_system_traits::factory::{
     CoreFactory,
     descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId},
 };
+use wakui::Key;
 
 use crate::sync::lock_recovered;
 
