@@ -14,7 +14,7 @@ nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_input_traits.workspace = true
-nerust_keyboard.workspace = true
+wakui.workspace = true
 nerust_settings_core.workspace = true
 thiserror.workspace = true
 
