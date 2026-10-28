@@ -34,25 +34,17 @@ impl FakeDialogs {
 impl crate::ports::DialogPorts for FakeDialogs {
     fn pick_rom_file(
         &self,
-        _language: nerust_settings_core::model::language::AppLanguage,
+        _title: String,
         _filters: Vec<(String, Vec<String>)>,
     ) -> Option<PathBuf> {
         crate::aux::bridge::lock_recovered(&self.inner.pick).clone()
     }
 
-    fn show_load_error(
-        &self,
-        _language: nerust_settings_core::model::language::AppLanguage,
-        detail: &str,
-    ) {
+    fn show_load_error(&self, _title: String, detail: &str) {
         crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
     }
 
-    fn show_error_async(
-        &self,
-        _language: nerust_settings_core::model::language::AppLanguage,
-        detail: String,
-    ) -> std::sync::mpsc::Receiver<()> {
+    fn show_error_async(&self, _title: String, detail: String) -> std::sync::mpsc::Receiver<()> {
         crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let _ = done_tx.send(());

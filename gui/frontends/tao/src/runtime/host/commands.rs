@@ -116,13 +116,13 @@ impl HostState {
     }
 
     fn open_rom_dialog(&mut self) -> bool {
-        let language = self.core.settings_snapshot().shared.general.language;
+        let titles = self.core.dialog_titles();
         let filters = Self::rom_dialog_filters(&self.ctx.registry);
-        let Some(path) = self.dialogs.pick_rom_file(language, filters) else {
+        let Some(path) = self.dialogs.pick_rom_file(titles.open, filters) else {
             return false;
         };
         if let Err(detail) = self.load_path(&path) {
-            self.dialogs.show_load_error(language, &detail);
+            self.dialogs.show_load_error(titles.error, &detail);
             return false;
         }
         true
