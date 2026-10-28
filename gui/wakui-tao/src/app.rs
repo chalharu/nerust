@@ -9,7 +9,7 @@ pub struct Window<K: Copy + Eq + std::hash::Hash + 'static> {
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> Window<K> {
-    pub fn new(app: Application<K>) -> Self {
+    pub fn new<A>(app: Application<K, A>) -> Self {
         Self {
             runtime: Box::new(WindowRuntime::new(app)),
         }
