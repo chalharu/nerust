@@ -83,7 +83,6 @@ impl HostState {
     /// Open the debugger (idempotent); the PPU viewer only for the toolbar button.
     /// Closing never resumes; `focus_ppu` opens-or-focuses the viewer.
     pub(crate) fn open_debug_windows(&mut self, opener: &dyn WindowOpener, focus_ppu: bool) {
-        use nerust_gui_shell::debug::DebugAction;
         if let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Debug) {
             let position = self.debug_window_pos();
             self.aux.window_mut(id).expect("debug reservation").title =
@@ -95,7 +94,11 @@ impl HostState {
                 crate::ports::AuxOpenParams::Debug { bridge, position },
             );
             if opened {
-                self.run_debug_drain(&[DebugAction::Pause, DebugAction::Refresh]);
+                if let Some(bridge) = self.debug_bridge_for_ppu() {
+                    let snapshot = self.aux.debug_snapshot(self.is_ppu_open());
+                    self.core.open_debug_drain(&bridge, snapshot);
+                }
+                self.poll_debug_flight();
             } else {
                 log::error!("failed to open debugger window");
             }
@@ -117,7 +120,7 @@ impl HostState {
                     self.aux.ppu_sync();
                     // The viewer is open now, so re-read with images:
                     // the opening drain ran imageless.
-                    self.run_debug_drain(&[]);
+                    self.refresh_open_debugger();
                 } else {
                     log::error!("failed to open PPU viewer window");
                 }
@@ -131,34 +134,25 @@ impl HostState {
 
     /// Drain debugger requests and push one batched snapshot back.
     pub(crate) fn drain_debug_requests(&mut self) {
-        if let Some(bridge) = self.debug_bridge_for_ppu() {
-            bridge.bind_epoch(self.debug_epoch());
-        }
-        let Some((open_ppu, requests)) = self.aux.debug_take_requests() else {
+        let Some(bridge) = self.debug_bridge_for_ppu() else {
             return;
         };
-        if open_ppu {
-            self.request_ppu_open();
-        }
-        if requests.is_empty() {
-            self.poll_debug_flight();
-            return;
-        }
-        self.run_debug_drain(&requests);
-    }
-
-    /// Run one action batch through an async shell-drain flight.
-    /// Sends only; the event loop polls, so the UI thread never blocks.
-    pub(crate) fn run_debug_drain(&mut self, requests: &[nerust_gui_shell::debug::DebugAction]) {
-        if let Some(bridge) = self.debug_bridge_for_ppu() {
-            bridge.bind_epoch(self.debug_epoch());
-        }
-        let ppu_open = self.is_ppu_open();
-        let snapshot = self.aux.debug_snapshot(ppu_open);
+        let snapshot = self.aux.debug_snapshot(self.is_ppu_open());
         // Contended bridge locks would wedge the UI thread:
         // all critical sections are short field copies.
         debug_assert!(snapshot.is_none() || self.aux.debug_locks_free());
-        self.core.enqueue_debug(requests, snapshot);
+        if self.core.take_debug_requests(&bridge, snapshot) {
+            self.request_ppu_open();
+        }
+        self.poll_debug_flight();
+    }
+
+    /// Refresh the open viewer imagelessly, then poll. Bridgeless
+    /// windows still enqueue so the chrome gate observes the drain.
+    pub(crate) fn refresh_open_debugger(&mut self) {
+        let bridge = self.debug_bridge_for_ppu();
+        let snapshot = self.aux.debug_snapshot(self.is_ppu_open());
+        self.core.refresh_debug_drain(bridge.as_deref(), snapshot);
         self.poll_debug_flight();
     }
 
@@ -181,7 +175,7 @@ impl HostState {
     pub(crate) fn sync_debug_chrome(&mut self, ctx: &nerust_frontend_host::frame::FrameCtx) {
         self.sync_chrome(ctx, false);
         if self.core.chrome_drain_due(self.is_debug_open()) {
-            self.run_debug_drain(&[]);
+            self.refresh_open_debugger();
         }
     }
 }
@@ -440,7 +434,7 @@ mod tests {
         let stub = crate::testkit::StubAux::new(crate::aux::focus::AuxKind::Debug);
         let applied = stub.applied_drain.clone();
         host.aux.insert(Box::new(stub));
-        host.run_debug_drain(&[]);
+        host.refresh_open_debugger();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while host.poll_debug_flight() {
             assert!(std::time::Instant::now() < deadline);
@@ -465,7 +459,7 @@ mod tests {
         assert!(!host.poll_debug_flight());
         // No debugger open: the drain records pause truth and stops.
         host.drain_debug_requests();
-        host.run_debug_drain(&[]);
+        host.refresh_open_debugger();
         assert_eq!(
             host.last_drain_paused(),
             Some(host.session().tick_metrics().paused)
@@ -552,10 +546,22 @@ mod tests {
 
     use crate::testkit::StubAux;
 
-    fn batch_stub(open_ppu: bool, batch: Vec<nerust_gui_shell::debug::DebugAction>) -> StubAux {
+    fn bridge_stub(open_ppu: bool, refresh: bool) -> StubAux {
+        use std::sync::atomic::Ordering;
+        let bridge = crate::aux::bridge::DebugBridge::new(
+            Default::default(),
+            Vec::new(),
+            0,
+            nerust_settings_core::model::language::AppLanguage::English,
+        );
+        if refresh {
+            bridge.dispatch(crate::aux::debug::DebugMessage::RefreshPressed);
+        }
+        if open_ppu {
+            bridge.open_ppu.store(true, Ordering::SeqCst);
+        }
         let mut stub = StubAux::new(crate::aux::focus::AuxKind::Debug);
-        stub.drain_open = open_ppu;
-        stub.debug_batch = batch;
+        stub.bridge = Some(std::sync::Arc::new(bridge));
         stub
     }
 
@@ -563,7 +569,7 @@ mod tests {
     fn empty_batch_with_ppu_flag_arms_viewer_open() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux.insert(Box::new(batch_stub(true, Vec::new())));
+        host.aux.insert(Box::new(bridge_stub(true, false)));
         host.drain_debug_requests();
         assert!(host.take_ppu_open_request());
         assert!(support.menu.updates().is_empty());
@@ -571,11 +577,9 @@ mod tests {
 
     #[test]
     fn nonempty_batch_without_snapshot_records_truth() {
-        use nerust_gui_shell::debug::DebugAction;
         let support = TestHost::new();
         let mut host = support.host;
-        host.aux
-            .insert(Box::new(batch_stub(false, vec![DebugAction::Refresh])));
+        host.aux.insert(Box::new(bridge_stub(false, true)));
         // Stub snapshot stays None, so the round trip never runs.
         assert!(host.aux.debug_locks_free());
         host.drain_debug_requests();

@@ -377,15 +377,15 @@ fn shortcut_and_cursor_keys_map_physical_codes() {
     use iced::keyboard::key::{Code, Physical};
     assert!(matches!(
         shortcut_request(&Physical::Code(Code::F6)),
-        Some(DebugAction::StepFrame)
+        Some(DebugMessage::StepFramePressed)
     ));
     assert!(matches!(
         shortcut_request(&Physical::Code(Code::F7)),
-        Some(DebugAction::StepInstr)
+        Some(DebugMessage::StepInstrPressed)
     ));
     assert!(matches!(
         shortcut_request(&Physical::Code(Code::F9)),
-        Some(DebugAction::TogglePause)
+        Some(DebugMessage::TogglePausePressed)
     ));
     assert!(shortcut_request(&Physical::Code(Code::KeyA)).is_none());
     assert!(matches!(
