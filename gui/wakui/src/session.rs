@@ -2,7 +2,7 @@
 //! View definitions and shell execution share these boundary types; native
 //! frontends construct them without naming shell or settings types.
 
-use wakui::Key;
+use crate::Key;
 
 /// Native gesture: open the debugger, toggle fullscreen, or run a session
 /// command. Frontends never name the settings binding that produced it.

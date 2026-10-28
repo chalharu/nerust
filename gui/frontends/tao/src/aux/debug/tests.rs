@@ -1,6 +1,6 @@
 use super::views::*;
 use super::*;
-use nerust_frontend_host::debugger::{
+use wakui::debugger::{
     DebugInputs, DebugSnapshot, DebuggerRows, DisasmRow, DumpRow, RegRow, pin_marker,
 };
 
@@ -74,8 +74,8 @@ fn test_snapshot() -> DebugSnapshot {
     }
 }
 
-fn chrome() -> nerust_frontend_host::debugger::DebuggerChrome {
-    nerust_frontend_host::debugger::DebuggerChrome {
+fn chrome() -> wakui::debugger::DebuggerChrome {
+    wakui::debugger::DebuggerChrome {
         debugger: "Debugger".to_string(),
         pause: "Pause".to_string(),
         resume: "Resume".to_string(),
@@ -323,7 +323,7 @@ fn program_boot_shares_view_and_queue() {
 #[test]
 fn outer_debug_window_uses_common_title_and_existing_grouped_pipeline() {
     use crate::aux::window::WindowProgram;
-    use nerust_frontend_host::{focus::AuxKind, window::Window};
+    use wakui::{focus::AuxKind, window::Window};
 
     let (view, queue) = harness();
     *view.borrow_mut() = snapshot_view(&test_snapshot());

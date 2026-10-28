@@ -1,27 +1,29 @@
 //! Framework app implementation: [`FrontendApp`] over the owned session.
 //!
 //! Native frontends hold the app behind `Box<dyn FrontendApp>` (see
-//! [`host::bootstrap`](nerust_frontend_host::bootstrap)) and never name
+//! [`host::bootstrap`](wakui::bootstrap)) and never name
 //! shell, runtime, or ViewModel types. All ViewModel contact lives here.
 
 use std::{path::Path, time::Instant};
 
-use nerust_frontend_host::{
+use nerust_gui_shell::session::access::{PauseControl, ResetControl, SlotIo, SlotNav};
+use wakui::{
     app::{FrontendApp, WidgetCloseOutcome},
-    aux::{AuxId, AuxRegistryPort, OpenRequest},
     debugger::{
         DebugHandle, DebugInputs, DebugSnapshot, DebuggerEffects, DebuggerEvent,
         DebuggerLiveEffects, DebuggerScope, PpuChrome, ScaledPicture,
     },
+    session::{SessionError, SessionEvent as FrameworkEvent},
+};
+use wakui::{
+    aux::{AuxId, AuxRegistryPort, OpenRequest},
     focus::{AuxKind, FocusEffect, FocusEvent},
+    mailbox::WindowMailbox,
     menu::{DialogTitles, MenuCapabilities, Menubar},
     osd::{ModalAdvance, ModalPresentation, ModalToken, OsdTurn},
-    session::{SessionError, SessionEvent as FrameworkEvent},
     viewport::{ViewportImage, ViewportPresent},
-    widget_session::WindowMailbox,
     window::{Window, WindowChromeSync, WindowEffects},
 };
-use nerust_gui_shell::session::access::{PauseControl, ResetControl, SlotIo, SlotNav};
 use wakui::{
     binding::PickerSink as _,
     control::{ControlEffect, ControlEvent, ControlId, ControlScreen},
@@ -480,8 +482,8 @@ impl FrontendApp for ApplicationHost {
 
     fn dispatch(
         &mut self,
-        event: nerust_frontend_host::session::SessionEvent,
-    ) -> Result<nerust_frontend_host::session::SessionOutcome, SessionError> {
+        event: wakui::session::SessionEvent,
+    ) -> Result<wakui::session::SessionOutcome, SessionError> {
         crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
     }
 

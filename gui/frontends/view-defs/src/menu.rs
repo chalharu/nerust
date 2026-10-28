@@ -1,8 +1,8 @@
 //! Menu builders over the signature: titles, signature assembly, models.
 //! Schema (ids, models, visitors) lives in the framework
-//! (`nerust_frontend_host::menu`).
+//! (`wakui::menu`).
 
-pub use nerust_frontend_host::menu::{
+pub use wakui::menu::{
     CommandModel, CommandVisitor, DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem,
     MenuModel, MenuVisitor, Menubar, NativeApplicationEntry, NativeApplicationMenu,
     NativeApplicationRole, Submenu, find_menu,

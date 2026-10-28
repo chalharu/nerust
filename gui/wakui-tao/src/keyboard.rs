@@ -6,7 +6,7 @@ use iced::keyboard::key::{Code, Physical};
 
 use wakui::Key;
 
-pub(crate) fn key_from_physical(physical: Physical) -> Option<Key> {
+pub fn key_from_physical(physical: Physical) -> Option<Key> {
     Some(match physical {
         Physical::Code(code) => match code {
             Code::KeyA => Key::KeyA,
@@ -212,7 +212,7 @@ pub(crate) fn key_from_physical(physical: Physical) -> Option<Key> {
     })
 }
 
-pub(crate) fn code_from_key(key: Key) -> Code {
+pub fn code_from_key(key: Key) -> Code {
     match key {
         Key::KeyA => Code::KeyA,
         Key::KeyB => Code::KeyB,

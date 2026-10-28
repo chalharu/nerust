@@ -3,7 +3,7 @@
 //!
 //! Deliberate non-goal: pipeline, frame, and OSD vocabulary
 //! (`PipelineFactory`, `FrameBuffer`, `VideoRenderProfile`, ...) stays in
-//! the render engine (`nerust_render_traits`). A UI framework owns windows
+//! the render engine (a peer asset). A UI framework owns windows
 //! and controls, never GPU pipelines — same split as winit versus wgpu.
 //! `raw-window-handle` is the only window-system vocabulary wakui names.
 
@@ -73,4 +73,23 @@ mod tests {
             discriminant(&test_region().display)
         );
     }
+}
+
+/// Viewport present/image vocabulary (moved from the frontend host).
+/// Renderer state after one present call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewportPresent {
+    Presented,
+    NoPipeline,
+    Skipped,
+}
+
+/// Composited frame for frontends that blend themselves: plain pixels,
+/// no render vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewportImage {
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: usize,
+    pub pixels: Vec<u8>,
 }

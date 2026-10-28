@@ -3,7 +3,7 @@
 
 use std::sync::mpsc::Receiver;
 
-use wakui::loop_driver::WakeNeed;
+use crate::loop_driver::WakeNeed;
 
 /// Native presentation runs only after the application borrow has ended.
 /// Callback-based dialogs return None; worker dialogs return their ACK receiver.

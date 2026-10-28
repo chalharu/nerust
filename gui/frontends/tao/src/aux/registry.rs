@@ -4,11 +4,11 @@
 use super::debug::{DebugMessage, views::ViewSnapshot};
 use super::domain::{AuxId, AuxNativeEvent, NativeWindowId};
 use super::focus::{AuxEvents, AuxIdentity, AuxKind, AuxRender, pump_aux};
-use nerust_frontend_host::aux::AuxWindows;
+use wakui::aux::AuxWindows;
 #[cfg(test)]
-use nerust_frontend_host::aux::OpenRequest;
-use nerust_frontend_host::widget_session::WindowMailbox;
+use wakui::aux::OpenRequest;
 use wakui::control::{ControlEvent, ControlScreen};
+use wakui::mailbox::WindowMailbox;
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Default)]
@@ -97,14 +97,11 @@ impl AuxRegistry {
         self.windows.request_open(kind)
     }
 
-    pub(crate) fn window(&self, id: AuxId) -> Option<&nerust_frontend_host::window::Window> {
+    pub(crate) fn window(&self, id: AuxId) -> Option<&wakui::window::Window> {
         self.windows.window(id)
     }
 
-    pub(crate) fn window_mut(
-        &mut self,
-        id: AuxId,
-    ) -> Option<&mut nerust_frontend_host::window::Window> {
+    pub(crate) fn window_mut(&mut self, id: AuxId) -> Option<&mut wakui::window::Window> {
         self.windows.window_mut(id)
     }
 
@@ -296,8 +293,8 @@ pub(crate) mod test_double {
 
     use super::{AuxController, WidgetSessionPort};
     use crate::aux::debug::views::ViewSnapshot;
-    use nerust_frontend_host::widget_session::WindowMailbox;
     use wakui::control::{ControlEvent, ControlScreen};
+    use wakui::mailbox::WindowMailbox;
 
     /// Configurable stub aux: answers only the capability its kind owns.
     pub(crate) struct StubAux {
@@ -403,8 +400,8 @@ mod tests {
 
     #[test]
     fn reserved_window_snapshot_allows_reentry_and_stale_ids_cannot_touch_reopen() {
-        use nerust_frontend_host::window::{DebugContents, WidgetContents, WindowVisitor};
         use std::cell::RefCell;
+        use wakui::window::{DebugContents, WidgetContents, WindowVisitor};
 
         let registry = RefCell::new(AuxRegistry::new());
         let OpenRequest::Create(old) = registry.borrow_mut().request_open(AuxKind::Debug) else {

@@ -1,5 +1,5 @@
 pub use crate::session::error::SlotOpFailure;
-pub use nerust_frontend_host::commands::SessionCommand;
+pub use wakui::commands::SessionCommand;
 
 /// Data-driven command vocabulary: every per-command answer lives on this trait.
 /// The executor matches once; [`SessionCommand`] is the sole implementor.

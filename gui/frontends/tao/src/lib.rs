@@ -12,7 +12,6 @@ mod event;
     target_os = "openbsd"
 ))]
 mod gtk_embed;
-mod keyboard;
 mod menu;
 mod ports;
 
@@ -30,7 +29,7 @@ pub(crate) mod test_session;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-use nerust_frontend_host::bootstrap::Boot;
+use wakui::bootstrap::Boot;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root;

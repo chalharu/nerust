@@ -4,8 +4,8 @@ use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
-use nerust_frontend_host::focus::{AuxKind, FocusEvent};
-use nerust_frontend_host::{
+use wakui::focus::{AuxKind, FocusEvent};
+use wakui::{
     event::{CommandEffect, EventOutcome},
     session::SessionEvent,
 };
@@ -125,8 +125,8 @@ impl HostState {
 
     #[cfg(test)]
     fn apply_keyboard_shortcut(&mut self, shortcut: nerust_gui_shell::session::KeyboardShortcut) {
-        use nerust_frontend_host::session::ShortcutGesture;
         use nerust_settings_core::model::input::ShortcutAction;
+        use wakui::session::ShortcutGesture;
         let gesture = match shortcut {
             nerust_gui_shell::session::KeyboardShortcut::OpenDebugger => {
                 ShortcutGesture::OpenDebugger
@@ -157,8 +157,8 @@ mod tests {
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::test_session::FakeRomLoader;
     use crate::testkit::StubAux;
-    use nerust_frontend_host::commands::NativeRole;
-    use nerust_frontend_host::commands::SessionCommand;
+    use wakui::commands::NativeRole;
+    use wakui::commands::SessionCommand;
 
     #[test]
     fn rom_filters_empty_without_cores() {
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn open_settings_blocks_menu_commands() {
         use crate::event::MenuCommand as Cmd;
-        use nerust_frontend_host::commands::SessionCommand;
+        use wakui::commands::SessionCommand;
         let support = settings_blocked_host();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
@@ -275,8 +275,8 @@ mod tests {
     #[test]
     fn canonical_events_share_external_settings_guard_and_effects() {
         use crate::event::UserEvent;
-        use nerust_frontend_host::focus::FocusEvent;
         use nerust_frontend_viewdefs::session::SessionEvent;
+        use wakui::focus::FocusEvent;
         let support = settings_blocked_host();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
@@ -287,7 +287,7 @@ mod tests {
             UserEvent::Menu(MenuCommand::Native(NativeRole::About)),
             UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
             UserEvent::Session(SessionEvent::Shortcut(
-                nerust_frontend_host::session::ShortcutGesture::OpenDebugger,
+                wakui::session::ShortcutGesture::OpenDebugger,
             )),
             UserEvent::Session(SessionEvent::Keyboard {
                 key: wakui::Key::F4,
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(
             host.on_event(
                 UserEvent::Session(SessionEvent::Shortcut(
-                    nerust_frontend_host::session::ShortcutGesture::OpenDebugger
+                    wakui::session::ShortcutGesture::OpenDebugger
                 )),
                 &opener
             ),
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn session_menu_runs_every_command_without_core() {
-        use nerust_frontend_host::commands::SessionCommand as Cmd;
+        use wakui::commands::SessionCommand as Cmd;
         let support = TestHost::new();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");

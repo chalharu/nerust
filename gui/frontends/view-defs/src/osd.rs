@@ -92,11 +92,11 @@ impl<S: OsdSink + StripSink + ?Sized> OsdVisitor for SinkVisitor<'_, S> {
 pub struct ModalToken(u64);
 
 impl ModalToken {
-    pub(crate) fn into_host(self) -> nerust_frontend_host::osd::ModalToken {
-        nerust_frontend_host::osd::ModalToken(self.0)
+    pub(crate) fn into_host(self) -> wakui::osd::ModalToken {
+        wakui::osd::ModalToken(self.0)
     }
 
-    pub(crate) fn from_host(token: nerust_frontend_host::osd::ModalToken) -> Self {
+    pub(crate) fn from_host(token: wakui::osd::ModalToken) -> Self {
         Self(token.0)
     }
 }

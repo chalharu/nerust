@@ -1,0 +1,19 @@
+[package]
+authors.workspace = true
+description = "wakui platform backend for iced/tao: native control handlers and input mapping"
+edition.workspace = true
+license.workspace = true
+name = "wakui-tao"
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+iced = { workspace = true, features = ["advanced"] }
+iced_tiny_skia.workspace = true
+iced_winit.workspace = true
+log.workspace = true
+tao.workspace = true
+wakui.workspace = true
+
+[dev-dependencies]
+strum.workspace = true

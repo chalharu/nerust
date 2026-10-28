@@ -1,8 +1,8 @@
 //! Command model builders over the menu signature (view side).
 //! Vocabulary (`MenuCommand`, `SessionCommand`, descriptors, visitors)
-//! lives in the framework (`nerust_frontend_host::commands`).
+//! lives in the framework (`wakui::commands`).
 
-pub use nerust_frontend_host::commands::*;
+pub use wakui::commands::*;
 
 use crate::menu::MenuSig;
 
