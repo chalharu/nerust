@@ -8,7 +8,7 @@ use std::sync::{
 
 use nerust_core_traits::debugger::{HexRow, SpaceId};
 use nerust_gui_shell::debug::DebugAction;
-use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, NavState};
+use nerust_gui_viewmodel::debugger::{DebugImageRgba, DisplayCache, NavState, tile_hover_text};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::{DebuggerEvent, DebuggerState, DebuggerUpdate, model::apply_live};
@@ -141,6 +141,18 @@ impl DebugBridge {
 
     pub fn language(&self) -> AppLanguage {
         self.meta.language
+    }
+
+    /// Pre-localized PPU viewer chrome. Frontends render these verbatim
+    /// instead of calling into the i18n catalog themselves.
+    pub fn ppu_chrome(&self) -> PpuChrome {
+        PpuChrome::new(self.meta.language)
+    }
+
+    /// Localized tile hover line for raw view coordinates. Geometry stays
+    /// view-side; the language lives here.
+    pub fn hover_line(&self, label: &str, width: u32, height: u32, x: f64, y: f64) -> String {
+        tile_hover_text(self.meta.language, label, width, height, x, y)
     }
 
     pub fn spaces(&self) -> &[(SpaceId, String, u32)] {
@@ -368,6 +380,28 @@ impl DebugBridge {
     #[doc(hidden)]
     pub fn navigate(&self, anchor: u32, addr: u32) {
         lock_recovered(&self.core).nav.navigate(anchor, addr);
+    }
+}
+
+/// Pre-localized PPU viewer chrome. Frontends render these verbatim;
+/// only the host touches the i18n catalog for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PpuChrome {
+    pub title: String,
+    pub hover_empty: String,
+    pub no_images: String,
+    pub panels_title: String,
+}
+
+impl PpuChrome {
+    pub fn new(language: AppLanguage) -> Self {
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        Self {
+            title: ui_text(language, UiText::PpuViewer).to_string(),
+            hover_empty: ui_text(language, UiText::HoverTile).to_string(),
+            no_images: ui_text(language, UiText::NoImages).to_string(),
+            panels_title: ui_text(language, UiText::Panels).to_string(),
+        }
     }
 }
 
