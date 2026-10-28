@@ -19,10 +19,29 @@ impl Harness {
         let window = windows::bound_window().expect("isolated Xvfb process required");
         let state = window.state();
         if system {
-            state.borrow_mut().ctx.registry =
-                std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
-                    nerust_nes_factory::NesFactory::boxed().into(),
-                ]));
+            // Sessions own their registries now: swap the whole session for
+            // one backed by NES, on an isolated temp settings root.
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static HARNESS_SYSTEM_SEQ: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "nerust-harness-system-{}-{}",
+                std::process::id(),
+                HARNESS_SYSTEM_SEQ.fetch_add(1, Ordering::SeqCst)
+            ));
+            let _ = std::fs::create_dir_all(root.join("storage"));
+            *state.borrow_mut().host.session_mut() =
+                nerust_gui_shell::session::SessionHandle::new_with_settings_paths(
+                    nerust_frontend_host::bootstrap::backend_capabilities(false, None),
+                    std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+                        nerust_nes_factory::NesFactory::boxed().into(),
+                    ])),
+                    std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::new()),
+                    nerust_gui_runtime::settings::SettingsPaths {
+                        settings_file: root.join("settings.yaml"),
+                        central_storage_root: root.join("storage"),
+                    },
+                )
+                .unwrap();
         }
         let mut baseline = state.borrow().host.settings_snapshot().clone();
         baseline.shared.general.language = AppLanguage::English;
@@ -713,8 +732,8 @@ fn settings_production_action_save_failure_edit_retry_closes_once() {
         },
         presentation: None,
     };
-    let registry = state.borrow().ctx.registry.clone();
-    let audio = state.borrow().ctx.audio_registry.clone();
+    let registry = state.borrow().host.system_registry();
+    let audio = state.borrow().host.audio_registry();
     *state.borrow_mut().host.session_mut() = SessionHandle::new_with_settings_paths(
         capabilities,
         registry.clone(),

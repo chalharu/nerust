@@ -49,6 +49,7 @@
 pub mod application;
 pub mod aux;
 pub mod binding;
+pub mod bootstrap;
 pub mod commands;
 pub mod control;
 pub mod debug_schedule;

@@ -30,29 +30,18 @@ pub(crate) mod test_session;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-use nerust_gui_shell::context::FrontendContext;
+use nerust_frontend_host::bootstrap::Boot;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
-/// Crash containment lives in the composition root; see `nerust::run`.
-pub fn run(ctx: FrontendContext, rom_path: Option<std::path::PathBuf>) -> i32 {
-    run_inner(ctx, rom_path);
+/// Crash containment and boot failure dialogs live in the composition root;
+/// see `nerust::run`.
+pub fn run(boot: Boot, rom_path: Option<std::path::PathBuf>) -> i32 {
+    run_inner(boot, rom_path);
     0
 }
 
-fn run_inner(ctx: FrontendContext, rom_path: Option<std::path::PathBuf>) {
-    let mut window = match app::Window::new(ctx) {
-        Ok(window) => window,
-        Err(detail) => {
-            log::error!("failed to initialise tao frontend: {detail}");
-            rfd::MessageDialog::new()
-                .set_title("nerust")
-                .set_description(&detail)
-                .set_level(rfd::MessageLevel::Error)
-                .set_buttons(rfd::MessageButtons::Ok)
-                .show();
-            return;
-        }
-    };
+fn run_inner(boot: Boot, rom_path: Option<std::path::PathBuf>) {
+    let mut window = app::Window::new(boot);
     if let Some(path) = rom_path
         && !window.load_path(&path)
     {

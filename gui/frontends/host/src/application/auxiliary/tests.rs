@@ -5,6 +5,7 @@ use crate::{
     widget_session::WidgetSession,
     window::WidgetContents,
 };
+use nerust_gui_shell::registry::SystemRegistry;
 use wakui::pause::PauseOwner;
 
 fn prepare(
@@ -15,17 +16,7 @@ fn prepare(
     let Some(OpenRequest::Create(id)) = host.reserve_window(windows, kind).unwrap() else {
         panic!()
     };
-    let session = host
-        .prepare_widget_window(
-            windows,
-            id,
-            Arc::new(SystemRegistry::new(vec![
-                nerust_nes_factory::NesFactory::boxed().into(),
-            ])),
-            Arc::new(AudioBackendRegistry::new()),
-        )
-        .unwrap()
-        .unwrap();
+    let session = host.prepare_widget_window(windows, id).unwrap().unwrap();
     assert!(matches!(
         windows.window(id).unwrap().contents.contents,
         WidgetContents::Controls(_)
@@ -357,12 +348,7 @@ fn shared_success_applies_before_release_and_preserves_modal_owner() {
     let id = reserve(host, &mut windows);
     assert!(host.tick().paused);
     let mut session = host
-        .prepare_widget_window(
-            &mut windows,
-            id,
-            Arc::new(SystemRegistry::new(Vec::new())),
-            Arc::new(AudioBackendRegistry::new()),
-        )
+        .prepare_widget_window(&mut windows, id)
         .unwrap()
         .unwrap();
     assert_eq!(windows.window(id).unwrap().title, session.window().title);

@@ -312,14 +312,14 @@ impl HostState {
 
     /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        match self.core.load_path(self.ctx.rom_loader.as_mut(), path) {
+        match self.loader.load(&mut self.core, path) {
             Ok(()) => {
                 self.after_rom_load();
                 Ok(())
             }
             Err(error) => {
                 log::warn!("ROM load failed: {error}");
-                Err(error.to_string())
+                Err(error)
             }
         }
     }
