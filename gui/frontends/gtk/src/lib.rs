@@ -26,15 +26,10 @@ use gtk::{
     },
 };
 use nerust_frontend_host::session::{SessionEvent, SessionOutcome};
-use nerust_gui_runtime::settings::{
-    HostBackendCapabilities, HostWindowCapabilities, SettingsSnapshot,
-};
+use nerust_gui_runtime::settings::{HostBackendCapabilities, HostWindowCapabilities};
 use nerust_gui_shell::{
     context::FrontendContext,
-    session::{
-        SessionError, SessionHandle,
-        access::{SessionControl, SettingsResult},
-    },
+    session::{SessionError, SessionHandle},
 };
 
 use self::window::{MenubarModels, Window, WindowExtend};
@@ -183,39 +178,6 @@ impl State {
         };
         let handler: &mut dyn EventHandler = &mut self.host;
         let _ = handler.handle_event(EventCommand::Focus(FocusEvent::BurstEnd), false);
-    }
-}
-
-impl SessionControl for State {
-    fn unload(&mut self) {
-        if let Err(error) = self.host.session_mut().unload() {
-            log::warn!("ROM unload failed: {error}");
-        }
-    }
-    fn apply_settings(
-        &mut self,
-        settings: SettingsSnapshot,
-    ) -> Result<SettingsResult, SessionError> {
-        let plan = self.host.apply_settings(settings)?;
-        if plan.renderer_needs_rebuild {
-            self.renderer_reload_pending = true;
-        }
-        Ok(SettingsResult {
-            renderer_needs_rebuild: self.renderer_reload_pending,
-            fullscreen_default_changed: plan.fullscreen_default_changed,
-            scaling_changed: plan.scaling_changed,
-        })
-    }
-    fn set_fullscreen_default(&mut self, fullscreen: bool) -> Result<SettingsResult, SessionError> {
-        let plan = self.host.session_mut().set_fullscreen_default(fullscreen)?;
-        if plan.renderer_rebuild_required || plan.window_settings_changed {
-            self.renderer_reload_pending = true;
-        }
-        Ok(SettingsResult {
-            renderer_needs_rebuild: self.renderer_reload_pending,
-            fullscreen_default_changed: plan.fullscreen_default_changed,
-            scaling_changed: false,
-        })
     }
 }
 
