@@ -1,7 +1,5 @@
 //! Menu/keyboard dispatch, ROM lifecycle, and the session delegate.
 
-use nerust_gui_shell::registry::SystemRegistry;
-
 use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
@@ -117,7 +115,7 @@ impl HostState {
 
     fn open_rom_dialog(&mut self) -> bool {
         let titles = self.core.dialog_titles();
-        let filters = Self::rom_dialog_filters(&self.ctx.registry);
+        let filters = self.core.rom_dialog_filters();
         let Some(path) = self.dialogs.pick_rom_file(titles.open, filters) else {
             return false;
         };
@@ -128,13 +126,6 @@ impl HostState {
         true
     }
 
-    /// ROM-picker filters: unified "All ROMs" first, then per-core entries.
-    /// Extension-less cores never reach the dialog; rfd pre-selects the
-    /// first filter, so the union keeps every system visible initially.
-    fn rom_dialog_filters(registry: &SystemRegistry) -> Vec<(String, Vec<String>)> {
-        nerust_gui_shell::registry::rom_picker_filters(registry.all())
-    }
-
     #[cfg(test)]
     fn apply_keyboard_shortcut(&mut self, shortcut: nerust_gui_shell::session::KeyboardShortcut) {
         self.handle_native_event(UserEvent::Session(SessionEvent::Shortcut(shortcut)), None);
@@ -143,7 +134,6 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-    use super::HostState;
     use crate::event::MenuCommand;
     use crate::runtime::host::HostAction;
     use crate::runtime::host::TestHost;
@@ -152,18 +142,17 @@ mod tests {
     use crate::testkit::StubAux;
     use nerust_frontend_host::commands::NativeRole;
     use nerust_frontend_host::commands::SessionCommand;
-    use nerust_gui_shell::registry::SystemRegistry;
 
     #[test]
     fn rom_filters_empty_without_cores() {
-        let registry = SystemRegistry::new(Vec::new());
-        assert!(HostState::rom_dialog_filters(&registry).is_empty());
+        let support = TestHost::new();
+        assert!(support.host.rom_dialog_filters().is_empty());
     }
 
     #[test]
     fn rom_filters_lead_with_unified_all_roms() {
-        let registry = SystemRegistry::new(vec![nerust_nes_factory::NesFactory::boxed().into()]);
-        let filters = HostState::rom_dialog_filters(&registry);
+        let support = TestHost::with_nes();
+        let filters = support.host.rom_dialog_filters();
         assert_eq!(filters.len(), 2);
         assert_eq!(filters[0].0, "All ROMs");
         assert_eq!(filters[0].1, ["nes"]);
