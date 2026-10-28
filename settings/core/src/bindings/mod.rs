@@ -6,7 +6,7 @@ use crate::model::input::{KeyboardProfile, PersistedControlId};
 use crate::model::shared::DesktopSharedSettings;
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{InputTopologyDescriptor, UnifiedFieldMap};
-use nerust_keyboard::Key;
+use wakui::Key;
 
 /// Precomputed (attachment, control) → key lookup for one profile.
 /// Build once per pass; repeated validations reuse it instead of re-indexing.
@@ -218,7 +218,7 @@ mod tests {
         DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
         PortId,
     };
-    use nerust_keyboard::Key;
+    use wakui::Key;
 
     use super::conflicting_keys;
 

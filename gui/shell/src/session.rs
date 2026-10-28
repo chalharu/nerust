@@ -37,7 +37,6 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{InputAssignments, UnifiedFieldMap};
-use nerust_keyboard::Key;
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
@@ -47,6 +46,7 @@ use nerust_system_traits::factory::{
     load::{DynSystemLoadOptions, MediaObject},
 };
 use thiserror::Error;
+use wakui::Key;
 
 use crate::{
     emu_core::{EmuCore, LiveCore},
@@ -120,7 +120,7 @@ pub enum KeyboardShortcut {
 struct InputDept {
     current_assignments: InputAssignments,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
-    key_field_map: HashMap<nerust_keyboard::Key, usize>,
+    key_field_map: HashMap<wakui::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
     topology_epoch: u64,
     /// Last served overlay, keyed by caller revision and topology epoch.
@@ -359,7 +359,7 @@ struct PreSwitchState {
     system_id: Option<Box<dyn SystemId>>,
     display_name: Option<&'static str>,
     assignments: InputAssignments,
-    pressed: std::collections::HashSet<nerust_keyboard::Key>,
+    pressed: std::collections::HashSet<wakui::Key>,
     persistence: persistence::PersistSnapshot,
     /// Whether the stashed runtime ran: frozen so no battery update slips past the flush.
     /// Rollback resumes it.

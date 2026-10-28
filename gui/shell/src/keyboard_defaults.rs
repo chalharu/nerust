@@ -1,6 +1,6 @@
 use nerust_input_traits::AbstractKey;
-use nerust_keyboard::Key;
 use nerust_settings_core::model::input::{KeyboardBinding, PersistedControlId};
+use wakui::Key;
 
 /// System-agnostic default keyboard binding for an abstract key.
 /// Returns all sensible default keys (e.g. keyboard + numpad for D-pad).
