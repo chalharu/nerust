@@ -1,10 +1,7 @@
 use nerust_gui_runtime::settings::{
     BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
 };
-use nerust_gui_shell::{
-    context::FrontendContext,
-    session::{SessionHandle, session_query::WindowSize},
-};
+use nerust_gui_shell::{context::FrontendContext, session::SessionHandle};
 #[cfg(test)]
 use std::path::PathBuf;
 use tao::{
@@ -338,15 +335,15 @@ fn window_surface_size(size: TaoPhysicalSize<u32>) -> (u32, u32) {
     (size.width, size.height)
 }
 
-fn logical_window_size(size: WindowSize, scaling: Option<u32>) -> TaoLogicalSize<f64> {
+fn logical_window_size(size: (f32, f32), scaling: Option<u32>) -> TaoLogicalSize<f64> {
     let (width, height) = scaling
         .map(|scale| {
             (
-                f64::from(size.width) * f64::from(scale),
-                f64::from(size.height) * f64::from(scale),
+                f64::from(size.0) * f64::from(scale),
+                f64::from(size.1) * f64::from(scale),
             )
         })
-        .unwrap_or((f64::from(size.width), f64::from(size.height)));
+        .unwrap_or((f64::from(size.0), f64::from(size.1)));
     TaoLogicalSize::new(width, height)
 }
 
@@ -440,26 +437,12 @@ mod tests {
 
     #[test]
     fn window_size_math_scales_and_falls_back() {
-        use nerust_gui_shell::session::session_query::WindowSize;
-
         use super::{
             default_fit_window_size, fullscreen_mode, logical_window_size, window_surface_size,
         };
-        let scaled = logical_window_size(
-            WindowSize {
-                width: 160.0,
-                height: 144.0,
-            },
-            Some(3),
-        );
+        let scaled = logical_window_size((160.0, 144.0), Some(3));
         assert_eq!((scaled.width, scaled.height), (480.0, 432.0));
-        let plain = logical_window_size(
-            WindowSize {
-                width: 160.0,
-                height: 144.0,
-            },
-            None,
-        );
+        let plain = logical_window_size((160.0, 144.0), None);
         assert_eq!((plain.width, plain.height), (160.0, 144.0));
         let remembered = TaoLogicalSize::new(800.0, 600.0);
         assert_eq!((remembered.width, remembered.height), (800.0, 600.0));
