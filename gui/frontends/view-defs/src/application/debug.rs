@@ -1,5 +1,6 @@
 //! Stateful debug transport. UI ports receive results, never individual queue transitions.
 
+use crate::aux_schedule::AuxSchedule;
 use crate::focus::AuxKind;
 use crate::{
     debugger::{AppliedLive, DebugBridge, DrainSnapshot},
@@ -10,7 +11,6 @@ use nerust_gui_shell::{
     session::{SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
-use wakui::debug_schedule::AuxSchedule;
 use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
 use wakui::session::SessionEvent;
@@ -166,7 +166,7 @@ impl DebugRuntime {
         WakeNeed {
             live_tick: follow.then(|| self.schedule.next_live_tick()).flatten(),
             flight_pending: drain_pending || self.live_flight.is_some(),
-            osd_deadline: None,
+            overlay_deadline: None,
         }
     }
     pub fn chrome_drain_due(&self, debug_open: bool, paused: bool) -> bool {

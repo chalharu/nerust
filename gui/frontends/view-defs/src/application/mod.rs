@@ -38,8 +38,9 @@ use wakui::window::Window;
 use crate::{
     debugger::BridgeLock,
     frame::{FrameCache, FrameCtx},
-    osd::{ModalAdvance, ModalToken, OsdNotifications},
+    osd::OsdNotifications,
 };
+use wakui::dialog::{ModalAdvance, ModalToken};
 
 /// One session and one source of truth for its application-level policies.
 /// Native adapters should use policy-aware host methods for commands and pause
@@ -158,7 +159,7 @@ impl ApplicationHost {
     }
 
     /// Pre-localized debugger chrome for the debugger window.
-    pub fn debugger_chrome(&self) -> wakui::debugger::DebuggerChrome {
+    pub fn debugger_chrome(&self) -> crate::debugger::DebuggerChrome {
         crate::debugger::debugger_chrome(self.settings_snapshot().shared.general.language)
     }
 
@@ -710,7 +711,7 @@ pub struct MenubarUpdate {
 // Scheduling already exposes meaningful request/consume/cadence operations;
 // reuse that facade rather than growing a second forest of forwarding methods.
 impl std::ops::Deref for ApplicationHost {
-    type Target = wakui::debug_schedule::AuxSchedule<crate::focus::AuxKind>;
+    type Target = crate::aux_schedule::AuxSchedule<crate::focus::AuxKind>;
     fn deref(&self) -> &Self::Target {
         self.debug.schedule()
     }

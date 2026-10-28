@@ -19,7 +19,7 @@ use wakui::{
         Capture, Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlKind,
         ControlMetadata, ControlScreen, Id, Layout, Node, Page,
     },
-    debugger::{DebugHandle, DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope},
+    dialog::{DialogTurn, ModalAdvance, ModalPresentation, ModalToken},
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
     focus::{FocusEffect, FocusEvent},
     loop_driver::WakeNeed,
@@ -27,7 +27,6 @@ use wakui::{
     menu::{
         CommandModel, DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar, Submenu,
     },
-    osd::{ModalAdvance, ModalPresentation, ModalToken, OsdTurn},
     pause::PauseOwner,
     session::{CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome},
     viewport::{ViewportImage, ViewportPresent, ViewportRegion},
@@ -594,7 +593,6 @@ pub(crate) struct FakeApp {
     pub history_notes: Vec<String>,
     pub history_filter: usize,
     pub error: Option<String>,
-    pub debug_paused: bool,
     pub debug_open_requested: bool,
     pub ppu_open_requested: bool,
     pub mailboxes: HashMap<AuxId, WindowMailbox>,
@@ -606,13 +604,10 @@ pub(crate) struct FakeApp {
     pub viewport_attached: bool,
     pub render_failed_detail: Option<String>,
     pub retry_due: bool,
-    pub chrome_drain: bool,
     prepared: std::collections::HashSet<AuxId>,
     pub remembered_size: Option<(u32, u32)>,
     pub slots: Vec<u64>,
     pub japanese: bool,
-    epoch: u64,
-    debug_epochs: HashMap<DebugHandle, u64>,
     main_active: bool,
     focus_paused: bool,
     redraw: bool,
@@ -653,7 +648,6 @@ impl FakeApp {
             history_notes: Vec::new(),
             history_filter: 0,
             error: None,
-            debug_paused: true,
             debug_open_requested: false,
             ppu_open_requested: false,
             mailboxes: HashMap::new(),
@@ -665,14 +659,11 @@ impl FakeApp {
             viewport_attached: false,
             render_failed_detail: None,
             retry_due: false,
-            chrome_drain: false,
             prepared: std::collections::HashSet::new(),
             remembered_size: None,
             active_slot: None,
             slots: Vec::new(),
             japanese: false,
-            epoch: 0,
-            debug_epochs: HashMap::new(),
             owners: std::collections::HashSet::new(),
             menu_gate: None,
             main_active: true,
@@ -780,7 +771,6 @@ impl FrontendApp<TestAux> for FakeApp {
         }
         self.loaded = true;
         self.paused = false;
-        self.epoch += 1;
         self.title_dirty = true;
         self.last_title_at = Instant::now();
         Ok(())
@@ -1484,15 +1474,17 @@ impl FrontendApp<TestAux> for FakeApp {
         true
     }
 
-    fn debug_widget(&self) -> Option<AuxId> {
+    fn polled_widget(&self) -> Option<AuxId> {
         self.widget_kinds
             .iter()
             .find_map(|(id, kind)| (*kind == TestAux::Debug).then_some(*id))
     }
 
-    fn debug_handle_for(&self, id: AuxId) -> Option<DebugHandle> {
-        (self.widget_kinds.get(&id) == Some(&TestAux::Debug)).then_some(DebugHandle(1))
+    fn poll_widget(&mut self, _id: AuxId) -> WakeNeed {
+        WakeNeed::default()
     }
+
+    fn tick_widget(&mut self, _id: AuxId) {}
 
     fn drain_open_requests(&mut self) -> Vec<TestAux> {
         let mut kinds = Vec::new();
@@ -1505,59 +1497,7 @@ impl FrontendApp<TestAux> for FakeApp {
         kinds
     }
 
-    fn close_debug_flights(&mut self) {}
-
-    fn debug_gesture(
-        &mut self,
-        _handle: DebugHandle,
-        _inputs: Vec<DebuggerEvent>,
-        event: DebuggerEvent,
-    ) -> DebuggerEffects {
-        if matches!(event, DebuggerEvent::TogglePausePressed) {
-            self.debug_paused = !self.debug_paused;
-            if self.loaded {
-                self.paused = !self.paused;
-            }
-        }
-        if matches!(event, DebuggerEvent::PpuOpenPressed) {
-            self.ppu_open_requested = true;
-        }
-        DebuggerEffects {
-            scope: Some(DebuggerScope::All),
-            ..Default::default()
-        }
-    }
-
-    fn debug_refresh(&mut self, _handle: DebugHandle, _scope: DebuggerScope) {}
-
-    fn debug_open_refresh(&mut self, _handle: DebugHandle) {}
-
-    fn debug_poll(&mut self, _handle: DebugHandle) -> WakeNeed {
-        WakeNeed::default()
-    }
-
-    fn debug_poll_live(&mut self, _handle: DebugHandle, _visible: bool) -> DebuggerLiveEffects {
-        DebuggerLiveEffects::default()
-    }
-
-    fn debug_live_tick(&mut self, _handle: DebugHandle) {}
-
-    fn debug_drain_pending(&self, _handle: DebugHandle) -> bool {
-        false
-    }
-
-    fn debug_reset_if_replaced(&mut self, handle: DebugHandle) -> bool {
-        let current = self.epoch;
-        let replaced = self.debug_epochs.get(&handle) != Some(&current);
-        if replaced {
-            self.debug_epochs.insert(handle, current);
-        }
-        replaced
-    }
-
-    fn chrome_drain_due(&self) -> bool {
-        self.chrome_drain
-    }
+    fn close_background_flights(&mut self) {}
 
     fn take_open_request(&mut self, kind: TestAux) -> bool {
         match kind {
@@ -1614,7 +1554,7 @@ impl FrontendApp<TestAux> for FakeApp {
         true
     }
 
-    fn pump_osd(&mut self, _now: Instant) -> OsdTurn {
+    fn pump_dialog(&mut self, _now: Instant) -> DialogTurn {
         // Reap a settled or dead receiver before presenting the next error.
         if let Some((_, Some(receiver))) = &self.modal {
             match receiver.try_recv() {
@@ -1633,23 +1573,21 @@ impl FrontendApp<TestAux> for FakeApp {
             // GTK presents without attaching a receiver (ACK arrives via the
             // native response callback), so the modal pause starts here.
             self.owners.insert(PauseOwner::Modal);
-            return OsdTurn {
+            return DialogTurn {
                 modal: Some(ModalPresentation {
                     token: ModalToken(self.modal_seq),
                     detail,
                 }),
                 wake: WakeNeed::default(),
-                changed: true,
             };
         }
-        OsdTurn {
+        DialogTurn {
             modal: None,
             wake: WakeNeed::default(),
-            changed: false,
         }
     }
 
-    fn attach_osd_modal_receiver(
+    fn attach_dialog_receiver(
         &mut self,
         token: ModalToken,
         receiver: std::sync::mpsc::Receiver<()>,
@@ -1664,7 +1602,7 @@ impl FrontendApp<TestAux> for FakeApp {
         false
     }
 
-    fn acknowledge_osd_modal(&mut self, token: ModalToken) -> ModalAdvance {
+    fn acknowledge_dialog(&mut self, token: ModalToken) -> ModalAdvance {
         if let Some((active, _)) = &self.modal
             && *active == token
         {
@@ -1685,19 +1623,19 @@ impl FrontendApp<TestAux> for FakeApp {
         ModalAdvance::Ignored
     }
 
-    fn osd_modal_pending(&self) -> bool {
+    fn dialog_pending(&self) -> bool {
         self.modal.is_some()
     }
 
-    fn osd_flight_pending(&self) -> bool {
+    fn dialog_flight_pending(&self) -> bool {
         matches!(&self.modal, Some((_, Some(_))))
     }
 
-    fn osd_pending(&self) -> usize {
+    fn dialog_queue_len(&self) -> usize {
         self.error_queue.len()
     }
 
-    fn osd_wakeup(&self, now: Instant) -> Option<Instant> {
+    fn dialog_wakeup(&self, now: Instant) -> Option<Instant> {
         self.modal.as_ref().map(|_| now)
     }
 
@@ -1709,7 +1647,7 @@ impl FrontendApp<TestAux> for FakeApp {
         self.redraw
     }
 
-    fn invalidate_osd(&mut self) {}
+    fn invalidate_overlay(&mut self) {}
 
     fn viewport_sync(&mut self, _region: ViewportRegion, _force: bool) -> Result<bool, String> {
         self.viewport_attached = true;
@@ -1739,7 +1677,7 @@ impl FrontendApp<TestAux> for FakeApp {
         })
     }
 
-    fn sync_osd_viewport(&mut self, _width: u32, _height: u32, _client_height: u32) {}
+    fn sync_overlay_viewport(&mut self, _width: u32, _height: u32, _client_height: u32) {}
 
     fn viewport_drop(&mut self) {
         self.viewport_attached = false;

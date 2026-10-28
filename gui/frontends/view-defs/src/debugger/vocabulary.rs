@@ -1,6 +1,6 @@
-//! Framework debugger vocabulary: gestures, scopes, chrome, rows, and
-//! opaque session handles. View definitions own bridges, models, and
-//! drivers; native frontends hold [`DebugHandle`]s and render snapshots.
+//! Debugger vocabulary: gestures, scopes, chrome, rows, and opaque
+//! session handles. View definitions own bridges, models, and drivers;
+//! native frontends only poll the widget and render its screen.
 
 /// Opaque debugger session: one bridge plus its model and drain driver.
 /// Created by the app (`open_debug`) and never dereferenced natively.

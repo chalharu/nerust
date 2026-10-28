@@ -5,7 +5,7 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use wakui::osd::{ModalAdvance, ModalPresentation, ModalPresenter};
+use wakui::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 
 use crate::surface::{Surface, SurfaceCore};
 
@@ -27,7 +27,7 @@ pub(crate) fn present_modal<K: Copy + Eq + std::hash::Hash + 'static>(
         state
             .borrow_mut()
             .host
-            .attach_osd_modal_receiver(token, receiver);
+            .attach_dialog_receiver(token, receiver);
     }
 }
 
@@ -58,7 +58,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> ModalPresenter for GtkModalPresen
             let next = state
                 .borrow_mut()
                 .host
-                .acknowledge_osd_modal(presentation.token);
+                .acknowledge_dialog(presentation.token);
             match next {
                 ModalAdvance::Present(next) => {
                     // Bounded by the host queue, even with synchronous map ACK.

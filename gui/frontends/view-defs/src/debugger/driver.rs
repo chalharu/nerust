@@ -2,12 +2,12 @@
 
 use std::{sync::Arc, task::Poll};
 
+use crate::debugger::{DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope};
 use nerust_gui_shell::{
     debug::{DebugAction, DebugDrainInput, DebugDrainOutput, DrainFlight, LiveImagesFlight},
     session::{LiveImages, SessionHandle},
 };
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
-use wakui::debugger::{DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope};
 
 use crate::{
     debugger::{BridgeView, DebugBridge, DrainSnapshot},

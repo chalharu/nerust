@@ -14,15 +14,14 @@ use crate::{
 
 use crate::{
     aux::AuxRegistryPort,
+    dialog::{DialogTurn, ModalAdvance, ModalToken},
     focus::{FocusEffect, FocusEvent},
     mailbox::WindowMailbox,
     menu::{MenuCapabilities, Menubar},
-    osd::{ModalAdvance, ModalToken},
     viewport::{ViewportImage, ViewportPresent},
     window::{Window, WindowChromeSync, WindowEffects},
 };
 use crate::{
-    debugger::{DebugHandle, DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope},
     event::EventHandler,
     session::{SessionError, SessionEvent, SessionOutcome},
 };
@@ -237,8 +236,8 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
         registry: &mut dyn AuxRegistryPort<K>,
         kind: K,
     ) -> Result<Option<crate::aux::OpenRequest>, String>;
-    /// Collect and consume deferred aux open requests (e.g. the PPU viewer
-    /// requested from a debugger gesture). Flavors open each kind through
+    /// Collect and consume deferred aux open requests (e.g. a viewer
+    /// requested from a widget gesture). Flavors open each kind through
     /// the normal `reserve_widget`/`prepare_widget` path.
     fn drain_open_requests(&mut self) -> Vec<K>;
     fn cancel_widget(
@@ -277,34 +276,23 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     /// session commands on this without naming the settings kind.
     fn settings_open(&self) -> bool;
 
-    // -- debugger (widget window; bridge owned view-side) -------------------
-    // The debugger is a generic Controls widget like settings/history/PPU.
-    // Flavors open it via `reserve_widget`/`prepare_widget`, push
-    // `widget_screen`s, and route `widget_dispatch` events; all bridge and
-    // drain state lives view-side behind these narrow ports.
-    /// Open debugger widget id, if any.
-    fn debug_widget(&self) -> Option<crate::aux::AuxId>;
-    /// Bridge handle behind a debugger widget id, if still live.
-    fn debug_handle_for(&self, id: crate::aux::AuxId) -> Option<DebugHandle>;
-    fn close_debug_flights(&mut self);
-    fn debug_gesture(
-        &mut self,
-        handle: DebugHandle,
-        inputs: Vec<DebuggerEvent>,
-        event: DebuggerEvent,
-    ) -> DebuggerEffects;
-    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope);
-    fn debug_open_refresh(&mut self, handle: DebugHandle);
-    fn debug_poll(&mut self, handle: DebugHandle) -> crate::loop_driver::WakeNeed;
-    fn debug_poll_live(&mut self, handle: DebugHandle, visible: bool) -> DebuggerLiveEffects;
-    fn debug_live_tick(&mut self, handle: DebugHandle);
-    fn debug_drain_pending(&self, handle: DebugHandle) -> bool;
-    fn debug_reset_if_replaced(&mut self, handle: DebugHandle) -> bool;
-    /// Chrome gate: a pause change since the last drain needs a viewer refresh.
-    fn chrome_drain_due(&self) -> bool;
+    // -- polled widgets (background work owned view-side) ------------------
+    // Widgets are generic Controls like settings/history/viewers.
+    // Flavors open them via `reserve_widget`/`prepare_widget`, push
+    // `widget_screen`s, and route `widget_dispatch` events; all drain and
+    // bridge state lives view-side behind these narrow ports. The framework
+    // never names the domain: it only polls the widget
+    // the view-side marks as needing background work.
+    /// Widget id needing background polling, if any.
+    fn polled_widget(&self) -> Option<crate::aux::AuxId>;
+    /// Poll background work for `id`, refresh its cached screen when due.
+    fn poll_widget(&mut self, id: crate::aux::AuxId) -> crate::loop_driver::WakeNeed;
+    /// Live-tick follow for `id` (images-only refresh while running).
+    fn tick_widget(&mut self, id: crate::aux::AuxId);
+    /// Drop background flights (ordered host teardown).
+    fn close_background_flights(&mut self);
     /// Generic aux open latch + window position memory, keyed by view-side kind.
-    /// View definitions map their kinds (debugger/PPU/...) to these; native
-    /// code never names the kinds.
+    /// View definitions map their kinds to these; native code never names them.
     fn take_open_request(&mut self, kind: K) -> bool;
     fn request_open(&mut self, kind: K);
     fn window_pos(&self, kind: K) -> Option<(i32, i32)>;
@@ -316,27 +304,27 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn next_live_tick(&self) -> Option<std::time::Instant>;
     fn live_due(&mut self, now: std::time::Instant) -> bool;
 
-    // -- OSD / notifications ----------------------------------------------
-    fn pump_osd(&mut self, now: Instant) -> crate::osd::OsdTurn;
-    fn attach_osd_modal_receiver(
+    // -- modal dialogs (generic; transient layers live renderer-side) ------
+    fn pump_dialog(&mut self, now: Instant) -> DialogTurn;
+    fn attach_dialog_receiver(
         &mut self,
         token: ModalToken,
         receiver: std::sync::mpsc::Receiver<()>,
     ) -> bool;
-    fn acknowledge_osd_modal(&mut self, token: ModalToken) -> ModalAdvance;
-    fn osd_modal_pending(&self) -> bool;
-    fn osd_flight_pending(&self) -> bool;
-    fn osd_pending(&self) -> usize;
-    fn osd_wakeup(&self, now: Instant) -> Option<Instant>;
+    fn acknowledge_dialog(&mut self, token: ModalToken) -> ModalAdvance;
+    fn dialog_pending(&self) -> bool;
+    fn dialog_flight_pending(&self) -> bool;
+    fn dialog_queue_len(&self) -> usize;
+    fn dialog_wakeup(&self, now: Instant) -> Option<Instant>;
     fn note_redraw(&mut self);
     fn redraw_needed(&self) -> bool;
-    fn invalidate_osd(&mut self);
+    fn invalidate_overlay(&mut self);
 
     // -- viewport / render --------------------------------------------------
     fn viewport_sync(&mut self, region: ViewportRegion, force: bool) -> Result<bool, String>;
     fn viewport_present(&mut self, width: u32, height: u32, client_height: u32) -> ViewportPresent;
     fn viewport_capture(&mut self, width: u32, height: u32) -> Option<ViewportImage>;
-    fn sync_osd_viewport(&mut self, width: u32, height: u32, client_height: u32);
+    fn sync_overlay_viewport(&mut self, width: u32, height: u32, client_height: u32);
     fn viewport_drop(&mut self);
     fn viewport_attached(&self) -> bool;
     fn viewport_generation(&self) -> u64;
