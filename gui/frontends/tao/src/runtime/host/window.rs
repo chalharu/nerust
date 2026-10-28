@@ -215,6 +215,7 @@ impl LoopHost for HostState {
     }
 
     fn pump_aux(&mut self) -> WakeNeed {
+        self.pump_widgets();
         if self.core.take_render_retry(Instant::now()) {
             self.request_redraw();
         }

@@ -112,9 +112,15 @@ impl HostState {
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, true);
         if self.is_debug_open() {
-            if let Some(bridge) = self.debug_bridge_for_ppu() {
+            if let Some(handle) = self.debug_handle {
                 use crate::aux::debug::DebugMessage;
-                bridge.dispatch(DebugMessage::RefreshPressed);
+                use nerust_frontend_host::app::FrontendApp as _;
+                self.core.debug_gesture(
+                    handle,
+                    vec![],
+                    DebugMessage::RefreshPressed,
+                    self.is_ppu_open(),
+                );
             }
             self.drain_debug_requests();
         }

@@ -3,42 +3,41 @@ use std::{cell::RefCell, rc::Rc};
 
 use iced::{Task, Theme};
 use nerust_frontend_host::{focus::AuxKind, window::Window};
-use nerust_frontend_viewdefs::widget_session::WidgetSession;
 use wakui::Key;
-use wakui::{
-    binding::PickerSink as _,
-    control::{ControlEffect, ControlEvent, ControlScreen},
-};
+use wakui::control::{ControlEvent, ControlScreen};
 
 use crate::{aux::window::WidgetBinding, convert::default_font};
 
 pub(crate) type Message = ControlEvent;
 pub(crate) type El<'a> = iced::Element<'a, Message, Theme, iced_tiny_skia::Renderer>;
-pub(crate) type ControlsState = Rc<RefCell<WidgetSession>>;
+/// Screen snapshot shared between the iced state and the native handle.
+pub(crate) type SharedScreen = Rc<RefCell<ControlScreen>>;
+/// Control-event queue: iced update pushes here, the host drain consumes.
+pub(crate) type EventQueue = Rc<RefCell<Vec<ControlEvent>>>;
+
+pub(crate) struct ControlsState {
+    pub(crate) screen: SharedScreen,
+    pub(crate) queue: EventQueue,
+}
 
 pub(crate) struct ControlsBinding {
-    // Boot transfers exactly the prepared session, never recreating its draft.
-    initial_state: RefCell<Option<ControlsState>>,
+    // Boot transfers exactly the prepared screen, never recreating its draft.
+    initial: RefCell<Option<(SharedScreen, EventQueue)>>,
     kind: AuxKind,
 }
 
 impl ControlsBinding {
-    pub(crate) fn new(session: WidgetSession) -> Self {
-        let nerust_frontend_host::window::WindowId::Auxiliary(kind) = session.window().id else {
-            unreachable!("widget sessions are auxiliary windows");
-        };
-        Self {
-            initial_state: RefCell::new(Some(Rc::new(RefCell::new(session)))),
-            kind,
-        }
-    }
-
-    pub(crate) fn session(&self) -> ControlsState {
-        self.initial_state
-            .borrow()
-            .as_ref()
-            .expect("before boot")
-            .clone()
+    pub(crate) fn new(screen: ControlScreen, kind: AuxKind) -> (Self, SharedScreen, EventQueue) {
+        let screen = Rc::new(RefCell::new(screen));
+        let queue = Rc::new(RefCell::new(Vec::new()));
+        (
+            Self {
+                initial: RefCell::new(Some((Rc::clone(&screen), Rc::clone(&queue)))),
+                kind,
+            },
+            screen,
+            queue,
+        )
     }
 }
 
@@ -62,46 +61,37 @@ impl WidgetBinding for ControlsBinding {
     }
 
     fn boot(&self) -> (ControlsState, Task<Message>) {
-        (
-            self.initial_state
-                .borrow_mut()
-                .take()
-                .expect("controls boot once"),
-            Task::none(),
-        )
+        let (screen, queue) = self
+            .initial
+            .borrow_mut()
+            .take()
+            .expect("controls boot once");
+        (ControlsState { screen, queue }, Task::none())
     }
 
     fn update(&self, state: &mut ControlsState, message: Message) -> Task<Message> {
-        // Dispatch ends before entering the native picker (which may run a nested loop).
-        let effects = state.borrow_mut().dispatch(message);
-        for effect in effects {
-            let ControlEffect::PickDirectory {
-                title,
-                target,
-                request,
-            } = effect;
-            let path = rfd::FileDialog::new().set_title(title).pick_folder();
-            state.borrow_mut().submit(target, request, path);
-        }
+        // Queue for the host drain: picker dialogs and submissions run
+        // outside iced update, never in a nested native loop.
+        state.queue.borrow_mut().push(message);
         Task::none()
     }
 
-    fn presentation(&self, state: &ControlsState) -> Option<Window> {
-        Some(state.borrow().window())
+    fn presentation(&self, _state: &ControlsState) -> Option<Window> {
+        None
     }
 
     fn view<'a>(&self, state: &'a ControlsState, _: iced::window::Id) -> El<'a> {
-        let screen = state.borrow().screen();
+        let screen = state.screen.borrow();
         super::controls::build_screen(&screen)
     }
 
     fn controls_view<'a>(
         &self,
-        _: &'a ControlsState,
-        screen: &ControlScreen,
-        _: iced::window::Id,
+        state: &'a ControlsState,
+        _screen: &ControlScreen,
+        id: iced::window::Id,
     ) -> El<'a> {
-        super::controls::build_screen(screen)
+        self.view(state, id)
     }
 }
 

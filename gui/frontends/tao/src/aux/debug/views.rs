@@ -2,16 +2,17 @@
 //! `capture_view` is the single place that locks the bridge.
 
 use iced_tiny_skia::Renderer;
-use nerust_frontend_viewdefs::debugger::{
-    DebuggerChrome, DebuggerRows, DisasmRow, DumpRow, RegRow, pin_marker,
+use nerust_frontend_host::debugger::{
+    DebugSnapshot, DebuggerChrome, DebuggerRows, DisasmRow, DumpRow, RegRow, pin_marker,
 };
 
 use super::DebugMessage;
-use crate::aux::bridge::DebugBridge;
 
-/// Owned per-rebuild snapshot: widgets read locals, never the live bridge. Locks are sequential, so
-/// it is one consistent read in practice, strictly more coherent than per-widget locking.
-pub(super) struct ViewSnapshot {
+/// Owned per-rebuild snapshot: widgets read locals only.
+/// Built from the app snapshot pushed after each debug turn, never by
+/// locking a bridge; widgets stay decoupled from view-definitions.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ViewSnapshot {
     pub(super) chrome: DebuggerChrome,
     pub(super) mem_input: String,
     pub(super) dis_input: String,
@@ -20,13 +21,13 @@ pub(super) struct ViewSnapshot {
     pub(super) anchor: u32,
     pub(super) bookmarks: Vec<(u32, String)>,
     pub(super) bm_input: String,
-    pub(super) watch: Option<u32>,
-    pub(super) watch_value: Option<u8>,
-    pub(super) freeze: Option<(u32, u8)>,
     pub(super) freeze_input: String,
     pub(super) selected: Option<(u32, Option<u8>)>,
     pub(super) edit_input: String,
     pub(super) pending_text: Option<String>,
+    pub(super) select_line: String,
+    pub(super) watch_line: String,
+    pub(super) freeze_line: String,
     pub(super) selected_name: Option<String>,
     pub(super) regs: Vec<RegRow>,
     pub(super) dump_rows: Vec<DumpRow>,
@@ -38,57 +39,44 @@ pub(super) struct ViewSnapshot {
     pub(super) reg_input: String,
 }
 
-/// Lock the bridge once and clone an owned snapshot out of it.
-/// No widget code runs here; see `anchor()` for the anchor rule.
-pub(super) fn capture_view(bridge: &DebugBridge) -> ViewSnapshot {
-    let chrome = bridge.debugger_chrome();
-    // One coherent pass: core fields clone under one guard, images
-    // ride the display `Arc` and clone lock-free below.
-    let view = bridge.view_snapshot();
-    let nav = view.nav;
-    let display = view.display;
-    // Formatted rows (view-owned DTOs): no formatter or row-type import here.
-    let rows: DebuggerRows = bridge.debugger_rows();
-    let selected_name = bridge.selected_name();
-    let mem_input = nav.mem_input().to_string();
-    let dis_input = nav.dis_input().to_string();
-    let follow_pc = nav.follow_pc();
-    let back_len = nav.back_len();
-    let watch_value = display.watch_value;
-    // Same rule as `anchor()`, computed from the snapshot above
-    // instead of re-locking nav and display for a second time.
-    let anchor = if follow_pc {
+/// One coherent pass over the pushed app snapshot: widgets read locals only.
+/// The disassembly anchor follows the same rule as before: track PC while
+/// following, otherwise hold the snapshot's disassembly address.
+pub(crate) fn snapshot_view(snapshot: &DebugSnapshot) -> ViewSnapshot {
+    let rows: &DebuggerRows = &snapshot.rows;
+    let inputs = &snapshot.inputs;
+    // Same anchor rule as before, computed from the snapshot instead
+    // of re-locking navigation and display for a second time.
+    let anchor = if inputs.follow_pc {
         rows.disasm.first().map(|line| line.addr).unwrap_or(0)
     } else {
-        nav.dis_addr().unwrap_or(0)
+        inputs.dis_addr.unwrap_or(0)
     };
-    let reg_target = view.reg_target;
-    let reg_input = view.reg_input;
     ViewSnapshot {
-        chrome,
-        mem_input,
-        dis_input,
-        follow_pc,
-        back_len,
+        chrome: snapshot.chrome.clone(),
+        mem_input: inputs.mem_input.clone(),
+        dis_input: inputs.dis_input.clone(),
+        follow_pc: inputs.follow_pc,
+        back_len: inputs.back_len,
         anchor,
-        bookmarks: view.bookmarks,
-        bm_input: view.bm_input,
-        watch: view.watch,
-        watch_value,
-        freeze: view.freeze,
-        freeze_input: view.freeze_input,
-        selected: view.selected,
-        edit_input: view.edit_input,
-        pending_text: rows.pending_text,
-        selected_name,
-        regs: rows.regs,
-        dump_rows: rows.dump,
-        diff: rows.changed_addrs,
-        disasm_lines: rows.disasm,
-        status_text: rows.status_text,
+        bookmarks: inputs.bookmarks.clone(),
+        bm_input: inputs.bm_input.clone(),
+        freeze_input: inputs.freeze_input.clone(),
+        selected: snapshot.selected,
+        edit_input: inputs.edit_input.clone(),
+        pending_text: rows.pending_text.clone(),
+        select_line: rows.selected_line.clone(),
+        watch_line: rows.watch_text.clone(),
+        freeze_line: rows.freeze_text.clone(),
+        selected_name: Some(snapshot.space_name.clone()).filter(|name| !name.is_empty()),
+        regs: rows.regs.clone(),
+        dump_rows: rows.dump.clone(),
+        diff: rows.changed_addrs.clone(),
+        disasm_lines: rows.disasm.clone(),
+        status_text: rows.status_text.clone(),
         paused: rows.paused,
-        reg_target,
-        reg_input,
+        reg_target: snapshot.reg_target,
+        reg_input: inputs.reg_input.clone(),
     }
 }
 
@@ -281,6 +269,7 @@ pub(super) fn view_regs_section(
 }
 
 pub(super) fn view_edit_row(
+    select_line: &str,
     selected: Option<(u32, Option<u8>)>,
     edit_input: &str,
     chrome: &DebuggerChrome,
@@ -289,16 +278,9 @@ pub(super) fn view_edit_row(
     use iced::widget::{button, row, text, text_input};
     // The target rides on the label and the button: writes always
     // land on the selected row, never on the page anchor.
-    let select_text = match selected {
-        Some((addr, old)) => chrome.selected_row_text(Some((addr, old))),
-        None => chrome.selected_row_text(None),
-    };
-    // The target rides on the button: writes always land on the
-    // selected row, never on the page anchor.
-    let write_label = match selected {
-        Some((addr, _)) => chrome.write_target_label(Some((addr, None))),
-        None => chrome.write_target_label(None),
-    };
+    // Both lines arrive pre-formatted in the snapshot rows.
+    let select_text = select_line.to_owned();
+    let write_label = chrome.write_target_label(selected);
     row![
         text(select_text).size(14).width(Length::Fixed(240.0)),
         text_input(&chrome.hex_byte, edit_input)
@@ -427,17 +409,17 @@ pub(super) fn view_dis_col(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn view_watch_row(
-    watch: Option<u32>,
-    watch_value: Option<u8>,
+    watch_text: &str,
     chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text};
-    let watch_text = chrome.watch_text(watch, watch_value);
     row![
         button(text(chrome.watch.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::WatchSet),
-        text(watch_text).size(14).width(iced::Length::Fill),
+        text(watch_text.to_owned())
+            .size(14)
+            .width(iced::Length::Fill),
         button(text(chrome.clear.clone()))
             .style(button::text)
             .on_press(DebugMessage::WatchClear),
@@ -448,12 +430,11 @@ pub(super) fn view_watch_row(
 }
 
 pub(super) fn view_freeze_row(
-    freeze: Option<(u32, u8)>,
+    freeze_text: &str,
     freeze_input: &str,
     chrome: &DebuggerChrome,
 ) -> iced::Element<'static, DebugMessage, iced::Theme, Renderer> {
     use iced::widget::{button, row, text, text_input};
-    let freeze_text = chrome.freeze_text(freeze);
     row![
         text_input(&chrome.hex_byte, freeze_input)
             .on_input(DebugMessage::FreezeInputChanged)
@@ -461,7 +442,9 @@ pub(super) fn view_freeze_row(
         button(text(chrome.freeze.clone()))
             .style(button::secondary)
             .on_press(DebugMessage::FreezeSet),
-        text(freeze_text).size(14).width(iced::Length::Fill),
+        text(freeze_text.to_owned())
+            .size(14)
+            .width(iced::Length::Fill),
         button(text(chrome.clear.clone()))
             .style(button::text)
             .on_press(DebugMessage::FreezeClear),

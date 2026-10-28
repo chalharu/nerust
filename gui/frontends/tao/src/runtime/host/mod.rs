@@ -116,12 +116,16 @@ impl TestHost {
 pub(crate) struct HostState {
     /// Main window cluster: handle, liveness, surface target.
     pub(super) windows: WindowCluster,
-    pub(super) core: ApplicationHost,
+    pub(crate) core: ApplicationHost,
     loader: RomLoaderSlot,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
-    pub(super) aux: AuxRegistry,
+    pub(crate) aux: AuxRegistry,
+    /// App-side debug session shared by the debugger and PPU windows.
+    pub(super) debug_handle: Option<nerust_frontend_host::debugger::DebugHandle>,
+    /// Last PPU generation pushed into the viewer.
+    pub(super) ppu_generation: u64,
 }
 
 impl std::ops::Deref for HostState {
@@ -192,6 +196,8 @@ impl HostState {
             app_menu,
             dialogs,
             aux: AuxRegistry::new(),
+            debug_handle: None,
+            ppu_generation: 0,
         }
     }
 
@@ -232,15 +238,6 @@ impl HostState {
         self.aux.contains(AuxKind::Settings)
     }
 
-    /// Close the settings window and rebuild the renderer when the render target changed.
-    #[cfg(test)]
-    pub(super) fn close_settings_and_maybe_rebuild(&mut self) -> bool {
-        let Some(id) = self.aux.route_id(AuxKind::Settings) else {
-            return false;
-        };
-        self.finish_widget_window(id, true)
-    }
-
     /// Aux window of this kind still registered. Test-only read: the
     /// ordered teardown must leave no aux window behind.
     #[cfg(test)]
@@ -259,19 +256,14 @@ impl HostState {
         self.aux.contains(AuxKind::Ppu)
     }
 
-    /// Narrow shared bridge for PPU-viewer creation. Cloned `Arc`, never a lock.
-    pub(super) fn debug_bridge_for_ppu(
-        &self,
-    ) -> Option<std::sync::Arc<crate::aux::bridge::DebugBridge>> {
-        self.aux.debug_bridge()
-    }
-
     pub(super) fn drop_debug_window(&mut self) {
         self.aux.remove_kind(AuxKind::Debug);
+        self.maybe_close_debug_session();
     }
 
     pub(super) fn drop_ppu_window(&mut self) {
         self.aux.remove_kind(AuxKind::Ppu);
+        self.maybe_close_debug_session();
     }
 
     #[cfg(test)]
@@ -438,7 +430,7 @@ mod tests {
         assert!(host.with_main_window(|_| ()).is_none());
         assert!(!host.is_debug_open());
         assert!(!host.is_ppu_open());
-        assert!(host.debug_bridge_for_ppu().is_none());
+        assert!(host.debug_handle().is_none());
         assert!(host.debug_window_pos().is_none());
         assert!(host.ppu_window_pos().is_none());
         host.remember_debug_window_pos(3, 4);

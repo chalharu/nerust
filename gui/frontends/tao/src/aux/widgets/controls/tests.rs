@@ -8,7 +8,6 @@ use iced::{
     },
     keyboard::{self, key},
 };
-use nerust_frontend_viewdefs::widget_session::WidgetSession;
 use nerust_settings_core::{
     i18n::{UiText, text as caption},
     model::language::AppLanguage,
@@ -16,44 +15,71 @@ use nerust_settings_core::{
 use wakui::Key;
 use wakui::control::{Control, ControlEvent, ControlId, ControlKind, ControlVisitor, Tab};
 
-use super::super::bindings::tests::{controls, find, prepare};
+use super::super::bindings::tests::{controls, find};
 use super::*;
+use crate::aux::widgets::bindings::tests::prepare;
+use crate::runtime::host::HostState;
+use nerust_frontend_host::{app::FrontendApp as _, aux::AuxId};
 
-fn fixture(nes: bool) -> WidgetSession {
-    let mut host = if nes {
+struct Fixture {
+    host: HostState,
+    id: AuxId,
+}
+
+fn fixture(nes: bool) -> Fixture {
+    let host = if nes {
         crate::runtime::host::TestHost::with_nes()
     } else {
         crate::runtime::host::TestHost::new()
     }
     .host;
-    prepare(&mut host, crate::aux::focus::AuxKind::Settings).1
+    let mut host = host;
+    let id = prepare(&mut host, crate::aux::focus::AuxKind::Settings);
+    Fixture { host, id }
 }
 
-fn send(state: &mut WidgetSession, id: ControlId, input: ControlInput) {
-    state.dispatch(Message::new(id, input));
-}
+impl Fixture {
+    fn screen(&self) -> wakui::control::ControlScreen {
+        self.host.core.widget_screen(self.id).expect("screen")
+    }
 
-fn field(state: &WidgetSession, key: UiText) -> Control {
-    find(&state.screen(), caption(AppLanguage::English, key))
+    fn send(&mut self, id: ControlId, input: ControlInput) {
+        let _ = self
+            .host
+            .core
+            .widget_dispatch(self.id, Message::new(id, input));
+    }
+
+    fn dispatch(&mut self, event: ControlEvent) -> Vec<wakui::control::ControlEffect> {
+        self.host.core.widget_dispatch(self.id, event)
+    }
+
+    fn field(&self, key: UiText) -> Control {
+        find(&self.screen(), caption(AppLanguage::English, key))
+    }
+
+    fn window(&self) -> nerust_frontend_host::window::Window {
+        self.host.aux.window(self.id).expect("window").clone()
+    }
 }
 
 #[test]
 fn outer_window_consumes_the_actual_screen_and_program_title_uses_window_title() {
-    use nerust_frontend_host::window::{WidgetContents, WindowVisitor};
+    use nerust_frontend_host::window::WindowVisitor;
 
-    let mut state = fixture(false);
-    let page = state.screen().pages[3].clone();
-    send(&mut state, page.select.id, ControlInput::Activate);
-    let window = state.window();
-    let WidgetContents::Controls(screen) = &window.contents.contents else {
-        panic!("settings window must contain the actual screen");
-    };
+    let mut fix = fixture(false);
+    let page = fix.screen().pages[3].clone();
+    fix.send(page.select.id, ControlInput::Activate);
+    // The app-side screen updates synchronously through the dispatch;
+    // the registry snapshot refreshes on the next widget pump.
+    let screen = fix.screen();
     assert!(
         screen
             .pages
             .iter()
             .any(|current| current.selected && current.id == page.id)
     );
+    let window = fix.window();
     let mut visitor = ControlsWindowVisitor::default();
     let outer: &mut dyn WindowVisitor = &mut visitor;
     window.visit(outer);
@@ -63,10 +89,9 @@ fn outer_window_consumes_the_actual_screen_and_program_title_uses_window_title()
     let (_, tree, _) = native_layout(&mut element);
     assert!(!tree.children.is_empty());
     // The title port reads the common window, not a standalone screen title.
-    assert_eq!(state.screen().title, window.title);
-    // A native tree owns all text even after both projections are dropped.
+    assert_eq!(fix.screen().title, window.title);
+    // A native tree owns all text even after the window is dropped.
     drop(window);
-    drop(state);
     let (_, tree, _) = native_layout(&mut element);
     assert!(!tree.children.is_empty());
 }
@@ -401,7 +426,7 @@ fn assert_no_overlay(
 
 #[test]
 fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
-    let state = fixture(false);
+    let fix = fixture(false);
     let mut events = keys(
         keyboard::Key::Named(key::Named::ArrowUp),
         key::Code::ArrowUp,
@@ -409,7 +434,7 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
     )
     .to_vec();
     // Positive control: these are real slider keyboard events, not just modifier updates.
-    let mut control = field(&state, UiText::NotificationDuration);
+    let mut control = fix.field(UiText::NotificationDuration);
     control.metadata.enabled = true;
     control.kind = ControlKind::Number {
         value: 10,
@@ -447,7 +472,7 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
         UiText::SaveStorageDirectory,
         UiText::Cancel,
     ] {
-        let mut control = field(&state, key);
+        let mut control = fix.field(key);
         control.metadata.enabled = false;
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
@@ -468,10 +493,10 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
 
 #[test]
 fn disabling_an_open_native_pick_list_removes_overlay_and_ignores_input() {
-    let state = fixture(false);
+    let fix = fixture(false);
     // Exercise both the control's own flag and the enclosing layout's flag.
     for parent_enabled in [true, false] {
-        let mut control = field(&state, UiText::Scaling);
+        let mut control = fix.field(UiText::Scaling);
         control.metadata.enabled = true;
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
@@ -534,9 +559,9 @@ fn disabling_an_open_native_pick_list_removes_overlay_and_ignores_input() {
 
 #[test]
 fn disabling_a_dragging_native_slider_ignores_motion_and_release() {
-    let state = fixture(false);
+    let fix = fixture(false);
     for parent_enabled in [true, false] {
-        let mut control = field(&state, UiText::NotificationDuration);
+        let mut control = fix.field(UiText::NotificationDuration);
         control.metadata.enabled = true;
         control.kind = ControlKind::Number {
             value: 10,
@@ -641,8 +666,8 @@ impl widget::Operation for EditableOperation {
 
 #[test]
 fn disabled_gate_prevents_operating_real_editable_descendants() {
-    let state = fixture(false);
-    let mut control = field(&state, UiText::SaveStorageDirectory);
+    let fix = fixture(false);
+    let mut control = fix.field(UiText::SaveStorageDirectory);
     control.metadata.enabled = true;
     for enabled in [true, false] {
         let mut element = super::super::disabled::gate(
@@ -720,8 +745,8 @@ fn disabled_gate_never_calls_inner_operate() {
 
 #[test]
 fn disabling_a_focused_native_text_input_does_not_capture_key_release() {
-    let state = fixture(false);
-    let mut control = field(&state, UiText::SaveStorageDirectory);
+    let fix = fixture(false);
+    let mut control = fix.field(UiText::SaveStorageDirectory);
     control.metadata.enabled = true;
     let mut element = control_element(&control, true, iced::Font::default());
     let (renderer, mut tree, node) = native_layout(&mut element);
@@ -750,20 +775,20 @@ fn disabling_a_focused_native_text_input_does_not_capture_key_release() {
 #[test]
 fn all_six_pages_build_native_trees_from_owned_empty_and_real_models() {
     for nes in [false, true] {
-        let mut state = fixture(nes);
-        let language = field(&state, UiText::Language);
-        send(&mut state, language.id, ControlInput::Select(2));
-        let pages = state.screen().pages;
+        let mut fix = fixture(nes);
+        let language = fix.field(UiText::Language);
+        fix.send(language.id, ControlInput::Select(2));
+        let pages = fix.screen().pages;
         assert_eq!(pages.len(), 6);
         for page in pages {
-            send(&mut state, page.select.id, ControlInput::Activate);
-            let before = state.screen();
+            fix.send(page.select.id, ControlInput::Activate);
+            let before = fix.screen();
             // Temporary screen is gone before iced even performs layout.
-            let mut element: El<'static> = build(&state.window());
+            let mut element: El<'static> = build(&fix.window());
             let (_, tree, node) = native_layout(&mut element);
             assert!(!tree.children.is_empty());
             assert!(node.size().width > 0.0 && node.size().height > 0.0);
-            assert_eq!(state.screen(), before);
+            assert_eq!(fix.screen(), before);
         }
     }
 }
@@ -781,9 +806,9 @@ impl ControlVisitor for Inventory {
 
 #[test]
 fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
-    let state = fixture(true);
+    let fix = fixture(true);
     let mut inventory = Inventory::default();
-    state.screen().visit(&mut inventory);
+    fix.screen().visit(&mut inventory);
     let mut kinds = [false; 7];
     for mut control in inventory.0 {
         kinds[match control.kind {
@@ -807,8 +832,8 @@ fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
 
 #[test]
 fn visitor_obeys_selected_hidden_disabled_layouts_and_balances_frames() {
-    let state = fixture(true);
-    let mut screen = state.screen();
+    let fix = fixture(true);
+    let mut screen = fix.screen();
     for page in &mut screen.pages {
         page.selected = false;
     }
@@ -820,7 +845,7 @@ fn visitor_obeys_selected_hidden_disabled_layouts_and_balances_frames() {
     let mut group = screen.pages[0].body.clone();
     group.metadata.visible = false;
     visitor.begin_layout(&group, LayoutKind::Group);
-    visitor.control(&field(&state, UiText::Language));
+    visitor.control(&fix.field(UiText::Language));
     assert!(visitor.stack.last().unwrap().children.is_empty());
     visitor.end_layout(&group, LayoutKind::Group);
     assert!(visitor.stack.last().unwrap().children.is_empty());
@@ -830,7 +855,7 @@ fn visitor_obeys_selected_hidden_disabled_layouts_and_balances_frames() {
     assert!(!visitor.stack.last().unwrap().enabled);
     visitor.begin_layout(&group, LayoutKind::Row);
     assert!(!visitor.stack.last().unwrap().enabled);
-    visitor.control(&field(&state, UiText::Language));
+    visitor.control(&fix.field(UiText::Language));
     visitor.end_layout(&group, LayoutKind::Row);
     visitor.end_layout(&group, LayoutKind::Column);
     visitor.end_page(&screen.pages[0]);
@@ -845,8 +870,8 @@ fn visitor_obeys_selected_hidden_disabled_layouts_and_balances_frames() {
 
 #[test]
 fn native_navigation_emits_typed_activation_and_updates_all_pages_and_tabs() {
-    let mut state = fixture(true);
-    for page in state.screen().pages {
+    let mut fix = fixture(true);
+    for page in fix.screen().pages {
         let mut element = page_radio(&page.select, false);
         let (renderer, mut tree, node) = native_layout(&mut element);
         let messages = feed(
@@ -862,11 +887,10 @@ fn native_navigation_emits_typed_activation_and_updates_all_pages_and_tabs() {
             matches!(&messages[0], ControlEvent { id: Some(id), input: ControlInput::Activate } if id == &page.select.id)
         );
         for message in messages {
-            state.dispatch(message);
+            fix.dispatch(message);
         }
         assert!(
-            state
-                .screen()
+            fix.screen()
                 .pages
                 .iter()
                 .find(|p| p.id == page.id)
@@ -875,19 +899,19 @@ fn native_navigation_emits_typed_activation_and_updates_all_pages_and_tabs() {
         );
     }
     let mut inventory = Inventory::default();
-    state.screen().visit(&mut inventory);
+    fix.screen().visit(&mut inventory);
     for tab in inventory.1 {
-        send(&mut state, tab.select.id, ControlInput::Activate);
+        fix.send(tab.select.id, ControlInput::Activate);
         let mut current = Inventory::default();
-        state.screen().visit(&mut current);
+        fix.screen().visit(&mut current);
         assert!(current.1.iter().find(|t| t.id == tab.id).unwrap().selected);
     }
 }
 
 #[test]
 fn dynamic_ids_restore_context_before_editing_instead_of_using_selected_target() {
-    let mut state = fixture(true);
-    let screen = state.screen();
+    let mut fix = fixture(true);
+    let screen = fix.screen();
     let mut inventory = Inventory::default();
     screen.visit(&mut inventory);
     let system = inventory
@@ -904,17 +928,13 @@ fn dynamic_ids_restore_context_before_editing_instead_of_using_selected_target()
         unreachable!()
     };
     let index = usize::from(selected == Some(0));
-    send(
-        &mut state,
-        screen.pages[0].select.id,
-        ControlInput::Activate,
-    );
-    send(&mut state, candidate.id, ControlInput::Select(index));
+    fix.send(screen.pages[0].select.id, ControlInput::Activate);
+    fix.send(candidate.id, ControlInput::Select(index));
     assert!(
-        matches!(state.screen().control(candidate.id).unwrap().kind, ControlKind::Choice { selected: Some(i), .. } if i == index)
+        matches!(fix.screen().control(candidate.id).unwrap().kind, ControlKind::Choice { selected: Some(i), .. } if i == index)
     );
     let mut current = Inventory::default();
-    state.screen().visit(&mut current);
+    fix.screen().visit(&mut current);
     assert!(
         current
             .1
@@ -956,14 +976,14 @@ fn dynamic_ids_restore_context_before_editing_instead_of_using_selected_target()
         .iter()
         .find(|tab| tab.label.contains("Shortcut"))
         .unwrap();
-    send(&mut state, shortcuts.select.id, ControlInput::Activate);
-    send(&mut state, slot.id, ControlInput::Select(none));
+    fix.send(shortcuts.select.id, ControlInput::Activate);
+    fix.send(slot.id, ControlInput::Select(none));
     assert!(matches!(
-        state.screen().control(slot.id).unwrap().kind,
+        fix.screen().control(slot.id).unwrap().kind,
         ControlKind::Choice { selected: Some(index), .. } if index == none
     ));
     let mut current = Inventory::default();
-    state.screen().visit(&mut current);
+    fix.screen().visit(&mut current);
     assert!(
         current
             .1
@@ -989,73 +1009,76 @@ fn controls_in(layout: &wakui::control::Layout) -> Vec<Control> {
 
 #[test]
 fn stale_disabled_hidden_wrong_kind_and_missing_callbacks_are_ignored() {
-    let mut state = fixture(false);
-    let info = controls(&state.screen())
+    let mut fix = fixture(false);
+    let info = controls(&fix.screen())
         .into_iter()
         .find(|c| {
             matches!(c.kind, ControlKind::Toggle { .. })
                 && c.metadata.accessible_label.contains("Info")
         })
         .unwrap();
-    send(&mut state, info.id, ControlInput::Bool(true));
+    fix.send(info.id, ControlInput::Bool(true));
     let callback = Message::new(
-        field(&state, UiText::NotificationDuration).id,
+        fix.field(UiText::NotificationDuration).id,
         ControlInput::Number(2000),
     );
-    send(&mut state, info.id, ControlInput::Bool(false));
-    let before = state.screen();
-    let foreign = field(&fixture(false), UiText::Language).id;
+    fix.send(info.id, ControlInput::Bool(false));
+    let before = fix.screen();
+    let foreign = {
+        let other = fixture(false);
+        other.field(UiText::Language).id
+    };
     for message in [
         callback,
         Message::new(
-            field(&state, UiText::MasterVolume).id,
+            fix.field(UiText::MasterVolume).id,
             ControlInput::Number(u32::MAX),
         ),
-        Message::new(field(&state, UiText::Mute).id, ControlInput::Select(0)),
+        Message::new(fix.field(UiText::Mute).id, ControlInput::Select(0)),
         Message::new(
-            field(&state, UiText::Language).id,
+            fix.field(UiText::Language).id,
             ControlInput::Select(usize::MAX),
         ),
         Message::new(foreign, ControlInput::Activate),
         Message::new(
-            field(&state, UiText::SaveStorageDirectory).id,
+            fix.field(UiText::SaveStorageDirectory).id,
             ControlInput::Text("hidden".into()),
         ),
     ] {
-        state.dispatch(message);
-        assert_eq!(state.screen(), before);
+        fix.dispatch(message);
+        assert_eq!(fix.screen(), before);
     }
 }
 
 #[test]
 fn capture_key_resolves_current_capture_and_clear_reaches_viewmodel() {
-    let mut state = fixture(false);
-    let id = controls(&state.screen())
+    let mut fix = fixture(false);
+    let id = controls(&fix.screen())
         .iter()
         .find(|c| matches!(c.kind, ControlKind::Binding { .. }))
         .unwrap()
         .id;
-    state.dispatch(Message::capture_key(Key::KeyZ));
-    assert!(state.screen().capture.target.is_none());
-    send(&mut state, id, ControlInput::Activate);
-    assert_eq!(state.screen().capture.target, Some(id));
-    state.dispatch(Message::capture_key(Key::KeyZ));
-    assert!(state.screen().capture.target.is_none());
+    fix.dispatch(Message::capture_key(Key::KeyZ));
+    assert!(fix.screen().capture.target.is_none());
+    fix.send(id, ControlInput::Activate);
+    assert_eq!(fix.screen().capture.target, Some(id));
+    fix.dispatch(Message::capture_key(Key::KeyZ));
+    assert!(fix.screen().capture.target.is_none());
     assert!(matches!(
-        &state.screen().control(id).unwrap().kind,
+        &fix.screen().control(id).unwrap().kind,
         ControlKind::Binding { text, capturing: false, .. } if text.contains('Z')
     ));
-    send(&mut state, id, ControlInput::CaptureClear);
+    fix.send(id, ControlInput::CaptureClear);
     assert!(matches!(
-        &state.screen().control(id).unwrap().kind,
+        &fix.screen().control(id).unwrap().kind,
         ControlKind::Binding { text, capturing: false, .. } if !text.contains('Z')
     ));
 }
 
 #[test]
 fn text_validation_footer_submit_and_cancel_use_model_policy() {
-    let mut state = fixture(false);
-    let policy = field(&state, UiText::SaveStoragePolicy);
+    let mut fix = fixture(false);
+    let policy = fix.field(UiText::SaveStoragePolicy);
     let ControlKind::Choice { choices, .. } = policy.kind else {
         unreachable!()
     };
@@ -1063,35 +1086,71 @@ fn text_validation_footer_submit_and_cancel_use_model_policy() {
         .iter()
         .position(|c| c.to_lowercase().contains("custom"))
         .unwrap();
-    send(&mut state, policy.id, ControlInput::Select(custom));
-    let directory = field(&state, UiText::SaveStorageDirectory).id;
-    let submit = field(&state, UiText::Ok).id;
-    send(&mut state, directory, ControlInput::Text(String::new()));
-    assert!(!state.screen().control(submit).unwrap().metadata.enabled);
-    assert!(state.screen().message.is_some());
-    send(&mut state, submit, ControlInput::Activate);
-    assert!(!state.mailbox().close_requested());
-    assert!(!state.mailbox().has_pending());
-    let effects = state.dispatch(Message::new(directory, ControlInput::Activate));
+    fix.send(policy.id, ControlInput::Select(custom));
+    let directory = fix.field(UiText::SaveStorageDirectory).id;
+    let submit = fix.field(UiText::Ok).id;
+    fix.send(directory, ControlInput::Text(String::new()));
+    assert!(!fix.screen().control(submit).unwrap().metadata.enabled);
+    assert!(fix.screen().message.is_some());
+    fix.send(submit, ControlInput::Activate);
+    assert!(
+        !fix.host
+            .core
+            .widget_mailbox(fix.id)
+            .expect("mailbox")
+            .close_requested()
+    );
+    assert!(
+        !fix.host
+            .core
+            .widget_mailbox(fix.id)
+            .expect("mailbox")
+            .has_pending()
+    );
+    let effects = fix.dispatch(Message::new(directory, ControlInput::Activate));
     assert!(
         matches!(effects.as_slice(), [wakui::control::ControlEffect::PickDirectory { target, .. }] if *target == directory)
     );
-    send(&mut state, directory, ControlInput::Text("/tmp".into()));
-    assert!(state.screen().control(submit).unwrap().metadata.enabled);
-    send(&mut state, submit, ControlInput::Activate);
-    assert!(state.mailbox().close_requested());
-    assert!(state.mailbox().has_pending());
-    let mut state = fixture(false);
-    let cancel = field(&state, UiText::Cancel).id;
-    send(&mut state, cancel, ControlInput::Activate);
-    assert!(state.mailbox().close_requested());
-    assert!(!state.mailbox().has_pending());
+    fix.send(directory, ControlInput::Text("/tmp".into()));
+    assert!(fix.screen().control(submit).unwrap().metadata.enabled);
+    fix.send(submit, ControlInput::Activate);
+    assert!(
+        fix.host
+            .core
+            .widget_mailbox(fix.id)
+            .expect("mailbox")
+            .close_requested()
+    );
+    assert!(
+        fix.host
+            .core
+            .widget_mailbox(fix.id)
+            .expect("mailbox")
+            .has_pending()
+    );
+    let mut fix = fixture(false);
+    let cancel = fix.field(UiText::Cancel).id;
+    fix.send(cancel, ControlInput::Activate);
+    assert!(
+        fix.host
+            .core
+            .widget_mailbox(fix.id)
+            .expect("mailbox")
+            .close_requested()
+    );
+    assert!(
+        !fix.host
+            .core
+            .widget_mailbox(fix.id)
+            .expect("mailbox")
+            .has_pending()
+    );
 }
 
 #[test]
 fn numeric_native_slider_honors_model_range_step_and_emits_ids() {
-    let state = fixture(false);
-    let mut control = field(&state, UiText::NotificationDuration);
+    let fix = fixture(false);
+    let mut control = fix.field(UiText::NotificationDuration);
     control.metadata.enabled = true;
     control.kind = ControlKind::Number {
         value: 10,
@@ -1123,7 +1182,7 @@ fn numeric_native_slider_honors_model_range_step_and_emits_ids() {
 
 #[test]
 fn disabled_native_controls_never_publish_or_open_overlays() {
-    let state = fixture(false);
+    let fix = fixture(false);
     for key in [
         UiText::Language,
         UiText::NotificationDuration,
@@ -1131,7 +1190,7 @@ fn disabled_native_controls_never_publish_or_open_overlays() {
         UiText::SaveStorageDirectory,
         UiText::Cancel,
     ] {
-        let mut control = field(&state, key);
+        let mut control = fix.field(key);
         control.metadata.enabled = false;
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
@@ -1185,8 +1244,8 @@ fn disabled_native_controls_never_publish_or_open_overlays() {
 
 #[test]
 fn native_choice_uses_indices_even_when_labels_are_identical() {
-    let state = fixture(false);
-    let mut control = field(&state, UiText::Scaling);
+    let fix = fixture(false);
+    let mut control = fix.field(UiText::Scaling);
     control.kind = ControlKind::Choice {
         choices: vec!["same".into(), "same".into()],
         selected: Some(0),
@@ -1226,8 +1285,8 @@ fn native_choice_uses_indices_even_when_labels_are_identical() {
 
 #[test]
 fn native_browse_change_clear_buttons_emit_only_current_control_ids() {
-    let state = fixture(false);
-    let screen = state.screen();
+    let fix = fixture(false);
+    let screen = fix.screen();
     let binding = controls(&screen)
         .iter()
         .find(|c| matches!(c.kind, ControlKind::Binding { .. }))
@@ -1235,7 +1294,7 @@ fn native_browse_change_clear_buttons_emit_only_current_control_ids() {
         .id;
     for (id, child, expected) in [
         (
-            field(&state, UiText::SaveStorageDirectory).id,
+            fix.field(UiText::SaveStorageDirectory).id,
             2,
             ControlInput::Activate,
         ),
@@ -1262,9 +1321,9 @@ fn native_browse_change_clear_buttons_emit_only_current_control_ids() {
 
 #[test]
 fn topology_change_rejects_removed_binding_and_keyboard_uses_latest_capture() {
-    let mut state = fixture(true);
+    let mut fix = fixture(true);
     let mut inventory = Inventory::default();
-    state.screen().visit(&mut inventory);
+    fix.screen().visit(&mut inventory);
     let input = inventory.1.iter().find(|t| controls_in(&t.body).iter().any(|c| matches!(&c.kind, ControlKind::Choice { choices, .. } if choices.iter().any(|s| s.contains("None"))))).unwrap().clone();
     let old: Vec<_> = controls_in(&input.body)
         .iter()
@@ -1275,28 +1334,28 @@ fn topology_change_rejects_removed_binding_and_keyboard_uses_latest_capture() {
         if let ControlKind::Choice { choices, .. } = &slot.kind
             && let Some(none) = choices.iter().position(|c| c.contains("None"))
         {
-            send(&mut state, slot.id, ControlInput::Select(none));
+            fix.send(slot.id, ControlInput::Select(none));
         }
     }
     let removed = old
         .into_iter()
-        .find(|id| state.screen().control(*id).is_none())
+        .find(|id| fix.screen().control(*id).is_none())
         .unwrap();
-    let before = state.screen();
-    send(&mut state, removed, ControlInput::Activate);
-    assert_eq!(state.screen(), before);
-    assert!(state.screen().capture.target.is_none());
-    let bindings: Vec<_> = controls(&state.screen())
+    let before = fix.screen();
+    fix.send(removed, ControlInput::Activate);
+    assert_eq!(fix.screen(), before);
+    assert!(fix.screen().capture.target.is_none());
+    let bindings: Vec<_> = controls(&fix.screen())
         .into_iter()
         .filter(|c| matches!(c.kind, ControlKind::Binding { .. }))
         .collect();
     let first = bindings[0].id;
     let second = bindings[1].id;
-    send(&mut state, first, ControlInput::Activate);
+    fix.send(first, ControlInput::Activate);
     let callback = Message::capture_key(Key::KeyZ);
-    send(&mut state, second, ControlInput::Activate);
-    state.dispatch(callback);
-    assert!(state.screen().capture.target.is_none());
-    assert!(matches!(&state.screen().control(second).unwrap().kind,
+    fix.send(second, ControlInput::Activate);
+    fix.dispatch(callback);
+    assert!(fix.screen().capture.target.is_none());
+    assert!(matches!(&fix.screen().control(second).unwrap().kind,
         ControlKind::Binding { text, capturing: false, .. } if text.contains('Z')));
 }

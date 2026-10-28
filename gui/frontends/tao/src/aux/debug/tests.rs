@@ -1,348 +1,262 @@
 use super::views::*;
 use super::*;
-use nerust_core_traits::debugger::{HexRow, SpaceId};
-use nerust_gui_viewmodel::debugger::{DisplayCache, StatusMessage};
-use nerust_settings_core::model::language::AppLanguage;
+use nerust_frontend_host::debugger::{
+    DebugInputs, DebugSnapshot, DebuggerRows, DisasmRow, DumpRow, RegRow, pin_marker,
+};
 
-fn freeze_bridge() -> Arc<DebugBridge> {
-    let bridge = Arc::new(DebugBridge::new(
-        DisplayCache::default(),
-        Vec::new(),
-        0,
-        AppLanguage::English,
-    ));
-    bridge.set_selected_for_test(Some((0x0200_0010, Some(0x00))));
-    bridge.set_freeze_input("FF".to_string());
-    bridge.set_edit_input("AA".to_string());
-    bridge
+fn test_snapshot() -> DebugSnapshot {
+    let rows = DebuggerRows {
+        disasm: vec![
+            DisasmRow {
+                addr: 0x0800_27D2,
+                is_pc: true,
+                text: "POP {r4, r5, r6, r7}".to_string(),
+                target: None,
+            },
+            DisasmRow {
+                addr: 0x0800_27D2E,
+                is_pc: false,
+                text: "POP {r1}".to_string(),
+                target: Some(0x0800_27CA8),
+            },
+        ],
+        dump: vec![
+            DumpRow {
+                addr: 0x100,
+                bytes: vec![0xAB; 16],
+            },
+            DumpRow {
+                addr: 0x110,
+                bytes: vec![1, 2, 3],
+            },
+        ],
+        changed_addrs: vec![0x100],
+        regs: vec![
+            RegRow {
+                name: "r0",
+                text: "r0 00000001".to_string(),
+            },
+            RegRow {
+                name: "r1",
+                text: "r1 00000002".to_string(),
+            },
+        ],
+        status_text: "Running".to_string(),
+        paused: false,
+        pending_text: None,
+        watch_text: "watch 0x00000100".to_string(),
+        freeze_text: "no freeze".to_string(),
+        selected_line: "row 0x00000100".to_string(),
+    };
+    DebugSnapshot {
+        chrome: chrome(),
+        rows,
+        inputs: DebugInputs {
+            mem_input: "0x100".to_string(),
+            dis_input: "0x200".to_string(),
+            follow_pc: true,
+            back_len: 0,
+            dis_addr: Some(0x0800_27D2),
+            mem_addr: Some(0x100),
+            bm_input: String::new(),
+            bookmarks: vec![(0x200, "BM1".to_string())],
+            freeze_input: "FF".to_string(),
+            edit_input: "42".to_string(),
+            reg_input: "7".to_string(),
+            watch: Some(0x100),
+            watch_value: Some(0xAB),
+            freeze: Some((0x100, 0xFF)),
+        },
+        selected: Some((0x100, Some(0xAB))),
+        reg_target: Some("r0"),
+        space_name: "Memory".to_string(),
+        has_spaces: true,
+    }
 }
 
-fn drive(bridge: &Arc<DebugBridge>, message: DebugMessage) {
+fn chrome() -> nerust_frontend_host::debugger::DebuggerChrome {
+    nerust_frontend_host::debugger::DebuggerChrome {
+        debugger: "Debugger".to_string(),
+        pause: "Pause".to_string(),
+        resume: "Resume".to_string(),
+        step_frame: "Step Frame".to_string(),
+        step_instr: "Step Instr".to_string(),
+        ppu_viewer: "PPU".to_string(),
+        refresh: "Refresh".to_string(),
+        space: "Space".to_string(),
+        prev: "Prev".to_string(),
+        next: "Next".to_string(),
+        page: "Page".to_string(),
+        addr_hex: "Addr".to_string(),
+        go: "Go".to_string(),
+        back: "Back".to_string(),
+        disassembly: "Disassembly".to_string(),
+        follow_pc: "Follow".to_string(),
+        follow_pc_tag: "(follow)".to_string(),
+        fixed_tag: "(fixed)".to_string(),
+        no_disassembly: "No disassembly".to_string(),
+        disassembly_hint: "hint".to_string(),
+        registers: "Registers".to_string(),
+        pick_register: "Pick".to_string(),
+        hex: "Hex".to_string(),
+        set: "Set".to_string(),
+        select_dump_row: "Select".to_string(),
+        write: "Write".to_string(),
+        hex_byte: "Byte".to_string(),
+        watch: "Watch".to_string(),
+        freeze: "Freeze".to_string(),
+        confirm: "Confirm".to_string(),
+        cancel: "Cancel".to_string(),
+        watch_none: "none".to_string(),
+        freeze_none: "none".to_string(),
+        clear: "Clear".to_string(),
+        bookmarks: "Bookmarks".to_string(),
+        label: "Label".to_string(),
+        add: "Add".to_string(),
+        memory: "Memory".to_string(),
+    }
+}
+
+fn drive(queue: &DebugQueue, view: &SharedView, message: DebugMessage) {
     let program = DebugProgram {
-        bridge: Arc::clone(bridge),
+        view: Rc::clone(view),
+        queue: Rc::clone(queue),
     };
     let mut state = DebugState {
-        bridge: Arc::clone(bridge),
+        view: Rc::clone(view),
+        queue: Rc::clone(queue),
     };
     let _ = program.update(&mut state, message);
 }
 
-#[test]
-fn input_echo_never_queues_drain_traffic() {
-    // Input-echo messages re-render locally; never queue emu-thread round-trips.
-    let bridge = full_bridge();
-    for message in [
-        DebugMessage::MemInputChanged("0x100".to_string()),
-        DebugMessage::DisInputChanged("0x200".to_string()),
-        DebugMessage::BookmarkInputChanged("tag".to_string()),
-        DebugMessage::FreezeInputChanged("FF".to_string()),
-        DebugMessage::EditInputChanged("42".to_string()),
-        DebugMessage::RegInputChanged("7".to_string()),
-        DebugMessage::RegSelected("r0"),
-        DebugMessage::WatchClear,
-        DebugMessage::BookmarkDelete(0x999),
-    ] {
-        drive(&bridge, message);
-    }
-    assert!(
-        bridge.outbox_len() == 0,
-        "typing never blocks on the emu thread"
-    );
-    assert!(bridge.view_invalidated.load(Ordering::Acquire));
+fn harness() -> (SharedView, DebugQueue) {
+    (
+        Rc::new(RefCell::new(ViewSnapshot::default())),
+        Rc::new(RefCell::new(Vec::new())),
+    )
 }
 
-#[test]
-fn edit_freeze_set_reads_edit_input() {
-    let bridge = freeze_bridge();
-    drive(&bridge, DebugMessage::EditFreezeSet);
-    assert_eq!(bridge.freeze(), Some((0x0200_0010, 0xAA)));
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("frozen 0x02000010=AA".to_string())
-    );
-}
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[test]
-fn freeze_set_reads_top_input() {
-    let bridge = freeze_bridge();
-    drive(&bridge, DebugMessage::FreezeSet);
-    assert_eq!(bridge.freeze(), Some((0x0200_0010, 0xFF)));
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("frozen 0x02000010=FF".to_string())
-    );
-}
-
-fn full_bridge() -> Arc<DebugBridge> {
-    use nerust_core_traits::debugger::DisasmLine;
-    let display = DisplayCache {
-        disasm_lines: vec![
-            DisasmLine {
-                addr: 0x0800_27D2,
-                bytes: [0xF0, 0xBC, 0, 0],
-                len: 2,
-                text: "POP {r4, r5, r6, r7}".to_string(),
-                is_pc: true,
-                target: None,
-            },
-            DisasmLine {
-                addr: 0x0800_27D2E,
-                bytes: [0x02, 0xBC, 0, 0],
-                len: 2,
-                text: "POP {r1}".to_string(),
-                is_pc: false,
-                target: Some(0x0800_27CA8),
-            },
-        ],
-        regs: vec![("r0", 1), ("r1", 2)],
-        reg_names: vec!["r0", "r1"],
-        dump_rows: vec![
-            HexRow {
-                addr: 0x100,
-                valid: 16,
-                bytes: [0xAB; 16],
-            },
-            HexRow {
-                addr: 0x110,
-                valid: 3,
-                bytes: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            },
-        ],
-        diff: vec![0x100],
-        ..DisplayCache::default()
-    };
-    let bridge = Arc::new(DebugBridge::new(
-        display,
-        vec![(SpaceId(0), "Memory".to_string(), 0)],
-        0,
-        AppLanguage::English,
-    ));
-    bridge.set_selected_for_test(Some((0x100, Some(0xAB))));
-    bridge.set_edit_input("42".to_string());
-    bridge.set_reg_input("7".to_string());
-    bridge.set_freeze_input("FF".to_string());
-    bridge
-}
-
-#[test]
-fn update_drives_toolbar_and_nav() {
-    let bridge = full_bridge();
+fn update_queues_gestures_for_the_host_drain() {
+    // iced update never touches the app: every gesture queues for the drain.
+    let (view, queue) = harness();
     for message in [
         DebugMessage::RefreshPressed,
-        DebugMessage::TogglePausePressed,
-        DebugMessage::StepFramePressed,
-        DebugMessage::StepInstrPressed,
-        DebugMessage::PpuOpenPressed,
-        DebugMessage::MemPage(1),
-        DebugMessage::MemPage(-1),
-        DebugMessage::FollowPcToggle,
+        DebugMessage::MemInputChanged("0x100".to_string()),
         DebugMessage::RowSelected(0x110),
+        DebugMessage::WatchClear,
     ] {
-        drive(&bridge, message);
+        drive(&queue, &view, message);
     }
-    assert!(bridge.open_ppu.load(Ordering::Acquire));
-    assert!(bridge.outbox_len() != 0);
-    // Space stepper with one space cycles and clears selection.
-    drive(&bridge, DebugMessage::SpaceNext);
-    assert!(bridge.selected().is_none());
-    drive(&bridge, DebugMessage::SpacePrev);
-    // Memory Go resolves valid hex, rejects the rest.
-    drive(&bridge, DebugMessage::MemInputChanged("100".to_string()));
-    drive(&bridge, DebugMessage::MemGo);
-    assert_eq!(bridge.mem_addr(), 0x100);
-    drive(&bridge, DebugMessage::MemInputChanged("zz".to_string()));
-    drive(&bridge, DebugMessage::MemGo);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("parse failed: zz".to_string())
+    assert_eq!(queue.borrow().len(), 4);
+    assert!(
+        matches!(queue.borrow()[2], DebugMessage::RowSelected(0x110)),
+        "order is preserved for the drain"
     );
 }
 
 #[test]
-fn update_drives_disassembly_pin_and_back() {
-    let bridge = full_bridge();
-    // Line click pins the anchor and leaves follow mode.
-    drive(&bridge, DebugMessage::DisLineClicked(0x300));
-    assert!(!bridge.following_pc());
-    drive(&bridge, DebugMessage::FollowTarget(0x308));
-    // Back pops twice, then reports the empty stack.
-    drive(&bridge, DebugMessage::DisBack);
-    drive(&bridge, DebugMessage::DisBack);
-    drive(&bridge, DebugMessage::DisBack);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("back stack is empty".to_string())
-    );
-    // Go resolves valid hex, rejects the rest.
-    drive(&bridge, DebugMessage::DisInputChanged("200".to_string()));
-    drive(&bridge, DebugMessage::DisGo);
-    assert!(!bridge.following_pc());
-    drive(&bridge, DebugMessage::DisInputChanged("zz".to_string()));
-    drive(&bridge, DebugMessage::DisGo);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("parse failed: zz".to_string())
-    );
-    drive(&bridge, DebugMessage::FollowPcToggle);
-    assert!(bridge.following_pc());
+fn push_snapshot_rebuilds_locals_from_the_app() {
+    let snapshot = test_snapshot();
+    let mapped = snapshot_view(&snapshot);
+    // Follow-PC mode anchors on the first visible line.
+    assert_eq!(mapped.anchor, 0x0800_27D2);
+    assert!(mapped.follow_pc);
+    assert_eq!(mapped.dump_rows.len(), 2);
+    assert_eq!(mapped.diff, vec![0x100]);
+    assert_eq!(mapped.regs.len(), 2);
+    assert_eq!(mapped.bookmarks, vec![(0x200, "BM1".to_string())]);
+    assert_eq!(mapped.select_line, "row 0x00000100");
+    assert_eq!(mapped.watch_line, "watch 0x00000100");
 }
 
 #[test]
-fn update_drives_bookmarks_watch_and_freeze() {
-    let bridge = full_bridge();
-    drive(
-        &bridge,
-        DebugMessage::BookmarkInputChanged("start".to_string()),
-    );
-    drive(&bridge, DebugMessage::BookmarkAdd);
-    assert_eq!(bridge.bookmarks().len(), 1);
-    // PC row anchors the bookmark while following.
-    assert_eq!(bridge.bookmarks()[0].0, 0x0800_27D2);
-    drive(&bridge, DebugMessage::BookmarkJump(0x0800_27D2));
-    drive(&bridge, DebugMessage::BookmarkDelete(0x0800_27D2));
-    assert!(bridge.bookmarks().is_empty());
-    // A full list refuses loudly.
-    for i in 0..8 {
-        drive(&bridge, DebugMessage::DisLineClicked(0x100 + i));
-        drive(&bridge, DebugMessage::BookmarkAdd);
-    }
-    drive(&bridge, DebugMessage::DisLineClicked(0x999));
-    drive(&bridge, DebugMessage::BookmarkAdd);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("bookmark list full".to_string())
-    );
-    // Watch follows the selection, then clears.
-    drive(&bridge, DebugMessage::WatchSet);
-    assert_eq!(bridge.watch(), Some(0x100));
-    drive(&bridge, DebugMessage::WatchClear);
-    assert!(bridge.watch().is_none());
-    bridge.set_selected_for_test(None);
-    drive(&bridge, DebugMessage::WatchSet);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("watch needs a selection".to_string())
-    );
-    // Freeze reads the top input, the edit input, then clears.
-    bridge.set_selected_for_test(Some((0x100, Some(0xAB))));
-    drive(&bridge, DebugMessage::FreezeInputChanged("00".to_string()));
-    drive(&bridge, DebugMessage::FreezeSet);
-    assert_eq!(bridge.freeze(), Some((0x100, 0x00)));
-    drive(&bridge, DebugMessage::EditFreezeSet);
-    assert_eq!(bridge.freeze(), Some((0x100, 0x42)));
-    drive(&bridge, DebugMessage::FreezeClear);
-    assert!(bridge.freeze().is_none());
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("freeze cleared".to_string())
-    );
-    // Rejections stay loud.
-    bridge.set_selected_for_test(None);
-    drive(&bridge, DebugMessage::FreezeSet);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("freeze needs a selected row and hex byte".to_string())
-    );
+fn snapshot_view_anchors_to_pin_once_navigated() {
+    let mut snapshot = test_snapshot();
+    snapshot.inputs.follow_pc = false;
+    snapshot.inputs.dis_addr = Some(0x0300);
+    let mapped = snapshot_view(&snapshot);
+    assert!(!mapped.follow_pc);
+    assert_eq!(mapped.anchor, 0x0300);
 }
 
 #[test]
-fn update_drives_write_and_register_flow() {
-    let bridge = full_bridge();
-    // EditWrite stages SelectRow plus EditStage in one batch.
-    drive(&bridge, DebugMessage::EditInputChanged("42".to_string()));
-    drive(&bridge, DebugMessage::EditWrite);
-    assert_eq!(bridge.outbox_len(), 2);
-    // Confirm consumes the transaction and clears the input.
-    drive(&bridge, DebugMessage::ConfirmWrite);
-    assert!(bridge.edit_input().is_empty());
-    // Cancel clears the optimistic text.
-    drive(&bridge, DebugMessage::CancelWrite);
-    assert!(bridge.display_snapshot().pending.is_none());
-    // Register pick then Set pushes one register write.
-    drive(&bridge, DebugMessage::RegSelected("r0"));
-    assert_eq!(bridge.reg_target(), Some("r0"));
-    drive(&bridge, DebugMessage::RegInputChanged("7".to_string()));
-    drive(&bridge, DebugMessage::RegSet);
-    assert_eq!(bridge.outbox_len(), 5);
-    // Rejections stay loud.
-    bridge.set_reg_target(None);
-    drive(&bridge, DebugMessage::RegSet);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("register write needs a register".to_string())
-    );
-    bridge.set_selected_for_test(None);
-    drive(&bridge, DebugMessage::EditWrite);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("write needs a selection".to_string())
-    );
-    drive(&bridge, DebugMessage::RegInputChanged("zz".to_string()));
-    bridge.set_reg_target(Some("r0"));
-    drive(&bridge, DebugMessage::RegSet);
-    assert_eq!(
-        bridge.display_snapshot().status,
-        StatusMessage::Local("parse failed: zz".to_string())
-    );
+fn snapshot_view_marks_coreless_as_paused_no_core() {
+    let mut snapshot = test_snapshot();
+    snapshot.rows.paused = true;
+    snapshot.rows.status_text = "No core".to_string();
+    snapshot.has_spaces = false;
+    snapshot.space_name = String::new();
+    let mapped = snapshot_view(&snapshot);
+    assert!(mapped.paused);
+    assert!(!mapped.status_text.is_empty());
+    assert!(mapped.selected_name.is_none());
 }
 
 #[test]
 fn view_builders_construct_every_section() {
-    let bridge = full_bridge();
-    let chrome = bridge.debugger_chrome();
-    let rows = bridge.debugger_rows();
-    let selected = bridge.selected();
-    let _ = view_toolbar(true, &chrome);
-    let _ = view_toolbar(false, &chrome);
-    let _ = view_space_row("Memory", &chrome);
-    let _ = view_mem_nav("0x00000100", &chrome);
+    let snapshot = test_snapshot();
+    let mapped = snapshot_view(&snapshot);
+    let chrome = &mapped.chrome;
+    let _ = view_toolbar(true, chrome);
+    let _ = view_toolbar(false, chrome);
+    let _ = view_space_row("Memory", chrome);
+    let _ = view_mem_nav("0x00000100", chrome);
     // Mid-row byte selection still lights its row.
-    let _ = view_dump_col(&rows.dump, &rows.changed_addrs, Some((0x102, Some(9))));
-    let _ = view_dump_col(&rows.dump, &[], None);
-    let _ = view_regs_section(&rows.regs, Some("r0"), "7", &chrome);
-    let _ = view_regs_section(&rows.regs, None, "", &chrome);
-    let _ = view_regs_section(&[], None, "", &chrome);
-    let _ = view_edit_row(selected, "42", &chrome);
-    let _ = view_edit_row(None, "", &chrome);
-    let _ = view_confirm_row(rows.pending_text.clone(), &chrome);
-    let _ = view_confirm_row(None, &chrome);
-    let _ = view_dis_nav(true, 0, 0x0800_27D2, "", &chrome);
-    let _ = view_dis_nav(false, 2, 0x300, "0x00000300", &chrome);
-    let _ = view_dis_col(&[], None, &chrome);
-    let _ = view_dis_col(&rows.disasm, None, &chrome);
-    let _ = view_dis_col(&rows.disasm, Some(0x0800_27D2E), &chrome);
-    let _ = view_watch_row(Some(0x100), Some(0xAB), &chrome);
-    let _ = view_freeze_row(Some((0x100, 0xFF)), "FF", &chrome);
-    let _ = view_bookmark_section("tag", &[(0x200, "BM1".to_string())], &chrome);
-    let _ = view_watch_row(None, None, &chrome);
-    let _ = view_freeze_row(None, "", &chrome);
-    let _ = view_bookmark_section("", &[], &chrome);
+    let _ = view_dump_col(&mapped.dump_rows, &mapped.diff, Some((0x102, Some(9))));
+    let _ = view_dump_col(&mapped.dump_rows, &[], None);
+    let _ = view_regs_section(&mapped.regs, Some("r0"), "7", chrome);
+    let _ = view_regs_section(&mapped.regs, None, "", chrome);
+    let _ = view_regs_section(&[], None, "", chrome);
+    let _ = view_edit_row(&mapped.select_line, mapped.selected, "42", chrome);
+    let _ = view_edit_row("", None, "", chrome);
+    let _ = view_confirm_row(mapped.pending_text.clone(), chrome);
+    let _ = view_confirm_row(None, chrome);
+    let _ = view_dis_nav(true, 0, 0x0800_27D2, "", chrome);
+    let _ = view_dis_nav(false, 2, 0x300, "0x00000300", chrome);
+    let _ = view_dis_col(&[], None, chrome);
+    let _ = view_dis_col(&mapped.disasm_lines, None, chrome);
+    let _ = view_dis_col(&mapped.disasm_lines, Some(0x0800_27D2E), chrome);
+    let _ = view_watch_row(&mapped.watch_line, chrome);
+    let _ = view_freeze_row(&mapped.freeze_line, "FF", chrome);
+    let _ = view_bookmark_section("tag", &[(0x200, "BM1".to_string())], chrome);
+    let _ = view_watch_row("", chrome);
+    let _ = view_freeze_row("", "", chrome);
+    let _ = view_bookmark_section("", &[], chrome);
     // Disassembly lines exercise the target follow button.
-    assert_eq!(rows.disasm.len(), 2);
+    assert_eq!(mapped.disasm_lines.len(), 2);
 }
 
 #[test]
 fn view_assembles_follow_and_fixed_modes() {
-    let bridge = full_bridge();
+    let (view, queue) = harness();
+    *view.borrow_mut() = snapshot_view(&test_snapshot());
     let program = DebugProgram {
-        bridge: Arc::clone(&bridge),
+        view: Rc::clone(&view),
+        queue: Rc::clone(&queue),
     };
     let state = DebugState {
-        bridge: Arc::clone(&bridge),
+        view: Rc::clone(&view),
+        queue: Rc::clone(&queue),
     };
     // Follow-PC mode anchors on the first visible line.
     let _follow = program.view(&state, iced::window::Id::unique());
     drop(_follow);
     // Fixed mode pins the anchor and shows the Back depth.
-    drive(&bridge, DebugMessage::DisLineClicked(0x300));
+    let mut fixed = test_snapshot();
+    fixed.inputs.follow_pc = false;
+    fixed.inputs.dis_addr = Some(0x300);
+    fixed.inputs.back_len = 2;
+    *view.borrow_mut() = snapshot_view(&fixed);
     let _fixed = program.view(&state, iced::window::Id::unique());
     drop(_fixed);
 }
 
 #[test]
 fn disasm_marker_never_double_marks_pc() {
-    use nerust_frontend_viewdefs::debugger::pin_marker;
-
     // The PC row carries exactly one `>`: the pin column contributes blanks.
     assert_eq!(pin_marker(true, true), "  ");
     // Pinned non-PC rows keep the `@` in the same column.
@@ -378,100 +292,12 @@ fn shortcut_and_cursor_keys_map_physical_codes() {
     assert!(cursor_page(&Physical::Code(Code::ArrowLeft)).is_none());
 }
 
-/// Headless UI-shell lifecycle test (build/pump/rebuild/relayout/draw).
-/// Software rasterization only: no display, no emulator contact.
 #[test]
-fn uishell_headless_build_pump_relayout_draw() {
-    use std::sync::atomic::AtomicBool;
-
-    use crate::aux::shell::UiShell;
-
-    let bridge = Arc::new(DebugBridge::new(
-        DisplayCache::default(),
-        Vec::new(),
-        0,
-        AppLanguage::English,
-    ));
-    let (instance, _task) = program::Instance::new(DebugProgram {
-        bridge: Arc::clone(&bridge),
-    });
-    let mut backend = Renderer::new(crate::convert::default_font(), iced::Pixels(16.0));
-    let bounds = iced::Size::new(1100.0, 800.0);
-    let mut shell = UiShell::new(instance, iced::window::Id::unique(), bounds);
-    let mut clipboard = iced_winit::Clipboard::unconnected();
-    let mut messages = Vec::new();
-    let _ = shell.pump(
-        iced::Event::Window(iced::window::Event::RedrawRequested(
-            std::time::Instant::now(),
-        )),
-        iced::mouse::Cursor::default(),
-        &mut clipboard,
-        &mut backend,
-        &mut messages,
-        None,
-    );
-    assert!(messages.is_empty());
-    let invalidated = AtomicBool::new(true);
-    shell.process_messages(
-        [DebugMessage::RefreshPressed, DebugMessage::FollowPcToggle],
-        &invalidated,
-    );
-    assert!(!invalidated.load(Ordering::Acquire));
-    shell.relayout(iced::Size::new(900.0, 650.0));
-    // Post-relayout pump rebuilds the transient interface from the
-    // retained cache and folds back without orphans.
-    messages.clear();
-    let _ = shell.pump(
-        iced::Event::Window(iced::window::Event::RedrawRequested(
-            std::time::Instant::now(),
-        )),
-        iced::mouse::Cursor::default(),
-        &mut clipboard,
-        &mut backend,
-        &mut messages,
-        None,
-    );
-    assert!(messages.is_empty());
-}
-
-#[test]
-fn capture_view_marks_coreless_as_paused_no_core() {
-    let bridge = Arc::new(DebugBridge::new(
-        DisplayCache::default(),
-        Vec::new(),
-        0,
-        AppLanguage::English,
-    ));
-    let snap = views::capture_view(&bridge);
-    assert!(snap.paused);
-    assert!(!snap.status_text.is_empty());
-}
-
-#[test]
-fn capture_view_anchors_to_first_line_in_follow_mode() {
-    // full_bridge starts in follow-PC mode (NavState default).
-    let bridge = full_bridge();
-    let snap = views::capture_view(&bridge);
-    assert_eq!(snap.anchor, 0x0800_27D2);
-}
-
-#[test]
-fn capture_view_anchors_to_pin_once_navigated() {
-    let bridge = full_bridge();
-    bridge.navigate(0x0800_27D2, 0x0300);
-    let snap = views::capture_view(&bridge);
-    assert_eq!(snap.anchor, 0x0300);
-    // Snapshot carries the window contents through untouched.
-    assert_eq!(snap.dump_rows.len(), 2);
-    assert_eq!(snap.diff, vec![0x100]);
-    assert_eq!(snap.regs.len(), 2);
-}
-
-#[test]
-fn program_boot_and_chrome_are_headless() {
-    let bridge = full_bridge();
+fn program_boot_shares_view_and_queue() {
+    let (view, queue) = harness();
     let program = DebugProgram {
-        bridge: Arc::clone(&bridge),
+        view: Rc::clone(&view),
+        queue: Rc::clone(&queue),
     };
     assert_eq!(DebugProgram::name(), "nerust_debug");
     assert!(program.window().is_none());
@@ -479,6 +305,17 @@ fn program_boot_and_chrome_are_headless() {
     let (state, _task) = program.boot();
     let theme = program.theme(&state, iced::window::Id::unique());
     assert!(matches!(theme, Some(iced::Theme::Light)));
+    // Update queues instead of touching the app.
+    let _ = program.update(
+        &mut DebugState {
+            view: Rc::clone(&view),
+            queue: Rc::clone(&queue),
+        },
+        DebugMessage::MemInputChanged("1234".into()),
+    );
+    assert_eq!(queue.borrow().len(), 1);
+    // Pushed snapshots render without a bridge.
+    *view.borrow_mut() = snapshot_view(&test_snapshot());
     let _ = program.view(&state, iced::window::Id::unique());
     drop(state);
 }
@@ -488,20 +325,22 @@ fn outer_debug_window_uses_common_title_and_existing_grouped_pipeline() {
     use crate::aux::window::WindowProgram;
     use nerust_frontend_host::{focus::AuxKind, window::Window};
 
-    let bridge = full_bridge();
+    let (view, queue) = harness();
+    *view.borrow_mut() = snapshot_view(&test_snapshot());
     let mut window = Window::auxiliary(AuxKind::Debug);
     window.title = "owned debugger title".into();
     let program = WindowProgram {
         window,
         program: DebugProgram {
-            bridge: bridge.clone(),
+            view: Rc::clone(&view),
+            queue: Rc::clone(&queue),
         },
     };
     let (mut state, _) = program.boot();
     let id = iced::window::Id::unique();
     assert_eq!(program.title(&state, id), "owned debugger title");
     drop(program.update(&mut state, DebugMessage::MemInputChanged("1234".into())));
-    assert_eq!(views::capture_view(&bridge).mem_input, "1234");
+    assert_eq!(queue.borrow().len(), 1);
     let element = program.view(&state, id);
     assert!(
         !iced::advanced::widget::Tree::new(element.as_widget())
