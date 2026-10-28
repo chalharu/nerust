@@ -27,12 +27,12 @@ use nerust_gui_runtime::settings::{
 };
 use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
 use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
+use wakui::app::FrontendApp as _;
 use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
-use wakui::{app::FrontendApp as _, debugger::DebugHandle};
 
 struct Common {
     app: ApplicationHost,
-    debug: wakui::debugger::DebugHandle,
+    debug: Option<wakui::aux::AuxId>,
 }
 
 impl Drop for Common {
@@ -214,13 +214,18 @@ impl LoopHost for NativeAdapter {
     }
     fn pump_debug(&mut self) -> WakeNeed {
         let mut state = self.common.borrow_mut();
-        let handle = state.debug;
-        let wake = state.app.debug_poll(handle, false);
-        if let Some(snapshot) = state.app.debug_snapshot(handle) {
-            println!("native debugger: {}", snapshot.rows.status_text);
+        // The debugger is a generic widget: refresh the cached snapshot,
+        // then render the projected screen like any other aux window.
+        if let Some(id) = state.app.debug_widget() {
+            state.app.widget_refresh(id);
+            if let Some(screen) = state.app.widget_screen(id) {
+                println!("native debugger: {}", screen.title);
+            }
+            if let Some(handle) = state.app.debug_handle_for(id) {
+                return state.app.debug_poll(handle);
+            }
         }
-        drop(state);
-        wake
+        WakeNeed::default()
     }
     fn pump_osd(&mut self, ctx: &FrameCtx) -> WakeNeed {
         let now = Instant::now();
@@ -301,22 +306,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut native = NativeAdapter {
         common: Rc::new(RefCell::new(Common {
             app: ApplicationHost::new(session),
-            debug: DebugHandle(0),
+            debug: None,
         })),
         redraws: 0,
         modals: 0,
         menus: MenuPresenter::default(),
         menu_items: 0,
     };
-    let handle = native.common.borrow_mut().app.open_debug();
-    native.common.borrow_mut().debug = handle;
+    // Open the debugger widget through the generic aux boundary.
+    let mut windows =
+        wakui::aux::AuxWindows::<nerust_frontend_viewdefs::focus::AuxKind, u64, ()>::new();
+    let id: Option<wakui::aux::AuxId> = {
+        let mut common = native.common.borrow_mut();
+        match common
+            .app
+            .reserve_widget(
+                &mut windows,
+                nerust_frontend_viewdefs::focus::AuxKind::Debug,
+            )
+            .expect("reservation")
+        {
+            Some(wakui::aux::OpenRequest::Create(id)) => {
+                assert!(
+                    common
+                        .app
+                        .prepare_widget(&mut windows, id)
+                        .expect("prepared")
+                );
+                assert!(windows.complete_open(id, Some(1), ()).is_ok());
+                Some(id)
+            }
+            _ => None,
+        }
+    };
+    native.common.borrow_mut().debug = id;
     let events = NativeEvents(Rc::new(RefCell::new(Vec::new())));
     let sink: &dyn EventSink = &events;
     assert!(sink.send(EventCommand::Menu(MenuCommand::Open)));
     let event = events.0.borrow_mut().pop().unwrap();
     let outcome = {
         let mut common = native.common.borrow_mut();
-        let handler: &mut dyn EventHandler = &mut common.app;
+        let handler: &mut dyn EventHandler<nerust_frontend_viewdefs::focus::AuxKind> =
+            &mut common.app;
         handler.handle_event(event, false)?
     };
     assert_eq!(outcome.effect, Some(CommandEffect::OpenRom));
@@ -330,10 +361,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let menu_items = native.menu_items;
     {
         let mut state = native.common.borrow_mut();
-        let handle = state.debug;
+        let handle = state
+            .app
+            .debug_handle_for(state.debug.expect("debug widget"))
+            .unwrap();
         let effects = state
             .app
-            .debug_gesture(handle, vec![], DebuggerEvent::RefreshPressed, false);
+            .debug_gesture(handle, vec![], DebuggerEvent::RefreshPressed);
         assert!(!effects.open_ppu && !effects.epoch_reset);
         assert!(state.app.debug_drain_pending(handle)); // Dispatch queues; the next turn polls.
         state
@@ -344,7 +378,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(native.modals, 1);
     {
         let state = native.common.borrow();
-        assert!(!state.app.debug_drain_pending(state.debug));
+        let handle = state
+            .app
+            .debug_handle_for(state.debug.expect("debug widget"))
+            .unwrap();
+        assert!(!state.app.debug_drain_pending(handle));
         assert!(!state.app.tick().loaded);
         assert!(!state.app.osd_modal_pending());
         assert!(!state.app.pause_held());

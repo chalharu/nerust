@@ -2,13 +2,14 @@ use super::*;
 use crate::{
     aux::window::WindowProgram,
     runtime::host::{HostState, TestHost},
+    testkit::TestAux,
 };
 use wakui::aux::{AuxId, OpenRequest};
 use wakui::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
 mod history;
 
-pub(crate) fn prepare(host: &mut HostState, kind: AuxKind) -> AuxId {
+pub(crate) fn prepare(host: &mut HostState<TestAux>, kind: TestAux) -> AuxId {
     let Some(OpenRequest::Create(id)) = host.reserve_aux_window(kind) else {
         panic!("reservation")
     };
@@ -16,16 +17,16 @@ pub(crate) fn prepare(host: &mut HostState, kind: AuxKind) -> AuxId {
     id
 }
 
-pub(crate) fn screen_of(host: &HostState, id: AuxId) -> ControlScreen {
+pub(crate) fn screen_of(host: &HostState<TestAux>, id: AuxId) -> ControlScreen {
     host.core.widget_screen(id).expect("widget screen")
 }
 
-pub(crate) fn mailbox_of(host: &HostState, id: AuxId) -> wakui::mailbox::WindowMailbox {
+pub(crate) fn mailbox_of(host: &HostState<TestAux>, id: AuxId) -> wakui::mailbox::WindowMailbox {
     host.core.widget_mailbox(id).expect("widget mailbox")
 }
 
 pub(crate) fn dispatch(
-    host: &mut HostState,
+    host: &mut HostState<TestAux>,
     id: AuxId,
     event: ControlEvent,
 ) -> Vec<wakui::control::ControlEffect> {
@@ -59,7 +60,7 @@ pub(crate) fn find(screen: &ControlScreen, label: &str) -> Control {
         })
 }
 
-pub(crate) fn activate(host: &mut HostState, id: AuxId, label: &str) {
+pub(crate) fn activate(host: &mut HostState<TestAux>, id: AuxId, label: &str) {
     let screen = screen_of(host, id);
     let control = find(&screen, label);
     let _ = dispatch(host, id, Message::new(control.id, ControlInput::Activate));
@@ -69,7 +70,7 @@ pub(crate) fn activate(host: &mut HostState, id: AuxId, label: &str) {
 fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen() {
     use iced_winit::program::Program;
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, AuxKind::Settings);
+    let id = prepare(&mut host, TestAux::Settings);
     let before = screen_of(&host, id);
     let page = &before.pages[3];
     let _ = dispatch(
@@ -78,7 +79,7 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
         Message::new(page.select.id, ControlInput::Activate),
     );
     let after = screen_of(&host, id);
-    let (binding, shared_screen, _queue) = ControlsBinding::new(after.clone(), AuxKind::Settings);
+    let (binding, shared_screen, _queue) = ControlsBinding::new(after.clone());
     assert!(binding.boot_pending());
     let window = host.aux.window(id).expect("reserved window").clone();
     let program = WindowProgram {
@@ -114,7 +115,7 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
 #[test]
 fn prepared_window_contains_the_controller_moved_into_boot() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, AuxKind::Settings);
+    let id = prepare(&mut host, TestAux::Settings);
     let screen = screen_of(&host, id);
     let page = screen.pages[4].clone();
     let _ = dispatch(
@@ -123,7 +124,7 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
         Message::new(page.select.id, ControlInput::Activate),
     );
     let updated = screen_of(&host, id);
-    let binding = ControlsBinding::new(updated.clone(), AuxKind::Settings);
+    let binding = ControlsBinding::new(updated.clone());
     let (state, _) = binding.0.boot();
     assert!(!binding.0.boot_pending());
     assert_eq!(*state.screen.borrow(), updated);
@@ -136,7 +137,7 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
 #[test]
 fn status_area_message_reaches_viewmodel() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, AuxKind::Settings);
+    let id = prepare(&mut host, TestAux::Settings);
     for (label, input) in [
         ("Status display", ControlInput::Bool(true)),
         ("Position", ControlInput::Select(0)),
@@ -162,10 +163,9 @@ fn status_area_message_reaches_viewmodel() {
 #[test]
 fn program_update_and_error_paths_stay_headless() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, AuxKind::Settings);
+    let id = prepare(&mut host, TestAux::Settings);
     let screen = screen_of(&host, id);
-    let kind = AuxKind::Settings;
-    let (binding, _, _) = ControlsBinding::new(screen, kind);
+    let (binding, _, _) = ControlsBinding::new(screen);
     let (mut state, _) = binding.boot();
     // Updates queue for the host drain; every page stays addressable.
     let pages = state.screen.borrow().pages.clone();
@@ -181,12 +181,12 @@ fn program_update_and_error_paths_stay_headless() {
 
 #[test]
 fn program_boot_and_chrome_are_headless() {
-    for kind in [AuxKind::Settings, AuxKind::History] {
+    for kind in [TestAux::Settings, TestAux::History] {
         let mut host = TestHost::new().host;
         let id = prepare(&mut host, kind);
         let screen = screen_of(&host, id);
         let mailbox = mailbox_of(&host, id);
-        let (binding, state_screen, _) = ControlsBinding::new(screen, kind);
+        let (binding, state_screen, _) = ControlsBinding::new(screen);
         let _ = binding.settings();
         let (state, _) = binding.boot();
         assert!(Rc::ptr_eq(&state_screen, &state.screen));

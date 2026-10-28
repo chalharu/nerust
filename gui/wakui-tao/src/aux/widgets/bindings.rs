@@ -4,14 +4,12 @@
 pub(crate) use crate::binding::*;
 
 #[cfg(test)]
+#[cfg(test)]
+pub(crate) use crate::handler::WidgetBinding;
+#[cfg(test)]
 use std::rc::Rc;
 #[cfg(test)]
 use wakui::Key;
-#[cfg(test)]
-use wakui::focus::AuxKind;
-
-#[cfg(test)]
-pub(crate) use crate::handler::WidgetBinding;
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -52,12 +52,18 @@ use wakui::bootstrap::Boot;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root.
-pub fn run(boot: Boot, rom_path: Option<std::path::PathBuf>) -> i32 {
+pub fn run<K: Copy + Eq + std::hash::Hash + 'static>(
+    boot: Boot<K>,
+    rom_path: Option<std::path::PathBuf>,
+) -> i32 {
     run_inner(boot, rom_path);
     0
 }
 
-fn run_inner(boot: Boot, rom_path: Option<std::path::PathBuf>) {
+fn run_inner<K: Copy + Eq + std::hash::Hash + 'static>(
+    boot: Boot<K>,
+    rom_path: Option<std::path::PathBuf>,
+) {
     let mut window = app::Window::new(boot);
     if let Some(path) = rom_path
         && !window.load_path(&path)

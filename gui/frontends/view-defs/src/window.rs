@@ -1,4 +1,12 @@
-//! Re-exported from the framework crate; window identity and contents
-//! are boundary vocabulary, never view logic.
+//! Window helpers over the generic framework windows. Identity and contents
+//! stay framework-owned; titles and kind mapping are view definitions.
 
-pub use wakui::window::*;
+pub use wakui::window::{MainContents, Widget, WidgetContents, Window, WindowEffects, WindowId};
+
+use crate::focus::AuxKind;
+use wakui::aux::AuxId;
+
+/// Pending (pre-screen) aux window for a view-side kind.
+pub fn pending_window(id: AuxId, kind: AuxKind) -> Window {
+    Window::auxiliary(id, kind.title())
+}

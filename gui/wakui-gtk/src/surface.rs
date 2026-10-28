@@ -12,8 +12,9 @@ use wakui::osd::ModalPresentation;
 use wakui::viewport::ViewportRegion;
 
 use super::State;
+use wakui::debugger::DebuggerScope;
 
-pub(crate) struct SurfaceCore {
+pub(crate) struct SurfaceCore<K: Copy + Eq + std::hash::Hash + 'static> {
     // The window owns the native frame callback, which owns Surface. Never
     // close that cycle with a strong reference back to the window.
     window: glib::WeakRef<gtk::ApplicationWindow>,
@@ -21,13 +22,13 @@ pub(crate) struct SurfaceCore {
     /// backends render into memory; nothing ever presents a fullscreen
     /// native surface here, so the chrome stays visible.
     picture: gtk::Picture,
-    pub(crate) state: Rc<RefCell<State>>,
+    pub(crate) state: Rc<RefCell<State<K>>>,
     output_generation: Cell<Option<u64>>,
     retry: RefCell<wakui::retry::RenderRetry>,
     wake: RefCell<WakeAt>,
 }
 
-pub(crate) type Surface = Rc<RefCell<SurfaceCore>>;
+pub(crate) type Surface<K> = Rc<RefCell<SurfaceCore<K>>>;
 
 /// Exactly one native one-shot. Only a Weak surface lives in its callback.
 #[derive(Default)]
@@ -44,7 +45,11 @@ impl WakeAt {
         }
     }
 
-    fn schedule(&mut self, surface: &Surface, deadline: Option<Instant>) {
+    fn schedule<K: Copy + Eq + std::hash::Hash + 'static>(
+        &mut self,
+        surface: &Surface<K>,
+        deadline: Option<Instant>,
+    ) {
         let Some(deadline) = deadline else {
             self.cancel();
             return;
@@ -81,21 +86,20 @@ impl Drop for WakeAt {
     }
 }
 
-/// Main-window ports only. GTK debugger flights live in separate native
-/// windows (using the shared DrainQueue), so this turn's debug port is a no-op.
-/// Native focus callbacks and window chrome timers retain their own cadence;
-/// the debugger's separate 250ms timer is not unified with this wake adapter.
-struct GtkTurn<'a> {
-    core: &'a SurfaceCore,
+/// Main-window ports plus the generic debugger-widget drain (no kinds).
+/// The 250ms aux timer owns native pushes and live ticks; this frame pump
+/// keeps the view-side session fresh and folds poll wakes into the deadline.
+struct GtkTurn<'a, K: Copy + Eq + std::hash::Hash + 'static> {
+    core: &'a SurfaceCore<K>,
     window: &'a gtk::ApplicationWindow,
-    state: &'a mut State,
+    state: &'a mut State<K>,
     physical_width: u32,
     physical_height: u32,
     client_height: u32,
     modal: Option<ModalPresentation>,
 }
 
-impl LoopHost for GtkTurn<'_> {
+impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for GtkTurn<'_, K> {
     type Frame = ();
 
     fn before_turn(&mut self) {
@@ -109,7 +113,22 @@ impl LoopHost for GtkTurn<'_> {
     }
 
     fn pump_debug(&mut self) -> WakeNeed {
-        WakeNeed::default()
+        let id = match self.state.host.debug_widget() {
+            Some(id) => id,
+            None => return WakeNeed::default(),
+        };
+        self.state.host.widget_refresh(id);
+        let handle = match self.state.host.debug_handle_for(id) {
+            Some(handle) => handle,
+            None => return WakeNeed::default(),
+        };
+        let _ = self.state.host.debug_reset_if_replaced(handle);
+        let wake = self.state.host.debug_poll(handle);
+        if self.state.host.chrome_drain_due() {
+            self.state.host.debug_refresh(handle, DebuggerScope::All);
+            self.state.host.widget_refresh(id);
+        }
+        wake
     }
 
     fn pump_osd(&mut self, _ctx: &Self::Frame) -> WakeNeed {
@@ -150,21 +169,21 @@ impl LoopHost for GtkTurn<'_> {
     }
 }
 
-pub(crate) trait SurfaceExtend {
+pub(crate) trait SurfaceExtend<K: Copy + Eq + std::hash::Hash + 'static> {
     fn bind(
         window: &gtk::ApplicationWindow,
         picture: &gtk::Picture,
-        state: Rc<RefCell<State>>,
-    ) -> Surface;
+        state: Rc<RefCell<State<K>>>,
+    ) -> Surface<K>;
     fn tick(&self) -> bool;
 }
 
-impl SurfaceExtend for Surface {
+impl<K: Copy + Eq + std::hash::Hash + 'static> SurfaceExtend<K> for Surface<K> {
     fn bind(
         window: &gtk::ApplicationWindow,
         picture: &gtk::Picture,
-        state: Rc<RefCell<State>>,
-    ) -> Surface {
+        state: Rc<RefCell<State<K>>>,
+    ) -> Surface<K> {
         state.borrow_mut().renderer_reload_pending = true;
         let result = Rc::new(RefCell::new(SurfaceCore {
             window: window.downgrade(),
@@ -191,10 +210,10 @@ impl SurfaceExtend for Surface {
     }
 }
 
-impl SurfaceCore {
+impl<K: Copy + Eq + std::hash::Hash + 'static> SurfaceCore<K> {
     /// Deadlines pump even without a mapped allocation; only the native frame
     /// clock swaps/attaches/renders. Present effects after all borrows end.
-    fn turn(surface: &Surface, render_frame: bool) -> bool {
+    fn turn(surface: &Surface<K>, render_frame: bool) -> bool {
         let s = surface.borrow();
         let Some(window) = s.window.upgrade() else {
             s.wake.borrow_mut().cancel();
@@ -267,7 +286,7 @@ impl SurfaceCore {
     /// so the in-window menubar stays visible. Attach runs outside the
     /// state borrow; outcome handling re-borrows briefly.
     fn ensure_if_due(
-        s: &SurfaceCore,
+        s: &SurfaceCore<K>,
         window: &gtk::ApplicationWindow,
         physical_width: u32,
         physical_height: u32,
@@ -323,7 +342,7 @@ impl SurfaceCore {
 
     /// Return owned effects; no native dialog may be presented in this scope.
     fn poll_osd(
-        s: &SurfaceCore,
+        s: &SurfaceCore<K>,
         window: &gtk::ApplicationWindow,
         physical_width: u32,
         physical_height: u32,
@@ -363,7 +382,7 @@ impl SurfaceCore {
     /// Render one frame into memory and hand it to the GTK picture, which
     /// composites it under the menubar. Nothing ever presents a fullscreen
     /// native surface, so the chrome survives by construction.
-    fn render_image_if_ready(s: &SurfaceCore, physical_width: u32, physical_height: u32) {
+    fn render_image_if_ready(s: &SurfaceCore<K>, physical_width: u32, physical_height: u32) {
         let mut state = match s.state.try_borrow_mut() {
             Ok(state) => state,
             Err(_) => {
@@ -393,8 +412,8 @@ mod wake_tests {
 
     struct Harness {
         window: gtk::ApplicationWindow,
-        state: Rc<RefCell<State>>,
-        surface: Surface,
+        state: Rc<RefCell<State<crate::testkit::TestAux>>>,
+        surface: Surface<crate::testkit::TestAux>,
     }
 
     impl Harness {

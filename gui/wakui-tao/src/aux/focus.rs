@@ -3,11 +3,9 @@
 
 use crate::aux::shell::AuxShellOps;
 use crate::domain::{AuxNativeEvent, NativeWindowId};
-pub(crate) use wakui::focus::{AuxKind, FocusEvent};
 
 /// Identity half: routing, liveness, and redraw requests.
 pub(crate) trait AuxIdentity {
-    fn kind(&self) -> AuxKind;
     /// Native window identity for event routing.
     fn native_id(&self) -> NativeWindowId;
     /// Close was requested through the shared flag.
@@ -24,8 +22,8 @@ pub(crate) trait AuxRender {
     fn handle_common(&mut self, event: &AuxNativeEvent);
     /// Convert one domain event for the window's own dispatcher.
     fn feed_event(&mut self, event: AuxNativeEvent) -> Option<iced::Event>;
-    /// Full render through the shared pump; only the log tag differs.
-    fn render(&mut self) -> Option<String>;
+    /// Full render through the shared pump; the title tags the log lines.
+    fn render(&mut self, title: &str) -> Option<String>;
     fn wake_deadline(&self) -> Option<std::time::Instant> {
         None
     }
@@ -39,16 +37,11 @@ impl<T: AuxIdentity + AuxRender + ?Sized> AuxWindow for T {}
 /// Single shell accessor behind every aux handle.
 /// Blanket [`AuxIdentity`]/[`AuxRender`] impls delegate here.
 pub(crate) trait AuxShellRef {
-    fn kind(&self) -> AuxKind;
     fn shell(&self) -> &dyn AuxShellOps;
     fn shell_mut(&mut self) -> &mut dyn AuxShellOps;
 }
 
 impl<T: AuxShellRef + ?Sized> AuxIdentity for T {
-    fn kind(&self) -> AuxKind {
-        AuxShellRef::kind(self)
-    }
-
     fn native_id(&self) -> NativeWindowId {
         self.shell().native_id()
     }
@@ -75,9 +68,8 @@ impl<T: AuxShellRef + ?Sized> AuxRender for T {
         self.shell_mut().feed_event(event)
     }
 
-    fn render(&mut self) -> Option<String> {
-        let tag = self.kind().log_tag();
-        self.shell_mut().render_tagged(tag)
+    fn render(&mut self, title: &str) -> Option<String> {
+        self.shell_mut().render_tagged(title)
     }
 
     fn wake_deadline(&self) -> Option<std::time::Instant> {
@@ -120,7 +112,7 @@ mod tests {
         mapped: Option<iced::Event>,
         redraws: Rc<Cell<u32>>,
         focused: Rc<Cell<bool>>,
-        seen_tag: Rc<RefCell<Option<&'static str>>>,
+        seen_tag: Rc<RefCell<Option<String>>>,
     }
 
     use std::rc::Rc;
@@ -142,24 +134,20 @@ mod tests {
         fn feed_event(&mut self, _event: AuxNativeEvent) -> Option<iced::Event> {
             self.mapped.take()
         }
-        fn render_tagged(&mut self, tag: &'static str) -> Option<String> {
-            *self.seen_tag.borrow_mut() = Some(tag);
+        fn render_tagged(&mut self, tag: &str) -> Option<String> {
+            *self.seen_tag.borrow_mut() = Some(tag.to_string());
             None
         }
     }
 
     /// Window double behind the blanket `AuxIdentity`/`AuxRender` impls.
     struct FakeWin {
-        kind: AuxKind,
         shell: FakeShell,
         handled: Rc<Cell<bool>>,
         handle_ret: bool,
     }
 
     impl AuxShellRef for FakeWin {
-        fn kind(&self) -> AuxKind {
-            self.kind
-        }
         fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
             &self.shell
         }
@@ -175,9 +163,8 @@ mod tests {
         }
     }
 
-    fn fake_win(kind: AuxKind, mapped: Option<iced::Event>, handle_ret: bool) -> FakeWin {
+    fn fake_win(mapped: Option<iced::Event>, handle_ret: bool) -> FakeWin {
         FakeWin {
-            kind,
             shell: FakeShell {
                 nid: NativeWindowId::dummy(),
                 close: false,
@@ -200,17 +187,17 @@ mod tests {
     #[test]
     fn pump_aux_redraws_only_when_unhandled() {
         // Handled event: no redraw requested.
-        let mut win = fake_win(AuxKind::Debug, Some(redraw_event()), true);
+        let mut win = fake_win(Some(redraw_event()), true);
         pump_aux(&mut win, AuxNativeEvent::Focused(true));
         assert!(win.handled.get());
         assert_eq!(win.shell.redraws.get(), 0);
         // Unhandled event: host redraws through the shell.
-        let mut win = fake_win(AuxKind::Debug, Some(redraw_event()), false);
+        let mut win = fake_win(Some(redraw_event()), false);
         pump_aux(&mut win, AuxNativeEvent::Focused(true));
         assert!(win.handled.get());
         assert_eq!(win.shell.redraws.get(), 1);
         // No mapped event: redraw without dispatch.
-        let mut win = fake_win(AuxKind::Debug, None, true);
+        let mut win = fake_win(None, true);
         pump_aux(&mut win, AuxNativeEvent::Focused(true));
         assert!(!win.handled.get());
         assert_eq!(win.shell.redraws.get(), 1);
@@ -218,17 +205,16 @@ mod tests {
 
     #[test]
     fn blanket_impls_delegate_identity_and_render() {
-        let mut win = fake_win(AuxKind::Ppu, Some(redraw_event()), true);
-        assert_eq!(AuxIdentity::kind(&win), AuxKind::Ppu);
+        let mut win = fake_win(Some(redraw_event()), true);
         assert_eq!(AuxIdentity::native_id(&win), win.shell.nid);
         assert!(!AuxIdentity::close_requested(&win));
         AuxIdentity::focus_window(&win);
         assert!(win.shell.focused.get());
         AuxIdentity::request_redraw(&win);
         assert_eq!(win.shell.redraws.get(), 1);
-        // Render fans out with the central log tag.
-        AuxRender::render(&mut win);
-        assert_eq!(*win.shell.seen_tag.borrow(), Some("PPU viewer"));
+        // Render fans out with the window title as tag.
+        AuxRender::render(&mut win, "Settings");
+        assert_eq!(*win.shell.seen_tag.borrow(), Some("Settings".to_string()));
         win.shell.close = true;
         assert!(AuxIdentity::close_requested(&win));
     }

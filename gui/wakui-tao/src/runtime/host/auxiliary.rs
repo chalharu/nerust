@@ -1,18 +1,15 @@
 //! Native auxiliary creation and settings effects. Policy lives view-side;
 //! native code routes handles, screens, and mailboxes through the app trait.
 use super::HostState;
-use wakui::{
-    aux::{AuxId, OpenRequest},
-    focus::AuxKind,
-};
+use wakui::aux::{AuxId, OpenRequest};
 
 use wakui::control::ControlEffect;
 use wakui::window::WindowEffects;
 
 use crate::ports::{AuxOpenParams, WindowOpener};
 
-impl HostState {
-    pub(crate) fn reserve_aux_window(&mut self, kind: AuxKind) -> Option<OpenRequest> {
+impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
+    pub(crate) fn reserve_aux_window(&mut self, kind: K) -> Option<OpenRequest> {
         match self.core.reserve_widget(&mut self.aux.windows, kind) {
             Ok(request) => request,
             Err(error) => {
@@ -68,9 +65,15 @@ impl HostState {
         effects.rebuild_renderer
     }
 
-    pub(super) fn open_settings_window(&mut self, opener: &dyn WindowOpener) {
-        let Some(OpenRequest::Create(id)) = self.reserve_aux_window(AuxKind::Settings) else {
-            return;
+    pub(crate) fn open_aux_window(&mut self, kind: K, opener: &dyn WindowOpener) {
+        let id = match self.reserve_aux_window(kind) {
+            Some(OpenRequest::Create(id)) => id,
+            Some(OpenRequest::Present(id)) => {
+                // Idempotent reopen: present the live window.
+                self.aux.focus_id(id);
+                return;
+            }
+            _ => return,
         };
         if !self.prepare_widget(id) {
             return;
@@ -92,7 +95,7 @@ impl HostState {
             },
         );
         if !opened {
-            log::error!("failed to open settings window");
+            log::error!("failed to open auxiliary window");
             self.sync_chrome(false);
         } else {
             self.sync_menu_state();
@@ -111,30 +114,24 @@ impl HostState {
     }
 
     /// Pump one widget turn: drain queued control events through the app,
-    /// run picker dialogs natively, then push the latest screen.
-    /// PPU hover arrives as generic Hover input; pictures refresh below.
+    /// refresh from the app, then push the latest screen. View definitions
+    /// own invalidation; native code never names widget kinds.
     pub(crate) fn pump_widgets(&mut self) {
-        let ids: Vec<AuxId> = [AuxKind::Settings, AuxKind::History, AuxKind::Ppu]
-            .into_iter()
-            .filter_map(|kind| self.aux.route_id(kind))
-            .collect();
+        let ids: Vec<AuxId> = self.aux.windows.ids();
         for id in ids {
             for event in self.aux.drain_widget_events(id) {
                 for effect in self.core.widget_dispatch(id, event) {
                     self.apply_control_effect(id, effect);
                 }
             }
-            let kind = self.aux.windows.kind_of_id(id);
-            if kind == Some(AuxKind::History) && self.core.history_changed() {
-                self.core.widget_refresh(id);
-            }
+            self.core.widget_refresh(id);
             if let Some(screen) = self.core.widget_screen(id) {
                 self.aux.push_widget_snapshot(id, &screen);
             }
         }
     }
 
-    fn apply_control_effect(&mut self, id: AuxId, effect: ControlEffect) {
+    pub(crate) fn apply_control_effect(&mut self, id: AuxId, effect: ControlEffect) {
         let ControlEffect::PickDirectory {
             title,
             target,

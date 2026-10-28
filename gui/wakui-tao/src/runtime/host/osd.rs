@@ -2,14 +2,10 @@
 
 use std::time::Instant;
 
-use tao::event::WindowEvent;
-use wakui::aux::{AuxId, OpenRequest};
 use wakui::osd::{ModalPresentation, ModalPresenter};
 
 use super::HostState;
 use super::window::WakeNeed;
-use crate::aux::focus::AuxKind;
-use crate::ports::WindowOpener;
 
 struct DialogPresenter<'a> {
     dialogs: &'a dyn crate::ports::DialogPorts,
@@ -28,83 +24,7 @@ impl ModalPresenter for DialogPresenter<'_> {
     }
 }
 
-impl HostState {
-    pub(crate) fn open_history(&mut self, opener: &dyn WindowOpener) {
-        let Some(request) = self.reserve_aux_window(AuxKind::History) else {
-            return;
-        };
-        let id = match request {
-            OpenRequest::Create(id) => id,
-            OpenRequest::Present(_) => {
-                if let Some(id) = self.aux.route_id(AuxKind::History) {
-                    self.sync_history_window(id);
-                }
-                return;
-            }
-            OpenRequest::Pending(_) => return,
-        };
-        if !self.prepare_widget(id) {
-            return;
-        }
-        let (screen, mailbox) = match (self.core.widget_screen(id), self.core.widget_mailbox(id)) {
-            (Some(screen), Some(mailbox)) => (screen, mailbox),
-            _ => {
-                self.core.cancel_widget(&mut self.aux.windows, id);
-                return;
-            }
-        };
-        let opened = self.create_aux_window(
-            id,
-            opener,
-            crate::ports::AuxOpenParams::Controls {
-                id,
-                screen: Box::new(screen),
-                mailbox,
-            },
-        );
-        if opened {
-            // Fresh window needs full content regardless of cache.
-            self.sync_history_window(id);
-        }
-    }
-
-    fn sync_history_window(&mut self, id: AuxId) {
-        if self.core.history_changed() {
-            self.core.widget_refresh(id);
-        }
-        if let Some(screen) = self.core.widget_screen(id) {
-            self.aux.push_widget_snapshot(id, &screen);
-        }
-    }
-
-    pub(crate) fn on_history_event(&mut self, event: WindowEvent) {
-        let id = self.aux.route_id(AuxKind::History);
-        if matches!(event, WindowEvent::Destroyed) {
-            if let Some(id) = id {
-                self.finish_widget_window(id, true);
-            }
-            return;
-        }
-        // Read-only viewer: shared aux-focus drive (arrival only
-        // cancels a pending pause, never resumes).
-        if let WindowEvent::Focused(focused) = event {
-            self.on_focus_event(wakui::focus::FocusEvent::Aux(AuxKind::History, focused));
-        }
-        let domain = crate::aux::native::adapt_event(&event);
-        let Some(outcome) = self.aux_on_event(AuxKind::History, domain) else {
-            return;
-        };
-        if outcome.close {
-            self.finish_widget_window(outcome.id.expect("routed generation"), true);
-            return;
-        }
-        if outcome.submitted {
-            let id = outcome.id.expect("routed generation");
-            self.finish_widget_window(id, false);
-            self.sync_history_window(id);
-        }
-    }
-
+impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// A fresh destination has neither the layer nor the reserved strip.
     #[cfg(test)]
     pub(crate) fn poll_notifications(&mut self) {
@@ -128,11 +48,8 @@ impl HostState {
         if self.core.redraw_needed() {
             self.windows.request_redraw();
         }
-        if self.aux.contains(AuxKind::History)
-            && let Some(id) = self.aux.route_id(AuxKind::History)
-        {
-            self.sync_history_window(id);
-        }
+        // Widget refresh runs in the aux pump (`pump_widgets`); OSD only
+        // reports its own flights here.
         // Receiver attachment adds a polling flight after the core's turn capture.
         WakeNeed {
             flight_pending: self.core.osd_flight_pending(),
@@ -218,41 +135,34 @@ mod tests {
 
     #[test]
     fn history_open_records_request_and_stays_closed() {
-        use crate::aux::focus::AuxKind;
         use crate::test_opener::{FakeOpener, OpenerCall};
+        use crate::testkit::TestAux;
         let support = TestHost::new();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        host.open_history(&opener);
-        host.open_history(&opener);
+        host.open_aux_window(TestAux::History, &opener);
+        host.open_aux_window(TestAux::History, &opener);
         assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
-        assert!(!host.aux.contains(AuxKind::History));
+        assert!(!host.aux.contains(TestAux::History));
         assert!(host.core.history_changed());
     }
 
     #[test]
     fn pending_history_open_skips_creation_and_content_cache_updates() {
         use crate::test_opener::FakeOpener;
+        use crate::testkit::TestAux;
+        use wakui::aux::OpenRequest;
         let mut host = TestHost::new().host;
-        let OpenRequest::Create(id) = host.aux.request_open(AuxKind::History) else {
+        let OpenRequest::Create(id) = host
+            .aux
+            .request_open(TestAux::History, TestAux::History.title())
+        else {
             panic!("expected reservation")
         };
         let opener = FakeOpener::failing("no display");
-        host.open_history(&opener);
+        host.open_aux_window(TestAux::History, &opener);
         assert!(opener.calls().is_empty());
-        assert_eq!(host.aux.route_id(AuxKind::History), Some(id));
+        assert_eq!(host.aux.route_id(TestAux::History), Some(id));
         assert!(host.core.history_changed());
-    }
-
-    #[test]
-    fn history_events_without_window_stay_total() {
-        use tao::event::WindowEvent;
-        let support = TestHost::new();
-        let mut host = support.host;
-        host.on_history_event(WindowEvent::Destroyed);
-        host.on_history_event(WindowEvent::Focused(true));
-        host.on_history_event(WindowEvent::Focused(false));
-        assert!(host.core.history_changed());
-        assert!(support.menu.updates().is_empty());
     }
 }

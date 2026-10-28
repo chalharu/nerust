@@ -27,7 +27,7 @@ impl WindowVisitor for MainPresentation<'_> {
     }
 }
 
-impl HostState {
+impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
         let Some(is_fullscreen) = self.windows.with_usable(|w| w.fullscreen().is_some()) else {
             return;
@@ -105,17 +105,8 @@ impl HostState {
     pub(super) fn after_rom_load(&mut self) {
         self.core.reconcile_pause();
         self.sync_chrome(true);
-        if self.is_debug_open() {
-            if let Some(handle) = self.debug_handle {
-                use crate::aux::debug::DebugMessage;
-                self.core.debug_gesture(
-                    handle,
-                    vec![],
-                    DebugMessage::RefreshPressed,
-                    self.is_ppu_open(),
-                );
-            }
-            self.drain_debug_requests();
+        if self.core.debug_widget().is_some() {
+            self.refresh_open_debugger();
         }
     }
 

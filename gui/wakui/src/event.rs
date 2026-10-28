@@ -1,10 +1,7 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
 use crate::session::{SessionError, SessionEvent, SessionOutcome};
-use crate::{
-    commands::MenuCommand,
-    focus::{AuxKind, FocusEvent},
-};
+use crate::{commands::MenuCommand, focus::FocusEvent};
 
 #[derive(Debug, Clone, Copy)]
 pub enum EventCommand {
@@ -20,26 +17,37 @@ pub trait EventSink {
     fn send(&self, event: EventCommand) -> bool;
 }
 
-pub trait EventHandler {
+pub trait EventHandler<K: Copy + Eq + std::hash::Hash> {
     fn handle_event(
         &mut self,
         event: EventCommand,
         settings_open: bool,
-    ) -> Result<EventOutcome, SessionError>;
+    ) -> Result<EventOutcome<K>, SessionError>;
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct EventOutcome {
+#[derive(Debug, Clone, Copy)]
+pub struct EventOutcome<K: Copy + Eq + std::hash::Hash> {
     pub session: SessionOutcome,
-    pub effect: Option<CommandEffect>,
+    pub effect: Option<CommandEffect<K>>,
     /// False for an event suppressed by settings policy.
     pub handled: bool,
 }
 
+impl<K: Copy + Eq + std::hash::Hash> Default for EventOutcome<K> {
+    fn default() -> Self {
+        Self {
+            session: SessionOutcome::default(),
+            effect: None,
+            // False for an event suppressed by settings policy.
+            handled: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandEffect {
+pub enum CommandEffect<K: Copy + Eq + std::hash::Hash> {
     OpenRom,
-    OpenAux(AuxKind),
+    OpenAux(K),
     About,
     Quit,
     ToggleFullscreen,

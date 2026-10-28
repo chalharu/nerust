@@ -3,14 +3,14 @@ use super::*;
 use crate::aux::widgets::controls::build_screen;
 use wakui::control::{Control, ControlInput, ControlKind, ControlVisitor, Layout, LayoutKind};
 
-fn fixture() -> (HostState, AuxId) {
+fn fixture() -> (HostState<TestAux>, AuxId) {
     let mut host = TestHost::new().host;
     host.core.report_host_error("history test error".into());
-    let id = prepare(&mut host, AuxKind::History);
+    let id = prepare(&mut host, TestAux::History);
     (host, id)
 }
 
-fn notes(host: &HostState, id: AuxId) -> Vec<String> {
+fn notes(host: &HostState<TestAux>, id: AuxId) -> Vec<String> {
     controls(&screen_of(host, id))
         .into_iter()
         .filter_map(|c| match c.kind {
@@ -20,7 +20,7 @@ fn notes(host: &HostState, id: AuxId) -> Vec<String> {
         .collect()
 }
 
-fn filter(host: &mut HostState, id: AuxId, index: usize) {
+fn filter(host: &mut HostState<TestAux>, id: AuxId, index: usize) {
     let screen = screen_of(host, id);
     let control = controls(&screen)
         .into_iter()
@@ -44,7 +44,7 @@ fn outer_history_window_uses_common_title_and_controls_pipeline() {
     );
     let screen = screen_of(&host, id);
     let window = host.aux.window(id).expect("reserved window").clone();
-    let (binding, _, _) = ControlsBinding::new(screen, AuxKind::History);
+    let (binding, _, _) = ControlsBinding::new(screen);
     let program = WindowProgram {
         window: window.clone(),
         program: binding,
@@ -58,7 +58,7 @@ fn outer_history_window_uses_common_title_and_controls_pipeline() {
 #[test]
 fn history_view_builds_empty_and_filtered() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, AuxKind::History);
+    let id = prepare(&mut host, TestAux::History);
     let screen = screen_of(&host, id);
     drop(build_screen(&screen));
     filter(&mut host, id, 1);
@@ -101,7 +101,7 @@ fn history_refresh_preserves_filter_and_error_note() {
 fn history_view_builds_without_a_window() {
     let (mut host, id) = fixture();
     let screen = screen_of(&host, id);
-    let (binding, _, _) = ControlsBinding::new(screen, AuxKind::History);
+    let (binding, _, _) = ControlsBinding::new(screen);
     let (state, _) = binding.boot();
     drop(binding.view(&state, iced::window::Id::unique()));
     host.core.report_host_error("new history row".into());

@@ -4,7 +4,7 @@ use std::{cell::RefCell, rc::Rc};
 use iced::{Task, Theme};
 use wakui::Key;
 use wakui::control::{ControlEvent, ControlScreen};
-use wakui::{focus::AuxKind, window::Window};
+use wakui::window::Window;
 
 use crate::{convert::default_font, handler::WidgetBinding};
 
@@ -23,17 +23,15 @@ pub struct ControlsState {
 pub struct ControlsBinding {
     // Boot transfers exactly the prepared screen, never recreating its draft.
     initial: RefCell<Option<(SharedScreen, EventQueue)>>,
-    kind: AuxKind,
 }
 
 impl ControlsBinding {
-    pub fn new(screen: ControlScreen, kind: AuxKind) -> (Self, SharedScreen, EventQueue) {
+    pub fn new(screen: ControlScreen) -> (Self, SharedScreen, EventQueue) {
         let screen = Rc::new(RefCell::new(screen));
         let queue = Rc::new(RefCell::new(Vec::new()));
         (
             Self {
                 initial: RefCell::new(Some((Rc::clone(&screen), Rc::clone(&queue)))),
-                kind,
             },
             screen,
             queue,
@@ -53,10 +51,6 @@ impl WidgetBinding for ControlsBinding {
     type Theme = Theme;
     type Renderer = iced_tiny_skia::Renderer;
     type Executor = iced_winit::futures::backend::default::Executor;
-
-    fn kind(&self) -> AuxKind {
-        self.kind
-    }
 
     fn settings(&self) -> iced::Settings {
         iced::Settings {
@@ -112,8 +106,7 @@ mod binding_tests {
     #[test]
     fn boot_moves_the_prepared_screen_and_queue_exactly_once() {
         let screen = wakui::conformance::conformance_screen();
-        let (binding, shared, queue) =
-            ControlsBinding::new(screen, wakui::focus::AuxKind::Settings);
+        let (binding, shared, queue) = ControlsBinding::new(screen);
         assert!(binding.initial.borrow().is_some());
         let (mut state, _) = binding.boot();
         assert!(binding.initial.borrow().is_none());

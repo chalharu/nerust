@@ -23,12 +23,9 @@ use wakui::{
         Capture, Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlKind,
         ControlMetadata, ControlScreen, Id, Layout, Node, Page,
     },
-    debugger::{
-        DebugHandle, DebugSnapshot, DebuggerChrome, DebuggerEffects, DebuggerEvent,
-        DebuggerLiveEffects, DebuggerScope,
-    },
+    debugger::{DebugHandle, DebuggerEffects, DebuggerEvent, DebuggerLiveEffects, DebuggerScope},
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
-    focus::{AuxKind, FocusEffect, FocusEvent},
+    focus::{FocusEffect, FocusEvent},
     loop_driver::WakeNeed,
     mailbox::{MailboxDomain, WindowMailbox},
     menu::{
@@ -60,6 +57,29 @@ pub(crate) mod labels {
     pub(crate) const CLEAR_HISTORY: &str = "Clear History";
     pub(crate) const HISTORY_TITLE: &str = "Notification History";
     pub(crate) const SETTINGS_TITLE: &str = "Settings";
+    pub(crate) const DEBUGGER_TITLE: &str = "Debugger";
+    pub(crate) const PPU_TITLE: &str = "PPU Viewer";
+}
+
+/// Headless aux kind: mirrors the view-side kinds without naming them.
+/// Production code stays generic over `K`; tests instantiate with this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum TestAux {
+    Settings,
+    History,
+    Debug,
+    Ppu,
+}
+
+impl TestAux {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            TestAux::Settings => labels::SETTINGS_TITLE,
+            TestAux::History => labels::HISTORY_TITLE,
+            TestAux::Debug => labels::DEBUGGER_TITLE,
+            TestAux::Ppu => "PPU Viewer",
+        }
+    }
 }
 
 fn find_control_mut(layout: &mut Layout, id: ControlId) -> Option<&mut Control> {
@@ -357,124 +377,6 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     }
 }
 
-fn chrome(fill: &str) -> DebuggerChrome {
-    DebuggerChrome {
-        debugger: fill.to_string(),
-        pause: "Pause".to_string(),
-        resume: "Resume".to_string(),
-        step_frame: "Step Frame".to_string(),
-        step_instr: "Step Instr".to_string(),
-        ppu_viewer: "PPU".to_string(),
-        refresh: "Refresh".to_string(),
-        space: "Space".to_string(),
-        prev: "Prev".to_string(),
-        next: "Next".to_string(),
-        page: "Page".to_string(),
-        addr_hex: "Addr".to_string(),
-        go: "Go".to_string(),
-        back: "Back".to_string(),
-        disassembly: "Disassembly".to_string(),
-        follow_pc: "Follow".to_string(),
-        follow_pc_tag: "(follow)".to_string(),
-        fixed_tag: "(fixed)".to_string(),
-        no_disassembly: "No disassembly".to_string(),
-        disassembly_hint: "hint".to_string(),
-        registers: "Registers".to_string(),
-        pick_register: "Pick".to_string(),
-        hex: "Hex".to_string(),
-        set: "Set".to_string(),
-        select_dump_row: "Select".to_string(),
-        write: "Write".to_string(),
-        hex_byte: "Byte".to_string(),
-        watch: "Watch".to_string(),
-        freeze: "Freeze".to_string(),
-        confirm: "Confirm".to_string(),
-        cancel: "Cancel".to_string(),
-        watch_none: "none".to_string(),
-        freeze_none: "none".to_string(),
-        clear: "Clear".to_string(),
-        bookmarks: "Bookmarks".to_string(),
-        label: "Label".to_string(),
-        add: "Add".to_string(),
-        memory: "Memory".to_string(),
-    }
-}
-
-/// Canned debugger snapshot: fixed rows, inputs, and selection.
-fn debug_snapshot(paused: bool) -> DebugSnapshot {
-    use wakui::debugger::{DebugInputs, DebuggerRows, DisasmRow, DumpRow, RegRow};
-    DebugSnapshot {
-        chrome: chrome("Debugger"),
-        rows: DebuggerRows {
-            disasm: vec![
-                DisasmRow {
-                    addr: 0x0800_27D2,
-                    is_pc: true,
-                    text: "POP {r4, r5, r6, r7}".to_string(),
-                    target: None,
-                },
-                DisasmRow {
-                    addr: 0x0800_27D6,
-                    is_pc: false,
-                    text: "POP {r1}".to_string(),
-                    target: Some(0x0800_27CA),
-                },
-            ],
-            dump: vec![
-                DumpRow {
-                    addr: 0x100,
-                    bytes: vec![0xAB; 16],
-                },
-                DumpRow {
-                    addr: 0x110,
-                    bytes: vec![1, 2, 3],
-                },
-            ],
-            changed_addrs: vec![0x100],
-            regs: vec![
-                RegRow {
-                    name: "r0",
-                    text: "r0 00000001".to_string(),
-                },
-                RegRow {
-                    name: "r1",
-                    text: "r1 00000002".to_string(),
-                },
-            ],
-            status_text: if paused {
-                "Paused".to_string()
-            } else {
-                "Running".to_string()
-            },
-            paused,
-            pending_text: None,
-            watch_text: "watch none".to_string(),
-            freeze_text: "freeze none".to_string(),
-            selected_line: "row 0x00000100".to_string(),
-        },
-        inputs: DebugInputs {
-            mem_input: "0x100".to_string(),
-            dis_input: "0x200".to_string(),
-            follow_pc: true,
-            back_len: 0,
-            dis_addr: Some(0x0800_27D2),
-            mem_addr: Some(0x100),
-            bm_input: String::new(),
-            bookmarks: Vec::new(),
-            freeze_input: String::new(),
-            edit_input: String::new(),
-            reg_input: String::new(),
-            watch: None,
-            watch_value: None,
-            freeze: None,
-        },
-        selected: Some((0x100, Some(0xAB))),
-        reg_target: None,
-        space_name: "Memory".to_string(),
-        has_spaces: true,
-    }
-}
-
 fn canned_menubar() -> Menubar {
     Menubar {
         commands: CommandModel {
@@ -535,13 +437,12 @@ pub(crate) struct FakeApp {
     pub history_notes: Vec<String>,
     pub history_filter: usize,
     pub error: Option<String>,
-    pub debug_open: bool,
     pub debug_paused: bool,
     pub debug_open_requested: bool,
     pub ppu_open_requested: bool,
     pub mailboxes: HashMap<AuxId, WindowMailbox>,
     pub mailbox_flags: HashMap<AuxId, Arc<Mutex<bool>>>,
-    pub widget_kinds: HashMap<AuxId, AuxKind>,
+    pub widget_kinds: HashMap<AuxId, TestAux>,
     pub widget_screens: HashMap<AuxId, ControlScreen>,
     pub closed_widgets: Vec<AuxId>,
     pub viewport_gen: u64,
@@ -554,8 +455,7 @@ pub(crate) struct FakeApp {
     main_active: bool,
     focus_paused: bool,
     redraw: bool,
-    debug_pos: Option<(i32, i32)>,
-    ppu_pos: Option<(i32, i32)>,
+    window_pos: HashMap<TestAux, (i32, i32)>,
     modal: Option<(ModalToken, Option<std::sync::mpsc::Receiver<()>>)>,
     modal_seq: u64,
     error_queue: std::collections::VecDeque<String>,
@@ -591,7 +491,6 @@ impl FakeApp {
             history_notes: Vec::new(),
             history_filter: 0,
             error: None,
-            debug_open: false,
             debug_paused: true,
             debug_open_requested: false,
             ppu_open_requested: false,
@@ -613,8 +512,7 @@ impl FakeApp {
             main_active: true,
             focus_paused: false,
             redraw: false,
-            debug_pos: None,
-            ppu_pos: None,
+            window_pos: HashMap::new(),
             modal: None,
             modal_seq: 0,
             error_queue: std::collections::VecDeque::new(),
@@ -629,12 +527,88 @@ impl FakeApp {
     }
 }
 
-impl EventHandler for FakeApp {
+pub(crate) fn ppu_screen() -> ControlScreen {
+    let note = control(
+        "tiles",
+        ControlDisplay::Standard,
+        ControlKind::Note {
+            text: "tiles".to_string(),
+        },
+    );
+    let body = Layout {
+        id: Id::fresh(),
+        label: String::new(),
+        metadata: ControlMetadata::new("ppu"),
+        spacing: 8,
+        indent: 0,
+        header: None,
+        children: vec![Node::Control(note)],
+    };
+    ControlScreen {
+        title: labels::PPU_TITLE.to_string(),
+        pages: vec![Page {
+            id: Id::fresh(),
+            label: labels::PPU_TITLE.to_string(),
+            selected: true,
+            select: control(
+                labels::PPU_TITLE,
+                ControlDisplay::Standard,
+                ControlKind::Action,
+            ),
+            body,
+        }],
+        footer: layout(vec![]),
+        message: None,
+        capture: Capture {
+            target: None,
+            prompt: String::new(),
+        },
+    }
+}
+
+pub(crate) fn debug_screen() -> ControlScreen {
+    let pause = control(labels::MUTE, ControlDisplay::Standard, ControlKind::Action);
+    let body = Layout {
+        id: Id::fresh(),
+        label: String::new(),
+        metadata: ControlMetadata::new("debug"),
+        spacing: 8,
+        indent: 0,
+        header: None,
+        children: vec![Node::Control(pause)],
+    };
+    ControlScreen {
+        title: labels::DEBUGGER_TITLE.to_string(),
+        pages: vec![Page {
+            id: Id::fresh(),
+            label: labels::DEBUGGER_TITLE.to_string(),
+            selected: true,
+            select: control(
+                labels::DEBUGGER_TITLE,
+                ControlDisplay::Standard,
+                ControlKind::Action,
+            ),
+            body,
+        }],
+        footer: layout(vec![Node::Control(control(
+            labels::OK,
+            ControlDisplay::Primary,
+            ControlKind::Action,
+        ))]),
+        message: None,
+        capture: Capture {
+            target: None,
+            prompt: String::new(),
+        },
+    }
+}
+
+impl EventHandler<TestAux> for FakeApp {
     fn handle_event(
         &mut self,
         event: EventCommand,
         settings_open: bool,
-    ) -> Result<EventOutcome, SessionError> {
+    ) -> Result<EventOutcome<TestAux>, SessionError> {
         use wakui::commands::{MenuCommand, NativeRole};
         self.events.push(event);
         let guarded = settings_open;
@@ -661,13 +635,13 @@ impl EventHandler for FakeApp {
                 }
                 MenuCommand::Close => self.unload(),
                 MenuCommand::Settings => {
-                    outcome.effect = Some(CommandEffect::OpenAux(AuxKind::Settings));
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Settings));
                 }
                 MenuCommand::Debugger => {
-                    outcome.effect = Some(CommandEffect::OpenAux(AuxKind::Debug));
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
                 }
                 MenuCommand::NotificationHistory => {
-                    outcome.effect = Some(CommandEffect::OpenAux(AuxKind::History));
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::History));
                 }
                 MenuCommand::Native(NativeRole::About) => {
                     outcome.effect = Some(CommandEffect::About);
@@ -688,7 +662,7 @@ impl EventHandler for FakeApp {
                     // Departure arms the pause; arrival cancels it.
                     self.focus_paused = !active;
                 }
-                FocusEvent::Aux(_, _) => {}
+                FocusEvent::Aux { .. } => {}
                 FocusEvent::BurstEnd => {}
             },
             EventCommand::LiveTick => {
@@ -697,7 +671,7 @@ impl EventHandler for FakeApp {
         }
         if let Some(effect) = outcome.session.effect {
             outcome.effect = Some(match effect {
-                SessionEffect::NativeOpenDebugger => CommandEffect::OpenAux(AuxKind::Debug),
+                SessionEffect::NativeOpenDebugger => CommandEffect::OpenAux(TestAux::Debug),
                 SessionEffect::ToggleFullscreen => CommandEffect::ToggleFullscreen,
             });
         }
@@ -705,7 +679,7 @@ impl EventHandler for FakeApp {
     }
 }
 
-impl FrontendApp for FakeApp {
+impl FrontendApp<TestAux> for FakeApp {
     fn load_rom(&mut self, path: &Path) -> Result<(), String> {
         self.load_paths.push(path.to_path_buf());
         if self.failing_load {
@@ -1032,7 +1006,7 @@ impl FrontendApp for FakeApp {
         self.focus_paused = true;
     }
 
-    fn drive_aux_focus(&mut self, _kind: AuxKind, focused: bool) -> bool {
+    fn drive_aux_focus(&mut self, _id: AuxId, focused: bool) -> bool {
         focused
     }
 
@@ -1042,10 +1016,10 @@ impl FrontendApp for FakeApp {
 
     fn reserve_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
-        kind: AuxKind,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
+        kind: TestAux,
     ) -> Result<Option<OpenRequest>, String> {
-        match registry.request_open(kind) {
+        match registry.request_open(kind, kind.title()) {
             OpenRequest::Create(id) => {
                 self.widget_kinds.insert(id, kind);
                 Ok(Some(OpenRequest::Create(id)))
@@ -1055,22 +1029,24 @@ impl FrontendApp for FakeApp {
         }
     }
 
-    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort, id: AuxId) -> bool {
+    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort<TestAux>, id: AuxId) -> bool {
         registry.cancel_open(id)
     }
 
     fn prepare_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
         id: AuxId,
     ) -> Result<bool, String> {
         let kind = self
             .widget_kinds
             .get(&id)
             .copied()
-            .unwrap_or(AuxKind::Settings);
+            .unwrap_or(TestAux::Settings);
         let screen = match kind {
-            AuxKind::History => self.history_screen(),
+            TestAux::History => self.history_screen(),
+            TestAux::Debug => debug_screen(),
+            TestAux::Ppu => ppu_screen(),
             _ => settings_screen(),
         };
         self.widget_screens.insert(id, screen.clone());
@@ -1089,7 +1065,7 @@ impl FrontendApp for FakeApp {
         }
         self.prepared.insert(id);
         if let Some(slot) = registry.window_mut(id) {
-            *slot = Window::controls(kind, screen);
+            *slot = Window::controls(id, screen);
         }
         Ok(true)
     }
@@ -1099,9 +1075,8 @@ impl FrontendApp for FakeApp {
     }
 
     fn widget_window(&self, id: AuxId) -> Option<Window> {
-        let kind = *self.widget_kinds.get(&id)?;
         let screen = self.widget_screens.get(&id)?.clone();
-        Some(Window::controls(kind, screen))
+        Some(Window::controls(id, screen))
     }
 
     fn widget_mailbox(&self, id: AuxId) -> Option<WindowMailbox> {
@@ -1148,7 +1123,7 @@ impl FrontendApp for FakeApp {
         };
         // Walk pages, footer, and history notes by id.
         let mut hit = false;
-        let is_history = self.widget_kinds.get(&id) == Some(&AuxKind::History);
+        let is_history = self.widget_kinds.get(&id) == Some(&TestAux::History);
         let mut activate_page: Option<usize> = None;
         for (index, page) in screen.pages.iter_mut().enumerate() {
             if page.select.id == target {
@@ -1242,7 +1217,7 @@ impl FrontendApp for FakeApp {
     }
 
     fn widget_refresh(&mut self, id: AuxId) {
-        if self.widget_kinds.get(&id) == Some(&AuxKind::History) {
+        if self.widget_kinds.get(&id) == Some(&TestAux::History) {
             let screen = self.history_screen();
             self.widget_screens.insert(id, screen);
         }
@@ -1250,7 +1225,7 @@ impl FrontendApp for FakeApp {
 
     fn close_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
         id: AuxId,
         close: bool,
     ) -> Option<WidgetCloseOutcome> {
@@ -1285,38 +1260,46 @@ impl FrontendApp for FakeApp {
         true
     }
 
-    fn open_debug(&mut self) -> DebugHandle {
-        self.debug_open = true;
-        DebugHandle(1)
+    fn settings_open(&self) -> bool {
+        self.widget_kinds
+            .values()
+            .any(|kind| *kind == TestAux::Settings)
     }
 
-    fn close_debug(&mut self, _handle: DebugHandle) {
-        self.debug_open = false;
+    fn debug_widget(&self) -> Option<AuxId> {
+        self.widget_kinds
+            .iter()
+            .find_map(|(id, kind)| (*kind == TestAux::Debug).then_some(*id))
+    }
+
+    fn debug_handle_for(&self, id: AuxId) -> Option<DebugHandle> {
+        (self.widget_kinds.get(&id) == Some(&TestAux::Debug)).then_some(DebugHandle(1))
+    }
+
+    fn drain_open_requests(&mut self) -> Vec<TestAux> {
+        let mut kinds = Vec::new();
+        if std::mem::take(&mut self.debug_open_requested) {
+            kinds.push(TestAux::Debug);
+        }
+        if std::mem::take(&mut self.ppu_open_requested) {
+            kinds.push(TestAux::Ppu);
+        }
+        kinds
     }
 
     fn close_debug_flights(&mut self) {}
-
-    fn debug_snapshot(&self, _handle: DebugHandle) -> Option<DebugSnapshot> {
-        self.debug_open.then(|| debug_snapshot(self.debug_paused))
-    }
-
-    fn debug_paused(&self, _handle: DebugHandle) -> bool {
-        self.debug_paused
-    }
-
-    fn debug_generation(&self, _handle: DebugHandle) -> u64 {
-        0
-    }
 
     fn debug_gesture(
         &mut self,
         _handle: DebugHandle,
         _inputs: Vec<DebuggerEvent>,
         event: DebuggerEvent,
-        _need_images: bool,
     ) -> DebuggerEffects {
         if matches!(event, DebuggerEvent::TogglePausePressed) {
             self.debug_paused = !self.debug_paused;
+        }
+        if matches!(event, DebuggerEvent::PpuOpenPressed) {
+            self.ppu_open_requested = true;
         }
         DebuggerEffects {
             scope: Some(DebuggerScope::All),
@@ -1324,34 +1307,19 @@ impl FrontendApp for FakeApp {
         }
     }
 
-    fn debug_refresh(&mut self, _handle: DebugHandle, _scope: DebuggerScope, _need_images: bool) {}
+    fn debug_refresh(&mut self, _handle: DebugHandle, _scope: DebuggerScope) {}
 
-    fn debug_open_refresh(&mut self, _handle: DebugHandle, _need_images: bool) {}
+    fn debug_open_refresh(&mut self, _handle: DebugHandle) {}
 
-    fn debug_aux_screen(&self, _handle: DebugHandle) -> Option<ControlScreen> {
-        None
-    }
-
-    fn debug_aux_dispatch(&mut self, _handle: DebugHandle, _event: ControlEvent) -> bool {
-        false
-    }
-
-    fn debug_aux_refresh(&mut self, _handle: DebugHandle) {}
-
-    fn debug_poll(&mut self, _handle: DebugHandle, _ppu_open: bool) -> WakeNeed {
+    fn debug_poll(&mut self, _handle: DebugHandle) -> WakeNeed {
         WakeNeed::default()
     }
 
-    fn debug_poll_live(
-        &mut self,
-        _handle: DebugHandle,
-        _visible: bool,
-        _need_images: bool,
-    ) -> DebuggerLiveEffects {
+    fn debug_poll_live(&mut self, _handle: DebugHandle, _visible: bool) -> DebuggerLiveEffects {
         DebuggerLiveEffects::default()
     }
 
-    fn debug_live_tick(&mut self, _handle: DebugHandle, _ppu_open: bool) {}
+    fn debug_live_tick(&mut self, _handle: DebugHandle) {}
 
     fn debug_drain_pending(&self, _handle: DebugHandle) -> bool {
         false
@@ -1361,48 +1329,32 @@ impl FrontendApp for FakeApp {
         false
     }
 
-    fn chrome_drain_due(&self, _debug_open: bool) -> bool {
+    fn chrome_drain_due(&self) -> bool {
         self.chrome_drain
     }
 
-    fn debugger_chrome(&self) -> DebuggerChrome {
-        chrome("Debugger")
+    fn take_open_request(&mut self, kind: TestAux) -> bool {
+        match kind {
+            TestAux::Debug => std::mem::take(&mut self.debug_open_requested),
+            TestAux::Ppu => std::mem::take(&mut self.ppu_open_requested),
+            _ => false,
+        }
     }
 
-    fn debugger_window_title(&self) -> String {
-        "Debugger".to_string()
+    fn request_open(&mut self, kind: TestAux) {
+        match kind {
+            TestAux::Debug => self.debug_open_requested = true,
+            TestAux::Ppu => self.ppu_open_requested = true,
+            _ => {}
+        }
     }
 
-    fn take_debug_open_request(&mut self) -> bool {
-        std::mem::take(&mut self.debug_open_requested)
+    fn window_pos(&self, kind: TestAux) -> Option<(i32, i32)> {
+        self.window_pos.get(&kind).copied()
     }
 
-    fn take_ppu_open_request(&mut self) -> bool {
-        std::mem::take(&mut self.ppu_open_requested)
-    }
-
-    fn request_debug_open(&mut self) {
-        self.debug_open_requested = true;
-    }
-
-    fn request_ppu_open(&mut self) {
-        self.ppu_open_requested = true;
-    }
-
-    fn debug_window_pos(&self) -> Option<(i32, i32)> {
-        self.debug_pos
-    }
-
-    fn ppu_window_pos(&self) -> Option<(i32, i32)> {
-        self.ppu_pos
-    }
-
-    fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
-        self.debug_pos = Some((x, y));
-    }
-
-    fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
-        self.ppu_pos = Some((x, y));
+    fn remember_window_pos(&mut self, kind: TestAux, x: i32, y: i32) {
+        self.window_pos.insert(kind, (x, y));
     }
 
     fn live_armed(&self) -> Arc<AtomicBool> {
@@ -1598,17 +1550,17 @@ impl SharedApp {
     }
 }
 
-impl EventHandler for SharedApp {
+impl EventHandler<TestAux> for SharedApp {
     fn handle_event(
         &mut self,
         event: EventCommand,
         settings_open: bool,
-    ) -> Result<EventOutcome, SessionError> {
+    ) -> Result<EventOutcome<TestAux>, SessionError> {
         self.inner.borrow_mut().handle_event(event, settings_open)
     }
 }
 
-impl FrontendApp for SharedApp {
+impl FrontendApp<TestAux> for SharedApp {
     fn load_rom(&mut self, path: &Path) -> Result<(), String> {
         self.inner.borrow_mut().load_rom(path)
     }
@@ -1781,25 +1733,25 @@ impl FrontendApp for SharedApp {
     fn note_main_departure(&mut self) {
         self.inner.borrow_mut().note_main_departure()
     }
-    fn drive_aux_focus(&mut self, kind: AuxKind, focused: bool) -> bool {
-        self.inner.borrow_mut().drive_aux_focus(kind, focused)
+    fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
+        self.inner.borrow_mut().drive_aux_focus(id, focused)
     }
     fn release_focus_pause(&mut self) {
         self.inner.borrow_mut().release_focus_pause()
     }
     fn reserve_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
-        kind: AuxKind,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
+        kind: TestAux,
     ) -> Result<Option<OpenRequest>, String> {
         self.inner.borrow_mut().reserve_widget(registry, kind)
     }
-    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort, id: AuxId) -> bool {
+    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort<TestAux>, id: AuxId) -> bool {
         self.inner.borrow_mut().cancel_widget(registry, id)
     }
     fn prepare_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
         id: AuxId,
     ) -> Result<bool, String> {
         self.inner.borrow_mut().prepare_widget(registry, id)
@@ -1836,7 +1788,7 @@ impl FrontendApp for SharedApp {
     }
     fn close_widget(
         &mut self,
-        registry: &mut dyn AuxRegistryPort,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
         id: AuxId,
         close: bool,
     ) -> Option<WidgetCloseOutcome> {
@@ -1851,69 +1803,43 @@ impl FrontendApp for SharedApp {
     fn history_changed(&self) -> bool {
         self.inner.borrow().history_changed()
     }
-    fn open_debug(&mut self) -> DebugHandle {
-        self.inner.borrow_mut().open_debug()
+    fn settings_open(&self) -> bool {
+        self.inner.borrow().settings_open()
     }
-    fn close_debug(&mut self, handle: DebugHandle) {
-        self.inner.borrow_mut().close_debug(handle)
+    fn debug_widget(&self) -> Option<AuxId> {
+        self.inner.borrow().debug_widget()
+    }
+    fn debug_handle_for(&self, id: AuxId) -> Option<DebugHandle> {
+        self.inner.borrow().debug_handle_for(id)
+    }
+    fn drain_open_requests(&mut self) -> Vec<TestAux> {
+        self.inner.borrow_mut().drain_open_requests()
     }
     fn close_debug_flights(&mut self) {
         self.inner.borrow_mut().close_debug_flights()
-    }
-    fn debug_snapshot(&self, handle: DebugHandle) -> Option<DebugSnapshot> {
-        self.inner.borrow().debug_snapshot(handle)
-    }
-    fn debug_paused(&self, handle: DebugHandle) -> bool {
-        self.inner.borrow().debug_paused(handle)
-    }
-    fn debug_generation(&self, handle: DebugHandle) -> u64 {
-        self.inner.borrow().debug_generation(handle)
     }
     fn debug_gesture(
         &mut self,
         handle: DebugHandle,
         inputs: Vec<DebuggerEvent>,
         event: DebuggerEvent,
-        need_images: bool,
     ) -> DebuggerEffects {
-        self.inner
-            .borrow_mut()
-            .debug_gesture(handle, inputs, event, need_images)
+        self.inner.borrow_mut().debug_gesture(handle, inputs, event)
     }
-    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope, need_images: bool) {
-        self.inner
-            .borrow_mut()
-            .debug_refresh(handle, scope, need_images)
+    fn debug_refresh(&mut self, handle: DebugHandle, scope: DebuggerScope) {
+        self.inner.borrow_mut().debug_refresh(handle, scope)
     }
-    fn debug_open_refresh(&mut self, handle: DebugHandle, need_images: bool) {
-        self.inner
-            .borrow_mut()
-            .debug_open_refresh(handle, need_images)
+    fn debug_open_refresh(&mut self, handle: DebugHandle) {
+        self.inner.borrow_mut().debug_open_refresh(handle)
     }
-    fn debug_aux_screen(&self, handle: DebugHandle) -> Option<ControlScreen> {
-        self.inner.borrow().debug_aux_screen(handle)
+    fn debug_poll(&mut self, handle: DebugHandle) -> WakeNeed {
+        self.inner.borrow_mut().debug_poll(handle)
     }
-    fn debug_aux_dispatch(&mut self, handle: DebugHandle, event: ControlEvent) -> bool {
-        self.inner.borrow_mut().debug_aux_dispatch(handle, event)
+    fn debug_poll_live(&mut self, handle: DebugHandle, visible: bool) -> DebuggerLiveEffects {
+        self.inner.borrow_mut().debug_poll_live(handle, visible)
     }
-    fn debug_aux_refresh(&mut self, handle: DebugHandle) {
-        self.inner.borrow_mut().debug_aux_refresh(handle)
-    }
-    fn debug_poll(&mut self, handle: DebugHandle, ppu_open: bool) -> WakeNeed {
-        self.inner.borrow_mut().debug_poll(handle, ppu_open)
-    }
-    fn debug_poll_live(
-        &mut self,
-        handle: DebugHandle,
-        visible: bool,
-        need_images: bool,
-    ) -> DebuggerLiveEffects {
-        self.inner
-            .borrow_mut()
-            .debug_poll_live(handle, visible, need_images)
-    }
-    fn debug_live_tick(&mut self, handle: DebugHandle, ppu_open: bool) {
-        self.inner.borrow_mut().debug_live_tick(handle, ppu_open)
+    fn debug_live_tick(&mut self, handle: DebugHandle) {
+        self.inner.borrow_mut().debug_live_tick(handle)
     }
     fn debug_drain_pending(&self, handle: DebugHandle) -> bool {
         self.inner.borrow().debug_drain_pending(handle)
@@ -1921,38 +1847,20 @@ impl FrontendApp for SharedApp {
     fn debug_reset_if_replaced(&mut self, handle: DebugHandle) -> bool {
         self.inner.borrow_mut().debug_reset_if_replaced(handle)
     }
-    fn chrome_drain_due(&self, debug_open: bool) -> bool {
-        self.inner.borrow().chrome_drain_due(debug_open)
+    fn chrome_drain_due(&self) -> bool {
+        self.inner.borrow().chrome_drain_due()
     }
-    fn debugger_chrome(&self) -> DebuggerChrome {
-        self.inner.borrow().debugger_chrome()
+    fn take_open_request(&mut self, kind: TestAux) -> bool {
+        self.inner.borrow_mut().take_open_request(kind)
     }
-    fn debugger_window_title(&self) -> String {
-        self.inner.borrow().debugger_window_title()
+    fn request_open(&mut self, kind: TestAux) {
+        self.inner.borrow_mut().request_open(kind)
     }
-    fn take_debug_open_request(&mut self) -> bool {
-        self.inner.borrow_mut().take_debug_open_request()
+    fn window_pos(&self, kind: TestAux) -> Option<(i32, i32)> {
+        self.inner.borrow().window_pos(kind)
     }
-    fn take_ppu_open_request(&mut self) -> bool {
-        self.inner.borrow_mut().take_ppu_open_request()
-    }
-    fn request_debug_open(&mut self) {
-        self.inner.borrow_mut().request_debug_open()
-    }
-    fn request_ppu_open(&mut self) {
-        self.inner.borrow_mut().request_ppu_open()
-    }
-    fn debug_window_pos(&self) -> Option<(i32, i32)> {
-        self.inner.borrow().debug_window_pos()
-    }
-    fn ppu_window_pos(&self) -> Option<(i32, i32)> {
-        self.inner.borrow().ppu_window_pos()
-    }
-    fn remember_debug_window_pos(&mut self, x: i32, y: i32) {
-        self.inner.borrow_mut().remember_debug_window_pos(x, y)
-    }
-    fn remember_ppu_window_pos(&mut self, x: i32, y: i32) {
-        self.inner.borrow_mut().remember_ppu_window_pos(x, y)
+    fn remember_window_pos(&mut self, kind: TestAux, x: i32, y: i32) {
+        self.inner.borrow_mut().remember_window_pos(kind, x, y)
     }
     fn live_armed(&self) -> Arc<AtomicBool> {
         self.inner.borrow().live_armed()

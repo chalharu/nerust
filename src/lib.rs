@@ -162,7 +162,7 @@ pub fn run() -> i32 {
 fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
-) -> Option<wakui::bootstrap::Boot> {
+) -> Option<wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
     match boot(ctx, backend_capabilities(true, supports_vsync), None) {
         Ok(boot) => Some(boot),
@@ -185,7 +185,10 @@ fn boot_frontend(
 /// Crash containment lives here, in the composition root: a crash must
 /// never look like a clean exit. Frontend `run` functions stay unguarded.
 #[cfg(all(feature = "gtk", not(clippy)))]
-fn run_gtk_guarded(boot: wakui::bootstrap::Boot, rom_path: Option<PathBuf>) -> i32 {
+fn run_gtk_guarded(
+    boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
+    rom_path: Option<PathBuf>,
+) -> i32 {
     // No dialog here: the event loop died with the panic, and stderr
     // (already logged by the guard) is the UX. Match exhaustively.
     match nerust_crash_guard::run_guarded_with(
@@ -210,7 +213,10 @@ fn crash_note(message: &str) -> String {
 }
 
 #[cfg(all(feature = "tao", not(clippy)))]
-fn run_tao_guarded(boot: wakui::bootstrap::Boot, rom_path: Option<PathBuf>) -> i32 {
+fn run_tao_guarded(
+    boot: wakui::bootstrap::Boot<nerust_frontend_viewdefs::focus::AuxKind>,
+    rom_path: Option<PathBuf>,
+) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
     // Exhaustive: a future outcome must not silently pass through.
     // Rust panic convention: a crash never exits 0.
