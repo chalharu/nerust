@@ -1,14 +1,8 @@
-//! Viewport pipeline traits: surface lifecycle, frame/OSD/strip sinks, factories.
-//! Framework-owned; render backends implement these, frontends program against them.
-//! Concrete selection (wgpu/gl/softbuffer) is injected by the composition root,
-//! never chosen by frontends.
-
 use std::sync::Arc;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use super::frame::{FrameBuffer, RenderedImage, ReservedStrip, VideoRenderProfile};
-use super::geometry::SurfaceSize;
+use crate::{FrameBuffer, RenderedImage, ReservedStrip, SurfaceSize, VideoRenderProfile};
 
 /// Wraps a static or formatted message as an `std::error::Error`.
 #[derive(Debug)]
@@ -629,20 +623,20 @@ mod tests {
     #[test]
     fn config_budget_floors_at_one() {
         let config = RendererConfig {
-            render_profile: crate::viewport::VideoRenderProfile {
-                source_logical_size: crate::viewport::LogicalSize {
+            render_profile: crate::VideoRenderProfile {
+                source_logical_size: crate::logical::LogicalSize {
                     width: 64,
                     height: 64,
                 },
-                logical_size: crate::viewport::LogicalSize {
+                logical_size: crate::logical::LogicalSize {
                     width: 64,
                     height: 64,
                 },
-                physical_size: crate::viewport::PhysicalSize {
+                physical_size: crate::physical::PhysicalSize {
                     width: 64.0,
                     height: 64.0,
                 },
-                frame_format: crate::viewport::VideoFrameFormat::Rgba,
+                frame_format: crate::VideoFrameFormat::Rgba,
                 ntsc_packed_rgba8: None,
             },
             vsync: true,
