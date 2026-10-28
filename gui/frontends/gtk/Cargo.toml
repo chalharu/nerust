@@ -20,10 +20,10 @@ nerust_gui_shell.workspace = true
 nerust_gui_viewmodel.workspace = true
 nerust_settings_core.workspace = true
 wakui.workspace = true
-nerust_render_traits = { features = ["renderer"], workspace = true }
 raw-window-handle.workspace = true
 
 [dev-dependencies]
+nerust_render_traits = { features = ["renderer"], workspace = true }
 nerust_persistence.workspace = true
 nerust_nes_factory.workspace = true
 nerust_render_osd.workspace = true
