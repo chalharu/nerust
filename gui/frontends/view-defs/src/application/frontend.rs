@@ -215,6 +215,10 @@ impl ApplicationHost {
         }
         // Disjoint field borrows: the bridge is read through an immutable
         // borrow while the runtime, session, and policy borrow mutably.
+        // Both queues are polled: the runtime queue is usually idle in
+        // production, while the per-session driver queue carries the open,
+        // refresh, and gesture drains. Dispatch only queues work, so a
+        // production poll must drain the driver too.
         let pending = {
             let sessions = &mut self.debug_sessions;
             let debug = &mut self.debug;
@@ -223,7 +227,9 @@ impl ApplicationHost {
             let Some(entry) = sessions.get_mut(&handle.0) else {
                 return WakeNeed::default();
             };
-            debug.poll(session, pause, &entry.bridge)
+            let runtime_pending = debug.poll(session, pause, &entry.bridge);
+            let driver_effects = entry.driver.poll(session, pause, &entry.bridge);
+            runtime_pending || driver_effects.pending
         };
         self.debug_wake(true, ppu_open, pending)
     }
