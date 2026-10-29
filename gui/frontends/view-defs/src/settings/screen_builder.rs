@@ -400,7 +400,7 @@ fn group(
         text(language, title).into(),
         header,
         children,
-        16,
+        16.0,
     )
 }
 

@@ -143,12 +143,13 @@ fn control(label: &str, display: ControlDisplay, kind: impl wakui::leaf::Control
 }
 
 fn layout(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("layout");
+    metadata.hints.spacing = Some(0.0);
+    metadata.hints.indent = Some(0.0);
     Container {
         id: Id::fresh(),
         label: String::new(),
-        metadata: ControlMetadata::new("layout"),
-        spacing: 0,
-        indent: 0,
+        metadata,
         header: None,
         policy: Box::new(ColumnPolicy),
         children,
@@ -305,6 +306,20 @@ fn settings_screen() -> ControlScreen {
     )
 }
 
+fn history_body(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("history");
+    metadata.hints.spacing = Some(0.0);
+    metadata.hints.indent = Some(0.0);
+    Container {
+        id: Id::fresh(),
+        label: String::new(),
+        metadata,
+        header: None,
+        policy: Box::new(ColumnPolicy),
+        children,
+    }
+}
+
 /// Canned history screen: filter choice, notes, clear/close actions.
 fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     let filter_control = control(
@@ -347,16 +362,7 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
             label: labels::HISTORY_TITLE.to_string(),
             selected: true,
             select: control(labels::HISTORY_TITLE, ControlDisplay::Standard, ActionLeaf),
-            body: Container {
-                id: Id::fresh(),
-                label: String::new(),
-                metadata: ControlMetadata::new("history"),
-                spacing: 0,
-                indent: 0,
-                header: None,
-                policy: Box::new(ColumnPolicy),
-                children,
-            },
+            body: history_body(children),
         }],
         footer: layout(vec![Node::Control(clear), Node::Control(close)]),
         message: None,
@@ -521,12 +527,13 @@ pub(crate) fn ppu_screen() -> ControlScreen {
             text: "tiles".to_string(),
         },
     );
+    let mut ppu_meta = ControlMetadata::new("ppu");
+    ppu_meta.hints.spacing = Some(8.0);
+    ppu_meta.hints.indent = Some(0.0);
     let body = Container {
         id: Id::fresh(),
         label: String::new(),
-        metadata: ControlMetadata::new("ppu"),
-        spacing: 8,
-        indent: 0,
+        metadata: ppu_meta,
         header: None,
         policy: Box::new(ColumnPolicy),
         children: vec![Node::Control(note)],
@@ -551,12 +558,13 @@ pub(crate) fn ppu_screen() -> ControlScreen {
 
 pub(crate) fn debug_screen() -> ControlScreen {
     let pause = control(labels::MUTE, ControlDisplay::Standard, ActionLeaf);
+    let mut debug_meta = ControlMetadata::new("debug");
+    debug_meta.hints.spacing = Some(8.0);
+    debug_meta.hints.indent = Some(0.0);
     let body = Container {
         id: Id::fresh(),
         label: String::new(),
-        metadata: ControlMetadata::new("debug"),
-        spacing: 8,
-        indent: 0,
+        metadata: debug_meta,
         header: None,
         policy: Box::new(ColumnPolicy),
         children: vec![Node::Control(pause)],
