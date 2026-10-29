@@ -5,7 +5,7 @@
 //! by [`AuxId`], kinds only arbitrate reservations and opens.
 
 use super::focus::{AuxEvents, AuxIdentity, AuxRender, pump_aux};
-use crate::domain::{AuxId, AuxNativeEvent, NativeWindowId};
+use crate::native_input::{AuxId, AuxNativeEvent, NativeWindowId};
 use wakui_core::aux::AuxWindows;
 #[cfg(test)]
 use wakui_core::aux::OpenRequest;
@@ -249,7 +249,7 @@ pub(crate) mod test_double {
     use std::rc::Rc;
 
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxRender};
-    use crate::domain::{AuxNativeEvent, NativeWindowId};
+    use crate::native_input::{AuxNativeEvent, NativeWindowId};
 
     use super::{AuxController, WidgetSessionPort};
     use wakui_core::control::{ControlEvent, ControlScreen};

@@ -1,9 +1,12 @@
-use super::*;
+use crate::binding::{ControlsBinding, Message, keyboard_key_from_physical};
+use crate::handler::WidgetBinding;
 use crate::{
-    aux::window::WindowProgram,
     runtime::host::{HostState, TestHost},
     testkit::TestAux,
+    window::WindowProgram,
 };
+use std::rc::Rc;
+use wakui_core::Key;
 use wakui_core::aux::{AuxId, OpenRequest};
 use wakui_core::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
@@ -159,7 +162,7 @@ fn status_area_message_reaches_viewmodel() {
             .selected,
         Some(1)
     );
-    drop(super::super::controls::build_screen(&screen));
+    drop(crate::controls::build_screen(&screen));
 }
 
 #[test]

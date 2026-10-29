@@ -3,7 +3,7 @@
 
 use iced::{Font, keyboard};
 
-use crate::domain::{AuxButton, AuxModifiers};
+use crate::native_input::{AuxButton, AuxModifiers};
 pub use crate::tao_map::keycode_to_key;
 
 /// Map a domain button to its iced counterpart.
@@ -86,10 +86,10 @@ pub struct FeedContext<'a> {
 /// Feed one domain event, tracking cursor, modifiers, and close.
 /// Pure over caller-owned state: the shell passes its live [`FeedContext`].
 pub fn feed_domain_event(
-    event: crate::domain::AuxNativeEvent,
+    event: crate::native_input::AuxNativeEvent,
     ctx: &mut FeedContext<'_>,
 ) -> Option<iced::Event> {
-    use crate::domain::AuxNativeEvent as E;
+    use crate::native_input::AuxNativeEvent as E;
     let scale_factor = ctx.scale_factor;
     let should_close = ctx.should_close;
     let (cursor, modifiers) = (&mut *ctx.cursor, &mut *ctx.modifiers);
@@ -404,7 +404,7 @@ mod tests {
         let should_close = AtomicBool::new(false);
         // Physical pixels divide by the live scale, like the shell feed.
         let moved = feed_domain_event(
-            crate::domain::AuxNativeEvent::CursorMoved(200.0, 100.0),
+            crate::native_input::AuxNativeEvent::CursorMoved(200.0, 100.0),
             &mut FeedContext {
                 cursor: &mut cursor,
                 modifiers: &mut modifiers,
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn mapped_buttons_cross_but_others_drop() {
-        use crate::domain::AuxNativeEvent;
+        use crate::native_input::AuxNativeEvent;
         use crate::tao_map::tao_button_to_aux;
         use tao::event::MouseButton;
         for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
@@ -542,19 +542,19 @@ mod tests {
 
     #[test]
     fn domain_modifiers_map_each_flag() {
-        use crate::tao_map::tao_modifiers_to_domain;
+        use crate::tao_map::tao_modifiers_to_native;
         use tao::keyboard::ModifiersState as M;
-        assert!(aux_modifiers_to_iced(tao_modifiers_to_domain(M::empty())).is_empty());
-        let shift = aux_modifiers_to_iced(tao_modifiers_to_domain(M::SHIFT));
+        assert!(aux_modifiers_to_iced(tao_modifiers_to_native(M::empty())).is_empty());
+        let shift = aux_modifiers_to_iced(tao_modifiers_to_native(M::SHIFT));
         assert!(shift.contains(keyboard::Modifiers::SHIFT));
         assert!(!shift.contains(keyboard::Modifiers::CTRL));
-        let ctrl = aux_modifiers_to_iced(tao_modifiers_to_domain(M::CONTROL));
+        let ctrl = aux_modifiers_to_iced(tao_modifiers_to_native(M::CONTROL));
         assert!(ctrl.contains(keyboard::Modifiers::CTRL));
-        let alt = aux_modifiers_to_iced(tao_modifiers_to_domain(M::ALT));
+        let alt = aux_modifiers_to_iced(tao_modifiers_to_native(M::ALT));
         assert!(alt.contains(keyboard::Modifiers::ALT));
-        let logo = aux_modifiers_to_iced(tao_modifiers_to_domain(M::SUPER));
+        let logo = aux_modifiers_to_iced(tao_modifiers_to_native(M::SUPER));
         assert!(logo.contains(keyboard::Modifiers::LOGO));
-        let all = aux_modifiers_to_iced(tao_modifiers_to_domain(
+        let all = aux_modifiers_to_iced(tao_modifiers_to_native(
             M::SHIFT | M::CONTROL | M::ALT | M::SUPER,
         ));
         for flag in [
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn feed_maps_key_press_and_release() {
-        use crate::domain::AuxNativeEvent as E;
+        use crate::native_input::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         // Text plus repeat ride into the iced key event.
         let pressed = feed_domain_event(
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn feed_drops_unmapped_domain_events() {
-        use crate::domain::AuxNativeEvent as E;
+        use crate::native_input::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         assert!(
             feed_domain_event(
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn feed_maps_each_mouse_button_both_edges() {
-        use crate::domain::AuxNativeEvent as E;
+        use crate::native_input::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         for (domain, iced_button) in [
             (AuxButton::Left, iced::mouse::Button::Left),
@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn feed_scales_wheel_pixels_and_passes_lines() {
-        use crate::domain::AuxNativeEvent as E;
+        use crate::native_input::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         let lines = feed_domain_event(
             E::WheelLines(0.0, 3.0),
@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn feed_tracks_modifiers_and_close() {
-        use crate::domain::{AuxModifiers, AuxNativeEvent as E};
+        use crate::native_input::{AuxModifiers, AuxNativeEvent as E};
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         assert!(
             feed_domain_event(
@@ -771,7 +771,7 @@ mod tests {
 
     #[test]
     fn feed_ignores_non_program_events() {
-        use crate::domain::AuxNativeEvent as E;
+        use crate::native_input::AuxNativeEvent as E;
         let (mut cursor, mut modifiers, should_close) = feed_harness();
         for event in [
             E::Focused(true),
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn window_events_convert_or_pass_through() {
-        use crate::domain::{AuxButton, AuxModifiers, AuxNativeEvent as E};
+        use crate::native_input::{AuxButton, AuxModifiers, AuxNativeEvent as E};
         use iced::mouse;
         use std::sync::atomic::AtomicBool;
         let mut cursor = mouse::Cursor::default();

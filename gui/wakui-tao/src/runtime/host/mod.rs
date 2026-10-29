@@ -12,7 +12,7 @@ use crate::aux::registry::AuxRegistry;
 
 mod auxiliary;
 mod commands;
-mod osd;
+mod dialog;
 mod presentation;
 mod window;
 
@@ -142,7 +142,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     pub(super) fn aux_on_event(
         &mut self,
         id: wakui_core::aux::AuxId,
-        event: crate::domain::AuxNativeEvent,
+        event: crate::native_input::AuxNativeEvent,
     ) -> Option<crate::aux::registry::AuxOutcome> {
         self.aux.on_event(id, event)
     }
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn aux_routing_stays_total_without_windows() {
-        use crate::domain::NativeWindowId;
+        use crate::native_input::NativeWindowId;
         use crate::testkit::TestAux;
         let support = TestHost::new();
         let mut host = support.host;

@@ -128,7 +128,7 @@ impl AuxSurface {
     }
 
     /// Native window identity for event routing.
-    pub(super) fn native_id(&self) -> crate::domain::NativeWindowId {
+    pub(super) fn native_id(&self) -> crate::native_input::NativeWindowId {
         crate::aux::native::native_id_of(self.window.id())
     }
 
@@ -177,10 +177,10 @@ impl AuxSurface {
     /// Shared event prelude (resize/scale/modifiers/close).
     pub(super) fn handle_common_event(
         &mut self,
-        event: &crate::domain::AuxNativeEvent,
+        event: &crate::native_input::AuxNativeEvent,
         relayout: &mut impl FnMut(Size),
     ) {
-        use crate::domain::AuxNativeEvent as E;
+        use crate::native_input::AuxNativeEvent as E;
         match event {
             E::Resized(width, height) => self.resize(*width, *height, relayout),
             E::ScaleChanged(scale_factor) => {
@@ -199,7 +199,7 @@ impl AuxSurface {
     /// Feed one domain event, returning the converted iced event.
     pub(super) fn feed_domain_event(
         &mut self,
-        event: crate::domain::AuxNativeEvent,
+        event: crate::native_input::AuxNativeEvent,
     ) -> Option<iced::Event> {
         crate::convert::feed_domain_event(
             event,
