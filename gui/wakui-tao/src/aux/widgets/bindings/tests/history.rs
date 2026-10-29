@@ -1,7 +1,10 @@
 //! History exercises the same controls binding, not a second toolbar/program.
 use super::*;
 use crate::aux::widgets::controls::build_screen;
-use wakui::control::{Control, ControlInput, ControlKind, ControlVisitor, Layout, LayoutKind};
+use wakui::control::{
+    Container, Control, ControlInput, ControlVisitor, RowPolicy, TablePolicy, policy,
+};
+use wakui::leaf::{ChoiceLeaf, ListLeaf, NoteLeaf};
 
 fn fixture() -> (HostState<TestAux>, AuxId) {
     let mut host = TestHost::new().host;
@@ -11,20 +14,32 @@ fn fixture() -> (HostState<TestAux>, AuxId) {
 }
 
 fn notes(host: &HostState<TestAux>, id: AuxId) -> Vec<String> {
-    controls(&screen_of(host, id))
-        .into_iter()
-        .filter_map(|c| match c.kind {
-            ControlKind::Note { text } => Some(text),
-            _ => None,
-        })
-        .collect()
+    let mut out = Vec::new();
+    struct Lists<'a>(&'a mut Vec<String>);
+    impl ControlVisitor for Lists<'_> {
+        fn control(&mut self, control: &Control) {
+            if let Some(list) = control.downcast::<ListLeaf>() {
+                for row in &list.rows {
+                    for cell in &row.cells {
+                        if let Some(note) = cell.downcast::<NoteLeaf>() {
+                            self.0.push(note.text.clone());
+                        }
+                    }
+                }
+            } else if let Some(note) = control.downcast::<NoteLeaf>() {
+                self.0.push(note.text.clone());
+            }
+        }
+    }
+    screen_of(host, id).visit(&mut Lists(&mut out));
+    out
 }
 
 fn filter(host: &mut HostState<TestAux>, id: AuxId, index: usize) {
     let screen = screen_of(host, id);
     let control = controls(&screen)
         .into_iter()
-        .find(|c| matches!(c.kind, ControlKind::Choice { .. }))
+        .find(|c| c.downcast::<ChoiceLeaf>().is_some())
         .unwrap();
     let _ = dispatch(
         host,
@@ -83,13 +98,10 @@ fn history_refresh_preserves_filter_and_error_note() {
     host.core.widget_refresh(id);
     let updated = screen_of(&host, id);
     assert_eq!(updated.title, before.title);
-    assert!(controls(&updated).iter().any(|c| matches!(
-        c.kind,
-        ControlKind::Choice {
-            selected: Some(3),
-            ..
-        }
-    )));
+    assert!(controls(&updated).iter().any(|c| {
+        c.downcast::<ChoiceLeaf>()
+            .is_some_and(|leaf| leaf.selected == Some(3))
+    }));
     assert!(
         notes(&host, id)
             .iter()
@@ -107,10 +119,10 @@ fn history_view_builds_without_a_window() {
     host.core.report_host_error("new history row".into());
     host.core.widget_refresh(id);
     let updated = screen_of(&host, id);
-    assert!(controls(&updated).iter().any(|t| matches!(
-        &t.kind,
-        ControlKind::Note { text } if text.contains("new history row")
-    )));
+    assert!(controls(&updated).iter().any(|t| {
+        t.downcast::<NoteLeaf>()
+            .is_some_and(|leaf| leaf.text.contains("new history row"))
+    }));
     filter(&mut host, id, 3);
     drop(build_screen(&screen_of(&host, id)));
 }
@@ -132,13 +144,10 @@ fn history_clear_applies_without_close_and_refreshes_same_filter() {
             .iter()
             .any(|t| t.contains("history test error"))
     );
-    assert!(controls(&screen).iter().any(|c| matches!(
-        c.kind,
-        ControlKind::Choice {
-            selected: Some(3),
-            ..
-        }
-    )));
+    assert!(controls(&screen).iter().any(|c| {
+        c.downcast::<ChoiceLeaf>()
+            .is_some_and(|leaf| leaf.selected == Some(3))
+    }));
     assert!(
         !host.prepare_widget(id),
         "original reservation/session survives clear"
@@ -173,11 +182,11 @@ fn owned_note_text_renders_verbatim_without_recounting() {
     let mut screen = screen_of(&host, id);
     let mut cell = controls(&screen)
         .into_iter()
-        .find(|c| matches!(c.kind, ControlKind::Note { .. }))
+        .find(|c| c.downcast::<NoteLeaf>().is_some())
         .unwrap();
-    cell.kind = ControlKind::Note {
+    cell.leaf = Box::new(NoteLeaf {
         text: message.clone(),
-    };
+    });
     screen.pages[0].body.children = vec![Node::Control(cell.clone())];
     assert_eq!(screen.control(cell.id).unwrap(), &cell);
     drop(build_screen(&screen));
@@ -193,12 +202,12 @@ fn shared_scene_drives_native_view_and_balanced_visitor_order() {
         controls: usize,
     }
     impl ControlVisitor for Probe {
-        fn begin_layout(&mut self, _: &Layout, kind: LayoutKind) {
+        fn begin_container(&mut self, container: &Container) {
             self.depth += 1;
-            self.tables += usize::from(matches!(kind, LayoutKind::Table));
-            self.rows += usize::from(matches!(kind, LayoutKind::Row));
+            self.tables += usize::from(policy::<TablePolicy>(container).is_some());
+            self.rows += usize::from(policy::<RowPolicy>(container).is_some());
         }
-        fn end_layout(&mut self, _: &Layout, _: LayoutKind) {
+        fn end_container(&mut self, _: &Container) {
             self.depth -= 1;
         }
         fn control(&mut self, _: &Control) {

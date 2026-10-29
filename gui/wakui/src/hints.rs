@@ -33,9 +33,8 @@ pub struct Rect {
     pub height: f64,
 }
 
-/// Optional placement requests carried by metadata/containers.
-/// Phase 1 only introduces the type; wiring into
-/// `ControlMetadata`/`Layout` happens in Phase 2 to stay non-breaking.
+/// Optional placement requests carried by metadata (`ControlMetadata.hints`).
+/// `None` means native default / automatic measurement.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct LayoutHints {
     pub margin: Option<Thickness>,
