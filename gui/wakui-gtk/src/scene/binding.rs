@@ -71,6 +71,9 @@ impl WidgetBinding {
 
     pub fn render(&self) {
         let screen = self.screen.borrow();
+        if let Some(dialog) = self.dialog() {
+            dialog.set_title(Some(&screen.title));
+        }
         screen.visit(&mut ControlGtkVisitor::new(self));
     }
 
@@ -398,6 +401,7 @@ pub fn build(
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
         .destroy_with_parent(true)
+        .title(&screen.title)
         .default_width(900)
         .default_height(560)
         .build();
