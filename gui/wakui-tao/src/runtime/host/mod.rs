@@ -23,7 +23,7 @@ use crate::ports::DialogPorts;
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum HostAction {
     None,
-    RomLoaded,
+    FileLoaded,
     Exit,
 }
 
@@ -99,9 +99,9 @@ pub(crate) struct HostState<K: Copy + Eq + std::hash::Hash + 'static> {
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     #[cfg(test)]
-    pub(crate) fn load_test_rom(&mut self) {
+    pub(crate) fn load_test_file(&mut self) {
         self.core
-            .load_rom(std::path::Path::new("test.nes"))
+            .load_file(std::path::Path::new("test.nes"))
             .unwrap();
     }
 
@@ -153,11 +153,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         id: wakui_core::aux::AuxId,
     ) -> Option<crate::aux::registry::AuxOutcome> {
         self.aux.render_id(id)
-    }
-
-    /// Settings window owns the screen iff the app holds a settings session.
-    pub(crate) fn settings_open(&self) -> bool {
-        self.core.settings_open()
     }
 }
 
@@ -216,7 +211,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let _ = host.core.refresh_window_title();
-        assert!(!host.core.tick_loaded());
+        assert!(!host.core.content_loaded());
     }
 
     #[test]
@@ -229,21 +224,20 @@ mod tests {
             MenuRecorderHandle::default().into_box(),
             std::sync::Arc::new(crate::ports::NativeDialogs),
         );
-        assert!(!host.core.tick_loaded());
+        assert!(!host.core.content_loaded());
     }
 
     #[test]
     fn headless_host_builds_and_syncs_menu() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.core.tick_loaded());
+        assert!(!host.core.content_loaded());
         host.sync_menu_state();
         assert_eq!(
             support.menu.updates(),
             [crate::test_menu::MenuSyncSnapshot {
                 loaded: false,
                 paused: false,
-                settings_open: false,
             }]
         );
     }

@@ -1,5 +1,10 @@
 //! Toolkit-independent session event delivery and composed pause ownership.
 //! The driver borrows existing host fields; it adds no native lifetime or widget.
+//!
+//! Domain meanings live here, not in `wakui`: shortcuts (debugger, slots,
+//! fullscreen), the settings open/close protocol, and the pause-owner table.
+//! The framework only transports opaque [`wakui::session::SessionEvent`]
+//! inputs; this module resolves them to typed shell commands.
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
@@ -8,29 +13,82 @@ use nerust_gui_shell::session::{
 };
 use nerust_settings_core::model::input::ShortcutAction;
 use wakui::pause::{PauseOwner, PausePolicy};
-use wakui::session::{
-    CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome, ShortcutGesture,
-};
+use wakui::session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome};
 
 use crate::commands::{CommandTable, MenuCommand};
+
+/// View-side suspension owners. The framework holds an opaque bitset;
+/// this table gives each hold its meaning. Order is load-bearing only
+/// for readability; bits never alias.
+pub mod pause_owners {
+    use wakui::pause::PauseOwner;
+
+    pub const USER: PauseOwner = PauseOwner::new(0);
+    pub const FOCUS: PauseOwner = PauseOwner::new(1);
+    pub const MODAL: PauseOwner = PauseOwner::new(2);
+    pub const SETTINGS: PauseOwner = PauseOwner::new(3);
+}
+
+/// View-side shortcut: what a shell keyboard binding means. Produced here
+/// from [`KeyboardShortcut`], consumed here; flavors only forward
+/// [`SessionEvent::Keyboard`] and never name these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewShortcut {
+    OpenDebugger,
+    ToggleFullscreen,
+    TogglePause,
+    SaveActiveSlot,
+    LoadActiveSlot,
+    SelectNextSlot,
+    SelectPreviousSlot,
+    Reset,
+}
+
+/// View-side session effect. Flavors never see these; [`crate::event`]
+/// maps them to native [`wakui::event::CommandEffect`]s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverEffect {
+    OpenDebugger,
+    ToggleFullscreen,
+}
+
+/// Driver outcome: the framework [`SessionOutcome`] plus view-side routing.
+/// The [`FrontendApp::dispatch`](wakui::app::FrontendApp::dispatch) boundary
+/// exposes only the command half; effects and settings transitions stay here.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DriverOutcome {
+    pub command: Option<CommandOutcome>,
+    pub effect: Option<DriverEffect>,
+    /// Whether this event acquired/released the Settings owner. Native chrome
+    /// can skip duplicate close notifications using this flag.
+    pub settings_changed: bool,
+}
+
+impl From<DriverOutcome> for SessionOutcome {
+    fn from(outcome: DriverOutcome) -> Self {
+        Self {
+            command: outcome.command,
+        }
+    }
+}
 
 fn convert_error(error: nerust_gui_shell::session::SessionError) -> SessionError {
     SessionError(error.to_string())
 }
 
-fn gesture(shortcut: KeyboardShortcut) -> ShortcutGesture {
+fn gesture(shortcut: KeyboardShortcut) -> ViewShortcut {
     match shortcut {
-        KeyboardShortcut::OpenDebugger => ShortcutGesture::OpenDebugger,
-        KeyboardShortcut::ToggleFullscreen => ShortcutGesture::ToggleFullscreen,
+        KeyboardShortcut::OpenDebugger => ViewShortcut::OpenDebugger,
+        KeyboardShortcut::ToggleFullscreen => ViewShortcut::ToggleFullscreen,
         KeyboardShortcut::Session(action) => match action {
-            ShortcutAction::TogglePause => ShortcutGesture::TogglePause,
-            ShortcutAction::SaveActiveSlot => ShortcutGesture::SaveActiveSlot,
-            ShortcutAction::LoadActiveSlot => ShortcutGesture::LoadActiveSlot,
-            ShortcutAction::SelectNextSlot => ShortcutGesture::SelectNextSlot,
-            ShortcutAction::SelectPreviousSlot => ShortcutGesture::SelectPreviousSlot,
-            ShortcutAction::Reset => ShortcutGesture::Reset,
-            ShortcutAction::OpenDebugger => ShortcutGesture::OpenDebugger,
-            ShortcutAction::ToggleFullscreen => ShortcutGesture::ToggleFullscreen,
+            ShortcutAction::TogglePause => ViewShortcut::TogglePause,
+            ShortcutAction::SaveActiveSlot => ViewShortcut::SaveActiveSlot,
+            ShortcutAction::LoadActiveSlot => ViewShortcut::LoadActiveSlot,
+            ShortcutAction::SelectNextSlot => ViewShortcut::SelectNextSlot,
+            ShortcutAction::SelectPreviousSlot => ViewShortcut::SelectPreviousSlot,
+            ShortcutAction::Reset => ViewShortcut::Reset,
+            ShortcutAction::OpenDebugger => ViewShortcut::OpenDebugger,
+            ShortcutAction::ToggleFullscreen => ViewShortcut::ToggleFullscreen,
         },
     }
 }
@@ -60,8 +118,8 @@ impl<'a> SessionDriver<'a> {
     pub fn dispatch_command(
         &mut self,
         command: SessionCommand,
-    ) -> Result<SessionOutcome, SessionError> {
-        let mut outcome = SessionOutcome::default();
+    ) -> Result<DriverOutcome, SessionError> {
+        let mut outcome = DriverOutcome::default();
         let executed = match command {
             SessionCommand::Pause | SessionCommand::Resume | SessionCommand::TogglePause => {
                 let active = match command {
@@ -69,7 +127,7 @@ impl<'a> SessionDriver<'a> {
                     SessionCommand::Resume => false,
                     _ => !self.session.tick_metrics().paused,
                 };
-                set_pause_owner(self.session, self.policy, PauseOwner::User, active)
+                set_pause_owner(self.session, self.policy, pause_owners::USER, active)
             }
             command => self.session.run_command(command).map_err(convert_error)?,
         };
@@ -80,8 +138,8 @@ impl<'a> SessionDriver<'a> {
         Ok(outcome)
     }
 
-    pub fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
-        let mut outcome = SessionOutcome::default();
+    pub fn dispatch(&mut self, event: SessionEvent) -> Result<DriverOutcome, SessionError> {
+        let outcome = DriverOutcome::default();
         match event {
             SessionEvent::Command(activation) => {
                 // Stale ids (previous model) resolve to nothing and are ignored.
@@ -91,63 +149,91 @@ impl<'a> SessionDriver<'a> {
                 return self.dispatch_command(command);
             }
             SessionEvent::Keyboard { key, pressed } => {
-                if !self.policy.owns(PauseOwner::Settings)
+                if !self.policy.owns(pause_owners::SETTINGS)
                     && let Some(shortcut) = self.session.handle_keyboard_key(key, pressed)
                 {
-                    return self.dispatch(SessionEvent::Shortcut(gesture(shortcut)));
+                    return self.shortcut(gesture(shortcut));
                 }
             }
-            SessionEvent::Shortcut(gesture) => match gesture {
-                ShortcutGesture::OpenDebugger => {
-                    outcome.effect = Some(SessionEffect::NativeOpenDebugger);
-                }
-                ShortcutGesture::ToggleFullscreen => {
-                    outcome.effect = Some(SessionEffect::ToggleFullscreen);
-                }
-                ShortcutGesture::TogglePause => {
-                    return self.dispatch_command(SessionCommand::TogglePause);
-                }
-                ShortcutGesture::SaveActiveSlot => {
-                    return self.dispatch_command(SessionCommand::SaveActiveSlotOrNew);
-                }
-                ShortcutGesture::LoadActiveSlot => {
-                    return self.dispatch_command(SessionCommand::LoadActiveSlot);
-                }
-                ShortcutGesture::SelectNextSlot => {
-                    return self.dispatch_command(SessionCommand::SelectNextSlot);
-                }
-                ShortcutGesture::SelectPreviousSlot => {
-                    return self.dispatch_command(SessionCommand::SelectPreviousSlot);
-                }
-                ShortcutGesture::Reset => {
-                    return self.dispatch_command(SessionCommand::Reset);
-                }
-            },
             SessionEvent::ClearInput => self.session.clear_input(),
-            SessionEvent::SettingsOpened => {
-                if !self.policy.owns(PauseOwner::Settings) {
-                    self.session.clear_input();
-                    set_pause_owner(self.session, self.policy, PauseOwner::Settings, true);
-                    outcome.settings_changed = true;
-                }
+        }
+        Ok(outcome)
+    }
+
+    fn shortcut(&mut self, shortcut: ViewShortcut) -> Result<DriverOutcome, SessionError> {
+        let mut outcome = DriverOutcome::default();
+        match shortcut {
+            ViewShortcut::OpenDebugger => {
+                outcome.effect = Some(DriverEffect::OpenDebugger);
             }
-            SessionEvent::SettingsClosed | SessionEvent::SettingsOpenFailed => {
-                if self.policy.owns(PauseOwner::Settings) {
-                    set_pause_owner(self.session, self.policy, PauseOwner::Settings, false);
-                    outcome.settings_changed = true;
-                }
+            ViewShortcut::ToggleFullscreen => {
+                outcome.effect = Some(DriverEffect::ToggleFullscreen);
+            }
+            ViewShortcut::TogglePause => {
+                return self.dispatch_command(SessionCommand::TogglePause);
+            }
+            ViewShortcut::SaveActiveSlot => {
+                return self.dispatch_command(SessionCommand::SaveActiveSlotOrNew);
+            }
+            ViewShortcut::LoadActiveSlot => {
+                return self.dispatch_command(SessionCommand::LoadActiveSlot);
+            }
+            ViewShortcut::SelectNextSlot => {
+                return self.dispatch_command(SessionCommand::SelectNextSlot);
+            }
+            ViewShortcut::SelectPreviousSlot => {
+                return self.dispatch_command(SessionCommand::SelectPreviousSlot);
+            }
+            ViewShortcut::Reset => {
+                return self.dispatch_command(SessionCommand::Reset);
             }
         }
         Ok(outcome)
     }
+
+    /// Settings dialog opened natively: clear held input and take the
+    /// Settings hold. View-side protocol, not a framework event.
+    pub fn note_settings_opened(&mut self) -> DriverOutcome {
+        let mut outcome = DriverOutcome::default();
+        if !self.policy.owns(pause_owners::SETTINGS) {
+            self.session.clear_input();
+            set_pause_owner(self.session, self.policy, pause_owners::SETTINGS, true);
+            outcome.settings_changed = true;
+        }
+        outcome
+    }
+
+    /// Settings dialog closed (or its native creation failed): release the
+    /// Settings hold. View-side protocol, not a framework event.
+    pub fn note_settings_dismissed(&mut self) -> DriverOutcome {
+        let mut outcome = DriverOutcome::default();
+        if self.policy.owns(pause_owners::SETTINGS) {
+            set_pause_owner(self.session, self.policy, pause_owners::SETTINGS, false);
+            outcome.settings_changed = true;
+        }
+        outcome
+    }
 }
 
+/// Framework boundary entry: opaque inputs in, command outcome out.
+/// Effects and settings transitions stay in [`DriverOutcome`]; the
+/// [`crate::event`] handler uses [`dispatch_driver`] instead.
 pub fn dispatch(
     session: &mut SessionHandle,
     policy: &mut PausePolicy,
     table: &CommandTable,
     event: SessionEvent,
 ) -> Result<SessionOutcome, SessionError> {
+    dispatch_driver(session, policy, table, event).map(SessionOutcome::from)
+}
+
+/// Driver entry for view-side handlers needing effects and transitions.
+pub fn dispatch_driver(
+    session: &mut SessionHandle,
+    policy: &mut PausePolicy,
+    table: &CommandTable,
+    event: SessionEvent,
+) -> Result<DriverOutcome, SessionError> {
     SessionDriver::new(session, policy, table).dispatch(event)
 }
 
@@ -158,19 +244,29 @@ pub fn dispatch_command(
     policy: &mut PausePolicy,
     command: SessionCommand,
 ) -> Result<SessionOutcome, SessionError> {
-    SessionDriver::new(session, policy, &CommandTable::default()).dispatch_command(command)
+    SessionDriver::new(session, policy, &CommandTable::default())
+        .dispatch_command(command)
+        .map(SessionOutcome::from)
 }
 
 /// Ownership changes are retained even without a core. The execution hold gates
 /// load/apply activation before a worker can run; commands synchronize a live one.
+///
+/// Adoption policy lives here, next to the owner table: acquiring the first
+/// hold over already-suspended content adopts an explicit user hold, so a
+/// settings or modal hold never manifests as a user hold on release.
 pub fn set_pause_owner(
     session: &mut SessionHandle,
     policy: &mut PausePolicy,
     owner: PauseOwner,
     active: bool,
 ) -> SessionCommandOutcome {
+    use pause_owners::USER;
     let tick = session.tick_metrics();
-    let paused = policy.set(owner, active, tick.paused);
+    if active && !policy.paused() && tick.paused && owner != USER {
+        policy.set(USER, true);
+    }
+    let paused = policy.set(owner, active);
     session.set_execution_held(paused);
     if tick.loaded && tick.paused != paused {
         session
@@ -320,6 +416,7 @@ mod tests {
     struct TestHost {
         session: SessionHandle,
         policy: PausePolicy,
+        table: CommandTable,
         loader: Box<dyn RomLoader>,
         root: PathBuf,
     }
@@ -359,21 +456,23 @@ mod tests {
             Self {
                 session,
                 policy: PausePolicy::default(),
+                table: CommandTable::default(),
                 loader,
                 root,
             }
         }
 
-        fn dispatch_session(
-            &mut self,
-            event: SessionEvent,
-        ) -> Result<SessionOutcome, SessionError> {
-            dispatch(
+        fn driver(&mut self) -> SessionDriver<'_> {
+            SessionDriver::new(&mut self.session, &mut self.policy, &self.table)
+        }
+
+        fn dispatch_session(&mut self, event: SessionEvent) -> Result<DriverOutcome, SessionError> {
+            SessionDriver::new(
                 &mut self.session,
                 &mut self.policy,
                 &CommandTable::default(),
-                event,
             )
+            .dispatch(event)
         }
 
         fn dispatch_session_command(
@@ -383,12 +482,20 @@ mod tests {
             dispatch_command(&mut self.session, &mut self.policy, command)
         }
 
-        fn event(&mut self, event: SessionEvent) -> SessionOutcome {
+        fn event(&mut self, event: SessionEvent) -> DriverOutcome {
             self.dispatch_session(event).unwrap()
         }
 
         fn command(&mut self, command: SessionCommand) -> SessionOutcome {
             self.dispatch_session_command(command).unwrap()
+        }
+
+        fn settings_opened(&mut self) -> DriverOutcome {
+            self.driver().note_settings_opened()
+        }
+
+        fn settings_dismissed(&mut self) -> DriverOutcome {
+            self.driver().note_settings_dismissed()
         }
 
         fn owner(&mut self, owner: PauseOwner, active: bool) {
@@ -419,7 +526,7 @@ mod tests {
             apply_settings(&mut self.session, &self.policy, settings).unwrap();
         }
 
-        fn key(&mut self, key: Key, pressed: bool) -> SessionOutcome {
+        fn key(&mut self, key: Key, pressed: bool) -> DriverOutcome {
             self.event(SessionEvent::Keyboard { key, pressed })
         }
     }
@@ -437,13 +544,10 @@ mod tests {
     fn keyboard_effects_repeat_release_and_clear_are_shared() {
         let mut host = TestHost::new(false);
         for (action, effect) in [
-            (
-                ShortcutAction::OpenDebugger,
-                SessionEffect::NativeOpenDebugger,
-            ),
+            (ShortcutAction::OpenDebugger, DriverEffect::OpenDebugger),
             (
                 ShortcutAction::ToggleFullscreen,
-                SessionEffect::ToggleFullscreen,
+                DriverEffect::ToggleFullscreen,
             ),
         ] {
             host.bind(action, Key::F2);
@@ -465,30 +569,23 @@ mod tests {
         let mut host = TestHost::new(false);
         host.bind(ShortcutAction::OpenDebugger, Key::F2);
         assert!(host.key(Key::F2, true).effect.is_some());
-        assert!(!host.event(SessionEvent::SettingsClosed).settings_changed);
-        assert!(host.event(SessionEvent::SettingsOpened).settings_changed);
-        assert!(!host.event(SessionEvent::SettingsOpened).settings_changed);
+        assert!(!host.settings_dismissed().settings_changed);
+        assert!(host.settings_opened().settings_changed);
+        assert!(!host.settings_opened().settings_changed);
         assert!(host.key(Key::F2, true).effect.is_none());
-        assert!(
-            host.event(SessionEvent::SettingsOpenFailed)
-                .settings_changed
-        );
-        assert!(!host.event(SessionEvent::SettingsClosed).settings_changed);
-        assert!(
-            !host
-                .event(SessionEvent::SettingsOpenFailed)
-                .settings_changed
-        );
+        assert!(host.settings_dismissed().settings_changed);
+        assert!(!host.settings_dismissed().settings_changed);
+        assert!(!host.settings_dismissed().settings_changed);
         assert!(!host.policy.paused());
         assert!(
             host.key(Key::F2, true).effect.is_some(),
             "open cleared the previous press"
         );
         assert!(
-            host.event(SessionEvent::SettingsOpened).settings_changed,
+            host.settings_opened().settings_changed,
             "failure permits retry"
         );
-        assert!(host.event(SessionEvent::SettingsClosed).settings_changed);
+        assert!(host.settings_dismissed().settings_changed);
     }
 
     #[test]
@@ -496,7 +593,7 @@ mod tests {
         use nerust_gui_shell::session::access::{PauseControl, ResetControl, SlotIo, SlotNav};
         let mut host = TestHost::new(false);
         host.pause();
-        assert!(host.policy.owns(PauseOwner::User));
+        assert!(host.policy.owns(pause_owners::USER));
         host.resume();
         host.toggle_pause();
         host.resume();
@@ -521,7 +618,7 @@ mod tests {
         host.load_nes();
         host.bind(ShortcutAction::TogglePause, Key::F2);
         assert!(host.key(Key::F2, true).command.unwrap().executed);
-        assert!(host.policy.owns(PauseOwner::User));
+        assert!(host.policy.owns(pause_owners::USER));
         assert!(host.session.tick_metrics().paused);
         assert!(host.key(Key::F2, true).command.is_none());
         host.command(SessionCommand::Resume);
@@ -529,19 +626,19 @@ mod tests {
         assert!(!host.session.tick_metrics().paused);
         host.key(Key::F2, false);
         host.key(Key::F2, true);
-        assert!(host.policy.owns(PauseOwner::User));
+        assert!(host.policy.owns(pause_owners::USER));
     }
 
     #[test]
     fn settings_modal_focus_and_user_compose_across_real_nes_replacement_and_apply() {
         let mut host = TestHost::new(true);
         // An owner acquired with no core must gate the first load too.
-        host.event(SessionEvent::SettingsOpened);
+        host.settings_opened();
         host.load_nes();
         assert!(host.session.tick_metrics().paused);
         assert_eq!(host.session.tick_metrics().frame_counter, 0);
-        host.owner(PauseOwner::Modal, true);
-        host.owner(PauseOwner::Focus, true);
+        host.owner(pause_owners::MODAL, true);
+        host.owner(pause_owners::FOCUS, true);
         host.load_nes();
         assert!(host.session.tick_metrics().paused);
         assert_eq!(host.session.tick_metrics().frame_counter, 0);
@@ -551,12 +648,12 @@ mod tests {
         invalid.local.audio.master_volume_percent = 101;
         assert!(apply_settings(&mut host.session, &host.policy, invalid).is_err());
         assert!(host.session.tick_metrics().paused);
-        host.event(SessionEvent::SettingsClosed);
-        host.event(SessionEvent::SettingsClosed);
-        host.owner(PauseOwner::Focus, false);
+        host.settings_dismissed();
+        host.settings_dismissed();
+        host.owner(pause_owners::FOCUS, false);
         assert!(host.session.tick_metrics().paused, "modal still holds");
         host.command(SessionCommand::Pause);
-        host.owner(PauseOwner::Modal, false);
+        host.owner(pause_owners::MODAL, false);
         assert!(
             host.session.tick_metrics().paused,
             "explicit pause survives modal release"
@@ -569,22 +666,22 @@ mod tests {
     fn failed_open_rolls_back_only_settings_and_can_retry_with_real_nes() {
         let mut host = TestHost::new(true);
         host.load_nes();
-        host.owner(PauseOwner::Modal, true);
-        host.event(SessionEvent::SettingsOpened);
-        host.event(SessionEvent::SettingsOpened);
+        host.owner(pause_owners::MODAL, true);
+        host.settings_opened();
+        host.settings_opened();
         assert!(
-            !host.policy.owns(PauseOwner::User),
+            !host.policy.owns(pause_owners::USER),
             "duplicate open never adopts its own pause"
         );
-        host.event(SessionEvent::SettingsOpenFailed);
-        assert!(host.policy.owns(PauseOwner::Modal));
-        assert!(!host.policy.owns(PauseOwner::Settings));
+        host.settings_dismissed();
+        assert!(host.policy.owns(pause_owners::MODAL));
+        assert!(!host.policy.owns(pause_owners::SETTINGS));
         assert!(host.session.tick_metrics().paused);
-        host.owner(PauseOwner::Modal, false);
+        host.owner(pause_owners::MODAL, false);
         assert!(!host.session.tick_metrics().paused);
-        assert!(host.event(SessionEvent::SettingsOpened).settings_changed);
+        assert!(host.settings_opened().settings_changed);
         assert!(host.session.tick_metrics().paused);
-        host.event(SessionEvent::SettingsOpenFailed);
+        host.settings_dismissed();
         assert!(!host.session.tick_metrics().paused);
     }
 
@@ -593,18 +690,14 @@ mod tests {
         let mut host = TestHost::new(true);
         host.load_nes();
         host.session.run_command(SessionCommand::Pause).unwrap();
-        host.event(SessionEvent::SettingsOpened);
-        assert!(host.policy.owns(PauseOwner::User));
-        host.event(SessionEvent::SettingsClosed);
+        host.settings_opened();
+        assert!(host.policy.owns(pause_owners::USER));
+        host.settings_dismissed();
         assert!(host.session.tick_metrics().paused);
         host.command(SessionCommand::Resume);
         host.session.run_command(SessionCommand::Pause).unwrap();
-        assert!(!host.event(SessionEvent::SettingsClosed).settings_changed);
-        assert!(
-            !host
-                .event(SessionEvent::SettingsOpenFailed)
-                .settings_changed
-        );
+        assert!(!host.settings_dismissed().settings_changed);
+        assert!(!host.settings_dismissed().settings_changed);
         reconcile_pause(&mut host.session, &host.policy);
         assert!(
             host.session.tick_metrics().paused,
@@ -617,11 +710,11 @@ mod tests {
         let mut host = TestHost::new(true);
         host.load_nes();
         host.command(SessionCommand::Pause);
-        host.event(SessionEvent::SettingsOpened);
+        host.settings_opened();
         host.command(SessionCommand::Resume);
-        assert!(!host.policy.owns(PauseOwner::User));
+        assert!(!host.policy.owns(pause_owners::USER));
         assert!(host.session.tick_metrics().paused);
-        host.event(SessionEvent::SettingsClosed);
+        host.settings_dismissed();
         assert!(!host.session.tick_metrics().paused);
     }
 }

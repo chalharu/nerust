@@ -230,10 +230,9 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
     }
 
     fn late_liveness(&mut self) -> TurnLiveness {
-        let (loaded, paused) = self.core.liveness_inputs();
         TurnLiveness {
-            loaded,
-            paused,
+            present: self.core.content_loaded(),
+            suspended: self.core.content_suspended(),
             main_active: self.core.main_active(),
             live_follow: self.debug_widget_live_follow(),
         }
@@ -303,15 +302,15 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
             .flatten()
     }
 
-    /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
+    /// Load a file, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        match self.core.load_rom(path) {
+        match self.core.load_file(path) {
             Ok(()) => {
-                self.after_rom_load();
+                self.after_file_load();
                 Ok(())
             }
             Err(error) => {
-                log::warn!("ROM load failed: {error}");
+                log::warn!("file load failed: {error}");
                 Err(error)
             }
         }
@@ -430,7 +429,7 @@ mod tests {
         let mut host = support.host;
         host.prepare_close();
         assert!(host.core.close_exited());
-        assert!(!host.settings_open());
+        assert!(!host.core.modal_guard_active());
         // Liveness gates all dead-handle use; the native handles stay
         // for natural post-loop teardown (no re-entrant destroy).
         assert!(host.surface_target().is_none());
@@ -438,7 +437,7 @@ mod tests {
         // Second delivery (Destroyed after CloseRequested) is a
         // no-op: re-armed state proves the flush path ran only once.
         host.prepare_close();
-        assert!(!host.settings_open());
+        assert!(!host.core.modal_guard_active());
     }
 
     #[test]

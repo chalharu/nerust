@@ -30,10 +30,11 @@ use wakui_core::{
     loop_driver::WakeNeed,
     mailbox::{MailboxDomain, WindowMailbox},
     menu::{
-        CommandModel, DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar, Submenu,
+        CommandModel, FileDialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar,
+        Submenu,
     },
     pause::PauseOwner,
-    session::{CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome},
+    session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome},
     viewport::{ViewportImage, ViewportPresent, ViewportRegion},
     window::{Window, WindowChromeSync, WindowEffects},
 };
@@ -80,6 +81,30 @@ impl TestAux {
             TestAux::Ppu => "PPU Viewer",
         }
     }
+}
+
+/// Flavor-local suspension owners. The framework holds an opaque bitset;
+/// this table gives each hold its meaning in tests only.
+pub(crate) mod owners {
+    use wakui_core::pause::PauseOwner;
+
+    pub(crate) const FOCUS: PauseOwner = PauseOwner::new(1);
+    pub(crate) const MODAL: PauseOwner = PauseOwner::new(2);
+    pub(crate) const SETTINGS: PauseOwner = PauseOwner::new(3);
+}
+
+/// Flavor-local menu skeleton. The framework tracks opaque ids only;
+/// this table mirrors a view-side skeleton in tests only.
+pub(crate) mod menu_id {
+    use wakui_core::menu::MenuId;
+
+    pub(crate) const FILE: MenuId = MenuId::from_raw(0);
+    pub(crate) const EMULATION: MenuId = MenuId::from_raw(1);
+    pub(crate) const STATES: MenuId = MenuId::from_raw(2);
+    pub(crate) const SELECT_SLOT: MenuId = MenuId::from_raw(3);
+    pub(crate) const SAVE_SLOT: MenuId = MenuId::from_raw(4);
+    pub(crate) const LOAD_SLOT: MenuId = MenuId::from_raw(5);
+    pub(crate) const DELETE_SLOT: MenuId = MenuId::from_raw(6);
 }
 
 /// Flavor-local simulation vocabulary for headless tests.
@@ -582,7 +607,7 @@ fn canned_menubar() -> Menubar {
         },
         menus: vec![
             Submenu {
-                id: MenuId::File,
+                id: menu_id::FILE,
                 label: "File".to_string(),
                 enabled: true,
                 children: vec![
@@ -599,13 +624,13 @@ fn canned_menubar() -> Menubar {
                 ],
             },
             Submenu {
-                id: MenuId::Emulation,
+                id: menu_id::EMULATION,
                 label: "Emulation".to_string(),
                 enabled: true,
                 children: vec![],
             },
             Submenu {
-                id: MenuId::Help,
+                id: MenuId::from_raw(7),
                 label: "Help".to_string(),
                 enabled: true,
                 children: vec![],
@@ -675,7 +700,7 @@ impl FakeApp {
             events: Vec::new(),
             dispatched: Vec::new(),
             main: {
-                let mut window = Window::main();
+                let mut window = Window::main("test");
                 window.menu = Some(canned_menubar());
                 window
             },
@@ -796,22 +821,18 @@ pub(crate) fn debug_screen() -> ControlScreen {
 }
 
 impl EventHandler<TestAux> for FakeApp {
-    fn handle_event(
-        &mut self,
-        event: EventCommand,
-        settings_open: bool,
-    ) -> Result<EventOutcome<TestAux>, SessionError> {
+    fn handle_event(&mut self, event: EventCommand) -> Result<EventOutcome<TestAux>, SessionError> {
         self.events.push(event);
         let quit = self.commands.quit();
-        let guarded = settings_open;
+        // The modal guard is fake-owned state: direct owner manipulation
+        // (tests) blocks the same commands as a real settings session.
+        let guarded = self.modal_guard_active();
         let blocked = match event {
-            // Only the opaque Quit activation passes the host settings guard.
+            // Only the opaque Quit activation passes the modal guard.
             EventCommand::Menu(activation) => activation != quit,
-            EventCommand::Session(
-                SessionEvent::Command(_)
-                | SessionEvent::Keyboard { .. }
-                | SessionEvent::Shortcut(_),
-            ) => true,
+            // ClearInput resets held input even under the guard, like the
+            // view-side handler: only commands and keys are gated.
+            EventCommand::Session(SessionEvent::Command(_) | SessionEvent::Keyboard { .. }) => true,
             _ => false,
         };
         if guarded && blocked {
@@ -828,7 +849,7 @@ impl EventHandler<TestAux> for FakeApp {
                 };
                 match command {
                     TestMenu::Open => {
-                        outcome.effect = Some(CommandEffect::OpenRom);
+                        outcome.effect = Some(CommandEffect::OpenFile);
                     }
                     TestMenu::Close => self.unload(),
                     TestMenu::Settings => {
@@ -851,6 +872,15 @@ impl EventHandler<TestAux> for FakeApp {
                     }
                 }
             }
+            EventCommand::Session(SessionEvent::Keyboard { key, pressed }) => {
+                // Test-double shortcut: F4 opens the debugger, like the
+                // default view-side binding. Production flavors never
+                // interpret keys; meaning resolves view-side.
+                if pressed && key == wakui_core::Key::F4 {
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                }
+                outcome.session = self.dispatch(SessionEvent::Keyboard { key, pressed })?;
+            }
             EventCommand::Session(event) => {
                 outcome.session = self.dispatch(event)?;
             }
@@ -866,12 +896,6 @@ impl EventHandler<TestAux> for FakeApp {
             EventCommand::LiveTick => {
                 outcome.effect = Some(CommandEffect::LiveTick);
             }
-        }
-        if let Some(effect) = outcome.session.effect {
-            outcome.effect = Some(match effect {
-                SessionEffect::NativeOpenDebugger => CommandEffect::OpenAux(TestAux::Debug),
-                SessionEffect::ToggleFullscreen => CommandEffect::ToggleFullscreen,
-            });
         }
         Ok(outcome)
     }
@@ -923,8 +947,66 @@ impl FakeApp {
     }
 }
 
+impl FakeApp {
+    /// Test-only simulation verbs. The framework trait no longer names
+    /// these; backend tests drive the fake through this inherent block.
+    pub(crate) fn pause_session(&mut self) {
+        if self.loaded {
+            self.paused = true;
+        }
+    }
+
+    pub(crate) fn resume_session(&mut self) {
+        if self.loaded {
+            self.paused = false;
+        }
+    }
+
+    pub(crate) fn toggle_pause_session(&mut self) {
+        if self.loaded {
+            self.paused = !self.paused;
+        }
+    }
+
+    pub(crate) fn reset_session(&mut self) {}
+
+    pub(crate) fn save_active_slot(&mut self) -> bool {
+        false
+    }
+
+    pub(crate) fn load_active_slot(&mut self) -> bool {
+        false
+    }
+
+    pub(crate) fn load_slot(&mut self, _id: u64) -> bool {
+        false
+    }
+
+    pub(crate) fn save_slot(&mut self, _id: u64) {}
+
+    pub(crate) fn delete_slot(&mut self, _id: u64) {}
+
+    pub(crate) fn select_slot(&mut self, id: u64) {
+        self.active_slot = Some(id);
+    }
+
+    pub(crate) fn create_slot(&mut self) {}
+
+    pub(crate) fn select_next_slot(&mut self) {}
+
+    pub(crate) fn select_previous_slot(&mut self) {}
+
+    pub(crate) fn active_slot_id(&self) -> Option<u64> {
+        self.active_slot
+    }
+
+    pub(crate) fn history_changed(&self) -> bool {
+        true
+    }
+}
+
 impl FrontendApp<TestAux> for FakeApp {
-    fn load_rom(&mut self, path: &Path) -> Result<(), String> {
+    fn load_file(&mut self, path: &Path) -> Result<(), String> {
         self.load_paths.push(path.to_path_buf());
         if self.failing_load {
             return Err("fake load failed".to_string());
@@ -968,76 +1050,26 @@ impl FrontendApp<TestAux> for FakeApp {
         self.error = Some(detail);
     }
 
-    fn resume_session(&mut self) {
+    fn resume_content(&mut self) {
         self.paused = false;
     }
 
     fn swap_frame_buffer(&mut self) {}
 
-    fn tick_loaded(&self) -> bool {
+    fn content_loaded(&self) -> bool {
         self.loaded
     }
 
-    fn tick_paused(&self) -> bool {
+    fn content_suspended(&self) -> bool {
         self.paused || self.focus_paused
     }
 
-    fn active_slot_id(&self) -> Option<u64> {
-        self.active_slot
-    }
-
-    fn clear_keys(&mut self) {}
+    fn clear_input(&mut self) {}
 
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
         self.window_size = (width as f32, height as f32);
         Ok(())
     }
-
-    fn pause_session(&mut self) {
-        if self.loaded {
-            self.paused = true;
-        }
-    }
-
-    fn resume_session_command(&mut self) {
-        if self.loaded {
-            self.paused = false;
-        }
-    }
-
-    fn toggle_pause_session(&mut self) {
-        if self.loaded {
-            self.paused = !self.paused;
-        }
-    }
-
-    fn reset_session(&mut self) {}
-
-    fn save_active_slot(&mut self) -> bool {
-        false
-    }
-
-    fn load_active_slot(&mut self) -> bool {
-        false
-    }
-
-    fn load_slot(&mut self, _id: u64) -> bool {
-        false
-    }
-
-    fn save_slot(&mut self, _id: u64) {}
-
-    fn delete_slot(&mut self, _id: u64) {}
-
-    fn select_slot(&mut self, id: u64) {
-        self.active_slot = Some(id);
-    }
-
-    fn create_slot(&mut self) {}
-
-    fn select_next_slot(&mut self) {}
-
-    fn select_previous_slot(&mut self) {}
 
     fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
         if active {
@@ -1058,8 +1090,7 @@ impl FrontendApp<TestAux> for FakeApp {
     fn reconcile_pause(&mut self) {}
 
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
-        use wakui_core::session::ShortcutGesture;
-        let mut outcome = SessionOutcome::default();
+        let outcome = SessionOutcome::default();
         match event {
             SessionEvent::Command(activation) => {
                 let Some(TestMenu::Session(session)) = self.commands.resolve(activation) else {
@@ -1068,48 +1099,20 @@ impl FrontendApp<TestAux> for FakeApp {
                 return self.dispatch_session(session);
             }
             SessionEvent::Keyboard { .. } => {}
-            SessionEvent::Shortcut(gesture) => match gesture {
-                ShortcutGesture::OpenDebugger => {
-                    outcome.effect = Some(SessionEffect::NativeOpenDebugger);
-                }
-                ShortcutGesture::ToggleFullscreen => {
-                    outcome.effect = Some(SessionEffect::ToggleFullscreen);
-                }
-                ShortcutGesture::TogglePause => {
-                    return self.dispatch_session(TestSession::TogglePause);
-                }
-                ShortcutGesture::SaveActiveSlot => {
-                    return self.dispatch_session(TestSession::SaveActiveSlotOrNew);
-                }
-                ShortcutGesture::LoadActiveSlot => {
-                    return self.dispatch_session(TestSession::LoadActiveSlot);
-                }
-                ShortcutGesture::SelectNextSlot => {
-                    return self.dispatch_session(TestSession::SelectNextSlot);
-                }
-                ShortcutGesture::SelectPreviousSlot => {
-                    return self.dispatch_session(TestSession::SelectPreviousSlot);
-                }
-                ShortcutGesture::Reset => {
-                    return self.dispatch_session(TestSession::Reset);
-                }
-            },
             SessionEvent::ClearInput => {}
-            SessionEvent::SettingsOpened | SessionEvent::SettingsOpenFailed => {}
-            SessionEvent::SettingsClosed => {}
         }
         Ok(outcome)
     }
 
-    fn dialog_titles(&self) -> DialogTitles {
-        DialogTitles {
-            open: "Open ROM".to_string(),
+    fn dialog_titles(&self) -> FileDialogTitles {
+        FileDialogTitles {
+            open: "Open file".to_string(),
             error: "Error".to_string(),
-            rom_load_failed: "ROM load failed".to_string(),
+            load_failed: "File load failed".to_string(),
         }
     }
 
-    fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
+    fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
         if self.loaded {
             vec![("ROM files".to_string(), vec!["nes".to_string()])]
         } else {
@@ -1117,11 +1120,8 @@ impl FrontendApp<TestAux> for FakeApp {
         }
     }
 
-    fn menubar_update(
-        &mut self,
-        settings_open: bool,
-        _capabilities: MenuCapabilities,
-    ) -> Option<Menubar> {
+    fn menubar_update(&mut self, _capabilities: MenuCapabilities) -> Option<Menubar> {
+        let settings_open = self.owners.contains(&owners::SETTINGS);
         self.menu_polls += 1;
         let gate = (
             settings_open,
@@ -1191,10 +1191,6 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn remembered_window_size(&self) -> Option<(u32, u32)> {
         self.remembered_size
-    }
-
-    fn liveness_inputs(&self) -> (bool, bool) {
-        (self.loaded, self.paused)
     }
 
     fn focus_event(&mut self, _event: FocusEvent) -> Option<FocusEffect> {
@@ -1476,20 +1472,12 @@ impl FrontendApp<TestAux> for FakeApp {
         })
     }
 
-    fn settings_closed(&mut self) -> bool {
-        true
-    }
-
     fn report_host_error(&mut self, detail: String) {
         self.history_notes.push(detail.clone());
         self.error_queue.push_back(detail);
     }
 
-    fn history_changed(&self) -> bool {
-        true
-    }
-
-    fn settings_open(&self) -> bool {
+    fn modal_guard_active(&self) -> bool {
         self.widget_kinds
             .values()
             .any(|kind| *kind == TestAux::Settings)
@@ -1573,7 +1561,7 @@ impl FrontendApp<TestAux> for FakeApp {
             match receiver.try_recv() {
                 Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.modal = None;
-                    self.owners.remove(&PauseOwner::Modal);
+                    self.owners.remove(&owners::MODAL);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
@@ -1606,7 +1594,7 @@ impl FrontendApp<TestAux> for FakeApp {
             && *active == token
         {
             *slot = Some(receiver);
-            self.owners.insert(PauseOwner::Modal);
+            self.owners.insert(owners::MODAL);
             return true;
         }
         false
@@ -1617,7 +1605,7 @@ impl FrontendApp<TestAux> for FakeApp {
             && *active == token
         {
             self.modal = None;
-            self.owners.remove(&PauseOwner::Modal);
+            self.owners.remove(&owners::MODAL);
             return ModalAdvance::Drained;
         }
         ModalAdvance::Ignored
@@ -1730,24 +1718,20 @@ impl SharedApp {
     pub(crate) fn new(inner: Rc<RefCell<FakeApp>>) -> Self {
         Self {
             inner,
-            main: Window::main(),
+            main: Window::main("test"),
         }
     }
 }
 
 impl EventHandler<TestAux> for SharedApp {
-    fn handle_event(
-        &mut self,
-        event: EventCommand,
-        settings_open: bool,
-    ) -> Result<EventOutcome<TestAux>, SessionError> {
-        self.inner.borrow_mut().handle_event(event, settings_open)
+    fn handle_event(&mut self, event: EventCommand) -> Result<EventOutcome<TestAux>, SessionError> {
+        self.inner.borrow_mut().handle_event(event)
     }
 }
 
 impl FrontendApp<TestAux> for SharedApp {
-    fn load_rom(&mut self, path: &Path) -> Result<(), String> {
-        self.inner.borrow_mut().load_rom(path)
+    fn load_file(&mut self, path: &Path) -> Result<(), String> {
+        self.inner.borrow_mut().load_file(path)
     }
     fn unload(&mut self) {
         self.inner.borrow_mut().unload()
@@ -1767,65 +1751,23 @@ impl FrontendApp<TestAux> for SharedApp {
     fn fail_window(&mut self, detail: String) {
         self.inner.borrow_mut().fail_window(detail)
     }
-    fn resume_session(&mut self) {
-        self.inner.borrow_mut().resume_session()
+    fn resume_content(&mut self) {
+        self.inner.borrow_mut().resume_content()
     }
     fn swap_frame_buffer(&mut self) {
         self.inner.borrow_mut().swap_frame_buffer()
     }
-    fn tick_loaded(&self) -> bool {
-        self.inner.borrow().tick_loaded()
+    fn content_loaded(&self) -> bool {
+        self.inner.borrow().content_loaded()
     }
-    fn tick_paused(&self) -> bool {
-        self.inner.borrow().tick_paused()
+    fn content_suspended(&self) -> bool {
+        self.inner.borrow().content_suspended()
     }
-    fn active_slot_id(&self) -> Option<u64> {
-        self.inner.borrow().active_slot_id()
-    }
-    fn clear_keys(&mut self) {
-        self.inner.borrow_mut().clear_keys()
+    fn clear_input(&mut self) {
+        self.inner.borrow_mut().clear_input()
     }
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
         self.inner.borrow_mut().update_window_size(width, height)
-    }
-    fn pause_session(&mut self) {
-        self.inner.borrow_mut().pause_session()
-    }
-    fn resume_session_command(&mut self) {
-        self.inner.borrow_mut().resume_session_command()
-    }
-    fn toggle_pause_session(&mut self) {
-        self.inner.borrow_mut().toggle_pause_session()
-    }
-    fn reset_session(&mut self) {
-        self.inner.borrow_mut().reset_session()
-    }
-    fn save_active_slot(&mut self) -> bool {
-        self.inner.borrow_mut().save_active_slot()
-    }
-    fn load_active_slot(&mut self) -> bool {
-        self.inner.borrow_mut().load_active_slot()
-    }
-    fn load_slot(&mut self, id: u64) -> bool {
-        self.inner.borrow_mut().load_slot(id)
-    }
-    fn save_slot(&mut self, id: u64) {
-        self.inner.borrow_mut().save_slot(id)
-    }
-    fn delete_slot(&mut self, id: u64) {
-        self.inner.borrow_mut().delete_slot(id)
-    }
-    fn select_slot(&mut self, id: u64) {
-        self.inner.borrow_mut().select_slot(id)
-    }
-    fn create_slot(&mut self) {
-        self.inner.borrow_mut().create_slot()
-    }
-    fn select_next_slot(&mut self) {
-        self.inner.borrow_mut().select_next_slot()
-    }
-    fn select_previous_slot(&mut self) {
-        self.inner.borrow_mut().select_previous_slot()
     }
     fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
         self.inner.borrow_mut().set_pause_owner(owner, active)
@@ -1842,20 +1784,14 @@ impl FrontendApp<TestAux> for SharedApp {
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         self.inner.borrow_mut().dispatch(event)
     }
-    fn dialog_titles(&self) -> DialogTitles {
+    fn dialog_titles(&self) -> FileDialogTitles {
         self.inner.borrow().dialog_titles()
     }
-    fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
-        self.inner.borrow().rom_dialog_filters()
+    fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
+        self.inner.borrow().file_dialog_filters()
     }
-    fn menubar_update(
-        &mut self,
-        settings_open: bool,
-        capabilities: MenuCapabilities,
-    ) -> Option<Menubar> {
-        self.inner
-            .borrow_mut()
-            .menubar_update(settings_open, capabilities)
+    fn menubar_update(&mut self, capabilities: MenuCapabilities) -> Option<Menubar> {
+        self.inner.borrow_mut().menubar_update(capabilities)
     }
     fn main_window(&self) -> &Window {
         // SAFETY: the borrow lives in the `Rc`; callers must not hold it
@@ -1902,9 +1838,6 @@ impl FrontendApp<TestAux> for SharedApp {
     }
     fn remembered_window_size(&self) -> Option<(u32, u32)> {
         self.inner.borrow().remembered_window_size()
-    }
-    fn liveness_inputs(&self) -> (bool, bool) {
-        self.inner.borrow().liveness_inputs()
     }
     fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
         self.inner.borrow_mut().focus_event(event)
@@ -1979,17 +1912,11 @@ impl FrontendApp<TestAux> for SharedApp {
     ) -> Option<WidgetCloseOutcome> {
         self.inner.borrow_mut().close_widget(registry, id, close)
     }
-    fn settings_closed(&mut self) -> bool {
-        self.inner.borrow_mut().settings_closed()
-    }
     fn report_host_error(&mut self, detail: String) {
         self.inner.borrow_mut().report_host_error(detail)
     }
-    fn history_changed(&self) -> bool {
-        self.inner.borrow().history_changed()
-    }
-    fn settings_open(&self) -> bool {
-        self.inner.borrow().settings_open()
+    fn modal_guard_active(&self) -> bool {
+        self.inner.borrow().modal_guard_active()
     }
     fn polled_widget(&self) -> Option<AuxId> {
         self.inner.borrow().polled_widget()
