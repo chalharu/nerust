@@ -10,22 +10,28 @@
 use crate::scene::control::ControlDisplay;
 use crate::scene::hints::LayoutHints;
 
-/// Unresolved string reference. Resolution is always outer-owned:
-/// literals pass through, `Localized` goes to the resolver's text table,
+/// Unresolved string reference. Resolution is always outer-owned.
+/// `Localized` reads the caption table, `Dynamic` reads live screen values
+/// (input echoes, computed labels); both resolve through
+/// [`crate::scene::inflate::Texts`].
 /// `Field` reads one row item field inside a list template.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Binding {
     Literal(String),
     Localized(String),
+    Dynamic(String),
     Field(String),
 }
 
-/// Unresolved flag reference. `Flag` reads outer boolean state through
-/// [`crate::scene::inflate::Flags`]; literals pass through.
+/// Unresolved flag reference. `Literal` passes through, `Flag` reads
+/// outer boolean state through [`crate::scene::inflate::Flags`], and `Field`
+/// reads a per-item boolean inside a list template (screen-level use
+/// degrades to false, mirroring `Binding::Field`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BoolBinding {
     Literal(bool),
     Flag(String),
+    Field(String),
 }
 
 /// Choice list content: fixed literals or an outer-owned source.

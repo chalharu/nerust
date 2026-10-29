@@ -91,6 +91,7 @@ impl<T: Texts + Flags + Lists + Choices + CustomLeaves> Resolver for T {}
 /// Frame-persistent expansion state. Owns the [`IdRegistry`] so surviving
 /// keys keep stable IDs, and remembers row-managed keys so vanished rows
 /// stop consuming identity without touching chrome keys.
+#[derive(Debug)]
 pub struct InflateCtx<K: Eq> {
     /// Registry shared with hand-built screens during migration.
     pub ids: IdRegistry<K>,
@@ -161,6 +162,18 @@ struct Row<'a> {
     index: usize,
 }
 
+/// Key-string constructors shared with outer crates. Event tables rebuild
+/// row control IDs through these instead of duplicating the namespace
+/// format; row projection builds keys the same way.
+pub fn row_key(source: &str, identity: &str, occurrence: usize) -> String {
+    format!("{source}/{identity}#{occurrence}")
+}
+
+/// Cell key nested under its row namespace.
+pub fn cell_key(row: &str, cell: &str) -> String {
+    format!("{row}/{cell}")
+}
+
 fn value_text(value: &Value) -> String {
     match value {
         Value::Text(text) => text.clone(),
@@ -172,7 +185,7 @@ fn value_text(value: &Value) -> String {
 fn text_of(binding: &Binding, resolver: &dyn Resolver, row: Option<Row<'_>>) -> String {
     match binding {
         Binding::Literal(text) => text.clone(),
-        Binding::Localized(key) => resolver.text(key),
+        Binding::Localized(key) | Binding::Dynamic(key) => resolver.text(key),
         Binding::Field(path) => match row {
             Some(cell) => value_text(&cell.lists.value(cell.source, cell.index, path)),
             None => {
@@ -183,10 +196,20 @@ fn text_of(binding: &Binding, resolver: &dyn Resolver, row: Option<Row<'_>>) -> 
     }
 }
 
-fn flag_of(binding: &BoolBinding, resolver: &dyn Resolver) -> bool {
+fn flag_of(binding: &BoolBinding, resolver: &dyn Resolver, row: Option<Row<'_>>) -> bool {
     match binding {
         BoolBinding::Literal(flag) => *flag,
         BoolBinding::Flag(key) => resolver.flag(key),
+        BoolBinding::Field(path) => match row {
+            Some(cell) => matches!(
+                cell.lists.value(cell.source, cell.index, path),
+                Value::Bool(true)
+            ),
+            None => {
+                log::debug!("L1 flag Field outside a row template is false");
+                false
+            }
+        },
     }
 }
 
@@ -225,7 +248,7 @@ fn project_rows<K: Eq + Clone>(
         let identity = value_text(&lists.value(source, index, &template.id_field));
         let occurrence = seen.get(&identity).copied().unwrap_or(0);
         seen.insert(identity.clone(), occurrence + 1);
-        let namespace = format!("{source}/{identity}#{occurrence}");
+        let namespace = row_key(source, &identity, occurrence);
         let row_key = key(&namespace);
         live.push(row_key.clone());
         let row_id = ids.id(row_key);
@@ -266,8 +289,8 @@ fn build_control<K: Eq + Clone>(
 ) -> Control {
     let label = text_of(&def.label, resolver, row);
     let mut metadata = ControlMetadata::new(label.clone());
-    metadata.enabled = flag_of(&def.enabled, resolver);
-    metadata.visible = flag_of(&def.visible, resolver);
+    metadata.enabled = flag_of(&def.enabled, resolver, row);
+    metadata.visible = flag_of(&def.visible, resolver, row);
     metadata.hints = def.hints;
     Control {
         id,
@@ -293,7 +316,7 @@ fn build_leaf<K: Eq + Clone>(
         }),
         LeafDef::Action => Box::new(ActionLeaf),
         LeafDef::Toggle { value } => Box::new(ToggleLeaf {
-            value: flag_of(value, resolver),
+            value: flag_of(value, resolver, row),
         }),
         LeafDef::Choice { choices, selected } => {
             let items = match choices {
@@ -347,7 +370,9 @@ fn build_leaf<K: Eq + Clone>(
                 .iter()
                 .map(|(name, binding)| match binding {
                     Binding::Literal(text) => (name.clone(), Value::Text(text.clone())),
-                    Binding::Localized(key) => (name.clone(), Value::Text(resolver.text(key))),
+                    Binding::Localized(key) | Binding::Dynamic(key) => {
+                        (name.clone(), Value::Text(resolver.text(key)))
+                    }
                     Binding::Field(path) => (
                         name.clone(),
                         match row {
