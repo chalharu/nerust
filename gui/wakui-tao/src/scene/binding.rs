@@ -79,7 +79,8 @@ impl ControlsBinding {
     }
 
     /// Whether the prepared screen is still waiting for its one boot move.
-    /// Native hosts assert handoff without touching the queued state.
+    /// Test-only handoff probe; native hosts never read this.
+    #[cfg(test)]
     pub fn boot_pending(&self) -> bool {
         self.initial.borrow().is_some()
     }

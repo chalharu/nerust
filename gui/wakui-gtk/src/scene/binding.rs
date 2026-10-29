@@ -74,17 +74,20 @@ impl WidgetBinding {
         screen.visit(&mut ControlGtkVisitor::new(self));
     }
 
-    /// Owned snapshot of the currently retained screen.
+    /// Owned snapshot of the currently retained screen (test probe).
+    #[cfg(test)]
     pub fn screen_snapshot(&self) -> ControlScreen {
         self.screen.borrow().clone()
     }
 
-    /// Retained widget registry for host-driven pumps and assertions.
+    /// Retained widget registry for test pumps and assertions.
+    #[cfg(test)]
     pub fn registry(&self) -> std::cell::Ref<'_, super::render::Registry> {
         self.registry.borrow()
     }
 
-    /// Page stack for host-driven page selection.
+    /// Page stack for test-driven page selection.
+    #[cfg(test)]
     pub fn stack(&self) -> gtk::Stack {
         self.stack.clone()
     }

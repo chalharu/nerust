@@ -2,21 +2,21 @@
 //!
 //! Framework-only: depends on `wakui` plus the iced/tao toolkits.
 //! Never on view definitions, sessions, or settings. Native frontends
-//! render [`wakui_core::scene::control::ControlScreen`] snapshots through
-//! [`scene::render`], adapt them to host windows through
-//! [`scene::binding`], and map native input through [`input`].
+//! render control snapshots, adapt them to host windows, and map native
+//! input; all of that machinery is crate-internal.
 //!
 //! A third-party app builds UI with `wakui` plus this crate only:
-//! see `examples/backend_smoke.rs`. The entry point is [`run`]; the
-//! composition root injects a boxed [`wakui_core::app::boundary::FrontendApp`].
+//! see `examples/backend_smoke.rs`. The entry points are [`run`] and
+//! [`show_message_dialog`], plus [`register`] for the backend registry;
+//! the composition root injects a boxed [`wakui_core::app::boundary::FrontendApp`].
 
-pub mod app;
-pub mod backend;
-pub mod event_sink;
-pub mod input;
-pub mod ports;
+pub(crate) mod app;
+pub(crate) mod backend;
+pub(crate) mod event_sink;
+pub(crate) mod input;
+pub(crate) mod ports;
 
-pub mod scene;
+pub(crate) mod scene;
 
 pub(crate) mod chrome;
 pub(crate) mod flow;
@@ -40,7 +40,7 @@ pub(crate) mod test_opener;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-pub use backend::{TaoBackend, register};
+pub use backend::register;
 
 use wakui_core::app::boundary::Application;
 use wakui_core::app::boundary::LaunchArguments;

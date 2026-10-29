@@ -1,13 +1,17 @@
 //! Backend registration for the gtk4 platform handler.
 
-use wakui_core::app::backend::{Backend, BackendRegistry};
+#[cfg(test)]
+use wakui_core::app::backend::Backend;
+use wakui_core::app::backend::BackendRegistry;
 
 /// Stable backend name used for composition-root selection.
-pub const NAME: &str = "gtk";
+pub(crate) const NAME: &str = "gtk";
 
-/// Marker backend proving the gtk4 handler contract.
-pub struct GtkBackend;
+/// Marker backend proving the gtk4 handler contract (test-only proof).
+#[cfg(test)]
+pub(crate) struct GtkBackend;
 
+#[cfg(test)]
 impl Backend for GtkBackend {
     fn name(&self) -> &'static str {
         NAME
