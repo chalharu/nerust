@@ -4,19 +4,19 @@
 //! sessions, or settings. Policy flows solely through
 //! [`wakui_core::app::boundary::FrontendApp`], injected as a boxed host at [`run`].
 //!
-//! Native frontends retain [`scene::binding`] dialogs from
-//! [`wakui_core::scene::control::ControlScreen`] snapshots, interpret them through the
-//! retained [`scene::render`], and map native input through [`input::keyboard`].
+//! Native frontends retain control dialogs from control snapshots,
+//! interpret them, and map native input; all of that machinery is
+//! crate-internal.
 //!
 //! Dialog lifecycle helpers live in `chrome::dialogs`. Modal presentation
 //! stays native; the host retains the queue and stale-ACK checks.
 
-pub mod backend;
+pub(crate) mod backend;
 
-pub mod scene;
+pub(crate) mod scene;
 
 pub(crate) mod chrome;
-pub mod input;
+pub(crate) mod input;
 
 mod gdk_raw;
 #[cfg(test)]
@@ -24,7 +24,7 @@ pub(crate) mod test_support;
 #[cfg(test)]
 pub(crate) mod testkit;
 
-pub use backend::{GtkBackend, register};
+pub use backend::register;
 pub use chrome::dialogs::show_message_dialog;
 
 use std::{cell::RefCell, path::Path, rc::Rc};
