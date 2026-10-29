@@ -1,4 +1,4 @@
-//! Headless fake app: canned [`wakui::app::FrontendApp`] for backend tests.
+//! Headless fake app: canned [`wakui_core::app::FrontendApp`] for backend tests.
 //!
 //! Production code never touches this module. The fake owns canned settings
 //! and history screens (stable English labels mirroring the real catalog),
@@ -12,7 +12,7 @@ use std::{
     time::Instant,
 };
 
-use wakui::{
+use wakui_core::{
     app::{FrontendApp, WidgetCloseOutcome},
     aux::{AuxId, AuxRegistryPort, OpenRequest},
     control::{
@@ -152,7 +152,11 @@ impl MailboxDomain for FakeDomain {
     }
 }
 
-fn control(label: &str, display: ControlDisplay, kind: impl wakui::leaf::ControlLeaf) -> Control {
+fn control(
+    label: &str,
+    display: ControlDisplay,
+    kind: impl wakui_core::leaf::ControlLeaf,
+) -> Control {
     Control {
         id: Id::fresh(),
         label: label.to_string(),
@@ -401,7 +405,7 @@ pub(crate) fn canned_menubar(
     japanese: bool,
     loaded: bool,
 ) -> Menubar {
-    use wakui::commands::{CommandId, DECLARATIONS, MenuCommand, NativeRole, SessionCommand};
+    use wakui_core::commands::{CommandId, DECLARATIONS, MenuCommand, NativeRole, SessionCommand};
     let t = |en: &str, ja: &str| {
         if japanese {
             ja.to_string()
@@ -433,7 +437,7 @@ pub(crate) fn canned_menubar(
     };
     let definitions = DECLARATIONS
         .iter()
-        .map(|(id, _, command)| wakui::commands::CommandDescriptor {
+        .map(|(id, _, command)| wakui_core::commands::CommandDescriptor {
             id: *id,
             parameter: command.parameter(),
             enabled: (!needs_core(id) || loaded) && !(slots.is_empty() && slot_command(id)),
@@ -682,7 +686,7 @@ impl EventHandler<TestAux> for FakeApp {
         event: EventCommand,
         settings_open: bool,
     ) -> Result<EventOutcome<TestAux>, SessionError> {
-        use wakui::commands::{MenuCommand, NativeRole};
+        use wakui_core::commands::{MenuCommand, NativeRole};
         self.events.push(event);
         // The host pause guard also applies without an aux reservation:
         // direct owner manipulation (tests) blocks the same commands.
@@ -889,8 +893,8 @@ impl FrontendApp<TestAux> for FakeApp {
     fn reconcile_pause(&mut self) {}
 
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
-        use wakui::commands::SessionCommand;
-        use wakui::session::ShortcutGesture;
+        use wakui_core::commands::SessionCommand;
+        use wakui_core::session::ShortcutGesture;
         let mut outcome = SessionOutcome::default();
         match event {
             SessionEvent::Command(command) => {
@@ -993,7 +997,7 @@ impl FrontendApp<TestAux> for FakeApp {
         if settings_open {
             // Host settings guard: only Quit stays available while the
             // settings dialog owns the pause.
-            use wakui::commands::{CommandId, MenuCommand, NativeRole};
+            use wakui_core::commands::{CommandId, MenuCommand, NativeRole};
             for descriptor in &mut live.commands.definitions {
                 descriptor.enabled = descriptor.id == CommandId::Quit;
             }
@@ -1195,7 +1199,7 @@ impl FrontendApp<TestAux> for FakeApp {
         &mut self,
         id: AuxId,
         event: ControlEvent,
-    ) -> Vec<wakui::control::ControlEffect> {
+    ) -> Vec<wakui_core::control::ControlEffect> {
         self.dispatched.push((id, event.clone()));
         let Some(screen) = self.widget_screens.get_mut(&id) else {
             return Vec::new();
@@ -1326,7 +1330,7 @@ impl FrontendApp<TestAux> for FakeApp {
                 .downcast::<TextLeaf>()
                 .is_some_and(|leaf| leaf.browse_label.is_some())
             {
-                return vec![wakui::control::ControlEffect::PickDirectory {
+                return vec![wakui_core::control::ControlEffect::PickDirectory {
                     title: control.label.clone(),
                     target,
                     request: Id::fresh(),

@@ -3,16 +3,16 @@
 //! input through the backend, and runs the framework conformance kit.
 //! Run with `cargo run -p wakui-tao --example backend_smoke`.
 
-use wakui::backend::BackendRegistry;
-use wakui::binding::PickerSink;
-use wakui::conformance::{ConformanceBackend, conformance_screen, run_conformance};
-use wakui::control::ControlVisitor;
+use wakui_core::backend::BackendRegistry;
+use wakui_core::binding::PickerSink;
+use wakui_core::conformance::{ConformanceBackend, conformance_screen, run_conformance};
+use wakui_core::control::ControlVisitor;
 use wakui_tao::{controls, keyboard, register};
 
 struct Printer;
 
 impl ControlVisitor for Printer {
-    fn control(&mut self, control: &wakui::control::Control) {
+    fn control(&mut self, control: &wakui_core::control::Control) {
         println!("control: {}", control.label);
     }
 }
@@ -20,8 +20,8 @@ impl ControlVisitor for Printer {
 impl PickerSink<String> for Printer {
     fn submit(
         &mut self,
-        _target: wakui::control::ControlId,
-        _request: wakui::control::Id,
+        _target: wakui_core::control::ControlId,
+        _request: wakui_core::control::Id,
         _payload: Option<String>,
     ) {
     }
@@ -39,7 +39,7 @@ fn main() {
     let physical = iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter);
     assert_eq!(
         keyboard::key_from_physical(physical),
-        Some(wakui::Key::Enter)
+        Some(wakui_core::Key::Enter)
     );
 
     // Registry selection prefers the explicit backend.

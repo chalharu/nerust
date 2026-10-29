@@ -7,7 +7,7 @@ use iced::{
         row, scrollable, slider, text, text_input,
     },
 };
-use wakui::{
+use wakui_core::{
     control::{
         Container, Control, ControlDisplay, ControlInput, ControlMetadata, ControlScreen,
         ControlVisitor, GroupPolicy, Page, RowPolicy, Tab, TablePolicy, Tabs, policy,
@@ -23,7 +23,7 @@ use crate::binding::{El, Message};
 
 /// All labels and callback IDs are owned; the snapshot may be dropped.
 #[cfg(test)]
-pub fn build(window: &wakui::window::Window) -> El<'static> {
+pub fn build(window: &wakui_core::window::Window) -> El<'static> {
     let mut visitor = ControlsWindowVisitor::default();
     window.visit(&mut visitor);
     visitor
@@ -38,7 +38,7 @@ struct ControlsWindowVisitor {
 }
 
 #[cfg(test)]
-impl wakui::window::WindowVisitor for ControlsWindowVisitor {
+impl wakui_core::window::WindowVisitor for ControlsWindowVisitor {
     fn visit_controls(&mut self, screen: &ControlScreen) {
         self.output = Some(build_screen(screen));
     }
@@ -322,7 +322,7 @@ impl ControlVisitor for IcedControlVisitor {
             self.append(control_element(control, frame.enabled, self.font));
             // Container-like leaves degrade flat in immediate mode.
             // Base leaves no-op here.
-            let ctx = wakui::leaf::LeafCtx {
+            let ctx = wakui_core::leaf::LeafCtx {
                 id: control.id,
                 hints: control.metadata.hints,
             };
@@ -559,11 +559,11 @@ mod tests {
         Event, Point, Rectangle, Size,
         advanced::{Shell, layout, mouse, widget::Tree},
     };
-    use wakui::control::{
+    use wakui_core::control::{
         Capture, ColumnPolicy, Container, ControlDisplay, ControlEvent, ControlId, ControlMetadata,
         Id, Node, Page,
     };
-    use wakui::leaf::ActionLeaf;
+    use wakui_core::leaf::ActionLeaf;
 
     fn action_control(label: &str) -> Control {
         Control {

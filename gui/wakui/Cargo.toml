@@ -7,10 +7,13 @@ name = "wakui"
 rust-version.workspace = true
 version.workspace = true
 
-[dependencies]
-log.workspace = true
-raw-window-handle.workspace = true
-serde = { features = ["derive"], workspace = true }
+[features]
+default = ["wakui_default"]
+gtk = ["wakui_gtk"]
+tao = ["wakui_tao"]
 
-[dev-dependencies]
-strum.workspace = true
+[dependencies]
+wakui_core.workspace = true
+wakui_gtk = { optional = true, workspace = true }
+wakui_tao = { optional = true, workspace = true }
+wakui_default = { optional = true, workspace = true }

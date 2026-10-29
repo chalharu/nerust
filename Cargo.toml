@@ -30,6 +30,7 @@ members = [
   "gui/shell",
   "gui/viewmodel",
   "gui/wakui",
+  "gui/wakui-core",
   "gui/wakui-gtk",
   "gui/wakui-tao",
   "crash-guard",
@@ -73,10 +74,9 @@ clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
-wakui-gtk = { optional = true, workspace = true }
 nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
-nerust_crash_guard = { optional = true, workspace = true }
+nerust_crash_guard.workspace = true
 nerust_gui_shell.workspace = true
 wakui.workspace = true
 nerust_gbc_factory = { optional = true, workspace = true }
@@ -89,7 +89,6 @@ nerust_render_wgpu = { optional = true, workspace = true }
 nerust_run_options.workspace = true
 nerust_sound_cpal = { optional = true, workspace = true }
 nerust_sound_cubeb = { optional = true, workspace = true }
-wakui-tao = { optional = true, workspace = true }
 simple_logger.workspace = true
 
 [dev-dependencies]
@@ -97,16 +96,16 @@ nerust_gba_core.workspace = true
 nerust_settings_core.workspace = true
 
 [features]
-default = ["nes", "gbc", "gba", "wgpu"]
+default = ["nes", "gbc", "gba", "wgpu", "cpal", "cubeb", "wakui/default"]
 cpal = ["nerust_sound_cpal"]
 cubeb = ["nerust_sound_cubeb"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["wakui-gtk", "nerust_crash_guard", "cpal", "cubeb"]
+gtk = ["wakui/gtk"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["wakui-tao", "nerust_crash_guard", "cpal", "cubeb"]
+tao = ["wakui/tao"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
@@ -272,9 +271,11 @@ tao = { version = "=0.37.2" }
 thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }
-wakui = { path = "gui/wakui" }
-wakui-gtk = { path = "gui/wakui-gtk" }
-wakui-tao = { path = "gui/wakui-tao" }
+wakui = { path = "gui/wakui", default-features = false }
+wakui_core = { path = "gui/wakui-core" }
+wakui_default = { path = "gui/wakui-default" }
+wakui_gtk = { path = "gui/wakui-gtk" }
+wakui_tao = { path = "gui/wakui-tao" }
 wgpu = { version = "=30.0.1" }
 winit = { version = "=0.30.13" }
 zerocopy = { features = ["derive"], version = "=0.8.63" }

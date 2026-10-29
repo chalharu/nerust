@@ -10,7 +10,7 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use wakui::aux::AuxId;
+use wakui_core::aux::AuxId;
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
     pub(super) fn on_main_event(
@@ -30,13 +30,13 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
                 // Focus truth plus resume only; chrome sync and drains
                 // stay deferred to the tick burst (one pass, one capture).
                 self.host
-                    .on_focus_event(wakui::focus::FocusEvent::Main(true));
+                    .on_focus_event(wakui_core::focus::FocusEvent::Main(true));
                 self.host.request_redraw();
             }
             WindowEvent::Focused(false) => {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
                 self.host
-                    .on_focus_event(wakui::focus::FocusEvent::Main(false));
+                    .on_focus_event(wakui_core::focus::FocusEvent::Main(false));
                 self.host.core.clear_keys();
             }
             WindowEvent::Resized(_) => {
@@ -128,8 +128,8 @@ mod tests {
     fn open_widget(
         runtime: &mut WindowRuntime<TestAux>,
         kind: TestAux,
-    ) -> Option<wakui::aux::AuxId> {
-        use wakui::aux::OpenRequest;
+    ) -> Option<wakui_core::aux::AuxId> {
+        use wakui_core::aux::OpenRequest;
         let id = runtime
             .host
             .reserve_aux_window(kind)
@@ -189,7 +189,7 @@ mod tests {
         // Menu Quit returns the exit intent only: host teardown waits.
         assert_eq!(
             runtime.host.on_menu_command(
-                MenuCommand::Native(wakui::commands::NativeRole::Quit),
+                MenuCommand::Native(wakui_core::commands::NativeRole::Quit),
                 &opener
             ),
             HostAction::Exit
@@ -271,7 +271,7 @@ mod tests {
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
         // Unknown id: routing finds nothing, menu untouched.
-        let id = wakui::aux::AuxId::from_raw(9999);
+        let id = wakui_core::aux::AuxId::from_raw(9999);
         runtime.on_aux_event(id, WindowEvent::Destroyed, &opener);
         assert!(menu.updates().is_empty());
     }
@@ -297,7 +297,7 @@ mod tests {
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
         runtime.host.core.note_main_departure();
-        let id = wakui::aux::AuxId::from_raw(9999);
+        let id = wakui_core::aux::AuxId::from_raw(9999);
         runtime.on_aux_event(id, WindowEvent::Focused(true), &opener);
         assert!(menu.updates().is_empty());
         assert!(opener.calls().is_empty());
@@ -332,7 +332,7 @@ mod tests {
     fn aux_redrawn_without_window_is_noop() {
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        let id = wakui::aux::AuxId::from_raw(9999);
+        let id = wakui_core::aux::AuxId::from_raw(9999);
         runtime.on_aux_redrawn(id, &opener);
         assert!(menu.updates().is_empty());
         assert!(opener.calls().is_empty());
@@ -391,7 +391,7 @@ mod tests {
     fn unknown_aux_event_stays_total() {
         let (mut runtime, menu) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        let id = wakui::aux::AuxId::from_raw(9999);
+        let id = wakui_core::aux::AuxId::from_raw(9999);
         runtime.on_aux_event(id, WindowEvent::Focused(true), &opener);
         runtime.on_aux_event(id, WindowEvent::Focused(false), &opener);
         runtime.on_aux_event(

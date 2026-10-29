@@ -2,7 +2,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
-use wakui::{
+use wakui_core::{
     control::{
         Container, Control, ControlDisplay, ControlId, ControlInput, ControlMetadata,
         ControlScreen, ControlVisitor, GroupPolicy, LayoutId, Page, PageId, RowPolicy, Tab, TabId,
@@ -861,7 +861,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 body.remove(&current);
             }
             self.frames.push(Frame::Box(body.clone(), Vec::new()));
-            let ctx = wakui::leaf::LeafCtx {
+            let ctx = wakui_core::leaf::LeafCtx {
                 id: control.id,
                 hints: control.metadata.hints,
             };
@@ -899,7 +899,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         native.update(control);
         // Unknown container-like leaves degrade to siblings: surface their
         // children explicitly. Base leaves no-op here.
-        let ctx = wakui::leaf::LeafCtx {
+        let ctx = wakui_core::leaf::LeafCtx {
             id: control.id,
             hints: control.metadata.hints,
         };

@@ -1,10 +1,10 @@
 //! Native auxiliary creation and settings effects. Policy lives view-side;
 //! native code routes handles, screens, and mailboxes through the app trait.
 use super::HostState;
-use wakui::aux::{AuxId, OpenRequest};
+use wakui_core::aux::{AuxId, OpenRequest};
 
-use wakui::control::ControlEffect;
-use wakui::window::WindowEffects;
+use wakui_core::control::ControlEffect;
+use wakui_core::window::WindowEffects;
 
 use crate::ports::{AuxOpenParams, WindowOpener};
 
