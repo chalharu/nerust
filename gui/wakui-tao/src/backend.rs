@@ -1,13 +1,17 @@
 //! Backend registration for the iced/tao platform handler.
 
-use wakui_core::app::backend::{Backend, BackendRegistry};
+#[cfg(test)]
+use wakui_core::app::backend::Backend;
+use wakui_core::app::backend::BackendRegistry;
 
 /// Stable backend name used for composition-root selection.
-pub const NAME: &str = "tao";
+pub(crate) const NAME: &str = "tao";
 
-/// Marker backend proving the iced/tao handler contract.
-pub struct TaoBackend;
+/// Marker backend proving the iced/tao handler contract (test-only proof).
+#[cfg(test)]
+pub(crate) struct TaoBackend;
 
+#[cfg(test)]
 impl Backend for TaoBackend {
     fn name(&self) -> &'static str {
         NAME

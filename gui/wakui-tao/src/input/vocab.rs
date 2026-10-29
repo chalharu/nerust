@@ -12,6 +12,7 @@ impl NativeWindowId {
 
     /// Test-only id from a reserved high range; every call mints a fresh
     /// value so multi-window routing stays testable (no dummy collisions).
+    #[cfg(test)]
     pub fn dummy() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(u64::MAX - 1_000_000);

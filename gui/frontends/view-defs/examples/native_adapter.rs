@@ -23,7 +23,6 @@ use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     renderer::{OsdLayer, OsdSink, StripSink},
 };
-use wakui::app::boundary::FrontendApp as _;
 use wakui::app::roles::{AuxPorts, DialogPorts, PollPorts as _};
 use wakui::chrome::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 use wakui::chrome::menu::{
