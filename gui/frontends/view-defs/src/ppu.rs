@@ -9,11 +9,21 @@ use nerust_gui_viewmodel::debugger::{
     DisplayCache, format_panels, scale2x_nearest, tile_hover_text,
 };
 use nerust_settings_core::model::language::AppLanguage;
-use wakui::scene::control::{
-    Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
-    ControlInput, ControlMetadata, ControlScreen, IdRegistry, Node, Page,
+use wakui::scene::control::{ControlDisplay, ControlEvent, ControlInput, ControlScreen};
+use wakui::scene::def::{
+    Binding, BoolBinding, ContainerDef, ControlDef, LeafDef, NodeDef, PageDef, PolicyDef,
+    RowTemplateDef, RowsDef, ScreenDef,
 };
-use wakui::scene::leaf::{ActionLeaf, ImageLeaf, NoteLeaf};
+use wakui::scene::hints::LayoutHints;
+use wakui::scene::inflate::{
+    Choices, CustomLeaves, Flags, ImageData, InflateCtx, Lists, Texts, Value, inflate,
+};
+use wakui::scene::leaf::ImageLeaf;
+#[cfg(test)]
+use wakui::scene::{
+    control::{Container, ControlId, Node},
+    leaf::NoteLeaf,
+};
 
 /// Pre-localized PPU viewer chrome. Frontends render verbatim.
 #[derive(Debug, Clone, Default)]
@@ -66,62 +76,157 @@ pub fn panels_text(display: &DisplayCache) -> String {
     format_panels(&display.panels)
 }
 
-fn layout_id(ids: &mut IdRegistry<String>, key: &str) -> wakui::scene::control::LayoutId {
-    ids.id(key.to_string())
-}
-
-fn control_id(ids: &mut IdRegistry<String>, key: &str) -> ControlId {
-    ids.id(key.to_string())
-}
-
-fn note_control(
-    ids: &mut IdRegistry<String>,
-    key: &str,
-    label: &str,
-    text: String,
-    display: ControlDisplay,
-) -> Control {
-    Control {
-        id: control_id(ids, key),
-        label: label.to_string(),
-        metadata: ControlMetadata::new(label),
+/// Static L1 definition for the PPU viewer. Pictures ride a bound list
+/// whose image cells resolve to [`Value::Image`]; `empty` and `panels`
+/// toggle conditional notes because L1 holds no conditionals.
+fn ppu_def(empty: bool, has_panels: bool) -> ScreenDef {
+    let note = |key: &str, text: Binding, display: ControlDisplay| ControlDef {
+        key: key.into(),
+        label: Binding::Literal(String::new()),
         display,
-        leaf: Box::new(NoteLeaf { text }),
+        enabled: BoolBinding::Literal(true),
+        visible: BoolBinding::Literal(true),
+        hints: LayoutHints::default(),
+        leaf: LeafDef::Note { text },
+    };
+    let mut children = vec![NodeDef::Control(Box::new(note(
+        "hover",
+        Binding::Dynamic("hover".into()),
+        ControlDisplay::Standard,
+    )))];
+    if empty {
+        children.push(NodeDef::Control(Box::new(note(
+            "empty",
+            Binding::Localized("no_images".into()),
+            ControlDisplay::Standard,
+        ))));
     }
-}
-
-fn image_control(ids: &mut IdRegistry<String>, key: &str, picture: &PpuPicture) -> Control {
-    Control {
-        id: control_id(ids, &format!("image:{key}")),
-        label: picture.label.clone(),
-        metadata: ControlMetadata::new(picture.label.clone()),
+    children.push(NodeDef::Control(Box::new(ControlDef {
+        key: "pictures".into(),
+        label: Binding::Literal(String::new()),
         display: ControlDisplay::Standard,
-        leaf: Box::new(ImageLeaf {
-            width: picture.width,
-            height: picture.height,
-            rgba: picture.rgba.clone(),
-        }),
+        enabled: BoolBinding::Literal(true),
+        visible: BoolBinding::Literal(true),
+        hints: LayoutHints::default(),
+        leaf: LeafDef::List {
+            columns: Vec::new(),
+            rows: RowsDef::Bound {
+                source: "pictures".into(),
+                template: RowTemplateDef {
+                    id_field: "label".into(),
+                    cells: vec![ControlDef {
+                        key: "cell".into(),
+                        label: Binding::Field("label".into()),
+                        display: ControlDisplay::Standard,
+                        enabled: BoolBinding::Literal(true),
+                        visible: BoolBinding::Literal(true),
+                        hints: LayoutHints::default(),
+                        leaf: LeafDef::Image {
+                            path: "picture".into(),
+                        },
+                    }],
+                },
+            },
+        },
+    })));
+    if has_panels {
+        children.push(NodeDef::Control(Box::new(note(
+            "panels-title",
+            Binding::Localized("panels_title".into()),
+            ControlDisplay::Heading,
+        ))));
+        children.push(NodeDef::Control(Box::new(note(
+            "panels",
+            Binding::Dynamic("panels".into()),
+            ControlDisplay::Standard,
+        ))));
+    }
+    let column = |key: &str, children: Vec<NodeDef>| ContainerDef {
+        key: key.into(),
+        label: Binding::Literal(String::new()),
+        hints: LayoutHints {
+            spacing: Some(12.0),
+            indent: Some(0.0),
+            ..LayoutHints::default()
+        },
+        header: None,
+        policy: PolicyDef::Column,
+        children,
+    };
+    ScreenDef {
+        title: Binding::Localized("title".into()),
+        pages: vec![PageDef {
+            key: "page".into(),
+            label: Binding::Localized("title".into()),
+            selected: true,
+            body: column("body", children),
+        }],
+        footer: column("footer", Vec::new()),
     }
 }
 
-fn column_layout(ids: &mut IdRegistry<String>, key: &str, children: Vec<Node>) -> Container {
-    let mut metadata = ControlMetadata::new(key);
-    metadata.hints.spacing = Some(12.0);
-    metadata.hints.indent = Some(0.0);
-    Container {
-        id: layout_id(ids, key),
-        label: String::new(),
-        metadata,
-        header: None,
-        policy: Box::new(ColumnPolicy),
-        children,
+/// Outer-owned resolution for [`ppu_def`]: chrome strings plus the live
+/// hover line, panel text, and picture bytes.
+struct PpuResolver<'m> {
+    chrome: &'m PpuChrome,
+    hover: &'m str,
+    pictures: &'m [PpuPicture],
+    panels: &'m str,
+}
+
+impl Texts for PpuResolver<'_> {
+    fn text(&self, key: &str) -> String {
+        match key {
+            "title" => self.chrome.title.clone(),
+            "no_images" => self.chrome.no_images.clone(),
+            "panels_title" => self.chrome.panels_title.clone(),
+            "hover" => {
+                if self.hover.is_empty() {
+                    self.chrome.hover_empty.clone()
+                } else {
+                    self.hover.to_string()
+                }
+            }
+            "panels" => self.panels.to_string(),
+            _ => String::new(),
+        }
     }
 }
+
+impl Flags for PpuResolver<'_> {}
+
+impl Lists for PpuResolver<'_> {
+    fn list_len(&self, source: &str) -> usize {
+        usize::from(source == "pictures") * self.pictures.len()
+    }
+
+    fn value(&self, source: &str, index: usize, path: &str) -> Value {
+        if source != "pictures" {
+            return Value::Text(String::new());
+        }
+        let Some(picture) = self.pictures.get(index) else {
+            return Value::Text(String::new());
+        };
+        match path {
+            "label" => Value::Text(picture.label.clone()),
+            "picture" => Value::Image(ImageData {
+                width: picture.width,
+                height: picture.height,
+                rgba: picture.rgba.clone(),
+            }),
+            _ => Value::Text(String::new()),
+        }
+    }
+}
+
+impl Choices for PpuResolver<'_> {}
+
+impl CustomLeaves for PpuResolver<'_> {}
 
 /// Owned PPU viewer session: pictures plus hover line, projected as controls.
 #[derive(Debug, Default)]
 pub struct PpuSession {
-    ids: IdRegistry<String>,
+    ctx: InflateCtx<String>,
     chrome: PpuChrome,
     hover: String,
     pictures: Vec<PpuPicture>,
@@ -139,7 +244,7 @@ impl PpuSession {
     ) -> Self {
         let has_panels = panels.is_some();
         Self {
-            ids: IdRegistry::default(),
+            ctx: InflateCtx::default(),
             hover: chrome.hover_empty.clone(),
             chrome,
             pictures,
@@ -199,83 +304,23 @@ impl PpuSession {
         line
     }
 
-    fn hover_text(&self) -> String {
-        if self.hover.is_empty() {
-            self.chrome.hover_empty.clone()
-        } else {
-            self.hover.clone()
-        }
-    }
-
-    /// Project the current viewer state as a generic control screen.
+    /// Project the current viewer state as a generic control screen
+    /// through the L1 definition below.
     pub fn screen(&mut self) -> ControlScreen {
-        let hover = self.hover_text();
-        let no_images = self.chrome.no_images.clone();
-        let panels_title = self.chrome.panels_title.clone();
-        let panels = self.panels.clone();
-        let title = self.chrome.title.clone();
-        let mut children = Vec::new();
-        children.push(Node::Control(note_control(
-            &mut self.ids,
-            "hover",
-            "",
-            hover,
-            ControlDisplay::Standard,
-        )));
-        if self.pictures.is_empty() {
-            children.push(Node::Control(note_control(
-                &mut self.ids,
-                "empty",
-                "",
-                no_images.clone(),
-                ControlDisplay::Standard,
-            )));
-        }
-        for (index, picture) in self.pictures.iter().enumerate() {
-            let key = format!("{index}:{}", picture.label);
-            children.push(Node::Control(image_control(&mut self.ids, &key, picture)));
-        }
-        if self.has_panels {
-            children.push(Node::Control(note_control(
-                &mut self.ids,
-                "panels-title",
-                "",
-                panels_title,
-                ControlDisplay::Heading,
-            )));
-            children.push(Node::Control(note_control(
-                &mut self.ids,
-                "panels",
-                "",
-                panels,
-                ControlDisplay::Standard,
-            )));
-        }
-        let body = column_layout(&mut self.ids, "body", children);
-        let footer = column_layout(&mut self.ids, "footer", Vec::new());
-        let page_id = layout_id(&mut self.ids, "page");
-        ControlScreen {
-            title: title.clone(),
-            pages: vec![Page {
-                id: page_id,
-                label: title.clone(),
-                selected: true,
-                select: Control {
-                    id: control_id(&mut self.ids, "page-select"),
-                    label: title.clone(),
-                    metadata: ControlMetadata::new(title.clone()),
-                    display: ControlDisplay::Standard,
-                    leaf: Box::new(ActionLeaf),
-                },
-                body,
-            }],
-            footer,
-            message: None,
-            capture: Capture {
-                target: None,
-                prompt: String::new(),
-            },
-        }
+        let resolver = PpuResolver {
+            chrome: &self.chrome,
+            hover: &self.hover,
+            pictures: &self.pictures,
+            panels: &self.panels,
+        };
+        let (screen, live) = inflate(
+            &ppu_def(self.pictures.is_empty(), self.has_panels),
+            &mut self.ctx,
+            |key| key.to_string(),
+            &resolver,
+        );
+        self.ctx.retain_rows(&live);
+        screen
     }
 
     /// Apply a generic control event. Hover over an image refreshes the
@@ -460,6 +505,16 @@ mod tests {
                 Node::Control(c) => {
                     if c.downcast::<ImageLeaf>().is_some() {
                         out.push(c.id);
+                    }
+                    // Picture cells hide inside the list: walk explicitly.
+                    if let Some(list) = c.downcast::<wakui::scene::leaf::ListLeaf>() {
+                        for row in &list.rows {
+                            for cell in &row.cells {
+                                if cell.downcast::<ImageLeaf>().is_some() {
+                                    out.push(cell.id);
+                                }
+                            }
+                        }
                     }
                 }
                 Node::Container(l) => collect_layout_images(l, out),

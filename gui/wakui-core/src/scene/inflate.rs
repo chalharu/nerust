@@ -20,8 +20,8 @@ use crate::scene::def::{
     PageDef, PolicyDef, RowsDef, ScreenDef, SelectedDef, TabDef, TabsDef,
 };
 use crate::scene::leaf::{
-    ActionLeaf, ChoiceLeaf, ControlLeaf, ItemRow, ListLeaf, NoteLeaf, NumberLeaf, TextLeaf,
-    ToggleLeaf,
+    ActionLeaf, ChoiceLeaf, ColumnDef, ControlLeaf, ImageLeaf, ItemRow, ListLeaf, NoteLeaf,
+    NumberLeaf, TextLeaf, ToggleLeaf,
 };
 
 /// Framework-primitive resolved value. Domain types convert into this;
@@ -31,6 +31,18 @@ pub enum Value {
     Text(String),
     Bool(bool),
     Num(u32),
+    /// Raster picture data. Compared by value like the other variants;
+    /// screens only project new pictures on generation change.
+    Image(ImageData),
+}
+
+/// Raw picture bytes in framework vocabulary: the exact payload an
+/// [`crate::scene::leaf::ImageLeaf`] carries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageData {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 /// Localized text table.
@@ -179,6 +191,7 @@ fn value_text(value: &Value) -> String {
         Value::Text(text) => text.clone(),
         Value::Bool(flag) => flag.to_string(),
         Value::Num(num) => num.to_string(),
+        Value::Image(_) => String::new(),
     }
 }
 
@@ -351,18 +364,32 @@ fn build_leaf<K: Eq + Clone>(
                 formatted: current.to_string(),
             })
         }
-        LeafDef::List { columns, rows } => {
-            use crate::scene::leaf::ColumnDef;
-            Box::new(ListLeaf {
-                columns: columns
-                    .iter()
-                    .map(|column| ColumnDef {
-                        id: column.id.clone(),
-                        header: text_of(&column.header, resolver, row),
-                        width: column.width,
-                    })
-                    .collect(),
-                rows: project_rows(rows, ids, key, resolver, live),
+        LeafDef::List { columns, rows } => Box::new(ListLeaf {
+            columns: columns
+                .iter()
+                .map(|column| ColumnDef {
+                    id: column.id.clone(),
+                    header: text_of(&column.header, resolver, row),
+                    width: column.width,
+                })
+                .collect(),
+            rows: project_rows(rows, ids, key, resolver, live),
+        }),
+        LeafDef::Image { path } => {
+            let (width, height, rgba) = match row {
+                Some(cell) => match cell.lists.value(cell.source, cell.index, path) {
+                    Value::Image(data) => (data.width, data.height, data.rgba),
+                    _ => (0, 0, Vec::new()),
+                },
+                None => {
+                    log::debug!("L1 image outside a row template is empty");
+                    (0, 0, Vec::new())
+                }
+            };
+            Box::new(ImageLeaf {
+                width,
+                height,
+                rgba,
             })
         }
         LeafDef::Custom { kind, fields } => {
@@ -996,5 +1023,60 @@ mod tests {
         let (screen, live) = inflate(&def, &mut ctx, key, &fake());
         ctx.retain_rows(&live);
         assert!(!visit_labels(&screen).is_empty());
+    }
+
+    #[test]
+    fn image_leaf_resolves_bytes_and_degrades_empty() {
+        use crate::scene::leaf::ImageLeaf;
+        let mut def = screen_def();
+        // Swap the table's note cell for an image cell reading a fake path.
+        let NodeDef::Control(table) = &mut def.pages[0].body.children[1] else {
+            panic!("table control");
+        };
+        let LeafDef::List { rows, .. } = &mut table.leaf else {
+            panic!("list leaf");
+        };
+        let RowsDef::Bound { template, .. } = rows;
+        template.cells[0].leaf = LeafDef::Image {
+            path: "picture".into(),
+        };
+        struct Images;
+        impl Texts for Images {}
+        impl Flags for Images {}
+        impl Lists for Images {
+            fn list_len(&self, source: &str) -> usize {
+                if source == "options" { 2 } else { 0 }
+            }
+            fn value(&self, source: &str, index: usize, path: &str) -> Value {
+                assert_eq!(source, "options");
+                match (index, path) {
+                    (0, "picture") => Value::Image(ImageData {
+                        width: 2,
+                        height: 2,
+                        rgba: vec![0xff; 16],
+                    }),
+                    _ => Value::Text(String::new()),
+                }
+            }
+        }
+        impl Choices for Images {}
+        impl CustomLeaves for Images {}
+        let mut ctx: InflateCtx<String> = InflateCtx::default();
+        let key = |s: &str| s.to_string();
+        let (screen, live) = inflate(&def, &mut ctx, key, &Images);
+        ctx.retain_rows(&live);
+        // Image cells hide inside the list: walk explicitly like flavors do.
+        struct Walk(Vec<(u32, u32)>);
+        impl ControlVisitor for Walk {
+            fn control(&mut self, control: &Control) {
+                if let Some(image) = control.downcast::<ImageLeaf>() {
+                    self.0.push((image.width, image.height));
+                }
+                crate::scene::control::walk_control(control, self);
+            }
+        }
+        let mut walk = Walk(Vec::new());
+        screen.visit(&mut walk);
+        assert_eq!(walk.0, vec![(2, 2), (0, 0)]);
     }
 }
