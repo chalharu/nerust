@@ -23,7 +23,6 @@ use wakui::{
     binding::PickerSink as _,
     control::{ControlEffect, ControlEvent, ControlId, ControlScreen},
     loop_driver::WakeNeed,
-    pause::PauseOwner,
     viewport::ViewportRegion,
 };
 
@@ -383,6 +382,10 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         let result = self.load_rom_inner(path);
         if result.is_ok() {
             ApplicationHost::resume_session(self);
+            // Reassert suspension holds after replacement: a focus or modal
+            // hold active across the load suspends the new content again.
+            // Flavors never touch this; the policy lives view-side.
+            ApplicationHost::reconcile_pause(self);
         }
         result
     }
@@ -433,22 +436,6 @@ impl FrontendApp<AuxKind> for ApplicationHost {
 
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
         ApplicationHost::update_window_size(self, width, height).map_err(|error| error.to_string())
-    }
-
-    fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
-        ApplicationHost::set_pause_owner(self, owner, active);
-    }
-
-    fn owns_pause(&self, owner: PauseOwner) -> bool {
-        ApplicationHost::owns_pause(self, owner)
-    }
-
-    fn pause_held(&self) -> bool {
-        ApplicationHost::pause_held(self)
-    }
-
-    fn reconcile_pause(&mut self) {
-        ApplicationHost::reconcile_pause(self);
     }
 
     fn dispatch(
@@ -545,8 +532,8 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::drive_aux_focus(self, id, focused)
     }
 
-    fn release_focus_pause(&mut self) {
-        ApplicationHost::release_focus_pause(self);
+    fn release_focus_hold(&mut self) {
+        ApplicationHost::release_focus_hold(self);
     }
 
     fn reserve_widget(

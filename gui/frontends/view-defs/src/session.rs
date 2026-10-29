@@ -6,13 +6,13 @@
 //! The framework only transports opaque [`wakui::session::SessionEvent`]
 //! inputs; this module resolves them to typed shell commands.
 
+use crate::pause::{PauseOwner, PausePolicy};
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
     KeyboardShortcut, SessionHandle, access::SettingsResult, commands::SessionCommand,
     commands::SessionCommandOutcome,
 };
 use nerust_settings_core::model::input::ShortcutAction;
-use wakui::pause::{PauseOwner, PausePolicy};
 use wakui::session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome};
 
 use crate::commands::{CommandTable, MenuCommand};
@@ -21,7 +21,7 @@ use crate::commands::{CommandTable, MenuCommand};
 /// this table gives each hold its meaning. Order is load-bearing only
 /// for readability; bits never alias.
 pub mod pause_owners {
-    use wakui::pause::PauseOwner;
+    use crate::pause::PauseOwner;
 
     pub const USER: PauseOwner = PauseOwner::new(0);
     pub const FOCUS: PauseOwner = PauseOwner::new(1);

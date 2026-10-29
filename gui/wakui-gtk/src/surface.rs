@@ -102,7 +102,8 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for GtkTurn<'_, K> {
     type Frame = ();
 
     fn before_turn(&mut self) {
-        // GTK focus/pause ownership is settled by native signal callbacks.
+        // GTK focus delivery is settled by native signal callbacks; suspension
+        // stays view-side.
     }
 
     fn frame_ctx(&mut self) {}
@@ -401,6 +402,7 @@ mod wake_tests {
         window: gtk::ApplicationWindow,
         state: Rc<RefCell<State<crate::testkit::TestAux>>>,
         surface: Surface<crate::testkit::TestAux>,
+        fake: Rc<RefCell<crate::testkit::FakeApp>>,
     }
 
     impl Harness {
@@ -413,12 +415,13 @@ mod wake_tests {
             let window = gtk::ApplicationWindow::builder().build();
             let picture = gtk::Picture::new();
             window.set_child(Some(&picture));
-            let state = crate::window::tests::model_state();
+            let (state, fake) = crate::window::tests::model_state_shared();
             let surface = Surface::bind(&window, &picture, state.clone());
             Some(Self {
                 window,
                 state,
                 surface,
+                fake,
             })
         }
 
@@ -458,7 +461,6 @@ mod wake_tests {
 
     #[test]
     fn native_modal_can_ack_synchronously_during_map_without_retaining_surface() {
-        use crate::testkit::owners;
         let Some(h) = Harness::new() else { return };
         let mapped = Rc::new(Cell::new(0));
         let dialogs = Rc::new(RefCell::new(Vec::<gtk::MessageDialog>::new()));
@@ -480,10 +482,10 @@ mod wake_tests {
                             assert!(surface.try_borrow_mut().is_ok());
                             let state = surface.borrow().state.clone();
                             assert!(state.try_borrow_mut().is_ok());
-                            assert!(state.borrow().host.owns_pause(owners::MODAL));
+                            assert!(state.borrow().host.dialog_flight_pending());
                             mapped.set(mapped.get() + 1);
                             dialog.response(gtk::ResponseType::Ok);
-                            assert!(!state.borrow().host.owns_pause(owners::MODAL));
+                            assert!(!state.borrow().host.dialog_pending());
                         }
                     });
                     dialogs.borrow_mut().push(dialog);
@@ -496,7 +498,7 @@ mod wake_tests {
             .report_host_error("sync ACK".into());
         assert!(h.surface.tick());
         assert_eq!(mapped.get(), 1);
-        assert!(!h.state.borrow().host.owns_pause(owners::MODAL));
+        assert!(!h.state.borrow().host.dialog_pending());
         toplevels.disconnect(signal);
         let weak = Rc::downgrade(&h.surface);
         drop(h);
@@ -633,16 +635,14 @@ mod wake_tests {
         use crate::testkit::owners;
 
         let Some(h) = Harness::new() else { return };
-        h.state
-            .borrow_mut()
-            .host
-            .set_pause_owner(owners::FOCUS, true);
+        h.fake.borrow_mut().set_pause_owner(owners::FOCUS, true);
         let mapped = Rc::new(Cell::new(0));
         let dialogs = Rc::new(RefCell::new(Vec::<gtk::MessageDialog>::new()));
         let toplevels = gtk::Window::toplevels();
         let signal = toplevels.connect_items_changed({
             let weak = Rc::downgrade(&h.surface);
             let state = h.state.clone();
+            let fake = h.fake.clone();
             let mapped = mapped.clone();
             let dialogs = dialogs.clone();
             move |list, position, _, added| {
@@ -653,12 +653,13 @@ mod wake_tests {
                     dialog.connect_map({
                         let weak = weak.clone();
                         let state = state.clone();
+                        let fake = fake.clone();
                         let mapped = mapped.clone();
                         move |_| {
                             let surface = weak.upgrade().unwrap();
                             let s = surface.borrow_mut();
-                            let state = state.borrow_mut();
-                            assert!(state.host.owns_pause(owners::MODAL));
+                            let _state = state.borrow_mut();
+                            assert!(fake.borrow().owns_pause(owners::MODAL));
                             // The firing source was cleared before entering GTK.
                             assert!(s.wake.borrow().source.is_none());
                             mapped.set(mapped.get() + 1);
@@ -681,20 +682,20 @@ mod wake_tests {
             2,
             "ACK presents the next batch without turn borrows"
         );
-        assert!(h.state.borrow().host.owns_pause(owners::MODAL));
+        assert!(h.fake.borrow().owns_pause(owners::MODAL));
         first.response(gtk::ResponseType::Ok);
         assert_eq!(
             mapped.get(),
             2,
             "stale response cannot advance the active dialog"
         );
-        assert!(h.state.borrow().host.owns_pause(owners::MODAL));
+        assert!(h.fake.borrow().owns_pause(owners::MODAL));
         let second = dialogs.borrow()[1].clone();
         second.response(gtk::ResponseType::Ok);
-        assert!(!h.state.borrow().host.owns_pause(owners::MODAL));
+        assert!(!h.fake.borrow().owns_pause(owners::MODAL));
         second.response(gtk::ResponseType::Ok);
-        assert!(!h.state.borrow().host.owns_pause(owners::MODAL));
-        assert!(h.state.borrow().host.owns_pause(owners::FOCUS));
+        assert!(!h.fake.borrow().owns_pause(owners::MODAL));
+        assert!(h.fake.borrow().owns_pause(owners::FOCUS));
         toplevels.disconnect(signal);
     }
 }

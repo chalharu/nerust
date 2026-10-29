@@ -262,7 +262,12 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         // The guard comes from the open widget alone: no suspension owner
         // is held, yet commands and keyboard input stay blocked.
-        assert!(!host.core.owns_pause(crate::testkit::owners::GUARD));
+        assert!(
+            !support
+                .app
+                .borrow()
+                .owns_pause(crate::testkit::owners::GUARD)
+        );
         assert!(host.core.modal_guard_active());
         for event in [
             UserEvent::Menu(about),
@@ -484,7 +489,10 @@ mod tests {
         use crate::testkit::owners;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.set_pause_owner(owners::GUARD, true);
+        support
+            .app
+            .borrow_mut()
+            .set_pause_owner(owners::GUARD, true);
         // Simulate a dialog thread that died before acking: the
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
@@ -496,13 +504,13 @@ mod tests {
             .modal
             .unwrap();
         assert!(host.core.attach_dialog_receiver(presentation.token, rx));
-        assert!(host.core.owns_pause(owners::MODAL));
+        assert!(support.app.borrow().owns_pause(owners::MODAL));
         host.poll_notifications();
         // Reaped as a failed ack: flight gone, queue unblocked.
         assert!(!host.core.dialog_pending());
         assert_eq!(host.core.dialog_queue_len(), 0);
-        assert!(!host.core.owns_pause(owners::MODAL));
-        assert!(host.core.owns_pause(owners::GUARD));
+        assert!(!support.app.borrow().owns_pause(owners::MODAL));
+        assert!(support.app.borrow().owns_pause(owners::GUARD));
     }
 
     #[test]
@@ -510,7 +518,10 @@ mod tests {
         use crate::testkit::owners;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.set_pause_owner(owners::FOCUS, true);
+        support
+            .app
+            .borrow_mut()
+            .set_pause_owner(owners::FOCUS, true);
         host.core.report_host_error("dead first dialog".into());
         let first = host
             .core
@@ -527,15 +538,15 @@ mod tests {
         assert!(support.dialogs.errors()[0].contains("chained native dialog"));
         assert!(host.core.dialog_pending());
         assert!(host.core.dialog_flight_pending());
-        assert!(host.core.owns_pause(owners::MODAL));
-        assert!(host.core.owns_pause(owners::FOCUS));
+        assert!(support.app.borrow().owns_pause(owners::MODAL));
+        assert!(support.app.borrow().owns_pause(owners::FOCUS));
         assert_eq!(host.core.dialog_queue_len(), 0);
 
         host.poll_notifications();
         assert!(!host.core.dialog_pending());
         assert!(!host.core.dialog_flight_pending());
-        assert!(!host.core.owns_pause(owners::MODAL));
-        assert!(host.core.owns_pause(owners::FOCUS));
+        assert!(!support.app.borrow().owns_pause(owners::MODAL));
+        assert!(support.app.borrow().owns_pause(owners::FOCUS));
         assert_eq!(support.dialogs.errors().len(), 1);
     }
 

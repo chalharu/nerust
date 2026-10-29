@@ -17,6 +17,7 @@ pub use window::MainState;
 
 use std::{path::Path, time::Instant};
 
+use crate::pause::{PauseOwner, PausePolicy};
 use crate::session::pause_owners;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{
@@ -28,7 +29,6 @@ use nerust_gui_shell::{
     },
 };
 use nerust_gui_viewmodel::debugger::tile_hover_text;
-use wakui::pause::{PauseOwner, PausePolicy};
 use wakui::retry::RenderRetry;
 
 use wakui::focus::{FocusCoordinator, FocusEffect, FocusEvent};
@@ -296,7 +296,7 @@ impl ApplicationHost {
         crate::session::apply_settings(&mut self.session, &self.pause_policy, settings)
             .map_err(|error| wakui::session::SessionError(error.to_string()))
     }
-    pub fn release_focus_pause(&mut self) {
+    pub fn release_focus_hold(&mut self) {
         self.set_pause_owner(pause_owners::FOCUS, false);
     }
     pub fn resume_session(&mut self) {
@@ -308,7 +308,7 @@ impl ApplicationHost {
     pub fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
         let effect = self.focus.on(event);
         match effect {
-            Some(FocusEffect::Resume) => self.release_focus_pause(),
+            Some(FocusEffect::Resume) => self.release_focus_hold(),
             Some(FocusEffect::Pause) if self.tick().loaded => {
                 self.set_pause_owner(pause_owners::FOCUS, true);
                 self.focus.note_protocol_pause();

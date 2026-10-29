@@ -9,7 +9,7 @@
 //! retained [`renderer`], and map native input through [`keyboard`].
 //!
 //! Dialog lifecycle helpers live in [`dialog`]. Modal presentation stays
-//! native (`native::dialog`); the host retains the queue, pause ownership,
+//! native (`native::dialog`); the host retains the queue,
 //! and stale-ACK checks.
 
 pub mod backend;
@@ -106,6 +106,17 @@ impl State<crate::testkit::TestAux> {
     /// Test-only construction over the headless [`testkit`] app.
     pub(crate) fn new_for_tests() -> Self {
         Self::new(Application::new(Box::new(crate::testkit::FakeApp::new())))
+    }
+
+    /// Test-only construction sharing the fake: tests steer and observe the
+    /// same headless app the state drives, without touching the framework
+    /// boundary. Suspension holds stay fake-local inherent state.
+    pub(crate) fn new_for_tests_shared() -> (Self, Rc<RefCell<crate::testkit::FakeApp>>) {
+        let fake = Rc::new(RefCell::new(crate::testkit::FakeApp::new()));
+        let state = Self::new(Application::new(Box::new(crate::testkit::SharedApp::new(
+            Rc::clone(&fake),
+        ))));
+        (state, fake)
     }
 }
 
