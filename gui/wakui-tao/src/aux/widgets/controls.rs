@@ -7,7 +7,7 @@ pub(crate) use crate::controls::*;
 #[cfg(test)]
 use crate::binding::{El, Message};
 #[cfg(test)]
-use wakui::control::{ControlDisplay, ControlInput, ControlMetadata, ControlScreen, Page};
+use wakui_core::control::{ControlDisplay, ControlInput, ControlMetadata, ControlScreen, Page};
 
 #[cfg(test)]
 mod tests;
@@ -19,14 +19,14 @@ struct ControlsWindowVisitor {
 }
 
 #[cfg(test)]
-impl wakui::window::WindowVisitor for ControlsWindowVisitor {
-    fn visit_controls(&mut self, screen: &wakui::control::ControlScreen) {
+impl wakui_core::window::WindowVisitor for ControlsWindowVisitor {
+    fn visit_controls(&mut self, screen: &wakui_core::control::ControlScreen) {
         self.output = Some(build_screen(screen));
     }
 }
 
 #[cfg(test)]
-pub(crate) fn build(window: &wakui::window::Window) -> El<'static> {
+pub(crate) fn build(window: &wakui_core::window::Window) -> El<'static> {
     let mut visitor = ControlsWindowVisitor::default();
     window.visit(&mut visitor);
     visitor

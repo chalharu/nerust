@@ -3,7 +3,7 @@ use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
 use std::time::Instant;
 
-use wakui::{
+use wakui_core::{
     menu::Menubar,
     window::{Window, WindowVisitor},
 };

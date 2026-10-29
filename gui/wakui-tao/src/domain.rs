@@ -19,7 +19,7 @@ impl NativeWindowId {
     }
 }
 
-pub use wakui::aux::AuxId;
+pub use wakui_core::aux::AuxId;
 
 /// Domain mouse button: only mapped buttons cross the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,12 +98,12 @@ pub enum AuxNativeEvent {
     WheelLines(f32, f32),
     WheelPixels(f32, f32),
     KeyPressed {
-        key: wakui::Key,
+        key: wakui_core::Key,
         text: Option<String>,
         repeat: bool,
     },
     KeyReleased {
-        key: wakui::Key,
+        key: wakui_core::Key,
     },
     Other,
 }

@@ -51,7 +51,7 @@ jobs:
             -p nerust_nes_core -p nerust_persistence \
             -p nerust_gba_core \
             -p nerust_gba_factory -p nerust_gba_device -p nerust_gba_settings
-      - name: Flavor policy gate (wakui-tao/wakui-gtk framework-only)
+      - name: Flavor policy gate (wakui_tao/wakui_gtk framework-only)
         run: python3 gui/frontends/check_frontend_policy.py
       - name: Save Cargo registry cache
         if: github.event_name == 'push'

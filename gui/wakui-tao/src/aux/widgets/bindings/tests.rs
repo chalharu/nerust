@@ -4,8 +4,8 @@ use crate::{
     runtime::host::{HostState, TestHost},
     testkit::TestAux,
 };
-use wakui::aux::{AuxId, OpenRequest};
-use wakui::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
+use wakui_core::aux::{AuxId, OpenRequest};
+use wakui_core::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
 mod history;
 
@@ -21,7 +21,10 @@ pub(crate) fn screen_of(host: &HostState<TestAux>, id: AuxId) -> ControlScreen {
     host.core.widget_screen(id).expect("widget screen")
 }
 
-pub(crate) fn mailbox_of(host: &HostState<TestAux>, id: AuxId) -> wakui::mailbox::WindowMailbox {
+pub(crate) fn mailbox_of(
+    host: &HostState<TestAux>,
+    id: AuxId,
+) -> wakui_core::mailbox::WindowMailbox {
     host.core.widget_mailbox(id).expect("widget mailbox")
 }
 
@@ -29,7 +32,7 @@ pub(crate) fn dispatch(
     host: &mut HostState<TestAux>,
     id: AuxId,
     event: ControlEvent,
-) -> Vec<wakui::control::ControlEffect> {
+) -> Vec<wakui_core::control::ControlEffect> {
     host.core.widget_dispatch(id, event)
 }
 
@@ -130,7 +133,7 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
     assert_eq!(*state.screen.borrow(), updated);
     assert!(matches!(
         host.aux.window(id).expect("window").contents.contents,
-        wakui::window::WidgetContents::Controls(_)
+        wakui_core::window::WidgetContents::Controls(_)
     ));
 }
 
@@ -151,7 +154,9 @@ fn status_area_message_reaches_viewmodel() {
     let screen = screen_of(&host, id);
     let c = find(&screen, "Status area");
     assert_eq!(
-        c.downcast::<wakui::leaf::ChoiceLeaf>().unwrap().selected,
+        c.downcast::<wakui_core::leaf::ChoiceLeaf>()
+            .unwrap()
+            .selected,
         Some(1)
     );
     drop(super::super::controls::build_screen(&screen));

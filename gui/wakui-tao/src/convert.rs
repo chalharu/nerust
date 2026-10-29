@@ -28,9 +28,9 @@ pub fn aux_modifiers_to_iced(m: AuxModifiers) -> keyboard::Modifiers {
 /// Map a domain key plus produced text to an iced logical key.
 /// Control-carrying text never masks editing keys: tao reports Enter as
 /// `"\r"`, so `Named` wins whenever the key already has an identity.
-pub fn domain_key_to_iced(key: &wakui::Key, text: Option<&str>) -> keyboard::Key {
+pub fn domain_key_to_iced(key: &wakui_core::Key, text: Option<&str>) -> keyboard::Key {
     use iced::keyboard::key::Named;
-    use wakui::Key as K;
+    use wakui_core::Key as K;
     let named = match key {
         K::Backspace => Some(Named::Backspace),
         K::Delete => Some(Named::Delete),
@@ -186,7 +186,7 @@ pub fn default_font() -> Font {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wakui::Key;
+    use wakui_core::Key;
 
     #[test]
     fn all_keycodes_have_mapping() {

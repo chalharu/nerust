@@ -134,7 +134,7 @@ jobs:
           # Display-requiring tests are #[ignore]d by default and run only
           # here, under Xvfb. Scoped to the tao frontend package so
           # unrelated ignores (optional ROMs, probe helpers) stay skipped.
-          xvfb-run cargo llvm-cov nextest --no-report -p wakui-tao --lib \
+          xvfb-run cargo llvm-cov nextest --no-report -p wakui_tao --lib \
             --run-ignored only
           cargo llvm-cov report \
             --no-default-ignore-filename-regex \
@@ -194,7 +194,7 @@ jobs:
           # here, under Xvfb (nextest isolates each test in its own process).
           # Scoped to the gtk frontend package so unrelated ignores
           # (optional ROMs, probe helpers) stay skipped.
-          xvfb-run cargo llvm-cov nextest --no-report -p wakui-gtk --lib \
+          xvfb-run cargo llvm-cov nextest --no-report -p wakui_gtk --lib \
             --run-ignored only
           cargo llvm-cov report \
             --no-default-ignore-filename-regex \

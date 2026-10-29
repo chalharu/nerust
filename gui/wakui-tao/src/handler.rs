@@ -5,8 +5,8 @@
 //! This is the MAUI handler counterpart: the framework visits control
 //! snapshots, the handler produces native elements.
 
-use wakui::control::ControlScreen;
-use wakui::window::Window;
+use wakui_core::control::ControlScreen;
+use wakui_core::window::Window;
 
 pub trait WidgetBinding {
     type State;
