@@ -9,8 +9,8 @@ use wakui_core::scene::control::{ControlEvent, ControlScreen};
 use wakui_core::{chrome::mailbox::WindowMailbox, chrome::window::Window};
 
 use crate::chrome::aux_windows::shell::{AuxShell, AuxSurface};
-use crate::scene::binding::{ControlsBinding, EventQueue, Message, SharedScreen};
 use crate::chrome::program::{WidgetBinding, WindowProgram};
+use crate::scene::binding::{ControlsBinding, EventQueue, Message, SharedScreen};
 
 /// A native window owns only surface/shell and typed widget signals.
 pub(crate) struct WidgetWindow<B, S>
@@ -145,7 +145,9 @@ impl ControlsWindowHandle {
 }
 
 impl crate::chrome::aux_windows::registry::AuxController for ControlsWindowHandle {
-    fn as_widget(&mut self) -> Option<&mut dyn crate::chrome::aux_windows::registry::WidgetSessionPort> {
+    fn as_widget(
+        &mut self,
+    ) -> Option<&mut dyn crate::chrome::aux_windows::registry::WidgetSessionPort> {
         Some(self)
     }
     fn widget_mailbox(&self) -> Option<WindowMailbox> {

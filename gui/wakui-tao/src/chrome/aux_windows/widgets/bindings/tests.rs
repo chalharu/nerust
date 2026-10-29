@@ -1,9 +1,9 @@
 use crate::scene::binding::WidgetBinding;
 use crate::scene::binding::{ControlsBinding, Message, keyboard_key_from_physical};
 use crate::{
+    chrome::program::WindowProgram,
     host::{HostState, TestHost},
     testkit::TestAux,
-    chrome::program::WindowProgram,
 };
 use std::rc::Rc;
 use wakui_core::Key;

@@ -91,7 +91,11 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
         self.host.pump_deferred_opens(opener);
     }
 
-    fn apply_aux_outcome(&mut self, id: AuxId, outcome: crate::chrome::aux_windows::registry::AuxOutcome) {
+    fn apply_aux_outcome(
+        &mut self,
+        id: AuxId,
+        outcome: crate::chrome::aux_windows::registry::AuxOutcome,
+    ) {
         if let Some(detail) = outcome.error {
             self.host.core.report_host_error(detail);
         }

@@ -1,6 +1,6 @@
 //! Session presentation sync: menu, title, and fullscreen state.
-use crate::host::HostState;
 use crate::chrome::menu::TAO_MENU_CAPABILITIES;
+use crate::host::HostState;
 
 use wakui_core::{
     chrome::menu::Menubar,

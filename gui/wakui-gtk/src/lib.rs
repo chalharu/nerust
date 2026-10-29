@@ -13,23 +13,20 @@
 //! and stale-ACK checks.
 
 pub mod backend;
-pub mod controls;
-pub mod dialog;
-pub mod keyboard;
+
+pub mod scene;
+
+pub(crate) mod chrome;
+pub mod input;
 
 mod gdk_raw;
-mod message_dialog;
-mod native_dialog;
-mod surface;
-mod surface_state;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 pub(crate) mod testkit;
-mod window;
 
 pub use backend::{GtkBackend, register};
-pub use message_dialog::show_message_dialog;
+pub use chrome::dialogs::show_message_dialog;
 
 use std::{cell::RefCell, path::Path, rc::Rc};
 
@@ -44,7 +41,8 @@ use gtk::{
 use wakui_core::app::boundary::Application;
 use wakui_core::app::boundary::LaunchArguments;
 
-use self::window::{MenubarModels, Window, WindowExtend};
+use crate::chrome::menu::MenubarModels;
+use crate::chrome::window::{Window, WindowExtend};
 
 pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
     pub(crate) host: Box<dyn wakui_core::app::boundary::FrontendApp<K>>,

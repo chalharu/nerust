@@ -1,11 +1,11 @@
 //! Beta exercises the same controls binding, not a second toolbar/program.
 use super::{activate, controls, dispatch, mailbox_of, prepare, screen_of};
+use crate::chrome::program::WindowProgram;
+use crate::host::{HostState, TestHost};
 use crate::scene::binding::WidgetBinding;
 use crate::scene::binding::{ControlsBinding, Message};
 use crate::scene::render::build_screen;
-use crate::host::{HostState, TestHost};
 use crate::testkit::TestAux;
-use crate::chrome::program::WindowProgram;
 use wakui_core::chrome::aux::AuxId;
 use wakui_core::scene::control::{
     Container, Control, ControlInput, ControlVisitor, RowPolicy, TablePolicy, policy,

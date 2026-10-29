@@ -1,82 +1,49 @@
+//! Main window: native chrome, event sink, and actions.
+//! Menu, dialog, and aux-window realizations live in sibling modules;
+//! behavior shared across them is covered by this file's tests.
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
     path::Path,
     rc::{Rc, Weak},
 };
 
-use super::{
-    State,
-    surface::{Surface, SurfaceExtend},
-    surface_state::surface_gone,
-};
-use crate::controls::{Callbacks, WidgetDialog};
-use gtk::{
-    gio, glib,
-    glib::variant::{StaticVariantType, ToVariant},
-    prelude::*,
-};
+use crate::State;
+use crate::chrome::aux_windows::NativeAux;
+use crate::chrome::aux_windows::{drain_deferred_opens, open_auxiliary, pump_debug_widgets};
+use crate::chrome::dialogs::{DialogRenderer, RenderedDialog, open_about};
+use crate::chrome::menu::GTK_MENU_CAPABILITIES;
+use crate::chrome::menu::{ActionRegistry, GtkMenuVisitor, MenubarModels};
+use crate::chrome::surface::{Surface, SurfaceExtend};
+use gtk::{glib, prelude::*};
 use wakui_core::input::event::{CommandEffect, EventCommand, EventSink};
 use wakui_core::input::session::SessionEvent;
-use wakui_core::scene::control::ControlScreen;
 use wakui_core::{
-    chrome::aux::{AuxId, AuxWindows, OpenRequest},
-    chrome::mailbox::WindowMailbox,
-    chrome::menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
+    chrome::aux::AuxWindows,
+    chrome::menu::Menubar,
     chrome::menu_presenter::MenuPresenter,
-    chrome::window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
-    input::commands::{Command, CommandId, CommandRef, CommandVisitor},
+    chrome::window::{MainContents, Window as HostWindow, WindowVisitor},
     input::focus::FocusEvent,
 };
 
-/// Bound once via `set_menubar`; host IDs retain the same native submenus
-/// across refills because replacing the root does not update the visible bar.
-#[derive(Clone)]
-pub(crate) struct MenubarModels {
-    pub(crate) menu_model: gio::Menu,
-    models: Rc<RefCell<HashMap<MenuId, gio::Menu>>>,
-    attached: Rc<Cell<bool>>,
-}
-
-impl MenubarModels {
-    pub(crate) fn new() -> Self {
-        Self {
-            menu_model: gio::Menu::new(),
-            models: Rc::default(),
-            attached: Rc::default(),
-        }
-    }
-
-    pub(crate) fn submenu(&self, id: MenuId) -> gio::Menu {
-        let existing = self.models.borrow().get(&id).cloned();
-        if let Some(menu) = existing {
-            return menu;
-        }
-        // No cache borrow across native construction, even on the first visit.
-        let menu = gio::Menu::new();
-        self.models.borrow_mut().entry(id).or_insert(menu).clone()
-    }
-}
-
 pub(crate) struct WindowCore<K: Copy + Eq + std::hash::Hash + 'static> {
-    application: gtk::Application,
-    window: gtk::ApplicationWindow,
-    state: Rc<RefCell<State<K>>>,
-    open_dialog: Option<gtk::FileChooserNative>,
-    about_dialog: Option<gtk::AboutDialog>,
-    about_opening: bool,
-    aux: AuxWindows<K, u64, NativeAux>,
-    actions: ActionRegistry,
-    sink: Rc<dyn EventSink>,
-    menubar: MenubarModels,
-    menu_presenter: Rc<MenuPresenter>,
-    main_delivery: Rc<MainWindowDelivery>,
+    pub(crate) application: gtk::Application,
+    pub(crate) window: gtk::ApplicationWindow,
+    pub(crate) state: Rc<RefCell<State<K>>>,
+    pub(crate) open_dialog: Option<gtk::FileChooserNative>,
+    pub(crate) about_dialog: Option<gtk::AboutDialog>,
+    pub(crate) about_opening: bool,
+    pub(crate) aux: AuxWindows<K, u64, NativeAux>,
+    pub(crate) actions: ActionRegistry,
+    pub(crate) sink: Rc<dyn EventSink>,
+    pub(crate) menubar: MenubarModels,
+    pub(crate) menu_presenter: Rc<MenuPresenter>,
+    pub(crate) main_delivery: Rc<MainWindowDelivery>,
 }
 
 /// A full window snapshot is latest-wins, including title-notify reentry before
 /// visit_menu. This is a delivery mailbox, not another host window registry.
 #[derive(Default)]
-struct MainWindowDelivery {
+pub(crate) struct MainWindowDelivery {
     active: Cell<bool>,
     pending: RefCell<Option<HostWindow>>,
 }
@@ -102,43 +69,6 @@ pub(crate) struct MainWindowRenderer<K: Copy + Eq + std::hash::Hash + 'static> {
 pub(crate) enum GtkWindowRenderer<'a, K: Copy + Eq + std::hash::Hash + 'static> {
     Main(MainWindowRenderer<K>),
     Build(Box<DialogRenderer<'a>>),
-}
-
-pub(crate) struct DialogRenderer<'a> {
-    parent: &'a gtk::ApplicationWindow,
-    screen: Option<ControlScreen>,
-    mailbox: Option<WindowMailbox>,
-    callbacks: Option<Callbacks>,
-    model: Option<HostWindow>,
-    result: Option<RenderedDialog>,
-}
-
-pub(crate) enum RenderedDialog {
-    Controls(WidgetDialog),
-}
-
-pub(crate) fn render_dialog(
-    model: &HostWindow,
-    parent: &gtk::ApplicationWindow,
-    _id: AuxId,
-    screen: ControlScreen,
-    mailbox: WindowMailbox,
-    callbacks: Callbacks,
-) -> Option<RenderedDialog> {
-    // `Build` never touches the `Main` variant, so any aux kind works.
-    let mut renderer = GtkWindowRenderer::<()>::Build(Box::new(DialogRenderer {
-        parent,
-        screen: Some(screen),
-        mailbox: Some(mailbox),
-        callbacks: Some(callbacks),
-        model: None,
-        result: None,
-    }));
-    model.visit(&mut renderer);
-    let GtkWindowRenderer::Build(builder) = renderer else {
-        unreachable!()
-    };
-    builder.result
 }
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> WindowVisitor for GtkWindowRenderer<'_, K> {
@@ -182,7 +112,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowVisitor for GtkWindowRender
         let (Some(screen), Some(mailbox)) = (builder.screen.take(), builder.mailbox.take()) else {
             return;
         };
-        builder.result = Some(RenderedDialog::Controls(crate::controls::build(
+        builder.result = Some(RenderedDialog::Controls(crate::scene::binding::build(
             builder.model.as_ref().expect("window chrome"),
             builder.parent,
             screen,
@@ -224,384 +154,6 @@ fn present_main_model<K: Copy + Eq + std::hash::Hash + 'static>(
         let model = delivery.pending.borrow_mut().take();
         let Some(model) = model else { break };
         model.visit(&mut visitor);
-    }
-}
-
-/// Native resources only. Opening, presence, identity and routing belong to host.
-/// Every aux window is a generic Controls dialog (any aux kind).
-#[derive(Clone)]
-pub(crate) enum NativeAux {
-    Controls(WidgetDialog),
-}
-
-impl NativeAux {
-    fn is_gone(&self) -> bool {
-        match self {
-            Self::Controls(program) => surface_gone(&program.dialog),
-        }
-    }
-
-    fn present(&self) {
-        match self {
-            Self::Controls(program) => {
-                program.dialog.present();
-                program.binding.sync();
-            }
-        }
-    }
-
-    fn native_window(&self) -> gtk::Window {
-        match self {
-            Self::Controls(program) => program.dialog.clone().upcast(),
-        }
-    }
-}
-
-/// Native liveness is an input; the shared registry decides create/present/pending.
-fn request_aux<K: Copy + Eq + std::hash::Hash + 'static>(
-    window: &Window<K>,
-    kind: K,
-) -> Option<AuxId> {
-    let existing = {
-        let window = window.borrow();
-        window.aux.route_id(kind).zip(window.aux.get(kind).cloned())
-    };
-    if let Some((id, handle)) = existing
-        && handle.is_gone()
-    {
-        close_aux(window, id);
-    }
-    let request = {
-        let mut core = window.borrow_mut();
-        let state = core.state.clone();
-        let request = state.borrow_mut().host.reserve_widget(&mut core.aux, kind);
-        match request {
-            Ok(Some(request)) => request,
-            Ok(None) => return None,
-            Err(error) => {
-                log::warn!("GTK auxiliary reservation failed: {error}");
-                return None;
-            }
-        }
-    };
-    match request {
-        OpenRequest::Create(id) => Some(id),
-        OpenRequest::Present(_) => {
-            let existing = window.borrow().aux.get(kind).cloned();
-            if let Some(existing) = existing {
-                existing.present();
-            }
-            None
-        }
-        OpenRequest::Pending(_) => None,
-    }
-}
-
-fn complete_aux<K: Copy + Eq + std::hash::Hash + 'static>(
-    window: &Window<K>,
-    id: AuxId,
-    handle: NativeAux,
-) -> bool {
-    let native = handle.native_window();
-    let result = window.borrow_mut().aux.complete_open(id, None, handle);
-    if let Err(rejected) = result {
-        rejected.native_window().destroy();
-        close_aux(window, id);
-        return false;
-    }
-    let weak = Rc::downgrade(window);
-    native.connect_destroy(move |_| {
-        if let Some(window) = weak.upgrade() {
-            close_aux(&window, id);
-        }
-    });
-    let weak = Rc::downgrade(window);
-    native.connect_unrealize(move |_| {
-        if let Some(window) = weak.upgrade() {
-            close_aux(&window, id);
-        }
-    });
-    true
-}
-
-/// Remove before any native drop or session callback: both can synchronously reenter.
-fn close_aux<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>, id: AuxId) -> bool {
-    let kind = window.borrow().aux.kind_of_id(id);
-    let outcome = {
-        let mut core = window.borrow_mut();
-        let state = core.state.clone();
-        state
-            .borrow_mut()
-            .host
-            .close_widget(&mut core.aux, id, true)
-    };
-    let Some(outcome) = outcome else {
-        return false;
-    };
-    if let Some(kind) = kind {
-        window
-            .state()
-            .borrow_mut()
-            .host
-            .remember_window_pos(kind, 0, 0);
-    }
-    // The native handle dies with the window; effects already applied.
-    drop(outcome);
-    true
-}
-
-fn open_auxiliary<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>, kind: K) {
-    let Some(id) = request_aux(window, kind) else {
-        return;
-    };
-    window.update_actions();
-    // Host prepares the only draft and publishes its Window into the reserved
-    // route. Validation/rollback and SettingsOpened/Closed are not native policy.
-    let prepared = {
-        let mut core = window.borrow_mut();
-        let state = core.state.clone();
-        state.borrow_mut().host.prepare_widget(&mut core.aux, id)
-    };
-    match prepared {
-        Ok(true) => (),
-        Ok(false) => return,
-        Err(error) => {
-            window.state().borrow_mut().host.report_host_error(error);
-            window.update_actions();
-            return;
-        }
-    }
-    let (model, screen, mailbox) = {
-        let core = window.borrow();
-        let state = core.state.clone();
-        let borrowed = state.borrow();
-        (
-            core.aux.window(id).cloned(),
-            borrowed.host.widget_screen(id),
-            borrowed.host.widget_mailbox(id),
-        )
-    };
-    let (Some(model), Some(screen), Some(mailbox)) = (model, screen, mailbox) else {
-        close_aux(window, id);
-        return;
-    };
-    let built = render_dialog(
-        &model,
-        &window.window(),
-        id,
-        screen,
-        mailbox,
-        widget_callbacks(window, id),
-    );
-    let handle = match built {
-        Some(RenderedDialog::Controls(built)) => NativeAux::Controls(built),
-        None => {
-            close_aux(window, id);
-            window.update_actions();
-            return;
-        }
-    };
-    // Window position memory: view-side owns the kind; GTK4 cannot move
-    // toplevels, but the read shows the wiring.
-    let _ = window.state().borrow().host.window_pos(kind);
-    let dialog_window = handle.native_window();
-    // Aux focus: report arrivals/departures view-side by registry id.
-    {
-        let weak = Rc::downgrade(window);
-        dialog_window.connect_is_active_notify(move |native| {
-            if let Some(window) = weak.upgrade() {
-                window
-                    .state()
-                    .borrow_mut()
-                    .host
-                    .drive_aux_focus(id, native.is_active());
-            }
-        });
-    }
-    let native = handle.native_window();
-    if complete_aux(window, id, handle) {
-        native.present();
-    }
-}
-
-/// Drain deferred aux opens (e.g. one aux view requested from another
-/// gesture) through the normal reserve/prepare path.
-fn drain_deferred_opens<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>) {
-    let kinds = window.state().borrow_mut().host.drain_open_requests();
-    for kind in kinds {
-        open_auxiliary(window, kind);
-    }
-}
-
-/// Per-pump polled-widget refresh without kinds: the widget screen is the only
-/// native view; the view-side poll behind it drives background work and ticks.
-fn pump_debug_widgets<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>) {
-    let id = match window.state().borrow().host.polled_widget() {
-        Some(id) => id,
-        None => return,
-    };
-    window.state().borrow_mut().host.widget_refresh(id);
-    if let Some(program) = window
-        .borrow()
-        .aux
-        .kind_of_id(id)
-        .and_then(|kind| window.borrow().aux.get(kind).cloned())
-    {
-        match program {
-            NativeAux::Controls(program) => program.binding.refresh(),
-        }
-    }
-    let _ = window.state().borrow_mut().host.poll_widget(id);
-    window.state().borrow_mut().host.widget_refresh(id);
-    if let Some(program) = window
-        .borrow()
-        .aux
-        .kind_of_id(id)
-        .and_then(|kind| window.borrow().aux.get(kind).cloned())
-    {
-        match program {
-            NativeAux::Controls(program) => program.binding.refresh(),
-        }
-    }
-    window.state().borrow_mut().host.tick_widget(id);
-}
-
-fn widget_callbacks<K: Copy + Eq + std::hash::Hash + 'static>(
-    window: &Window<K>,
-    id: AuxId,
-) -> Callbacks {
-    let current = Rc::downgrade(window);
-    let refresh = current.clone();
-    let submit = current.clone();
-    let picker = current.clone();
-    let close = current.clone();
-    Callbacks {
-        current: Box::new(move || {
-            current.upgrade().is_some_and(|window| {
-                let core = window.borrow();
-                core.aux.kind_of_id(id).is_some() && !core.state.borrow().host.close_exited()
-            })
-        }),
-        refresh: Box::new(move || {
-            let window = refresh.upgrade()?;
-            let kind = window.borrow().aux.kind_of_id(id)?;
-            let state = window.borrow().state.clone();
-            let _ = kind;
-            // Refresh the view-side session (History/PPU/Debug; no-op for
-            // Settings) before reading the screen, so retained dialogs track
-            // the host through the periodic sync timer.
-            state.borrow_mut().host.widget_refresh(id);
-            state.borrow().host.widget_screen(id)
-        }),
-        submit: Box::new(move |events| {
-            let Some(window) = submit.upgrade() else {
-                return Vec::new();
-            };
-            // Complete every owner borrow before running native effects:
-            // applying chrome or actions reenters the window borrow.
-            let (effects, outcome, deferred) = {
-                let state = window.state();
-                let mut borrowed = state.borrow_mut();
-                let mut effects = Vec::new();
-                for event in events {
-                    effects.extend(borrowed.host.widget_dispatch(id, event));
-                }
-                // Consume a staged submission without closing: apply runs
-                // after the borrows end; native teardown stays on the close path.
-                let outcome = {
-                    let mut core = window.borrow_mut();
-                    borrowed.host.close_widget(&mut core.aux, id, false)
-                };
-                let deferred = borrowed.host.drain_open_requests();
-                (effects, outcome, deferred)
-            };
-            if let Some(outcome) = outcome {
-                apply_window_effects(&window, outcome.effects);
-                window.update_actions();
-            }
-            for kind in deferred {
-                open_auxiliary(&window, kind);
-            }
-            effects
-        }),
-        submit_picker: Box::new(move |target, request, path| {
-            if let Some(window) = picker.upgrade() {
-                let state = window.state();
-                state
-                    .borrow_mut()
-                    .host
-                    .widget_submit_picker(id, target, request, path);
-            }
-        }),
-        close: Box::new(move || {
-            if let Some(window) = close.upgrade()
-                && close_aux(&window, id)
-            {
-                window.update_actions();
-            }
-        }),
-    }
-}
-
-fn apply_window_effects<K: Copy + Eq + std::hash::Hash + 'static>(
-    window: &Window<K>,
-    effects: WindowEffects,
-) {
-    if effects.rebuild_renderer {
-        window.state().borrow_mut().renderer_reload_pending = true;
-    }
-    let native = window.window();
-    if let Some(fullscreen) = effects.fullscreen {
-        native.set_fullscreened(fullscreen);
-    }
-    if let Some((width, height)) = effects.resize {
-        native.set_default_size(width as i32, height as i32);
-        native.queue_resize();
-    }
-    if effects.redraw {
-        native.queue_draw();
-    }
-    if effects.refresh_chrome {
-        window.update_actions();
-    }
-}
-
-/// Shared identity cache only; no borrow may survive a native call.
-/// Names are derived from the opaque id alone, so menu-item references
-/// (`win.<name>`) stay stable across rebuilds without domain knowledge.
-#[derive(Clone, Default)]
-pub(crate) struct ActionRegistry(Rc<RefCell<HashMap<CommandId, gio::SimpleAction>>>);
-
-impl ActionRegistry {
-    fn get(&self, id: CommandId) -> Option<gio::SimpleAction> {
-        self.0.borrow().get(&id).cloned()
-    }
-
-    pub(crate) fn action_name(id: CommandId) -> String {
-        format!("{:?}", id)
-            .chars()
-            .filter(|c| c.is_alphanumeric())
-            .collect::<String>()
-    }
-
-    fn name(&self, id: CommandId) -> Option<String> {
-        self.0
-            .borrow()
-            .contains_key(&id)
-            .then(|| Self::action_name(id))
-    }
-
-    fn get_or_insert(
-        &self,
-        id: CommandId,
-        parameter_type: Option<&glib::VariantTy>,
-    ) -> gio::SimpleAction {
-        if let Some(action) = self.get(id) {
-            return action;
-        }
-        let action = gio::SimpleAction::new(&Self::action_name(id), parameter_type);
-        self.0.borrow_mut().insert(id, action.clone());
-        action
     }
 }
 
@@ -660,47 +212,6 @@ fn apply_command_effect<K: Copy + Eq + std::hash::Hash + 'static>(
         CommandEffect::ToggleFullscreen => toggle_window_fullscreen(window),
         CommandEffect::LiveTick => (),
     }
-}
-
-fn open_about<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>) {
-    let existing = window.borrow().about_dialog.clone();
-    if let Some(dialog) = existing {
-        dialog.present();
-        return;
-    }
-    {
-        let mut core = window.borrow_mut();
-        if core.about_opening {
-            return;
-        }
-        core.about_opening = true;
-    }
-    let dialog: gtk::AboutDialog =
-        gtk::Builder::from_string(include_str!("../resources/about.xml"))
-            .object("about")
-            .unwrap();
-    dialog.set_transient_for(Some(&window.window()));
-    let weak = Rc::downgrade(window);
-    dialog.connect_close_request(move |dialog| {
-        if let Some(window) = weak.upgrade() {
-            let old = {
-                let mut core = window.borrow_mut();
-                if core.about_dialog.as_ref() == Some(dialog) {
-                    core.about_dialog.take()
-                } else {
-                    None
-                }
-            };
-            drop(old);
-        }
-        glib::Propagation::Proceed
-    });
-    {
-        let mut core = window.borrow_mut();
-        core.about_dialog = Some(dialog.clone());
-        core.about_opening = false;
-    }
-    dialog.present();
 }
 
 pub(crate) trait WindowExtend<K: Copy + Eq + std::hash::Hash + 'static> {
@@ -895,7 +406,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
         // through the same RefCell, so holding the guard would double-borrow.
         let detail = self.state().borrow_mut().load_path(path).err();
         if let Some(detail) = detail {
-            show_rom_load_error(&self.window(), self.state(), &detail);
+            crate::chrome::dialogs::show_file_load_error(&self.window(), self.state(), &detail);
         }
         self.update_actions();
     }
@@ -970,7 +481,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
         // No hardcoded F-keys: the aux open rides the shortcut schema
         // (default F4, rebindable in Settings), so a user binding always wins.
-        if let Some(controller_input) = crate::keyboard::key_from_gdk(key) {
+        if let Some(controller_input) = crate::input::keyboard::key_from_gdk(key) {
             self.event_sink()
                 .send(EventCommand::Session(SessionEvent::Keyboard {
                     key: controller_input,
@@ -982,138 +493,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
 
     fn event_sink(&self) -> Rc<dyn EventSink> {
         self.borrow().sink.clone()
-    }
-}
-
-pub(crate) const GTK_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
-    about: true,
-    dialog_ellipsis: false,
-    application_menu: false,
-};
-
-/// A stack over persistent native objects, keyed by host semantic identity.
-pub(crate) struct GtkMenuVisitor {
-    menubar: MenubarModels,
-    window: Option<gtk::ApplicationWindow>,
-    application: Option<gtk::Application>,
-    actions: ActionRegistry,
-    sink: Option<Rc<dyn EventSink>>,
-    stack: Vec<(gio::Menu, bool)>,
-}
-
-impl GtkMenuVisitor {
-    #[cfg(test)]
-    pub(crate) fn new(menubar: MenubarModels) -> Self {
-        Self {
-            menubar,
-            window: None,
-            application: None,
-            actions: ActionRegistry::default(),
-            sink: None,
-            stack: Vec::new(),
-        }
-    }
-}
-
-/// Decode strictly before binding: a bad or missing item is never item zero.
-/// Shape comes from the generic spec (`None` vs `Some`); domain meaning of
-/// the index resolves view-side.
-fn send_action(sink: &dyn EventSink, descriptor: &Command, value: Option<&glib::Variant>) {
-    let indexed = descriptor.spec.argument().is_some();
-    let argument = match (indexed, value) {
-        (false, None) => None,
-        (true, Some(value)) => {
-            let Some(id) = value.get::<u64>() else { return };
-            Some(id)
-        }
-        _ => return,
-    };
-    sink.send(EventCommand::Menu(CommandRef {
-        id: descriptor.id,
-        argument,
-    }));
-}
-
-impl CommandVisitor for GtkMenuVisitor {
-    fn command(&mut self, descriptor: &Command) {
-        let action = if let Some(action) = self.actions.get(descriptor.id) {
-            action
-        } else {
-            let parameter_type = descriptor
-                .spec
-                .argument()
-                .is_some()
-                .then(u64::static_variant_type);
-            let action = self
-                .actions
-                .get_or_insert(descriptor.id, parameter_type.as_deref());
-            if let Some(sink) = self.sink.clone() {
-                let descriptor = descriptor.clone();
-                action.connect_activate(move |_, parameter| {
-                    send_action(sink.as_ref(), &descriptor, parameter);
-                });
-            }
-            if let Some(window) = &self.window {
-                window.add_action(&action);
-            }
-            action
-        };
-        // Once per declaration, never per item entry. No registry borrow here.
-        action.set_enabled(descriptor.enabled);
-    }
-}
-
-impl MenuVisitor for GtkMenuVisitor {
-    fn begin_menubar(&mut self, _menubar: &Menubar, rebuild: bool) {
-        if rebuild {
-            self.menubar.menu_model.remove_all();
-        }
-        self.stack.push((self.menubar.menu_model.clone(), rebuild));
-    }
-
-    fn begin_menu(&mut self, menu: &Submenu, rebuild: bool) {
-        let native = self.menubar.submenu(menu.id);
-        let (parent, parent_rebuild) = self.stack.last().expect("host menu parent");
-        if *parent_rebuild {
-            parent.append_submenu(Some(&menu.label), &native);
-        }
-        if rebuild {
-            native.remove_all();
-        }
-        self.stack.push((native, rebuild));
-    }
-
-    fn item(&mut self, item: &MenuItem) {
-        let action = item.command.and_then(|activation| {
-            self.actions
-                .name(activation.id)
-                .map(|name| (name, activation.argument))
-        });
-        let (parent, rebuild) = self.stack.last().expect("host item parent");
-        if *rebuild {
-            let native = gio::MenuItem::new(Some(&item.label), None);
-            if let Some((name, target)) = action {
-                native.set_action_and_target_value(
-                    Some(&format!("win.{name}")),
-                    target.map(|id| id.to_variant()).as_ref(),
-                );
-            }
-            parent.append_item(&native);
-        }
-    }
-
-    fn end_menu(&mut self, _id: MenuId) {
-        self.stack.pop();
-    }
-    fn end_menubar(&mut self) {
-        self.stack.pop();
-        debug_assert!(self.stack.is_empty());
-        if let (Some(application), Some(window)) = (&self.application, &self.window)
-            && !self.menubar.attached.replace(true)
-        {
-            application.set_menubar(Some(&self.menubar.menu_model));
-            window.set_show_menubar(true);
-        }
     }
 }
 
@@ -1167,33 +546,32 @@ fn toggle_window_fullscreen<K: Copy + Eq + std::hash::Hash + 'static>(window: &W
 }
 
 /// Use the single modal queue, including its acknowledgement path.
-fn show_rom_load_error<K: Copy + Eq + std::hash::Hash + 'static>(
-    _parent: &gtk::ApplicationWindow,
-    state: Rc<RefCell<State<K>>>,
-    detail: &str,
-) {
-    state.borrow_mut().host.report_host_error(detail.to_owned());
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testkit::TestAux;
     use wakui_core::chrome::aux::AuxId;
 
-    pub(crate) fn program(window: &super::Window<TestAux>, kind: TestAux) -> super::WidgetDialog {
-        super::open_auxiliary(window, kind);
-        let Some(super::NativeAux::Controls(program)) = window.borrow().aux.get(kind).cloned()
+    pub(crate) fn program(
+        window: &super::Window<TestAux>,
+        kind: TestAux,
+    ) -> crate::scene::binding::WidgetDialog {
+        crate::chrome::aux_windows::open_auxiliary(window, kind);
+        let Some(crate::chrome::aux_windows::NativeAux::Controls(program)) =
+            window.borrow().aux.get(kind).cloned()
         else {
             panic!("generic widget program");
         };
         program
     }
 
-    pub(crate) fn route(window: &super::Window<TestAux>, kind: TestAux) -> Option<super::AuxId> {
+    pub(crate) fn route(
+        window: &super::Window<TestAux>,
+        kind: TestAux,
+    ) -> Option<wakui_core::chrome::aux::AuxId> {
         window.borrow().aux.route_id(kind)
     }
-    pub(crate) fn inert_callbacks() -> super::Callbacks {
-        super::Callbacks {
+    pub(crate) fn inert_callbacks() -> crate::scene::binding::Callbacks {
+        crate::scene::binding::Callbacks {
             current: Box::new(|| true),
             refresh: Box::new(|| None),
             submit: Box::new(|_| Vec::new()),
@@ -1207,12 +585,11 @@ pub(crate) mod tests {
         GtkApplicationExt as _, GtkWindowExt as _, ObjectExt as _,
     };
 
-    use super::{
-        CommandId, GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenubarModels,
-        WindowExtend, key_event_pressed,
-    };
-    use crate::surface_state::surface_gone;
+    use super::{KeyEventState, WindowExtend, key_event_pressed};
+    use crate::chrome::menu::{GTK_MENU_CAPABILITIES, GtkMenuVisitor, MenubarModels};
+    use crate::chrome::surface_state::surface_gone;
     use crate::testkit::{TestMenu, TestSession, menu_id};
+    use wakui_core::input::commands::CommandId;
 
     /// Opaque id for a simulated command, found in the window's latest
     /// menubar by downcasting the generic spec. Native registries key on
@@ -1272,7 +649,7 @@ pub(crate) mod tests {
         // Bypass the item wiring: a directly built dialog carries no
         // destroy hook, like an externally destroyed one whose
         // close-request never ran.
-        super::open_auxiliary(&win, TestAux::Beta);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Beta);
         let built = win.borrow().aux.get(TestAux::Beta).cloned().unwrap();
         // External destroy disposes the widget without signals; the
         // item keeps the dead dialog.
@@ -1280,9 +657,9 @@ pub(crate) mod tests {
         dead.destroy();
         assert!(surface_gone(&dead));
         // Must rebuild, not panic on the item borrow.
-        super::open_auxiliary(&win, TestAux::Beta);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Beta);
         let item = win.borrow().aux.get(TestAux::Beta).cloned();
-        let Some(super::NativeAux::Controls(program)) = item else {
+        let Some(crate::chrome::aux_windows::NativeAux::Controls(program)) = item else {
             panic!("rebuilt dialog");
         };
         let dialog = program.dialog;
@@ -1297,7 +674,7 @@ pub(crate) mod tests {
             window,
             gtk::Picture::new(),
             state,
-            super::MenubarModels::new(),
+            crate::chrome::menu::MenubarModels::new(),
         ))
     }
 
@@ -1314,7 +691,7 @@ pub(crate) mod tests {
                 window,
                 gtk::Picture::new(),
                 state,
-                super::MenubarModels::new(),
+                crate::chrome::menu::MenubarModels::new(),
             ),
             fake,
         ))
@@ -1388,10 +765,12 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs display; CI-only under xvfb"]
     fn common_main_window_menu_opens_debug_from_reserved_owned_blueprint() {
-        use super::{HostWindow, NativeAux, OpenRequest};
+        use crate::chrome::aux_windows::NativeAux;
         use gio::prelude::MenuModelExt;
         use gtk::prelude::WidgetExt;
         use std::{cell::Cell, rc::Rc};
+        use wakui_core::chrome::aux::OpenRequest;
+        use wakui_core::chrome::window::Window as HostWindow;
 
         let win = bound_window().expect("run in an isolated Xvfb process");
         let mut model = win.state().borrow().host.main_window().clone();
@@ -1435,7 +814,7 @@ pub(crate) mod tests {
                         .request_open(TestAux::Gamma, TestAux::Gamma.title()),
                     OpenRequest::Pending(id)
                 );
-                super::open_auxiliary(&win, TestAux::Gamma);
+                crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Gamma);
                 added.set(added.get() + 1);
                 let weak = Rc::downgrade(&win);
                 let mapped = mapped.clone();
@@ -1485,7 +864,7 @@ pub(crate) mod tests {
                     .as_str()
             )
         );
-        super::open_auxiliary(&win, TestAux::Gamma);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Gamma);
         assert_eq!(win.borrow().aux.route_id(TestAux::Gamma), Some(id));
         native.destroy();
         win.window().destroy();
@@ -1494,8 +873,8 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs display; CI-only under xvfb"]
     fn common_auxiliary_contents_choose_native_groups_and_owned_titles() {
-        use super::HostWindow;
         use gtk::prelude::WidgetExt;
+        use wakui_core::chrome::window::Window as HostWindow;
         use wakui_core::chrome::window::WindowId;
         let win = bound_window().expect("run in an isolated Xvfb process");
         let main = win.window();
@@ -1504,7 +883,7 @@ pub(crate) mod tests {
         let mut debug = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Gamma.title());
         debug.id = WindowId::Auxiliary(AuxId::from_raw(2));
         debug.title = "owned debug title".into();
-        let hid = super::request_aux(&win, TestAux::Beta).unwrap();
+        let hid = crate::chrome::aux_windows::request_aux(&win, TestAux::Beta).unwrap();
         {
             let mut core = win.borrow_mut();
             let hstate = core.state.clone();
@@ -1528,20 +907,22 @@ pub(crate) mod tests {
         // even when the model id names another route.
         let mut history = _hmodel;
         history.id = WindowId::Auxiliary(AuxId::from_raw(2));
-        let Some(super::RenderedDialog::Controls(built)) = super::render_dialog(
-            &history,
-            &main,
-            hid,
-            hscreen.clone(),
-            hmailbox.clone(),
-            super::widget_callbacks(&win, hid),
-        ) else {
+        let Some(crate::chrome::dialogs::RenderedDialog::Controls(built)) =
+            crate::chrome::dialogs::render_dialog(
+                &history,
+                &main,
+                hid,
+                hscreen.clone(),
+                hmailbox.clone(),
+                crate::chrome::aux_windows::widget_callbacks(&win, hid),
+            )
+        else {
             panic!("History contents, not ID, select grouped controls")
         };
         assert!(built.dialog.content_area().first_child().is_some());
         let pending = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Alpha.title());
         assert!(
-            super::render_dialog(
+            crate::chrome::dialogs::render_dialog(
                 &pending,
                 &main,
                 hid,
@@ -1551,11 +932,11 @@ pub(crate) mod tests {
             )
             .is_none()
         );
-        super::close_aux(&win, hid);
+        crate::chrome::aux_windows::close_aux(&win, hid);
 
         // PPU is a generic widget window: the aux model starts pending,
         // the view-side aux screen supplies the ControlScreen.
-        let pid = super::request_aux(&win, TestAux::Delta).unwrap();
+        let pid = crate::chrome::aux_windows::request_aux(&win, TestAux::Delta).unwrap();
         {
             let mut core = win.borrow_mut();
             let pstate = core.state.clone();
@@ -1576,16 +957,23 @@ pub(crate) mod tests {
             )
         };
         assert_eq!(pmodel.title, TestAux::Delta.title());
-        let Some(super::RenderedDialog::Controls(pbuilt)) =
-            super::render_dialog(&pmodel, &main, pid, pscreen2, pmailbox, inert_callbacks())
+        let Some(crate::chrome::dialogs::RenderedDialog::Controls(pbuilt)) =
+            crate::chrome::dialogs::render_dialog(
+                &pmodel,
+                &main,
+                pid,
+                pscreen2,
+                pmailbox,
+                inert_callbacks(),
+            )
         else {
             panic!("PPU widget renders as generic controls");
         };
         assert!(pbuilt.dialog.content_area().first_child().is_some());
-        super::close_aux(&win, pid);
+        crate::chrome::aux_windows::close_aux(&win, pid);
 
         // Aux gamma is also a generic widget window now.
-        let did = super::request_aux(&win, TestAux::Gamma).unwrap();
+        let did = crate::chrome::aux_windows::request_aux(&win, TestAux::Gamma).unwrap();
         {
             let mut core = win.borrow_mut();
             let dstate = core.state.clone();
@@ -1609,15 +997,22 @@ pub(crate) mod tests {
             )
         };
         assert_eq!(dmodel.title, TestAux::Gamma.title());
-        let Some(super::RenderedDialog::Controls(dbuilt)) =
-            super::render_dialog(&dmodel, &main, did, dscreen, dmailbox, inert_callbacks())
+        let Some(crate::chrome::dialogs::RenderedDialog::Controls(dbuilt)) =
+            crate::chrome::dialogs::render_dialog(
+                &dmodel,
+                &main,
+                did,
+                dscreen,
+                dmailbox,
+                inert_callbacks(),
+            )
         else {
             panic!("Debug widget renders as generic controls");
         };
         assert!(dbuilt.dialog.content_area().first_child().is_some());
-        super::close_aux(&win, did);
+        crate::chrome::aux_windows::close_aux(&win, did);
 
-        let id = super::request_aux(&win, TestAux::Beta).unwrap();
+        let id = crate::chrome::aux_windows::request_aux(&win, TestAux::Beta).unwrap();
         {
             let mut core = win.borrow_mut();
             let state = core.state.clone();
@@ -1639,20 +1034,22 @@ pub(crate) mod tests {
         };
         let mut history = model;
         history.id = WindowId::Auxiliary(AuxId::from_raw(2));
-        let Some(super::RenderedDialog::Controls(built)) = super::render_dialog(
-            &history,
-            &main,
-            id,
-            screen.clone(),
-            mailbox.clone(),
-            super::widget_callbacks(&win, id),
-        ) else {
+        let Some(crate::chrome::dialogs::RenderedDialog::Controls(built)) =
+            crate::chrome::dialogs::render_dialog(
+                &history,
+                &main,
+                id,
+                screen.clone(),
+                mailbox.clone(),
+                crate::chrome::aux_windows::widget_callbacks(&win, id),
+            )
+        else {
             panic!("History contents, not ID, select grouped controls")
         };
         assert!(built.dialog.content_area().first_child().is_some());
         let pending = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Alpha.title());
         assert!(
-            super::render_dialog(
+            crate::chrome::dialogs::render_dialog(
                 &pending,
                 &main,
                 id,
@@ -1673,9 +1070,9 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs display; CI-only under xvfb"]
     fn common_dialog_map_reentry_sees_committed_identity_without_borrows() {
-        use super::OpenRequest;
         use gtk::prelude::{ListModelExt, WidgetExt};
         use std::{cell::Cell, rc::Rc};
+        use wakui_core::chrome::aux::OpenRequest;
         let win = bound_window().expect("isolated Xvfb process");
         for kind in [TestAux::Beta, TestAux::Alpha] {
             let created = Rc::new(Cell::new(0));
@@ -1698,7 +1095,7 @@ pub(crate) mod tests {
                             win.borrow_mut().aux.request_open(kind, kind.title()),
                             OpenRequest::Pending(id)
                         );
-                        super::open_auxiliary(&win, kind);
+                        crate::chrome::aux_windows::open_auxiliary(&win, kind);
                         created.set(created.get() + 1);
                         let weak = Rc::downgrade(&win);
                         let mapped = mapped.clone();
@@ -1713,13 +1110,13 @@ pub(crate) mod tests {
                             );
                             // Count before re-presenting: GTK can emit map synchronously.
                             if mapped.replace(mapped.get() + 1) == 0 {
-                                super::open_auxiliary(&win, kind);
+                                crate::chrome::aux_windows::open_auxiliary(&win, kind);
                             }
                         });
                     }
                 }
             });
-            super::open_auxiliary(&win, kind);
+            crate::chrome::aux_windows::open_auxiliary(&win, kind);
             toplevels.disconnect(signal);
             assert_eq!(created.get(), 1);
             assert_eq!(mapped.get(), 1);
@@ -1760,13 +1157,13 @@ pub(crate) mod tests {
                         assert!(win.try_borrow_mut().is_ok());
                         assert!(win.state().try_borrow_mut().is_ok());
                         let old = win.borrow().aux.route_id(kind).unwrap();
-                        assert!(super::close_aux(&win, old));
-                        super::open_auxiliary(&win, kind);
-                        assert!(!super::close_aux(&win, old));
+                        assert!(crate::chrome::aux_windows::close_aux(&win, old));
+                        crate::chrome::aux_windows::open_auxiliary(&win, kind);
+                        assert!(!crate::chrome::aux_windows::close_aux(&win, old));
                     }
                 }
             });
-            super::open_auxiliary(&win, kind);
+            crate::chrome::aux_windows::open_auxiliary(&win, kind);
             toplevels.disconnect(signal);
             let stale = stale.borrow().clone().unwrap();
             assert!(surface_gone(&stale));
@@ -1810,8 +1207,8 @@ pub(crate) mod tests {
                 let win = weak.upgrade().unwrap();
                 let old = win.borrow().aux.route_id(TestAux::Gamma).unwrap();
                 assert!(win.borrow_mut().aux.cancel_open(old));
-                super::open_auxiliary(&win, TestAux::Gamma);
-                assert!(!super::close_aux(&win, old));
+                crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Gamma);
+                assert!(!crate::chrome::aux_windows::close_aux(&win, old));
             }
         });
         let removed = win.application().connect_window_removed({
@@ -1822,7 +1219,7 @@ pub(crate) mod tests {
                 assert!(win.state().try_borrow_mut().is_ok());
             }
         });
-        super::open_auxiliary(&win, TestAux::Gamma);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Gamma);
         win.application().disconnect(signal);
         win.application().disconnect(removed);
         let stale = stale.borrow().clone().unwrap();
@@ -1875,7 +1272,7 @@ pub(crate) mod tests {
             }
         });
         // A real host input change, not a direct call to the native setter.
-        let super::OpenRequest::Create(id) = win
+        let wakui_core::chrome::aux::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
             .request_open(TestAux::Alpha, TestAux::Alpha.title())
@@ -1893,7 +1290,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .is_enabled()
         );
-        assert!(super::close_aux(&win, id));
+        assert!(crate::chrome::aux_windows::close_aux(&win, id));
         win.update_actions();
         assert_eq!(notifications.get(), 2);
         assert!(borrow_free.get());
@@ -1926,7 +1323,7 @@ pub(crate) mod tests {
             screen.visit(&mut find);
             find.1.unwrap_or_else(|| panic!("control {label:?}"))
         }
-        let super::OpenRequest::Create(id) = win
+        let wakui_core::chrome::aux::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
             .request_open(TestAux::Alpha, TestAux::Alpha.title())
@@ -1993,7 +1390,7 @@ pub(crate) mod tests {
                 .host
                 .close_widget(&mut core.aux, id, false);
         }
-        assert!(super::close_aux(win, id));
+        assert!(crate::chrome::aux_windows::close_aux(win, id));
     }
 
     #[test]
@@ -2046,7 +1443,7 @@ pub(crate) mod tests {
         }
         win.update_actions();
         win.rebuild_menubar();
-        let super::OpenRequest::Create(id) = win
+        let wakui_core::chrome::aux::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
             .request_open(TestAux::Alpha, TestAux::Alpha.title())
@@ -2054,7 +1451,7 @@ pub(crate) mod tests {
             panic!("expected settings reservation");
         };
         win.update_actions();
-        assert!(super::close_aux(&win, id));
+        assert!(crate::chrome::aux_windows::close_aux(&win, id));
         win.update_actions();
         assert_eq!(
             changes.get(),
@@ -2105,7 +1502,7 @@ pub(crate) mod tests {
             .actions
             .get(command_id(&win, TestMenu::Quit))
             .unwrap();
-        let super::OpenRequest::Create(id) = win
+        let wakui_core::chrome::aux::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
             .request_open(TestAux::Alpha, TestAux::Alpha.title())
@@ -2122,7 +1519,7 @@ pub(crate) mod tests {
             let win = weak.upgrade().unwrap();
             assert!(win.try_borrow_mut().is_ok());
             assert!(win.state().try_borrow_mut().is_ok());
-            assert!(super::close_aux(&win, id));
+            assert!(crate::chrome::aux_windows::close_aux(&win, id));
             win.update_actions();
         });
         win.update_actions();
@@ -2217,7 +1614,7 @@ pub(crate) mod tests {
 
     #[test]
     fn auxiliary_open_reservations_block_reentrant_native_creation() {
-        use super::OpenRequest;
+        use wakui_core::chrome::aux::OpenRequest;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2228,15 +1625,15 @@ pub(crate) mod tests {
                 panic!("expected reservation");
             };
             match kind {
-                TestAux::Gamma => super::open_auxiliary(&win, TestAux::Gamma),
-                TestAux::Beta => super::open_auxiliary(&win, TestAux::Beta),
+                TestAux::Gamma => crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Gamma),
+                TestAux::Beta => crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Beta),
                 TestAux::Alpha => {
                     let action = win
                         .borrow()
                         .actions
                         .get(command_id(&win, TestMenu::AuxAlpha))
                         .unwrap();
-                    super::open_auxiliary(&win, TestAux::Alpha);
+                    crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Alpha);
                     assert!(action.is_enabled());
                 }
                 TestAux::Delta => unreachable!(),
@@ -2249,26 +1646,26 @@ pub(crate) mod tests {
 
     #[test]
     fn history_reuses_identity_and_old_destroy_cannot_close_replacement() {
-        use super::NativeAux;
+        use crate::chrome::aux_windows::NativeAux;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        super::open_auxiliary(&win, TestAux::Beta);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Beta);
         let old_id = win.borrow().aux.route_id(TestAux::Beta).unwrap();
         let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Beta).cloned()
         else {
             panic!("history dialog");
         };
         let old = program.dialog;
-        super::open_auxiliary(&win, TestAux::Beta);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Beta);
         assert_eq!(win.borrow().aux.route_id(TestAux::Beta), Some(old_id));
-        assert!(super::close_aux(&win, old_id));
-        super::open_auxiliary(&win, TestAux::Beta);
+        assert!(crate::chrome::aux_windows::close_aux(&win, old_id));
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Beta);
         let new_id = win.borrow().aux.route_id(TestAux::Beta).unwrap();
         assert_ne!(old_id, new_id);
         old.destroy();
-        assert!(!super::close_aux(&win, old_id));
+        assert!(!crate::chrome::aux_windows::close_aux(&win, old_id));
         assert_eq!(win.borrow().aux.route_id(TestAux::Beta), Some(new_id));
         let current = win.borrow().aux.get(TestAux::Beta).unwrap().native_window();
         current.destroy();
@@ -2277,7 +1674,7 @@ pub(crate) mod tests {
 
     #[test]
     fn settings_identity_guards_pause_owner_and_native_finish() {
-        use super::NativeAux;
+        use crate::chrome::aux_windows::NativeAux;
         use crate::testkit::owners;
         let Some((win, fake)) = bound_window_shared() else {
             eprintln!("SKIP: window widget test needs a display");
@@ -2295,7 +1692,7 @@ pub(crate) mod tests {
             panic!("settings dialog");
         };
         let old = program.dialog;
-        super::open_auxiliary(&win, TestAux::Alpha);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Alpha);
         assert_eq!(win.borrow().aux.route_id(TestAux::Alpha), Some(old_id));
         win.update_actions();
         assert!(!action.is_enabled());
@@ -2303,10 +1700,10 @@ pub(crate) mod tests {
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(TestAux::Alpha));
         assert!(!fake.borrow().owns_pause(owners::GUARD));
-        super::open_auxiliary(&win, TestAux::Alpha);
+        crate::chrome::aux_windows::open_auxiliary(&win, TestAux::Alpha);
         let new_id = win.borrow().aux.route_id(TestAux::Alpha).unwrap();
         assert_ne!(old_id, new_id);
-        assert!(!super::close_aux(&win, old_id));
+        assert!(!crate::chrome::aux_windows::close_aux(&win, old_id));
         old.destroy();
         assert!(fake.borrow().owns_pause(owners::GUARD));
         assert!(!action.is_enabled());
@@ -2364,8 +1761,8 @@ pub(crate) mod tests {
 
     #[test]
     fn command_declarations_generate_and_reuse_every_action() {
-        use super::StaticVariantType;
         use gio::prelude::MenuModelExt;
+        use gtk::glib::variant::StaticVariantType;
         let state = model_state();
         let model = {
             let mut state = state.borrow_mut();
@@ -2383,7 +1780,7 @@ pub(crate) mod tests {
             .iter()
             .map(|descriptor| {
                 // Names derive from the opaque id alone, never domain vocabulary.
-                let expected = super::ActionRegistry::action_name(descriptor.id);
+                let expected = crate::chrome::menu::ActionRegistry::action_name(descriptor.id);
                 let action = visitor.actions.get(descriptor.id).unwrap();
                 assert_eq!(action.name().as_str(), expected);
                 assert_eq!(action.is_enabled(), descriptor.enabled);
@@ -2422,7 +1819,13 @@ pub(crate) mod tests {
             file.item_attribute_value(file.n_items() - 1, "action", None)
                 .unwrap()
                 .str(),
-            Some(format!("win.{}", super::ActionRegistry::action_name(quit)).as_str())
+            Some(
+                format!(
+                    "win.{}",
+                    crate::chrome::menu::ActionRegistry::action_name(quit)
+                )
+                .as_str()
+            )
         );
         assert_eq!(
             visitor
@@ -2431,15 +1834,23 @@ pub(crate) mod tests {
                 .item_attribute_value(0, "action", None)
                 .unwrap()
                 .str(),
-            Some(format!("win.{}", super::ActionRegistry::action_name(about)).as_str())
+            Some(
+                format!(
+                    "win.{}",
+                    crate::chrome::menu::ActionRegistry::action_name(about)
+                )
+                .as_str()
+            )
         );
     }
 
     #[test]
     fn generated_actions_send_typed_commands_to_dyn_sink_and_reject_bad_arguments() {
-        use super::{CommandVisitor, EventCommand, EventSink, ToVariant};
+        use gtk::glib::variant::ToVariant;
         use std::{cell::RefCell, rc::Rc};
         use wakui_core::input::commands::CommandRef;
+        use wakui_core::input::commands::CommandVisitor;
+        use wakui_core::input::event::{EventCommand, EventSink};
         #[derive(Default)]
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
@@ -2495,10 +1906,10 @@ pub(crate) mod tests {
         let sink: Rc<dyn EventSink> = recording.clone();
         // Exercise the callback decoder directly: GAction itself also rejects
         // these before emitting activate, which would otherwise mask a bug here.
-        super::send_action(sink.as_ref(), descriptor, None);
-        super::send_action(sink.as_ref(), descriptor, Some(&"42".to_variant()));
-        super::send_action(sink.as_ref(), descriptor, Some(&42_i32.to_variant()));
-        super::send_action(
+        crate::chrome::menu::send_action(sink.as_ref(), descriptor, None);
+        crate::chrome::menu::send_action(sink.as_ref(), descriptor, Some(&"42".to_variant()));
+        crate::chrome::menu::send_action(sink.as_ref(), descriptor, Some(&42_i32.to_variant()));
+        crate::chrome::menu::send_action(
             sink.as_ref(),
             model.commands.get(reset).unwrap(),
             Some(&42_u64.to_variant()),
@@ -2520,14 +1931,17 @@ pub(crate) mod tests {
 
     #[test]
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
-        use super::{EventCommand, OpenRequest};
         use crate::testkit::owners;
+        use wakui_core::chrome::aux::OpenRequest;
+        use wakui_core::input::event::EventCommand;
         let Some((win, fake)) = bound_window_shared() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let about_name = super::ActionRegistry::action_name(command_id(&win, TestMenu::About));
-        let quit_name = super::ActionRegistry::action_name(command_id(&win, TestMenu::Quit));
+        let about_name =
+            crate::chrome::menu::ActionRegistry::action_name(command_id(&win, TestMenu::About));
+        let quit_name =
+            crate::chrome::menu::ActionRegistry::action_name(command_id(&win, TestMenu::Quit));
         assert!(win.application().lookup_action(&about_name).is_none());
         assert!(win.application().lookup_action(&quit_name).is_none());
         let about = win
@@ -2565,7 +1979,7 @@ pub(crate) mod tests {
         assert!(win.borrow().about_dialog.is_none());
         assert!(!about.is_enabled());
         assert!(quit.is_enabled());
-        assert!(super::close_aux(&win, id));
+        assert!(crate::chrome::aux_windows::close_aux(&win, id));
         fake.borrow_mut().set_pause_owner(owners::GUARD, true);
         assert!(sink.send(about_event));
         assert!(
@@ -2627,7 +2041,8 @@ pub(crate) mod tests {
                             assert!(win.state().try_borrow_mut().is_ok());
                             assert!(win.borrow().actions.0.try_borrow_mut().is_ok());
                             mapped.set(mapped.get() + 1);
-                            win.event_sink().send(super::EventCommand::LiveTick);
+                            win.event_sink()
+                                .send(wakui_core::input::event::EventCommand::LiveTick);
                         }
                     });
                 }
@@ -2647,8 +2062,9 @@ pub(crate) mod tests {
 
     #[test]
     fn event_sink_and_action_callbacks_do_not_keep_window_alive() {
-        use super::{EventCommand, SessionEvent};
         use std::rc::Rc;
+        use wakui_core::input::event::EventCommand;
+        use wakui_core::input::session::SessionEvent;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2670,8 +2086,9 @@ pub(crate) mod tests {
 
     #[test]
     fn keys_and_shortcuts_use_the_same_dyn_event_boundary() {
-        use super::{EventCommand, EventSink, SessionEvent};
         use std::{cell::RefCell, rc::Rc};
+        use wakui_core::input::event::{EventCommand, EventSink};
+        use wakui_core::input::session::SessionEvent;
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
             fn send(&self, event: EventCommand) -> bool {
@@ -2736,7 +2153,7 @@ pub(crate) mod tests {
         let bars = MenubarModels::new();
         let commands = FakeCommands::new();
         let mut model = crate::testkit::canned_menubar(&commands, &[1, 2], Some(2), false, true);
-        fn disable_items(menu: &mut super::Submenu) {
+        fn disable_items(menu: &mut wakui_core::chrome::menu::Submenu) {
             use wakui_core::chrome::menu::MenuEntry;
             for entry in &mut menu.children {
                 match entry {
@@ -2776,7 +2193,13 @@ pub(crate) mod tests {
                 menu.item_attribute_value(index, "action", None)
                     .unwrap()
                     .str(),
-                Some(format!("win.{}", super::ActionRegistry::action_name(load_item)).as_str())
+                Some(
+                    format!(
+                        "win.{}",
+                        crate::chrome::menu::ActionRegistry::action_name(load_item)
+                    )
+                    .as_str()
+                )
             );
         }
     }

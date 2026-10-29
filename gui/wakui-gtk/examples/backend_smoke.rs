@@ -6,7 +6,7 @@
 
 use wakui_core::app::backend::BackendRegistry;
 use wakui_core::support::conformance::{ConformanceBackend, run_conformance};
-use wakui_gtk::{keyboard, register};
+use wakui_gtk::{input::keyboard, register};
 
 fn main() {
     // Native input maps without the app crates.
