@@ -2,9 +2,9 @@
 //!
 //! Framework-only: depends on [`wakui`] plus the iced/tao toolkits.
 //! Never on view definitions, sessions, or settings. Native frontends
-//! render [`wakui_core::scene::control::ControlScreen`] snapshots through [`controls`],
-//! adapt them to host windows through [`binding`], and map native input
-//! through [`keyboard`], [`tao_map`], and [`convert`].
+//! render [`wakui_core::scene::control::ControlScreen`] snapshots through
+//! [`control_renderer`], adapt them to host windows through
+//! [`control_binding`], and map native input through [`input`].
 //!
 //! A third-party app builds UI with `wakui` plus this crate only:
 //! see `examples/backend_smoke.rs`. The entry point is [`run`]; the
@@ -12,21 +12,16 @@
 
 pub mod app;
 pub mod backend;
-pub mod binding;
-pub mod controls;
-pub mod convert;
-pub mod disabled;
-pub mod event;
-pub mod handler;
-pub mod keyboard;
-pub mod menu;
-pub mod native_input;
+pub mod control_binding;
+pub mod control_renderer;
+pub mod event_sink;
+pub mod input;
+pub mod native_menu;
 pub mod ports;
-pub mod tao_map;
-pub mod window;
+pub mod window_program;
 
-pub(crate) mod aux;
-pub(crate) mod runtime;
+pub(crate) mod aux_windows;
+pub(crate) mod event_loop;
 
 #[cfg(any(
     target_os = "linux",
