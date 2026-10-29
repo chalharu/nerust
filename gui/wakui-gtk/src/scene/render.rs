@@ -820,6 +820,9 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 notebook.reorder_child(child, Some(i as u32));
             }
         }
+        // An empty tab set reserves no space: the shortcuts tab carries no
+        // sections, and hidden lists never reach the notebook.
+        notebook.set_visible(!children.is_empty());
         if let Some(selected) = selected
             && notebook.current_page() != Some(selected as u32)
         {
@@ -862,6 +865,10 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             let NativeKind::List(body) = &native.kind else {
                 return;
             };
+            // Row gap comes from the host metadata: view definitions set it
+            // to the retired per-row container spacing (settings 12,
+            // debugger 8). Unset keeps the legacy packed history/PPU lists.
+            body.set_spacing(control.metadata.hints.spacing.unwrap_or(0.0) as i32);
             body.set_visible(control.metadata.visible);
             body.set_sensitive(control.metadata.enabled);
             *native.last.borrow_mut() = Some(control.clone());
