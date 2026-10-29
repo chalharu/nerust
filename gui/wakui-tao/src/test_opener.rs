@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OpenerCall {
     Main,
-    Settings,
-    Debug,
-    Ppu,
-    History,
+    Alpha,
+    Gamma,
+    Delta,
+    Beta,
 }
 
 /// `WindowOpener` that fails every creation closed and records calls. Aux handles are unbuildable
@@ -53,10 +53,10 @@ impl crate::ports::WindowOpener for FakeOpener {
         };
         // Titles are view-side; the headless fake maps them back to calls.
         let call = match window.title.as_str() {
-            title if title == TestAux::Settings.title() => OpenerCall::Settings,
-            title if title == TestAux::Debug.title() => OpenerCall::Debug,
-            title if title == TestAux::Ppu.title() => OpenerCall::Ppu,
-            title if title == TestAux::History.title() => OpenerCall::History,
+            title if title == TestAux::Alpha.title() => OpenerCall::Alpha,
+            title if title == TestAux::Gamma.title() => OpenerCall::Gamma,
+            title if title == TestAux::Delta.title() => OpenerCall::Delta,
+            title if title == TestAux::Beta.title() => OpenerCall::Beta,
             _ => return None,
         };
         crate::aux::bridge::lock_recovered(&self.calls).push(call);
@@ -75,7 +75,7 @@ mod tests {
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let opener = FakeOpener::failing("no display");
         let mut host = crate::runtime::host::TestHost::new().host;
-        let id = prepare(&mut host, TestAux::History);
+        let id = prepare(&mut host, TestAux::Beta);
         assert!(
             opener
                 .create_aux(
@@ -88,7 +88,7 @@ mod tests {
                 )
                 .is_none()
         );
-        let debug_id = prepare(&mut host, TestAux::Debug);
+        let debug_id = prepare(&mut host, TestAux::Gamma);
         assert!(
             opener
                 .create_aux(
@@ -101,7 +101,7 @@ mod tests {
                 )
                 .is_none()
         );
-        assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::Debug]);
+        assert_eq!(opener.calls(), [OpenerCall::Beta, OpenerCall::Gamma]);
     }
 
     #[test]
@@ -118,7 +118,7 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let mut host = crate::runtime::host::TestHost::new().host;
-        let id = prepare(&mut host, TestAux::Settings);
+        let id = prepare(&mut host, TestAux::Alpha);
         assert!(
             opener
                 .create_aux(
@@ -131,7 +131,7 @@ mod tests {
                 )
                 .is_none()
         );
-        let ppu_id = prepare(&mut host, TestAux::Ppu);
+        let ppu_id = prepare(&mut host, TestAux::Delta);
         assert!(
             opener
                 .create_aux(
@@ -144,7 +144,7 @@ mod tests {
                 )
                 .is_none()
         );
-        assert_eq!(opener.calls(), [OpenerCall::Settings, OpenerCall::Ppu]);
+        assert_eq!(opener.calls(), [OpenerCall::Alpha, OpenerCall::Delta]);
     }
 
     #[test]

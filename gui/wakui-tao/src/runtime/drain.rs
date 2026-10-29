@@ -10,7 +10,7 @@ use crate::ports::WindowOpener;
 impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// Live-follow truth for the turn driver: a loaded running core behind
     /// the open polled widget.
-    pub(crate) fn debug_widget_live_follow(&self) -> bool {
+    pub(crate) fn polled_live_follow(&self) -> bool {
         self.core.content_loaded()
             && !self.core.content_suspended()
             && self.core.polled_widget().is_some()
@@ -56,7 +56,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 
     /// Refresh the open polled widget, then poll. The app enqueues
     /// Pause+Refresh through the shared session; native code pushes the result.
-    pub(crate) fn refresh_open_debugger(&mut self) {
+    pub(crate) fn refresh_open_polled(&mut self) {
         let Some(id) = self.core.polled_widget() else {
             return;
         };

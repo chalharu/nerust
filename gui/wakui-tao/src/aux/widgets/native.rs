@@ -199,7 +199,7 @@ mod tests {
     fn widget_signals_keep_close_separate_from_repaint_and_clear() {
         use crate::aux::widgets::bindings::tests::{mailbox_of, prepare};
         let mut support = crate::runtime::host::TestHost::new().host;
-        let id = prepare(&mut support, crate::testkit::TestAux::History);
+        let id = prepare(&mut support, crate::testkit::TestAux::Beta);
         let settings = WindowSignals {
             screen: std::rc::Rc::new(std::cell::RefCell::new(
                 support.core.widget_screen(id).expect("screen"),

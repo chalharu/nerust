@@ -120,7 +120,7 @@ fn show_blocking(title: &str, detail: &str) {
     crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
 }
 
-/// Surface ROM load failures in a modal dialog: the previous
+/// Surface file load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
 pub(crate) fn show_file_load_error(title: String, detail: &str) {
     crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
@@ -281,7 +281,7 @@ mod tests {
             let mut host = crate::runtime::host::TestHost::new().host;
             let id = crate::aux::widgets::bindings::tests::prepare(
                 &mut host,
-                crate::testkit::TestAux::History,
+                crate::testkit::TestAux::Beta,
             );
             AuxOpenParams::Controls {
                 id,

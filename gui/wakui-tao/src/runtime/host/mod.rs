@@ -101,7 +101,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     #[cfg(test)]
     pub(crate) fn load_test_file(&mut self) {
         self.core
-            .load_file(std::path::Path::new("test.nes"))
+            .load_file(std::path::Path::new("test.dat"))
             .unwrap();
     }
 
@@ -303,12 +303,12 @@ mod tests {
         let _ = NativeWindowId::dummy();
         assert!(host.with_main_window(|_| ()).is_none());
         assert!(host.core.polled_widget().is_none());
-        assert!(host.core.window_pos(TestAux::Debug).is_none());
-        assert!(host.core.window_pos(TestAux::Settings).is_none());
-        host.core.remember_window_pos(TestAux::Debug, 3, 4);
-        host.core.remember_window_pos(TestAux::Settings, 5, 6);
-        assert_eq!(host.core.window_pos(TestAux::Debug), Some((3, 4)));
-        assert_eq!(host.core.window_pos(TestAux::Settings), Some((5, 6)));
+        assert!(host.core.window_pos(TestAux::Gamma).is_none());
+        assert!(host.core.window_pos(TestAux::Alpha).is_none());
+        host.core.remember_window_pos(TestAux::Gamma, 3, 4);
+        host.core.remember_window_pos(TestAux::Alpha, 5, 6);
+        assert_eq!(host.core.window_pos(TestAux::Gamma), Some((3, 4)));
+        assert_eq!(host.core.window_pos(TestAux::Alpha), Some((5, 6)));
         let armed = host.core.live_armed();
         assert!(!armed.load(std::sync::atomic::Ordering::Acquire));
         host.core.register_tick_thread(std::thread::current());
@@ -330,12 +330,12 @@ mod tests {
         use crate::testkit::TestAux;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.request_open(TestAux::Debug);
-        assert!(host.core.take_open_request(TestAux::Debug));
-        assert!(!host.core.take_open_request(TestAux::Debug));
-        host.core.request_open(TestAux::Ppu);
-        assert!(host.core.take_open_request(TestAux::Ppu));
-        assert!(!host.core.take_open_request(TestAux::Ppu));
+        host.core.request_open(TestAux::Gamma);
+        assert!(host.core.take_open_request(TestAux::Gamma));
+        assert!(!host.core.take_open_request(TestAux::Gamma));
+        host.core.request_open(TestAux::Delta);
+        assert!(host.core.take_open_request(TestAux::Delta));
+        assert!(!host.core.take_open_request(TestAux::Delta));
         assert!(host.core.drain_open_requests().is_empty());
     }
 }

@@ -104,7 +104,7 @@ mod tests {
         use crate::testkit::owners;
         use wakui_core::dialog::ModalAdvance;
         let mut host = TestHost::new().host;
-        host.core.set_pause_owner(owners::SETTINGS, true);
+        host.core.set_pause_owner(owners::GUARD, true);
         host.core.report_host_error("active on close".into());
         let presentation = host.core.pump_dialog(Instant::now()).modal.unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -137,11 +137,11 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        host.open_aux_window(TestAux::History, &opener);
-        host.open_aux_window(TestAux::History, &opener);
-        assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
-        assert!(!host.aux.contains(TestAux::History));
-        assert!(support.app.borrow().history_changed());
+        host.open_aux_window(TestAux::Beta, &opener);
+        host.open_aux_window(TestAux::Beta, &opener);
+        assert_eq!(opener.calls(), [OpenerCall::Beta, OpenerCall::Beta]);
+        assert!(!host.aux.contains(TestAux::Beta));
+        assert!(support.app.borrow().log_changed());
     }
 
     #[test]
@@ -151,16 +151,14 @@ mod tests {
         use wakui_core::aux::OpenRequest;
         let support = TestHost::new();
         let mut host = support.host;
-        let OpenRequest::Create(id) = host
-            .aux
-            .request_open(TestAux::History, TestAux::History.title())
+        let OpenRequest::Create(id) = host.aux.request_open(TestAux::Beta, TestAux::Beta.title())
         else {
             panic!("expected reservation")
         };
         let opener = FakeOpener::failing("no display");
-        host.open_aux_window(TestAux::History, &opener);
+        host.open_aux_window(TestAux::Beta, &opener);
         assert!(opener.calls().is_empty());
-        assert_eq!(host.aux.route_id(TestAux::History), Some(id));
-        assert!(host.core.modal_guard_active() || host.aux.contains(TestAux::History) || true);
+        assert_eq!(host.aux.route_id(TestAux::Beta), Some(id));
+        assert!(host.core.modal_guard_active() || host.aux.contains(TestAux::Beta) || true);
     }
 }

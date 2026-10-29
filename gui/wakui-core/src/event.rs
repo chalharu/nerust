@@ -18,7 +18,7 @@ pub trait EventSink {
 }
 
 pub trait EventHandler<K: Copy + Eq + std::hash::Hash> {
-    /// Modal guards (e.g. an open settings dialog) are enforced view-side;
+    /// Modal guards (e.g. an open modal dialog) are enforced view-side;
     /// flavors forward every native callback unchanged.
     fn handle_event(&mut self, event: EventCommand) -> Result<EventOutcome<K>, SessionError>;
 }

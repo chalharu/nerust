@@ -1,4 +1,4 @@
-//! Shared iced-on-tao auxiliary-window shell: debugger and PPU viewer
+//! Shared iced-on-tao auxiliary-window shell: aux viewer windows
 //! run the same tiny-skia lifecycle over different programs.
 
 use std::sync::{

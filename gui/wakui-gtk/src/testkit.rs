@@ -2,7 +2,7 @@
 //!
 //! Production code never touches this module. The fake owns canned settings
 //! and history screens (stable English labels mirroring the real catalog),
-//! a canned debugger snapshot, and recording flags. Native-flow tests drive
+//! a canned aux snapshot, and recording flags. Native-flow tests drive
 //! `HostState` against it without view definitions, shell, or settings.
 
 use std::{
@@ -38,46 +38,46 @@ use wakui_core::{
 /// Stable English labels mirroring the real catalog. Native-flow tests look
 /// controls up by these; the fake screens below use the same strings.
 pub(crate) mod labels {
-    pub(crate) const LANGUAGE: &str = "UI Language";
-    pub(crate) const MUTE: &str = "Mute";
+    pub(crate) const CHOICE_A: &str = "Choice A";
+    pub(crate) const TOGGLE_A: &str = "Toggle A";
     pub(crate) const OK: &str = "OK";
     pub(crate) const CANCEL: &str = "Cancel";
-    pub(crate) const STORAGE_POLICY: &str = "Save storage policy";
-    pub(crate) const STORAGE_DIRECTORY: &str = "Save storage directory";
+    pub(crate) const CHOICE_B: &str = "Choice B";
+    pub(crate) const TEXT_A: &str = "Text A";
     pub(crate) const BROWSE: &str = "Browse";
-    pub(crate) const SCALING: &str = "Scaling";
-    pub(crate) const STATUS_DISPLAY: &str = "Status display";
-    pub(crate) const DURATION: &str = "Duration (ms)";
-    pub(crate) const POSITION: &str = "Position";
-    pub(crate) const STATUS_POSITION: &str = "Status position";
-    pub(crate) const STATUS_AREA: &str = "Status area";
-    pub(crate) const CLEAR_HISTORY: &str = "Clear History";
-    pub(crate) const HISTORY_TITLE: &str = "Notification History";
-    pub(crate) const SETTINGS_TITLE: &str = "Settings";
-    pub(crate) const DEBUGGER_TITLE: &str = "Debugger";
+    pub(crate) const CHOICE_C: &str = "Choice C";
+    pub(crate) const TOGGLE_B: &str = "Toggle B";
+    pub(crate) const NUMBER_A: &str = "Number A";
+    pub(crate) const CHOICE_D: &str = "Choice D";
+    pub(crate) const CHOICE_E: &str = "Choice E";
+    pub(crate) const CHOICE_F: &str = "Choice F";
+    pub(crate) const CLEAR_LOG: &str = "Clear log";
+    pub(crate) const TITLE_BETA: &str = "Aux Beta";
+    pub(crate) const TITLE_ALPHA: &str = "Aux Alpha";
+    pub(crate) const TITLE_GAMMA: &str = "Aux Gamma";
 }
 
 /// Headless aux kind mirroring the view-side kinds without naming them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TestAux {
-    Debug,
-    Ppu,
-    History,
-    Settings,
+    Gamma,
+    Delta,
+    Beta,
+    Alpha,
 }
 
 impl TestAux {
     pub(crate) fn title(self) -> &'static str {
         match self {
-            TestAux::Debug => labels::DEBUGGER_TITLE,
-            TestAux::Ppu => "PPU Viewer",
-            TestAux::History => labels::HISTORY_TITLE,
-            TestAux::Settings => labels::SETTINGS_TITLE,
+            TestAux::Gamma => labels::TITLE_GAMMA,
+            TestAux::Delta => "Aux Delta",
+            TestAux::Beta => labels::TITLE_BETA,
+            TestAux::Alpha => labels::TITLE_ALPHA,
         }
     }
 
     pub(crate) fn resume_on_arrival(self) -> bool {
-        matches!(self, TestAux::Debug | TestAux::Ppu)
+        matches!(self, TestAux::Gamma | TestAux::Delta)
     }
 }
 
@@ -88,7 +88,7 @@ pub(crate) mod owners {
 
     pub(crate) const FOCUS: PauseOwner = PauseOwner::new(1);
     pub(crate) const MODAL: PauseOwner = PauseOwner::new(2);
-    pub(crate) const SETTINGS: PauseOwner = PauseOwner::new(3);
+    pub(crate) const GUARD: PauseOwner = PauseOwner::new(3);
 }
 
 /// Flavor-local menu skeleton. The framework tracks opaque ids only;
@@ -96,14 +96,14 @@ pub(crate) mod owners {
 pub(crate) mod menu_id {
     use wakui_core::menu::MenuId;
 
-    pub(crate) const FILE: MenuId = MenuId::from_raw(0);
-    pub(crate) const EMULATION: MenuId = MenuId::from_raw(1);
-    pub(crate) const STATES: MenuId = MenuId::from_raw(2);
-    pub(crate) const SELECT_SLOT: MenuId = MenuId::from_raw(3);
-    pub(crate) const SAVE_SLOT: MenuId = MenuId::from_raw(4);
-    pub(crate) const LOAD_SLOT: MenuId = MenuId::from_raw(5);
-    pub(crate) const DELETE_SLOT: MenuId = MenuId::from_raw(6);
-    pub(crate) const HELP: MenuId = MenuId::from_raw(7);
+    pub(crate) const GROUP_A: MenuId = MenuId::from_raw(0);
+    pub(crate) const GROUP_B: MenuId = MenuId::from_raw(1);
+    pub(crate) const GROUP_C: MenuId = MenuId::from_raw(2);
+    pub(crate) const SUB_A: MenuId = MenuId::from_raw(3);
+    pub(crate) const SUB_B: MenuId = MenuId::from_raw(4);
+    pub(crate) const SUB_C: MenuId = MenuId::from_raw(5);
+    pub(crate) const SUB_D: MenuId = MenuId::from_raw(6);
+    pub(crate) const GROUP_D: MenuId = MenuId::from_raw(7);
 }
 
 /// Flavor-local simulation vocabulary for headless tests.
@@ -115,26 +115,26 @@ pub(crate) mod menu_id {
 pub(crate) enum TestSession {
     Pause,
     Resume,
-    TogglePause,
-    Reset,
-    CreateSlot,
-    SaveActiveSlotOrNew,
-    LoadActiveSlot,
-    SelectActiveSlot(u64),
-    SaveSlot(u64),
-    LoadSlot(u64),
-    DeleteSlot(u64),
-    SelectNextSlot,
-    SelectPreviousSlot,
+    Toggle,
+    Restart,
+    Create,
+    SaveActiveOrNew,
+    LoadActive,
+    Select(u64),
+    Save(u64),
+    Load(u64),
+    Delete(u64),
+    Next,
+    Previous,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TestMenu {
     Open,
     Close,
-    Settings,
-    Debugger,
-    History,
+    AuxAlpha,
+    AuxGamma,
+    AuxBeta,
     About,
     Quit,
     Session(TestSession),
@@ -145,20 +145,19 @@ use wakui_core::commands::CommandRef;
 impl TestSession {
     fn template(self) -> Self {
         match self {
-            Self::SelectActiveSlot(_) => Self::SelectActiveSlot(0),
-            Self::SaveSlot(_) => Self::SaveSlot(0),
-            Self::LoadSlot(_) => Self::LoadSlot(0),
-            Self::DeleteSlot(_) => Self::DeleteSlot(0),
+            Self::Select(_) => Self::Select(0),
+            Self::Save(_) => Self::Save(0),
+            Self::Load(_) => Self::Load(0),
+            Self::Delete(_) => Self::Delete(0),
             other => other,
         }
     }
 
     fn argument(self) -> Option<u64> {
         match self {
-            Self::SelectActiveSlot(index)
-            | Self::SaveSlot(index)
-            | Self::LoadSlot(index)
-            | Self::DeleteSlot(index) => Some(index),
+            Self::Select(index) | Self::Save(index) | Self::Load(index) | Self::Delete(index) => {
+                Some(index)
+            }
             _ => None,
         }
     }
@@ -167,10 +166,10 @@ impl TestSession {
         match argument {
             None if self.template() == self => Some(self),
             Some(index) => match self {
-                Self::SelectActiveSlot(_) => Some(Self::SelectActiveSlot(index)),
-                Self::SaveSlot(_) => Some(Self::SaveSlot(index)),
-                Self::LoadSlot(_) => Some(Self::LoadSlot(index)),
-                Self::DeleteSlot(_) => Some(Self::DeleteSlot(index)),
+                Self::Select(_) => Some(Self::Select(index)),
+                Self::Save(_) => Some(Self::Save(index)),
+                Self::Load(_) => Some(Self::Load(index)),
+                Self::Delete(_) => Some(Self::Delete(index)),
                 _ => None,
             },
             _ => None,
@@ -240,24 +239,24 @@ impl FakeCommands {
         let templates = [
             M::Open,
             M::Close,
-            M::Settings,
-            M::Debugger,
-            M::History,
+            M::AuxAlpha,
+            M::AuxGamma,
+            M::AuxBeta,
             M::About,
             M::Quit,
             M::Session(S::Pause),
             M::Session(S::Resume),
-            M::Session(S::TogglePause),
-            M::Session(S::Reset),
-            M::Session(S::CreateSlot),
-            M::Session(S::SaveActiveSlotOrNew),
-            M::Session(S::LoadActiveSlot),
-            M::Session(S::SelectActiveSlot(0)),
-            M::Session(S::SaveSlot(0)),
-            M::Session(S::LoadSlot(0)),
-            M::Session(S::DeleteSlot(0)),
-            M::Session(S::SelectNextSlot),
-            M::Session(S::SelectPreviousSlot),
+            M::Session(S::Toggle),
+            M::Session(S::Restart),
+            M::Session(S::Create),
+            M::Session(S::SaveActiveOrNew),
+            M::Session(S::LoadActive),
+            M::Session(S::Select(0)),
+            M::Session(S::Save(0)),
+            M::Session(S::Load(0)),
+            M::Session(S::Delete(0)),
+            M::Session(S::Next),
+            M::Session(S::Previous),
         ];
         Self {
             table: templates
@@ -430,9 +429,9 @@ fn screen(title: &str, pages: Vec<Page>, footer: Vec<Control>) -> ControlScreen 
 }
 
 /// Canned settings screen: six pages, stable labels, submittable footer.
-fn settings_screen() -> ControlScreen {
+fn alpha_screen() -> ControlScreen {
     let language = control(
-        labels::LANGUAGE,
+        labels::CHOICE_A,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["English".to_string(), "日本語".to_string()],
@@ -440,12 +439,12 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let mute = control(
-        labels::MUTE,
+        labels::TOGGLE_A,
         ControlDisplay::Standard,
         ToggleLeaf { value: false },
     );
     let policy = control(
-        labels::STORAGE_POLICY,
+        labels::CHOICE_B,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec![
@@ -457,7 +456,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let directory = control(
-        labels::STORAGE_DIRECTORY,
+        labels::TEXT_A,
         ControlDisplay::Standard,
         TextLeaf {
             value: String::new(),
@@ -466,7 +465,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let scaling = control(
-        labels::SCALING,
+        labels::CHOICE_C,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["1x".to_string(), "2x".to_string()],
@@ -474,12 +473,12 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let status = control(
-        labels::STATUS_DISPLAY,
+        labels::TOGGLE_B,
         ControlDisplay::Standard,
         ToggleLeaf { value: false },
     );
     let duration = control(
-        labels::DURATION,
+        labels::NUMBER_A,
         ControlDisplay::Standard,
         NumberLeaf {
             value: 3000,
@@ -491,7 +490,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let position = control(
-        labels::POSITION,
+        labels::CHOICE_D,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["Top".to_string(), "Bottom".to_string()],
@@ -499,7 +498,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let status_position = control(
-        labels::STATUS_POSITION,
+        labels::CHOICE_E,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["Top".to_string(), "Bottom".to_string()],
@@ -507,7 +506,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let status_area = control(
-        labels::STATUS_AREA,
+        labels::CHOICE_F,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["Full".to_string(), "Compact".to_string()],
@@ -517,15 +516,15 @@ fn settings_screen() -> ControlScreen {
     let ok = control(labels::OK, ControlDisplay::Primary, ActionLeaf);
     let cancel = control(labels::CANCEL, ControlDisplay::Secondary, ActionLeaf);
     screen(
-        labels::SETTINGS_TITLE,
+        labels::TITLE_ALPHA,
         vec![
-            page("General", true, vec![language, mute]),
+            page("Section A", true, vec![language, mute]),
             page(
-                "Input",
+                "Section B",
                 false,
                 vec![
                     control(
-                        "Reset Key",
+                        "Sample key",
                         ControlDisplay::Standard,
                         BindingLeaf {
                             text: String::new(),
@@ -535,30 +534,30 @@ fn settings_screen() -> ControlScreen {
                         },
                     ),
                     control(
-                        "Shortcuts apply immediately",
+                        "Applies immediately",
                         ControlDisplay::Standard,
                         NoteLeaf {
-                            text: "Shortcuts apply immediately".to_string(),
+                            text: "Applies immediately".to_string(),
                         },
                     ),
                 ],
             ),
-            page("Video", false, vec![scaling]),
-            page("Audio", false, vec![]),
+            page("Section C", false, vec![scaling]),
+            page("Section D", false, vec![]),
             page(
-                "Storage",
+                "Section E",
                 false,
                 vec![policy, directory, status, duration, position],
             ),
-            page("Notifications", false, vec![status_position, status_area]),
+            page("Section F", false, vec![status_position, status_area]),
         ],
         vec![ok, cancel],
     )
 }
 
 /// Canned history screen: filter choice, notes, clear/close actions.
-fn history_body(children: Vec<Node>) -> Container {
-    let mut metadata = ControlMetadata::new("history");
+fn log_body(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("log");
     metadata.hints.spacing = Some(0.0);
     metadata.hints.indent = Some(0.0);
     Container {
@@ -571,7 +570,7 @@ fn history_body(children: Vec<Node>) -> Container {
     }
 }
 
-fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
+fn log_screen(notes: &[String], filter: usize) -> ControlScreen {
     let filter_control = control(
         "Filter",
         ControlDisplay::Standard,
@@ -588,10 +587,10 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     let mut children = vec![Node::Control(filter_control)];
     if notes.is_empty() {
         children.push(Node::Control(control(
-            "No notifications",
+            "No entries",
             ControlDisplay::Standard,
             NoteLeaf {
-                text: "No notifications".to_string(),
+                text: "No entries".to_string(),
             },
         )));
     } else {
@@ -603,16 +602,16 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
             )));
         }
     }
-    let clear = control(labels::CLEAR_HISTORY, ControlDisplay::Standard, ActionLeaf);
+    let clear = control(labels::CLEAR_LOG, ControlDisplay::Standard, ActionLeaf);
     let close = control("Close", ControlDisplay::Primary, ActionLeaf);
     ControlScreen {
-        title: labels::HISTORY_TITLE.to_string(),
+        title: labels::TITLE_BETA.to_string(),
         pages: vec![Page {
             id: Id::fresh(),
-            label: labels::HISTORY_TITLE.to_string(),
+            label: labels::TITLE_BETA.to_string(),
             selected: true,
-            select: control(labels::HISTORY_TITLE, ControlDisplay::Standard, ActionLeaf),
-            body: history_body(children),
+            select: control(labels::TITLE_BETA, ControlDisplay::Standard, ActionLeaf),
+            body: log_body(children),
         }],
         footer: layout(vec![Node::Control(clear), Node::Control(close)]),
         message: None,
@@ -623,17 +622,17 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     }
 }
 
-/// Minimal debugger screen: title only, so generic open paths work headless.
-fn debug_screen() -> ControlScreen {
-    screen(labels::DEBUGGER_TITLE, Vec::new(), Vec::new())
+/// Minimal aux screen: title only, so generic open paths work headless.
+fn gamma_screen() -> ControlScreen {
+    screen(labels::TITLE_GAMMA, Vec::new(), Vec::new())
 }
 
-/// Canned menubar covering every simulated declaration, with slot submenus
-/// driven by the fake's slot list. Labels flip to Japanese when requested;
+/// Canned menubar covering every simulated declaration, with item submenus
+/// driven by the fake's item list. Labels flip to Japanese when requested;
 /// the flip is test-double chrome, never the real i18n catalog.
 pub(crate) fn canned_menubar(
     commands: &FakeCommands,
-    slots: &[u64],
+    items: &[u64],
     active: Option<u64>,
     japanese: bool,
     loaded: bool,
@@ -649,20 +648,20 @@ pub(crate) fn canned_menubar(
     };
     let reference = |command: TestMenu| commands.reference(command);
     // Session commands need a loaded core; indexed commands additionally need
-    // slots. This mirrors host enablement, never the real policy catalog.
+    // items. This mirrors host enablement, never the real policy catalog.
     let enabled_for = |template: TestMenu| {
         let indexed = template.argument().is_some();
         let needs_core = !matches!(
             template,
             M::Open
-                | M::Settings
-                | M::Debugger
-                | M::History
+                | M::AuxAlpha
+                | M::AuxGamma
+                | M::AuxBeta
                 | M::Quit
                 | M::About
-                | M::Session(S::CreateSlot)
+                | M::Session(S::Create)
         );
-        (!needs_core || loaded) && !(slots.is_empty() && indexed)
+        (!needs_core || loaded) && !(items.is_empty() && indexed)
     };
     let mut model = commands.model();
     for declaration in &mut model.definitions {
@@ -681,23 +680,23 @@ pub(crate) fn canned_menubar(
             enabled: loaded || !matches!(command, M::Session(_)),
         })
     };
-    let slot_submenu = |id: MenuId, en: &str, ja: &str, make: fn(u64) -> TestSession| {
-        let children = if slots.is_empty() {
+    let item_submenu = |id: MenuId, en: &str, ja: &str, make: fn(u64) -> TestSession| {
+        let children = if items.is_empty() {
             vec![MenuEntry::Item(MenuItem {
                 command: None,
-                label: t("No save slots yet", "空きスロットがありません"),
+                label: t("No items yet", "空きスロットがありません"),
                 enabled: false,
             })]
         } else {
-            slots
+            items
                 .iter()
-                .map(|slot| {
-                    let label = if Some(*slot) == active {
-                        format!("Slot {slot} (active)")
+                .map(|item| {
+                    let label = if Some(*item) == active {
+                        format!("Item {item} (active)")
                     } else {
-                        format!("Slot {slot}")
+                        format!("Item {item}")
                     };
-                    let activation = reference(M::Session(make(*slot)));
+                    let activation = reference(M::Session(make(*item)));
                     MenuEntry::Item(MenuItem {
                         command: Some(activation),
                         label,
@@ -717,69 +716,69 @@ pub(crate) fn canned_menubar(
         commands: CommandModel { definitions },
         menus: vec![
             Submenu {
-                id: menu_id::FILE,
-                label: t("File", "ファイル"),
+                id: menu_id::GROUP_A,
+                label: t("Group A", "ファイル"),
                 enabled: true,
                 children: vec![
                     item(M::Open, "Open...", "開く..."),
-                    item(M::Settings, "Settings...", "設定..."),
+                    item(M::AuxAlpha, "Aux Alpha...", "設定..."),
                     item(M::Quit, "Quit", "終了"),
                 ],
             },
             Submenu {
-                id: menu_id::EMULATION,
-                label: t("Emulation", "エミュレーション"),
+                id: menu_id::GROUP_B,
+                label: t("Group B", "エミュレーション"),
                 enabled: true,
                 children: vec![
-                    item(M::Session(S::Reset), "Reset", "リセット"),
-                    item(M::Debugger, "Debugger", "デバッガ"),
+                    item(M::Session(S::Restart), "Reset", "リセット"),
+                    item(M::AuxGamma, "Aux Gamma", "デバッガ"),
                 ],
             },
             Submenu {
-                id: menu_id::STATES,
-                label: t("States", "ステート"),
+                id: menu_id::GROUP_C,
+                label: t("Group C", "ステート"),
                 enabled: true,
                 children: vec![
-                    item(M::Session(S::CreateSlot), "New slot", "新規スロット"),
+                    item(M::Session(S::Create), "New item", "新規スロット"),
                     item(
-                        M::Session(S::SaveActiveSlotOrNew),
-                        "Save active slot",
+                        M::Session(S::SaveActiveOrNew),
+                        "Save active item",
                         "アクティブスロットに保存",
                     ),
                     item(
-                        M::Session(S::LoadActiveSlot),
-                        "Load active slot",
+                        M::Session(S::LoadActive),
+                        "Load active item",
                         "アクティブスロットを読込",
                     ),
-                    slot_submenu(
-                        menu_id::SELECT_SLOT,
-                        "Select slot",
+                    item_submenu(
+                        menu_id::SUB_A,
+                        "Select item",
                         "スロット選択",
-                        TestSession::SelectActiveSlot,
+                        TestSession::Select,
                     ),
-                    slot_submenu(
-                        menu_id::SAVE_SLOT,
-                        "Save slot",
+                    item_submenu(
+                        menu_id::SUB_B,
+                        "Save item",
                         "スロットに保存",
-                        TestSession::SaveSlot,
+                        TestSession::Save,
                     ),
-                    slot_submenu(
-                        menu_id::LOAD_SLOT,
-                        "Load slot",
+                    item_submenu(
+                        menu_id::SUB_C,
+                        "Load item",
                         "スロットを読込",
-                        TestSession::LoadSlot,
+                        TestSession::Load,
                     ),
-                    slot_submenu(
-                        menu_id::DELETE_SLOT,
-                        "Delete slot",
+                    item_submenu(
+                        menu_id::SUB_D,
+                        "Delete item",
                         "スロットを削除",
-                        TestSession::DeleteSlot,
+                        TestSession::Delete,
                     ),
                 ],
             },
             Submenu {
-                id: menu_id::HELP,
-                label: t("Help", "ヘルプ"),
+                id: menu_id::GROUP_D,
+                label: t("Group D", "ヘルプ"),
                 enabled: true,
                 children: vec![item(M::About, "About", "について")],
             },
@@ -805,11 +804,11 @@ pub(crate) struct FakeApp {
     pub title_dirty: bool,
     pub fullscreen_default: bool,
     pub window_size: (f32, f32),
-    pub history_notes: Vec<String>,
-    pub history_filter: usize,
+    pub log_notes: Vec<String>,
+    pub log_filter: usize,
     pub error: Option<String>,
-    pub debug_open_requested: bool,
-    pub ppu_open_requested: bool,
+    pub gamma_open_requested: bool,
+    pub delta_open_requested: bool,
     pub mailboxes: HashMap<AuxId, WindowMailbox>,
     pub mailbox_flags: HashMap<AuxId, Arc<Mutex<bool>>>,
     pub widget_kinds: HashMap<AuxId, TestAux>,
@@ -821,7 +820,7 @@ pub(crate) struct FakeApp {
     pub retry_due: bool,
     prepared: std::collections::HashSet<AuxId>,
     pub remembered_size: Option<(u32, u32)>,
-    pub slots: Vec<u64>,
+    pub items: Vec<u64>,
     pub japanese: bool,
     main_active: bool,
     focus_paused: bool,
@@ -834,7 +833,7 @@ pub(crate) struct FakeApp {
     last_title_at: Instant,
     live_consumed: bool,
     last_live: Option<Instant>,
-    pub active_slot: Option<u64>,
+    pub active_item: Option<u64>,
     owners: std::collections::HashSet<PauseOwner>,
     menu_gate: Option<(bool, bool, bool, Option<u64>, Menubar)>,
     pub(crate) commands: FakeCommands,
@@ -864,11 +863,11 @@ impl FakeApp {
             title_dirty: true,
             fullscreen_default: false,
             window_size: (960.0, 720.0),
-            history_notes: Vec::new(),
-            history_filter: 0,
+            log_notes: Vec::new(),
+            log_filter: 0,
             error: None,
-            debug_open_requested: false,
-            ppu_open_requested: false,
+            gamma_open_requested: false,
+            delta_open_requested: false,
             mailboxes: HashMap::new(),
             mailbox_flags: HashMap::new(),
             widget_kinds: HashMap::new(),
@@ -880,8 +879,8 @@ impl FakeApp {
             retry_due: false,
             prepared: std::collections::HashSet::new(),
             remembered_size: None,
-            active_slot: None,
-            slots: Vec::new(),
+            active_item: None,
+            items: Vec::new(),
             japanese: false,
             owners: std::collections::HashSet::new(),
             menu_gate: None,
@@ -899,8 +898,8 @@ impl FakeApp {
         }
     }
 
-    pub(crate) fn history_screen(&self) -> ControlScreen {
-        history_screen(&self.history_notes, self.history_filter)
+    pub(crate) fn log_screen(&self) -> ControlScreen {
+        log_screen(&self.log_notes, self.log_filter)
     }
 
     pub(crate) fn dispatch_session(
@@ -921,24 +920,24 @@ impl FakeApp {
                 }
                 true
             }
-            TestSession::TogglePause => {
+            TestSession::Toggle => {
                 if self.loaded {
                     self.paused = !self.paused;
                 }
                 true
             }
-            TestSession::Reset => true,
-            TestSession::CreateSlot => true,
-            TestSession::SaveActiveSlotOrNew => false,
-            TestSession::LoadActiveSlot => false,
-            TestSession::SelectActiveSlot(id) => {
-                self.active_slot = Some(id);
+            TestSession::Restart => true,
+            TestSession::Create => true,
+            TestSession::SaveActiveOrNew => false,
+            TestSession::LoadActive => false,
+            TestSession::Select(id) => {
+                self.active_item = Some(id);
                 true
             }
-            TestSession::SaveSlot(_) => true,
-            TestSession::LoadSlot(_) => true,
-            TestSession::DeleteSlot(_) => true,
-            TestSession::SelectNextSlot | TestSession::SelectPreviousSlot => true,
+            TestSession::Save(_) => true,
+            TestSession::Load(_) => true,
+            TestSession::Delete(_) => true,
+            TestSession::Next | TestSession::Previous => true,
         };
         outcome.command = Some(CommandOutcome {
             executed,
@@ -980,14 +979,14 @@ impl EventHandler<TestAux> for FakeApp {
                         outcome.effect = Some(CommandEffect::OpenFile);
                     }
                     TestMenu::Close => self.unload(),
-                    TestMenu::Settings => {
-                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Settings));
+                    TestMenu::AuxAlpha => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Alpha));
                     }
-                    TestMenu::Debugger => {
-                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                    TestMenu::AuxGamma => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Gamma));
                     }
-                    TestMenu::History => {
-                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::History));
+                    TestMenu::AuxBeta => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Beta));
                     }
                     TestMenu::About => {
                         outcome.effect = Some(CommandEffect::About);
@@ -1001,11 +1000,11 @@ impl EventHandler<TestAux> for FakeApp {
                 }
             }
             EventCommand::Session(SessionEvent::Keyboard { key, pressed }) => {
-                // Test-double shortcut: F4 opens the debugger, like the
+                // Test-double shortcut: F4 opens aux gamma, like the
                 // default view-side binding. Production flavors never
                 // interpret keys.
                 if pressed && key == wakui_core::Key::F4 {
-                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Gamma));
                 }
                 outcome.session = self.dispatch(SessionEvent::Keyboard { key, pressed })?;
             }
@@ -1138,7 +1137,7 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
         if self.loaded {
-            vec![("ROM files".to_string(), vec!["nes".to_string()])]
+            vec![("Data files".to_string(), vec!["dat".to_string()])]
         } else {
             Vec::new()
         }
@@ -1146,17 +1145,17 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn menubar_update(&mut self, _capabilities: MenuCapabilities) -> Option<Menubar> {
         // The modal guard is fake-owned state, like the real settings hold.
-        let settings_open = self.modal_guard_active();
+        let guard_open = self.modal_guard_active();
         self.menu_polls += 1;
         let mut live = canned_menubar(
             &self.commands,
-            &self.slots,
-            self.active_slot,
+            &self.items,
+            self.active_item,
             self.japanese,
             self.loaded,
         );
-        if settings_open {
-            // Host settings guard: only Quit stays available while the
+        if guard_open {
+            // Host modal guard: only Quit stays available while the
             // settings dialog owns the pause.
             let quit = self.commands.quit();
             for descriptor in &mut live.commands.definitions {
@@ -1181,10 +1180,10 @@ impl FrontendApp<TestAux> for FakeApp {
             }
         }
         let gate = (
-            settings_open,
+            guard_open,
             self.loaded,
             self.paused,
-            self.active_slot,
+            self.active_item,
             live.clone(),
         );
         if self.menu_gate.as_ref() == Some(&gate) {
@@ -1286,9 +1285,9 @@ impl FrontendApp<TestAux> for FakeApp {
         match registry.request_open(kind, kind.title()) {
             OpenRequest::Create(id) => {
                 self.widget_kinds.insert(id, kind);
-                if kind == TestAux::Settings {
+                if kind == TestAux::Alpha {
                     // Opening settings takes the settings pause, like the app.
-                    self.owners.insert(owners::SETTINGS);
+                    self.owners.insert(owners::GUARD);
                 }
                 Ok(Some(OpenRequest::Create(id)))
             }
@@ -1310,12 +1309,12 @@ impl FrontendApp<TestAux> for FakeApp {
             .widget_kinds
             .get(&id)
             .copied()
-            .unwrap_or(TestAux::Settings);
+            .unwrap_or(TestAux::Alpha);
         let screen = match kind {
-            TestAux::History => self.history_screen(),
-            TestAux::Debug => debug_screen(),
-            TestAux::Ppu => debug_screen(),
-            _ => settings_screen(),
+            TestAux::Beta => self.log_screen(),
+            TestAux::Gamma => gamma_screen(),
+            TestAux::Delta => gamma_screen(),
+            _ => alpha_screen(),
         };
         self.widget_screens.insert(id, screen.clone());
         let mailbox = if let Some(mailbox) = self.mailboxes.get(&id) {
@@ -1332,8 +1331,8 @@ impl FrontendApp<TestAux> for FakeApp {
             return Ok(false);
         }
         self.prepared.insert(id);
-        if let Some(slot) = registry.window_mut(id) {
-            *slot = Window::controls(id, screen);
+        if let Some(item) = registry.window_mut(id) {
+            *item = Window::controls(id, screen);
         }
         Ok(true)
     }
@@ -1408,7 +1407,7 @@ impl FrontendApp<TestAux> for FakeApp {
         };
         // Walk pages, footer, and history notes by id.
         let mut hit = false;
-        let is_history = self.widget_kinds.get(&id) == Some(&TestAux::History);
+        let is_history = self.widget_kinds.get(&id) == Some(&TestAux::Beta);
         let mut activate_page: Option<usize> = None;
         for (index, page) in screen.pages.iter_mut().enumerate() {
             if page.select.id == target {
@@ -1432,7 +1431,7 @@ impl FrontendApp<TestAux> for FakeApp {
             && is_history
             && let ControlInput::Select(index) = event.input
         {
-            self.history_filter = index;
+            self.log_filter = index;
         }
         if !hit {
             for node in &mut screen.footer.children {
@@ -1446,13 +1445,12 @@ impl FrontendApp<TestAux> for FakeApp {
         }
         // Activation semantics mirror the app policy just enough for
         // native-flow tests: submissions stage, Cancel/Close only flag the
-        // mailbox, Clear History clears notes, Browse opens the picker.
+        // mailbox, Clear log clears notes, Browse opens the picker.
         if hit
             && matches!(event.input, ControlInput::Activate)
             && let Some(control) = screen.control(target).cloned()
         {
-            if (control.display == ControlDisplay::Primary
-                || control.label == labels::CLEAR_HISTORY)
+            if (control.display == ControlDisplay::Primary || control.label == labels::CLEAR_LOG)
                 && let Some(flag) = self.mailbox_flags.get(&id)
             {
                 *flag.lock().unwrap() = true;
@@ -1462,18 +1460,18 @@ impl FrontendApp<TestAux> for FakeApp {
             {
                 mailbox.request_close();
             }
-            if control.label == labels::CLEAR_HISTORY {
-                self.history_notes.clear();
+            if control.label == labels::CLEAR_LOG {
+                self.log_notes.clear();
             }
             if control.display == ControlDisplay::Primary
-                && self.widget_kinds.get(&id) != Some(&TestAux::History)
+                && self.widget_kinds.get(&id) != Some(&TestAux::Beta)
                 && let Some(screen) = self.widget_screens.get(&id)
             {
                 // Submitting settings applies the staged language choice,
                 // which is the only chrome the fake relabels.
                 let mut staged = None;
                 for page in &screen.pages {
-                    if let Some(found) = find_control_in(&page.body, labels::LANGUAGE) {
+                    if let Some(found) = find_control_in(&page.body, labels::CHOICE_A) {
                         staged = found.downcast::<ChoiceLeaf>().unwrap().selected;
                         break;
                     }
@@ -1522,7 +1520,7 @@ impl FrontendApp<TestAux> for FakeApp {
     }
 
     fn widget_refresh(&mut self, id: AuxId) {
-        if self.widget_kinds.get(&id) != Some(&TestAux::History) {
+        if self.widget_kinds.get(&id) != Some(&TestAux::Beta) {
             return;
         }
         // Rebuild history notes in place, reusing surviving control ids so
@@ -1530,7 +1528,7 @@ impl FrontendApp<TestAux> for FakeApp {
         let screen = self
             .widget_screens
             .entry(id)
-            .or_insert_with(|| history_screen(&[], self.history_filter));
+            .or_insert_with(|| log_screen(&[], self.log_filter));
         let page = &mut screen.pages[0];
         let mut reused: Vec<ControlId> = Vec::new();
         for node in page.body.children.iter() {
@@ -1540,7 +1538,7 @@ impl FrontendApp<TestAux> for FakeApp {
                 reused.push(control.id);
             }
         }
-        let mut children = Vec::with_capacity(self.history_notes.len() + 1);
+        let mut children = Vec::with_capacity(self.log_notes.len() + 1);
         if let Some(filter) = page.body.children.iter().find_map(|node| match node {
             Node::Control(control) if control.label == "Filter" => Some(control.clone()),
             _ => None,
@@ -1549,25 +1547,25 @@ impl FrontendApp<TestAux> for FakeApp {
             let staged = filter.downcast::<ChoiceLeaf>().unwrap();
             filter.leaf = Box::new(ChoiceLeaf {
                 choices: staged.choices.clone(),
-                selected: Some(self.history_filter),
+                selected: Some(self.log_filter),
             });
             children.push(Node::Control(filter));
         }
-        if self.history_notes.is_empty() {
+        if self.log_notes.is_empty() {
             let id = reused.into_iter().next().unwrap_or_else(Id::fresh);
             children.push(Node::Control(Control {
                 id,
                 ..control(
-                    "No notifications",
+                    "No entries",
                     ControlDisplay::Standard,
                     NoteLeaf {
-                        text: "No notifications".to_string(),
+                        text: "No entries".to_string(),
                     },
                 )
             }));
         } else {
             let mut reused = reused.into_iter();
-            for text in &self.history_notes {
+            for text in &self.log_notes {
                 let id = reused.next().unwrap_or_else(Id::fresh);
                 children.push(Node::Control(Control {
                     id,
@@ -1603,9 +1601,9 @@ impl FrontendApp<TestAux> for FakeApp {
                 return None;
             }
         } else {
-            if self.widget_kinds.get(&id) == Some(&TestAux::Settings) {
+            if self.widget_kinds.get(&id) == Some(&TestAux::Alpha) {
                 // Closing the settings dialog releases the settings pause.
-                self.owners.remove(&owners::SETTINGS);
+                self.owners.remove(&owners::GUARD);
             }
             self.closed_widgets.push(id);
             self.prepared.remove(&id);
@@ -1623,15 +1621,15 @@ impl FrontendApp<TestAux> for FakeApp {
     fn modal_guard_active(&self) -> bool {
         self.widget_kinds
             .values()
-            .any(|kind| *kind == TestAux::Settings)
+            .any(|kind| *kind == TestAux::Alpha)
     }
 
     fn report_host_error(&mut self, detail: String) {
-        self.history_notes.push(detail.clone());
+        self.log_notes.push(detail.clone());
         self.error_queue.push_back(detail);
         // New history invalidates open history drafts, like the host.
         for (id, mailbox) in &self.mailboxes {
-            if self.widget_kinds.get(id) == Some(&TestAux::History) {
+            if self.widget_kinds.get(id) == Some(&TestAux::Beta) {
                 mailbox.invalidate();
             }
         }
@@ -1640,7 +1638,7 @@ impl FrontendApp<TestAux> for FakeApp {
     fn polled_widget(&self) -> Option<AuxId> {
         self.widget_kinds
             .iter()
-            .find_map(|(id, kind)| (*kind == TestAux::Debug).then_some(*id))
+            .find_map(|(id, kind)| (*kind == TestAux::Gamma).then_some(*id))
     }
 
     fn poll_widget(&mut self, _id: AuxId) -> WakeNeed {
@@ -1651,11 +1649,11 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn drain_open_requests(&mut self) -> Vec<TestAux> {
         let mut kinds = Vec::new();
-        if std::mem::take(&mut self.debug_open_requested) {
-            kinds.push(TestAux::Debug);
+        if std::mem::take(&mut self.gamma_open_requested) {
+            kinds.push(TestAux::Gamma);
         }
-        if std::mem::take(&mut self.ppu_open_requested) {
-            kinds.push(TestAux::Ppu);
+        if std::mem::take(&mut self.delta_open_requested) {
+            kinds.push(TestAux::Delta);
         }
         kinds
     }
@@ -1664,32 +1662,32 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn take_open_request(&mut self, kind: TestAux) -> bool {
         match kind {
-            TestAux::Debug => std::mem::take(&mut self.debug_open_requested),
-            TestAux::Ppu => std::mem::take(&mut self.ppu_open_requested),
+            TestAux::Gamma => std::mem::take(&mut self.gamma_open_requested),
+            TestAux::Delta => std::mem::take(&mut self.delta_open_requested),
             _ => false,
         }
     }
 
     fn request_open(&mut self, kind: TestAux) {
         match kind {
-            TestAux::Debug => self.debug_open_requested = true,
-            TestAux::Ppu => self.ppu_open_requested = true,
+            TestAux::Gamma => self.gamma_open_requested = true,
+            TestAux::Delta => self.delta_open_requested = true,
             _ => {}
         }
     }
 
     fn window_pos(&self, kind: TestAux) -> Option<(i32, i32)> {
         match kind {
-            TestAux::Debug => self.debug_pos,
-            TestAux::Ppu => self.ppu_pos,
+            TestAux::Gamma => self.debug_pos,
+            TestAux::Delta => self.ppu_pos,
             _ => None,
         }
     }
 
     fn remember_window_pos(&mut self, kind: TestAux, x: i32, y: i32) {
         match kind {
-            TestAux::Debug => self.debug_pos = Some((x, y)),
-            TestAux::Ppu => self.ppu_pos = Some((x, y)),
+            TestAux::Gamma => self.debug_pos = Some((x, y)),
+            TestAux::Delta => self.ppu_pos = Some((x, y)),
             _ => {}
         }
     }
@@ -1755,10 +1753,10 @@ impl FrontendApp<TestAux> for FakeApp {
         token: ModalToken,
         receiver: std::sync::mpsc::Receiver<()>,
     ) -> bool {
-        if let Some((active, slot)) = &mut self.modal
+        if let Some((active, item)) = &mut self.modal
             && *active == token
         {
-            *slot = Some(receiver);
+            *item = Some(receiver);
             self.owners.insert(owners::MODAL);
             return true;
         }

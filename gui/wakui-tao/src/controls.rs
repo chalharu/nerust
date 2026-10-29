@@ -568,7 +568,7 @@ pub fn control_element(control: &Control, parent_enabled: bool, font: iced::Font
         text(label.to_owned()).font(font).into()
     };
     // Help surfaces as hover tooltips in GTK; Tao has no hover affordance,
-    // so a permanent subtitle (e.g. "Occupied by another slot") only adds
+    // so a permanent subtitle (e.g. "Occupied by another item") only adds
     // noise. The disabled state already reads off the dimmed input itself.
     element
 }
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn visitor_balances_hidden_disabled_frames() {
         let screen = screen(vec![
-            page("First", true, group(vec![action_control("Mute")])),
+            page("First", true, group(vec![action_control("Toggle A")])),
             page("Second", false, group(vec![action_control("OK")])),
         ]);
         let mut visitor = IcedControlVisitor::default();
@@ -657,7 +657,7 @@ mod tests {
         let mut group = screen.pages[0].body.clone();
         group.metadata.visible = false;
         visitor.begin_container(&group);
-        visitor.control(&action_control("Mute"));
+        visitor.control(&action_control("Toggle A"));
         assert!(visitor.stack.last().unwrap().children.is_empty());
         visitor.end_container(&group);
         assert!(visitor.stack.last().unwrap().children.is_empty());
@@ -667,7 +667,7 @@ mod tests {
         assert!(!visitor.stack.last().unwrap().enabled);
         visitor.begin_container(&group);
         assert!(!visitor.stack.last().unwrap().enabled);
-        visitor.control(&action_control("Mute"));
+        visitor.control(&action_control("Toggle A"));
         visitor.end_container(&group);
         visitor.end_container(&group);
         visitor.end_page(&screen.pages[0]);

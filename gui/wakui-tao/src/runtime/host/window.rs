@@ -234,7 +234,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
             present: self.core.content_loaded(),
             suspended: self.core.content_suspended(),
             main_active: self.core.main_active(),
-            live_follow: self.debug_widget_live_follow(),
+            live_follow: self.polled_live_follow(),
         }
     }
 
@@ -587,7 +587,7 @@ mod tests {
         // Focused main window repaints even while paused.
         let (_, redraw) = update_flow(now, true, true, true, false, idle);
         assert!(redraw);
-        // PPU follow repaints while running unfocused.
+        // Polled follow repaints while running unfocused.
         let (_, redraw) = update_flow(now, true, false, false, true, idle);
         assert!(redraw);
         // Loaded paused unfocused sleeps.

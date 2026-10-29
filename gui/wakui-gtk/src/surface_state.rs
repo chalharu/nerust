@@ -1,7 +1,7 @@
 //! Native-surface liveness predicates shared by every widget owner.
 //!
 //! Leaf module by design: only GTK/GDK types, never sibling frontend
-//! modules, so debugger/OSD/window can all use these without creating
+//! modules, so aux/OSD/window can all use these without creating
 //! module cycles.
 
 use gtk::prelude::*;

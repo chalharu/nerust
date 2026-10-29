@@ -1,4 +1,4 @@
-//! Menu/keyboard dispatch, ROM lifecycle, and the session delegate.
+//! Menu/keyboard dispatch, file lifecycle, and the session delegate.
 
 use super::HostState;
 use super::{HostAction, element_state_to_pressed};
@@ -151,8 +151,8 @@ mod tests {
         let support = TestHost::with_nes();
         let filters = support.host.core.file_dialog_filters();
         assert_eq!(filters.len(), 1);
-        assert_eq!(filters[0].0, "ROM files");
-        assert_eq!(filters[0].1, ["nes"]);
+        assert_eq!(filters[0].0, "Data files");
+        assert_eq!(filters[0].1, ["dat"]);
     }
 
     #[test]
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn file_dialog_success_loads_picked_path() {
-        let path = std::path::PathBuf::from("/tmp/game.nes");
+        let path = std::path::PathBuf::from("/tmp/game.dat");
         let support = TestHost::with_pick(Some(path.clone()));
         let mut host = support.host;
         assert!(host.open_file_dialog());
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn file_dialog_failure_surfaces_error() {
-        let path = std::path::PathBuf::from("/tmp/broken.nes");
+        let path = std::path::PathBuf::from("/tmp/broken.dat");
         let support = TestHost::with_failing_pick(Some(path.clone()));
         let mut host = support.host;
         assert!(!host.open_file_dialog());
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_open_guard_swallows_non_quit() {
+    fn guard_blocks_non_quit() {
         let support = TestHost::new();
         let open = support.menu_ref(M::Open);
         let mut host = support.host;
@@ -195,18 +195,18 @@ mod tests {
         assert!(support.app.borrow().load_paths.clone().is_empty());
     }
 
-    fn settings_blocked_host() -> TestHost {
+    fn guard_blocked_host() -> TestHost {
         use crate::testkit::TestAux;
         use wakui_core::aux::OpenRequest;
         let support = TestHost::new();
         let mut host = support.host;
-        let id = match host.reserve_aux_window(TestAux::Settings) {
+        let id = match host.reserve_aux_window(TestAux::Alpha) {
             Some(OpenRequest::Create(id)) => id,
             _ => panic!("reservation"),
         };
         assert!(host.prepare_widget(id));
         host.aux
-            .insert_for_test(TestAux::Settings, Box::new(StubAux::new()));
+            .insert_for_test(TestAux::Alpha, Box::new(StubAux::new()));
         assert!(host.core.modal_guard_active());
         TestHost {
             host,
@@ -217,15 +217,15 @@ mod tests {
     }
 
     #[test]
-    fn open_settings_blocks_menu_commands() {
-        let support = settings_blocked_host();
+    fn open_guard_blocks_menu_commands() {
+        let support = guard_blocked_host();
         let commands = [
             M::Open,
             M::Close,
-            M::Settings,
-            M::Debugger,
-            M::History,
-            M::Session(S::TogglePause),
+            M::AuxAlpha,
+            M::AuxGamma,
+            M::AuxBeta,
+            M::Session(S::Toggle),
         ]
         .map(|command| support.menu_ref(command));
         let mut host = support.host;
@@ -239,8 +239,8 @@ mod tests {
     }
 
     #[test]
-    fn open_settings_lets_quit_through() {
-        let support = settings_blocked_host();
+    fn open_guard_lets_quit_through() {
+        let support = guard_blocked_host();
         let quit = support.menu_ref(M::Quit);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
@@ -250,19 +250,19 @@ mod tests {
     }
 
     #[test]
-    fn canonical_events_share_external_settings_guard_and_effects() {
+    fn canonical_events_share_external_modal_guard_and_effects() {
         use crate::event::UserEvent;
         use wakui_core::focus::FocusEvent;
         use wakui_core::session::SessionEvent;
-        let support = settings_blocked_host();
+        let support = guard_blocked_host();
         let about = support.menu_ref(M::About);
-        let select = support.menu_ref(M::Session(S::SelectActiveSlot(42)));
+        let select = support.menu_ref(M::Session(S::Select(42)));
         let quit = support.menu_ref(M::Quit);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         // The guard comes from the open widget alone: no suspension owner
         // is held, yet commands and keyboard input stay blocked.
-        assert!(!host.core.owns_pause(crate::testkit::owners::SETTINGS));
+        assert!(!host.core.owns_pause(crate::testkit::owners::GUARD));
         assert!(host.core.modal_guard_active());
         for event in [
             UserEvent::Menu(about),
@@ -274,7 +274,7 @@ mod tests {
         ] {
             assert_eq!(host.on_event(event, &opener), HostAction::None);
         }
-        assert!(support.app.borrow().active_slot_id().is_none());
+        assert!(support.app.borrow().active_item_id().is_none());
         assert!(support.menu.updates().is_empty());
         assert!(opener.calls().is_empty());
         assert_eq!(
@@ -294,12 +294,12 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_f4_effect_opens_native_debugger() {
+    fn keyboard_f4_effect_opens_native_aux() {
         use crate::event::UserEvent;
         use wakui_core::session::SessionEvent;
         let mut host = TestHost::new().host;
         let opener = FakeOpener::failing("no display");
-        // The fake binds F4 to the debugger, like the default view-side
+        // The fake binds F4 to aux gamma, like the default view-side
         // binding. Production flavors never interpret keys.
         assert_eq!(
             host.on_event(
@@ -311,18 +311,18 @@ mod tests {
             ),
             HostAction::None
         );
-        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        assert_eq!(opener.calls(), [OpenerCall::Gamma]);
     }
 
     #[test]
     fn history_menu_records_open_attempt() {
         let support = TestHost::new();
-        let history = support.menu_ref(M::History);
+        let history = support.menu_ref(M::AuxBeta);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         assert_eq!(host.on_menu_command(history, &opener), HostAction::None);
-        assert_eq!(opener.calls(), [OpenerCall::History]);
-        assert!(!host.aux.contains(crate::testkit::TestAux::History));
+        assert_eq!(opener.calls(), [OpenerCall::Beta]);
+        assert!(!host.aux.contains(crate::testkit::TestAux::Beta));
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn open_menu_routes_dialog_result() {
-        let path = std::path::PathBuf::from("/tmp/game.nes");
+        let path = std::path::PathBuf::from("/tmp/game.dat");
         let support = TestHost::with_pick(Some(path.clone()));
         let open = support.menu_ref(M::Open);
         let mut host = support.host;
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn session_menu_runs_command_and_syncs() {
         let support = TestHost::new();
-        let toggle = support.menu_ref(M::Session(S::TogglePause));
+        let toggle = support.menu_ref(M::Session(S::Toggle));
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         assert_eq!(host.on_menu_command(toggle, &opener), HostAction::None);
@@ -370,22 +370,22 @@ mod tests {
     #[test]
     fn settings_menu_records_open_attempt() {
         let support = TestHost::new();
-        let settings = support.menu_ref(M::Settings);
+        let settings = support.menu_ref(M::AuxAlpha);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         assert_eq!(host.on_menu_command(settings, &opener), HostAction::None);
-        assert_eq!(opener.calls(), [OpenerCall::Settings]);
+        assert_eq!(opener.calls(), [OpenerCall::Alpha]);
         assert!(host.aux.windows.ids().is_empty());
     }
 
     #[test]
-    fn debugger_menu_records_open_attempt() {
+    fn aux_gamma_menu_records_open_attempt() {
         let support = TestHost::new();
-        let debugger = support.menu_ref(M::Debugger);
+        let aux_gamma = support.menu_ref(M::AuxGamma);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(host.on_menu_command(debugger, &opener), HostAction::None);
-        assert_eq!(opener.calls(), [OpenerCall::Debug]);
+        assert_eq!(host.on_menu_command(aux_gamma, &opener), HostAction::None);
+        assert_eq!(opener.calls(), [OpenerCall::Gamma]);
         assert!(host.aux.windows.ids().is_empty());
     }
 
@@ -395,17 +395,17 @@ mod tests {
         let activations = [
             S::Pause,
             S::Resume,
-            S::TogglePause,
-            S::Reset,
-            S::CreateSlot,
-            S::SaveActiveSlotOrNew,
-            S::LoadActiveSlot,
-            S::SelectActiveSlot(7),
-            S::SaveSlot(7),
-            S::LoadSlot(7),
-            S::DeleteSlot(7),
-            S::SelectNextSlot,
-            S::SelectPreviousSlot,
+            S::Toggle,
+            S::Restart,
+            S::Create,
+            S::SaveActiveOrNew,
+            S::LoadActive,
+            S::Select(7),
+            S::Save(7),
+            S::Load(7),
+            S::Delete(7),
+            S::Next,
+            S::Previous,
         ]
         .map(|command| support.menu_ref(M::Session(command)));
         let mut host = support.host;
@@ -415,7 +415,7 @@ mod tests {
             assert_eq!(host.on_menu_command(command, &opener), HostAction::None);
         }
         // dirty gate: identical chrome skips the IPC. Only the
-        // first sync and the active-slot selection change the sig.
+        // first sync and the active-item selection change the sig.
         assert_eq!(support.menu.updates().len(), before + 2);
         assert!(opener.calls().is_empty());
     }
@@ -430,15 +430,15 @@ mod tests {
         app.borrow_mut().resume_session();
         app.borrow_mut().toggle_pause_session();
         assert!(!app.borrow().content_suspended());
-        assert!(!app.borrow_mut().save_active_slot());
-        assert!(!app.borrow_mut().load_active_slot());
-        app.borrow_mut().select_next_slot();
-        app.borrow_mut().select_previous_slot();
-        assert!(!app.borrow_mut().load_slot(99));
-        app.borrow_mut().save_slot(99);
-        app.borrow_mut().delete_slot(99);
-        app.borrow_mut().select_slot(99);
-        app.borrow_mut().create_slot();
+        assert!(!app.borrow_mut().save_active_item());
+        assert!(!app.borrow_mut().load_active_item());
+        app.borrow_mut().select_next();
+        app.borrow_mut().select_previous();
+        assert!(!app.borrow_mut().load_item(99));
+        app.borrow_mut().save_item(99);
+        app.borrow_mut().delete_item(99);
+        app.borrow_mut().select_item(99);
+        app.borrow_mut().create_item();
         app.borrow_mut().reset_session();
         host.core.unload();
         assert!(!app.borrow().content_loaded());
@@ -448,7 +448,7 @@ mod tests {
     fn history_key_starts_changed_and_survives_failed_save() {
         let support = TestHost::new();
         let _host = support.host;
-        assert!(support.app.borrow().history_changed());
+        assert!(support.app.borrow().log_changed());
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
         use crate::testkit::owners;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.set_pause_owner(owners::SETTINGS, true);
+        host.core.set_pause_owner(owners::GUARD, true);
         // Simulate a dialog thread that died before acking: the
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
@@ -502,7 +502,7 @@ mod tests {
         assert!(!host.core.dialog_pending());
         assert_eq!(host.core.dialog_queue_len(), 0);
         assert!(!host.core.owns_pause(owners::MODAL));
-        assert!(host.core.owns_pause(owners::SETTINGS));
+        assert!(host.core.owns_pause(owners::GUARD));
     }
 
     #[test]
@@ -549,7 +549,7 @@ mod tests {
         host.poll_notifications();
         assert!(support.dialogs.errors().is_empty());
         assert_eq!(host.core.dialog_queue_len(), 0);
-        assert!(support.app.borrow().history_changed());
+        assert!(support.app.borrow().log_changed());
     }
 
     #[test]
@@ -558,7 +558,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.apply_keyboard_f4();
-        assert!(host.core.take_open_request(TestAux::Debug));
+        assert!(host.core.take_open_request(TestAux::Gamma));
         assert!(support.menu.updates().is_empty());
     }
 

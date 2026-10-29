@@ -1,7 +1,7 @@
 //! Platform handler interface: native widget state and callbacks.
 //!
 //! A backend [`WidgetBinding`] is hosted by the single native Program
-//! adapter; Settings and History are bindings, not standalone programs.
+//! adapter; aux views are bindings, not standalone programs.
 //! This is the MAUI handler counterpart: the framework visits control
 //! snapshots, the handler produces native elements.
 

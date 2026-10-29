@@ -260,7 +260,7 @@ pub(crate) mod imp {
 
         fn item(&mut self, item: &HostItem) {
             // Structural validation only: same opaque id plus same argument
-            // shape. Domain meaning (e.g. slot existence) resolved view-side.
+            // shape. Domain meaning (e.g. item existence) resolved view-side.
             let declaration = item.command.and_then(|activation| {
                 self.declarations
                     .iter()
@@ -443,24 +443,24 @@ pub(crate) mod imp {
                 leaves
             }
 
-            fn slot_label(id: u64, active: Option<u64>) -> String {
+            fn item_label(id: u64, active: Option<u64>) -> String {
                 if active == Some(id) {
-                    format!("Slot {id} (active)")
+                    format!("Item {id} (active)")
                 } else {
-                    format!("Slot {id}")
+                    format!("Item {id}")
                 }
             }
 
-            /// Canned model with the production shape: File/Emulation roots,
-            /// States nesting the four slot submenus, labels pre-localized.
+            /// Canned model with the production shape: Group A/B roots,
+            /// Group C nesting the four item submenus, labels pre-localized.
             /// Native identity, routing, and enablement are what this test
             /// owns; label copy and domain meaning live in the fake table.
             fn canned_bar(
                 commands: &FakeCommands,
                 loaded: bool,
                 paused: bool,
-                settings_open: bool,
-                slots: &[u64],
+                guard_open: bool,
+                items: &[u64],
                 active: Option<u64>,
             ) -> Menubar {
                 use TestMenu as C;
@@ -473,11 +473,11 @@ pub(crate) mod imp {
                     };
                     match command {
                         C::Quit => true,
-                        _ if settings_open => false,
-                        C::Open | C::Settings | C::Debugger | C::History => true,
+                        _ if guard_open => false,
+                        C::Open | C::AuxAlpha | C::AuxGamma | C::AuxBeta => true,
                         C::Session(S::Pause) => loaded && !paused,
                         C::Session(S::Resume) => loaded && paused,
-                        C::Session(S::LoadActiveSlot) => loaded && active.is_some(),
+                        C::Session(S::LoadActive) => loaded && active.is_some(),
                         _ => loaded,
                     }
                 };
@@ -489,22 +489,22 @@ pub(crate) mod imp {
                         enabled: item_enabled(activation),
                     })
                 };
-                let slot_submenu =
+                let item_submenu =
                     |id: MenuId, label: &str, make_command: fn(u64) -> S| -> MenuEntry {
-                        let children: Vec<MenuEntry> = if slots.is_empty() {
+                        let children: Vec<MenuEntry> = if items.is_empty() {
                             vec![MenuEntry::Item(wakui_core::menu::MenuItem {
                                 command: None,
-                                label: "No save slots".to_string(),
+                                label: "No items".to_string(),
                                 enabled: false,
                             })]
                         } else {
-                            slots
+                            items
                                 .iter()
-                                .map(|slot| {
-                                    let activation = reference(C::Session(make_command(*slot)));
+                                .map(|item| {
+                                    let activation = reference(C::Session(make_command(*item)));
                                     MenuEntry::Item(wakui_core::menu::MenuItem {
                                         command: Some(activation),
-                                        label: slot_label(*slot, active),
+                                        label: item_label(*item, active),
                                         enabled: item_enabled(Some(activation)),
                                     })
                                 })
@@ -513,7 +513,7 @@ pub(crate) mod imp {
                         MenuEntry::Submenu(Submenu {
                             id,
                             label: label.to_string(),
-                            enabled: loaded && !settings_open && !slots.is_empty(),
+                            enabled: loaded && !guard_open && !items.is_empty(),
                             children,
                         })
                     };
@@ -521,46 +521,38 @@ pub(crate) mod imp {
                     commands: commands.model(),
                     menus: vec![
                         Submenu {
-                            id: menu_id::FILE,
-                            label: "File".to_string(),
+                            id: menu_id::GROUP_A,
+                            label: "Group A".to_string(),
                             enabled: true,
                             children: vec![
                                 leaf(Some(C::Open), "Open..."),
                                 leaf(Some(C::Close), "Close"),
-                                leaf(Some(C::Settings), "Settings..."),
-                                leaf(Some(C::Debugger), "Open Debugger"),
-                                leaf(Some(C::History), "Notification History"),
+                                leaf(Some(C::AuxAlpha), "Aux Alpha..."),
+                                leaf(Some(C::AuxGamma), "Aux Gamma"),
+                                leaf(Some(C::AuxBeta), "Aux Beta"),
                                 leaf(Some(C::Quit), "Quit"),
                             ],
                         },
                         Submenu {
-                            id: menu_id::EMULATION,
-                            label: "Emulation".to_string(),
+                            id: menu_id::GROUP_B,
+                            label: "Group B".to_string(),
                             enabled: true,
                             children: vec![
                                 leaf(Some(C::Session(S::Pause)), "Pause"),
                                 leaf(Some(C::Session(S::Resume)), "Resume"),
-                                leaf(Some(C::Session(S::Reset)), "Reset"),
-                                leaf(Some(C::Session(S::CreateSlot)), "New Slot"),
-                                leaf(Some(C::Session(S::SaveActiveSlotOrNew)), "Save"),
-                                leaf(Some(C::Session(S::LoadActiveSlot)), "Load"),
+                                leaf(Some(C::Session(S::Restart)), "Reset"),
+                                leaf(Some(C::Session(S::Create)), "New item"),
+                                leaf(Some(C::Session(S::SaveActiveOrNew)), "Save"),
+                                leaf(Some(C::Session(S::LoadActive)), "Load"),
                                 MenuEntry::Submenu(Submenu {
-                                    id: menu_id::STATES,
-                                    label: "States".to_string(),
-                                    enabled: loaded && !settings_open,
+                                    id: menu_id::GROUP_C,
+                                    label: "Group C".to_string(),
+                                    enabled: loaded && !guard_open,
                                     children: vec![
-                                        slot_submenu(
-                                            menu_id::SELECT_SLOT,
-                                            "Select Slot",
-                                            S::SelectActiveSlot,
-                                        ),
-                                        slot_submenu(menu_id::SAVE_SLOT, "Save Slot", S::SaveSlot),
-                                        slot_submenu(menu_id::LOAD_SLOT, "Load Slot", S::LoadSlot),
-                                        slot_submenu(
-                                            menu_id::DELETE_SLOT,
-                                            "Delete Slot",
-                                            S::DeleteSlot,
-                                        ),
+                                        item_submenu(menu_id::SUB_A, "Sub A", S::Select),
+                                        item_submenu(menu_id::SUB_B, "Sub B", S::Save),
+                                        item_submenu(menu_id::SUB_C, "Sub C", S::Load),
+                                        item_submenu(menu_id::SUB_D, "Sub D", S::Delete),
                                     ],
                                 }),
                             ],
@@ -585,8 +577,8 @@ pub(crate) mod imp {
                 menu: &mut AppMenu,
                 loaded: bool,
                 paused: bool,
-                settings_open: bool,
-                slots: &[u64],
+                guard_open: bool,
+                items: &[u64],
                 active: Option<u64>,
                 bar: &gtk::MenuBar,
             ) {
@@ -607,83 +599,82 @@ pub(crate) mod imp {
                         .iter()
                         .map(|(id, menu)| (*id, menu.id().clone()))
                         .collect::<Vec<_>>();
-                    let menubar =
-                        canned_bar(commands, loaded, paused, settings_open, slots, active);
+                    let menubar = canned_bar(commands, loaded, paused, guard_open, items, active);
                     menu.update(&menubar);
                     let roots = menu.menu_bar.items();
                     assert_eq!(roots.len(), 2);
-                    for (root, id) in roots.iter().zip([menu_id::FILE, menu_id::EMULATION]) {
+                    for (root, id) in roots.iter().zip([menu_id::GROUP_A, menu_id::GROUP_B]) {
                         assert_eq!(root.id(), menu.menus[&id].id());
                     }
                     assert_eq!(menu.menus.len(), 7);
                     for (id, label) in [
-                        (menu_id::FILE, "File"),
-                        (menu_id::EMULATION, "Emulation"),
-                        (menu_id::STATES, "States"),
-                        (menu_id::SELECT_SLOT, "Select Slot"),
-                        (menu_id::SAVE_SLOT, "Save Slot"),
-                        (menu_id::LOAD_SLOT, "Load Slot"),
-                        (menu_id::DELETE_SLOT, "Delete Slot"),
+                        (menu_id::GROUP_A, "Group A"),
+                        (menu_id::GROUP_B, "Group B"),
+                        (menu_id::GROUP_C, "Group C"),
+                        (menu_id::SUB_A, "Sub A"),
+                        (menu_id::SUB_B, "Sub B"),
+                        (menu_id::SUB_C, "Sub C"),
+                        (menu_id::SUB_D, "Sub D"),
                     ] {
                         assert_eq!(menu.menus[&id].text(), label);
                     }
                     for (id, count) in [
-                        (menu_id::FILE, 6),
-                        (menu_id::EMULATION, 7),
-                        (menu_id::STATES, 4),
+                        (menu_id::GROUP_A, 6),
+                        (menu_id::GROUP_B, 7),
+                        (menu_id::GROUP_C, 4),
                     ] {
                         assert_eq!(menu.menus[&id].items().len(), count);
                     }
                     let mut expected = vec![
                         reference(C::Open),
                         reference(C::Close),
-                        reference(C::Settings),
+                        reference(C::AuxAlpha),
                         reference(C::Quit),
-                        reference(C::Debugger),
-                        reference(C::History),
+                        reference(C::AuxGamma),
+                        reference(C::AuxBeta),
                     ];
                     for session in [
                         S::Pause,
                         S::Resume,
-                        S::Reset,
-                        S::CreateSlot,
-                        S::SaveActiveSlotOrNew,
-                        S::LoadActiveSlot,
+                        S::Restart,
+                        S::Create,
+                        S::SaveActiveOrNew,
+                        S::LoadActive,
                     ] {
                         expected.push(reference(C::Session(session)));
                     }
                     for (id, make_command) in [
-                        (menu_id::SELECT_SLOT, S::SelectActiveSlot as fn(u64) -> S),
-                        (menu_id::SAVE_SLOT, S::SaveSlot),
-                        (menu_id::LOAD_SLOT, S::LoadSlot),
-                        (menu_id::DELETE_SLOT, S::DeleteSlot),
+                        (menu_id::SUB_A, S::Select as fn(u64) -> S),
+                        (menu_id::SUB_B, S::Save),
+                        (menu_id::SUB_C, S::Load),
+                        (menu_id::SUB_D, S::Delete),
                     ] {
                         let submenu = &menu.menus[&id];
                         assert_eq!(
                             submenu.is_enabled(),
-                            loaded && !settings_open && !slots.is_empty()
+                            loaded && !guard_open && !items.is_empty()
                         );
                         let children = submenu.items();
-                        assert_eq!(children.len(), slots.len().max(1));
-                        if slots.is_empty() {
+                        assert_eq!(children.len(), items.len().max(1));
+                        if items.is_empty() {
                             let placeholder = children[0].as_menuitem().unwrap();
-                            assert_eq!(placeholder.text(), "No save slots");
+                            assert_eq!(placeholder.text(), "No items");
                             assert!(!placeholder.is_enabled());
                             assert!(menu.items.iter().any(|(parent, command, item)| {
                                 *parent == id && command.is_none() && item.id() == placeholder.id()
                             }));
                         } else {
-                            for (child, slot) in children.iter().zip(slots) {
-                                let activation = reference(C::Session(make_command(*slot)));
+                            for (child, id) in children.iter().zip(items) {
+                                let activation = reference(C::Session(make_command(*id)));
                                 let native = child.as_menuitem().unwrap();
                                 assert_eq!(native.id(), item(menu, activation).id());
-                                assert_eq!(native.text(), slot_label(*slot, active));
+                                assert_eq!(native.text(), item_label(*id, active));
                                 expected.push(activation);
                             }
                         }
                     }
                     let leaves = walk(roots, bar.children(), &mut HashSet::new());
-                    assert_eq!(leaves.len(), 12 + 4 * slots.len().max(1));
+                    assert_eq!(leaves.len(), 12 + 4 * items.len().max(1));
                     assert_eq!(menu.items.len(), leaves.len(), "stale cached items");
                     let routes = menu.commands.read().unwrap();
                     assert_eq!(routes.len(), expected.len());
@@ -712,16 +703,16 @@ pub(crate) mod imp {
                         let enabled = match resolved {
                             None => false,
                             Some(TestMenu::Quit) => true,
-                            _ if settings_open => false,
+                            _ if guard_open => false,
                             Some(
                                 TestMenu::Open
-                                | TestMenu::Settings
-                                | TestMenu::Debugger
-                                | TestMenu::History,
+                                | TestMenu::AuxAlpha
+                                | TestMenu::AuxGamma
+                                | TestMenu::AuxBeta,
                             ) => true,
                             Some(TestMenu::Session(TestSession::Pause)) => loaded && !paused,
                             Some(TestMenu::Session(TestSession::Resume)) => loaded && paused,
-                            Some(TestMenu::Session(TestSession::LoadActiveSlot)) => {
+                            Some(TestMenu::Session(TestSession::LoadActive)) => {
                                 loaded && active.is_some()
                             }
                             Some(_) => loaded,
@@ -784,9 +775,9 @@ pub(crate) mod imp {
                 .clone()
                 .gtk_menubar_for_gtk_window(&window)
                 .unwrap();
-            let (mut loaded, mut paused, mut settings_open) = (false, false, false);
-            let mut slots: Vec<u64> = Vec::new();
-            let mut active_slot: Option<u64> = None;
+            let (mut loaded, mut paused, mut guard_open) = (false, false, false);
+            let mut items: Vec<u64> = Vec::new();
+            let mut active_item: Option<u64> = None;
             // One opaque-id table for the whole scenario: repeated builds
             // keep identities, like the view-side registry across frames.
             let commands = FakeCommands::new();
@@ -795,9 +786,9 @@ pub(crate) mod imp {
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
             // Activate the actual GTK leaf: muda's callback must transport the
@@ -817,22 +808,22 @@ pub(crate) mod imp {
                 recording.0.lock().unwrap().as_slice(),
                 [HostEvent::Menu(received)] if *received == open
             ));
-            assert_eq!(menu.menus[&menu_id::FILE].text(), "File");
+            assert_eq!(menu.menus[&menu_id::GROUP_A].text(), "Group A");
             assert_eq!(
-                item(&menu, commands.reference(TestMenu::Debugger)).text(),
-                "Open Debugger"
+                item(&menu, commands.reference(TestMenu::AuxGamma)).text(),
+                "Aux Gamma"
             );
             loaded = true;
-            slots = vec![42, 7];
-            active_slot = Some(42);
+            items = vec![42, 7];
+            active_item = Some(42);
             sync_and_check(
                 &commands,
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
             paused = true;
@@ -841,57 +832,57 @@ pub(crate) mod imp {
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
-            settings_open = true;
+            guard_open = true;
             sync_and_check(
                 &commands,
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
-            settings_open = false;
-            active_slot = Some(7);
+            guard_open = false;
+            active_item = Some(7);
             sync_and_check(
                 &commands,
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
-            // Delete one slot, then the last: removed IDs/commands must vanish,
-            // while the surviving slot and static items retain their IDs.
-            slots = vec![7];
+            // Delete one item, then the last: removed IDs/commands must vanish,
+            // while the surviving item and static items retain their IDs.
+            items = vec![7];
             sync_and_check(
                 &commands,
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
-            slots = Vec::new();
-            active_slot = None;
+            items = Vec::new();
+            active_item = None;
             sync_and_check(
                 &commands,
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
             loaded = false;
@@ -900,9 +891,9 @@ pub(crate) mod imp {
                 &mut menu,
                 loaded,
                 paused,
-                settings_open,
-                &slots,
-                active_slot,
+                guard_open,
+                &items,
+                active_item,
                 &bar,
             );
 
@@ -911,14 +902,7 @@ pub(crate) mod imp {
             use wakui_core::menu::{
                 NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
             };
-            let mut root = canned_bar(
-                &commands,
-                loaded,
-                paused,
-                settings_open,
-                &slots,
-                active_slot,
-            );
+            let mut root = canned_bar(&commands, loaded, paused, guard_open, &items, active_item);
             root.application_menu = Some(NativeApplicationMenu {
                 label: "Host App".into(),
                 entries: vec![A::Role(R::About), A::Separator, A::Role(R::Quit)],
@@ -935,7 +919,7 @@ pub(crate) mod imp {
             assert_eq!(menu.menu_bar.items()[0].id(), &app_id);
             assert_eq!(
                 menu.menu_bar.items()[1].id(),
-                menu.menus[&menu_id::FILE].id()
+                menu.menus[&menu_id::GROUP_A].id()
             );
             root.application_menu.as_mut().unwrap().label = "Relabeled App".into();
             menu.update(&root.clone());
@@ -998,7 +982,7 @@ pub(crate) mod imp {
             &mut self,
             _loaded: bool,
             _paused: bool,
-            _settings_open: bool,
+            _guard_open: bool,
             _menu: &Menubar,
         ) {
         }

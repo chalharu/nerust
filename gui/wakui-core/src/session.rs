@@ -1,11 +1,11 @@
 //! Framework input vocabulary: opaque commands and keys in, outcomes out.
 //!
 //! View definitions and native frontends share these boundary types. Native
-//! adapters translate callbacks into these intents without naming shell,
-//! settings, or emulator types; meaning (shortcuts, settings guards, pause
-//! adoption, debugger/fullscreen routing) resolves view-side, the same
-//! direction as [`crate::commands`]: new meanings are added outside this
-//! file, never as new enum variants here.
+//! adapters translate callbacks into these intents without naming shell or
+//! view types; meaning (key bindings, modal guards, suspension adoption,
+//! aux routing) resolves view-side, the same direction as
+//! [`crate::commands`]: new meanings are added outside this file, never as
+//! new enum variants here.
 
 use crate::Key;
 use crate::commands::CommandRef;
