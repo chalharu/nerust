@@ -1,5 +1,5 @@
 //! Single tao mapping leaf: codes, buttons, modifiers (tao to native input only).
-//! Iced conversion lives in [`crate::convert`] (native input to iced).
+//! Iced conversion lives in [`crate::input::convert`] (native input to iced).
 
 use super::vocab::{AuxButton, AuxModifiers, ModifierFlag};
 use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};

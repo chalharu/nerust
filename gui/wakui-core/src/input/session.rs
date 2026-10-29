@@ -4,7 +4,7 @@
 //! adapters translate callbacks into these intents without naming shell or
 //! view types; meaning (key bindings, modal guards, suspension adoption,
 //! aux routing) resolves view-side, the same direction as
-//! [`crate::commands`]: new meanings are added outside this file, never as
+//! [`crate::input::commands`]: new meanings are added outside this file, never as
 //! new enum variants here.
 
 use crate::Key;
