@@ -63,8 +63,8 @@ enum TableChild {
     Element(El<'static>),
     Row {
         cells: Vec<El<'static>>,
-        spacing: u16,
-        indent: u16,
+        spacing: f64,
+        indent: f64,
     },
 }
 
@@ -115,7 +115,16 @@ impl IcedControlVisitor {
         if frame.children.is_empty() && layout.label.is_empty() {
             return;
         }
-        let spacing = f32::from(layout.spacing);
+        let spacing = (layout
+            .metadata
+            .hints
+            .spacing
+            .unwrap_or(wakui::hints::DEFAULT_SPACING)) as f32;
+        let indent_px = (layout
+            .metadata
+            .hints
+            .indent
+            .unwrap_or(wakui::hints::DEFAULT_INDENT)) as f32;
         let element = if policy::<RowPolicy>(container).is_some() {
             if !layout.label.is_empty() {
                 frame
@@ -125,15 +134,23 @@ impl IcedControlVisitor {
             if let Some(table) = self.stack.last_mut().and_then(|frame| frame.table.as_mut()) {
                 table.push(TableChild::Row {
                     cells: frame.children,
-                    spacing: layout.spacing,
-                    indent: layout.indent,
+                    spacing: layout
+                        .metadata
+                        .hints
+                        .spacing
+                        .unwrap_or(wakui::hints::DEFAULT_SPACING),
+                    indent: layout
+                        .metadata
+                        .hints
+                        .indent
+                        .unwrap_or(wakui::hints::DEFAULT_INDENT),
                 });
                 return;
             }
             row(frame.children)
                 .spacing(spacing)
                 .align_y(Alignment::Center)
-                .padding(iced::padding::left(f32::from(layout.indent)))
+                .padding(iced::padding::left(indent_px))
                 .into()
         } else if policy::<GroupPolicy>(container).is_some() {
             // Title stands alone; the group header action (e.g. the
@@ -154,7 +171,7 @@ impl IcedControlVisitor {
             stacked.push(
                 column(frame.children)
                     .spacing(spacing)
-                    .padding(iced::padding::left(f32::from(layout.indent)))
+                    .padding(iced::padding::left(indent_px))
                     .into(),
             );
             column(stacked).spacing(spacing).into()
@@ -164,9 +181,7 @@ impl IcedControlVisitor {
                 children =
                     column![text(layout.label.clone()).font(self.font), children].spacing(spacing);
             }
-            children
-                .padding(iced::padding::left(f32::from(layout.indent)))
-                .into()
+            children.padding(iced::padding::left(indent_px)).into()
         };
         self.append(element);
     }
@@ -175,22 +190,25 @@ impl IcedControlVisitor {
 fn table_element(children: Vec<TableChild>, layout: &Container, font: iced::Font) -> El<'static> {
     // All rows use the same tracks, including short/ragged rows. Gutter and
     // indentation are shared minima, never content-dependent shrink widths.
-    let (columns, spacing, indent) = children.iter().fold((0, 0, 0), |sizes, child| {
-        if let TableChild::Row {
-            cells,
-            spacing,
-            indent,
-        } = child
-        {
-            (
-                sizes.0.max(cells.len()),
-                sizes.1.max(*spacing),
-                sizes.2.max(*indent),
-            )
-        } else {
-            sizes
-        }
-    });
+    let (columns, spacing, indent) =
+        children
+            .iter()
+            .fold((0usize, 0.0f64, 0.0f64), |sizes, child| {
+                if let TableChild::Row {
+                    cells,
+                    spacing,
+                    indent,
+                } = child
+                {
+                    (
+                        sizes.0.max(cells.len()),
+                        sizes.1.max(*spacing),
+                        sizes.2.max(*indent),
+                    )
+                } else {
+                    sizes
+                }
+            });
     let rows = children.into_iter().map(|child| match child {
         TableChild::Element(element) => element,
         TableChild::Row { mut cells, .. } => {
@@ -199,22 +217,29 @@ fn table_element(children: Vec<TableChild>, layout: &Container, font: iced::Font
                 .into_iter()
                 .map(|cell| container(cell).width(Length::FillPortion(1)).into()))
             .width(Length::Fill)
-            .spacing(f32::from(spacing))
-            .padding(iced::padding::left(f32::from(indent)))
+            .spacing(spacing as f32)
+            .padding(iced::padding::left(indent as f32))
             .align_y(Alignment::Center)
             .into()
         }
     });
-    let mut body = column(rows)
-        .width(Length::Fill)
-        .spacing(f32::from(layout.spacing));
+    let spacing = (layout
+        .metadata
+        .hints
+        .spacing
+        .unwrap_or(wakui::hints::DEFAULT_SPACING)) as f32;
+    let indent_px = (layout
+        .metadata
+        .hints
+        .indent
+        .unwrap_or(wakui::hints::DEFAULT_INDENT)) as f32;
+    let mut body = column(rows).width(Length::Fill).spacing(spacing);
     if !layout.label.is_empty() {
         body = column![text(layout.label.clone()).font(font), body]
             .width(Length::Fill)
-            .spacing(f32::from(layout.spacing));
+            .spacing(spacing);
     }
-    body.padding(iced::padding::left(f32::from(layout.indent)))
-        .into()
+    body.padding(iced::padding::left(indent_px)).into()
 }
 
 impl ControlVisitor for IcedControlVisitor {
@@ -322,11 +347,7 @@ impl ControlVisitor for IcedControlVisitor {
             self.append(control_element(control, frame.enabled, self.font));
             // Container-like leaves degrade flat in immediate mode.
             // Base leaves no-op here.
-            let ctx = wakui::leaf::LeafCtx {
-                id: control.id,
-                hints: control.metadata.hints,
-            };
-            control.leaf.walk(&ctx, self);
+            wakui::control::walk_control(control, self);
         }
     }
 }
@@ -576,12 +597,13 @@ mod tests {
     }
 
     fn group(children: Vec<Control>) -> Container {
+        let mut metadata = ControlMetadata::new("group");
+        metadata.hints.spacing = Some(0.0);
+        metadata.hints.indent = Some(0.0);
         Container {
             id: Id::fresh(),
             label: String::new(),
-            metadata: ControlMetadata::new("group"),
-            spacing: 0,
-            indent: 0,
+            metadata,
             header: None,
             policy: Box::new(GroupPolicy),
             children: children.into_iter().map(Node::Control).collect(),
@@ -602,15 +624,18 @@ mod tests {
         ControlScreen {
             title: "Test".to_string(),
             pages,
-            footer: Container {
-                id: Id::fresh(),
-                label: String::new(),
-                metadata: ControlMetadata::new("footer"),
-                spacing: 0,
-                indent: 0,
-                header: None,
-                policy: Box::new(ColumnPolicy),
-                children: Vec::new(),
+            footer: {
+                let mut metadata = ControlMetadata::new("footer");
+                metadata.hints.spacing = Some(0.0);
+                metadata.hints.indent = Some(0.0);
+                Container {
+                    id: Id::fresh(),
+                    label: String::new(),
+                    metadata,
+                    header: None,
+                    policy: Box::new(ColumnPolicy),
+                    children: Vec::new(),
+                }
             },
             message: None,
             capture: Capture {

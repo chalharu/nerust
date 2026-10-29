@@ -11,7 +11,8 @@ use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
 use wakui::Key;
 use wakui::control::{
     Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlInput,
-    ControlMetadata, ControlScreen, GroupPolicy, IdRegistry, Node, Page, RowPolicy, Tabs,
+    ControlMetadata, ControlScreen, GroupPolicy, IdRegistry, LayoutPolicy, Node, Page, RowPolicy,
+    Tabs,
 };
 use wakui::leaf::{
     ActionLeaf, BindingLeaf, ChoiceLeaf, ControlLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
@@ -379,45 +380,59 @@ impl<'a> Builder<'a> {
         }
     }
 
-    pub(crate) fn page_body(&mut self, id: SettingsPage, children: Vec<Node>) -> Container {
+    fn fresh_container(
+        &mut self,
+        key: StableKey,
+        header: Option<Control>,
+        policy: Box<dyn LayoutPolicy>,
+        children: Vec<Node>,
+        spacing: f64,
+        indent: f64,
+    ) -> Container {
+        let mut metadata = ControlMetadata::new("");
+        metadata.hints.spacing = Some(spacing);
+        metadata.hints.indent = Some(indent);
         Container {
-            id: self.ids.id(StableKey::Layout(SettingsLayoutId::Page(id))),
+            id: self.ids.id(key),
             label: String::new(),
-            metadata: ControlMetadata::new(""),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(ColumnPolicy),
+            metadata,
+            header,
+            policy,
             children,
         }
+    }
+
+    pub(crate) fn page_body(&mut self, id: SettingsPage, children: Vec<Node>) -> Container {
+        self.fresh_container(
+            StableKey::Layout(SettingsLayoutId::Page(id)),
+            None,
+            Box::new(ColumnPolicy),
+            children,
+            12.0,
+            0.0,
+        )
     }
 
     pub(crate) fn footer(&mut self, children: Vec<Node>) -> Container {
-        Container {
-            id: self.ids.id(StableKey::Layout(SettingsLayoutId::Footer)),
-            label: String::new(),
-            metadata: ControlMetadata::new(""),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(RowPolicy),
+        self.fresh_container(
+            StableKey::Layout(SettingsLayoutId::Footer),
+            None,
+            Box::new(RowPolicy),
             children,
-        }
+            12.0,
+            0.0,
+        )
     }
 
     pub(crate) fn row(&mut self, control: Control, control_key: &SettingsControlId) -> Node {
-        let layout = Container {
-            id: self.ids.id(StableKey::Layout(SettingsLayoutId::Row(
-                control_key.clone(),
-            ))),
-            label: String::new(),
-            metadata: ControlMetadata::new(""),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(RowPolicy),
-            children: vec![Node::Control(control)],
-        };
+        let layout = self.fresh_container(
+            StableKey::Layout(SettingsLayoutId::Row(control_key.clone())),
+            None,
+            Box::new(RowPolicy),
+            vec![Node::Control(control)],
+            12.0,
+            0.0,
+        );
         Node::Container(Box::new(layout))
     }
 
@@ -432,16 +447,14 @@ impl<'a> Builder<'a> {
             _ => unreachable!(),
         };
         let row_key = self.conflict_key(id, &system, label);
-        let layout = Container {
-            id: self.ids.id(StableKey::ConflictRow(row_key)),
-            label: String::new(),
-            metadata: ControlMetadata::new(""),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(RowPolicy),
-            children: vec![Node::Control(control)],
-        };
+        let layout = self.fresh_container(
+            StableKey::ConflictRow(row_key),
+            None,
+            Box::new(RowPolicy),
+            vec![Node::Control(control)],
+            12.0,
+            0.0,
+        );
         Node::Container(Box::new(layout))
     }
 
@@ -452,17 +465,18 @@ impl<'a> Builder<'a> {
         title: String,
         header: Option<Control>,
         children: Vec<Node>,
-        indent: u16,
+        indent: f64,
     ) -> Node {
         use nerust_settings_core::i18n::{notification_group_label, text};
+        let mut metadata = ControlMetadata::new(title.clone());
+        metadata.hints.spacing = Some(8.0);
+        metadata.hints.indent = Some(indent);
         let layout = Container {
             id: self
                 .ids
                 .id(StableKey::Layout(SettingsLayoutId::Notification(group))),
             label: title.clone(),
-            metadata: ControlMetadata::new(title.clone()),
-            spacing: 8,
-            indent,
+            metadata,
             header: header.map(|mut header| {
                 header.metadata.accessible_label = if group == NotificationGroup::Status {
                     text(
@@ -482,16 +496,14 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn column(&mut self, key: SettingsLayoutId, children: Vec<Node>) -> Node {
-        Node::Container(Box::new(Container {
-            id: self.ids.id(StableKey::Layout(key)),
-            label: String::new(),
-            metadata: ControlMetadata::new(""),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(ColumnPolicy),
+        Node::Container(Box::new(self.fresh_container(
+            StableKey::Layout(key),
+            None,
+            Box::new(ColumnPolicy),
             children,
-        }))
+            12.0,
+            0.0,
+        )))
     }
 
     pub(crate) fn tabs(
@@ -525,16 +537,14 @@ impl<'a> Builder<'a> {
                         Some(key) => StableKey::EmptyLayout(key.clone()),
                         None => StableKey::Layout(SettingsLayoutId::Tab(id.clone())),
                     };
-                    let body = Container {
-                        id: self.ids.id(body_key),
-                        label: String::new(),
-                        metadata: ControlMetadata::new(""),
-                        spacing: 12,
-                        indent: 0,
-                        header: None,
-                        policy: Box::new(ColumnPolicy),
+                    let body = self.fresh_container(
+                        body_key,
+                        None,
+                        Box::new(ColumnPolicy),
                         children,
-                    };
+                        12.0,
+                        0.0,
+                    );
                     let mut select_context = context.clone();
                     let event = select_context.pop().expect("tab select event");
                     let token = match &empty_content {
