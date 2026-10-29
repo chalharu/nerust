@@ -9,7 +9,7 @@ use super::core::{ControlLeaf, Leaf, LeafCtx, LeafUpdate};
 
 /// Generic column definition for `ListLeaf`. Headers arrive
 /// pre-localized; widths are optional hints (`None` = auto).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnDef {
     pub id: String,
     pub header: String,

@@ -10,7 +10,7 @@ version.workspace = true
 [dependencies]
 log.workspace = true
 raw-window-handle.workspace = true
-serde = { features = ["derive"], workspace = true }
+serde = { features = ["derive", "alloc"], workspace = true }
 
 [dev-dependencies]
 strum.workspace = true
