@@ -290,7 +290,7 @@ impl DebuggerDriver {
     pub fn poll(
         &mut self,
         session: &mut nerust_gui_shell::session::SessionHandle,
-        pause: &mut wakui::pause::PausePolicy,
+        pause: &mut crate::pause::PausePolicy,
         bridge: &DebugBridge,
     ) -> DebuggerEffects {
         use nerust_gui_shell::session::commands::SessionCommand;

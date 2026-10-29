@@ -1183,7 +1183,7 @@ fn toggle_window_fullscreen<K: Copy + Eq + std::hash::Hash + 'static>(window: &W
     apply_persisted_window_fullscreen(window, fullscreen);
 }
 
-/// Use the single modal queue, including its pause ownership and acknowledgement path.
+/// Use the single modal queue, including its acknowledgement path.
 fn show_rom_load_error<K: Copy + Eq + std::hash::Hash + 'static>(
     _parent: &gtk::ApplicationWindow,
     state: Rc<RefCell<State<K>>>,
@@ -1316,6 +1316,48 @@ pub(crate) mod tests {
             state,
             super::MenubarModels::new(),
         ))
+    }
+
+    /// Display-bound window sharing its headless app: hold assertions steer
+    /// the fake directly; production code never sees these paths.
+    pub(crate) fn bound_window_shared() -> Option<(
+        super::Window<TestAux>,
+        std::rc::Rc<std::cell::RefCell<crate::testkit::FakeApp>>,
+    )> {
+        let (app, window, state, fake) = harness_shared()?;
+        Some((
+            super::Window::<TestAux>::bind(
+                app,
+                window,
+                gtk::Picture::new(),
+                state,
+                super::MenubarModels::new(),
+            ),
+            fake,
+        ))
+    }
+
+    fn harness_shared() -> Option<(
+        gtk::Application,
+        gtk::ApplicationWindow,
+        TestHarnessState,
+        std::rc::Rc<std::cell::RefCell<crate::testkit::FakeApp>>,
+    )> {
+        if !crate::test_support::ui_test_available() {
+            return None;
+        }
+        static NEXT_APP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let app_id = NEXT_APP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let app = gtk::Application::builder()
+            .application_id(format!("org.nerust.window-test.n{app_id}"))
+            .flags(gio::ApplicationFlags::NON_UNIQUE)
+            .build();
+        // Menubar binding requires startup, just as in the real activate path.
+        app.register(None::<&gio::Cancellable>)
+            .expect("test application registers");
+        let window = gtk::ApplicationWindow::builder().application(&app).build();
+        let (state, fake) = model_state_shared();
+        Some((app, window, state, fake))
     }
 
     #[test]
@@ -1712,7 +1754,10 @@ pub(crate) mod tests {
         use TestAux;
         use gtk::prelude::{ListModelExt, WidgetExt};
         use std::{cell::RefCell, rc::Rc};
-        let win = bound_window().expect("isolated Xvfb process");
+        let Some((win, fake)) = bound_window_shared() else {
+            eprintln!("SKIP: window widget test needs a display");
+            return;
+        };
         for kind in [TestAux::Beta, TestAux::Alpha] {
             let stale = Rc::new(RefCell::new(None));
             let toplevels = gtk::Window::toplevels();
@@ -1746,7 +1791,7 @@ pub(crate) mod tests {
             assert_ne!(current, stale.clone().upcast::<gtk::Window>());
             assert!(current.is_visible());
             if kind == TestAux::Alpha {
-                assert!(win.state().borrow().host.owns_pause(owners::GUARD));
+                assert!(fake.borrow().owns_pause(owners::GUARD));
                 assert!(
                     !win.borrow()
                         .actions
@@ -1759,7 +1804,7 @@ pub(crate) mod tests {
             assert!(win.borrow().aux.contains(kind));
             current.destroy();
             assert!(!win.borrow().aux.contains(kind));
-            assert!(!win.state().borrow().host.owns_pause(owners::GUARD));
+            assert!(!fake.borrow().owns_pause(owners::GUARD));
         }
         win.window().destroy();
     }
@@ -2251,7 +2296,7 @@ pub(crate) mod tests {
     fn settings_identity_guards_pause_owner_and_native_finish() {
         use super::NativeAux;
         use crate::testkit::owners;
-        let Some(win) = bound_window() else {
+        let Some((win, fake)) = bound_window_shared() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
@@ -2274,18 +2319,15 @@ pub(crate) mod tests {
         old.response(gtk::ResponseType::Cancel);
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(TestAux::Alpha));
-        assert!(!win.state().borrow().host.owns_pause(owners::GUARD));
+        assert!(!fake.borrow().owns_pause(owners::GUARD));
         super::open_auxiliary(&win, TestAux::Alpha);
         let new_id = win.borrow().aux.route_id(TestAux::Alpha).unwrap();
         assert_ne!(old_id, new_id);
         assert!(!super::close_aux(&win, old_id));
         old.destroy();
-        assert!(win.state().borrow().host.owns_pause(owners::GUARD));
+        assert!(fake.borrow().owns_pause(owners::GUARD));
         assert!(!action.is_enabled());
-        win.state()
-            .borrow_mut()
-            .host
-            .set_pause_owner(owners::MODAL, true);
+        fake.borrow_mut().set_pause_owner(owners::MODAL, true);
         let current = win
             .borrow()
             .aux
@@ -2295,8 +2337,8 @@ pub(crate) mod tests {
         current.destroy();
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(TestAux::Alpha));
-        assert!(!win.state().borrow().host.owns_pause(owners::GUARD));
-        assert!(win.state().borrow().host.owns_pause(owners::MODAL));
+        assert!(!fake.borrow().owns_pause(owners::GUARD));
+        assert!(fake.borrow().owns_pause(owners::MODAL));
     }
 
     /// Headless-capable state: session plus settings only, no renderer.
@@ -2321,6 +2363,14 @@ pub(crate) mod tests {
 
     pub(crate) fn model_state() -> TestHarnessState {
         std::rc::Rc::new(std::cell::RefCell::new(crate::State::new_for_tests()))
+    }
+
+    pub(crate) fn model_state_shared() -> (
+        TestHarnessState,
+        std::rc::Rc<std::cell::RefCell<crate::testkit::FakeApp>>,
+    ) {
+        let (state, fake) = crate::State::new_for_tests_shared();
+        (std::rc::Rc::new(std::cell::RefCell::new(state)), fake)
     }
 
     #[test]
@@ -2489,7 +2539,7 @@ pub(crate) mod tests {
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
         use super::{EventCommand, OpenRequest};
         use crate::testkit::owners;
-        let Some(win) = bound_window() else {
+        let Some((win, fake)) = bound_window_shared() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
@@ -2533,19 +2583,13 @@ pub(crate) mod tests {
         assert!(!about.is_enabled());
         assert!(quit.is_enabled());
         assert!(super::close_aux(&win, id));
-        win.state()
-            .borrow_mut()
-            .host
-            .set_pause_owner(owners::GUARD, true);
+        fake.borrow_mut().set_pause_owner(owners::GUARD, true);
         assert!(sink.send(about_event));
         assert!(
             win.borrow().about_dialog.is_none(),
             "host pause guard also applies without aux"
         );
-        win.state()
-            .borrow_mut()
-            .host
-            .set_pause_owner(owners::GUARD, false);
+        fake.borrow_mut().set_pause_owner(owners::GUARD, false);
         win.update_actions();
         about.activate(None);
         let dialog = win

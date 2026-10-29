@@ -1,16 +1,17 @@
-//! Composable suspension ownership: releasing one owner never releases another.
+//! View-side suspension ownership: releasing one owner never releases another.
 //!
-//! Toolkit-free gate shared by every native backend. Owners compose as
-//! bits; content stays suspended while any owner holds.
+//! This policy belongs to the application layer, not the UI framework: it
+//! arbitrates content suspension across unrelated reasons (explicit user
+//! request, focus loss, modal dialogs). The framework only transports the
+//! underlying notifications (focus events, modal effects, commands); this
+//! module decides what they mean for suspension.
 //!
-//! Owner identities are opaque [`PauseOwner`] tokens minted view-side: the
-//! framework never names concrete owners (user, focus, modal, settings, ...).
-//! View definitions own the owner table plus any adoption policy (e.g. an
-//! explicit user hold adopted when the first hold arrives over already
-//! suspended content). This file is a pure bitset, like [`crate::control`]
-//! is pure structure.
+//! Owners compose as bits; content stays suspended while any owner holds.
+//! The owner table ([`super::session::pause_owners`]) gives each hold its
+//! meaning, plus the adoption policy (an explicit user hold adopted when the
+//! first hold arrives over already suspended content).
 
-/// Opaque suspension owner. Minted view-side from a stable owner table;
+/// Opaque suspension owner. Minted from the view-side owner table;
 /// never a position or a framework-known kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PauseOwner(u8);
@@ -43,7 +44,7 @@ impl PausePolicy {
 
     /// Set or release one opaque hold. Returns whether content stays suspended.
     /// Adoption policies (e.g. adopting an explicit user hold on the first
-    /// acquisition) live view-side, next to the owner table.
+    /// acquisition) live next to the owner table.
     pub fn set(&mut self, owner: PauseOwner, active: bool) -> bool {
         debug_assert!(owner.0 < 32, "pause owner index exhausted");
         let bit = 1 << owner.0;

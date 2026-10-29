@@ -67,7 +67,8 @@ mod tests {
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
         use crate::testkit::owners;
-        let mut host = TestHost::with_nes().host;
+        let support = TestHost::with_nes();
+        let mut host = support.host;
         host.load_test_file();
         host.core.report_host_error("parked modal".into());
         host.core.note_main_departure();
@@ -83,8 +84,8 @@ mod tests {
         ack.send(()).unwrap();
         host.tick_osd_pump();
         assert!(host.core.content_suspended(), "focus still holds");
-        assert!(!host.core.owns_pause(owners::MODAL));
-        host.core.release_focus_pause();
+        assert!(!support.app.borrow().owns_pause(owners::MODAL));
+        host.core.release_focus_hold();
         assert!(!host.core.content_suspended());
     }
 
@@ -103,8 +104,12 @@ mod tests {
     fn close_retires_owned_modal_receiver_queue() {
         use crate::testkit::owners;
         use wakui_core::dialog::ModalAdvance;
-        let mut host = TestHost::new().host;
-        host.core.set_pause_owner(owners::GUARD, true);
+        let support = TestHost::new();
+        let mut host = support.host;
+        support
+            .app
+            .borrow_mut()
+            .set_pause_owner(owners::GUARD, true);
         host.core.report_host_error("active on close".into());
         let presentation = host.core.pump_dialog(Instant::now()).modal.unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -121,7 +126,7 @@ mod tests {
         assert!(!host.core.dialog_pending());
         assert!(!host.core.dialog_flight_pending());
         assert_eq!(host.core.dialog_queue_len(), 0);
-        assert!(!host.core.pause_held());
+        assert!(!support.app.borrow().pause_held());
         assert_eq!(
             host.core.acknowledge_dialog(presentation.token),
             ModalAdvance::Ignored
