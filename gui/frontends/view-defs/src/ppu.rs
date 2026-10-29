@@ -83,6 +83,8 @@ fn ppu_def(empty: bool, has_panels: bool) -> ScreenDef {
     let note = |key: &str, text: Binding, display: ControlDisplay| ControlDef {
         key: key.into(),
         label: Binding::Literal(String::new()),
+        accessible: None,
+        help: None,
         display,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -104,6 +106,8 @@ fn ppu_def(empty: bool, has_panels: bool) -> ScreenDef {
     children.push(NodeDef::Control(Box::new(ControlDef {
         key: "pictures".into(),
         label: Binding::Literal(String::new()),
+        accessible: None,
+        help: None,
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -117,6 +121,8 @@ fn ppu_def(empty: bool, has_panels: bool) -> ScreenDef {
                     cells: vec![ControlDef {
                         key: "cell".into(),
                         label: Binding::Field("label".into()),
+                        accessible: None,
+                        help: None,
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
                         visible: BoolBinding::Literal(true),

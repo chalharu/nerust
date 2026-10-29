@@ -13,18 +13,20 @@ use nerust_settings_core::{
         shared::{DesktopSharedSettings, StoragePolicy},
     },
 };
-use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
 use wakui::scene::control::{
     Container, Control, ControlInput, ControlScreen, ControlVisitor, GroupPolicy, Tab, policy,
 };
 use wakui::scene::leaf::{
-    ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
+    ActionLeaf, BindingLeaf, ChoiceLeaf, ListLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
 };
 
 use super::*;
-use crate::settings::{InputPageSection, InputTab, SettingsEvent as E};
+use crate::settings::{
+    InputPageSection, InputTab, SettingsEvent as E, SettingsSystemId, screen::section_tab_id,
+};
+use nerust_gui_viewmodel::settings::dto::{BindingRowView, BindingSectionView};
+use wakui::scene::inflate::{cell_key, row_key};
 
-type Id = SettingsControlId;
 type I = ControlInput;
 
 fn state(nes: bool) -> SettingsController {
@@ -46,8 +48,60 @@ fn state(nes: bool) -> SettingsController {
     )
 }
 
-fn token(controller: &SettingsController, key: Id) -> ControlId {
-    controller.ids.borrow_mut().id(StableKey::Control(key))
+fn token(controller: &SettingsController, key: impl AsRef<str>) -> ControlId {
+    controller.ids.borrow_mut().ids.id(key.as_ref().to_string())
+}
+
+fn sys_ns(system: &str) -> String {
+    row_key("systems", system, 0)
+}
+
+fn input_ns(tab: &str) -> String {
+    row_key("input_tabs", tab, 0)
+}
+
+fn sec_ns(input: &str, tab_id: &str, occurrence: usize) -> String {
+    cell_key(&input_ns(input), &row_key("sections", tab_id, occurrence))
+}
+
+fn select_key(ns: &str) -> String {
+    cell_key(ns, "select")
+}
+
+fn field_key(system: &str, field: &str) -> String {
+    let rowns = cell_key(&sys_ns(system), &row_key("fields", field, 0));
+    cell_key(&rowns, "cell")
+}
+
+fn slot_key(system: &str, slot: &str) -> String {
+    let tabns = input_ns(system);
+    let rowns = cell_key(&tabns, &row_key("slots", slot, 0));
+    cell_key(&rowns, "cell")
+}
+
+fn binding_key_str(
+    system: &str,
+    sections: &[BindingSectionView],
+    shortcuts: &[BindingRowView],
+    target: &CaptureTarget,
+) -> String {
+    let id = crate::settings::screen::binding_key(target);
+    // Sections first, then the shortcuts tab; identities are unique so the
+    // per-parent engine occurrence always resolves to zero here.
+    for (section_index, section) in sections.iter().enumerate() {
+        if section.rows.iter().any(|row| &row.target == target) {
+            let tabid = section_tab_id(system, section_index, &section.rows);
+            let secns = sec_ns(system, &tabid, 0);
+            let rowns = cell_key(&secns, &row_key("binding_rows", &id, 0));
+            return cell_key(&rowns, "cell");
+        }
+    }
+    if shortcuts.iter().any(|row| &row.target == target) {
+        let tabns = input_ns("shortcuts");
+        let rowns = cell_key(&tabns, &row_key("shortcut_rows", &id, 0));
+        return cell_key(&rowns, "cell");
+    }
+    panic!("unknown binding target {target:?}");
 }
 
 fn prepare(controller: &mut SettingsController) {
@@ -95,12 +149,11 @@ fn events(actual: Option<Vec<E>>, expected: Vec<E>) {
     );
 }
 
-fn apply(controller: &mut SettingsController, key: &Id, input: I) {
-    let id = token(controller, key.clone());
+fn apply(controller: &mut SettingsController, id: ControlId, input: I) {
     for event in controller
         .screen()
         .bind(&id, input.clone())
-        .unwrap_or_else(|| panic!("rejected {key:?}: {input:?}"))
+        .unwrap_or_else(|| panic!("rejected {id:?}: {input:?}"))
     {
         controller.update(event);
     }
@@ -133,6 +186,9 @@ impl ControlVisitor for Inventory {
     }
     fn control(&mut self, control: &Control) {
         self.controls.push(control.clone());
+        // List and tab cells surface only through explicit walk, mirroring
+        // what native flavors do after rendering the host control.
+        wakui::scene::control::walk_control(control, self);
     }
 }
 
@@ -142,8 +198,8 @@ fn inventory(view: &SettingsScreen) -> Inventory {
     result
 }
 
-fn control_for(view: &SettingsScreen, key: &Id, controller: &SettingsController) -> Control {
-    let id = token(controller, key.clone());
+fn control_for(view: &SettingsScreen, key: &str, controller: &SettingsController) -> Control {
+    let id = token(controller, key);
     view.screen.control(id).unwrap().clone()
 }
 
@@ -189,52 +245,54 @@ fn six_pages_have_complete_unique_inventory_and_shared_groups() {
         );
         assert!(view.screen.control(c.id).is_some());
     }
-    // Every expected domain key resolves to a live control.
-    let mut expected = vec![
-        Id::Language,
-        Id::StoragePolicy,
-        Id::StorageDirectory,
-        Id::StorageError,
-        Id::Fullscreen,
-        Id::Scaling,
-        Id::Vsync,
-        Id::Mute,
-        Id::Volume,
-        Id::SampleRate,
-        Id::Latency,
-        Id::InfoEnabled,
-        Id::InfoDuration,
-        Id::InfoColor,
-        Id::WarningEnabled,
-        Id::WarningDuration,
-        Id::WarningColor,
-        Id::ErrorEnabled,
-        Id::ErrorPresentation,
-        Id::ErrorColor,
-        Id::StatusEnabled,
-        Id::Position,
-        Id::StatusPosition,
-        Id::AreaMode,
-        Id::StatusAreaMode,
-        Id::StatusAreaFollows,
-        Id::NoSystems,
-        Id::Cancel,
-        Id::Submit,
-        Id::Tab(SettingsTabId::Shortcuts),
-    ];
-    expected.extend(
-        controller
-            .vm
-            .shortcuts
-            .view
-            .get()
-            .rows
-            .iter()
-            .map(|r| Id::Binding(r.target.clone())),
-    );
-    for key in expected {
-        let id = token(&controller, key.clone());
-        assert!(view.screen.control(id).is_some(), "missing {key:?}");
+    // Every expected key resolves to a live control.
+    let mut expected: Vec<ControlId> = [
+        "language",
+        "storage-policy",
+        "storage-dir",
+        "storage-error",
+        "fullscreen",
+        "scaling",
+        "vsync",
+        "mute",
+        "volume",
+        "sample-rate",
+        "latency",
+        "info-enabled",
+        "info-duration",
+        "info-color",
+        "warning-enabled",
+        "warning-duration",
+        "warning-color",
+        "error-enabled",
+        "error-presentation",
+        "error-color",
+        "status-enabled",
+        "position",
+        "status-position",
+        "area-mode",
+        "status-area-mode",
+        "status-area-follows",
+        "no-systems",
+        "cancel",
+        "submit",
+    ]
+    .into_iter()
+    .map(|key| token(&controller, key))
+    .collect();
+    expected.push(token(
+        &controller,
+        cell_key(&input_ns("shortcuts"), "select"),
+    ));
+    let shortcut_rows = controller.vm.shortcuts.view.get().rows;
+    expected.extend(shortcut_rows.iter().map(|row| {
+        token(
+            &controller,
+            binding_key_str("shortcuts", &[], &shortcut_rows, &row.target),
+        )
+    }));
+    for id in &expected {
+        assert!(view.screen.control(*id).is_some(), "missing {id:?}");
     }
     // Pages resolve through their select controls.
     for page in 0..6 {
@@ -255,118 +313,116 @@ fn all_static_bindings_emit_the_exact_typed_event() {
     let n = controller.vm.notifications.view.get();
     let cases = vec![
         (
-            Id::Language,
+            "language",
             I::Select(0),
             E::SetLanguage(g.language_choices[0].clone()),
         ),
         (
-            Id::StoragePolicy,
+            "storage-policy",
             I::Select(0),
             E::SetStoragePolicy(g.storage_policy_choices[0].clone()),
         ),
         (
-            Id::StorageDirectory,
+            "storage-dir",
             I::Text("/chosen".into()),
             E::SetStorageDirectory("/chosen".into()),
         ),
-        (Id::StorageDirectory, I::Activate, E::BrowseStorageDirectory),
+        ("storage-dir", I::Activate, E::BrowseStorageDirectory),
         (
-            Id::Fullscreen,
+            "fullscreen",
             I::Bool(true),
             E::ToggleFullscreenDefault(true),
         ),
         (
-            Id::Scaling,
+            "scaling",
             I::Select(1),
             E::SetScaling(v.scaling_choices[1].clone()),
         ),
-        (Id::Vsync, I::Bool(false), E::ToggleVsync(false)),
-        (Id::Mute, I::Bool(true), E::ToggleMute(true)),
-        (Id::Volume, I::Number(42), E::SetVolume(42)),
+        ("vsync", I::Bool(false), E::ToggleVsync(false)),
+        ("mute", I::Bool(true), E::ToggleMute(true)),
+        ("volume", I::Number(42), E::SetVolume(42)),
         (
-            Id::SampleRate,
+            "sample-rate",
             I::Select(1),
             E::SetSampleRate(a.sample_rate_choices[1].clone()),
         ),
-        (Id::Latency, I::Number(99), E::SetLatency(99)),
-        (Id::InfoEnabled, I::Bool(false), E::ToggleInfoEnabled(false)),
-        (Id::InfoDuration, I::Number(2345), E::SetInfoDuration(2345)),
+        ("latency", I::Number(99), E::SetLatency(99)),
+        ("info-enabled", I::Bool(false), E::ToggleInfoEnabled(false)),
+        ("info-duration", I::Number(2345), E::SetInfoDuration(2345)),
         (
-            Id::InfoColor,
+            "info-color",
             I::Select(1),
             E::SetInfoColor(n.color_choices[1].clone()),
         ),
         (
-            Id::WarningEnabled,
+            "warning-enabled",
             I::Bool(false),
             E::ToggleWarningEnabled(false),
         ),
         (
-            Id::WarningDuration,
+            "warning-duration",
             I::Number(4567),
             E::SetWarningDuration(4567),
         ),
         (
-            Id::WarningColor,
+            "warning-color",
             I::Select(2),
             E::SetWarningColor(n.color_choices[2].clone()),
         ),
         (
-            Id::ErrorEnabled,
+            "error-enabled",
             I::Bool(false),
             E::ToggleErrorEnabled(false),
         ),
         (
-            Id::ErrorPresentation,
+            "error-presentation",
             I::Select(0),
             E::ToggleErrorModal(true),
         ),
         (
-            Id::ErrorPresentation,
+            "error-presentation",
             I::Select(1),
             E::ToggleErrorModal(false),
         ),
         (
-            Id::ErrorColor,
+            "error-color",
             I::Select(3),
             E::SetErrorColor(n.color_choices[3].clone()),
         ),
         (
-            Id::StatusEnabled,
+            "status-enabled",
             I::Bool(false),
             E::ToggleStatusEnabled(false),
         ),
         (
-            Id::Position,
+            "position",
             I::Select(1),
             E::SetPosition(n.position_choices[1].clone()),
         ),
         (
-            Id::StatusPosition,
+            "status-position",
             I::Select(2),
             E::SetStatusPosition(n.position_choices[2].clone()),
         ),
         (
-            Id::AreaMode,
+            "area-mode",
             I::Select(1),
             E::SetAreaMode(n.area_mode_choices[1].clone()),
         ),
         (
-            Id::StatusAreaMode,
+            "status-area-mode",
             I::Select(0),
             E::SetStatusAreaMode(n.area_mode_choices[0].clone()),
         ),
-        (Id::Cancel, I::Activate, E::Cancel),
-        (Id::Submit, I::Activate, E::Submit),
-        (
-            Id::Tab(SettingsTabId::Shortcuts),
-            I::Activate,
-            E::SelectInputTab(0),
-        ),
+        ("cancel", I::Activate, E::Cancel),
+        ("submit", I::Activate, E::Submit),
     ];
+    let shortcuts_tab = cell_key(&input_ns("shortcuts"), "select");
+    let mut cases = cases;
+    cases.push((shortcuts_tab.as_str(), I::Activate, E::SelectInputTab(0)));
     for (key, input, event) in cases {
         let view = controller.screen();
-        let id = token(&controller, key.clone());
+        let id = token(&controller, key);
         events(view.bind(&id, input), vec![event]);
     }
     {
@@ -378,9 +434,13 @@ fn all_static_bindings_emit_the_exact_typed_event() {
             );
         }
     }
-    for row in controller.vm.shortcuts.view.get().rows.clone() {
+    let shortcut_rows = controller.vm.shortcuts.view.get().rows;
+    for row in shortcut_rows.clone() {
         let view = controller.screen();
-        let id = token(&controller, Id::Binding(row.target.clone()));
+        let id = token(
+            &controller,
+            binding_key_str("", &[], &shortcut_rows, &row.target),
+        );
         events(
             view.bind(&id, I::Activate),
             vec![E::StartCapture(row.target.clone())],
@@ -396,9 +456,11 @@ fn all_static_bindings_emit_the_exact_typed_event() {
         a,
         "building/binding never mutates VM"
     );
-    apply(&mut controller, &Id::Volume, I::Number(42));
+    let volume_id = token(&controller, "volume");
+    apply(&mut controller, volume_id, I::Number(42));
     assert_eq!(controller.vm.audio.view.get().volume_percent, 42);
-    apply(&mut controller, &Id::InfoDuration, I::Number(2345));
+    let duration_id = token(&controller, "info-duration");
+    apply(&mut controller, duration_id, I::Number(2345));
     assert_eq!(
         controller.vm.notifications.view.get().info_duration_ms,
         2345
@@ -408,15 +470,33 @@ fn all_static_bindings_emit_the_exact_typed_event() {
 /// Map a page-select control back to its page. Selects are minted from
 /// page keys, so the mapping is the token helper in reverse.
 fn token_page(controller: &SettingsController, select: ControlId) -> SettingsPage {
-    for page in [
-        SettingsPage::General,
-        SettingsPage::Input,
-        SettingsPage::Video,
-        SettingsPage::Audio,
-        SettingsPage::Notifications,
-        SettingsPage::System,
+    for (page, key) in [
+        (
+            SettingsPage::General,
+            crate::settings::screen::keys::PAGE_GENERAL,
+        ),
+        (
+            SettingsPage::Input,
+            crate::settings::screen::keys::PAGE_INPUT,
+        ),
+        (
+            SettingsPage::Video,
+            crate::settings::screen::keys::PAGE_VIDEO,
+        ),
+        (
+            SettingsPage::Audio,
+            crate::settings::screen::keys::PAGE_AUDIO,
+        ),
+        (
+            SettingsPage::Notifications,
+            crate::settings::screen::keys::PAGE_NOTIFICATIONS,
+        ),
+        (
+            SettingsPage::System,
+            crate::settings::screen::keys::PAGE_SYSTEM,
+        ),
     ] {
-        if token(controller, Id::Page(page)) == select {
+        if token(controller, format!("{key}/select")) == select {
             return page;
         }
     }
@@ -456,6 +536,10 @@ fn all_controls_reject_wrong_kind_bad_indices_and_numeric_overflow() {
             assert!(view.bind(&control.id, I::Bool(true)).is_none());
         } else if control.downcast::<NoteLeaf>().is_some() {
             assert!(view.bind(&control.id, I::Activate).is_none());
+        } else if control.downcast::<ListLeaf>().is_some() {
+            // List hosts carry no binding; every input is rejected.
+            assert!(view.bind(&control.id, I::Activate).is_none());
+            assert!(view.bind(&control.id, I::Select(0)).is_none());
         } else {
             panic!("uncovered leaf");
         }
@@ -463,16 +547,7 @@ fn all_controls_reject_wrong_kind_bad_indices_and_numeric_overflow() {
     assert!(
         controller
             .screen()
-            .bind(
-                &token(
-                    &controller,
-                    Id::SystemField {
-                        system: SettingsSystemId("unknown".into()),
-                        field: SystemSettingsFieldId("unknown".into()),
-                    },
-                ),
-                I::Select(0),
-            )
+            .bind(&token(&controller, "fields/unknown#9/cell"), I::Select(0),)
             .is_none()
     );
 }
@@ -487,13 +562,10 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
     assert!(!system.fields.is_empty());
     assert!(!input.sections.is_empty());
     for field in &system.fields {
-        let id = Id::SystemField {
-            system: key.clone(),
-            field: field.id.clone(),
-        };
+        let id = token(&controller, field_key(&key.0, field.id.as_str()));
         for (index, choice) in field.choices.iter().enumerate() {
             events(
-                view.bind(&token(&controller, id.clone()), I::Select(index)),
+                view.bind(&id, I::Select(index)),
                 vec![
                     E::SelectSystemTab(0),
                     E::SetSystemChoice(field.id.as_str().into(), choice.clone()),
@@ -506,7 +578,7 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
             .iter()
             .position(|c| c.value != field.selected)
             .unwrap();
-        apply(&mut controller, &id, I::Select(index));
+        apply(&mut controller, id, I::Select(index));
         assert_eq!(controller.system_tab_index, Some(0));
         assert_eq!(
             controller.vm.systems()[0]
@@ -521,11 +593,12 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
         );
     }
     for slot in &input.slots {
-        let id = Id::ControllerSlot {
-            system: key.clone(),
-            slot: slot.slot_id,
-        };
-        let c = control_for(&controller.screen(), &id, &controller);
+        let id = token(&controller, slot_key(&key.0, slot.slot_id.as_str()));
+        let c = control_for(
+            &controller.screen(),
+            &slot_key(&key.0, slot.slot_id.as_str()),
+            &controller,
+        );
         let leaf = c.downcast::<ChoiceLeaf>().unwrap();
         assert_eq!(
             leaf.selected,
@@ -535,17 +608,10 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
         );
         for (index, choice) in slot.choices.iter().enumerate() {
             if slot.occupied_by_other_slot {
-                assert!(
-                    controller
-                        .screen()
-                        .bind(&token(&controller, id.clone()), I::Select(index))
-                        .is_none()
-                );
+                assert!(controller.screen().bind(&id, I::Select(index)).is_none());
             } else {
                 events(
-                    controller
-                        .screen()
-                        .bind(&token(&controller, id.clone()), I::Select(index)),
+                    controller.screen().bind(&id, I::Select(index)),
                     vec![
                         E::SelectInputTab(0),
                         E::SetControllerSlot {
@@ -557,73 +623,35 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
             }
         }
     }
-    let slot = &input.slots[0];
-    let id = Id::ControllerSlot {
-        system: key.clone(),
-        slot: slot.slot_id,
-    };
-    let none = slot.choices.iter().position(|c| c.value.is_none()).unwrap();
-    controller.input_tab = Some(InputTab::Shortcuts);
-    apply(&mut controller, &id, I::Select(none));
-    let refreshed = controller.screen();
-    let selected = refreshed
-        .screen
-        .control(token(&controller, id.clone()))
-        .unwrap()
-        .downcast::<ChoiceLeaf>()
-        .unwrap()
-        .selected;
-    assert_eq!(selected, Some(none), "selected None is not no selection");
-    assert!(
-        controller.vm.inputs()[0].view.get().slots[0]
-            .selected_profile_id
-            .is_none()
-    );
     // Tab selects are minted from domain tab keys; map them back through
     // the same registry to recover the expected navigation events.
     // Candidates come from the original snapshots: later applies only
     // change selections, never the section structure under test.
-    let mut candidates: Vec<(SettingsTabId, Vec<E>)> = Vec::new();
-    candidates.push((
-        SettingsTabId::System(key.clone()),
-        vec![E::SelectSystemTab(0)],
-    ));
-    candidates.push((
-        SettingsTabId::Input(key.clone()),
-        vec![E::SelectInputTab(0)],
-    ));
+    let mut candidates: Vec<(String, Vec<E>)> = Vec::new();
+    let sys = key.0.clone();
+    candidates.push((select_key(&sys_ns(&sys)), vec![E::SelectSystemTab(0)]));
+    candidates.push((select_key(&input_ns(&sys)), vec![E::SelectInputTab(0)]));
     for (section_index, section) in input.sections.iter().enumerate() {
-        let domain = section
-            .rows
-            .iter()
-            .find_map(|r| match &r.target {
-                CaptureTarget::Binding { attachment, .. } => Some(SettingsTabId::Attachment {
-                    system: key.clone(),
-                    attachment: attachment.clone(),
-                }),
-                _ => None,
-            })
-            .unwrap_or_else(|| SettingsTabId::EmptyAttachment {
-                system: key.clone(),
-                index: section_index,
-            });
+        let tabid = section_tab_id(&sys, section_index, &section.rows);
         candidates.push((
-            domain,
+            select_key(&sec_ns(&sys, &tabid, 0)),
             vec![
                 E::SelectInputTab(0),
                 E::SelectInputSection(InputPageSection::Attachment(section_index)),
             ],
         ));
     }
-    candidates.push((SettingsTabId::Shortcuts, vec![E::SelectInputTab(1)]));
+    candidates.push((
+        select_key(&input_ns("shortcuts")),
+        vec![E::SelectInputTab(1)],
+    ));
     let inv = inventory(&view);
     for tab in inv.tabs {
         // Plain tabs resolve through the registry; empty-attachment tabs
         // use content keys minted at build, so match those by label.
         let expected = candidates
             .iter()
-            .filter(|(domain, _)| !matches!(domain, SettingsTabId::EmptyAttachment { .. }))
-            .find(|(domain, _)| token(&controller, Id::Tab(domain.clone())) == tab.select.id)
+            .find(|(select_key, _)| token(&controller, select_key) == tab.select.id)
             .map(|(_, events)| events.clone())
             .or_else(|| {
                 let sections: Vec<(usize, usize, String)> = controller
@@ -659,16 +687,39 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
     // Row binds resolve against the original projection: later applies
     // only change selections, and the snapshot still owns its bindings.
     for row in input.sections.iter().flat_map(|s| &s.rows) {
-        let id = Id::Binding(row.target.clone());
+        let id = token(
+            &controller,
+            binding_key_str(&sys, &input.sections, &[], &row.target),
+        );
         events(
-            view.bind(&token(&controller, id.clone()), I::Activate),
+            view.bind(&id, I::Activate),
             vec![E::StartCapture(row.target.clone())],
         );
         events(
-            view.bind(&token(&controller, id), I::CaptureClear),
+            view.bind(&id, I::CaptureClear),
             vec![E::ClearCapture(row.target.clone())],
         );
     }
+
+    let slot = &input.slots[0];
+    let id = token(&controller, slot_key(&key.0, slot.slot_id.as_str()));
+    let none = slot.choices.iter().position(|c| c.value.is_none()).unwrap();
+    controller.input_tab = Some(InputTab::Shortcuts);
+    apply(&mut controller, id, I::Select(none));
+    let refreshed = controller.screen();
+    let selected = refreshed
+        .screen
+        .control(id)
+        .unwrap()
+        .downcast::<ChoiceLeaf>()
+        .unwrap()
+        .selected;
+    assert_eq!(selected, Some(none), "selected None is not no selection");
+    assert!(
+        controller.vm.inputs()[0].view.get().slots[0]
+            .selected_profile_id
+            .is_none()
+    );
 }
 
 #[test]
@@ -689,22 +740,15 @@ fn occupied_multiport_controller_is_disabled_and_topology_changes_are_scoped() {
                 .unwrap();
             let current = controller.vm.inputs()[0].view.get();
             if let Some(occupied) = current.slots.iter().find(|s| s.occupied_by_other_slot) {
-                let id = Id::ControllerSlot {
-                    system: SettingsSystemId(current.system_id.to_string()),
-                    slot: occupied.slot_id,
-                };
+                let id = token(
+                    &controller,
+                    slot_key(&current.system_id.to_string(), occupied.slot_id.as_str()),
+                );
                 let screen = controller.screen();
-                let c = screen
-                    .screen
-                    .control(token(&controller, id.clone()))
-                    .unwrap();
+                let c = screen.screen.control(id).unwrap();
                 assert!(!c.metadata.enabled);
                 assert!(c.metadata.help.is_some());
-                assert!(
-                    screen
-                        .bind(&token(&controller, id.clone()), I::Select(0))
-                        .is_none()
-                );
+                assert!(screen.bind(&id, I::Select(0)).is_none());
                 for token_id in original_ids.iter() {
                     assert!(
                         screen.screen.control(*token_id).is_some(),
@@ -727,26 +771,29 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     let mut controller = state(false);
     prepare(&mut controller);
     for (toggle, child, input) in [
-        (Id::InfoEnabled, Id::InfoDuration, I::Number(2000)),
-        (Id::WarningEnabled, Id::WarningColor, I::Select(0)),
-        (Id::ErrorEnabled, Id::ErrorPresentation, I::Select(0)),
-        (Id::StatusEnabled, Id::StatusPosition, I::Select(0)),
+        ("info-enabled", "info-duration", I::Number(2000)),
+        ("warning-enabled", "warning-color", I::Select(0)),
+        ("error-enabled", "error-presentation", I::Select(0)),
+        ("status-enabled", "status-position", I::Select(0)),
     ] {
-        apply(&mut controller, &toggle, I::Bool(false));
+        let toggle_id = token(&controller, toggle);
+        apply(&mut controller, toggle_id, I::Bool(false));
         assert!(
             controller
                 .screen()
-                .bind(&token(&controller, child.clone()), input)
+                .bind(&token(&controller, child), input)
                 .is_none()
         );
-        apply(&mut controller, &toggle, I::Bool(true));
+        let toggle_id = token(&controller, toggle);
+        apply(&mut controller, toggle_id, I::Bool(true));
     }
-    apply(&mut controller, &Id::ErrorPresentation, I::Select(0));
+    let presentation_id = token(&controller, "error-presentation");
+    apply(&mut controller, presentation_id, I::Select(0));
     assert!(
         !controller
             .screen()
             .screen
-            .control(token(&controller, Id::ErrorColor))
+            .control(token(&controller, "error-color"))
             .unwrap()
             .metadata
             .visible
@@ -754,7 +801,7 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert!(
         controller
             .screen()
-            .bind(&token(&controller, Id::ErrorColor), I::Select(0))
+            .bind(&token(&controller, "error-color"), I::Select(0))
             .is_none()
     );
     controller
@@ -766,14 +813,14 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert!(
         screen
             .screen
-            .control(token(&controller, Id::StatusAreaFollows))
+            .control(token(&controller, "status-area-follows"))
             .unwrap()
             .metadata
             .visible
     );
     assert!(
         screen
-            .bind(&token(&controller, Id::StatusAreaMode), I::Select(0))
+            .bind(&token(&controller, "status-area-mode"), I::Select(0))
             .is_none()
     );
     controller.update(E::SetStorageDirectory(String::new()));
@@ -784,7 +831,7 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert!(controller.validation_banner().headline.is_some());
     assert!(
         screen
-            .bind(&token(&controller, Id::Submit), I::Activate)
+            .bind(&token(&controller, "submit"), I::Activate)
             .is_none()
     );
     assert_eq!(
@@ -794,7 +841,7 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert_eq!(controller.error_message, screen.screen.message);
     assert!(
         screen
-            .bind(&token(&controller, Id::Cancel), I::Activate)
+            .bind(&token(&controller, "cancel"), I::Activate)
             .is_some()
     );
     controller
@@ -806,7 +853,7 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert!(
         !screen
             .screen
-            .control(token(&controller, Id::StorageDirectory))
+            .control(token(&controller, "storage-dir"))
             .unwrap()
             .metadata
             .visible
@@ -814,14 +861,14 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert!(
         screen
             .bind(
-                &token(&controller, Id::StorageDirectory),
+                &token(&controller, "storage-dir"),
                 I::Text("ignored".into())
             )
             .is_none()
     );
     assert!(
         screen
-            .bind(&token(&controller, Id::StorageDirectory), I::Activate)
+            .bind(&token(&controller, "storage-dir"), I::Activate)
             .is_none()
     );
 }
@@ -844,28 +891,23 @@ fn empty_registry_shortcuts_capture_and_localized_refresh_are_owned() {
     assert!(inv.tabs[0].selected);
     assert_eq!(
         inv.tabs[0].select.id,
-        token(&controller, Id::Tab(SettingsTabId::Shortcuts))
+        token(&controller, select_key(&input_ns("shortcuts")))
     );
     assert_eq!(controller.vm.shortcuts.view.get().rows.len(), 8);
     let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
-    let id = Id::Binding(target.clone());
-    let token_id = token(&controller, id.clone());
+    let shortcut_rows = controller.vm.shortcuts.view.get().rows;
+    let id = binding_key_str("", &[], &shortcut_rows, &target);
+    let token_id = token(&controller, &id);
     assert!(before.bind(&token_id, I::Activate).is_some());
     assert!(before.bind_capture_key(Key::Space).is_none());
-    apply(&mut controller, &id, I::Activate);
+    apply(&mut controller, token_id, I::Activate);
     let capture = controller.screen();
-    assert_eq!(
-        capture.screen.capture.target,
-        Some(token(&controller, id.clone()))
-    );
+    assert_eq!(capture.screen.capture.target, Some(token(&controller, &id)));
     assert_eq!(
         capture.screen.capture.prompt,
         text(AppLanguage::English, UiText::CapturePrompt)
     );
-    let bound = capture
-        .screen
-        .control(token(&controller, id.clone()))
-        .unwrap();
+    let bound = capture.screen.control(token(&controller, &id)).unwrap();
     let leaf = bound.downcast::<BindingLeaf>().unwrap();
     assert!(leaf.capturing);
     events(
@@ -885,7 +927,8 @@ fn empty_registry_shortcuts_capture_and_localized_refresh_are_owned() {
         .unwrap();
     assert!(!leaf.capturing);
     assert!(leaf.text.contains("Space"));
-    apply(&mut controller, &id, I::CaptureClear);
+    let clear_id = token(&controller, &id);
+    apply(&mut controller, clear_id, I::CaptureClear);
     controller
         .vm
         .general
@@ -903,23 +946,20 @@ fn empty_registry_shortcuts_capture_and_localized_refresh_are_owned() {
     assert_eq!(
         after
             .screen
-            .control(token(&controller, Id::Cancel))
+            .control(token(&controller, "cancel"))
             .unwrap()
             .label,
         "キャンセル"
     );
     let dir = after
         .screen
-        .control(token(&controller, Id::StorageDirectory))
+        .control(token(&controller, "storage-dir"))
         .unwrap();
     let text_leaf = dir.downcast::<TextLeaf>().unwrap();
     assert_eq!(text_leaf.value, String::new());
     assert_eq!(text_leaf.placeholder, String::new());
     assert_eq!(text_leaf.browse_label.as_deref(), Some("参照"));
-    let volume = after
-        .screen
-        .control(token(&controller, Id::Volume))
-        .unwrap();
+    let volume = after.screen.control(token(&controller, "volume")).unwrap();
     assert_eq!(volume.downcast::<NumberLeaf>().unwrap().value, 37);
     let binding_leaf = after
         .screen
@@ -946,7 +986,7 @@ fn empty_registry_shortcuts_capture_and_localized_refresh_are_owned() {
     assert_eq!(
         before
             .screen
-            .control(token(&controller, Id::Cancel))
+            .control(token(&controller, "cancel"))
             .unwrap()
             .label,
         "Cancel",
@@ -1021,7 +1061,7 @@ fn object_safe_visitor_is_balanced_and_reenters_without_controller_borrows() {
     assert!(visitor.stack.is_empty());
     assert!(visitor.visited > 30);
     assert_eq!(controller.borrow().vm.audio.view.get().volume_percent, 12);
-    let volume = token(&controller.borrow(), Id::Volume);
+    let volume = token(&controller.borrow(), "volume");
     assert_eq!(
         view.screen
             .control(volume)
