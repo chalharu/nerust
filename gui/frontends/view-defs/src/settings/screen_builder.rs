@@ -98,7 +98,10 @@ fn row_choice_gated<T: Clone + Eq>(
 ) -> Node {
     let key = id.clone();
     let control = visible(
-        enabled(draft_choice(b, id, label, choices, value, event), gate.enabled),
+        enabled(
+            draft_choice(b, id, label, choices, value, event),
+            gate.enabled,
+        ),
         gate.visible,
     )
     .finish(&mut b.table);
