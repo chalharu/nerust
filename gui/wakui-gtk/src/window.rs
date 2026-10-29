@@ -16,10 +16,10 @@ use gtk::{
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
-use wakui::control::ControlScreen;
-use wakui::event::{CommandEffect, EventCommand, EventSink};
-use wakui::session::SessionEvent;
-use wakui::{
+use wakui_core::control::ControlScreen;
+use wakui_core::event::{CommandEffect, EventCommand, EventSink};
+use wakui_core::session::SessionEvent;
+use wakui_core::{
     aux::{AuxId, AuxWindows, OpenRequest},
     commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
     focus::FocusEvent,
@@ -176,7 +176,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowVisitor for GtkWindowRender
         }
     }
 
-    fn visit_controls(&mut self, _screen: &wakui::control::ControlScreen) {
+    fn visit_controls(&mut self, _screen: &wakui_core::control::ControlScreen) {
         let Self::Build(builder) = self else {
             return;
         };
@@ -1169,7 +1169,7 @@ fn show_rom_load_error<K: Copy + Eq + std::hash::Hash + 'static>(
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testkit::TestAux;
-    use wakui::aux::AuxId;
+    use wakui_core::aux::AuxId;
 
     pub(crate) fn program(window: &super::Window<TestAux>, kind: TestAux) -> super::WidgetDialog {
         super::open_auxiliary(window, kind);
@@ -1325,7 +1325,7 @@ pub(crate) mod tests {
         let mut model = win.state().borrow().host.main_window().clone();
         assert!(matches!(
             model.contents.contents,
-            wakui::window::WidgetContents::Main(_)
+            wakui_core::window::WidgetContents::Main(_)
         ));
         model.title = "owned main chrome".into();
         model.menu.as_mut().unwrap().menus[0].label = "owned main menu".into();
@@ -1355,7 +1355,7 @@ pub(crate) mod tests {
                 let model = win.borrow().aux.window(id).cloned().unwrap();
                 assert!(matches!(
                     model.contents.contents,
-                    wakui::window::WidgetContents::Controls(_)
+                    wakui_core::window::WidgetContents::Controls(_)
                 ));
                 assert_eq!(
                     win.borrow_mut()
@@ -1424,7 +1424,7 @@ pub(crate) mod tests {
     fn common_auxiliary_contents_choose_native_groups_and_owned_titles() {
         use super::HostWindow;
         use gtk::prelude::WidgetExt;
-        use wakui::window::WindowId;
+        use wakui_core::window::WindowId;
         let win = bound_window().expect("run in an isolated Xvfb process");
         let main = win.window();
         let state = win.state();
@@ -1664,7 +1664,7 @@ pub(crate) mod tests {
         use TestAux;
         use gtk::prelude::{ListModelExt, WidgetExt};
         use std::{cell::RefCell, rc::Rc};
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
         let win = bound_window().expect("isolated Xvfb process");
         for kind in [TestAux::History, TestAux::Settings] {
             let stale = Rc::new(RefCell::new(None));
@@ -1831,7 +1831,7 @@ pub(crate) mod tests {
     /// Drive the settings widget without native dialogs: reserve, prepare,
     /// dispatch a single choice by visible label, submit, close.
     fn apply_settings_choice(win: &super::Window<TestAux>, label: &str, needle: &str) {
-        use wakui::control::{
+        use wakui_core::control::{
             Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlVisitor,
         };
         struct Find<'a>(&'a str, Option<ControlId>);
@@ -1842,7 +1842,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        fn find(screen: &wakui::control::ControlScreen, label: &str) -> ControlId {
+        fn find(screen: &wakui_core::control::ControlScreen, label: &str) -> ControlId {
             let mut find = Find(label, None);
             screen.visit(&mut find);
             find.1.unwrap_or_else(|| panic!("control {label:?}"))
@@ -1873,7 +1873,7 @@ pub(crate) mod tests {
         let choices = screen
             .control(control)
             .unwrap()
-            .downcast::<wakui::leaf::ChoiceLeaf>()
+            .downcast::<wakui_core::leaf::ChoiceLeaf>()
             .unwrap()
             .choices
             .clone();
@@ -2189,7 +2189,7 @@ pub(crate) mod tests {
     #[test]
     fn settings_identity_guards_pause_owner_and_native_finish() {
         use super::NativeAux;
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2326,7 +2326,7 @@ pub(crate) mod tests {
     fn generated_actions_send_typed_commands_to_dyn_sink_and_reject_bad_arguments() {
         use super::{CommandVisitor, EventCommand, EventSink, ToVariant};
         use std::{cell::RefCell, rc::Rc};
-        use wakui::commands::{MenuCommand, SessionCommand};
+        use wakui_core::commands::{MenuCommand, SessionCommand};
         #[derive(Default)]
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
@@ -2390,8 +2390,8 @@ pub(crate) mod tests {
     #[test]
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
         use super::{EventCommand, OpenRequest};
-        use wakui::commands::{MenuCommand, NativeRole};
-        use wakui::pause::PauseOwner;
+        use wakui_core::commands::{MenuCommand, NativeRole};
+        use wakui_core::pause::PauseOwner;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2542,7 +2542,7 @@ pub(crate) mod tests {
         win.borrow_mut().sink = sink.clone();
         win.key_event(gdk::Key::F4, KeyEventState::Press);
         win.key_event(gdk::Key::F4, KeyEventState::Release);
-        let shortcut = SessionEvent::Shortcut(wakui::session::ShortcutGesture::OpenDebugger);
+        let shortcut = SessionEvent::Shortcut(wakui_core::session::ShortcutGesture::OpenDebugger);
         win.event_sink().send(EventCommand::Session(shortcut));
         assert!(matches!(
             sink.0.borrow().as_slice(),
@@ -2550,7 +2550,7 @@ pub(crate) mod tests {
                 EventCommand::Session(SessionEvent::Keyboard { pressed: true, .. }),
                 EventCommand::Session(SessionEvent::Keyboard { pressed: false, .. }),
                 EventCommand::Session(SessionEvent::Shortcut(
-                    wakui::session::ShortcutGesture::OpenDebugger
+                    wakui_core::session::ShortcutGesture::OpenDebugger
                 )),
             ]
         ));
@@ -2593,7 +2593,7 @@ pub(crate) mod tests {
         let bars = MenubarModels::new();
         let mut model = crate::testkit::canned_menubar(&[1, 2], Some(2), false, true);
         fn disable_items(menu: &mut super::Submenu) {
-            use wakui::menu::MenuEntry;
+            use wakui_core::menu::MenuEntry;
             for entry in &mut menu.children {
                 match entry {
                     MenuEntry::Item(item) => item.enabled = false,

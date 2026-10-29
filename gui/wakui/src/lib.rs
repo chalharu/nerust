@@ -1,48 +1,34 @@
-//! `wakui`: cross-platform native UI framework core (MAUI/wxWidgets style).
+//! `wakui`: feature-gated facade over [`wakui_core`] plus one platform backend.
 //!
-//! The common layer owns control abstractions, handler interfaces, the
-//! property mapper and the turn driver. It renders nothing itself:
-//! platform backends generate native controls. No intra-repository
-//! dependencies; only `std` plus toolkit-independent externals.
+//! Library users who only need the framework vocabulary depend on
+//! `wakui_core` directly and never touch this crate. Depending on `wakui`
+//! additionally links exactly one backend and re-exports its `run` and
+//! `show_message_dialog` entry points, so the composition root stays free
+//! of per-flavor branches:
 //!
-//! # Writing a backend
+//! - `wakui` with default features runs the platform-default backend
+//!   (`wakui_default`: gtk on Linux/BSD, tao on Windows/macOS).
+//! - `wakui/gtk` or `wakui/tao` selects a backend explicitly.
 //!
-//! 1. Depend on `wakui` only.
-//! 2. Render [`control::ControlScreen`] snapshots by implementing
-//!    [`control::ControlVisitor`]. Never match on view-definition types.
-//! 3. Apply [`mapper::map_updates`] lists (`None` for construction,
-//!    `Some(previous)` for retained patching); register a
-//!    [`mapper::MapperRule`] for native quirks instead of forking updates.
-//! 4. Drive end-of-burst turns through [`loop_driver::drive_turn`] with
-//!    your [`loop_driver::LoopHost`] implementation.
-//! 5. Register your static [`backend::Backend::name`] in the composition
-//!    root's [`backend::BackendRegistry`] for builder-style selection.
-//! 6. Deliver native picker results through [`binding::PickerSink`].
+//! Enabling both backends is rejected below; custom backends depend on
+//! `wakui_core` only.
 
-pub mod app;
-pub mod aux;
-pub mod backend;
-pub mod binding;
-pub mod cache;
-pub mod commands;
-pub mod conformance;
-pub mod control;
-pub mod dialog;
-pub mod event;
-pub mod focus;
-pub mod hints;
-pub mod key;
-pub mod leaf;
-pub mod loop_driver;
-pub mod mailbox;
-pub mod mapper;
-pub mod menu;
-pub mod menu_presenter;
-pub mod pause;
-pub mod retry;
-pub mod session;
-pub mod sync;
-pub mod viewport;
-pub mod window;
+#[cfg(all(feature = "wakui_gtk", feature = "wakui_tao"))]
+compile_error!(
+    "Features 'wakui_gtk' and 'wakui_tao' are mutually exclusive. Enable only one backend."
+);
 
-pub use key::Key;
+#[cfg(all(
+    feature = "wakui_default",
+    not(feature = "wakui_gtk"),
+    not(feature = "wakui_tao")
+))]
+pub use wakui_default::{run, show_message_dialog};
+
+#[cfg(all(feature = "wakui_gtk", not(feature = "wakui_tao")))]
+pub use wakui_gtk::{run, show_message_dialog};
+
+#[cfg(all(feature = "wakui_tao", not(feature = "wakui_gtk")))]
+pub use wakui_tao::{run, show_message_dialog};
+
+pub use wakui_core::*;

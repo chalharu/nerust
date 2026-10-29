@@ -2,7 +2,7 @@
 //! Converted to free functions: orphan rules forbid trait impls
 //! for the framework-owned key type outside its crate.
 
-use wakui::Key;
+use wakui_core::Key;
 
 pub fn key_from_gdk(key: gdk::Key) -> Option<Key> {
     match key {

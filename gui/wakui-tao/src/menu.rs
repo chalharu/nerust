@@ -1,5 +1,5 @@
 use tao::window::Window as TaoWindow;
-use wakui::menu::{MenuCapabilities, Menubar};
+use wakui_core::menu::{MenuCapabilities, Menubar};
 
 pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: false,
@@ -53,8 +53,8 @@ pub(crate) mod imp {
     use tao::platform::unix::WindowExtUnix;
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
-    use wakui::event::EventSink;
-    use wakui::{
+    use wakui_core::event::EventSink;
+    use wakui_core::{
         commands::{CommandDescriptor, CommandVisitor},
         menu::{
             MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
@@ -343,8 +343,8 @@ pub(crate) mod imp {
     #[cfg(test)]
     mod tests {
         use super::{MenuCommand, try_append};
-        use wakui::commands::MenuCommand as EventCommand;
-        use wakui::commands::NativeRole;
+        use wakui_core::commands::MenuCommand as EventCommand;
+        use wakui_core::commands::NativeRole;
 
         #[test]
         fn native_commands_are_host_commands_without_conversion() {
@@ -375,11 +375,11 @@ pub(crate) mod imp {
 
             use gtk::prelude::*;
             use muda::{MenuItem, MenuItemKind};
-            use wakui::commands::SessionCommand as S;
-            use wakui::commands::{CommandDescriptor, CommandId, CommandParameter};
-            use wakui::event::{EventCommand as HostEvent, EventSink};
-            use wakui::menu::MenuCommand;
-            use wakui::menu::{CommandModel, MenuEntry, MenuId, Menubar, Submenu};
+            use wakui_core::commands::SessionCommand as S;
+            use wakui_core::commands::{CommandDescriptor, CommandId, CommandParameter};
+            use wakui_core::event::{EventCommand as HostEvent, EventSink};
+            use wakui_core::menu::MenuCommand;
+            use wakui_core::menu::{CommandModel, MenuEntry, MenuId, Menubar, Submenu};
 
             use super::AppMenu;
 
@@ -454,7 +454,7 @@ pub(crate) mod imp {
                 slots: &[u64],
                 active: Option<u64>,
             ) -> Menubar {
-                use wakui::commands::MenuCommand as C;
+                use wakui_core::commands::MenuCommand as C;
                 let mut definitions = vec![];
                 for id in [
                     CommandId::Open,
@@ -491,7 +491,7 @@ pub(crate) mod imp {
                 let item_enabled = |command: Option<MenuCommand>| -> bool {
                     match command {
                         None => false,
-                        Some(C::Native(wakui::commands::NativeRole::Quit)) => true,
+                        Some(C::Native(wakui_core::commands::NativeRole::Quit)) => true,
                         Some(_) if settings_open => false,
                         Some(C::Open | C::Settings | C::Debugger | C::NotificationHistory) => true,
                         Some(C::Session(S::Pause)) => loaded && !paused,
@@ -501,7 +501,7 @@ pub(crate) mod imp {
                     }
                 };
                 let leaf = |command: Option<MenuCommand>, label: &str| {
-                    MenuEntry::Item(wakui::menu::MenuItem {
+                    MenuEntry::Item(wakui_core::menu::MenuItem {
                         command,
                         label: label.to_string(),
                         enabled: item_enabled(command),
@@ -510,7 +510,7 @@ pub(crate) mod imp {
                 let slot_submenu =
                     |id: MenuId, label: &str, make_command: fn(u64) -> S| -> MenuEntry {
                         let children: Vec<MenuEntry> = if slots.is_empty() {
-                            vec![MenuEntry::Item(wakui::menu::MenuItem {
+                            vec![MenuEntry::Item(wakui_core::menu::MenuItem {
                                 command: None,
                                 label: "No save slots".to_string(),
                                 enabled: false,
@@ -520,7 +520,7 @@ pub(crate) mod imp {
                                 .iter()
                                 .map(|slot| {
                                     let command = C::Session(make_command(*slot));
-                                    MenuEntry::Item(wakui::menu::MenuItem {
+                                    MenuEntry::Item(wakui_core::menu::MenuItem {
                                         command: Some(command),
                                         label: slot_label(*slot, active),
                                         enabled: item_enabled(Some(command)),
@@ -548,7 +548,10 @@ pub(crate) mod imp {
                                 leaf(Some(C::Settings), "Settings..."),
                                 leaf(Some(C::Debugger), "Open Debugger"),
                                 leaf(Some(C::NotificationHistory), "Notification History"),
-                                leaf(Some(C::Native(wakui::commands::NativeRole::Quit)), "Quit"),
+                                leaf(
+                                    Some(C::Native(wakui_core::commands::NativeRole::Quit)),
+                                    "Quit",
+                                ),
                             ],
                         },
                         Submenu {
@@ -902,7 +905,7 @@ pub(crate) mod imp {
 
             // Root structure comes from Host, even when exercising a standard
             // application menu on this test platform rather than macOS.
-            use wakui::menu::{
+            use wakui_core::menu::{
                 NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
             };
             let mut root = canned_bar(loaded, paused, settings_open, &slots, active_slot);
@@ -969,8 +972,8 @@ pub(crate) mod imp {
 pub(crate) mod imp {
     use super::TaoWindow;
     use std::sync::Arc;
-    use wakui::event::EventSink;
-    use wakui::menu::Menubar;
+    use wakui_core::event::EventSink;
+    use wakui_core::menu::Menubar;
 
     pub(crate) struct AppMenu;
 

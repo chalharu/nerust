@@ -137,31 +137,20 @@ pub fn run() -> i32 {
 
     #[cfg(all(feature = "gtk", feature = "tao"))]
     compile_error!("Features 'gtk' and 'tao' are mutually exclusive. Enable only one frontend.");
-    #[cfg(all(not(feature = "gtk"), not(feature = "tao"), not(clippy)))]
-    compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
-    #[cfg(clippy)]
-    {
-        let _ = ctx;
-        let _ = options;
-        let _ = supports_vsync;
-        0
-    }
-    #[cfg(not(clippy))]
-    {
-        // File operands only; flags were already consumed by the CLI parse.
-        // Backends apply their platform file-open convention to these.
-        let arguments = EmulatorArguments(
-            options
-                .rom_path
-                .into_iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect::<Vec<_>>(),
-        );
-        let Some(boot) = boot_frontend(ctx, supports_vsync, arguments) else {
-            return 1;
-        };
-        return run_frontend(boot);
-    }
+
+    // File operands only; flags were already consumed by the CLI parse.
+    // Backends apply their platform file-open convention to these.
+    let arguments = EmulatorArguments(
+        options
+            .rom_path
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+    );
+    let Some(boot) = boot_frontend(ctx, supports_vsync, arguments) else {
+        return 1;
+    };
+    run_frontend(boot)
 }
 
 /// Composition-root launch arguments: file operands with flags already
@@ -182,7 +171,6 @@ impl wakui::app::LaunchArguments for EmulatorArguments {
 /// The composition root's own arguments type travels inside the bundle (see
 /// [`Application::builder`](wakui::app::ApplicationBuilder)); neither
 /// the framework nor the backends interpret it beyond file operands.
-#[cfg_attr(clippy, allow(dead_code))]
 fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
@@ -206,31 +194,19 @@ fn boot_frontend(
     }
 }
 
-/// Frontend dispatch: only the `run` entry point differs per frontend.
+/// Frontend dispatch: the backend is selected by the `wakui` facade
+/// feature (`wakui/default` picks the platform default, `wakui/gtk` and
+/// `wakui/tao` select explicitly), so only this single `run` call exists.
 /// Crash containment and boot failure dialogs are shared (see `run_guarded`).
-/// Opaque launch arguments travel inside the bundle, so both arms are identical
-/// apart from the backend selected by feature.
-#[cfg(all(feature = "gtk", not(clippy)))]
+/// Opaque launch arguments travel inside the bundle.
 fn run_frontend(
     boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
 ) -> i32 {
-    run_guarded(boot, wakui_gtk::run)
-}
-
-/// Frontend dispatch: only the `run` entry point differs per frontend.
-/// Crash containment and boot failure dialogs are shared (see `run_guarded`).
-/// Opaque launch arguments travel inside the bundle, so both arms are identical
-/// apart from the backend selected by feature.
-#[cfg(all(feature = "tao", not(feature = "gtk"), not(clippy)))]
-fn run_frontend(
-    boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
-) -> i32 {
-    run_guarded(boot, wakui_tao::run)
+    run_guarded(boot, wakui::run)
 }
 
 /// Crash containment lives here, in the composition root: a crash must
 /// never look like a clean exit. Frontend `run` functions stay unguarded.
-#[cfg(all(any(feature = "gtk", feature = "tao"), not(clippy)))]
 #[allow(clippy::needless_pass_by_value)]
 fn run_guarded(
     boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
@@ -260,17 +236,12 @@ fn run_guarded(
 
 /// Native error dialog on boot-failure/crash paths. Blocking; safe with no
 /// event loop running. stderr already carries the message, so a missing
-/// display degrades to the log. Only the `show_message_dialog` entry point
-/// differs per flavor; vocabulary lives in `wakui::dialog`.
-#[cfg_attr(clippy, allow(dead_code))]
+/// display degrades to the log. The `show_message_dialog` entry point comes
+/// from the `wakui` facade's selected backend; vocabulary lives in
+/// `wakui::dialog`.
 fn show_error_dialog(title: &str, detail: &str) {
     let dialog = wakui::dialog::MessageDialog::error(title, detail);
-    #[cfg(feature = "gtk")]
-    wakui_gtk::show_message_dialog(&dialog);
-    #[cfg(all(feature = "tao", not(feature = "gtk")))]
-    wakui_tao::show_message_dialog(&dialog);
-    #[cfg(all(not(feature = "gtk"), not(feature = "tao")))]
-    let _ = dialog;
+    wakui::show_message_dialog(&dialog);
 }
 
 /// Crash dialog copy: inline literals, never the catalog.
