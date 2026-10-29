@@ -228,7 +228,7 @@ fn present_main_model<K: Copy + Eq + std::hash::Hash + 'static>(
 }
 
 /// Native resources only. Opening, presence, identity and routing belong to host.
-/// Every aux window is a generic Controls dialog (settings/history/debugger/PPU).
+/// Every aux window is a generic Controls dialog (any aux kind).
 #[derive(Clone)]
 pub(crate) enum NativeAux {
     Controls(WidgetDialog),
@@ -424,7 +424,7 @@ fn open_auxiliary<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>, 
     }
 }
 
-/// Drain deferred aux opens (e.g. the PPU viewer requested from a debugger
+/// Drain deferred aux opens (e.g. one aux view requested from another
 /// gesture) through the normal reserve/prepare path.
 fn drain_deferred_opens<K: Copy + Eq + std::hash::Hash + 'static>(window: &Window<K>) {
     let kinds = window.state().borrow_mut().host.drain_open_requests();
@@ -835,8 +835,8 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
             });
         }
 
-        // Generic aux pump: deferred opens (e.g. PPU from a debugger gesture)
-        // plus the debugger-widget refresh/poll/live-tick without kinds.
+        // Generic aux pump: deferred opens (e.g. one aux view from another gesture)
+        // plus the polled-widget refresh/poll/live-tick without kinds.
         {
             let weak = Rc::downgrade(&result);
             let _ = glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
@@ -985,7 +985,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
     }
 
     fn key_event(&self, key: gdk::Key, event: KeyEventState) -> bool {
-        // No hardcoded F-keys: the debugger open rides the shortcut schema
+        // No hardcoded F-keys: the aux open rides the shortcut schema
         // (default F4, rebindable in Settings), so a user binding always wins.
         if let Some(controller_input) = crate::keyboard::key_from_gdk(key) {
             self.event_sink()
@@ -1032,7 +1032,7 @@ impl GtkMenuVisitor {
     }
 }
 
-/// Decode strictly before binding: a bad or missing slot is never slot zero.
+/// Decode strictly before binding: a bad or missing item is never item zero.
 /// Shape comes from the generic spec (`None` vs `Some`); domain meaning of
 /// the index resolves view-side.
 fn send_action(sink: &dyn EventSink, descriptor: &Command, value: Option<&glib::Variant>) {
@@ -1075,7 +1075,7 @@ impl CommandVisitor for GtkMenuVisitor {
             }
             action
         };
-        // Once per declaration, never per slot entry. No registry borrow here.
+        // Once per declaration, never per item entry. No registry borrow here.
         action.set_enabled(descriptor.enabled);
     }
 }
@@ -1253,14 +1253,14 @@ pub(crate) mod tests {
 
     #[test]
     fn test_aux_titles_and_resume_mirror_view_defs() {
-        assert_eq!(TestAux::Debug.title(), "Debugger");
-        assert_eq!(TestAux::Ppu.title(), "PPU Viewer");
-        assert_eq!(TestAux::History.title(), "Notification History");
-        assert_eq!(TestAux::Settings.title(), "Settings");
-        assert!(TestAux::Debug.resume_on_arrival());
-        assert!(TestAux::Ppu.resume_on_arrival());
-        assert!(!TestAux::History.resume_on_arrival());
-        assert!(!TestAux::Settings.resume_on_arrival());
+        assert_eq!(TestAux::Gamma.title(), "Aux Gamma");
+        assert_eq!(TestAux::Delta.title(), "Aux Delta");
+        assert_eq!(TestAux::Beta.title(), "Aux Beta");
+        assert_eq!(TestAux::Alpha.title(), "Aux Alpha");
+        assert!(TestAux::Gamma.resume_on_arrival());
+        assert!(TestAux::Delta.resume_on_arrival());
+        assert!(!TestAux::Beta.resume_on_arrival());
+        assert!(!TestAux::Alpha.resume_on_arrival());
     }
 
     #[test]
@@ -1268,17 +1268,17 @@ pub(crate) mod tests {
         let bars = MenubarModels::new();
         let shared = bars.clone();
         assert!(bars.models.borrow().is_empty());
-        let file = bars.submenu(menu_id::FILE);
+        let file = bars.submenu(menu_id::GROUP_A);
         assert_eq!(bars.models.borrow().len(), 1);
-        assert_eq!(shared.submenu(menu_id::FILE), file);
-        let states = shared.submenu(menu_id::STATES);
+        assert_eq!(shared.submenu(menu_id::GROUP_A), file);
+        let states = shared.submenu(menu_id::GROUP_C);
         assert_ne!(states, file);
-        assert_eq!(bars.submenu(menu_id::STATES), states);
+        assert_eq!(bars.submenu(menu_id::GROUP_C), states);
         assert_eq!(bars.models.borrow().len(), 2);
     }
 
-    /// Externally destroyed dialogs keep their slot (no signal fires):
-    /// reopening must rebuild instead of panicking on the slot borrow.
+    /// Externally destroyed dialogs keep their item (no signal fires):
+    /// reopening must rebuild instead of panicking on the item borrow.
     /// Widget-only: needs a display, run under Xvfb (skips headless).
     #[test]
     fn open_history_rebuilds_dead_dialog_without_borrow_panic() {
@@ -1286,20 +1286,20 @@ pub(crate) mod tests {
             eprintln!("SKIP: window widget test needs a display (run under Xvfb)");
             return;
         };
-        // Bypass the slot wiring: a directly built dialog carries no
+        // Bypass the item wiring: a directly built dialog carries no
         // destroy hook, like an externally destroyed one whose
         // close-request never ran.
-        super::open_auxiliary(&win, TestAux::History);
-        let built = win.borrow().aux.get(TestAux::History).cloned().unwrap();
+        super::open_auxiliary(&win, TestAux::Beta);
+        let built = win.borrow().aux.get(TestAux::Beta).cloned().unwrap();
         // External destroy disposes the widget without signals; the
-        // slot keeps the dead dialog.
+        // item keeps the dead dialog.
         let dead = built.native_window();
         dead.destroy();
         assert!(surface_gone(&dead));
-        // Must rebuild, not panic on the slot borrow.
-        super::open_auxiliary(&win, TestAux::History);
-        let slot = win.borrow().aux.get(TestAux::History).cloned();
-        let Some(super::NativeAux::Controls(program)) = slot else {
+        // Must rebuild, not panic on the item borrow.
+        super::open_auxiliary(&win, TestAux::Beta);
+        let item = win.borrow().aux.get(TestAux::Beta).cloned();
+        let Some(super::NativeAux::Controls(program)) = item else {
             panic!("rebuilt dialog");
         };
         let dialog = program.dialog;
@@ -1398,7 +1398,7 @@ pub(crate) mod tests {
                 let win = weak.upgrade().unwrap();
                 assert!(win.try_borrow_mut().is_ok());
                 assert!(win.state().try_borrow_mut().is_ok());
-                let id = win.borrow().aux.route_id(TestAux::Debug).unwrap();
+                let id = win.borrow().aux.route_id(TestAux::Gamma).unwrap();
                 let model = win.borrow().aux.window(id).cloned().unwrap();
                 assert!(matches!(
                     model.contents.contents,
@@ -1407,10 +1407,10 @@ pub(crate) mod tests {
                 assert_eq!(
                     win.borrow_mut()
                         .aux
-                        .request_open(TestAux::Debug, TestAux::Debug.title()),
+                        .request_open(TestAux::Gamma, TestAux::Gamma.title()),
                     OpenRequest::Pending(id)
                 );
-                super::open_auxiliary(&win, TestAux::Debug);
+                super::open_auxiliary(&win, TestAux::Gamma);
                 added.set(added.get() + 1);
                 let weak = Rc::downgrade(&win);
                 let mapped = mapped.clone();
@@ -1419,24 +1419,24 @@ pub(crate) mod tests {
                     assert!(win.try_borrow_mut().is_ok());
                     assert!(win.state().try_borrow_mut().is_ok());
                     assert_eq!(native.title().as_deref(), Some(model.title.as_str()));
-                    assert!(win.borrow().aux.get(TestAux::Debug).is_none());
+                    assert!(win.borrow().aux.get(TestAux::Gamma).is_none());
                     mapped.set(mapped.get() + 1);
                 });
             }
         });
         // Resolve the real GMenu action rather than bypassing native dispatch.
-        let emulation = bars.submenu(menu_id::EMULATION);
-        let debug_action = (0..emulation.n_items()).find_map(|i| {
-            emulation
+        let group_b = bars.submenu(menu_id::GROUP_B);
+        let gamma_action = (0..group_b.n_items()).find_map(|i| {
+            group_b
                 .item_attribute_value(i, "action", None)
                 .and_then(|value| {
                     value
                         .str()
-                        .filter(|name| *name == "win.debugger")
+                        .filter(|name| *name == "win.aux_gamma")
                         .map(str::to_owned)
                 })
         });
-        let name = debug_action.expect("host Debug entry in main_window.menu");
+        let name = gamma_action.expect("host Gamma entry in main_window.menu");
         let action = win
             .window()
             .lookup_action(name.strip_prefix("win.").unwrap())
@@ -1445,23 +1445,23 @@ pub(crate) mod tests {
         win.application().disconnect(signal);
         assert_eq!(added.get(), 1);
         assert_eq!(mapped.get(), 1);
-        let id = win.borrow().aux.route_id(TestAux::Debug).unwrap();
-        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Debug).cloned()
+        let id = win.borrow().aux.route_id(TestAux::Gamma).unwrap();
+        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Gamma).cloned()
         else {
-            panic!("generic debugger dialog constructed");
+            panic!("generic aux dialog constructed");
         };
         let native = program.dialog.clone();
         assert!(native.content_area().first_child().is_some());
         assert_eq!(
             native.title().as_deref(),
             Some(
-                HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Debug.title())
+                HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Gamma.title())
                     .title
                     .as_str()
             )
         );
-        super::open_auxiliary(&win, TestAux::Debug);
-        assert_eq!(win.borrow().aux.route_id(TestAux::Debug), Some(id));
+        super::open_auxiliary(&win, TestAux::Gamma);
+        assert_eq!(win.borrow().aux.route_id(TestAux::Gamma), Some(id));
         native.destroy();
         win.window().destroy();
     }
@@ -1476,10 +1476,10 @@ pub(crate) mod tests {
         let main = win.window();
         let state = win.state();
         // Owned titles survive: a model with an owned title renders verbatim.
-        let mut debug = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Debug.title());
+        let mut debug = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Gamma.title());
         debug.id = WindowId::Auxiliary(AuxId::from_raw(2));
         debug.title = "owned debug title".into();
-        let hid = super::request_aux(&win, TestAux::History).unwrap();
+        let hid = super::request_aux(&win, TestAux::Beta).unwrap();
         {
             let mut core = win.borrow_mut();
             let hstate = core.state.clone();
@@ -1514,7 +1514,7 @@ pub(crate) mod tests {
             panic!("History contents, not ID, select grouped controls")
         };
         assert!(built.dialog.content_area().first_child().is_some());
-        let pending = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Settings.title());
+        let pending = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Alpha.title());
         assert!(
             super::render_dialog(
                 &pending,
@@ -1530,7 +1530,7 @@ pub(crate) mod tests {
 
         // PPU is a generic widget window: the aux model starts pending,
         // the view-side aux screen supplies the ControlScreen.
-        let pid = super::request_aux(&win, TestAux::Ppu).unwrap();
+        let pid = super::request_aux(&win, TestAux::Delta).unwrap();
         {
             let mut core = win.borrow_mut();
             let pstate = core.state.clone();
@@ -1550,7 +1550,7 @@ pub(crate) mod tests {
                 borrowed.host.widget_mailbox(pid).expect("PPU mailbox"),
             )
         };
-        assert_eq!(pmodel.title, TestAux::Ppu.title());
+        assert_eq!(pmodel.title, TestAux::Delta.title());
         let Some(super::RenderedDialog::Controls(pbuilt)) =
             super::render_dialog(&pmodel, &main, pid, pscreen2, pmailbox, inert_callbacks())
         else {
@@ -1559,8 +1559,8 @@ pub(crate) mod tests {
         assert!(pbuilt.dialog.content_area().first_child().is_some());
         super::close_aux(&win, pid);
 
-        // Debugger is also a generic widget window now.
-        let did = super::request_aux(&win, TestAux::Debug).unwrap();
+        // Aux gamma is also a generic widget window now.
+        let did = super::request_aux(&win, TestAux::Gamma).unwrap();
         {
             let mut core = win.borrow_mut();
             let dstate = core.state.clone();
@@ -1583,7 +1583,7 @@ pub(crate) mod tests {
                 borrowed.host.widget_mailbox(did).expect("Debug mailbox"),
             )
         };
-        assert_eq!(dmodel.title, TestAux::Debug.title());
+        assert_eq!(dmodel.title, TestAux::Gamma.title());
         let Some(super::RenderedDialog::Controls(dbuilt)) =
             super::render_dialog(&dmodel, &main, did, dscreen, dmailbox, inert_callbacks())
         else {
@@ -1592,7 +1592,7 @@ pub(crate) mod tests {
         assert!(dbuilt.dialog.content_area().first_child().is_some());
         super::close_aux(&win, did);
 
-        let id = super::request_aux(&win, TestAux::History).unwrap();
+        let id = super::request_aux(&win, TestAux::Beta).unwrap();
         {
             let mut core = win.borrow_mut();
             let state = core.state.clone();
@@ -1625,7 +1625,7 @@ pub(crate) mod tests {
             panic!("History contents, not ID, select grouped controls")
         };
         assert!(built.dialog.content_area().first_child().is_some());
-        let pending = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Settings.title());
+        let pending = HostWindow::auxiliary(AuxId::from_raw(1), TestAux::Alpha.title());
         assert!(
             super::render_dialog(
                 &pending,
@@ -1652,7 +1652,7 @@ pub(crate) mod tests {
         use gtk::prelude::{ListModelExt, WidgetExt};
         use std::{cell::Cell, rc::Rc};
         let win = bound_window().expect("isolated Xvfb process");
-        for kind in [TestAux::History, TestAux::Settings] {
+        for kind in [TestAux::Beta, TestAux::Alpha] {
             let created = Rc::new(Cell::new(0));
             let mapped = Rc::new(Cell::new(0));
             let toplevels = gtk::Window::toplevels();
@@ -1713,7 +1713,7 @@ pub(crate) mod tests {
         use gtk::prelude::{ListModelExt, WidgetExt};
         use std::{cell::RefCell, rc::Rc};
         let win = bound_window().expect("isolated Xvfb process");
-        for kind in [TestAux::History, TestAux::Settings] {
+        for kind in [TestAux::Beta, TestAux::Alpha] {
             let stale = Rc::new(RefCell::new(None));
             let toplevels = gtk::Window::toplevels();
             let signal = toplevels.connect_items_changed({
@@ -1745,12 +1745,12 @@ pub(crate) mod tests {
             let current = win.borrow().aux.get(kind).unwrap().native_window();
             assert_ne!(current, stale.clone().upcast::<gtk::Window>());
             assert!(current.is_visible());
-            if kind == TestAux::Settings {
-                assert!(win.state().borrow().host.owns_pause(owners::SETTINGS));
+            if kind == TestAux::Alpha {
+                assert!(win.state().borrow().host.owns_pause(owners::GUARD));
                 assert!(
                     !win.borrow()
                         .actions
-                        .get(command_id(&win, TestMenu::Settings))
+                        .get(command_id(&win, TestMenu::AuxAlpha))
                         .unwrap()
                         .is_enabled()
                 );
@@ -1759,7 +1759,7 @@ pub(crate) mod tests {
             assert!(win.borrow().aux.contains(kind));
             current.destroy();
             assert!(!win.borrow().aux.contains(kind));
-            assert!(!win.state().borrow().host.owns_pause(owners::SETTINGS));
+            assert!(!win.state().borrow().host.owns_pause(owners::GUARD));
         }
         win.window().destroy();
     }
@@ -1780,9 +1780,9 @@ pub(crate) mod tests {
                 }
                 *stale.borrow_mut() = Some(native.clone());
                 let win = weak.upgrade().unwrap();
-                let old = win.borrow().aux.route_id(TestAux::Debug).unwrap();
+                let old = win.borrow().aux.route_id(TestAux::Gamma).unwrap();
                 assert!(win.borrow_mut().aux.cancel_open(old));
-                super::open_auxiliary(&win, TestAux::Debug);
+                super::open_auxiliary(&win, TestAux::Gamma);
                 assert!(!super::close_aux(&win, old));
             }
         });
@@ -1794,7 +1794,7 @@ pub(crate) mod tests {
                 assert!(win.state().try_borrow_mut().is_ok());
             }
         });
-        super::open_auxiliary(&win, TestAux::Debug);
+        super::open_auxiliary(&win, TestAux::Gamma);
         win.application().disconnect(signal);
         win.application().disconnect(removed);
         let stale = stale.borrow().clone().unwrap();
@@ -1802,14 +1802,14 @@ pub(crate) mod tests {
         let current = win
             .borrow()
             .aux
-            .get(TestAux::Debug)
+            .get(TestAux::Gamma)
             .unwrap()
             .native_window();
         assert_ne!(current, stale);
         assert!(
             win.borrow()
                 .aux
-                .window(win.borrow().aux.route_id(TestAux::Debug).unwrap())
+                .window(win.borrow().aux.route_id(TestAux::Gamma).unwrap())
                 .is_some()
         );
         current.destroy();
@@ -1850,7 +1850,7 @@ pub(crate) mod tests {
         let super::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("expected settings reservation");
         };
@@ -1861,7 +1861,7 @@ pub(crate) mod tests {
         assert!(
             !win.borrow()
                 .actions
-                .get(command_id(&win, TestMenu::Settings))
+                .get(command_id(&win, TestMenu::AuxAlpha))
                 .unwrap()
                 .is_enabled()
         );
@@ -1873,7 +1873,7 @@ pub(crate) mod tests {
         assert!(
             win.borrow()
                 .actions
-                .get(command_id(&win, TestMenu::Settings))
+                .get(command_id(&win, TestMenu::AuxAlpha))
                 .unwrap()
                 .is_enabled()
         );
@@ -1901,7 +1901,7 @@ pub(crate) mod tests {
         let super::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("settings reservation");
         };
@@ -1987,14 +1987,14 @@ pub(crate) mod tests {
         );
         let models = [
             menubar.menu_model.clone(),
-            menubar.submenu(menu_id::FILE),
-            menubar.submenu(menu_id::STATES),
-            menubar.submenu(menu_id::EMULATION),
-            menubar.submenu(menu_id::HELP),
-            menubar.submenu(menu_id::SELECT_SLOT),
-            menubar.submenu(menu_id::SAVE_SLOT),
-            menubar.submenu(menu_id::LOAD_SLOT),
-            menubar.submenu(menu_id::DELETE_SLOT),
+            menubar.submenu(menu_id::GROUP_A),
+            menubar.submenu(menu_id::GROUP_C),
+            menubar.submenu(menu_id::GROUP_B),
+            menubar.submenu(menu_id::GROUP_D),
+            menubar.submenu(menu_id::SUB_A),
+            menubar.submenu(menu_id::SUB_B),
+            menubar.submenu(menu_id::SUB_C),
+            menubar.submenu(menu_id::SUB_D),
         ];
         let changes = Rc::new(Cell::new(0));
         let borrow_free = Rc::new(Cell::new(true));
@@ -2021,7 +2021,7 @@ pub(crate) mod tests {
         let super::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("expected settings reservation");
         };
@@ -2034,7 +2034,7 @@ pub(crate) mod tests {
             "action-only changes must not rebuild models"
         );
 
-        apply_settings_choice(&win, "UI Language", "日本語");
+        apply_settings_choice(&win, "Choice A", "日本語");
         win.update_actions();
         assert!(changes.get() > 0);
         assert!(borrow_free.get());
@@ -2043,14 +2043,14 @@ pub(crate) mod tests {
             Some(menubar.menu_model.upcast_ref())
         );
         for (model, id) in models[1..].iter().zip([
-            menu_id::FILE,
-            menu_id::STATES,
-            menu_id::EMULATION,
-            menu_id::HELP,
-            menu_id::SELECT_SLOT,
-            menu_id::SAVE_SLOT,
-            menu_id::LOAD_SLOT,
-            menu_id::DELETE_SLOT,
+            menu_id::GROUP_A,
+            menu_id::GROUP_C,
+            menu_id::GROUP_B,
+            menu_id::GROUP_D,
+            menu_id::SUB_A,
+            menu_id::SUB_B,
+            menu_id::SUB_C,
+            menu_id::SUB_D,
         ]) {
             assert_eq!(model, &menubar.submenu(id));
         }
@@ -2080,7 +2080,7 @@ pub(crate) mod tests {
         let super::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("expected settings reservation");
         };
@@ -2103,21 +2103,21 @@ pub(crate) mod tests {
         assert!(
             win.borrow()
                 .actions
-                .get(command_id(&win, TestMenu::Settings))
+                .get(command_id(&win, TestMenu::AuxAlpha))
                 .unwrap()
                 .is_enabled()
         );
         assert!(
             win.borrow()
                 .actions
-                .get(command_id(&win, TestMenu::Debugger))
+                .get(command_id(&win, TestMenu::AuxGamma))
                 .unwrap()
                 .is_enabled()
         );
         assert!(
             win.borrow()
                 .actions
-                .get(command_id(&win, TestMenu::History))
+                .get(command_id(&win, TestMenu::AuxBeta))
                 .unwrap()
                 .is_enabled()
         );
@@ -2147,17 +2147,17 @@ pub(crate) mod tests {
         let once = called.clone();
         let weak = Rc::downgrade(&win);
         let menubar = win.borrow().menubar.clone();
-        let model = menubar.submenu(menu_id::STATES);
+        let model = menubar.submenu(menu_id::GROUP_C);
         model.connect_items_changed(move |_, _, _, _| {
             if once.replace(true) {
                 return;
             }
             let win = weak.upgrade().unwrap();
             assert!(win.try_borrow_mut().is_ok());
-            apply_settings_choice(&win, "UI Language", "English");
+            apply_settings_choice(&win, "Choice A", "English");
             win.update_actions();
         });
-        apply_settings_choice(&win, "UI Language", "日本語");
+        apply_settings_choice(&win, "Choice A", "日本語");
         win.update_actions();
         assert!(called.get(), "must exercise real items-changed reentry");
         fn labels(model: &gio::MenuModel, result: &mut Vec<String>) {
@@ -2176,7 +2176,10 @@ pub(crate) mod tests {
         let root = win.borrow().menubar.menu_model.clone();
         let mut rendered = Vec::new();
         labels(root.upcast_ref(), &mut rendered);
-        assert!(rendered.iter().any(|label| label == "File"), "{rendered:?}");
+        assert!(
+            rendered.iter().any(|label| label == "Group A"),
+            "{rendered:?}"
+        );
         assert!(
             !rendered.iter().any(|label| label == "ファイル"),
             "{rendered:?}"
@@ -2191,24 +2194,24 @@ pub(crate) mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        for kind in [TestAux::Debug, TestAux::History, TestAux::Settings] {
+        for kind in [TestAux::Gamma, TestAux::Beta, TestAux::Alpha] {
             let OpenRequest::Create(id) = win.borrow_mut().aux.request_open(kind, kind.title())
             else {
                 panic!("expected reservation");
             };
             match kind {
-                TestAux::Debug => super::open_auxiliary(&win, TestAux::Debug),
-                TestAux::History => super::open_auxiliary(&win, TestAux::History),
-                TestAux::Settings => {
+                TestAux::Gamma => super::open_auxiliary(&win, TestAux::Gamma),
+                TestAux::Beta => super::open_auxiliary(&win, TestAux::Beta),
+                TestAux::Alpha => {
                     let action = win
                         .borrow()
                         .actions
-                        .get(command_id(&win, TestMenu::Settings))
+                        .get(command_id(&win, TestMenu::AuxAlpha))
                         .unwrap();
-                    super::open_auxiliary(&win, TestAux::Settings);
+                    super::open_auxiliary(&win, TestAux::Alpha);
                     assert!(action.is_enabled());
                 }
-                TestAux::Ppu => unreachable!(),
+                TestAux::Delta => unreachable!(),
             }
             assert_eq!(win.borrow().aux.route_id(kind), Some(id));
             assert!(win.borrow().aux.get(kind).is_none());
@@ -2223,30 +2226,25 @@ pub(crate) mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        super::open_auxiliary(&win, TestAux::History);
-        let old_id = win.borrow().aux.route_id(TestAux::History).unwrap();
-        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::History).cloned()
+        super::open_auxiliary(&win, TestAux::Beta);
+        let old_id = win.borrow().aux.route_id(TestAux::Beta).unwrap();
+        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Beta).cloned()
         else {
             panic!("history dialog");
         };
         let old = program.dialog;
-        super::open_auxiliary(&win, TestAux::History);
-        assert_eq!(win.borrow().aux.route_id(TestAux::History), Some(old_id));
+        super::open_auxiliary(&win, TestAux::Beta);
+        assert_eq!(win.borrow().aux.route_id(TestAux::Beta), Some(old_id));
         assert!(super::close_aux(&win, old_id));
-        super::open_auxiliary(&win, TestAux::History);
-        let new_id = win.borrow().aux.route_id(TestAux::History).unwrap();
+        super::open_auxiliary(&win, TestAux::Beta);
+        let new_id = win.borrow().aux.route_id(TestAux::Beta).unwrap();
         assert_ne!(old_id, new_id);
         old.destroy();
         assert!(!super::close_aux(&win, old_id));
-        assert_eq!(win.borrow().aux.route_id(TestAux::History), Some(new_id));
-        let current = win
-            .borrow()
-            .aux
-            .get(TestAux::History)
-            .unwrap()
-            .native_window();
+        assert_eq!(win.borrow().aux.route_id(TestAux::Beta), Some(new_id));
+        let current = win.borrow().aux.get(TestAux::Beta).unwrap().native_window();
         current.destroy();
-        assert!(!win.borrow().aux.contains(TestAux::History));
+        assert!(!win.borrow().aux.contains(TestAux::Beta));
     }
 
     #[test]
@@ -2260,29 +2258,29 @@ pub(crate) mod tests {
         let action = win
             .borrow()
             .actions
-            .get(command_id(&win, TestMenu::Settings))
+            .get(command_id(&win, TestMenu::AuxAlpha))
             .unwrap();
         action.activate(None);
-        let old_id = win.borrow().aux.route_id(TestAux::Settings).unwrap();
-        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Settings).cloned()
+        let old_id = win.borrow().aux.route_id(TestAux::Alpha).unwrap();
+        let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Alpha).cloned()
         else {
             panic!("settings dialog");
         };
         let old = program.dialog;
-        super::open_auxiliary(&win, TestAux::Settings);
-        assert_eq!(win.borrow().aux.route_id(TestAux::Settings), Some(old_id));
+        super::open_auxiliary(&win, TestAux::Alpha);
+        assert_eq!(win.borrow().aux.route_id(TestAux::Alpha), Some(old_id));
         win.update_actions();
         assert!(!action.is_enabled());
         old.response(gtk::ResponseType::Cancel);
         assert!(action.is_enabled());
-        assert!(!win.borrow().aux.contains(TestAux::Settings));
-        assert!(!win.state().borrow().host.owns_pause(owners::SETTINGS));
-        super::open_auxiliary(&win, TestAux::Settings);
-        let new_id = win.borrow().aux.route_id(TestAux::Settings).unwrap();
+        assert!(!win.borrow().aux.contains(TestAux::Alpha));
+        assert!(!win.state().borrow().host.owns_pause(owners::GUARD));
+        super::open_auxiliary(&win, TestAux::Alpha);
+        let new_id = win.borrow().aux.route_id(TestAux::Alpha).unwrap();
         assert_ne!(old_id, new_id);
         assert!(!super::close_aux(&win, old_id));
         old.destroy();
-        assert!(win.state().borrow().host.owns_pause(owners::SETTINGS));
+        assert!(win.state().borrow().host.owns_pause(owners::GUARD));
         assert!(!action.is_enabled());
         win.state()
             .borrow_mut()
@@ -2291,13 +2289,13 @@ pub(crate) mod tests {
         let current = win
             .borrow()
             .aux
-            .get(TestAux::Settings)
+            .get(TestAux::Alpha)
             .unwrap()
             .native_window();
         current.destroy();
         assert!(action.is_enabled());
-        assert!(!win.borrow().aux.contains(TestAux::Settings));
-        assert!(!win.state().borrow().host.owns_pause(owners::SETTINGS));
+        assert!(!win.borrow().aux.contains(TestAux::Alpha));
+        assert!(!win.state().borrow().host.owns_pause(owners::GUARD));
         assert!(win.state().borrow().host.owns_pause(owners::MODAL));
     }
 
@@ -2386,7 +2384,7 @@ pub(crate) mod tests {
             .find(|descriptor| descriptor.downcast::<TestMenu>() == Some(&TestMenu::About))
             .expect("about declaration")
             .id;
-        let file = visitor.menubar.submenu(menu_id::FILE);
+        let file = visitor.menubar.submenu(menu_id::GROUP_A);
         assert_eq!(
             file.item_attribute_value(file.n_items() - 1, "action", None)
                 .unwrap()
@@ -2396,7 +2394,7 @@ pub(crate) mod tests {
         assert_eq!(
             visitor
                 .menubar
-                .submenu(menu_id::HELP)
+                .submenu(menu_id::GROUP_D)
                 .item_attribute_value(0, "action", None)
                 .unwrap()
                 .str(),
@@ -2439,20 +2437,20 @@ pub(crate) mod tests {
                 .expect("declaration")
                 .id
         };
-        let reset = find(TestMenu::Session(TestSession::Reset));
-        let load_slot = find(TestMenu::Session(TestSession::LoadSlot(0)));
+        let reset = find(TestMenu::Session(TestSession::Restart));
+        let load_item = find(TestMenu::Session(TestSession::Load(0)));
         let reset_ref = CommandRef {
             id: reset,
             argument: None,
         };
         let load_ref = |index: u64| CommandRef {
-            id: load_slot,
+            id: load_item,
             argument: Some(index),
         };
         visitor.actions.get(reset).unwrap().activate(None);
         visitor
             .actions
-            .get(load_slot)
+            .get(load_item)
             .unwrap()
             .activate(Some(&42_u64.to_variant()));
         assert!(matches!(
@@ -2460,7 +2458,7 @@ pub(crate) mod tests {
             [EventCommand::Menu(a), EventCommand::Menu(b)]
                 if *a == reset_ref && *b == load_ref(42)
         ));
-        let descriptor = model.commands.get(load_slot).unwrap();
+        let descriptor = model.commands.get(load_item).unwrap();
         let sink: Rc<dyn EventSink> = recording.clone();
         // Exercise the callback decoder directly: GAction itself also rejects
         // these before emitting activate, which would otherwise mask a bug here.
@@ -2475,7 +2473,7 @@ pub(crate) mod tests {
         assert_eq!(recording.0.borrow().len(), 2);
         visitor
             .actions
-            .get(load_slot)
+            .get(load_item)
             .unwrap()
             .activate(Some(&0_u64.to_variant()));
         assert!(
@@ -2525,7 +2523,7 @@ pub(crate) mod tests {
         let OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("settings reservation");
         };
@@ -2538,7 +2536,7 @@ pub(crate) mod tests {
         win.state()
             .borrow_mut()
             .host
-            .set_pause_owner(owners::SETTINGS, true);
+            .set_pause_owner(owners::GUARD, true);
         assert!(sink.send(about_event));
         assert!(
             win.borrow().about_dialog.is_none(),
@@ -2547,7 +2545,7 @@ pub(crate) mod tests {
         win.state()
             .borrow_mut()
             .host
-            .set_pause_owner(owners::SETTINGS, false);
+            .set_pause_owner(owners::GUARD, false);
         win.update_actions();
         about.activate(None);
         let dialog = win
@@ -2563,7 +2561,7 @@ pub(crate) mod tests {
         let OpenRequest::Create(_) = win
             .borrow_mut()
             .aux
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("settings reservation");
         };
@@ -2688,10 +2686,10 @@ pub(crate) mod tests {
         }
         // One disabled item names the empty state, never a blank list.
         for id in [
-            menu_id::SELECT_SLOT,
-            menu_id::SAVE_SLOT,
-            menu_id::LOAD_SLOT,
-            menu_id::DELETE_SLOT,
+            menu_id::SUB_A,
+            menu_id::SUB_B,
+            menu_id::SUB_C,
+            menu_id::SUB_D,
         ] {
             let menu = bars.submenu(id);
             assert_eq!(menu.n_items(), 1);
@@ -2699,7 +2697,7 @@ pub(crate) mod tests {
             assert!(menu.item_attribute_value(0, "target", None).is_none());
             assert_eq!(
                 menu.item_attribute_value(0, "label", None).unwrap().str(),
-                Some("No save slots yet")
+                Some("No items yet")
             );
         }
     }
@@ -2725,21 +2723,20 @@ pub(crate) mod tests {
         }
         let mut visitor = GtkMenuVisitor::new(bars.clone());
         model.visit(None, &mut visitor);
-        let load_slot = model
+        let load_item = model
             .commands
             .definitions
             .iter()
             .find(|descriptor| {
-                descriptor.downcast::<TestMenu>()
-                    == Some(&TestMenu::Session(TestSession::LoadSlot(0)))
+                descriptor.downcast::<TestMenu>() == Some(&TestMenu::Session(TestSession::Load(0)))
             })
-            .expect("load slot declaration")
+            .expect("load item declaration")
             .id;
         assert!(
-            visitor.actions.get(load_slot).unwrap().is_enabled(),
-            "slot entries cannot overwrite shared declaration enablement"
+            visitor.actions.get(load_item).unwrap().is_enabled(),
+            "item entries cannot overwrite shared declaration enablement"
         );
-        let menu = bars.submenu(menu_id::LOAD_SLOT);
+        let menu = bars.submenu(menu_id::SUB_C);
         assert_eq!(menu.n_items(), 2);
         for (index, id) in [(0, 1_u64), (1, 2_u64)] {
             assert_eq!(
@@ -2752,7 +2749,7 @@ pub(crate) mod tests {
                 menu.item_attribute_value(index, "action", None)
                     .unwrap()
                     .str(),
-                Some(format!("win.{}", super::ActionRegistry::action_name(load_slot)).as_str())
+                Some(format!("win.{}", super::ActionRegistry::action_name(load_item)).as_str())
             );
         }
     }

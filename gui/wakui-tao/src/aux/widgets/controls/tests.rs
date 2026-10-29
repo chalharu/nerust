@@ -31,7 +31,7 @@ struct Fixture {
 fn fixture() -> Fixture {
     let host = crate::runtime::host::TestHost::new().host;
     let mut host = host;
-    let id = prepare(&mut host, crate::testkit::TestAux::Settings);
+    let id = prepare(&mut host, crate::testkit::TestAux::Alpha);
     Fixture { host, id }
 }
 
@@ -475,7 +475,7 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
     )
     .to_vec();
     // Positive control: these are real slider keyboard events, not just modifier updates.
-    let mut control = fix.field("Duration (ms)");
+    let mut control = fix.field("Number A");
     control.metadata.enabled = true;
     control.leaf = Box::new(NumberLeaf {
         value: 10,
@@ -506,13 +506,7 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
         key::Code::KeyV,
         Some("v"),
     ));
-    for key in [
-        "UI Language",
-        "Duration (ms)",
-        "Mute",
-        "Save storage directory",
-        "Cancel",
-    ] {
+    for key in ["Choice A", "Number A", "Toggle A", "Text A", "Cancel"] {
         let mut control = fix.field(key);
         control.metadata.enabled = false;
         let mut element = control_element(&control, true, iced::Font::default());
@@ -539,7 +533,7 @@ fn disabling_an_open_native_pick_list_removes_overlay_and_ignores_input() {
     let fix = fixture();
     // Exercise both the control's own flag and the enclosing layout's flag.
     for parent_enabled in [true, false] {
-        let mut control = fix.field("Scaling");
+        let mut control = fix.field("Choice C");
         control.metadata.enabled = true;
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
@@ -604,7 +598,7 @@ fn disabling_an_open_native_pick_list_removes_overlay_and_ignores_input() {
 fn disabling_a_dragging_native_slider_ignores_motion_and_release() {
     let fix = fixture();
     for parent_enabled in [true, false] {
-        let mut control = fix.field("Duration (ms)");
+        let mut control = fix.field("Number A");
         control.metadata.enabled = true;
         control.leaf = Box::new(NumberLeaf {
             value: 10,
@@ -710,7 +704,7 @@ impl widget::Operation for EditableOperation {
 #[test]
 fn disabled_gate_prevents_operating_real_editable_descendants() {
     let fix = fixture();
-    let mut control = fix.field("Save storage directory");
+    let mut control = fix.field("Text A");
     control.metadata.enabled = true;
     for enabled in [true, false] {
         let mut element = super::super::disabled::gate(
@@ -789,7 +783,7 @@ fn disabled_gate_never_calls_inner_operate() {
 #[test]
 fn disabling_a_focused_native_text_input_does_not_capture_key_release() {
     let fix = fixture();
-    let mut control = fix.field("Save storage directory");
+    let mut control = fix.field("Text A");
     control.metadata.enabled = true;
     let mut element = control_element(&control, true, iced::Font::default());
     let (renderer, mut tree, node) = native_layout(&mut element);
@@ -819,7 +813,7 @@ fn disabling_a_focused_native_text_input_does_not_capture_key_release() {
 fn all_six_pages_build_native_trees_from_owned_empty_and_real_models() {
     {
         let mut fix = fixture();
-        let language = fix.field("UI Language");
+        let language = fix.field("Choice A");
         fix.send(language.id, ControlInput::Select(2));
         let pages = fix.screen().pages;
         assert_eq!(pages.len(), 6);
@@ -853,11 +847,11 @@ fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
     let mut inventory = Inventory::default();
     fix.screen().visit(&mut inventory);
     let mut controls = inventory.0;
-    // Settings screens carry no raster images; synthesize one so the
-    // generic Image path is covered without a PPU fixture.
+    // Aux screens carry no raster images; synthesize one so the
+    // generic Image path is covered without a Delta fixture.
     controls.push(Control {
         id: ControlId::fresh(),
-        label: "Tiles".to_string(),
+        label: "Note".to_string(),
         metadata: ControlMetadata::new("Tiles"),
         display: ControlDisplay::Standard,
         leaf: Box::new(ImageLeaf {
@@ -906,24 +900,18 @@ fn stale_disabled_hidden_wrong_kind_and_missing_callbacks_are_ignored() {
         .find(|c| c.downcast::<ToggleLeaf>().is_some())
         .unwrap();
     fix.send(info.id, ControlInput::Bool(true));
-    let callback = Message::new(fix.field("Duration (ms)").id, ControlInput::Number(2000));
+    let callback = Message::new(fix.field("Number A").id, ControlInput::Number(2000));
     fix.send(info.id, ControlInput::Bool(false));
     let before = fix.screen();
     let foreign = {
         let other = fixture();
-        other.field("UI Language").id
+        other.field("Choice A").id
     };
     for message in [
         callback,
-        Message::new(
-            fix.field("Duration (ms)").id,
-            ControlInput::Number(u32::MAX),
-        ),
-        Message::new(fix.field("Mute").id, ControlInput::Select(0)),
-        Message::new(
-            fix.field("UI Language").id,
-            ControlInput::Select(usize::MAX),
-        ),
+        Message::new(fix.field("Number A").id, ControlInput::Number(u32::MAX)),
+        Message::new(fix.field("Toggle A").id, ControlInput::Select(0)),
+        Message::new(fix.field("Choice A").id, ControlInput::Select(usize::MAX)),
         Message::new(foreign, ControlInput::Activate),
         Message::new(ControlId::fresh(), ControlInput::Activate),
     ] {
@@ -935,7 +923,7 @@ fn stale_disabled_hidden_wrong_kind_and_missing_callbacks_are_ignored() {
 #[test]
 fn numeric_native_slider_honors_model_range_step_and_emits_ids() {
     let fix = fixture();
-    let mut control = fix.field("Duration (ms)");
+    let mut control = fix.field("Number A");
     control.metadata.enabled = true;
     control.leaf = Box::new(NumberLeaf {
         value: 10,
@@ -968,13 +956,7 @@ fn numeric_native_slider_honors_model_range_step_and_emits_ids() {
 #[test]
 fn disabled_native_controls_never_publish_or_open_overlays() {
     let fix = fixture();
-    for key in [
-        "UI Language",
-        "Duration (ms)",
-        "Mute",
-        "Save storage directory",
-        "Cancel",
-    ] {
+    for key in ["Choice A", "Number A", "Toggle A", "Text A", "Cancel"] {
         let mut control = fix.field(key);
         control.metadata.enabled = false;
         let mut element = control_element(&control, true, iced::Font::default());
@@ -1032,7 +1014,7 @@ fn disabled_native_controls_never_publish_or_open_overlays() {
 #[test]
 fn native_choice_uses_indices_even_when_labels_are_identical() {
     let fix = fixture();
-    let mut control = fix.field("Scaling");
+    let mut control = fix.field("Choice C");
     control.leaf = Box::new(ChoiceLeaf {
         choices: vec!["same".into(), "same".into()],
         selected: Some(0),
@@ -1080,11 +1062,7 @@ fn native_browse_change_clear_buttons_emit_only_current_control_ids() {
         .unwrap()
         .id;
     for (id, child, expected) in [
-        (
-            fix.field("Save storage directory").id,
-            2,
-            ControlInput::Activate,
-        ),
+        (fix.field("Text A").id, 2, ControlInput::Activate),
         (binding, 2, ControlInput::Activate),
         (binding, 3, ControlInput::CaptureClear),
     ] {

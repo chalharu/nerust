@@ -344,7 +344,7 @@ mod tests {
         let registry = RefCell::new(registry());
         let OpenRequest::Create(old) = registry
             .borrow_mut()
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("expected reservation");
         };
@@ -359,7 +359,7 @@ mod tests {
                 assert_eq!(
                     self.0
                         .borrow_mut()
-                        .request_open(TestAux::Settings, TestAux::Settings.title()),
+                        .request_open(TestAux::Alpha, TestAux::Alpha.title()),
                     OpenRequest::Pending(self.1)
                 );
                 self.2 = true;
@@ -371,7 +371,7 @@ mod tests {
         assert!(registry.borrow_mut().cancel_open(old));
         let OpenRequest::Create(current) = registry
             .borrow_mut()
-            .request_open(TestAux::Settings, TestAux::Settings.title())
+            .request_open(TestAux::Alpha, TestAux::Alpha.title())
         else {
             panic!("expected reopen");
         };
@@ -384,7 +384,7 @@ mod tests {
                 .complete_open(old, Box::new(StubAux::new()))
                 .is_err()
         );
-        assert_eq!(registry.borrow().route_id(TestAux::Settings), Some(current));
+        assert_eq!(registry.borrow().route_id(TestAux::Alpha), Some(current));
         assert!(
             registry
                 .borrow_mut()
@@ -399,28 +399,28 @@ mod tests {
         let mut registry = registry();
         let first = StubAux::new();
         let old_native = first.nid;
-        let old_id = registry.insert_for_test(TestAux::Settings, Box::new(first));
+        let old_id = registry.insert_for_test(TestAux::Alpha, Box::new(first));
         let second = StubAux::new();
         let new_native = second.nid;
-        let new_id = registry.insert_for_test(TestAux::Settings, Box::new(second));
+        let new_id = registry.insert_for_test(TestAux::Alpha, Box::new(second));
         assert_ne!(old_id, new_id);
         assert_eq!(registry.kind_of(old_native), None);
-        assert_eq!(registry.kind_of(new_native), Some(TestAux::Settings));
-        registry.remove_kind(TestAux::Settings);
+        assert_eq!(registry.kind_of(new_native), Some(TestAux::Alpha));
+        registry.remove_kind(TestAux::Alpha);
         assert_eq!(registry.kind_of(new_native), None);
     }
 
     #[test]
     fn opening_arbitration_rejects_wrong_kind_and_duplicate_native() {
         let mut registry = registry();
-        let OpenRequest::Create(settings) = registry.request_open(TestAux::Settings, "Settings")
+        let OpenRequest::Create(settings) = registry.request_open(TestAux::Alpha, "Aux Alpha")
         else {
             panic!("expected settings reservation");
         };
-        assert!(registry.contains(TestAux::Settings));
+        assert!(registry.contains(TestAux::Alpha));
         assert!(registry.render_id(settings).is_none());
         assert_eq!(
-            registry.request_open(TestAux::Settings, "Settings"),
+            registry.request_open(TestAux::Alpha, "Aux Alpha"),
             OpenRequest::Pending(settings)
         );
         let wrong_native = NativeWindowId::dummy();
@@ -430,26 +430,26 @@ mod tests {
         // Native collision is rejected only after seating; a fresh native
         // completes the reservation.
         assert!(rejected.is_ok());
-        assert_eq!(registry.kind_of(wrong_native), Some(TestAux::Settings));
-        let OpenRequest::Create(other) = registry.request_open(TestAux::Debug, "Debugger") else {
+        assert_eq!(registry.kind_of(wrong_native), Some(TestAux::Alpha));
+        let OpenRequest::Create(other) = registry.request_open(TestAux::Gamma, "Aux Gamma") else {
             panic!("expected debug reservation");
         };
         let mut collision = StubAux::new();
         collision.nid = wrong_native;
         assert!(registry.complete_open(other, Box::new(collision)).is_err());
-        assert_eq!(registry.kind_of(wrong_native), Some(TestAux::Settings));
+        assert_eq!(registry.kind_of(wrong_native), Some(TestAux::Alpha));
         assert!(registry.cancel_open(other));
-        assert!(!registry.contains(TestAux::Debug));
+        assert!(!registry.contains(TestAux::Gamma));
         assert!(!registry.cancel_open(settings));
     }
 
     #[test]
     fn registry_routes_by_map_without_scans() {
         let mut registry = registry();
-        assert!(!registry.contains(TestAux::Settings));
-        let id = registry.insert_for_test(TestAux::Settings, Box::new(StubAux::new()));
-        assert_eq!(registry.route_id(TestAux::Settings), Some(id));
-        assert!(registry.contains(TestAux::Settings));
+        assert!(!registry.contains(TestAux::Alpha));
+        let id = registry.insert_for_test(TestAux::Alpha, Box::new(StubAux::new()));
+        assert_eq!(registry.route_id(TestAux::Alpha), Some(id));
+        assert!(registry.contains(TestAux::Alpha));
         // Event and render route by id; close flag stays clear.
         let outcome = registry
             .on_event(id, AuxNativeEvent::Focused(true))
@@ -458,9 +458,9 @@ mod tests {
         registry.render_id(id);
         registry.focus_id(id);
         // Removal drops the route; re-insert assigns a fresh id.
-        assert!(registry.remove_kind(TestAux::Settings).is_some());
-        assert!(!registry.contains(TestAux::Settings));
-        let second = registry.insert_for_test(TestAux::Settings, Box::new(StubAux::new()));
+        assert!(registry.remove_kind(TestAux::Alpha).is_some());
+        assert!(!registry.contains(TestAux::Alpha));
+        let second = registry.insert_for_test(TestAux::Alpha, Box::new(StubAux::new()));
         assert_ne!(id, second);
     }
 
@@ -471,16 +471,16 @@ mod tests {
         let history = StubAux::new();
         let seated = history.nid;
         assert_eq!(registry.kind_of(absent), None);
-        registry.insert_for_test(TestAux::History, Box::new(history));
+        registry.insert_for_test(TestAux::Beta, Box::new(history));
         // The seated stub routes back by its own minted id.
-        assert_eq!(registry.kind_of(seated), Some(TestAux::History));
+        assert_eq!(registry.kind_of(seated), Some(TestAux::Beta));
         assert_ne!(seated, absent);
-        assert!(registry.remove_kind(TestAux::Settings).is_none());
-        assert!(!registry.contains(TestAux::Settings));
+        assert!(registry.remove_kind(TestAux::Alpha).is_none());
+        assert!(!registry.contains(TestAux::Alpha));
         // Close-all drops every route at once.
         registry.close_all();
-        assert!(!registry.contains(TestAux::History));
-        assert_eq!(registry.route_id(TestAux::History), None);
+        assert!(!registry.contains(TestAux::Beta));
+        assert_eq!(registry.route_id(TestAux::Beta), None);
     }
 
     #[test]
@@ -489,7 +489,7 @@ mod tests {
         let mut stub = StubAux::new();
         let mut host = crate::runtime::host::TestHost::new().host;
         let id = host
-            .reserve_aux_window(TestAux::History)
+            .reserve_aux_window(TestAux::Beta)
             .and_then(|request| match request {
                 OpenRequest::Create(id) => Some(id),
                 _ => None,
@@ -502,16 +502,16 @@ mod tests {
         );
         stub.mailbox = host.core.widget_mailbox(id);
         stub.close = true;
-        let seat = registry.insert_for_test(TestAux::History, Box::new(stub));
+        let seat = registry.insert_for_test(TestAux::Beta, Box::new(stub));
         let outcome = registry
             .on_event(seat, AuxNativeEvent::Focused(true))
-            .expect("history routes");
+            .expect("beta routes");
         assert!(outcome.close);
         // Default controller hooks stay quiet.
         registry.render_id(seat);
         registry.focus_id(seat);
         let mut bare = StubAux::new();
-        AuxController::on_redraw(&mut bare, "History");
+        AuxController::on_redraw(&mut bare, "Beta");
     }
 
     #[test]
@@ -520,7 +520,7 @@ mod tests {
 
         let mut host = crate::runtime::host::TestHost::new().host;
         let id = host
-            .reserve_aux_window(TestAux::History)
+            .reserve_aux_window(TestAux::Beta)
             .and_then(|request| match request {
                 OpenRequest::Create(id) => Some(id),
                 _ => None,
@@ -543,7 +543,7 @@ mod tests {
         stub.widget_queue
             .push(ControlEvent::new(control.id, ControlInput::Activate));
         let pushed = stub.pushed_screen.clone();
-        let seat = registry.insert_for_test(TestAux::History, Box::new(stub));
+        let seat = registry.insert_for_test(TestAux::Beta, Box::new(stub));
         assert_eq!(
             registry.drain_widget_events(seat).len(),
             1,

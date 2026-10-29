@@ -7,7 +7,7 @@ use crate::{
 use wakui_core::aux::{AuxId, OpenRequest};
 use wakui_core::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
 
-mod history;
+mod log;
 
 pub(crate) fn prepare(host: &mut HostState<TestAux>, kind: TestAux) -> AuxId {
     let Some(OpenRequest::Create(id)) = host.reserve_aux_window(kind) else {
@@ -73,7 +73,7 @@ pub(crate) fn activate(host: &mut HostState<TestAux>, id: AuxId, label: &str) {
 fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen() {
     use iced_winit::program::Program;
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, TestAux::Settings);
+    let id = prepare(&mut host, TestAux::Alpha);
     let before = screen_of(&host, id);
     let page = &before.pages[3];
     let _ = dispatch(
@@ -103,7 +103,7 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
             .id,
         page.id
     );
-    let control = find(&state.screen.borrow(), "Mute");
+    let control = find(&state.screen.borrow(), "Toggle A");
     drop(program.update(
         &mut state,
         Message::new(control.id, ControlInput::Bool(true)),
@@ -118,7 +118,7 @@ fn common_window_program_moves_the_prepared_controller_and_binds_latest_screen()
 #[test]
 fn prepared_window_contains_the_controller_moved_into_boot() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, TestAux::Settings);
+    let id = prepare(&mut host, TestAux::Alpha);
     let screen = screen_of(&host, id);
     let page = screen.pages[4].clone();
     let _ = dispatch(
@@ -140,19 +140,19 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
 #[test]
 fn status_area_message_reaches_viewmodel() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, TestAux::Settings);
+    let id = prepare(&mut host, TestAux::Alpha);
     for (label, input) in [
-        ("Status display", ControlInput::Bool(true)),
-        ("Position", ControlInput::Select(0)),
-        ("Status position", ControlInput::Select(2)),
-        ("Status area", ControlInput::Select(1)),
+        ("Toggle B", ControlInput::Bool(true)),
+        ("Choice D", ControlInput::Select(0)),
+        ("Choice E", ControlInput::Select(2)),
+        ("Choice F", ControlInput::Select(1)),
     ] {
         let screen = screen_of(&host, id);
         let c = find(&screen, label);
         let _ = dispatch(&mut host, id, Message::new(c.id, input));
     }
     let screen = screen_of(&host, id);
-    let c = find(&screen, "Status area");
+    let c = find(&screen, "Choice F");
     assert_eq!(
         c.downcast::<wakui_core::leaf::ChoiceLeaf>()
             .unwrap()
@@ -165,7 +165,7 @@ fn status_area_message_reaches_viewmodel() {
 #[test]
 fn program_update_and_error_paths_stay_headless() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, TestAux::Settings);
+    let id = prepare(&mut host, TestAux::Alpha);
     let screen = screen_of(&host, id);
     let (binding, _, _) = ControlsBinding::new(screen);
     let (mut state, _) = binding.boot();
@@ -183,7 +183,7 @@ fn program_update_and_error_paths_stay_headless() {
 
 #[test]
 fn program_boot_and_chrome_are_headless() {
-    for kind in [TestAux::Settings, TestAux::History] {
+    for kind in [TestAux::Alpha, TestAux::Beta] {
         let mut host = TestHost::new().host;
         let id = prepare(&mut host, kind);
         let screen = screen_of(&host, id);

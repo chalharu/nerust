@@ -103,24 +103,24 @@ mod tests {
     #[test]
     fn builder_carries_launch_arguments_opaquely() {
         let app = Application::builder(Box::new(crate::testkit::FakeApp::new()))
-            .argument("/tmp/launch.nes")
+            .argument("/tmp/launch.dat")
             .argument("--flag-like")
             .build();
         // Opaque: even flag-like strings ride along; the framework never
         // interprets them.
         assert_eq!(
             app.arguments(),
-            &vec!["/tmp/launch.nes".to_string(), "--flag-like".to_string()]
+            &vec!["/tmp/launch.dat".to_string(), "--flag-like".to_string()]
         );
     }
 
     #[test]
     fn builder_arguments_replace_en_bloc() {
         let app = Application::builder(Box::new(crate::testkit::FakeApp::new()))
-            .argument("/tmp/ignored.nes")
-            .arguments(vec!["/tmp/launch.nes".to_string()])
+            .argument("/tmp/ignored.dat")
+            .arguments(vec!["/tmp/launch.dat".to_string()])
             .build();
-        assert_eq!(app.arguments(), &vec!["/tmp/launch.nes".to_string()]);
+        assert_eq!(app.arguments(), &vec!["/tmp/launch.dat".to_string()]);
     }
 
     #[test]

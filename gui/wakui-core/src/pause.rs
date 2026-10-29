@@ -10,7 +10,7 @@
 //! suspended content). This file is a pure bitset, like [`crate::control`]
 //! is pure structure.
 
-/// Opaque suspension owner. Minted view-side from a stable domain table;
+/// Opaque suspension owner. Minted view-side from a stable owner table;
 /// never a position or a framework-known kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PauseOwner(u8);

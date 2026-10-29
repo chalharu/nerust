@@ -29,7 +29,7 @@ pub enum OpenRequest {
     Pending(AuxId),
 }
 
-struct Slot<K, N, H> {
+struct Entry<K, N, H> {
     kind: K,
     window: Window,
     mailbox: Option<crate::mailbox::WindowMailbox>,
@@ -40,7 +40,7 @@ struct Slot<K, N, H> {
 /// Owns both pending reservations and active toolkit-specific handles.
 /// `None` handles are opening; native identities are optional for signal-based backends.
 pub struct AuxWindows<K, N, H> {
-    entries: HashMap<AuxId, Slot<K, N, H>>,
+    entries: HashMap<AuxId, Entry<K, N, H>>,
     by_kind: HashMap<K, AuxId>,
     by_native: HashMap<N, AuxId>,
     next_id: u64,
@@ -67,8 +67,8 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     /// pending [`Window`] for immediate native reads.
     pub fn request_open(&mut self, kind: K, title: &str) -> OpenRequest {
         if let Some(id) = self.by_kind.get(&kind).copied() {
-            let slot = self.entries.get(&id).expect("kind index is consistent");
-            return if slot.handle.is_some() {
+            let entry = self.entries.get(&id).expect("kind index is consistent");
+            return if entry.handle.is_some() {
                 OpenRequest::Present(id)
             } else {
                 OpenRequest::Pending(id)
@@ -80,7 +80,7 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
         self.by_kind.insert(kind, id);
         self.entries.insert(
             id,
-            Slot {
+            Entry {
                 kind,
                 window,
                 mailbox: None,
@@ -94,18 +94,18 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     /// Only the current opening may complete. Return rejected handles so callers
     /// can destroy toolkit objects after releasing any `RefCell` borrow.
     pub fn complete_open(&mut self, id: AuxId, native: Option<N>, handle: H) -> Result<(), H> {
-        let Some(slot) = self.entries.get(&id) else {
+        let Some(entry) = self.entries.get(&id) else {
             return Err(handle);
         };
-        let kind = slot.kind;
-        if slot.handle.is_some()
+        let kind = entry.kind;
+        if entry.handle.is_some()
             || native.is_some_and(|native| self.by_native.contains_key(&native))
         {
             return Err(handle);
         }
-        let slot = self.entries.get_mut(&id).expect("current reservation");
-        slot.native = native;
-        slot.handle = Some(handle);
+        let entry = self.entries.get_mut(&id).expect("current reservation");
+        entry.native = native;
+        entry.handle = Some(handle);
         if let Some(native) = native {
             self.by_native.insert(native, id);
         }
@@ -114,14 +114,14 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     }
 
     pub fn cancel_open(&mut self, id: AuxId) -> bool {
-        let Some(slot) = self.entries.get(&id) else {
+        let Some(entry) = self.entries.get(&id) else {
             return false;
         };
-        if slot.handle.is_some() {
+        if entry.handle.is_some() {
             return false;
         }
-        let slot = self.entries.remove(&id).expect("just checked");
-        self.by_kind.remove(&slot.kind);
+        let entry = self.entries.remove(&id).expect("just checked");
+        self.by_kind.remove(&entry.kind);
         true
     }
 
@@ -131,12 +131,12 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     }
 
     pub fn kind_of_id(&self, id: AuxId) -> Option<K> {
-        self.entries.get(&id).map(|slot| slot.kind)
+        self.entries.get(&id).map(|entry| entry.kind)
     }
 
     pub fn kind_of(&self, native: N) -> Option<K> {
         let id = self.by_native.get(&native).copied()?;
-        self.entries.get(&id).map(|slot| slot.kind)
+        self.entries.get(&id).map(|entry| entry.kind)
     }
 
     pub fn id_of(&self, native: N) -> Option<AuxId> {
@@ -145,13 +145,13 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
 
     /// Presentation exists even before native creation; stale IDs see nothing.
     pub fn window(&self, id: AuxId) -> Option<&Window> {
-        self.entries.get(&id).map(|slot| &slot.window)
+        self.entries.get(&id).map(|entry| &entry.window)
     }
 
-    /// Install a fresh settings projection or update presentation in this same
-    /// lifetime slot. Do not retain the registry borrow during native visiting.
+    /// Install a fresh view projection or update presentation in this same
+    /// lifetime entry. Do not retain the registry borrow during native visiting.
     pub fn window_mut(&mut self, id: AuxId) -> Option<&mut Window> {
-        self.entries.get_mut(&id).map(|slot| &mut slot.window)
+        self.entries.get_mut(&id).map(|entry| &mut entry.window)
     }
 
     /// Opaque shared lifecycle signals, available during native creation too.
@@ -194,7 +194,7 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut H> {
         self.entries
             .values_mut()
-            .filter_map(|slot| slot.handle.as_mut())
+            .filter_map(|entry| entry.handle.as_mut())
     }
 
     /// All registered ids (reservations and active handles), for pump loops.
@@ -206,21 +206,21 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     /// Removes pending reservations too. Drop returned handles outside toolkit borrows.
     pub fn remove(&mut self, kind: K) -> Option<H> {
         let id = self.by_kind.remove(&kind)?;
-        let slot = self.entries.remove(&id).expect("kind index is consistent");
-        if let Some(native) = slot.native {
+        let entry = self.entries.remove(&id).expect("kind index is consistent");
+        if let Some(native) = entry.native {
             self.by_native.remove(&native);
         }
-        slot.handle
+        entry.handle
     }
 
     /// A stale close callback must not remove a newer window of the same kind.
     pub fn remove_id(&mut self, id: AuxId) -> Option<H> {
-        let slot = self.entries.remove(&id)?;
-        self.by_kind.remove(&slot.kind);
-        if let Some(native) = slot.native {
+        let entry = self.entries.remove(&id)?;
+        self.by_kind.remove(&entry.kind);
+        if let Some(native) = entry.native {
             self.by_native.remove(&native);
         }
-        slot.handle
+        entry.handle
     }
 
     /// Drops all handles and reservations without resetting the id sequence.
@@ -291,10 +291,10 @@ mod tests {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     enum Kind {
-        Debug,
-        Ppu,
-        History,
-        Settings,
+        Alpha,
+        Beta,
+        Gamma,
+        Delta,
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
 
         let drops = Rc::new(Cell::new(0));
         let windows = RefCell::new(AuxWindows::<Kind, u64, Handle>::default());
-        let OpenRequest::Create(id) = windows.borrow_mut().request_open(Kind::Debug, "title")
+        let OpenRequest::Create(id) = windows.borrow_mut().request_open(Kind::Alpha, "title")
         else {
             panic!("expected reservation");
         };
@@ -338,60 +338,57 @@ mod tests {
     #[test]
     fn pending_reentrant_opens_reserve_once_and_active_opens_present() {
         let mut windows = AuxWindows::default();
-        let id = reserve(&mut windows, Kind::Debug);
+        let id = reserve(&mut windows, Kind::Alpha);
         assert_eq!(
-            windows.request_open(Kind::Debug, "title"),
+            windows.request_open(Kind::Alpha, "title"),
             OpenRequest::Pending(id)
         );
-        assert_eq!(windows.route_id(Kind::Debug), Some(id));
-        assert_eq!(windows.kind_of_id(id), Some(Kind::Debug));
-        assert!(windows.contains(Kind::Debug));
-        assert_eq!(windows.get(Kind::Debug), None);
-        assert_eq!(windows.get_mut(Kind::Debug), None);
+        assert_eq!(windows.route_id(Kind::Alpha), Some(id));
+        assert_eq!(windows.kind_of_id(id), Some(Kind::Alpha));
+        assert!(windows.contains(Kind::Alpha));
+        assert_eq!(windows.get(Kind::Alpha), None);
+        assert_eq!(windows.get_mut(Kind::Alpha), None);
         assert_eq!(windows.values_mut().count(), 0);
-        assert_eq!(windows.complete_open(id, Some(10), "debug"), Ok(()));
+        assert_eq!(windows.complete_open(id, Some(10), "alpha"), Ok(()));
         assert_eq!(
-            windows.request_open(Kind::Debug, "title"),
+            windows.request_open(Kind::Alpha, "title"),
             OpenRequest::Present(id)
         );
         assert!(!windows.cancel_open(id));
-        assert_eq!(
-            windows.complete_open(id, Some(11), "duplicate"),
-            Err("duplicate")
-        );
-        assert_eq!(windows.kind_of(10), Some(Kind::Debug));
+        assert_eq!(windows.complete_open(id, Some(11), "dup"), Err("dup"));
+        assert_eq!(windows.kind_of(10), Some(Kind::Alpha));
         assert_eq!(windows.kind_of(11), None);
         assert_eq!(windows.id_of(10), Some(id));
-        assert_eq!(windows.get(Kind::Debug), Some(&"debug"));
+        assert_eq!(windows.get(Kind::Alpha), Some(&"alpha"));
     }
 
     #[test]
     fn cancelled_open_retries_with_fresh_id_and_rejects_stale_callbacks() {
         let mut windows = AuxWindows::new();
-        let old = reserve(&mut windows, Kind::Settings);
+        let old = reserve(&mut windows, Kind::Delta);
         assert!(windows.cancel_open(old));
         assert!(!windows.cancel_open(old));
-        let current = reserve(&mut windows, Kind::Settings);
+        let current = reserve(&mut windows, Kind::Delta);
         assert!(current.0 > old.0);
         assert_eq!(windows.complete_open(old, Some(1), "stale"), Err("stale"));
         assert_eq!(windows.remove_id(old), None);
         assert!(!windows.cancel_open(old));
-        assert_eq!(windows.route_id(Kind::Settings), Some(current));
-        assert_eq!(windows.complete_open(current, None, "settings"), Ok(()));
+        assert_eq!(windows.route_id(Kind::Delta), Some(current));
+        assert_eq!(windows.complete_open(current, None, "delta"), Ok(()));
         assert_eq!(windows.remove_id(old), None);
-        assert_eq!(windows.get(Kind::Settings), Some(&"settings"));
+        assert_eq!(windows.get(Kind::Delta), Some(&"delta"));
     }
 
     #[test]
     fn reopen_removes_old_native_routes_and_stale_close_is_noop() {
         let mut windows = AuxWindows::new();
-        let old = reserve(&mut windows, Kind::Debug);
+        let old = reserve(&mut windows, Kind::Alpha);
         assert_eq!(windows.complete_open(old, Some(10), "old"), Ok(()));
-        assert_eq!(windows.remove(Kind::Debug), Some("old"));
-        let current = reserve(&mut windows, Kind::Debug);
+        assert_eq!(windows.remove(Kind::Alpha), Some("old"));
+        let current = reserve(&mut windows, Kind::Alpha);
         assert_eq!(windows.complete_open(current, Some(20), "new"), Ok(()));
         assert_eq!(windows.kind_of(10), None);
-        assert_eq!(windows.kind_of(20), Some(Kind::Debug));
+        assert_eq!(windows.kind_of(20), Some(Kind::Alpha));
         assert_eq!(windows.kind_of_id(old), None);
         assert_eq!(windows.complete_open(old, Some(30), "stale"), Err("stale"));
         assert_eq!(windows.kind_of(30), None);
@@ -403,60 +400,60 @@ mod tests {
     #[test]
     fn native_collision_rejects_without_mutation_and_can_retry() {
         let mut windows = AuxWindows::new();
-        let debug = reserve(&mut windows, Kind::Debug);
-        let ppu = reserve(&mut windows, Kind::Ppu);
-        assert_eq!(windows.complete_open(debug, Some(10), "debug"), Ok(()));
-        assert_eq!(windows.complete_open(ppu, Some(10), "ppu"), Err("ppu"));
-        assert_eq!(windows.kind_of(10), Some(Kind::Debug));
-        assert_eq!(windows.get(Kind::Debug), Some(&"debug"));
+        let debug = reserve(&mut windows, Kind::Alpha);
+        let ppu = reserve(&mut windows, Kind::Beta);
+        assert_eq!(windows.complete_open(debug, Some(10), "alpha"), Ok(()));
+        assert_eq!(windows.complete_open(ppu, Some(10), "beta"), Err("beta"));
+        assert_eq!(windows.kind_of(10), Some(Kind::Alpha));
+        assert_eq!(windows.get(Kind::Alpha), Some(&"alpha"));
         assert_eq!(
-            windows.request_open(Kind::Ppu, "title"),
+            windows.request_open(Kind::Beta, "title"),
             OpenRequest::Pending(ppu)
         );
-        assert_eq!(windows.complete_open(ppu, Some(20), "ppu"), Ok(()));
-        assert_eq!(windows.kind_of(20), Some(Kind::Ppu));
+        assert_eq!(windows.complete_open(ppu, Some(20), "beta"), Ok(()));
+        assert_eq!(windows.kind_of(20), Some(Kind::Beta));
     }
 
     #[test]
     fn clear_removes_active_pending_and_routes_but_never_reuses_ids() {
         let mut windows = AuxWindows::new();
-        let active = reserve(&mut windows, Kind::History);
-        assert_eq!(windows.complete_open(active, Some(10), "history"), Ok(()));
-        let pending = reserve(&mut windows, Kind::Settings);
+        let active = reserve(&mut windows, Kind::Gamma);
+        assert_eq!(windows.complete_open(active, Some(10), "gamma"), Ok(()));
+        let pending = reserve(&mut windows, Kind::Delta);
         windows.clear();
         windows.clear();
         assert_eq!(windows.kind_of(10), None);
         assert_eq!(windows.kind_of_id(active), None);
         assert_eq!(windows.kind_of_id(pending), None);
-        assert!(!windows.contains(Kind::Settings));
-        assert!(!windows.contains(Kind::History));
+        assert!(!windows.contains(Kind::Delta));
+        assert!(!windows.contains(Kind::Gamma));
         assert_eq!(windows.values_mut().count(), 0);
-        let fresh = reserve(&mut windows, Kind::History);
+        let fresh = reserve(&mut windows, Kind::Gamma);
         assert!(fresh.0 > pending.0);
         assert_eq!(windows.complete_open(active, None, "stale"), Err("stale"));
         assert!(!windows.cancel_open(pending));
         assert_eq!(windows.remove_id(active), None);
-        assert_eq!(windows.route_id(Kind::History), Some(fresh));
+        assert_eq!(windows.route_id(Kind::Gamma), Some(fresh));
     }
 
     #[test]
     fn kinds_are_independent_and_native_less_handles_are_active() {
         let mut windows = AuxWindows::new();
-        for kind in [Kind::Debug, Kind::Ppu, Kind::History, Kind::Settings] {
+        for kind in [Kind::Alpha, Kind::Beta, Kind::Gamma, Kind::Delta] {
             let id = reserve(&mut windows, kind);
             assert_eq!(windows.complete_open(id, None, "active"), Ok(()));
         }
         for handle in windows.values_mut() {
             *handle = "updated";
         }
-        *windows.get_mut(Kind::Debug).unwrap() = "debug";
-        assert_eq!(windows.get(Kind::Debug), Some(&"debug"));
-        assert_eq!(windows.remove(Kind::Ppu), Some("updated"));
-        assert_eq!(windows.get(Kind::History), Some(&"updated"));
-        assert_eq!(windows.get(Kind::Settings), Some(&"updated"));
+        *windows.get_mut(Kind::Alpha).unwrap() = "alpha";
+        assert_eq!(windows.get(Kind::Alpha), Some(&"alpha"));
+        assert_eq!(windows.remove(Kind::Beta), Some("updated"));
+        assert_eq!(windows.get(Kind::Gamma), Some(&"updated"));
+        assert_eq!(windows.get(Kind::Delta), Some(&"updated"));
         assert_eq!(windows.values_mut().count(), 3);
-        let pending = reserve(&mut windows, Kind::Ppu);
+        let pending = reserve(&mut windows, Kind::Beta);
         assert_eq!(windows.remove_id(pending), None);
-        assert!(!windows.contains(Kind::Ppu));
+        assert!(!windows.contains(Kind::Beta));
     }
 }

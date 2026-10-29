@@ -164,12 +164,11 @@ impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K, Vec<String>> {
 /// (view-defined kinds); the framework never names it.
 ///
 /// File, content, and suspension ports are generic (open/unload content,
-/// suspend holders, file dialogs). Emulator verbs (slots, reset, debugger
-/// routing, settings/history kinds) live view-side behind separate domain
-/// ports; flavors never name them.
+/// suspend holders, file dialogs). Content verbs and aux kinds live
+/// view-side behind separate domain ports; flavors never name them.
 pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     // -- lifecycle -------------------------------------------------------
-    /// Open content from a file. Values like ROM wording stay view-side;
+    /// Open content from a file. Content-specific wording stays view-side;
     /// the framework only transports the path and the failure string.
     fn load_file(&mut self, path: &Path) -> Result<(), String>;
     fn unload(&mut self);
@@ -182,7 +181,7 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn resume_content(&mut self);
     fn swap_frame_buffer(&mut self);
 
-    // -- content state (generic; no tick/slot vocabulary) -------------------
+    // -- content state (generic) ------------------------------------------------
     /// Whether content is present (a document is open).
     fn content_loaded(&self) -> bool;
     /// Whether present content is suspended.
@@ -263,13 +262,13 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
         close: bool,
     ) -> Option<WidgetCloseOutcome>;
     fn report_host_error(&mut self, detail: String);
-    /// Whether a modal dialog (e.g. settings) currently gates chrome and
+    /// Whether a modal dialog currently gates chrome and
     /// commands. Flavors gate nothing themselves; the view side enforces the
     /// guard when it handles events and builds menus.
     fn modal_guard_active(&self) -> bool;
 
     // -- polled widgets (background work owned view-side) ------------------
-    // Widgets are generic Controls like settings/history/viewers.
+    // Widgets are generic Controls.
     // Flavors open them via `reserve_widget`/`prepare_widget`, push
     // `widget_screen`s, and route `widget_dispatch` events; all drain and
     // bridge state lives view-side behind these narrow ports. The framework
