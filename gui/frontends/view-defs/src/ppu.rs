@@ -105,12 +105,13 @@ fn image_control(ids: &mut IdRegistry<String>, key: &str, picture: &PpuPicture) 
 }
 
 fn column_layout(ids: &mut IdRegistry<String>, key: &str, children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new(key);
+    metadata.hints.spacing = Some(12.0);
+    metadata.hints.indent = Some(0.0);
     Container {
         id: layout_id(ids, key),
         label: String::new(),
-        metadata: ControlMetadata::new(key),
-        spacing: 12,
-        indent: 0,
+        metadata,
         header: None,
         policy: Box::new(ColumnPolicy),
         children,

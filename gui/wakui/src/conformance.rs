@@ -30,12 +30,13 @@ fn control(label: &str, leaf: impl ControlLeaf) -> Control {
 }
 
 fn layout(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("conformance");
+    metadata.hints.spacing = Some(12.0);
+    metadata.hints.indent = Some(0.0);
     Container {
         id: Id::fresh(),
         label: String::new(),
-        metadata: ControlMetadata::new("conformance"),
-        spacing: 12,
-        indent: 0,
+        metadata,
         header: None,
         policy: Box::new(ColumnPolicy),
         children,

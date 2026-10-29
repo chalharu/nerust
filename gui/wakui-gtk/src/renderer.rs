@@ -651,6 +651,16 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             1
         };
         let layout = container;
+        let spacing = container
+            .metadata
+            .hints
+            .spacing
+            .unwrap_or(wakui::hints::DEFAULT_SPACING);
+        let indent = container
+            .metadata
+            .hints
+            .indent
+            .unwrap_or(wakui::hints::DEFAULT_INDENT);
         let node = self.node(NodeId::Layout(layout.id, kind), || {
             if kind == 3 {
                 return NativeNode {
@@ -689,13 +699,13 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         }
         if kind == 3 {
             let grid = node.widget.clone().downcast::<gtk::Grid>().unwrap();
-            grid.set_row_spacing(layout.spacing.into());
+            grid.set_row_spacing(spacing as u32);
             self.frames.push(Frame::Table(grid, Vec::new()));
         } else {
             let body = node.body.unwrap();
             body.set_homogeneous(kind == 0 && matches!(self.frames.last(), Some(Frame::Table(..))));
-            body.set_spacing(layout.spacing.into());
-            body.set_margin_start(layout.indent.into());
+            body.set_spacing(spacing as i32);
+            body.set_margin_start(indent as i32);
             let label = node.label.unwrap();
             // Master parity: section titles render bold and larger, with
             // breathing room above and a tight gap below the rows.
@@ -861,11 +871,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 body.remove(&current);
             }
             self.frames.push(Frame::Box(body.clone(), Vec::new()));
-            let ctx = wakui::leaf::LeafCtx {
-                id: control.id,
-                hints: control.metadata.hints,
-            };
-            control.leaf.walk(&ctx, self);
+            wakui::control::walk_control(control, self);
             if let Some(Frame::Box(parent, children)) = self.frames.pop() {
                 reconcile_box(&parent, &children);
             }
@@ -899,11 +905,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         native.update(control);
         // Unknown container-like leaves degrade to siblings: surface their
         // children explicitly. Base leaves no-op here.
-        let ctx = wakui::leaf::LeafCtx {
-            id: control.id,
-            hints: control.metadata.hints,
-        };
-        control.leaf.walk(&ctx, self);
+        wakui::control::walk_control(control, self);
         // Footer actions live in the dialog action area (right-aligned
         // with dialog margins), never in the content row. The input
         // event flow is unchanged; only placement differs from content.

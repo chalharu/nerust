@@ -171,16 +171,7 @@ impl HistoryModel {
             Node::Control(table),
         ];
         children.extend(empty);
-        let body = Container {
-            id: ids.id(HistoryKey::Body),
-            label: String::new(),
-            metadata: ControlMetadata::new(""),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(ColumnPolicy),
-            children,
-        };
+        let body = container(ids, HistoryKey::Body, children);
         let screen = ControlScreen {
             title: c.title.clone(),
             pages: vec![Page {
@@ -190,16 +181,7 @@ impl HistoryModel {
                 select: simple_note(ids, HistoryKey::Select, c.title.clone(), c.title.clone()),
                 body,
             }],
-            footer: Container {
-                id: ids.id(HistoryKey::Footer),
-                label: String::new(),
-                metadata: ControlMetadata::new(""),
-                spacing: 12,
-                indent: 0,
-                header: None,
-                policy: Box::new(ColumnPolicy),
-                children: vec![Node::Control(close.clone())],
-            },
+            footer: container(ids, HistoryKey::Footer, vec![Node::Control(close.clone())]),
             message: None,
             capture: Capture {
                 target: None,
@@ -240,6 +222,20 @@ pub enum HistoryKey {
     Empty,
     Row(HistoryRowView, usize),
     Cell(HistoryRowView, usize, usize),
+}
+
+fn container(ids: &mut IdRegistry<HistoryKey>, key: HistoryKey, children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("");
+    metadata.hints.spacing = Some(12.0);
+    metadata.hints.indent = Some(0.0);
+    Container {
+        id: ids.id(key),
+        label: String::new(),
+        metadata,
+        header: None,
+        policy: Box::new(ColumnPolicy),
+        children,
+    }
 }
 
 fn simple<L: wakui::leaf::ControlLeaf>(

@@ -107,44 +107,35 @@ fn native_layout(element: &mut El<'static>) -> (iced_tiny_skia::Renderer, Tree, 
 
 // Domain-free scenes: no history/settings presenter or content-specific widths.
 fn table_layout(children: Vec<wakui::control::Node>) -> Container {
-    plain_layout(children, 8, 0, Box::new(ColumnPolicy))
+    plain_layout(children, 8.0, 0.0, Box::new(ColumnPolicy))
 }
 
-fn table_grid(children: Vec<wakui::control::Node>, spacing: u16, indent: u16) -> Container {
+fn table_grid(children: Vec<wakui::control::Node>, spacing: f64, indent: f64) -> Container {
     plain_layout(children, spacing, indent, Box::new(TablePolicy))
 }
 
 fn plain_layout(
     children: Vec<wakui::control::Node>,
-    spacing: u16,
-    indent: u16,
+    spacing: f64,
+    indent: f64,
     policy: Box<dyn wakui::control::LayoutPolicy>,
 ) -> Container {
     let mut ids = wakui::control::IdRegistry::default();
+    let mut metadata = ControlMetadata::new("layout");
+    metadata.hints.spacing = Some(spacing);
+    metadata.hints.indent = Some(indent);
     Container {
         id: ids.id(()),
         label: String::new(),
-        metadata: ControlMetadata::new("layout"),
-        spacing,
-        indent,
+        metadata,
         header: None,
         policy,
         children,
     }
 }
 
-fn row_layout(children: Vec<wakui::control::Node>, spacing: u16, indent: u16) -> Container {
-    let mut ids = wakui::control::IdRegistry::default();
-    Container {
-        id: ids.id(()),
-        label: String::new(),
-        metadata: ControlMetadata::new("layout"),
-        spacing,
-        indent,
-        header: None,
-        policy: Box::new(RowPolicy),
-        children,
-    }
+fn row_layout(children: Vec<wakui::control::Node>, spacing: f64, indent: f64) -> Container {
+    plain_layout(children, spacing, indent, Box::new(RowPolicy))
 }
 
 fn table_note(value: &str, heading: bool) -> Control {
@@ -169,8 +160,8 @@ fn table_row(values: &[&str], heading: bool) -> wakui::control::Node {
             .iter()
             .map(|value| Node::Control(table_note(value, heading)))
             .collect(),
-        8,
-        0,
+        8.0,
+        0.0,
     )))
 }
 
@@ -222,12 +213,12 @@ fn generic_table_shares_real_column_offsets_and_wraps_variable_content() {
             table_row(&["1", "Warning", "X", &long], false),
             table_row(&["ragged", "row"], false),
         ],
-        8,
-        0,
+        8.0,
+        0.0,
     );
     table.label = "Table title".into();
     table.header = Some(table_note("Table description", false));
-    table.indent = 11;
+    table.metadata.hints.indent = Some(11.0);
     let screen = table_screen(table_layout(vec![Node::Container(Box::new(table))]));
     for width in [960.0, 640.0] {
         let mut element = build_screen(&screen);
@@ -270,40 +261,44 @@ fn generic_table_preserves_nested_layouts_headers_visibility_and_disabled_input(
     let mut action = table_note("Action", false);
     action.label = "Action".into();
     action.leaf = Box::new(ActionLeaf);
-    let mut inner = table_grid(vec![table_row(&["nested", "table", "cells"], false)], 8, 0);
+    let mut inner = table_grid(
+        vec![table_row(&["nested", "table", "cells"], false)],
+        8.0,
+        0.0,
+    );
     inner.header = Some(table_note("Nested header", true));
-    let mut hidden = table_grid(vec![table_row(&["hidden"; 4], false)], 8, 0);
+    let mut hidden = table_grid(vec![table_row(&["hidden"; 4], false)], 8.0, 0.0);
     hidden.metadata.visible = false;
     let mut disabled_row = row_layout(
         vec![
             Node::Control(action.clone()),
             Node::Container(Box::new(plain_layout(
                 vec![Node::Container(Box::new(inner))],
-                8,
-                0,
+                8.0,
+                0.0,
                 Box::new(ColumnPolicy),
             ))),
             Node::Control(table_note("third", false)),
             Node::Control(table_note("fourth", false)),
         ],
-        13,
-        9,
+        13.0,
+        9.0,
     );
     disabled_row.metadata.enabled = false;
-    disabled_row.indent = 9;
-    disabled_row.spacing = 13;
+    disabled_row.metadata.hints.indent = Some(9.0);
+    disabled_row.metadata.hints.spacing = Some(13.0);
     let mut table = table_grid(
         vec![
             table_row(&["one", "two", "three", "four"], true),
             Node::Container(Box::new(disabled_row)),
             Node::Container(Box::new(hidden)),
         ],
-        17,
-        5,
+        17.0,
+        5.0,
     );
     table.header = Some(table_note("Visible table header", true));
-    table.spacing = 17;
-    table.indent = 5;
+    table.metadata.hints.spacing = Some(17.0);
+    table.metadata.hints.indent = Some(5.0);
     let mut element = build_screen(&table_screen(table_layout(vec![Node::Container(
         Box::new(table.clone()),
     )])));

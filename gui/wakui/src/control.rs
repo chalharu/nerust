@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::hints::LayoutHints;
 use crate::key::Key;
-use crate::leaf::ControlLeaf;
+use crate::leaf::{ControlLeaf, LeafCtx};
 
 /// Process-unique opaque token. Neither position nor a hash of a domain key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -272,11 +272,6 @@ pub struct Container {
     pub id: LayoutId,
     pub label: String,
     pub metadata: ControlMetadata,
-    /// Gap between children, in logical pixels. Container padding owned by
-    /// the framework (MAUI `Spacing` analog); arrangement stays native.
-    pub spacing: u16,
-    /// Leading inset, in logical pixels (MAUI `Padding` analog).
-    pub indent: u16,
     pub header: Option<Control>,
     pub policy: Box<dyn LayoutPolicy>,
     pub children: Vec<Node>,
@@ -288,8 +283,6 @@ impl Clone for Container {
             id: self.id,
             label: self.label.clone(),
             metadata: self.metadata.clone(),
-            spacing: self.spacing,
-            indent: self.indent,
             header: self.header.clone(),
             policy: self.policy.clone_box(),
             children: self.children.clone(),
@@ -302,8 +295,6 @@ impl PartialEq for Container {
         self.id == other.id
             && self.label == other.label
             && self.metadata == other.metadata
-            && self.spacing == other.spacing
-            && self.indent == other.indent
             && self.header == other.header
             && self.policy.equals(other.policy.as_ref())
             && self.children == other.children
@@ -406,6 +397,18 @@ fn find(container: &Container, id: ControlId) -> Option<&Control> {
 /// never on view-definition types or debug names.
 pub fn policy<T: 'static>(container: &Container) -> Option<&T> {
     container.policy.as_any().downcast_ref::<T>()
+}
+
+/// Explicit child exposure for container-like leaves. Flavors call this
+/// once after rendering the host control; base leaves no-op. Each control
+/// is visited exactly once: the framework never walks implicitly, so this
+/// helper is the single place where nested controls surface.
+pub fn walk_control(control: &Control, visitor: &mut dyn ControlVisitor) {
+    let ctx = LeafCtx {
+        id: control.id,
+        hints: control.metadata.hints,
+    };
+    control.leaf.walk(&ctx, visitor);
 }
 
 pub trait ControlVisitor {

@@ -163,12 +163,13 @@ fn control(label: &str, display: ControlDisplay, kind: impl wakui::leaf::Control
 }
 
 fn layout(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("layout");
+    metadata.hints.spacing = Some(0.0);
+    metadata.hints.indent = Some(0.0);
     Container {
         id: Id::fresh(),
         label: String::new(),
-        metadata: ControlMetadata::new("layout"),
-        spacing: 0,
-        indent: 0,
+        metadata,
         header: None,
         policy: Box::new(ColumnPolicy),
         children,
@@ -326,6 +327,20 @@ fn settings_screen() -> ControlScreen {
 }
 
 /// Canned history screen: filter choice, notes, clear/close actions.
+fn history_body(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("history");
+    metadata.hints.spacing = Some(0.0);
+    metadata.hints.indent = Some(0.0);
+    Container {
+        id: Id::fresh(),
+        label: String::new(),
+        metadata,
+        header: None,
+        policy: Box::new(ColumnPolicy),
+        children,
+    }
+}
+
 fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     let filter_control = control(
         "Filter",
@@ -367,16 +382,7 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
             label: labels::HISTORY_TITLE.to_string(),
             selected: true,
             select: control(labels::HISTORY_TITLE, ControlDisplay::Standard, ActionLeaf),
-            body: Container {
-                id: Id::fresh(),
-                label: String::new(),
-                metadata: ControlMetadata::new("history"),
-                spacing: 0,
-                indent: 0,
-                header: None,
-                policy: Box::new(ColumnPolicy),
-                children,
-            },
+            body: history_body(children),
         }],
         footer: layout(vec![Node::Control(clear), Node::Control(close)]),
         message: None,
