@@ -5,7 +5,7 @@
 //! a canned aux snapshot, and recording flags. Native-flow tests drive
 //! `HostState` against it without view definitions, shell, or settings.
 
-pub(crate) use crate::aux_windows::registry::test_double::StubAux;
+pub(crate) use crate::chrome::aux_windows::registry::test_double::StubAux;
 
 use std::{
     cell::RefCell,
