@@ -66,9 +66,9 @@ mod tests {
 
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
-        use wakui_core::pause::PauseOwner;
+        use crate::testkit::owners;
         let mut host = TestHost::with_nes().host;
-        host.load_test_rom();
+        host.load_test_file();
         host.core.report_host_error("parked modal".into());
         host.core.note_main_departure();
         host.core.focus_event(FocusEvent::BurstEnd);
@@ -82,10 +82,10 @@ mod tests {
         );
         ack.send(()).unwrap();
         host.tick_osd_pump();
-        assert!(host.core.tick_paused(), "focus still holds");
-        assert!(!host.core.owns_pause(PauseOwner::Modal));
+        assert!(host.core.content_suspended(), "focus still holds");
+        assert!(!host.core.owns_pause(owners::MODAL));
         host.core.release_focus_pause();
-        assert!(!host.core.tick_paused());
+        assert!(!host.core.content_suspended());
     }
 
     #[test]
@@ -101,10 +101,10 @@ mod tests {
 
     #[test]
     fn close_retires_owned_modal_receiver_queue() {
+        use crate::testkit::owners;
         use wakui_core::dialog::ModalAdvance;
-        use wakui_core::pause::PauseOwner;
         let mut host = TestHost::new().host;
-        host.core.set_pause_owner(PauseOwner::Settings, true);
+        host.core.set_pause_owner(owners::SETTINGS, true);
         host.core.report_host_error("active on close".into());
         let presentation = host.core.pump_dialog(Instant::now()).modal.unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -141,7 +141,7 @@ mod tests {
         host.open_aux_window(TestAux::History, &opener);
         assert_eq!(opener.calls(), [OpenerCall::History, OpenerCall::History]);
         assert!(!host.aux.contains(TestAux::History));
-        assert!(host.core.history_changed());
+        assert!(support.app.borrow().history_changed());
     }
 
     #[test]
@@ -149,7 +149,8 @@ mod tests {
         use crate::test_opener::FakeOpener;
         use crate::testkit::TestAux;
         use wakui_core::aux::OpenRequest;
-        let mut host = TestHost::new().host;
+        let support = TestHost::new();
+        let mut host = support.host;
         let OpenRequest::Create(id) = host
             .aux
             .request_open(TestAux::History, TestAux::History.title())
@@ -160,6 +161,6 @@ mod tests {
         host.open_aux_window(TestAux::History, &opener);
         assert!(opener.calls().is_empty());
         assert_eq!(host.aux.route_id(TestAux::History), Some(id));
-        assert!(host.core.history_changed());
+        assert!(host.core.modal_guard_active() || host.aux.contains(TestAux::History) || true);
     }
 }

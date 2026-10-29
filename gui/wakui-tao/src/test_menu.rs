@@ -30,12 +30,9 @@ impl MenuRecorderHandle {
 }
 
 impl MenuSink for MenuRecorderHandle {
-    fn update(&mut self, loaded: bool, paused: bool, settings_open: bool, _menu: &Menubar) {
-        crate::aux::bridge::lock_recovered(&self.inner.updates).push(MenuSyncSnapshot {
-            loaded,
-            paused,
-            settings_open,
-        });
+    fn update(&mut self, loaded: bool, paused: bool, _menu: &Menubar) {
+        crate::aux::bridge::lock_recovered(&self.inner.updates)
+            .push(MenuSyncSnapshot { loaded, paused });
     }
 
     fn init_for_window(&self, _window: &tao::window::Window) {}
@@ -47,7 +44,6 @@ impl MenuSink for MenuRecorderHandle {
 pub(crate) struct MenuSyncSnapshot {
     pub(crate) loaded: bool,
     pub(crate) paused: bool,
-    pub(crate) settings_open: bool,
 }
 
 #[cfg(test)]

@@ -26,10 +26,11 @@ use wakui_core::{
     loop_driver::WakeNeed,
     mailbox::{MailboxDomain, WindowMailbox},
     menu::{
-        CommandModel, DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar, Submenu,
+        CommandModel, FileDialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar,
+        Submenu,
     },
     pause::PauseOwner,
-    session::{CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome},
+    session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome},
     viewport::{ViewportImage, ViewportPresent, ViewportRegion},
     window::{Window, WindowChromeSync, WindowEffects},
 };
@@ -78,6 +79,31 @@ impl TestAux {
     pub(crate) fn resume_on_arrival(self) -> bool {
         matches!(self, TestAux::Debug | TestAux::Ppu)
     }
+}
+
+/// Flavor-local suspension owners. The framework holds an opaque bitset;
+/// this table gives each hold its meaning in tests only.
+pub(crate) mod owners {
+    use wakui_core::pause::PauseOwner;
+
+    pub(crate) const FOCUS: PauseOwner = PauseOwner::new(1);
+    pub(crate) const MODAL: PauseOwner = PauseOwner::new(2);
+    pub(crate) const SETTINGS: PauseOwner = PauseOwner::new(3);
+}
+
+/// Flavor-local menu skeleton. The framework tracks opaque ids only;
+/// this table mirrors a view-side skeleton in tests only.
+pub(crate) mod menu_id {
+    use wakui_core::menu::MenuId;
+
+    pub(crate) const FILE: MenuId = MenuId::from_raw(0);
+    pub(crate) const EMULATION: MenuId = MenuId::from_raw(1);
+    pub(crate) const STATES: MenuId = MenuId::from_raw(2);
+    pub(crate) const SELECT_SLOT: MenuId = MenuId::from_raw(3);
+    pub(crate) const SAVE_SLOT: MenuId = MenuId::from_raw(4);
+    pub(crate) const LOAD_SLOT: MenuId = MenuId::from_raw(5);
+    pub(crate) const DELETE_SLOT: MenuId = MenuId::from_raw(6);
+    pub(crate) const HELP: MenuId = MenuId::from_raw(7);
 }
 
 /// Flavor-local simulation vocabulary for headless tests.
@@ -691,7 +717,7 @@ pub(crate) fn canned_menubar(
         commands: CommandModel { definitions },
         menus: vec![
             Submenu {
-                id: MenuId::File,
+                id: menu_id::FILE,
                 label: t("File", "ファイル"),
                 enabled: true,
                 children: vec![
@@ -701,7 +727,7 @@ pub(crate) fn canned_menubar(
                 ],
             },
             Submenu {
-                id: MenuId::Emulation,
+                id: menu_id::EMULATION,
                 label: t("Emulation", "エミュレーション"),
                 enabled: true,
                 children: vec![
@@ -710,7 +736,7 @@ pub(crate) fn canned_menubar(
                 ],
             },
             Submenu {
-                id: MenuId::States,
+                id: menu_id::STATES,
                 label: t("States", "ステート"),
                 enabled: true,
                 children: vec![
@@ -726,25 +752,25 @@ pub(crate) fn canned_menubar(
                         "アクティブスロットを読込",
                     ),
                     slot_submenu(
-                        MenuId::SelectSlot,
+                        menu_id::SELECT_SLOT,
                         "Select slot",
                         "スロット選択",
                         TestSession::SelectActiveSlot,
                     ),
                     slot_submenu(
-                        MenuId::SaveSlot,
+                        menu_id::SAVE_SLOT,
                         "Save slot",
                         "スロットに保存",
                         TestSession::SaveSlot,
                     ),
                     slot_submenu(
-                        MenuId::LoadSlot,
+                        menu_id::LOAD_SLOT,
                         "Load slot",
                         "スロットを読込",
                         TestSession::LoadSlot,
                     ),
                     slot_submenu(
-                        MenuId::DeleteSlot,
+                        menu_id::DELETE_SLOT,
                         "Delete slot",
                         "スロットを削除",
                         TestSession::DeleteSlot,
@@ -752,7 +778,7 @@ pub(crate) fn canned_menubar(
                 ],
             },
             Submenu {
-                id: MenuId::Help,
+                id: menu_id::HELP,
                 label: t("Help", "ヘルプ"),
                 enabled: true,
                 children: vec![item(M::About, "About", "について")],
@@ -827,7 +853,7 @@ impl FakeApp {
             events: Vec::new(),
             dispatched: Vec::new(),
             main: {
-                let mut window = Window::main();
+                let mut window = Window::main("test");
                 window.menu = Some(menu.clone());
                 window
             },
@@ -923,24 +949,18 @@ impl FakeApp {
 }
 
 impl EventHandler<TestAux> for FakeApp {
-    fn handle_event(
-        &mut self,
-        event: EventCommand,
-        settings_open: bool,
-    ) -> Result<EventOutcome<TestAux>, SessionError> {
+    fn handle_event(&mut self, event: EventCommand) -> Result<EventOutcome<TestAux>, SessionError> {
         self.events.push(event);
-        // The host pause guard also applies without an aux reservation:
-        // direct owner manipulation (tests) blocks the same commands.
+        // The modal guard is fake-owned state: direct owner manipulation
+        // (tests) blocks the same commands as a real settings session.
         let quit = self.commands.quit();
-        let guarded = settings_open || self.owners.contains(&PauseOwner::Settings);
+        let guarded = self.modal_guard_active();
         let blocked = match event {
-            // Only the opaque Quit activation passes the host settings guard.
+            // Only the opaque Quit activation passes the modal guard.
             EventCommand::Menu(activation) => activation != quit,
-            EventCommand::Session(
-                SessionEvent::Command(_)
-                | SessionEvent::Keyboard { .. }
-                | SessionEvent::Shortcut(_),
-            ) => true,
+            // ClearInput resets held input even under the guard, like the
+            // view-side handler: only commands and keys are gated.
+            EventCommand::Session(SessionEvent::Command(_) | SessionEvent::Keyboard { .. }) => true,
             _ => false,
         };
         if guarded && blocked {
@@ -957,7 +977,7 @@ impl EventHandler<TestAux> for FakeApp {
                 };
                 match command {
                     TestMenu::Open => {
-                        outcome.effect = Some(CommandEffect::OpenRom);
+                        outcome.effect = Some(CommandEffect::OpenFile);
                     }
                     TestMenu::Close => self.unload(),
                     TestMenu::Settings => {
@@ -980,6 +1000,15 @@ impl EventHandler<TestAux> for FakeApp {
                     }
                 }
             }
+            EventCommand::Session(SessionEvent::Keyboard { key, pressed }) => {
+                // Test-double shortcut: F4 opens the debugger, like the
+                // default view-side binding. Production flavors never
+                // interpret keys.
+                if pressed && key == wakui_core::Key::F4 {
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                }
+                outcome.session = self.dispatch(SessionEvent::Keyboard { key, pressed })?;
+            }
             EventCommand::Session(event) => {
                 outcome.session = self.dispatch(event)?;
             }
@@ -996,18 +1025,12 @@ impl EventHandler<TestAux> for FakeApp {
                 outcome.effect = Some(CommandEffect::LiveTick);
             }
         }
-        if let Some(effect) = outcome.session.effect {
-            outcome.effect = Some(match effect {
-                SessionEffect::NativeOpenDebugger => CommandEffect::OpenAux(TestAux::Debug),
-                SessionEffect::ToggleFullscreen => CommandEffect::ToggleFullscreen,
-            });
-        }
         Ok(outcome)
     }
 }
 
 impl FrontendApp<TestAux> for FakeApp {
-    fn load_rom(&mut self, path: &Path) -> Result<(), String> {
+    fn load_file(&mut self, path: &Path) -> Result<(), String> {
         self.load_paths.push(path.to_path_buf());
         if self.failing_load {
             return Err("fake load failed".to_string());
@@ -1051,76 +1074,26 @@ impl FrontendApp<TestAux> for FakeApp {
         self.error = Some(detail);
     }
 
-    fn resume_session(&mut self) {
+    fn resume_content(&mut self) {
         self.paused = false;
     }
 
     fn swap_frame_buffer(&mut self) {}
 
-    fn tick_loaded(&self) -> bool {
+    fn content_loaded(&self) -> bool {
         self.loaded
     }
 
-    fn tick_paused(&self) -> bool {
+    fn content_suspended(&self) -> bool {
         self.paused || self.focus_paused
     }
 
-    fn active_slot_id(&self) -> Option<u64> {
-        self.active_slot
-    }
-
-    fn clear_keys(&mut self) {}
+    fn clear_input(&mut self) {}
 
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
         self.window_size = (width as f32, height as f32);
         Ok(())
     }
-
-    fn pause_session(&mut self) {
-        if self.loaded {
-            self.paused = true;
-        }
-    }
-
-    fn resume_session_command(&mut self) {
-        if self.loaded {
-            self.paused = false;
-        }
-    }
-
-    fn toggle_pause_session(&mut self) {
-        if self.loaded {
-            self.paused = !self.paused;
-        }
-    }
-
-    fn reset_session(&mut self) {}
-
-    fn save_active_slot(&mut self) -> bool {
-        false
-    }
-
-    fn load_active_slot(&mut self) -> bool {
-        false
-    }
-
-    fn load_slot(&mut self, _id: u64) -> bool {
-        false
-    }
-
-    fn save_slot(&mut self, _id: u64) {}
-
-    fn delete_slot(&mut self, _id: u64) {}
-
-    fn select_slot(&mut self, id: u64) {
-        self.active_slot = Some(id);
-    }
-
-    fn create_slot(&mut self) {}
-
-    fn select_next_slot(&mut self) {}
-
-    fn select_previous_slot(&mut self) {}
 
     fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
         if active {
@@ -1141,8 +1114,7 @@ impl FrontendApp<TestAux> for FakeApp {
     fn reconcile_pause(&mut self) {}
 
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
-        use wakui_core::session::ShortcutGesture;
-        let mut outcome = SessionOutcome::default();
+        let outcome = SessionOutcome::default();
         match event {
             SessionEvent::Command(activation) => {
                 let Some(TestMenu::Session(session)) = self.commands.resolve(activation) else {
@@ -1151,48 +1123,20 @@ impl FrontendApp<TestAux> for FakeApp {
                 return self.dispatch_session(session);
             }
             SessionEvent::Keyboard { .. } => {}
-            SessionEvent::Shortcut(gesture) => match gesture {
-                ShortcutGesture::OpenDebugger => {
-                    outcome.effect = Some(SessionEffect::NativeOpenDebugger);
-                }
-                ShortcutGesture::ToggleFullscreen => {
-                    outcome.effect = Some(SessionEffect::ToggleFullscreen);
-                }
-                ShortcutGesture::TogglePause => {
-                    return self.dispatch_session(TestSession::TogglePause);
-                }
-                ShortcutGesture::SaveActiveSlot => {
-                    return self.dispatch_session(TestSession::SaveActiveSlotOrNew);
-                }
-                ShortcutGesture::LoadActiveSlot => {
-                    return self.dispatch_session(TestSession::LoadActiveSlot);
-                }
-                ShortcutGesture::SelectNextSlot => {
-                    return self.dispatch_session(TestSession::SelectNextSlot);
-                }
-                ShortcutGesture::SelectPreviousSlot => {
-                    return self.dispatch_session(TestSession::SelectPreviousSlot);
-                }
-                ShortcutGesture::Reset => {
-                    return self.dispatch_session(TestSession::Reset);
-                }
-            },
             SessionEvent::ClearInput => {}
-            SessionEvent::SettingsOpened | SessionEvent::SettingsOpenFailed => {}
-            SessionEvent::SettingsClosed => {}
         }
         Ok(outcome)
     }
 
-    fn dialog_titles(&self) -> DialogTitles {
-        DialogTitles {
-            open: "Open ROM".to_string(),
+    fn dialog_titles(&self) -> FileDialogTitles {
+        FileDialogTitles {
+            open: "Open file".to_string(),
             error: "Error".to_string(),
-            rom_load_failed: "ROM load failed".to_string(),
+            load_failed: "File load failed".to_string(),
         }
     }
 
-    fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
+    fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
         if self.loaded {
             vec![("ROM files".to_string(), vec!["nes".to_string()])]
         } else {
@@ -1200,11 +1144,9 @@ impl FrontendApp<TestAux> for FakeApp {
         }
     }
 
-    fn menubar_update(
-        &mut self,
-        settings_open: bool,
-        _capabilities: MenuCapabilities,
-    ) -> Option<Menubar> {
+    fn menubar_update(&mut self, _capabilities: MenuCapabilities) -> Option<Menubar> {
+        // The modal guard is fake-owned state, like the real settings hold.
+        let settings_open = self.modal_guard_active();
         self.menu_polls += 1;
         let mut live = canned_menubar(
             &self.commands,
@@ -1310,10 +1252,6 @@ impl FrontendApp<TestAux> for FakeApp {
         self.remembered_size
     }
 
-    fn liveness_inputs(&self) -> (bool, bool) {
-        (self.loaded, self.paused)
-    }
-
     fn focus_event(&mut self, _event: FocusEvent) -> Option<FocusEffect> {
         None
     }
@@ -1350,7 +1288,7 @@ impl FrontendApp<TestAux> for FakeApp {
                 self.widget_kinds.insert(id, kind);
                 if kind == TestAux::Settings {
                     // Opening settings takes the settings pause, like the app.
-                    self.owners.insert(PauseOwner::Settings);
+                    self.owners.insert(owners::SETTINGS);
                 }
                 Ok(Some(OpenRequest::Create(id)))
             }
@@ -1667,7 +1605,7 @@ impl FrontendApp<TestAux> for FakeApp {
         } else {
             if self.widget_kinds.get(&id) == Some(&TestAux::Settings) {
                 // Closing the settings dialog releases the settings pause.
-                self.owners.remove(&PauseOwner::Settings);
+                self.owners.remove(&owners::SETTINGS);
             }
             self.closed_widgets.push(id);
             self.prepared.remove(&id);
@@ -1682,11 +1620,7 @@ impl FrontendApp<TestAux> for FakeApp {
         })
     }
 
-    fn settings_closed(&mut self) -> bool {
-        true
-    }
-
-    fn settings_open(&self) -> bool {
+    fn modal_guard_active(&self) -> bool {
         self.widget_kinds
             .values()
             .any(|kind| *kind == TestAux::Settings)
@@ -1701,10 +1635,6 @@ impl FrontendApp<TestAux> for FakeApp {
                 mailbox.invalidate();
             }
         }
-    }
-
-    fn history_changed(&self) -> bool {
-        true
     }
 
     fn polled_widget(&self) -> Option<AuxId> {
@@ -1793,7 +1723,7 @@ impl FrontendApp<TestAux> for FakeApp {
             match receiver.try_recv() {
                 Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.modal = None;
-                    self.owners.remove(&PauseOwner::Modal);
+                    self.owners.remove(&owners::MODAL);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
@@ -1805,7 +1735,7 @@ impl FrontendApp<TestAux> for FakeApp {
             self.modal = Some((ModalToken(self.modal_seq), None));
             // GTK presents without attaching a receiver (ACK arrives via the
             // native response callback), so the modal pause starts here.
-            self.owners.insert(PauseOwner::Modal);
+            self.owners.insert(owners::MODAL);
             return DialogTurn {
                 modal: Some(ModalPresentation {
                     token: ModalToken(self.modal_seq),
@@ -1829,7 +1759,7 @@ impl FrontendApp<TestAux> for FakeApp {
             && *active == token
         {
             *slot = Some(receiver);
-            self.owners.insert(PauseOwner::Modal);
+            self.owners.insert(owners::MODAL);
             return true;
         }
         false
@@ -1840,12 +1770,12 @@ impl FrontendApp<TestAux> for FakeApp {
             && *active == token
         {
             self.modal = None;
-            self.owners.remove(&PauseOwner::Modal);
+            self.owners.remove(&owners::MODAL);
             // Chain the next queued error before releasing, like the host.
             if let Some(detail) = self.error_queue.pop_front() {
                 self.modal_seq += 1;
                 self.modal = Some((ModalToken(self.modal_seq), None));
-                self.owners.insert(PauseOwner::Modal);
+                self.owners.insert(owners::MODAL);
                 return ModalAdvance::Present(ModalPresentation {
                     token: ModalToken(self.modal_seq),
                     detail,

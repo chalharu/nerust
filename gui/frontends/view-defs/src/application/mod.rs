@@ -12,11 +12,12 @@ mod window;
 pub use crate::menu::MenuSig;
 pub use auxiliary::WidgetWindowClose;
 use debug::DebugRuntime;
-pub use wakui::menu::DialogTitles;
+pub use wakui::menu::FileDialogTitles;
 pub use window::MainState;
 
 use std::{path::Path, time::Instant};
 
+use crate::session::pause_owners;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::{
     load::{RomLoader, RomLoaderError},
@@ -89,7 +90,7 @@ impl ApplicationHost {
             osd: Default::default(),
             chrome: Default::default(),
             menubar_chrome: Default::default(),
-            main_window: Window::main(),
+            main_window: Window::main("nerust"),
             menu_capabilities: None,
             fullscreen: Default::default(),
             viewport: crate::viewport::RenderDriver::new(),
@@ -162,7 +163,7 @@ impl ApplicationHost {
     }
 
     /// Pre-localized dialog titles for native file/error dialogs.
-    pub fn dialog_titles(&self) -> DialogTitles {
+    pub fn dialog_titles(&self) -> FileDialogTitles {
         crate::menu::dialog_titles(self.settings_snapshot().shared.general.language)
     }
 
@@ -259,6 +260,27 @@ impl ApplicationHost {
     pub fn owns_pause(&self, owner: PauseOwner) -> bool {
         self.pause_policy.owns(owner)
     }
+
+    /// Whether a modal dialog currently gates chrome and commands.
+    /// Flavors never query kinds; they forward events and the view side
+    /// enforces this guard in `handle_event` and menu builds.
+    pub fn modal_guard_active(&self) -> bool {
+        self.owns_pause(pause_owners::SETTINGS)
+    }
+
+    /// View-side driver entry for the [`wakui::event::EventHandler`] impl:
+    /// opaque inputs in, effects and settings transitions out.
+    pub(crate) fn dispatch_driver_event(
+        &mut self,
+        event: SessionEvent,
+    ) -> Result<crate::session::DriverOutcome, wakui::session::SessionError> {
+        crate::session::dispatch_driver(
+            &mut self.session,
+            &mut self.pause_policy,
+            &self.menu_commands,
+            event,
+        )
+    }
     pub fn pause_held(&self) -> bool {
         self.pause_policy.paused()
     }
@@ -275,7 +297,7 @@ impl ApplicationHost {
             .map_err(|error| wakui::session::SessionError(error.to_string()))
     }
     pub fn release_focus_pause(&mut self) {
-        self.set_pause_owner(PauseOwner::Focus, false);
+        self.set_pause_owner(pause_owners::FOCUS, false);
     }
     pub fn resume_session(&mut self) {
         use nerust_gui_shell::session::access::PauseControl;
@@ -288,7 +310,7 @@ impl ApplicationHost {
         match effect {
             Some(FocusEffect::Resume) => self.release_focus_pause(),
             Some(FocusEffect::Pause) if self.tick().loaded => {
-                self.set_pause_owner(PauseOwner::Focus, true);
+                self.set_pause_owner(pause_owners::FOCUS, true);
                 self.focus.note_protocol_pause();
             }
             _ => {}
@@ -349,8 +371,8 @@ impl ApplicationHost {
         }
         let report = notifications.pump(&mut self.session, ctx, now);
         let pending = notifications.modal_pending();
-        if self.owns_pause(PauseOwner::Modal) != pending {
-            self.set_pause_owner(PauseOwner::Modal, pending);
+        if self.owns_pause(pause_owners::MODAL) != pending {
+            self.set_pause_owner(pause_owners::MODAL, pending);
         }
         report
     }
@@ -381,7 +403,7 @@ impl ApplicationHost {
 
     fn commit_modal_advance(&mut self, advance: &ModalAdvance) {
         if matches!(advance, ModalAdvance::Drained) {
-            self.set_pause_owner(PauseOwner::Modal, false);
+            self.set_pause_owner(pause_owners::MODAL, false);
             self.note_redraw();
         }
     }
@@ -578,10 +600,10 @@ impl ApplicationHost {
     pub fn menubar_update(
         &mut self,
         ctx: &FrameCtx,
-        settings_open: bool,
         capabilities: MenuCapabilities,
     ) -> Option<MenubarUpdate> {
-        let settings_open = settings_open || self.owns_pause(PauseOwner::Settings);
+        // The modal guard is view-side state; flavors never pass it in.
+        let settings_open = self.owns_pause(pause_owners::SETTINGS);
         let signature =
             match self
                 .menubar_chrome
@@ -603,6 +625,30 @@ impl ApplicationHost {
         Some(MenubarUpdate { signature, menubar })
     }
 
+    /// View-side settings protocol for native open/close paths.
+    /// Returns whether the Settings hold changed.
+    pub fn note_settings_opened(&mut self) -> bool {
+        crate::session::SessionDriver::new(
+            &mut self.session,
+            &mut self.pause_policy,
+            &self.menu_commands,
+        )
+        .note_settings_opened()
+        .settings_changed
+    }
+
+    /// View-side settings protocol for native close and failed-open paths.
+    /// Returns whether the Settings hold changed.
+    pub fn note_settings_dismissed(&mut self) -> bool {
+        crate::session::SessionDriver::new(
+            &mut self.session,
+            &mut self.pause_policy,
+            &self.menu_commands,
+        )
+        .note_settings_dismissed()
+        .settings_changed
+    }
+
     pub fn main_window(&self) -> &Window {
         &self.main_window
     }
@@ -621,11 +667,6 @@ impl ApplicationHost {
     pub fn refresh_window_title(&mut self) -> Option<String> {
         let tick = self.session.tick_metrics();
         self.title_update(&tick)
-    }
-    /// Turn-liveness inputs without shell vocabulary: `(loaded, paused)`.
-    pub fn liveness_inputs(&self) -> (bool, bool) {
-        let tick = self.session.tick_metrics();
-        (tick.loaded, tick.paused)
     }
     pub fn title_same(&self, title: &str) -> bool {
         self.chrome.title_same(title)

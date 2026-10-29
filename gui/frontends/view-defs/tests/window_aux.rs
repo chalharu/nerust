@@ -60,7 +60,7 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         (Window::auxiliary(aux_id(index), kind.title()), "pending")
     };
     for (window, group) in [
-        (Window::main(), "main"),
+        (Window::main("test"), "main"),
         aux(AuxKind::Debug),
         aux(AuxKind::Ppu),
         aux(AuxKind::History),
