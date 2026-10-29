@@ -1,202 +1,158 @@
-//! Canonical native command vocabulary, bindings and enablement rules.
+//! Framework command vocabulary: opaque identity plus an extensible spec.
 //!
-//! Framework-owned boundary language (MAUI `ICommand` analogue): the session
-//! command enum lives here so shell, view definitions, and native frontends
-//! share one vocabulary without a dependency cycle.
+//! The same direction as [`crate::control`]: new commands are added as
+//! `impl CommandSpec` outside this file, never as new enum variants here.
+//! `Command` carries a boxed spec plus an `enabled` flag; native adapters
+//! forward opaque [`CommandRef`] activations and resolve meaning view-side
+//! against the latest model, like [`crate::control::ControlEvent`].
+//!
+//! Two base specs cover the framework primitives: [`UnitSpec`] (no argument)
+//! and [`IndexedSpec`] (one `u64` argument, e.g. a slot index chosen
+//! view-side). Flavors downcast via `as_any`, never via domain types or
+//! debug names.
 
-/// Session verbs shared by shell execution, view definitions, and frontends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionCommand {
-    Pause,
-    Resume,
-    TogglePause,
-    Reset,
-    CreateSlot,
-    SaveActiveSlotOrNew,
-    LoadActiveSlot,
-    SelectActiveSlot(u64),
-    SaveSlot(u64),
-    LoadSlot(u64),
-    DeleteSlot(u64),
-    SelectNextSlot,
-    SelectPreviousSlot,
-}
+use std::any::Any;
 
-/// Canonical native command declarations, bindings and enablement.
+use crate::control::Id;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NativeRole {
-    About,
-    Quit,
-}
+/// Process-unique opaque command identity. Minted view-side from a stable
+/// domain key via [`crate::control::IdRegistry`]; never a position or label.
+pub type CommandId = Id;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MenuCommand {
-    Open,
-    Close,
-    Settings,
-    Debugger,
-    NotificationHistory,
-    Session(SessionCommand),
-    Native(NativeRole),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CommandId {
-    Open,
-    Close,
-    Settings,
-    Debugger,
-    NotificationHistory,
-    Quit,
-    About,
-    Pause,
-    Resume,
-    Reset,
-    CreateSlot,
-    SaveActiveSlotOrNew,
-    LoadActiveSlot,
-    SelectActiveSlot,
-    SaveSlot,
-    LoadSlot,
-    DeleteSlot,
-    TogglePause,
-    SelectNextSlot,
-    SelectPreviousSlot,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandParameter {
-    None,
-    SlotId,
-}
-
-// One declaration table supplies names, order, parameter types and bindings.
-// Slot commands use zero as a template, never as a default argument.
-/// All declarations for view-side model builders.
-pub const DECLARATIONS: &[(CommandId, &str, MenuCommand)] = {
-    use MenuCommand::{Native, Session};
-    use SessionCommand as S;
-    &[
-        (CommandId::Open, "open", MenuCommand::Open),
-        (CommandId::Close, "close", MenuCommand::Close),
-        (CommandId::Settings, "settings", MenuCommand::Settings),
-        (CommandId::Debugger, "debugger", MenuCommand::Debugger),
-        (
-            CommandId::NotificationHistory,
-            "history",
-            MenuCommand::NotificationHistory,
-        ),
-        (CommandId::Quit, "quit", Native(NativeRole::Quit)),
-        (CommandId::About, "about", Native(NativeRole::About)),
-        (CommandId::Pause, "pause", Session(S::Pause)),
-        (CommandId::Resume, "resume", Session(S::Resume)),
-        (CommandId::Reset, "reset", Session(S::Reset)),
-        (
-            CommandId::CreateSlot,
-            "state-create",
-            Session(S::CreateSlot),
-        ),
-        (
-            CommandId::SaveActiveSlotOrNew,
-            "state-save-active",
-            Session(S::SaveActiveSlotOrNew),
-        ),
-        (
-            CommandId::LoadActiveSlot,
-            "state-load-active",
-            Session(S::LoadActiveSlot),
-        ),
-        (
-            CommandId::SelectActiveSlot,
-            "state-select-slot",
-            Session(S::SelectActiveSlot(0)),
-        ),
-        (
-            CommandId::SaveSlot,
-            "state-save-slot",
-            Session(S::SaveSlot(0)),
-        ),
-        (
-            CommandId::LoadSlot,
-            "state-load-slot",
-            Session(S::LoadSlot(0)),
-        ),
-        (
-            CommandId::DeleteSlot,
-            "state-delete-slot",
-            Session(S::DeleteSlot(0)),
-        ),
-        (
-            CommandId::TogglePause,
-            "toggle-pause",
-            Session(S::TogglePause),
-        ),
-        (
-            CommandId::SelectNextSlot,
-            "state-select-next",
-            Session(S::SelectNextSlot),
-        ),
-        (
-            CommandId::SelectPreviousSlot,
-            "state-select-previous",
-            Session(S::SelectPreviousSlot),
-        ),
-    ]
-};
-
-impl CommandId {
-    fn declaration(self) -> &'static (Self, &'static str, MenuCommand) {
-        DECLARATIONS
-            .iter()
-            .find(|(id, _, _)| *id == self)
-            .expect("command declaration")
+/// Extensible command shape. Only `clone_box` is mandatory; `equals` degrades
+/// to a safe default (always different, so a missing override stays correct
+/// and only refreshes more). Domain commands implement this trait outside
+/// `wakui`; flavors dispatch via `as_any`, never via domain types.
+pub trait CommandSpec: std::fmt::Debug + Send + 'static {
+    fn clone_box(&self) -> Box<dyn CommandSpec>;
+    fn equals(&self, other: &dyn CommandSpec) -> bool {
+        let _ = other;
+        false
     }
-
-    pub fn name(self) -> &'static str {
-        self.declaration().1
+    fn as_any(&self) -> &dyn Any;
+    /// Diagnostics only. Dispatch via `as_any` + `TypeId`, never this string.
+    fn debug_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+    /// Framework-primitive argument. `None` is a unit command; `Some` is an
+    /// indexed command. Domain meaning of the index lives view-side.
+    fn argument(&self) -> Option<u64> {
+        None
     }
 }
 
+/// Unit command: no argument.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UnitSpec;
+
+impl CommandSpec for UnitSpec {
+    fn clone_box(&self) -> Box<dyn CommandSpec> {
+        Box::new(*self)
+    }
+    fn equals(&self, other: &dyn CommandSpec) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Indexed command: one `u64` argument. The framework never interprets the
+/// index; view definitions map it (e.g. to a slot id).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IndexedSpec {
+    pub index: u64,
+}
+
+impl CommandSpec for IndexedSpec {
+    fn clone_box(&self) -> Box<dyn CommandSpec> {
+        Box::new(*self)
+    }
+    fn equals(&self, other: &dyn CommandSpec) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn argument(&self) -> Option<u64> {
+        Some(self.index)
+    }
+}
+
+/// Opaque activation: what native adapters forward. The view side resolves
+/// the id against its latest [`CommandModel`] plus argument shape, exactly
+/// like settings resolves [`crate::control::ControlId`] via `BindingTable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommandDescriptor {
+pub struct CommandRef {
     pub id: CommandId,
-    pub parameter: CommandParameter,
-    pub enabled: bool,
+    pub argument: Option<u64>,
 }
 
-impl CommandDescriptor {
-    /// Binding is structural, not an execution guard. Disabled commands still
-    /// bind; the host applies settings policy when an event actually arrives.
-    pub fn bind(&self, argument: Option<u64>) -> Option<MenuCommand> {
-        let template = self.id.declaration().2;
-        let parameter = template.parameter();
-        if self.parameter != parameter {
-            return None;
-        }
-        match (template, parameter, argument) {
-            (command, CommandParameter::None, None) => Some(command),
-            (MenuCommand::Session(command), CommandParameter::SlotId, Some(id)) => {
-                Some(MenuCommand::Session(match command {
-                    SessionCommand::SelectActiveSlot(_) => SessionCommand::SelectActiveSlot(id),
-                    SessionCommand::SaveSlot(_) => SessionCommand::SaveSlot(id),
-                    SessionCommand::LoadSlot(_) => SessionCommand::LoadSlot(id),
-                    SessionCommand::DeleteSlot(_) => SessionCommand::DeleteSlot(id),
-                    _ => return None,
-                }))
-            }
-            _ => None,
+impl CommandRef {
+    pub fn unit(id: CommandId) -> Self {
+        Self { id, argument: None }
+    }
+
+    pub fn indexed(id: CommandId, argument: u64) -> Self {
+        Self {
+            id,
+            argument: Some(argument),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One declared command: stable identity, enablement, and an extensible spec.
+/// The spec template carries the argument *shape* (`None` vs `Some`);
+/// concrete arguments travel in [`CommandRef`], never here.
+#[derive(Debug)]
+pub struct Command {
+    pub id: CommandId,
+    pub enabled: bool,
+    pub spec: Box<dyn CommandSpec>,
+}
+
+impl Clone for Command {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            enabled: self.enabled,
+            spec: self.spec.clone_box(),
+        }
+    }
+}
+
+impl PartialEq for Command {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.enabled == other.enabled
+            && self.spec.equals(other.spec.as_ref())
+    }
+}
+
+impl Eq for Command {}
+
+impl Command {
+    /// Downcast the spec to a concrete framework-provided or external type.
+    /// Dispatch via `TypeId`, never via domain types or debug names.
+    pub fn downcast<T: 'static>(&self) -> Option<&T> {
+        self.spec.as_any().downcast_ref::<T>()
+    }
+
+    /// Whether this declaration accepts the activation: same id and same
+    /// argument shape. Domain validity (e.g. slot existence) stays view-side.
+    pub fn accepts(&self, activation: CommandRef) -> bool {
+        self.id == activation.id && self.spec.argument().is_some() == activation.argument.is_some()
+    }
+}
+
+/// All declarations for view-side model builders.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommandModel {
-    pub definitions: Vec<CommandDescriptor>,
+    pub definitions: Vec<Command>,
 }
 
 impl CommandModel {
-    pub fn get(&self, id: CommandId) -> Option<&CommandDescriptor> {
+    pub fn get(&self, id: CommandId) -> Option<&Command> {
         self.definitions.iter().find(|command| command.id == id)
     }
 
@@ -208,38 +164,35 @@ impl CommandModel {
 }
 
 pub trait CommandVisitor {
-    fn command(&mut self, command: &CommandDescriptor);
+    fn command(&mut self, command: &Command);
 }
 
-impl MenuCommand {
-    pub fn parameter(self) -> CommandParameter {
-        if self.template().1.is_some() {
-            CommandParameter::SlotId
-        } else {
-            CommandParameter::None
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn specs_are_object_safe_and_storable() {
+        let boxed: Box<dyn CommandSpec> = Box::new(IndexedSpec { index: 7 });
+        assert_eq!(boxed.argument(), Some(7));
+        let cloned = boxed.clone_box();
+        assert!(cloned.as_any().downcast_ref::<IndexedSpec>().is_some());
+        assert!(boxed.equals(cloned.as_ref()));
+        let unit = UnitSpec;
+        assert!(!boxed.equals(&unit));
+        assert_eq!(unit.argument(), None);
     }
 
-    fn template(self) -> (Self, Option<u64>) {
-        use SessionCommand as S;
-        match self {
-            Self::Session(S::SelectActiveSlot(id)) => {
-                (Self::Session(S::SelectActiveSlot(0)), Some(id))
-            }
-            Self::Session(S::SaveSlot(id)) => (Self::Session(S::SaveSlot(0)), Some(id)),
-            Self::Session(S::LoadSlot(id)) => (Self::Session(S::LoadSlot(0)), Some(id)),
-            Self::Session(S::DeleteSlot(id)) => (Self::Session(S::DeleteSlot(0)), Some(id)),
-            other => (other, None),
-        }
-    }
-
-    pub fn binding(self) -> (CommandId, Option<u64>) {
-        let (template, argument) = self.template();
-        let id = DECLARATIONS
-            .iter()
-            .find(|(_, _, command)| *command == template)
-            .expect("command declaration")
-            .0;
-        (id, argument)
+    #[test]
+    fn accepts_matches_id_and_shape_only() {
+        let id = CommandId::fresh();
+        let command = Command {
+            id,
+            enabled: true,
+            spec: Box::new(IndexedSpec { index: 0 }),
+        };
+        assert!(command.accepts(CommandRef::indexed(id, 42)));
+        assert!(!command.accepts(CommandRef::unit(id)));
+        assert!(!command.accepts(CommandRef::indexed(CommandId::fresh(), 42)));
     }
 }

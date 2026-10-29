@@ -360,11 +360,16 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
     };
     let ctx = fixture.core.frame_ctx();
     let initial = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    let select = fixture
+        .core
+        .menu_commands()
+        .activation(crate::commands::MenuCommand::Session(
+            nerust_gui_shell::session::commands::SessionCommand::SelectActiveSlot(73),
+        ))
+        .unwrap();
     fixture
         .core
-        .dispatch(SessionEvent::Command(
-            wakui::commands::SessionCommand::SelectActiveSlot(73),
-        ))
+        .dispatch(SessionEvent::Command(select))
         .unwrap();
     let update = fixture.core.menubar_update(&ctx, false, caps).unwrap();
     assert_eq!(update.signature.active_slot, Some(73));
@@ -374,10 +379,10 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
 
 #[test]
 fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
+    use crate::commands::MenuCommand;
     use wakui::aux::{AuxWindows, OpenRequest};
     use wakui::window::WindowVisitor;
     use wakui::{
-        commands::MenuCommand,
         event::{CommandEffect, EventCommand, EventHandler},
         menu::MenuEntry,
         window::{WidgetContents, Window},
@@ -394,6 +399,11 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
             application_menu: false,
         },
     );
+    let debugger = fixture
+        .core
+        .menu_commands()
+        .activation(MenuCommand::Debugger)
+        .expect("debugger activation");
     let command = fixture
         .core
         .main_window()
@@ -404,7 +414,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         .iter()
         .flat_map(|menu| &menu.children)
         .find_map(|entry| match entry {
-            MenuEntry::Item(item) if item.command == Some(MenuCommand::Debugger) => item.command,
+            MenuEntry::Item(item) if item.command == Some(debugger) => item.command,
             _ => None,
         })
         .expect("OpenDebugger belongs to this main window's actual menu");
@@ -444,21 +454,40 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
 
 #[test]
 fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() {
-    use wakui::{
-        commands::{MenuCommand as M, NativeRole, SessionCommand as S},
-        event::{CommandEffect as E, EventCommand as C, EventHandler},
-    };
+    use crate::commands::{MenuCommand as M, NativeRole};
+    use nerust_gui_shell::session::commands::SessionCommand as S;
+    use wakui::event::{CommandEffect as E, EventCommand as C, EventHandler};
     let mut fixture = Fixture::new();
+    let ctx = fixture.core.frame_ctx();
+    fixture
+        .core
+        .menubar_update(
+            &ctx,
+            false,
+            wakui::menu::MenuCapabilities {
+                about: true,
+                dialog_ellipsis: false,
+                application_menu: false,
+            },
+        )
+        .unwrap();
+    let table = fixture.core.menu_commands().clone();
+    let menu = |command: M| C::Menu(table.activation(command).unwrap());
+    let session_command = |command: S| {
+        C::Session(SessionEvent::Command(
+            table.activation(M::Session(command)).unwrap(),
+        ))
+    };
     let host: &mut dyn EventHandler<AuxKind> = &mut fixture.core;
     for event in [
-        C::Menu(M::Open),
-        C::Menu(M::Close),
-        C::Menu(M::Settings),
-        C::Menu(M::Debugger),
-        C::Menu(M::NotificationHistory),
-        C::Menu(M::Native(NativeRole::About)),
-        C::Menu(M::Session(S::Pause)),
-        C::Session(SessionEvent::Command(S::Resume)),
+        menu(M::Open),
+        menu(M::Close),
+        menu(M::Settings),
+        menu(M::Debugger),
+        menu(M::NotificationHistory),
+        menu(M::Native(NativeRole::About)),
+        menu(M::Session(S::Pause)),
+        session_command(S::Resume),
         C::Session(SessionEvent::Keyboard {
             key: wakui::Key::F2,
             pressed: true,
@@ -471,7 +500,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
         assert!(!result.handled && result.effect.is_none() && result.session.command.is_none());
     }
     let quit = host
-        .handle_event(C::Menu(M::Native(NativeRole::Quit)), true)
+        .handle_event(menu(M::Native(NativeRole::Quit)), true)
         .unwrap();
     assert_eq!(quit.effect, Some(E::Quit));
     let tick = host.handle_event(C::LiveTick, true).unwrap();
@@ -488,7 +517,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
         .handle_event(C::Session(SessionEvent::SettingsOpened), true)
         .unwrap();
     assert!(opened.session.settings_changed);
-    let guarded = host.handle_event(C::Menu(M::Debugger), false).unwrap();
+    let guarded = host.handle_event(menu(M::Debugger), false).unwrap();
     assert!(!guarded.handled, "owned Settings also guards");
     let closed = host
         .handle_event(C::Session(SessionEvent::SettingsClosed), true)
@@ -500,12 +529,10 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
 
 #[test]
 fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
+    use crate::commands::{MenuCommand as M, NativeRole};
     use std::{cell::RefCell, rc::Rc};
     use wakui::event::EventSink;
-    use wakui::{
-        commands::{MenuCommand as M, NativeRole},
-        event::{CommandEffect as E, EventCommand as C, EventHandler},
-    };
+    use wakui::event::{CommandEffect as E, EventCommand as C, EventHandler};
     struct Sink(Rc<RefCell<Vec<C>>>);
     impl EventSink for Sink {
         fn send(&self, event: C) -> bool {
@@ -516,6 +543,24 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
     let fixture = RefCell::new(Fixture::new());
     let sink = Sink(Rc::new(RefCell::new(Vec::new())));
     let transport: &dyn EventSink = &sink;
+    let table = {
+        let mut state = fixture.borrow_mut();
+        let ctx = state.core.frame_ctx();
+        state
+            .core
+            .menubar_update(
+                &ctx,
+                false,
+                wakui::menu::MenuCapabilities {
+                    about: true,
+                    dialog_ellipsis: false,
+                    application_menu: false,
+                },
+            )
+            .unwrap();
+        state.core.menu_commands().clone()
+    };
+    let menu = |command: M| C::Menu(table.activation(command).unwrap());
     for (command, effect) in [
         (M::Open, E::OpenRom),
         (M::Settings, E::OpenAux(AuxKind::Settings)),
@@ -524,7 +569,7 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
         (M::Native(NativeRole::About), E::About),
         (M::Native(NativeRole::Quit), E::Quit),
     ] {
-        assert!(transport.send(C::Menu(command)));
+        assert!(transport.send(menu(command)));
         let event = sink.0.borrow_mut().pop().unwrap();
         let result = {
             let mut state = fixture.borrow_mut();
@@ -565,26 +610,37 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
 
 #[test]
 fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
-    use wakui::{
-        commands::{MenuCommand as M, SessionCommand as S},
-        event::{EventCommand as C, EventHandler},
-    };
+    use crate::commands::MenuCommand as M;
+    use nerust_gui_shell::session::commands::SessionCommand as S;
+    use wakui::event::{EventCommand as C, EventHandler};
     let mut fixture = Fixture::new();
+    let ctx = fixture.core.frame_ctx();
     fixture
         .core
-        .handle_event(C::Menu(M::Session(S::SelectActiveSlot(73))), false)
+        .menubar_update(
+            &ctx,
+            false,
+            wakui::menu::MenuCapabilities {
+                about: true,
+                dialog_ellipsis: false,
+                application_menu: false,
+            },
+        )
+        .unwrap();
+    let table = fixture.core.menu_commands().clone();
+    let menu = |command: M| C::Menu(table.activation(command).unwrap());
+    fixture
+        .core
+        .handle_event(menu(M::Session(S::SelectActiveSlot(73))), false)
         .unwrap();
     assert_eq!(fixture.core.session().active_slot_id(), Some(73));
-    let Err(error) = fixture
-        .core
-        .handle_event(C::Menu(M::Session(S::Reset)), false)
-    else {
+    let Err(error) = fixture.core.handle_event(menu(M::Session(S::Reset)), false) else {
         panic!("reset without a core must fail");
     };
     assert_eq!(error.0, "no emulation core active");
     let load = fixture
         .core
-        .handle_event(C::Menu(M::Session(S::LoadActiveSlot)), false)
+        .handle_event(menu(M::Session(S::LoadActiveSlot)), false)
         .unwrap();
     assert!(
         load.session.command.is_some(),
@@ -593,7 +649,7 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
     fixture.load();
     fixture
         .core
-        .handle_event(C::Menu(M::Session(S::TogglePause)), false)
+        .handle_event(menu(M::Session(S::TogglePause)), false)
         .unwrap();
     assert!(
         fixture.core.tick().paused,
@@ -603,7 +659,7 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
     fixture.core.set_pause_owner(PauseOwner::Modal, true);
     fixture
         .core
-        .handle_event(C::Menu(M::Session(S::Resume)), false)
+        .handle_event(menu(M::Session(S::Resume)), false)
         .unwrap();
     assert!(!fixture.core.owns_pause(PauseOwner::User));
     assert!(fixture.core.tick().paused, "modal still owns pause");
@@ -623,6 +679,6 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
         .handle_event(C::Focus(FocusEvent::Main(true)), false)
         .unwrap();
     assert!(!fixture.core.tick().paused);
-    fixture.core.handle_event(C::Menu(M::Close), false).unwrap();
+    fixture.core.handle_event(menu(M::Close), false).unwrap();
     assert!(!fixture.core.tick().loaded);
 }
