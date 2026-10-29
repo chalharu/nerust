@@ -15,7 +15,7 @@ use crate::{
 use crate::{
     aux::AuxRegistryPort,
     dialog::{DialogTurn, ModalAdvance, ModalToken},
-    focus::{FocusEffect, FocusEvent},
+    focus::FocusEvent,
     mailbox::WindowMailbox,
     menu::{MenuCapabilities, Menubar},
     viewport::{ViewportImage, ViewportPresent},
@@ -211,13 +211,14 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn remembered_window_size(&self) -> Option<(u32, u32)>;
 
     // -- focus -------------------------------------------------------------
-    fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect>;
+    // Notifications only: arrivals, departures, burst ends. Suspension
+    // decisions live view-side; the framework pauses nothing.
+    fn focus_event(&mut self, event: FocusEvent);
     fn main_active(&self) -> bool;
     fn note_main_arrival(&mut self) -> bool;
     fn note_main_departure(&mut self);
-    /// View-side resolves `id` to its kind and applies the resume protocol.
+    /// View-side resolves `id` to its kind and applies its focus policy.
     fn drive_aux_focus(&mut self, id: crate::aux::AuxId, focused: bool) -> bool;
-    fn release_focus_hold(&mut self);
 
     // -- aux widget windows (id-keyed; sessions owned view-side) ---------
     fn reserve_widget(
