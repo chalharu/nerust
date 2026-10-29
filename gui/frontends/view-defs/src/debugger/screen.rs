@@ -489,29 +489,47 @@ impl DebuggerScreenSession {
     }
 
     fn group(&mut self, key: &str, title: String, children: Vec<Node>) -> Node {
-        Node::Container(Box::new(Container {
-            id: self.ids.id(format!("group:{key}")),
-            label: title.clone(),
-            metadata: ControlMetadata::new(title),
-            spacing: 8,
-            indent: 0,
-            header: None,
-            policy: Box::new(GroupPolicy),
+        Node::Container(Box::new(self.container(
+            &format!("group:{key}"),
+            title,
+            GroupPolicy,
+            8.0,
+            0.0,
             children,
-        }))
+        )))
+    }
+
+    fn container<P: wakui::control::LayoutPolicy>(
+        &mut self,
+        key: &str,
+        label: String,
+        policy: P,
+        spacing: f64,
+        indent: f64,
+        children: Vec<Node>,
+    ) -> Container {
+        let mut metadata = ControlMetadata::new(label.clone());
+        metadata.hints.spacing = Some(spacing);
+        metadata.hints.indent = Some(indent);
+        Container {
+            id: self.ids.id(key.to_string()),
+            label,
+            metadata,
+            header: None,
+            policy: Box::new(policy),
+            children,
+        }
     }
 
     fn column(&mut self, key: &str, children: Vec<Node>) -> Container {
-        Container {
-            id: self.ids.id(format!("layout:{key}")),
-            label: String::new(),
-            metadata: ControlMetadata::new(key),
-            spacing: 12,
-            indent: 0,
-            header: None,
-            policy: Box::new(ColumnPolicy),
+        self.container(
+            &format!("layout:{key}"),
+            String::new(),
+            ColumnPolicy,
+            12.0,
+            0.0,
             children,
-        }
+        )
     }
 
     fn last_id(&mut self, key: &str) -> Option<ControlId> {
@@ -530,22 +548,24 @@ fn placeholder(ids: &mut IdRegistry<String>) -> ControlScreen {
             text: "…".to_string(),
         }),
     };
+    let mut body_meta = ControlMetadata::new("body");
+    body_meta.hints.spacing = Some(12.0);
+    body_meta.hints.indent = Some(0.0);
     let body = Container {
         id: ids.id("layout:body".to_string()),
         label: String::new(),
-        metadata: ControlMetadata::new("body"),
-        spacing: 12,
-        indent: 0,
+        metadata: body_meta,
         header: None,
         policy: Box::new(ColumnPolicy),
         children: vec![Node::Control(note)],
     };
+    let mut footer_meta = ControlMetadata::new("footer");
+    footer_meta.hints.spacing = Some(0.0);
+    footer_meta.hints.indent = Some(0.0);
     let footer = Container {
         id: ids.id("layout:footer".to_string()),
         label: String::new(),
-        metadata: ControlMetadata::new("footer"),
-        spacing: 0,
-        indent: 0,
+        metadata: footer_meta,
         header: None,
         policy: Box::new(ColumnPolicy),
         children: Vec::new(),

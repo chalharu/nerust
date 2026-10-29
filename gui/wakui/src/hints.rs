@@ -44,7 +44,19 @@ pub struct LayoutHints {
     pub height_request: Option<f64>,
     pub h_align: Option<LayoutAlign>,
     pub v_align: Option<LayoutAlign>,
+    /// Gap between children (MAUI Spacing analog). `None` means the
+    /// flavor default below. View definitions keep passing the same
+    /// numbers as `Some`, so existing screens render identically.
+    pub spacing: Option<f64>,
+    /// Leading inset (MAUI Padding-start analog). `None` means no inset.
+    pub indent: Option<f64>,
 }
+
+/// Flavor fallback when a screen omits spacing. Matches the prevailing
+/// view-defs value so new screens degrade to the familiar density.
+pub const DEFAULT_SPACING: f64 = 12.0;
+/// Flavor fallback when a screen omits the leading inset.
+pub const DEFAULT_INDENT: f64 = 0.0;
 
 #[cfg(test)]
 mod tests {
@@ -61,6 +73,8 @@ mod tests {
                 height_request: None,
                 h_align: None,
                 v_align: None,
+                spacing: None,
+                indent: None,
             }
         );
     }
