@@ -10,7 +10,7 @@ use wakui_core::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 use crate::surface::{Surface, SurfaceCore};
 
 /// Only translates the host token into a native response. Host retains the
-/// queue, pause ownership and stale-ACK checks; there is no native ModalState.
+/// queue and stale-ACK checks; there is no native ModalState.
 pub(crate) fn present_modal<K: Copy + Eq + std::hash::Hash + 'static>(
     surface: &Surface<K>,
     window: &gtk::ApplicationWindow,

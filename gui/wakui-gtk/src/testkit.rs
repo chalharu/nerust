@@ -29,7 +29,6 @@ use wakui_core::{
         CommandModel, FileDialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar,
         Submenu,
     },
-    pause::PauseOwner,
     session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome},
     viewport::{ViewportImage, ViewportPresent, ViewportRegion},
     window::{Window, WindowChromeSync, WindowEffects},
@@ -81,14 +80,20 @@ impl TestAux {
     }
 }
 
-/// Flavor-local suspension owners. The framework holds an opaque bitset;
-/// this table gives each hold its meaning in tests only.
-pub(crate) mod owners {
-    use wakui_core::pause::PauseOwner;
+/// Flavor-local suspension holds (test double only). Production flavors never
+/// compose suspension; the view side owns that policy. The fake keeps a local
+/// hold set so native-flow tests can simulate a suspending app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Hold(pub(crate) u8);
 
-    pub(crate) const FOCUS: PauseOwner = PauseOwner::new(1);
-    pub(crate) const MODAL: PauseOwner = PauseOwner::new(2);
-    pub(crate) const GUARD: PauseOwner = PauseOwner::new(3);
+/// Flavor-local suspension holds; this table gives each hold its meaning in
+/// tests only.
+pub(crate) mod owners {
+    use super::Hold;
+
+    pub(crate) const FOCUS: Hold = Hold(1);
+    pub(crate) const MODAL: Hold = Hold(2);
+    pub(crate) const GUARD: Hold = Hold(3);
 }
 
 /// Flavor-local menu skeleton. The framework tracks opaque ids only;
@@ -834,7 +839,7 @@ pub(crate) struct FakeApp {
     live_consumed: bool,
     last_live: Option<Instant>,
     pub active_item: Option<u64>,
-    owners: std::collections::HashSet<PauseOwner>,
+    owners: std::collections::HashSet<Hold>,
     menu_gate: Option<(bool, bool, bool, Option<u64>, Menubar)>,
     pub(crate) commands: FakeCommands,
 }
@@ -944,6 +949,20 @@ impl FakeApp {
             needs_redraw: false,
         });
         Ok(outcome)
+    }
+
+    /// Test-only suspension-hold simulation. Production flavors never compose
+    /// suspension; the view side owns that policy.
+    pub(crate) fn set_pause_owner(&mut self, owner: Hold, active: bool) {
+        if active {
+            self.owners.insert(owner);
+        } else {
+            self.owners.remove(&owner);
+        }
+    }
+
+    pub(crate) fn owns_pause(&self, owner: Hold) -> bool {
+        self.owners.contains(&owner)
     }
 }
 
@@ -1093,24 +1112,6 @@ impl FrontendApp<TestAux> for FakeApp {
         self.window_size = (width as f32, height as f32);
         Ok(())
     }
-
-    fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
-        if active {
-            self.owners.insert(owner);
-        } else {
-            self.owners.remove(&owner);
-        }
-    }
-
-    fn owns_pause(&self, owner: PauseOwner) -> bool {
-        self.owners.contains(&owner)
-    }
-
-    fn pause_held(&self) -> bool {
-        !self.owners.is_empty()
-    }
-
-    fn reconcile_pause(&mut self) {}
 
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         let outcome = SessionOutcome::default();
@@ -1273,7 +1274,7 @@ impl FrontendApp<TestAux> for FakeApp {
         focused
     }
 
-    fn release_focus_pause(&mut self) {
+    fn release_focus_hold(&mut self) {
         self.focus_paused = false;
     }
 
@@ -1870,5 +1871,317 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn render_succeeded(&mut self) {
         self.render_failed_detail = None;
+    }
+}
+/// Shared ownership bridge: `State` owns the only `Box<dyn FrontendApp>`,
+/// tests observe and steer the same [`FakeApp`] through the [`Rc`].
+pub(crate) struct SharedApp {
+    inner: std::rc::Rc<std::cell::RefCell<FakeApp>>,
+}
+
+impl SharedApp {
+    pub(crate) fn new(inner: std::rc::Rc<std::cell::RefCell<FakeApp>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl EventHandler<TestAux> for SharedApp {
+    fn handle_event(&mut self, event: EventCommand) -> Result<EventOutcome<TestAux>, SessionError> {
+        self.inner.borrow_mut().handle_event(event)
+    }
+}
+
+impl FrontendApp<TestAux> for SharedApp {
+    fn load_file(&mut self, path: &Path) -> Result<(), String> {
+        self.inner.borrow_mut().load_file(path)
+    }
+    fn unload(&mut self) {
+        self.inner.borrow_mut().unload()
+    }
+    fn begin_close(&mut self) -> bool {
+        self.inner.borrow_mut().begin_close()
+    }
+    fn finish_close(&mut self) {
+        self.inner.borrow_mut().finish_close()
+    }
+    fn close_exited(&self) -> bool {
+        self.inner.borrow().close_exited()
+    }
+    fn fatal_message(&self) -> Option<String> {
+        self.inner.borrow().fatal_message()
+    }
+    fn fail_window(&mut self, detail: String) {
+        self.inner.borrow_mut().fail_window(detail)
+    }
+    fn resume_content(&mut self) {
+        self.inner.borrow_mut().resume_content()
+    }
+    fn swap_frame_buffer(&mut self) {
+        self.inner.borrow_mut().swap_frame_buffer()
+    }
+    fn content_loaded(&self) -> bool {
+        self.inner.borrow().content_loaded()
+    }
+    fn content_suspended(&self) -> bool {
+        self.inner.borrow().content_suspended()
+    }
+    fn clear_input(&mut self) {
+        self.inner.borrow_mut().clear_input()
+    }
+    fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
+        self.inner.borrow_mut().update_window_size(width, height)
+    }
+    fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
+        self.inner.borrow_mut().dispatch(event)
+    }
+    fn dialog_titles(&self) -> FileDialogTitles {
+        self.inner.borrow().dialog_titles()
+    }
+    fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
+        self.inner.borrow().file_dialog_filters()
+    }
+    fn menubar_update(&mut self, _capabilities: MenuCapabilities) -> Option<Menubar> {
+        self.inner.borrow_mut().menubar_update(_capabilities)
+    }
+    fn main_window(&self) -> &Window {
+        // SAFETY: the borrow lives in the `Rc`; callers must not hold it
+        // across a mutable app borrow. Test-only.
+        unsafe { &*(&self.inner.borrow().main as *const Window) }
+    }
+    fn window_usable(&self) -> bool {
+        self.inner.borrow().window_usable()
+    }
+    fn title_update(&mut self) -> Option<String> {
+        self.inner.borrow_mut().title_update()
+    }
+    fn title_refresh_due(&mut self, now: Instant) -> bool {
+        self.inner.borrow_mut().title_refresh_due(now)
+    }
+    fn refresh_window_title(&mut self) -> Option<String> {
+        self.inner.borrow_mut().refresh_window_title()
+    }
+    fn observe_fullscreen(&mut self, _native: bool) -> bool {
+        self.inner.borrow_mut().observe_fullscreen(_native)
+    }
+    fn fullscreen_request(&mut self, _native: bool) -> Option<bool> {
+        self.inner.borrow_mut().fullscreen_request(_native)
+    }
+    fn persist_fullscreen_default(&mut self, fullscreen: bool) -> Result<bool, String> {
+        self.inner
+            .borrow_mut()
+            .persist_fullscreen_default(fullscreen)
+    }
+    fn window_size(&self) -> (f32, f32) {
+        self.inner.borrow().window_size()
+    }
+    fn window_scale_factor(&self) -> Option<u32> {
+        self.inner.borrow().window_scale_factor()
+    }
+    fn window_chrome_sync(&mut self, _native_fullscreen: bool) -> WindowChromeSync {
+        self.inner
+            .borrow_mut()
+            .window_chrome_sync(_native_fullscreen)
+    }
+    fn remembered_window_size(&self) -> Option<(u32, u32)> {
+        self.inner.borrow().remembered_window_size()
+    }
+    fn focus_event(&mut self, _event: FocusEvent) -> Option<FocusEffect> {
+        self.inner.borrow_mut().focus_event(_event)
+    }
+    fn main_active(&self) -> bool {
+        self.inner.borrow().main_active()
+    }
+    fn note_main_arrival(&mut self) -> bool {
+        self.inner.borrow_mut().note_main_arrival()
+    }
+    fn note_main_departure(&mut self) {
+        self.inner.borrow_mut().note_main_departure()
+    }
+    fn drive_aux_focus(&mut self, _id: AuxId, focused: bool) -> bool {
+        self.inner.borrow_mut().drive_aux_focus(_id, focused)
+    }
+    fn release_focus_hold(&mut self) {
+        self.inner.borrow_mut().release_focus_hold()
+    }
+    fn reserve_widget(
+        &mut self,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
+        kind: TestAux,
+    ) -> Result<Option<OpenRequest>, String> {
+        self.inner.borrow_mut().reserve_widget(registry, kind)
+    }
+    fn cancel_widget(&mut self, registry: &mut dyn AuxRegistryPort<TestAux>, id: AuxId) -> bool {
+        self.inner.borrow_mut().cancel_widget(registry, id)
+    }
+    fn prepare_widget(
+        &mut self,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
+        id: AuxId,
+    ) -> Result<bool, String> {
+        self.inner.borrow_mut().prepare_widget(registry, id)
+    }
+    fn widget_screen(&self, id: AuxId) -> Option<ControlScreen> {
+        self.inner.borrow().widget_screen(id)
+    }
+    fn widget_window(&self, id: AuxId) -> Option<Window> {
+        self.inner.borrow().widget_window(id)
+    }
+    fn widget_mailbox(&self, id: AuxId) -> Option<WindowMailbox> {
+        self.inner.borrow().widget_mailbox(id)
+    }
+    fn widget_dispatch(
+        &mut self,
+        id: AuxId,
+        event: ControlEvent,
+    ) -> Vec<wakui_core::control::ControlEffect> {
+        self.inner.borrow_mut().widget_dispatch(id, event)
+    }
+    fn widget_submit_picker(
+        &mut self,
+        id: AuxId,
+        target: ControlId,
+        _request: Id,
+        payload: Option<PathBuf>,
+    ) {
+        self.inner
+            .borrow_mut()
+            .widget_submit_picker(id, target, _request, payload)
+    }
+    fn widget_refresh(&mut self, id: AuxId) {
+        self.inner.borrow_mut().widget_refresh(id)
+    }
+    fn close_widget(
+        &mut self,
+        registry: &mut dyn AuxRegistryPort<TestAux>,
+        id: AuxId,
+        close: bool,
+    ) -> Option<WidgetCloseOutcome> {
+        self.inner.borrow_mut().close_widget(registry, id, close)
+    }
+    fn modal_guard_active(&self) -> bool {
+        self.inner.borrow().modal_guard_active()
+    }
+    fn report_host_error(&mut self, detail: String) {
+        self.inner.borrow_mut().report_host_error(detail)
+    }
+    fn polled_widget(&self) -> Option<AuxId> {
+        self.inner.borrow().polled_widget()
+    }
+    fn poll_widget(&mut self, _id: AuxId) -> WakeNeed {
+        self.inner.borrow_mut().poll_widget(_id)
+    }
+    fn tick_widget(&mut self, _id: AuxId) {
+        self.inner.borrow_mut().tick_widget(_id)
+    }
+    fn drain_open_requests(&mut self) -> Vec<TestAux> {
+        self.inner.borrow_mut().drain_open_requests()
+    }
+    fn close_background_flights(&mut self) {
+        self.inner.borrow_mut().close_background_flights()
+    }
+    fn take_open_request(&mut self, kind: TestAux) -> bool {
+        self.inner.borrow_mut().take_open_request(kind)
+    }
+    fn request_open(&mut self, kind: TestAux) {
+        self.inner.borrow_mut().request_open(kind)
+    }
+    fn window_pos(&self, kind: TestAux) -> Option<(i32, i32)> {
+        self.inner.borrow().window_pos(kind)
+    }
+    fn remember_window_pos(&mut self, kind: TestAux, x: i32, y: i32) {
+        self.inner.borrow_mut().remember_window_pos(kind, x, y)
+    }
+    fn live_armed(&self) -> Arc<AtomicBool> {
+        self.inner.borrow().live_armed()
+    }
+    fn register_tick_thread(&mut self, _thread: std::thread::Thread) {
+        self.inner.borrow_mut().register_tick_thread(_thread)
+    }
+    fn next_live_tick(&self) -> Option<Instant> {
+        self.inner.borrow().next_live_tick()
+    }
+    fn live_due(&mut self, now: Instant) -> bool {
+        self.inner.borrow_mut().live_due(now)
+    }
+    fn pump_dialog(&mut self, _now: Instant) -> DialogTurn {
+        self.inner.borrow_mut().pump_dialog(_now)
+    }
+    fn attach_dialog_receiver(
+        &mut self,
+        token: ModalToken,
+        receiver: std::sync::mpsc::Receiver<()>,
+    ) -> bool {
+        self.inner
+            .borrow_mut()
+            .attach_dialog_receiver(token, receiver)
+    }
+    fn acknowledge_dialog(&mut self, token: ModalToken) -> ModalAdvance {
+        self.inner.borrow_mut().acknowledge_dialog(token)
+    }
+    fn dialog_pending(&self) -> bool {
+        self.inner.borrow().dialog_pending()
+    }
+    fn dialog_flight_pending(&self) -> bool {
+        self.inner.borrow().dialog_flight_pending()
+    }
+    fn dialog_queue_len(&self) -> usize {
+        self.inner.borrow().dialog_queue_len()
+    }
+    fn dialog_wakeup(&self, now: Instant) -> Option<Instant> {
+        self.inner.borrow().dialog_wakeup(now)
+    }
+    fn note_redraw(&mut self) {
+        self.inner.borrow_mut().note_redraw()
+    }
+    fn redraw_needed(&self) -> bool {
+        self.inner.borrow().redraw_needed()
+    }
+    fn invalidate_overlay(&mut self) {
+        self.inner.borrow_mut().invalidate_overlay()
+    }
+    fn viewport_sync(&mut self, _region: ViewportRegion, _force: bool) -> Result<bool, String> {
+        self.inner.borrow_mut().viewport_sync(_region, _force)
+    }
+    fn viewport_present(
+        &mut self,
+        _width: u32,
+        _height: u32,
+        _client_height: u32,
+    ) -> ViewportPresent {
+        self.inner
+            .borrow_mut()
+            .viewport_present(_width, _height, _client_height)
+    }
+    fn viewport_capture(&mut self, width: u32, height: u32) -> Option<ViewportImage> {
+        self.inner.borrow_mut().viewport_capture(width, height)
+    }
+    fn sync_overlay_viewport(&mut self, _width: u32, _height: u32, _client_height: u32) {
+        self.inner
+            .borrow_mut()
+            .sync_overlay_viewport(_width, _height, _client_height)
+    }
+    fn viewport_drop(&mut self) {
+        self.inner.borrow_mut().viewport_drop()
+    }
+    fn viewport_attached(&self) -> bool {
+        self.inner.borrow().viewport_attached()
+    }
+    fn viewport_generation(&self) -> u64 {
+        self.inner.borrow().viewport_generation()
+    }
+    fn render_ready(&self) -> bool {
+        self.inner.borrow().render_ready()
+    }
+    fn render_failed(&mut self, detail: String) {
+        self.inner.borrow_mut().render_failed(detail)
+    }
+    fn render_retry_deadline(&self) -> Option<Instant> {
+        self.inner.borrow().render_retry_deadline()
+    }
+    fn take_render_retry(&mut self, _now: Instant) -> bool {
+        self.inner.borrow_mut().take_render_retry(_now)
+    }
+    fn render_succeeded(&mut self) {
+        self.inner.borrow_mut().render_succeeded()
     }
 }

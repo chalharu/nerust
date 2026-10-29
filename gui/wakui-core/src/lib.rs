@@ -38,7 +38,6 @@ pub mod mailbox;
 pub mod mapper;
 pub mod menu;
 pub mod menu_presenter;
-pub mod pause;
 pub mod retry;
 pub mod session;
 pub mod sync;

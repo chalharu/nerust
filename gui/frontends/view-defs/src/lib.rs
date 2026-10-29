@@ -19,6 +19,7 @@ pub mod frame;
 pub mod history;
 pub mod menu;
 pub mod osd;
+pub mod pause;
 pub mod ppu;
 pub mod session;
 pub mod settings;
