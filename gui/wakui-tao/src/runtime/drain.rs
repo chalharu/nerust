@@ -11,7 +11,9 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// Live-follow truth for the turn driver: a loaded running core behind
     /// the open polled widget.
     pub(crate) fn debug_widget_live_follow(&self) -> bool {
-        self.core.tick_loaded() && !self.core.tick_paused() && self.core.polled_widget().is_some()
+        self.core.content_loaded()
+            && !self.core.content_suspended()
+            && self.core.polled_widget().is_some()
     }
 
     /// Focus-driven chrome sync. Menu/title refresh always runs; no redraw.

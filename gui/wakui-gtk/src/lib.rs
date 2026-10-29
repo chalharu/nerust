@@ -65,14 +65,14 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
         self.host.swap_frame_buffer();
     }
 
-    /// Load a ROM, flagging a renderer rebuild on success.
+    /// Load a file, flagging a renderer rebuild on success.
     /// Returns the failure detail; presenting it is the caller's job.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        if let Err(error) = self.host.load_rom(path) {
-            log::warn!("ROM load failed: {error}");
+        if let Err(error) = self.host.load_file(path) {
+            log::warn!("file load failed: {error}");
             return Err(error);
         }
-        if self.host.tick_loaded() {
+        if self.host.content_loaded() {
             self.renderer_reload_pending = true;
         }
         Ok(())
@@ -112,10 +112,9 @@ impl State<crate::testkit::TestAux> {
 impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
     pub(crate) fn tick_focus_sync(&mut self) {
         use wakui_core::focus::FocusEvent;
-        let _ = self.host.handle_event(
-            wakui_core::event::EventCommand::Focus(FocusEvent::BurstEnd),
-            false,
-        );
+        let _ = self
+            .host
+            .handle_event(wakui_core::event::EventCommand::Focus(FocusEvent::BurstEnd));
     }
 }
 

@@ -1,11 +1,11 @@
 use super::*;
 use crate::application::tests::Fixture;
+use crate::session::pause_owners;
 use crate::widget_session::WidgetSession;
 use crate::widget_session::take_submission;
 use nerust_gui_shell::registry::SystemRegistry;
 use wakui::control::{Control, ControlDisplay, ControlEvent, ControlInput, ControlVisitor};
 use wakui::leaf::{ChoiceLeaf, NumberLeaf};
-use wakui::pause::PauseOwner;
 use wakui::window::WidgetContents;
 
 fn prepare(
@@ -90,7 +90,7 @@ fn opaque_submission_returns_real_effects_and_clones_cannot_consume_future_draft
     let host = &mut fixture.core;
     let mut windows = AuxWindows::new();
     let (id, mut session) = prepare(host, &mut windows, AuxKind::Settings);
-    host.set_pause_owner(PauseOwner::Modal, true);
+    host.set_pause_owner(pause_owners::MODAL, true);
     let language = host.settings_snapshot().shared.general.language;
     input(
         &mut session,
@@ -131,7 +131,7 @@ fn opaque_submission_returns_real_effects_and_clones_cannot_consume_future_draft
         host.settings_snapshot().local.audio.master_volume_percent,
         38
     );
-    assert!(host.owns_pause(PauseOwner::Settings));
+    assert!(host.owns_pause(pause_owners::SETTINGS));
     volume(&mut session, 41);
     submit(&mut session);
     assert_eq!(
@@ -152,8 +152,8 @@ fn opaque_submission_returns_real_effects_and_clones_cannot_consume_future_draft
         host.settings_snapshot().local.audio.master_volume_percent,
         41
     );
-    assert!(!host.owns_pause(PauseOwner::Settings));
-    assert!(host.owns_pause(PauseOwner::Modal));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
+    assert!(host.owns_pause(pause_owners::MODAL));
     assert!(host.tick().paused);
 }
 
@@ -177,7 +177,7 @@ fn save_failure_rolls_back_but_preserves_window_draft_and_pause_for_retry() {
     assert!(host.apply_window_submission(&windows, id, pending).is_err());
     assert_eq!(host.settings_snapshot(), &original);
     assert!(windows.contains(AuxKind::Settings));
-    assert!(host.owns_pause(PauseOwner::Settings));
+    assert!(host.owns_pause(pause_owners::SETTINGS));
     assert!(host.tick().paused);
     assert!(!mailbox.close_requested());
     assert!(mailbox.take_invalidated());
@@ -205,7 +205,7 @@ fn save_failure_rolls_back_but_preserves_window_draft_and_pause_for_retry() {
             .1
             .is_ok()
     );
-    assert!(!host.owns_pause(PauseOwner::Settings));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn generation_and_mailbox_identity_guard_native_close_and_stale_submission() {
         host.apply_window_submission(&windows, old, stale).unwrap(),
         WindowEffects::default()
     );
-    assert!(host.owns_pause(PauseOwner::Settings));
+    assert!(host.owns_pause(pause_owners::SETTINGS));
     assert_ne!(
         host.settings_snapshot().local.audio.master_volume_percent,
         12
@@ -309,7 +309,7 @@ fn generation_and_mailbox_identity_guard_native_close_and_stale_submission() {
         host.close_widget_window(&mut windows, current, None, None)
             .is_some()
     );
-    assert!(!host.owns_pause(PauseOwner::Settings));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
 }
 
 #[test]
@@ -325,10 +325,10 @@ fn close_before_apply_failure_releases_only_settings_and_retires_generation() {
     let original = host.settings_snapshot().clone();
     let mut windows = AuxWindows::new();
     let (id, mut session) = prepare(host, &mut windows, AuxKind::Settings);
-    host.set_pause_owner(PauseOwner::Modal, true);
+    host.set_pause_owner(pause_owners::MODAL, true);
     host.note_main_departure();
     host.tick_focus_sync();
-    assert!(host.owns_pause(PauseOwner::Focus));
+    assert!(host.owns_pause(pause_owners::FOCUS));
     volume(&mut session, 13);
     submit(&mut session);
     let pending = take_submission(&session.mailbox()).unwrap();
@@ -339,9 +339,9 @@ fn close_before_apply_failure_releases_only_settings_and_retires_generation() {
     assert_eq!(handle, Some(()));
     assert!(result.is_err());
     assert!(!windows.contains(AuxKind::Settings));
-    assert!(!host.owns_pause(PauseOwner::Settings));
-    assert!(host.owns_pause(PauseOwner::Modal));
-    assert!(host.owns_pause(PauseOwner::Focus));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
+    assert!(host.owns_pause(pause_owners::MODAL));
+    assert!(host.owns_pause(pause_owners::FOCUS));
     assert!(host.tick().paused);
     assert_eq!(host.settings_snapshot(), &original);
     assert!(
@@ -373,15 +373,15 @@ fn shared_success_applies_before_release_and_preserves_modal_owner() {
         .unwrap();
     assert_eq!(windows.window(id).unwrap().title, session.window(id).title);
     assert!(windows.complete_open(id, Some(1), ()).is_ok());
-    host.set_pause_owner(PauseOwner::Modal, true);
+    host.set_pause_owner(pause_owners::MODAL, true);
     submit(&mut session);
     let (handle, result) = host
         .close_widget_window(&mut windows, id, None, take_submission(&session.mailbox()))
         .unwrap();
     assert_eq!(handle, Some(()));
     assert!(result.unwrap().refresh_chrome);
-    assert!(!host.owns_pause(PauseOwner::Settings));
-    assert!(host.owns_pause(PauseOwner::Modal));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
+    assert!(host.owns_pause(pause_owners::MODAL));
     assert!(host.tick().paused);
 }
 
@@ -405,7 +405,7 @@ fn pending_present_failure_and_stale_callbacks_do_not_touch_new_owner() {
         host.close_widget_window(&mut windows, old, None, None)
             .is_none()
     );
-    assert!(host.owns_pause(PauseOwner::Settings));
+    assert!(host.owns_pause(pause_owners::SETTINGS));
     assert!(windows.complete_open(current, Some(2), ()).is_ok());
     assert_eq!(
         host.reserve_window(&mut windows, AuxKind::Settings)
@@ -413,7 +413,7 @@ fn pending_present_failure_and_stale_callbacks_do_not_touch_new_owner() {
         Some(OpenRequest::Present(current))
     );
     assert!(!host.cancel_window(&mut windows, current));
-    assert!(host.owns_pause(PauseOwner::Settings));
+    assert!(host.owns_pause(pause_owners::SETTINGS));
     assert!(
         host.close_widget_window(&mut windows, current, None, None)
             .unwrap()
@@ -441,7 +441,7 @@ fn duplicate_factory_registration_is_rejected_and_reservation_can_roll_back() {
     assert!(registry.is_err());
     assert!(host.cancel_window(&mut windows, id));
     assert!(!windows.contains(AuxKind::Settings));
-    assert!(!host.owns_pause(PauseOwner::Settings));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
 }
 
 #[test]
@@ -451,7 +451,7 @@ fn invalid_draft_cannot_submit_and_cancel_releases_only_settings_pause() {
     let host = &mut fixture.core;
     let mut windows = AuxWindows::new();
     let (id, mut session) = prepare(host, &mut windows, AuxKind::Settings);
-    host.set_pause_owner(PauseOwner::User, true);
+    host.set_pause_owner(pause_owners::USER, true);
     let original = host.settings_snapshot().clone();
     let language = original.shared.general.language;
     let policy = controls(&session)
@@ -473,7 +473,7 @@ fn invalid_draft_cannot_submit_and_cancel_releases_only_settings_pause() {
         .unwrap();
     assert!(result.is_ok());
     assert_eq!(host.settings_snapshot(), &original);
-    assert!(!host.owns_pause(PauseOwner::Settings));
-    assert!(host.owns_pause(PauseOwner::User));
+    assert!(!host.owns_pause(pause_owners::SETTINGS));
+    assert!(host.owns_pause(pause_owners::USER));
     assert!(!windows.contains(AuxKind::Settings));
 }

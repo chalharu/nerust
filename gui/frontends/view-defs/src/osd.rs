@@ -399,6 +399,7 @@ mod tests {
         time::Duration,
     };
 
+    use crate::session::pause_owners;
     use nerust_core_traits::audio::AudioBackendRegistry;
     use nerust_gui_runtime::settings::{
         HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
@@ -415,7 +416,6 @@ mod tests {
         language::AppLanguage,
         local::{NotificationAreaMode, NotificationPosition},
     };
-    use wakui::pause::PauseOwner;
 
     use super::*;
     use crate::{application::ApplicationHost, frame::FrameCache};
@@ -611,12 +611,16 @@ mod tests {
         let mut host = ApplicationHost::new(fixture.session);
         let _root = fixture.root;
         let mut notifications = OsdNotifications::new();
-        let owners = [PauseOwner::Focus, PauseOwner::Settings, PauseOwner::User];
+        let owners = [
+            pause_owners::FOCUS,
+            pause_owners::SETTINGS,
+            pause_owners::USER,
+        ];
         for owner in owners {
             host.set_pause_owner(owner, true);
         }
         pump_error(&mut host, &mut notifications, "first");
-        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(pause_owners::MODAL));
         assert!(
             !notifications.flight_pending(),
             "callback delivery needs no polling"
@@ -639,7 +643,7 @@ mod tests {
         };
         assert!(next.detail.contains("second"));
         assert_ne!(first.token, next.token);
-        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(pause_owners::MODAL));
         assert_eq!(
             host.acknowledge_modal(&mut notifications, first.token),
             ModalAdvance::Ignored
@@ -653,7 +657,7 @@ mod tests {
             host.acknowledge_modal(&mut notifications, next.token),
             ModalAdvance::Ignored
         );
-        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(!host.owns_pause(pause_owners::MODAL));
         assert!(host.redraw_needed());
         assert!(!notifications.modal_pending());
         for owner in owners {
@@ -706,7 +710,7 @@ mod tests {
         assert!(!host.pause_held(), "idle pump cannot adopt a pause either");
         pump_error(&mut host, &mut notifications, "adopt stopped core");
         let presentation = notifications.take_modal().unwrap();
-        assert!(host.owns_pause(PauseOwner::User));
+        assert!(host.owns_pause(pause_owners::USER));
         assert_eq!(
             host.acknowledge_modal(&mut notifications, presentation.token),
             ModalAdvance::Drained
@@ -792,7 +796,7 @@ mod tests {
         host.pump_notifications(&mut notifications, &ctx, Instant::now());
         assert!(notifications.take_modal().is_none());
         assert!(!notifications.modal_pending());
-        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(!host.owns_pause(pause_owners::MODAL));
     }
 
     #[test]
@@ -801,7 +805,7 @@ mod tests {
         let mut host = ApplicationHost::new(fixture.session);
         let _root = fixture.root;
         let mut notifications = OsdNotifications::new();
-        host.set_pause_owner(PauseOwner::Settings, true);
+        host.set_pause_owner(pause_owners::SETTINGS, true);
         pump_error(&mut host, &mut notifications, "worker first");
         let first = notifications.take_modal().unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -819,7 +823,7 @@ mod tests {
         let Some(ModalAdvance::Present(second)) = host.poll_modal_ack(&mut notifications) else {
             panic!("worker ACK must chain");
         };
-        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(pause_owners::MODAL));
         assert!(
             host.poll_modal_ack(&mut notifications).is_none(),
             "duplicate message retired with receiver"
@@ -836,8 +840,8 @@ mod tests {
         );
         assert!(host.poll_modal_ack(&mut notifications).is_none());
         assert!(!notifications.flight_pending());
-        assert!(!host.owns_pause(PauseOwner::Modal));
-        assert!(host.owns_pause(PauseOwner::Settings));
+        assert!(!host.owns_pause(pause_owners::MODAL));
+        assert!(host.owns_pause(pause_owners::SETTINGS));
     }
 
     #[test]
@@ -854,7 +858,7 @@ mod tests {
         let present = |presentation: ModalPresentation| {
             let mut borrowed = shared.borrow_mut();
             let (host, notifications) = &mut *borrowed;
-            assert!(host.owns_pause(PauseOwner::Modal));
+            assert!(host.owns_pause(pause_owners::MODAL));
             assert!(notifications.take_modal().is_none());
             host.acknowledge_modal(notifications, presentation.token)
         };
@@ -868,7 +872,7 @@ mod tests {
             host.acknowledge_modal(notifications, token),
             ModalAdvance::Ignored
         );
-        assert!(!host.owns_pause(PauseOwner::Modal));
+        assert!(!host.owns_pause(pause_owners::MODAL));
     }
 
     #[test]
@@ -887,7 +891,7 @@ mod tests {
             panic!("disconnect must chain just like ACK");
         };
         assert!(next.detail.contains("after disconnect"));
-        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(pause_owners::MODAL));
         assert_eq!(
             host.acknowledge_modal(&mut notifications, next.token),
             ModalAdvance::Drained
@@ -917,7 +921,7 @@ mod tests {
             host.acknowledge_modal(&mut notifications, old.token),
             ModalAdvance::Ignored
         );
-        assert!(host.owns_pause(PauseOwner::Modal));
+        assert!(host.owns_pause(pause_owners::MODAL));
         assert_eq!(
             host.acknowledge_modal(&mut notifications, new.token),
             ModalAdvance::Drained

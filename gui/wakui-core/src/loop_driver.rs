@@ -45,23 +45,23 @@ pub fn earliest_wake(input: WakeNeed, now: Instant) -> Option<Instant> {
 /// Pure wake/repaint decision, preserved for native host policy tests.
 pub fn update_flow(
     now: Instant,
-    tick_loaded: bool,
-    tick_paused: bool,
-    main_active: bool,
+    present: bool,
+    suspended: bool,
+    host_active: bool,
     live_follow: bool,
     input: WakeNeed,
 ) -> (Option<Instant>, bool) {
     (
         earliest_wake(input, now),
-        main_active || live_follow || (tick_loaded && !tick_paused),
+        host_active || live_follow || (present && !suspended),
     )
 }
 
 /// Fresh post-pump state, not the tick stored in the turn's frame capture.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TurnLiveness {
-    pub loaded: bool,
-    pub paused: bool,
+    pub present: bool,
+    pub suspended: bool,
     pub main_active: bool,
     pub live_follow: bool,
 }
@@ -109,8 +109,8 @@ pub fn drive_turn(host: &mut impl LoopHost) -> TurnOutcome {
     let live = host.late_liveness();
     let (deadline, wants_redraw) = update_flow(
         host.now(),
-        live.loaded,
-        live.paused,
+        live.present,
+        live.suspended,
         live.main_active,
         live.live_follow,
         wake,
@@ -167,13 +167,13 @@ mod tests {
         fn before_turn(&mut self) {
             self.calls.push("focus");
             if let Some(paused) = self.focus_pause {
-                self.live.paused = paused;
+                self.live.suspended = paused;
             }
         }
 
         fn frame_ctx(&mut self) -> bool {
             self.calls.push("capture");
-            self.captured_paused = self.live.paused;
+            self.captured_paused = self.live.suspended;
             self.captured_paused
         }
 
@@ -185,7 +185,7 @@ mod tests {
         fn pump_widgets(&mut self) -> WakeNeed {
             self.calls.push("debug");
             if let Some(paused) = self.debug_pause {
-                self.live.paused = paused;
+                self.live.suspended = paused;
             }
             self.debug
         }
@@ -194,7 +194,7 @@ mod tests {
             self.calls.push("osd");
             assert_eq!(*ctx, self.captured_paused);
             if self.acknowledge {
-                self.live.paused = false;
+                self.live.suspended = false;
             }
             self.osd
         }
@@ -202,7 +202,7 @@ mod tests {
         fn pump_aux(&mut self) -> WakeNeed {
             self.calls.push("aux/retry");
             if let Some(paused) = self.aux_pause {
-                self.live.paused = paused;
+                self.live.suspended = paused;
             }
             self.clock
                 .set(self.clock.get() + Duration::from_millis(100));
@@ -226,8 +226,8 @@ mod tests {
     #[test]
     fn ordered_turn_uses_post_modal_ack_tick_instead_of_parking() {
         let mut host = Host::new(Instant::now());
-        host.live.loaded = true;
-        host.live.paused = true;
+        host.live.present = true;
+        host.live.suspended = true;
         host.acknowledge = true;
         let outcome = drive_turn(&mut host);
         assert!(host.captured_paused);
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn deferred_focus_settles_before_the_only_capture() {
         let mut host = Host::new(Instant::now());
-        host.live.loaded = true;
+        host.live.present = true;
         host.focus_pause = Some(true);
         let outcome = drive_turn(&mut host);
         assert!(host.captured_paused);
@@ -264,8 +264,8 @@ mod tests {
     #[test]
     fn debug_resume_and_aux_pause_are_both_observed_after_all_pumps() {
         let mut host = Host::new(Instant::now());
-        host.live.loaded = true;
-        host.live.paused = true;
+        host.live.present = true;
+        host.live.suspended = true;
         host.debug_pause = Some(false);
         assert!(drive_turn(&mut host).wants_redraw);
         // A later native auxiliary effect wins over a completed drain.
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn idle_and_paused_sleep_but_focus_follow_and_running_redraw() {
-        for (loaded, paused, main_active, live_follow, redraw) in [
+        for (present, suspended, main_active, live_follow, redraw) in [
             (false, false, false, false, false),
             (true, true, false, false, false),
             (true, false, false, false, true),
@@ -317,8 +317,8 @@ mod tests {
         ] {
             let mut host = Host::new(Instant::now());
             host.live = TurnLiveness {
-                loaded,
-                paused,
+                present,
+                suspended,
                 main_active,
                 live_follow,
             };

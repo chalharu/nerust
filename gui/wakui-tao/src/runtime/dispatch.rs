@@ -37,7 +37,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
                 self.host
                     .on_focus_event(wakui_core::focus::FocusEvent::Main(false));
-                self.host.core.clear_keys();
+                self.host.core.clear_input();
             }
             WindowEvent::Resized(_) => {
                 self.host.sync_fullscreen_default_from_window();
@@ -204,7 +204,7 @@ mod tests {
         runtime.begin_close();
         assert!(runtime.host.core.close_exited());
         assert!(runtime.host.aux.windows.ids().is_empty());
-        assert!(!runtime.host.settings_open());
+        assert!(!runtime.host.core.modal_guard_active());
         assert!(runtime.surface_xid.is_none());
         runtime.begin_close();
         assert!(runtime.host.core.close_exited());

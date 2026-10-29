@@ -26,7 +26,6 @@ use wakui_core::{
     mailbox::WindowMailbox,
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
     menu_presenter::MenuPresenter,
-    pause::PauseOwner,
     window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
 };
 
@@ -615,14 +614,14 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> EventSink for WindowEventSink<K> 
         let Some(window) = self.0.upgrade() else {
             return false;
         };
-        let (state, settings_open) = {
+        let state = {
             let core = window.borrow();
-            let settings_open = core.state.borrow().host.owns_pause(PauseOwner::Settings);
-            (core.state.clone(), settings_open)
+            core.state.clone()
         };
         let outcome = {
             let mut state = state.borrow_mut();
-            state.host.handle_event(event, settings_open)
+            // The modal guard lives view-side; flavors forward every event.
+            state.host.handle_event(event)
         };
         // Native constructors, setters and effects may synchronously reenter.
         match outcome {
@@ -632,7 +631,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> EventSink for WindowEventSink<K> 
                 }
                 if matches!(event, EventCommand::Menu(_))
                     || outcome.session.command.is_some()
-                    || outcome.session.settings_changed
                     || outcome.effect.is_some()
                 {
                     window.update_actions();
@@ -652,7 +650,7 @@ fn apply_command_effect<K: Copy + Eq + std::hash::Hash + 'static>(
     effect: CommandEffect<K>,
 ) {
     match effect {
-        CommandEffect::OpenRom => window.open(),
+        CommandEffect::OpenFile => window.open(),
         CommandEffect::OpenAux(kind) => {
             open_auxiliary(window, kind);
             drain_deferred_opens(window);
@@ -869,7 +867,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
         // Unified "All ROMs" first: GTK pre-selects the first filter, so
         // every registered system is visible in the initial view while
         // per-factory entries stay selectable behind it.
-        let filters = self.state().borrow().host.rom_dialog_filters();
+        let filters = self.state().borrow().host.file_dialog_filters();
         let mut first_filter = None;
         for (name, extensions) in filters {
             let filter = gtk::FileFilter::new();
@@ -949,13 +947,9 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
 
     fn update_actions(&self) {
         let state = self.state();
-        let settings_open = state.borrow().host.owns_pause(PauseOwner::Settings);
         let model = {
             let mut state = state.borrow_mut();
-            let menu_changed = state
-                .host
-                .menubar_update(settings_open, GTK_MENU_CAPABILITIES)
-                .is_some();
+            let menu_changed = state.host.menubar_update(GTK_MENU_CAPABILITIES).is_some();
             let title_changed = state.title_update().is_some();
             (menu_changed || title_changed).then(|| state.host.main_window().clone())
         };
@@ -1231,11 +1225,11 @@ pub(crate) mod tests {
     };
 
     use super::{
-        CommandId, GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenuId, MenubarModels,
+        CommandId, GTK_MENU_CAPABILITIES, GtkMenuVisitor, KeyEventState, MenubarModels,
         WindowExtend, key_event_pressed,
     };
     use crate::surface_state::surface_gone;
-    use crate::testkit::{TestMenu, TestSession};
+    use crate::testkit::{TestMenu, TestSession, menu_id};
 
     /// Opaque id for a simulated command, found in the window's latest
     /// menubar by downcasting the generic spec. Native registries key on
@@ -1274,12 +1268,12 @@ pub(crate) mod tests {
         let bars = MenubarModels::new();
         let shared = bars.clone();
         assert!(bars.models.borrow().is_empty());
-        let file = bars.submenu(MenuId::File);
+        let file = bars.submenu(menu_id::FILE);
         assert_eq!(bars.models.borrow().len(), 1);
-        assert_eq!(shared.submenu(MenuId::File), file);
-        let states = shared.submenu(MenuId::States);
+        assert_eq!(shared.submenu(menu_id::FILE), file);
+        let states = shared.submenu(menu_id::STATES);
         assert_ne!(states, file);
-        assert_eq!(bars.submenu(MenuId::States), states);
+        assert_eq!(bars.submenu(menu_id::STATES), states);
         assert_eq!(bars.models.borrow().len(), 2);
     }
 
@@ -1431,7 +1425,7 @@ pub(crate) mod tests {
             }
         });
         // Resolve the real GMenu action rather than bypassing native dispatch.
-        let emulation = bars.submenu(MenuId::Emulation);
+        let emulation = bars.submenu(menu_id::EMULATION);
         let debug_action = (0..emulation.n_items()).find_map(|i| {
             emulation
                 .item_attribute_value(i, "action", None)
@@ -1714,10 +1708,10 @@ pub(crate) mod tests {
     #[test]
     #[ignore = "needs display; CI-only under xvfb"]
     fn common_dialog_stale_build_cannot_remove_replacement_or_release_settings_pause() {
+        use crate::testkit::owners;
         use TestAux;
         use gtk::prelude::{ListModelExt, WidgetExt};
         use std::{cell::RefCell, rc::Rc};
-        use wakui_core::pause::PauseOwner;
         let win = bound_window().expect("isolated Xvfb process");
         for kind in [TestAux::History, TestAux::Settings] {
             let stale = Rc::new(RefCell::new(None));
@@ -1752,7 +1746,7 @@ pub(crate) mod tests {
             assert_ne!(current, stale.clone().upcast::<gtk::Window>());
             assert!(current.is_visible());
             if kind == TestAux::Settings {
-                assert!(win.state().borrow().host.owns_pause(PauseOwner::Settings));
+                assert!(win.state().borrow().host.owns_pause(owners::SETTINGS));
                 assert!(
                     !win.borrow()
                         .actions
@@ -1765,7 +1759,7 @@ pub(crate) mod tests {
             assert!(win.borrow().aux.contains(kind));
             current.destroy();
             assert!(!win.borrow().aux.contains(kind));
-            assert!(!win.state().borrow().host.owns_pause(PauseOwner::Settings));
+            assert!(!win.state().borrow().host.owns_pause(owners::SETTINGS));
         }
         win.window().destroy();
     }
@@ -1993,14 +1987,14 @@ pub(crate) mod tests {
         );
         let models = [
             menubar.menu_model.clone(),
-            menubar.submenu(MenuId::File),
-            menubar.submenu(MenuId::States),
-            menubar.submenu(MenuId::Emulation),
-            menubar.submenu(MenuId::Help),
-            menubar.submenu(MenuId::SelectSlot),
-            menubar.submenu(MenuId::SaveSlot),
-            menubar.submenu(MenuId::LoadSlot),
-            menubar.submenu(MenuId::DeleteSlot),
+            menubar.submenu(menu_id::FILE),
+            menubar.submenu(menu_id::STATES),
+            menubar.submenu(menu_id::EMULATION),
+            menubar.submenu(menu_id::HELP),
+            menubar.submenu(menu_id::SELECT_SLOT),
+            menubar.submenu(menu_id::SAVE_SLOT),
+            menubar.submenu(menu_id::LOAD_SLOT),
+            menubar.submenu(menu_id::DELETE_SLOT),
         ];
         let changes = Rc::new(Cell::new(0));
         let borrow_free = Rc::new(Cell::new(true));
@@ -2049,14 +2043,14 @@ pub(crate) mod tests {
             Some(menubar.menu_model.upcast_ref())
         );
         for (model, id) in models[1..].iter().zip([
-            MenuId::File,
-            MenuId::States,
-            MenuId::Emulation,
-            MenuId::Help,
-            MenuId::SelectSlot,
-            MenuId::SaveSlot,
-            MenuId::LoadSlot,
-            MenuId::DeleteSlot,
+            menu_id::FILE,
+            menu_id::STATES,
+            menu_id::EMULATION,
+            menu_id::HELP,
+            menu_id::SELECT_SLOT,
+            menu_id::SAVE_SLOT,
+            menu_id::LOAD_SLOT,
+            menu_id::DELETE_SLOT,
         ]) {
             assert_eq!(model, &menubar.submenu(id));
         }
@@ -2153,7 +2147,7 @@ pub(crate) mod tests {
         let once = called.clone();
         let weak = Rc::downgrade(&win);
         let menubar = win.borrow().menubar.clone();
-        let model = menubar.submenu(MenuId::States);
+        let model = menubar.submenu(menu_id::STATES);
         model.connect_items_changed(move |_, _, _, _| {
             if once.replace(true) {
                 return;
@@ -2258,7 +2252,7 @@ pub(crate) mod tests {
     #[test]
     fn settings_identity_guards_pause_owner_and_native_finish() {
         use super::NativeAux;
-        use wakui_core::pause::PauseOwner;
+        use crate::testkit::owners;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2282,18 +2276,18 @@ pub(crate) mod tests {
         old.response(gtk::ResponseType::Cancel);
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(TestAux::Settings));
-        assert!(!win.state().borrow().host.owns_pause(PauseOwner::Settings));
+        assert!(!win.state().borrow().host.owns_pause(owners::SETTINGS));
         super::open_auxiliary(&win, TestAux::Settings);
         let new_id = win.borrow().aux.route_id(TestAux::Settings).unwrap();
         assert_ne!(old_id, new_id);
         assert!(!super::close_aux(&win, old_id));
         old.destroy();
-        assert!(win.state().borrow().host.owns_pause(PauseOwner::Settings));
+        assert!(win.state().borrow().host.owns_pause(owners::SETTINGS));
         assert!(!action.is_enabled());
         win.state()
             .borrow_mut()
             .host
-            .set_pause_owner(PauseOwner::Modal, true);
+            .set_pause_owner(owners::MODAL, true);
         let current = win
             .borrow()
             .aux
@@ -2303,8 +2297,8 @@ pub(crate) mod tests {
         current.destroy();
         assert!(action.is_enabled());
         assert!(!win.borrow().aux.contains(TestAux::Settings));
-        assert!(!win.state().borrow().host.owns_pause(PauseOwner::Settings));
-        assert!(win.state().borrow().host.owns_pause(PauseOwner::Modal));
+        assert!(!win.state().borrow().host.owns_pause(owners::SETTINGS));
+        assert!(win.state().borrow().host.owns_pause(owners::MODAL));
     }
 
     /// Headless-capable state: session plus settings only, no renderer.
@@ -2344,10 +2338,7 @@ pub(crate) mod tests {
         let state = model_state();
         let model = {
             let mut state = state.borrow_mut();
-            state
-                .host
-                .menubar_update(false, GTK_MENU_CAPABILITIES)
-                .unwrap()
+            state.host.menubar_update(GTK_MENU_CAPABILITIES).unwrap()
         };
         let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
         model.visit(None, &mut visitor);
@@ -2395,7 +2386,7 @@ pub(crate) mod tests {
             .find(|descriptor| descriptor.downcast::<TestMenu>() == Some(&TestMenu::About))
             .expect("about declaration")
             .id;
-        let file = visitor.menubar.submenu(MenuId::File);
+        let file = visitor.menubar.submenu(menu_id::FILE);
         assert_eq!(
             file.item_attribute_value(file.n_items() - 1, "action", None)
                 .unwrap()
@@ -2405,7 +2396,7 @@ pub(crate) mod tests {
         assert_eq!(
             visitor
                 .menubar
-                .submenu(MenuId::Help)
+                .submenu(menu_id::HELP)
                 .item_attribute_value(0, "action", None)
                 .unwrap()
                 .str(),
@@ -2429,10 +2420,7 @@ pub(crate) mod tests {
         let state = model_state();
         let model = {
             let mut state = state.borrow_mut();
-            state
-                .host
-                .menubar_update(false, GTK_MENU_CAPABILITIES)
-                .unwrap()
+            state.host.menubar_update(GTK_MENU_CAPABILITIES).unwrap()
         };
         let recording = Rc::new(RecordingSink::default());
         let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
@@ -2502,7 +2490,7 @@ pub(crate) mod tests {
     #[test]
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
         use super::{EventCommand, OpenRequest};
-        use wakui_core::pause::PauseOwner;
+        use crate::testkit::owners;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
@@ -2550,7 +2538,7 @@ pub(crate) mod tests {
         win.state()
             .borrow_mut()
             .host
-            .set_pause_owner(PauseOwner::Settings, true);
+            .set_pause_owner(owners::SETTINGS, true);
         assert!(sink.send(about_event));
         assert!(
             win.borrow().about_dialog.is_none(),
@@ -2559,7 +2547,7 @@ pub(crate) mod tests {
         win.state()
             .borrow_mut()
             .host
-            .set_pause_owner(PauseOwner::Settings, false);
+            .set_pause_owner(owners::SETTINGS, false);
         win.update_actions();
         about.activate(None);
         let dialog = win
@@ -2674,16 +2662,11 @@ pub(crate) mod tests {
         win.borrow_mut().sink = sink.clone();
         win.key_event(gdk::Key::F4, KeyEventState::Press);
         win.key_event(gdk::Key::F4, KeyEventState::Release);
-        let shortcut = SessionEvent::Shortcut(wakui_core::session::ShortcutGesture::OpenDebugger);
-        win.event_sink().send(EventCommand::Session(shortcut));
         assert!(matches!(
             sink.0.borrow().as_slice(),
             [
                 EventCommand::Session(SessionEvent::Keyboard { pressed: true, .. }),
                 EventCommand::Session(SessionEvent::Keyboard { pressed: false, .. }),
-                EventCommand::Session(SessionEvent::Shortcut(
-                    wakui_core::session::ShortcutGesture::OpenDebugger
-                )),
             ]
         ));
         win.window().destroy();
@@ -2705,10 +2688,10 @@ pub(crate) mod tests {
         }
         // One disabled item names the empty state, never a blank list.
         for id in [
-            MenuId::SelectSlot,
-            MenuId::SaveSlot,
-            MenuId::LoadSlot,
-            MenuId::DeleteSlot,
+            menu_id::SELECT_SLOT,
+            menu_id::SAVE_SLOT,
+            menu_id::LOAD_SLOT,
+            menu_id::DELETE_SLOT,
         ] {
             let menu = bars.submenu(id);
             assert_eq!(menu.n_items(), 1);
@@ -2756,7 +2739,7 @@ pub(crate) mod tests {
             visitor.actions.get(load_slot).unwrap().is_enabled(),
             "slot entries cannot overwrite shared declaration enablement"
         );
-        let menu = bars.submenu(MenuId::LoadSlot);
+        let menu = bars.submenu(menu_id::LOAD_SLOT);
         assert_eq!(menu.n_items(), 2);
         for (index, id) in [(0, 1_u64), (1, 2_u64)] {
             assert_eq!(

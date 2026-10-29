@@ -1,3 +1,4 @@
+use super::menu_id;
 use super::*;
 use crate::commands::{CommandTable, MenuCommand, NativeRole};
 use nerust_gui_shell::session::commands::SessionCommand;
@@ -8,7 +9,7 @@ use nerust_settings_core::model::{
 };
 use wakui::commands::CommandRef;
 use wakui::control::IdRegistry;
-use wakui::menu::{CommandVisitor, MenuModel, MenuVisitor, find_menu};
+use wakui::menu::{CommandVisitor, MenuId, MenuModel, MenuVisitor, find_menu};
 
 const CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: true,
@@ -76,7 +77,7 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
     let (model, table) = built(&sig(), CAPABILITIES);
     assert_eq!(
         model.menus.iter().map(|menu| menu.id).collect::<Vec<_>>(),
-        [MenuId::File, MenuId::Emulation, MenuId::Help]
+        [menu_id::FILE, menu_id::EMULATION, menu_id::HELP]
     );
     assert_eq!(
         items(&model.menus[0])
@@ -90,13 +91,13 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
             activation(&table, MenuCommand::Native(NativeRole::Quit)),
         ]
     );
-    let states = find_menu(&model.menus, MenuId::States).unwrap();
+    let states = find_menu(&model.menus, menu_id::STATES).unwrap();
     assert_eq!(states.children.len(), 7);
     for id in [
-        MenuId::SelectSlot,
-        MenuId::SaveSlot,
-        MenuId::LoadSlot,
-        MenuId::DeleteSlot,
+        menu_id::SELECT_SLOT,
+        menu_id::SAVE_SLOT,
+        menu_id::LOAD_SLOT,
+        menu_id::DELETE_SLOT,
     ] {
         let menu = find_menu(&model.menus, id).unwrap();
         assert!(!menu.enabled);
@@ -117,7 +118,7 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
             application_menu: false,
         },
     );
-    assert!(find_menu(&tao.menus, MenuId::Help).is_none());
+    assert!(find_menu(&tao.menus, menu_id::HELP).is_none());
     assert!(
         command_item(&tao, &tao_table, MenuCommand::Open)
             .label
@@ -302,14 +303,14 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     assert_eq!(
         record.preorder,
         [
-            MenuId::File,
-            MenuId::Emulation,
-            MenuId::States,
-            MenuId::SelectSlot,
-            MenuId::SaveSlot,
-            MenuId::LoadSlot,
-            MenuId::DeleteSlot,
-            MenuId::Help
+            menu_id::FILE,
+            menu_id::EMULATION,
+            menu_id::STATES,
+            menu_id::SELECT_SLOT,
+            menu_id::SAVE_SLOT,
+            menu_id::LOAD_SLOT,
+            menu_id::DELETE_SLOT,
+            menu_id::HELP
         ]
     );
     assert_eq!(record.rebuilds, record.preorder);
@@ -331,10 +332,10 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     assert_eq!(
         record.rebuilds,
         [
-            MenuId::SelectSlot,
-            MenuId::SaveSlot,
-            MenuId::LoadSlot,
-            MenuId::DeleteSlot
+            menu_id::SELECT_SLOT,
+            menu_id::SAVE_SLOT,
+            menu_id::LOAD_SLOT,
+            menu_id::DELETE_SLOT
         ]
     );
     assert!(!record.root_rebuild);
@@ -346,7 +347,7 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     build_menubar(&mut ids, &signature, CAPABILITIES)
         .0
         .visit(Some(&slots), &mut record);
-    assert_eq!(record.rebuilds, [MenuId::Emulation, MenuId::States]);
+    assert_eq!(record.rebuilds, [menu_id::EMULATION, menu_id::STATES]);
     assert!(!record.root_rebuild);
 }
 

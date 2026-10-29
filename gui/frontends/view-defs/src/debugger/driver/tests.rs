@@ -593,7 +593,7 @@ fn settle(driver: &mut DebuggerDriver, bridge: &DebugBridge, host: &mut Applicat
 
 #[test]
 fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
-    use wakui::pause::PauseOwner;
+    use crate::session::pause_owners;
     let mut fixture = Fixture::new();
     fixture.load();
     let bridge = fixture.host.new_debug_bridge();
@@ -607,8 +607,8 @@ fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
         false,
     );
     settle(&mut driver, &bridge, &mut fixture.host);
-    assert!(fixture.host.owns_pause(PauseOwner::User));
-    fixture.host.set_pause_owner(PauseOwner::Modal, true);
+    assert!(fixture.host.owns_pause(pause_owners::USER));
+    fixture.host.set_pause_owner(pause_owners::MODAL, true);
     driver.dispatch(
         fixture.host.session(),
         &bridge,
@@ -617,7 +617,7 @@ fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
         false,
     );
     settle(&mut driver, &bridge, &mut fixture.host);
-    assert!(!fixture.host.owns_pause(PauseOwner::User));
+    assert!(!fixture.host.owns_pause(pause_owners::USER));
     assert!(fixture.host.tick().paused, "modal still owns pause");
     driver.enqueue(
         fixture.host.session(),
@@ -636,8 +636,8 @@ fn actual_host_pause_ownership_composes_with_modal_and_replacement() {
         false,
     );
     settle(&mut driver, &bridge, &mut fixture.host);
-    fixture.host.set_pause_owner(PauseOwner::Modal, false);
-    assert!(fixture.host.owns_pause(PauseOwner::User));
+    fixture.host.set_pause_owner(pause_owners::MODAL, false);
+    assert!(fixture.host.owns_pause(pause_owners::USER));
     assert!(
         fixture.host.tick().paused,
         "stale resume must not release user pause"

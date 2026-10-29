@@ -5,8 +5,8 @@ mod tests;
 
 use std::{sync::mpsc::Receiver, time::Instant};
 
+use crate::session::pause_owners;
 use nerust_render_traits::SurfaceSize;
-use wakui::pause::PauseOwner;
 
 use super::ApplicationHost;
 use crate::{
@@ -37,8 +37,8 @@ impl ApplicationHost {
         }
         let report = self.osd.notifications.pump(&mut self.session, ctx, now);
         let pending = self.osd.notifications.modal_pending();
-        if self.owns_pause(PauseOwner::Modal) != pending {
-            self.set_pause_owner(PauseOwner::Modal, pending);
+        if self.owns_pause(pause_owners::MODAL) != pending {
+            self.set_pause_owner(pause_owners::MODAL, pending);
         }
         // Pump first: a completed worker must chain newly queued batches without
         // briefly releasing Modal and resuming a core behind the next dialog.

@@ -32,11 +32,7 @@ impl FakeDialogs {
 }
 
 impl crate::ports::DialogPorts for FakeDialogs {
-    fn pick_rom_file(
-        &self,
-        _title: String,
-        _filters: Vec<(String, Vec<String>)>,
-    ) -> Option<PathBuf> {
+    fn pick_file(&self, _title: String, _filters: Vec<(String, Vec<String>)>) -> Option<PathBuf> {
         crate::aux::bridge::lock_recovered(&self.inner.pick).clone()
     }
 

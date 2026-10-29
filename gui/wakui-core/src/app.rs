@@ -34,7 +34,7 @@ pub struct WidgetCloseOutcome {
 }
 
 /// Built bundle handed from the composition root to a frontend. The app is
-/// already constructed (session, factory, loader); frontend entry points
+/// already constructed (content handle, factory, loader); frontend entry points
 /// receive only this struct. `K` is the view-side aux kind, `A` the
 /// launch-arguments type.
 ///
@@ -161,52 +161,46 @@ impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K, Vec<String>> {
 /// The single policy owner, behind a trait object. Native adapters drive
 /// one [`Application::into_app`] through these narrow ports; all ViewModel contact
 /// stays inside the implementation. `K` is the view-side aux kind
-/// (debug/settings/history/...); the framework never names it.
+/// (view-defined kinds); the framework never names it.
+///
+/// File, content, and suspension ports are generic (open/unload content,
+/// suspend holders, file dialogs). Emulator verbs (slots, reset, debugger
+/// routing, settings/history kinds) live view-side behind separate domain
+/// ports; flavors never name them.
 pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     // -- lifecycle -------------------------------------------------------
-    fn load_rom(&mut self, path: &Path) -> Result<(), String>;
+    /// Open content from a file. Values like ROM wording stay view-side;
+    /// the framework only transports the path and the failure string.
+    fn load_file(&mut self, path: &Path) -> Result<(), String>;
     fn unload(&mut self);
     fn begin_close(&mut self) -> bool;
     fn finish_close(&mut self);
     fn close_exited(&self) -> bool;
     fn fatal_message(&self) -> Option<String>;
     fn fail_window(&mut self, detail: String);
-    fn resume_session(&mut self);
+    /// Resume suspended content (e.g. at startup after construction).
+    fn resume_content(&mut self);
     fn swap_frame_buffer(&mut self);
 
-    // -- session queries (replacing direct session borrows) --------------
-    fn tick_loaded(&self) -> bool;
-    fn tick_paused(&self) -> bool;
-    fn active_slot_id(&self) -> Option<u64>;
-    fn clear_keys(&mut self);
+    // -- content state (generic; no tick/slot vocabulary) -------------------
+    /// Whether content is present (a document is open).
+    fn content_loaded(&self) -> bool;
+    /// Whether present content is suspended.
+    fn content_suspended(&self) -> bool;
+    /// Reset held-input state (e.g. on window close).
+    fn clear_input(&mut self);
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String>;
-    fn pause_session(&mut self);
-    fn resume_session_command(&mut self);
-    fn toggle_pause_session(&mut self);
-    fn reset_session(&mut self);
-    fn save_active_slot(&mut self) -> bool;
-    fn load_active_slot(&mut self) -> bool;
-    fn load_slot(&mut self, id: u64) -> bool;
-    fn save_slot(&mut self, id: u64);
-    fn delete_slot(&mut self, id: u64);
-    fn select_slot(&mut self, id: u64);
-    fn create_slot(&mut self);
-    fn select_next_slot(&mut self);
-    fn select_previous_slot(&mut self);
+    // -- suspension (generic holders; identities are opaque) --------------
     fn set_pause_owner(&mut self, owner: crate::pause::PauseOwner, active: bool);
     fn owns_pause(&self, owner: crate::pause::PauseOwner) -> bool;
     fn pause_held(&self) -> bool;
     fn reconcile_pause(&mut self);
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError>;
 
-    // -- chrome, menus, titles -------------------------------------------
-    fn dialog_titles(&self) -> crate::menu::DialogTitles;
-    fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)>;
-    fn menubar_update(
-        &mut self,
-        settings_open: bool,
-        capabilities: MenuCapabilities,
-    ) -> Option<Menubar>;
+    // -- chrome, menus, titles (generic file dialogs) ---------------------
+    fn dialog_titles(&self) -> crate::menu::FileDialogTitles;
+    fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)>;
+    fn menubar_update(&mut self, capabilities: MenuCapabilities) -> Option<Menubar>;
     fn main_window(&self) -> &Window;
     fn window_usable(&self) -> bool;
     fn title_update(&mut self) -> Option<String>;
@@ -219,7 +213,6 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn window_scale_factor(&self) -> Option<u32>;
     fn window_chrome_sync(&mut self, native_fullscreen: bool) -> WindowChromeSync;
     fn remembered_window_size(&self) -> Option<(u32, u32)>;
-    fn liveness_inputs(&self) -> (bool, bool);
 
     // -- focus -------------------------------------------------------------
     fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect>;
@@ -269,12 +262,11 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
         id: crate::aux::AuxId,
         close: bool,
     ) -> Option<WidgetCloseOutcome>;
-    fn settings_closed(&mut self) -> bool;
     fn report_host_error(&mut self, detail: String);
-    fn history_changed(&self) -> bool;
-    /// Whether a settings widget is currently open. Flavors gate menus and
-    /// session commands on this without naming the settings kind.
-    fn settings_open(&self) -> bool;
+    /// Whether a modal dialog (e.g. settings) currently gates chrome and
+    /// commands. Flavors gate nothing themselves; the view side enforces the
+    /// guard when it handles events and builds menus.
+    fn modal_guard_active(&self) -> bool;
 
     // -- polled widgets (background work owned view-side) ------------------
     // Widgets are generic Controls like settings/history/viewers.

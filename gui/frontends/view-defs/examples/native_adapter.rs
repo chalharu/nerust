@@ -195,7 +195,6 @@ impl LoopHost for NativeAdapter {
                 state.app.title_update(&ctx.tick()),
                 state.app.menubar_update(
                     ctx,
-                    false,
                     MenuCapabilities {
                         about: false,
                         dialog_ellipsis: false,
@@ -262,8 +261,8 @@ impl LoopHost for NativeAdapter {
         let state = self.common.borrow();
         let tick = state.app.tick(); // Fresh post-ACK state, not the frame capture.
         TurnLiveness {
-            loaded: tick.loaded,
-            paused: tick.paused,
+            present: tick.loaded,
+            suspended: tick.paused,
             main_active: state.app.main_active(),
             live_follow: false,
         }
@@ -369,9 +368,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut common = native.common.borrow_mut();
         let handler: &mut dyn EventHandler<nerust_frontend_viewdefs::focus::AuxKind> =
             &mut common.app;
-        handler.handle_event(event, false)?
+        handler.handle_event(event)?
     };
-    assert_eq!(outcome.effect, Some(CommandEffect::OpenRom));
+    assert_eq!(outcome.effect, Some(CommandEffect::OpenFile));
     // Native presentation can synchronously reenter only after borrow release.
     assert!(native.common.try_borrow_mut().is_ok());
     native.common.borrow_mut().app.note_main_departure();

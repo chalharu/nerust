@@ -620,7 +620,7 @@ fn text_validation_footer_submit_and_cancel_follow_model_policy() {
     send(&mut session, cancel, ControlInput::Activate);
     assert!(session.mailbox().close_requested());
     assert!(!session.mailbox().has_pending());
-    let _ = Window::main();
+    let _ = Window::main("test");
 }
 
 #[test]

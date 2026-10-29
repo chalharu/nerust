@@ -10,7 +10,7 @@ use crate::{
     widget_session::{Pending, WidgetSession, WindowSubmission},
 };
 use wakui::aux::{AuxId, AuxWindows, OpenRequest};
-use wakui::session::{SessionError, SessionEvent};
+use wakui::session::SessionError;
 use wakui::window::WindowEffects;
 
 pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>);
@@ -246,18 +246,10 @@ impl ApplicationHost {
         let request = windows.request_open(kind, kind.title());
         if kind == AuxKind::Settings
             && let OpenRequest::Create(id) = request
+            && !self.note_settings_opened()
         {
-            match self.dispatch(SessionEvent::SettingsOpened) {
-                Ok(outcome) if outcome.settings_changed => (),
-                Ok(_) => {
-                    windows.cancel_open(id);
-                    return Ok(None);
-                }
-                Err(error) => {
-                    windows.cancel_open(id);
-                    return Err(error);
-                }
-            }
+            windows.cancel_open(id);
+            return Ok(None);
         }
         Ok(Some(request))
     }
@@ -295,15 +287,14 @@ impl ApplicationHost {
             return false;
         }
         if kind == Some(AuxKind::Settings) {
-            let _ = self.dispatch(SessionEvent::SettingsOpenFailed);
+            self.note_settings_dismissed();
         }
         true
     }
 
     /// Also used by native lifecycle tests after registry removal.
     pub fn settings_closed(&mut self) -> bool {
-        self.dispatch(SessionEvent::SettingsClosed)
-            .is_ok_and(|outcome| outcome.settings_changed)
+        self.note_settings_dismissed()
     }
 }
 

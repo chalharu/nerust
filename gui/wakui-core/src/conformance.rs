@@ -45,12 +45,12 @@ fn layout(children: Vec<Node>) -> Container {
 
 /// Minimal two-control screen: one toggle in a page, one action in the footer.
 pub fn conformance_screen() -> ControlScreen {
-    let toggle = control("Mute", ToggleLeaf { value: false });
+    let toggle = control("Option", ToggleLeaf { value: false });
     let page = Page {
         id: Id::fresh(),
-        label: "Audio".to_string(),
+        label: "Section".to_string(),
         selected: true,
-        select: control("Audio", ActionLeaf),
+        select: control("Section", ActionLeaf),
         body: layout(vec![Node::Control(toggle)]),
     };
     ControlScreen {
@@ -95,8 +95,8 @@ impl Default for ConformanceBackend {
             redraws: 0,
             flight_pending: false,
             live: TurnLiveness {
-                loaded: true,
-                paused: false,
+                present: true,
+                suspended: false,
                 main_active: false,
                 live_follow: false,
             },
@@ -156,7 +156,7 @@ pub fn run_conformance(backend: &mut ConformanceBackend) {
     screen.visit(backend);
     assert_eq!(
         backend.visited,
-        ["Mute", "OK"],
+        ["Option", "OK"],
         "visit order is page body then footer"
     );
 
@@ -178,7 +178,7 @@ pub fn run_conformance(backend: &mut ConformanceBackend) {
 
     // 3. Picker correlation survives the round trip.
     let request = Id::fresh();
-    backend.submit(toggle.id, request, Some("/tmp/rom".to_string()));
+    backend.submit(toggle.id, request, Some("/tmp/file".to_string()));
     assert_eq!(backend.picker.len(), 1);
     assert_eq!(backend.picker[0].1, request);
 
@@ -211,7 +211,7 @@ mod tests {
     fn conformance_kit_passes_on_the_fake_backend() {
         let mut backend = ConformanceBackend::default();
         run_conformance(&mut backend);
-        assert_eq!(backend.visited, ["Mute", "OK"]);
+        assert_eq!(backend.visited, ["Option", "OK"]);
         assert!(backend.constructed > 0);
         assert!(backend.patched > 0);
         assert_eq!(backend.redraws, 1);

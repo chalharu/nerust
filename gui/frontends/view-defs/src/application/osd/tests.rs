@@ -141,12 +141,16 @@ fn owned_receiver_ack_disconnect_chain_and_stale_callbacks_preserve_other_owners
     let mut fixture = Fixture::new();
     let host = &mut fixture.core;
     let now = Instant::now();
-    let owners = [PauseOwner::Focus, PauseOwner::Settings, PauseOwner::User];
+    let owners = [
+        pause_owners::FOCUS,
+        pause_owners::SETTINGS,
+        pause_owners::USER,
+    ];
     for owner in owners {
         host.set_pause_owner(owner, true);
     }
     let first = error(host, "first", now).modal.unwrap();
-    assert!(host.owns_pause(PauseOwner::Modal));
+    assert!(host.owns_pause(pause_owners::MODAL));
     assert!(!host.osd_flight_pending());
     let (sender, receiver) = mpsc::channel();
     assert!(host.attach_osd_modal_receiver(first.token, receiver));
@@ -163,7 +167,7 @@ fn owned_receiver_ack_disconnect_chain_and_stale_callbacks_preserve_other_owners
     assert!(second.detail.contains("second"));
     assert_ne!(first.token, second.token);
     assert!(!chained.wake.flight_pending);
-    assert!(host.owns_pause(PauseOwner::Modal));
+    assert!(host.owns_pause(pause_owners::MODAL));
     assert_eq!(
         host.acknowledge_osd_modal(first.token),
         ModalAdvance::Ignored
@@ -176,7 +180,7 @@ fn owned_receiver_ack_disconnect_chain_and_stale_callbacks_preserve_other_owners
     // Notification is enqueued before polling the disconnect in this very turn.
     let third = error(host, "third", now).modal.unwrap();
     assert!(third.detail.contains("third"));
-    assert!(host.owns_pause(PauseOwner::Modal));
+    assert!(host.owns_pause(pause_owners::MODAL));
     assert!(
         host.pump_osd(&ctx, now).modal.is_none(),
         "taken exactly once"
@@ -190,7 +194,7 @@ fn owned_receiver_ack_disconnect_chain_and_stale_callbacks_preserve_other_owners
         ModalAdvance::Ignored
     );
     assert!(!host.osd_modal_pending() && !host.osd_flight_pending());
-    assert!(!host.owns_pause(PauseOwner::Modal));
+    assert!(!host.owns_pause(pause_owners::MODAL));
     for owner in owners {
         assert!(host.owns_pause(owner));
     }
@@ -232,7 +236,7 @@ struct SynchronousModal<'a>(&'a RefCell<Fixture>);
 impl ModalPresenter for SynchronousModal<'_> {
     fn present_modal(&self, effect: ModalPresentation) -> Option<mpsc::Receiver<()>> {
         let mut fixture = self.0.borrow_mut();
-        assert!(fixture.core.owns_pause(PauseOwner::Modal));
+        assert!(fixture.core.owns_pause(pause_owners::MODAL));
         assert_eq!(
             fixture.core.acknowledge_osd_modal(effect.token),
             ModalAdvance::Drained
@@ -353,11 +357,11 @@ fn owned_modal_adopts_independent_stop_but_idle_does_not_resume_it() {
     host.pump_osd(&ctx, now);
     assert!(host.tick().paused && !host.pause_held());
     let effect = error(host, "adopt independent pause", now).modal.unwrap();
-    assert!(host.owns_pause(PauseOwner::User));
+    assert!(host.owns_pause(pause_owners::USER));
     assert_eq!(
         host.acknowledge_osd_modal(effect.token),
         ModalAdvance::Drained
     );
     assert!(host.tick().paused);
-    assert!(!host.owns_pause(PauseOwner::Modal));
+    assert!(!host.owns_pause(pause_owners::MODAL));
 }

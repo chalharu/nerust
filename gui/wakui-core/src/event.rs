@@ -18,18 +18,16 @@ pub trait EventSink {
 }
 
 pub trait EventHandler<K: Copy + Eq + std::hash::Hash> {
-    fn handle_event(
-        &mut self,
-        event: EventCommand,
-        settings_open: bool,
-    ) -> Result<EventOutcome<K>, SessionError>;
+    /// Modal guards (e.g. an open settings dialog) are enforced view-side;
+    /// flavors forward every native callback unchanged.
+    fn handle_event(&mut self, event: EventCommand) -> Result<EventOutcome<K>, SessionError>;
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct EventOutcome<K: Copy + Eq + std::hash::Hash> {
     pub session: SessionOutcome,
     pub effect: Option<CommandEffect<K>>,
-    /// False for an event suppressed by settings policy.
+    /// False for an event suppressed by the view-side modal guard.
     pub handled: bool,
 }
 
@@ -38,7 +36,7 @@ impl<K: Copy + Eq + std::hash::Hash> Default for EventOutcome<K> {
         Self {
             session: SessionOutcome::default(),
             effect: None,
-            // False for an event suppressed by settings policy.
+            // False for an event suppressed by the modal guard.
             handled: false,
         }
     }
@@ -46,7 +44,8 @@ impl<K: Copy + Eq + std::hash::Hash> Default for EventOutcome<K> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandEffect<K: Copy + Eq + std::hash::Hash> {
-    OpenRom,
+    /// Open a file (values like ROM wording arrive via [`crate::menu::FileDialogTitles`]).
+    OpenFile,
     OpenAux(K),
     About,
     Quit,

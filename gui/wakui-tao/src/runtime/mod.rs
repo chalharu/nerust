@@ -81,8 +81,8 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
             }
             Err(detail) => {
                 // Startup runs before the main window exists: standalone dialog only.
-                crate::ports::show_rom_load_error(
-                    self.host.core.dialog_titles().rom_load_failed,
+                crate::ports::show_file_load_error(
+                    self.host.core.dialog_titles().load_failed,
                     &detail,
                 );
                 false
@@ -91,7 +91,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
     }
 
     pub(crate) fn run(mut self) {
-        self.host.core.resume_session();
+        self.host.core.resume_content();
         let event_loop = self
             .event_loop
             .take()
@@ -138,7 +138,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
                 let action = self.host.on_event(command, &opener);
                 match action {
                     HostAction::None => (),
-                    HostAction::RomLoaded => self.recreate_renderer(),
+                    HostAction::FileLoaded => self.recreate_renderer(),
                     HostAction::Exit => {
                         self.begin_close();
                         *control_flow = ControlFlow::Exit

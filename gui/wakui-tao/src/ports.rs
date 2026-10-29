@@ -23,7 +23,7 @@ use crate::event::UserEvent;
 /// canned picks and record errors. `Send + Sync`: error dialogs run on the modal actor so the event loop never stalls behind a modal (see `ModalFlight`).
 /// Titles arrive pre-localized from the host; ports never touch the i18n catalog.
 pub(crate) trait DialogPorts: Send + Sync {
-    fn pick_rom_file(&self, title: String, filters: Vec<(String, Vec<String>)>) -> Option<PathBuf>;
+    fn pick_file(&self, title: String, filters: Vec<(String, Vec<String>)>) -> Option<PathBuf>;
     fn show_load_error(&self, title: String, detail: &str);
     /// Non-blocking error dialog: spawns the modal, returns its ack channel.
     /// A dead channel means the spawn failed; the host reaps it as a failed ack.
@@ -34,7 +34,7 @@ pub(crate) trait DialogPorts: Send + Sync {
 pub(crate) struct NativeDialogs;
 
 impl DialogPorts for NativeDialogs {
-    fn pick_rom_file(&self, title: String, filters: Vec<(String, Vec<String>)>) -> Option<PathBuf> {
+    fn pick_file(&self, title: String, filters: Vec<(String, Vec<String>)>) -> Option<PathBuf> {
         let mut dialog = FileDialog::new().set_title(title);
         for (name, extensions) in filters {
             dialog = dialog.add_filter(name, extensions.as_slice());
@@ -43,7 +43,7 @@ impl DialogPorts for NativeDialogs {
     }
 
     fn show_load_error(&self, title: String, detail: &str) {
-        show_rom_load_error(title, detail);
+        show_file_load_error(title, detail);
     }
 
     fn show_error_async(&self, title: String, detail: String) -> std::sync::mpsc::Receiver<()> {
@@ -122,7 +122,7 @@ fn show_blocking(title: &str, detail: &str) {
 
 /// Surface ROM load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
-pub(crate) fn show_rom_load_error(title: String, detail: &str) {
+pub(crate) fn show_file_load_error(title: String, detail: &str) {
     crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
 }
 

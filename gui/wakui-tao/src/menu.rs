@@ -11,7 +11,7 @@ pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
 /// native menubar, test recorders observe the syncs. Object-safe so
 /// `HostState` holds it behind `Box<dyn MenuSink>`.
 pub(crate) trait MenuSink {
-    fn update(&mut self, loaded: bool, paused: bool, settings_open: bool, menu: &Menubar);
+    fn update(&mut self, loaded: bool, paused: bool, menu: &Menubar);
     fn init_for_window(&self, window: &TaoWindow);
     fn clear_event_handler(&self);
 }
@@ -319,7 +319,7 @@ pub(crate) mod imp {
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, _loaded: bool, _paused: bool, _settings_open: bool, menu: &Menubar) {
+        fn update(&mut self, _loaded: bool, _paused: bool, menu: &Menubar) {
             AppMenu::update(self, menu);
         }
 
@@ -343,7 +343,7 @@ pub(crate) mod imp {
     #[cfg(test)]
     mod tests {
         use super::try_append;
-        use crate::testkit::{FakeCommands, TestMenu, TestSession};
+        use crate::testkit::{FakeCommands, TestMenu, TestSession, menu_id};
         use wakui_core::commands::CommandRef;
         use wakui_core::event::EventCommand as HostEvent;
 
@@ -521,7 +521,7 @@ pub(crate) mod imp {
                     commands: commands.model(),
                     menus: vec![
                         Submenu {
-                            id: MenuId::File,
+                            id: menu_id::FILE,
                             label: "File".to_string(),
                             enabled: true,
                             children: vec![
@@ -534,7 +534,7 @@ pub(crate) mod imp {
                             ],
                         },
                         Submenu {
-                            id: MenuId::Emulation,
+                            id: menu_id::EMULATION,
                             label: "Emulation".to_string(),
                             enabled: true,
                             children: vec![
@@ -545,19 +545,19 @@ pub(crate) mod imp {
                                 leaf(Some(C::Session(S::SaveActiveSlotOrNew)), "Save"),
                                 leaf(Some(C::Session(S::LoadActiveSlot)), "Load"),
                                 MenuEntry::Submenu(Submenu {
-                                    id: MenuId::States,
+                                    id: menu_id::STATES,
                                     label: "States".to_string(),
                                     enabled: loaded && !settings_open,
                                     children: vec![
                                         slot_submenu(
-                                            MenuId::SelectSlot,
+                                            menu_id::SELECT_SLOT,
                                             "Select Slot",
                                             S::SelectActiveSlot,
                                         ),
-                                        slot_submenu(MenuId::SaveSlot, "Save Slot", S::SaveSlot),
-                                        slot_submenu(MenuId::LoadSlot, "Load Slot", S::LoadSlot),
+                                        slot_submenu(menu_id::SAVE_SLOT, "Save Slot", S::SaveSlot),
+                                        slot_submenu(menu_id::LOAD_SLOT, "Load Slot", S::LoadSlot),
                                         slot_submenu(
-                                            MenuId::DeleteSlot,
+                                            menu_id::DELETE_SLOT,
                                             "Delete Slot",
                                             S::DeleteSlot,
                                         ),
@@ -612,25 +612,25 @@ pub(crate) mod imp {
                     menu.update(&menubar);
                     let roots = menu.menu_bar.items();
                     assert_eq!(roots.len(), 2);
-                    for (root, id) in roots.iter().zip([MenuId::File, MenuId::Emulation]) {
+                    for (root, id) in roots.iter().zip([menu_id::FILE, menu_id::EMULATION]) {
                         assert_eq!(root.id(), menu.menus[&id].id());
                     }
                     assert_eq!(menu.menus.len(), 7);
                     for (id, label) in [
-                        (MenuId::File, "File"),
-                        (MenuId::Emulation, "Emulation"),
-                        (MenuId::States, "States"),
-                        (MenuId::SelectSlot, "Select Slot"),
-                        (MenuId::SaveSlot, "Save Slot"),
-                        (MenuId::LoadSlot, "Load Slot"),
-                        (MenuId::DeleteSlot, "Delete Slot"),
+                        (menu_id::FILE, "File"),
+                        (menu_id::EMULATION, "Emulation"),
+                        (menu_id::STATES, "States"),
+                        (menu_id::SELECT_SLOT, "Select Slot"),
+                        (menu_id::SAVE_SLOT, "Save Slot"),
+                        (menu_id::LOAD_SLOT, "Load Slot"),
+                        (menu_id::DELETE_SLOT, "Delete Slot"),
                     ] {
                         assert_eq!(menu.menus[&id].text(), label);
                     }
                     for (id, count) in [
-                        (MenuId::File, 6),
-                        (MenuId::Emulation, 7),
-                        (MenuId::States, 4),
+                        (menu_id::FILE, 6),
+                        (menu_id::EMULATION, 7),
+                        (menu_id::STATES, 4),
                     ] {
                         assert_eq!(menu.menus[&id].items().len(), count);
                     }
@@ -653,10 +653,10 @@ pub(crate) mod imp {
                         expected.push(reference(C::Session(session)));
                     }
                     for (id, make_command) in [
-                        (MenuId::SelectSlot, S::SelectActiveSlot as fn(u64) -> S),
-                        (MenuId::SaveSlot, S::SaveSlot),
-                        (MenuId::LoadSlot, S::LoadSlot),
-                        (MenuId::DeleteSlot, S::DeleteSlot),
+                        (menu_id::SELECT_SLOT, S::SelectActiveSlot as fn(u64) -> S),
+                        (menu_id::SAVE_SLOT, S::SaveSlot),
+                        (menu_id::LOAD_SLOT, S::LoadSlot),
+                        (menu_id::DELETE_SLOT, S::DeleteSlot),
                     ] {
                         let submenu = &menu.menus[&id];
                         assert_eq!(
@@ -817,7 +817,7 @@ pub(crate) mod imp {
                 recording.0.lock().unwrap().as_slice(),
                 [HostEvent::Menu(received)] if *received == open
             ));
-            assert_eq!(menu.menus[&MenuId::File].text(), "File");
+            assert_eq!(menu.menus[&menu_id::FILE].text(), "File");
             assert_eq!(
                 item(&menu, commands.reference(TestMenu::Debugger)).text(),
                 "Open Debugger"
@@ -935,7 +935,7 @@ pub(crate) mod imp {
             assert_eq!(menu.menu_bar.items()[0].id(), &app_id);
             assert_eq!(
                 menu.menu_bar.items()[1].id(),
-                menu.menus[&MenuId::File].id()
+                menu.menus[&menu_id::FILE].id()
             );
             root.application_menu.as_mut().unwrap().label = "Relabeled App".into();
             menu.update(&root.clone());
@@ -1007,7 +1007,7 @@ pub(crate) mod imp {
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, _loaded: bool, _paused: bool, _settings_open: bool, menu: &Menubar) {
+        fn update(&mut self, _loaded: bool, _paused: bool, menu: &Menubar) {
             AppMenu::update(self, menu);
         }
 

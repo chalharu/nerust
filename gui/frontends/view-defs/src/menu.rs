@@ -4,9 +4,25 @@
 
 use wakui::control::IdRegistry;
 use wakui::menu::{
-    DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar, NativeApplicationEntry,
+    FileDialogTitles, MenuCapabilities, MenuEntry, MenuItem, Menubar, NativeApplicationEntry,
     NativeApplicationMenu, NativeApplicationRole, Submenu,
 };
+
+/// View-side menu skeleton: what each opaque [`MenuId`] means. The framework
+/// only tracks the ids for native reuse; the File/Emulation/States shape,
+/// slot submenus, and Help live here.
+pub mod menu_id {
+    use wakui::menu::MenuId;
+
+    pub const FILE: MenuId = MenuId::from_raw(0);
+    pub const EMULATION: MenuId = MenuId::from_raw(1);
+    pub const STATES: MenuId = MenuId::from_raw(2);
+    pub const SELECT_SLOT: MenuId = MenuId::from_raw(3);
+    pub const SAVE_SLOT: MenuId = MenuId::from_raw(4);
+    pub const LOAD_SLOT: MenuId = MenuId::from_raw(5);
+    pub const DELETE_SLOT: MenuId = MenuId::from_raw(6);
+    pub const HELP: MenuId = MenuId::from_raw(7);
+}
 
 use crate::commands::{
     MenuCommand, MenuCommandId, NativeRole, build_command_model, command_enabled,
@@ -19,13 +35,16 @@ use nerust_settings_core::{
     model::input::ShortcutAction,
 };
 
-/// Dialog titles in the view language.
-pub fn dialog_titles(language: nerust_settings_core::model::language::AppLanguage) -> DialogTitles {
+/// Dialog titles in the view language. ROM wording is view-side data;
+/// the framework only transports the strings.
+pub fn dialog_titles(
+    language: nerust_settings_core::model::language::AppLanguage,
+) -> FileDialogTitles {
     use nerust_settings_core::i18n::{UiText, text as ui_text};
-    DialogTitles {
+    FileDialogTitles {
         open: ui_text(language, UiText::Open).to_string(),
         error: ui_text(language, UiText::Error).to_string(),
-        rom_load_failed: ui_text(language, UiText::RomLoadFailed).to_string(),
+        load_failed: ui_text(language, UiText::RomLoadFailed).to_string(),
     }
 }
 
@@ -99,13 +118,13 @@ pub fn build_menubar(
     ];
     for (id, key, command) in [
         (
-            MenuId::SelectSlot,
+            menu_id::SELECT_SLOT,
             UiText::SelectActiveSlot,
             S::SelectActiveSlot as fn(u64) -> S,
         ),
-        (MenuId::SaveSlot, UiText::SaveSlot, S::SaveSlot),
-        (MenuId::LoadSlot, UiText::LoadSlot, S::LoadSlot),
-        (MenuId::DeleteSlot, UiText::DeleteSlot, S::DeleteSlot),
+        (menu_id::SAVE_SLOT, UiText::SaveSlot, S::SaveSlot),
+        (menu_id::LOAD_SLOT, UiText::LoadSlot, S::LoadSlot),
+        (menu_id::DELETE_SLOT, UiText::DeleteSlot, S::DeleteSlot),
     ] {
         let template_opaque = table
             .activation(C::Session(command(0)))
@@ -140,7 +159,7 @@ pub fn build_menubar(
     }
     let mut menus = vec![
         submenu(
-            MenuId::File,
+            menu_id::FILE,
             UiText::File,
             true,
             vec![
@@ -151,14 +170,14 @@ pub fn build_menubar(
             ],
         ),
         submenu(
-            MenuId::Emulation,
+            menu_id::EMULATION,
             UiText::Emulation,
             true,
             vec![
                 MenuEntry::Item(item(C::Session(S::Pause), UiText::Pause)),
                 MenuEntry::Item(item(C::Session(S::Resume), UiText::Resume)),
                 MenuEntry::Item(item(C::Session(S::Reset), UiText::Reset)),
-                MenuEntry::Submenu(submenu(MenuId::States, UiText::SaveStates, true, states)),
+                MenuEntry::Submenu(submenu(menu_id::STATES, UiText::SaveStates, true, states)),
                 hinted(
                     C::Debugger,
                     UiText::OpenDebugger,
@@ -170,7 +189,7 @@ pub fn build_menubar(
     ];
     if capabilities.about {
         menus.push(submenu(
-            MenuId::Help,
+            menu_id::HELP,
             UiText::Help,
             true,
             vec![MenuEntry::Item(item(
