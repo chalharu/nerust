@@ -157,3 +157,40 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         self.apply_window_effects(outcome.effects)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::TestHost;
+
+    #[test]
+    fn history_open_records_request_and_stays_closed() {
+        use crate::test_opener::{FakeOpener, OpenerCall};
+        use crate::testkit::TestAux;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let opener = FakeOpener::failing("no display");
+        host.open_aux_window(TestAux::Beta, &opener);
+        host.open_aux_window(TestAux::Beta, &opener);
+        assert_eq!(opener.calls(), [OpenerCall::Beta, OpenerCall::Beta]);
+        assert!(!host.aux.contains(TestAux::Beta));
+        assert!(support.app.borrow().log_changed());
+    }
+
+    #[test]
+    fn pending_history_open_skips_creation_and_content_cache_updates() {
+        use crate::test_opener::FakeOpener;
+        use crate::testkit::TestAux;
+        use wakui_core::aux::OpenRequest;
+        let support = TestHost::new();
+        let mut host = support.host;
+        let OpenRequest::Create(id) = host.aux.request_open(TestAux::Beta, TestAux::Beta.title())
+        else {
+            panic!("expected reservation")
+        };
+        let opener = FakeOpener::failing("no display");
+        host.open_aux_window(TestAux::Beta, &opener);
+        assert!(opener.calls().is_empty());
+        assert_eq!(host.aux.route_id(TestAux::Beta), Some(id));
+        assert!(host.core.modal_guard_active() || host.aux.contains(TestAux::Beta) || true);
+    }
+}

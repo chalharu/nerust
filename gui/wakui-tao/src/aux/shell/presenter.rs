@@ -22,7 +22,7 @@ pub(crate) struct AuxShell<P: Program<Theme = iced::Theme, Renderer = Renderer>>
 }
 
 impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxShell<P> {
-    fn native_id(&self) -> crate::domain::NativeWindowId {
+    fn native_id(&self) -> crate::native_input::NativeWindowId {
         self.surface.native_id()
     }
 
@@ -38,13 +38,13 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> AuxShellOps for AuxSh
         self.surface.request_redraw();
     }
 
-    fn handle_common(&mut self, event: &crate::domain::AuxNativeEvent) {
+    fn handle_common(&mut self, event: &crate::native_input::AuxNativeEvent) {
         let ui_state = &mut self.ui_state;
         self.surface
             .handle_common_event(event, &mut |bounds| ui_state.relayout(bounds));
     }
 
-    fn feed_event(&mut self, event: crate::domain::AuxNativeEvent) -> Option<iced::Event> {
+    fn feed_event(&mut self, event: crate::native_input::AuxNativeEvent) -> Option<iced::Event> {
         self.surface.feed_domain_event(event)
     }
 

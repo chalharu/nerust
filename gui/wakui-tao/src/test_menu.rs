@@ -2,6 +2,7 @@
 //! Production code never touches this module.
 
 use std::sync::{Arc, Mutex};
+use wakui_core::sync::lock_recovered;
 
 use crate::menu::MenuSink;
 use wakui_core::menu::Menubar;
@@ -21,7 +22,7 @@ pub(crate) struct MenuRecorderHandle {
 
 impl MenuRecorderHandle {
     pub(crate) fn updates(&self) -> Vec<MenuSyncSnapshot> {
-        crate::aux::bridge::lock_recovered(&self.inner.updates).clone()
+        lock_recovered(&self.inner.updates).clone()
     }
 
     pub(crate) fn into_box(self) -> Box<dyn MenuSink> {
@@ -31,8 +32,7 @@ impl MenuRecorderHandle {
 
 impl MenuSink for MenuRecorderHandle {
     fn update(&mut self, loaded: bool, paused: bool, _menu: &Menubar) {
-        crate::aux::bridge::lock_recovered(&self.inner.updates)
-            .push(MenuSyncSnapshot { loaded, paused });
+        lock_recovered(&self.inner.updates).push(MenuSyncSnapshot { loaded, paused });
     }
 
     fn init_for_window(&self, _window: &tao::window::Window) {}

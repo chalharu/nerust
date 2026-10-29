@@ -260,7 +260,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> SurfaceCore<K> {
         if let Some((_, modal)) = effects
             && let Some(presentation) = modal
         {
-            crate::native::dialog::present_modal(surface, &window, presentation);
+            crate::native_dialog::present_modal(surface, &window, presentation);
         }
         if render_frame {
             Self::render_image_if_ready(&surface.borrow(), physical_width, physical_height);

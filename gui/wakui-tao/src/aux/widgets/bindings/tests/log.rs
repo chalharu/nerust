@@ -1,6 +1,12 @@
 //! Beta exercises the same controls binding, not a second toolbar/program.
-use super::*;
-use crate::aux::widgets::controls::build_screen;
+use super::{activate, controls, dispatch, mailbox_of, prepare, screen_of};
+use crate::binding::{ControlsBinding, Message};
+use crate::controls::build_screen;
+use crate::handler::WidgetBinding;
+use crate::runtime::host::{HostState, TestHost};
+use crate::testkit::TestAux;
+use crate::window::WindowProgram;
+use wakui_core::aux::AuxId;
 use wakui_core::control::{
     Container, Control, ControlInput, ControlVisitor, RowPolicy, TablePolicy, policy,
 };
