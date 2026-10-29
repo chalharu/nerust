@@ -130,6 +130,33 @@ fn session_verbs_stay_total_headless() {
 }
 
 #[test]
+fn readonly_aux_arrival_cancels_pending_without_resuming_for_main_arrival() {
+    use wakui::focus::FocusEvent;
+    let mut fixture = Fixture::new();
+    fixture.load();
+    // Read-only arrival cancels the armed departure: nothing suspends.
+    fixture.core.note_main_departure();
+    fixture.core.focus_event(FocusEvent::Aux {
+        resume: false,
+        focused: true,
+    });
+    fixture.core.tick_focus_sync();
+    assert!(!fixture.core.pause_held());
+    // A later real departure still suspends.
+    fixture.core.note_main_departure();
+    fixture.core.tick_focus_sync();
+    assert!(fixture.core.owns_pause(pause_owners::FOCUS));
+    // Read-only arrival over the held focus pause keeps it for main arrival.
+    fixture.core.focus_event(FocusEvent::Aux {
+        resume: false,
+        focused: true,
+    });
+    assert!(fixture.core.owns_pause(pause_owners::FOCUS));
+    assert!(fixture.core.note_main_arrival());
+    assert!(!fixture.core.pause_held());
+}
+
+#[test]
 fn unarmed_burst_end_commits_nothing() {
     let mut fixture = Fixture::new();
     fixture.core.tick_focus_sync();
