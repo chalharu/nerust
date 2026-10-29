@@ -79,21 +79,27 @@ fn row_note_visible(b: &mut Builder<'_>, id: Id, label: String, value: String, s
     row(b, &key, control)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn row_choice_enabled_visible<T: Clone + Eq>(
+/// Enabled/visible gates for one row. Bundled so row helpers stay under
+/// the argument limit without nesting mutable borrows at call sites.
+#[derive(Clone, Copy)]
+struct Gate {
+    enabled: bool,
+    visible: bool,
+}
+
+fn row_choice_gated<T: Clone + Eq>(
     b: &mut Builder<'_>,
     id: Id,
     label: String,
     choices: &[ChoiceView<T>],
     value: &T,
     event: impl Fn(ChoiceView<T>) -> E,
-    on: bool,
-    show: bool,
+    gate: Gate,
 ) -> Node {
     let key = id.clone();
     let control = visible(
-        enabled(draft_choice(b, id, label, choices, value, event), on),
-        show,
+        enabled(draft_choice(b, id, label, choices, value, event), gate.enabled),
+        gate.visible,
     )
     .finish(&mut b.table);
     row(b, &key, control)
@@ -516,15 +522,17 @@ fn notifications(controller: &SettingsController, b: &mut Builder<'_>) -> Vec<No
             |c| E::ToggleErrorModal(c.value),
             view.error_enabled,
         ),
-        row_choice_enabled_visible(
+        row_choice_gated(
             b,
             Id::ErrorColor,
             t(UiText::NotificationColor),
             &view.color_choices,
             &view.error_color,
             E::SetErrorColor,
-            view.error_enabled && !error_modal,
-            !error_modal,
+            Gate {
+                enabled: view.error_enabled && !error_modal,
+                visible: !error_modal,
+            },
         ),
     ];
     groups.push(group(
@@ -580,15 +588,17 @@ fn notifications(controller: &SettingsController, b: &mut Builder<'_>) -> Vec<No
             E::SetStatusPosition,
             status_enabled,
         ),
-        row_choice_enabled_visible(
+        row_choice_gated(
             b,
             Id::StatusAreaMode,
             t(UiText::NotificationStatusAreaMode),
             &view.area_mode_choices,
             &view.status_area_mode,
             E::SetStatusAreaMode,
-            status_enabled && !same_edge,
-            !same_edge,
+            Gate {
+                enabled: status_enabled && !same_edge,
+                visible: !same_edge,
+            },
         ),
         row_note_visible(
             b,

@@ -207,7 +207,6 @@ fn run_frontend(
 
 /// Crash containment lives here, in the composition root: a crash must
 /// never look like a clean exit. Frontend `run` functions stay unguarded.
-#[allow(clippy::needless_pass_by_value)]
 fn run_guarded(
     boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
     runner: fn(
@@ -245,13 +244,11 @@ fn show_error_dialog(title: &str, detail: &str) {
 }
 
 /// Crash dialog copy: inline literals, never the catalog.
-#[cfg_attr(clippy, allow(dead_code))]
 fn crash_title() -> &'static str {
     "nerust"
 }
 
 /// Always English: crash copy must not depend on the settings stack.
-#[cfg_attr(clippy, allow(dead_code))]
 fn crash_dialog_text(message: &str) -> String {
     format!("The application crashed: {message}\n\nDetails were written to the log (stderr).")
 }
