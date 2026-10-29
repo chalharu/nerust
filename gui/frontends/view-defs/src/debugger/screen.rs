@@ -226,6 +226,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
     let action = |key: &str, label: Binding| ControlDef {
         key: key.into(),
         label,
+        accessible: None,
+        help: None,
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -235,6 +237,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
     let note = |key: &str, label: Binding, text: Binding| ControlDef {
         key: key.into(),
         label,
+        accessible: None,
+        help: None,
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -244,6 +248,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
     let text = |key: &str, label: Binding, value: Binding| ControlDef {
         key: key.into(),
         label,
+        accessible: None,
+        help: None,
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -251,6 +257,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         leaf: LeafDef::Text {
             value,
             placeholder: Binding::Literal(String::new()),
+            browse_label: None,
         },
     };
     let group_hints = LayoutHints {
@@ -273,6 +280,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         NodeDef::Control(Box::new(ControlDef {
             key: "dis:follow".into(),
             label: Binding::Localized("follow_pc".into()),
+            accessible: None,
+            help: None,
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
@@ -302,6 +311,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
     dis_children.push(NodeDef::Control(Box::new(ControlDef {
         key: "disasm".into(),
         label: Binding::Literal(String::new()),
+        accessible: None,
+        help: None,
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -316,6 +327,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                         ControlDef {
                             key: "line".into(),
                             label: Binding::Field("text".into()),
+                            accessible: None,
+                            help: None,
                             display: ControlDisplay::Standard,
                             enabled: BoolBinding::Literal(true),
                             visible: BoolBinding::Literal(true),
@@ -325,6 +338,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                         ControlDef {
                             key: "follow".into(),
                             label: Binding::Literal("→".into()),
+                            accessible: None,
+                            help: None,
                             display: ControlDisplay::Standard,
                             enabled: BoolBinding::Literal(true),
                             visible: BoolBinding::Field("has_target".into()),
@@ -368,6 +383,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         NodeDef::Control(Box::new(ControlDef {
             key: "dump".into(),
             label: Binding::Literal(String::new()),
+            accessible: None,
+            help: None,
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
@@ -381,6 +398,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                         cells: vec![ControlDef {
                             key: "line".into(),
                             label: Binding::Field("line".into()),
+                            accessible: None,
+                            help: None,
                             display: ControlDisplay::Standard,
                             enabled: BoolBinding::Literal(true),
                             visible: BoolBinding::Literal(true),
@@ -479,6 +498,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                     NodeDef::Control(Box::new(ControlDef {
                         key: "regs".into(),
                         label: Binding::Literal(String::new()),
+                        accessible: None,
+                        help: None,
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
                         visible: BoolBinding::Literal(true),
@@ -492,6 +513,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                     cells: vec![ControlDef {
                                         key: "cell".into(),
                                         label: Binding::Field("text".into()),
+                                        accessible: None,
+                                        help: None,
                                         display: ControlDisplay::Standard,
                                         enabled: BoolBinding::Literal(true),
                                         visible: BoolBinding::Literal(true),
@@ -569,6 +592,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                     NodeDef::Control(Box::new(ControlDef {
                         key: "bookmarks".into(),
                         label: Binding::Literal(String::new()),
+                        accessible: None,
+                        help: None,
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
                         visible: BoolBinding::Literal(true),
@@ -583,6 +608,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                         ControlDef {
                                             key: "jump".into(),
                                             label: Binding::Field("jump".into()),
+                                            accessible: None,
+                                            help: None,
                                             display: ControlDisplay::Standard,
                                             enabled: BoolBinding::Literal(true),
                                             visible: BoolBinding::Literal(true),
@@ -592,6 +619,8 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                         ControlDef {
                                             key: "delete".into(),
                                             label: Binding::Field("delete".into()),
+                                            accessible: None,
+                                            help: None,
                                             display: ControlDisplay::Standard,
                                             enabled: BoolBinding::Literal(true),
                                             visible: BoolBinding::Literal(true),
@@ -798,6 +827,8 @@ fn placeholder_def() -> ScreenDef {
                 children: vec![NodeDef::Control(Box::new(ControlDef {
                     key: "empty".into(),
                     label: Binding::Literal(String::new()),
+                    accessible: None,
+                    help: None,
                     display: ControlDisplay::Standard,
                     enabled: BoolBinding::Literal(true),
                     visible: BoolBinding::Literal(true),

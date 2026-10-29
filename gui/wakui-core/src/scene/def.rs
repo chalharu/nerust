@@ -34,11 +34,14 @@ pub enum BoolBinding {
     Field(String),
 }
 
-/// Choice list content: fixed literals or an outer-owned source.
+/// Choice list content: fixed literals, an outer-owned source, or
+/// per-row paths resolving to [`crate::scene::inflate::Value`] list labels
+/// and numeric selections. `Row` variants resolve in row context.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ChoicesDef {
     Static(Vec<Binding>),
     Bound(String),
+    Row { labels: String, selected: String },
 }
 
 /// Choice selection: fixed index or an outer-owned source.
@@ -90,11 +93,22 @@ pub enum LeafDef {
     Text {
         value: Binding,
         placeholder: Binding,
+        browse_label: Option<Binding>,
     },
     Number {
         value: NumBinding,
         min: u32,
         max: u32,
+        step: u32,
+        unit: String,
+    },
+    /// Key-capture binding row. `capturing` is row-aware like other flags;
+    /// labels resolve like any text.
+    Binding {
+        text: Binding,
+        capturing: BoolBinding,
+        change_label: Binding,
+        clear_label: Binding,
     },
     Image {
         path: String,
@@ -112,10 +126,16 @@ pub enum LeafDef {
     },
 }
 
-/// Row content: bound lists only. Static rows belong in `children`.
+/// Row content: flat source or parent-relative nested source.
+/// `Nested` resolves through [`crate::scene::inflate::Lists::nested_len`] and
+/// `nested_value` with the enclosing row as parent.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RowsDef {
     Bound {
+        source: String,
+        template: RowTemplateDef,
+    },
+    Nested {
         source: String,
         template: RowTemplateDef,
     },
@@ -135,6 +155,8 @@ pub struct RowTemplateDef {
 pub struct ControlDef {
     pub key: String,
     pub label: Binding,
+    pub accessible: Option<Binding>,
+    pub help: Option<Binding>,
     pub display: ControlDisplay,
     pub enabled: BoolBinding,
     pub visible: BoolBinding,
@@ -176,12 +198,33 @@ pub struct TabDef {
     pub body: ContainerDef,
 }
 
-/// Declarative tab set with a static selection index.
+/// Declarative tab set. `Static` is fixed chrome; `Bound` projects one tab
+/// per source item, with the body template evaluated in row context.
+/// A `Bound` set inside a template resolves its count parent-relatively
+/// (positional rule, documented in `inflate`); bodies holding dynamic
+/// content use [`RowsDef::Nested`] lists.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct TabsDef {
-    pub key: String,
-    pub tabs: Vec<TabDef>,
-    pub selected: usize,
+pub enum TabsDef {
+    Static {
+        key: String,
+        tabs: Vec<TabDef>,
+        selected: usize,
+    },
+    Bound {
+        key: String,
+        source: String,
+        template: Box<TabTemplateDef>,
+        selected: SelectedDef,
+    },
+}
+
+/// Per-tab projection. `body` is a static template evaluated in row
+/// context; dynamic counts inside belong to nested bound lists.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TabTemplateDef {
+    pub id_field: String,
+    pub label: Binding,
+    pub body: ContainerDef,
 }
 
 /// One declarative page. `select` (the L2 tab-stop control) is derived from
