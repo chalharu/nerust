@@ -1,6 +1,8 @@
 use super::*;
+use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
-use wakui::commands::{CommandDescriptor, CommandId, CommandVisitor, MenuCommand, SessionCommand};
+use wakui::commands::{Command, CommandRef, CommandVisitor};
+use wakui::control::IdRegistry;
 
 fn signature() -> MenuSig {
     MenuSig {
@@ -20,6 +22,10 @@ fn signature() -> MenuSig {
         .into(),
         shortcuts: Vec::new().into(),
     }
+}
+
+fn build() -> (CommandModel, CommandTable) {
+    build_command_model(&mut IdRegistry::default(), &signature())
 }
 
 #[test]
@@ -52,43 +58,47 @@ fn every_command_round_trips_with_unique_stable_declarations() {
         ]
         .map(MenuCommand::Session),
     );
-    let model = build_command_model(&signature());
+    let (model, table) = build();
     assert_eq!(commands.len(), model.definitions.len());
     let mut names = std::collections::HashSet::new();
     let mut ids = std::collections::HashSet::new();
     for command in commands {
-        let (id, arg) = command.binding();
-        assert!(names.insert(id.name()));
-        assert!(ids.insert(id));
-        let descriptor = model.get(id).unwrap();
-        assert_eq!(descriptor.bind(arg), Some(command));
-        assert_eq!(descriptor.enabled, command_enabled(command, &signature()));
-        assert!(
-            descriptor
-                .bind(if arg.is_some() { None } else { Some(42) })
-                .is_none()
-        );
-        let mut malformed = *descriptor;
-        malformed.parameter = if arg.is_some() {
-            CommandParameter::None
-        } else {
-            CommandParameter::SlotId
+        let activation = table.activation(command).expect("activation");
+        assert!(names.insert(command.binding().0.name()));
+        assert!(ids.insert(activation.id));
+        // Resolution is structural: same id plus same argument shape.
+        assert_eq!(table.resolve(activation), Some(command));
+        let declaration = model.get(activation.id).unwrap();
+        assert!(declaration.accepts(activation));
+        assert_eq!(declaration.enabled, command_enabled(command, &signature()));
+        // Wrong argument shape never resolves.
+        let flipped = CommandRef {
+            id: activation.id,
+            argument: if activation.argument.is_some() {
+                None
+            } else {
+                Some(42)
+            },
         };
-        assert!(malformed.bind(arg).is_none());
-        if arg.is_some() {
+        assert_eq!(table.resolve(flipped), None);
+        assert!(!declaration.accepts(flipped));
+        if let Some(arg) = activation.argument {
+            let _ = arg;
             for value in [0, u64::MAX] {
-                assert_eq!(
-                    descriptor.bind(Some(value)).unwrap().binding(),
-                    (id, Some(value))
-                );
+                let resolved = table
+                    .resolve(CommandRef {
+                        id: activation.id,
+                        argument: Some(value),
+                    })
+                    .unwrap();
+                assert_eq!(resolved.binding(), (command.binding().0, Some(value)));
             }
         }
     }
     assert_eq!(
-        model
-            .definitions
+        DECLARATIONS
             .iter()
-            .map(|d| d.id.name())
+            .map(|(_, name, _)| *name)
             .collect::<Vec<_>>(),
         [
             "open",
@@ -119,10 +129,10 @@ fn every_command_round_trips_with_unique_stable_declarations() {
 fn declarations_gate_slot_parameters_but_direct_commands_validate_the_slot() {
     let mut sig = signature();
     let slots = [
-        CommandId::SelectActiveSlot,
-        CommandId::SaveSlot,
-        CommandId::LoadSlot,
-        CommandId::DeleteSlot,
+        MenuCommandId::SelectActiveSlot,
+        MenuCommandId::SaveSlot,
+        MenuCommandId::LoadSlot,
+        MenuCommandId::DeleteSlot,
     ];
     assert!(!command_enabled(
         MenuCommand::Session(SessionCommand::SaveSlot(99)),
@@ -141,13 +151,20 @@ fn declarations_gate_slot_parameters_but_direct_commands_validate_the_slot() {
         } else {
             Vec::new().into()
         };
-        let model = build_command_model(&sig);
-        for descriptor in &model.definitions {
-            if slots.contains(&descriptor.id) {
-                assert_eq!(descriptor.enabled, loaded && !settings_open && nonempty);
+        let mut ids = IdRegistry::default();
+        let (model, table) = build_command_model(&mut ids, &sig);
+        for declaration in &model.definitions {
+            let key = table.key(declaration.id).expect("domain key");
+            if slots.contains(&key) {
+                assert_eq!(declaration.enabled, loaded && !settings_open && nonempty);
             }
-            if settings_open {
-                assert_eq!(descriptor.enabled, descriptor.id == CommandId::Quit);
+        }
+        if settings_open {
+            let quit = table
+                .activation(MenuCommand::Native(NativeRole::Quit))
+                .unwrap();
+            for declaration in &model.definitions {
+                assert_eq!(declaration.enabled, declaration.id == quit.id);
             }
         }
     }
@@ -157,11 +174,11 @@ fn declarations_gate_slot_parameters_but_direct_commands_validate_the_slot() {
 fn command_visitor_is_object_safe() {
     struct Count(usize);
     impl CommandVisitor for Count {
-        fn command(&mut self, _: &CommandDescriptor) {
+        fn command(&mut self, _: &Command) {
             self.0 += 1;
         }
     }
-    let model = build_command_model(&signature());
+    let (model, _) = build();
     let mut count = Count(0);
     let visitor: &mut dyn CommandVisitor = &mut count;
     model.visit(visitor);

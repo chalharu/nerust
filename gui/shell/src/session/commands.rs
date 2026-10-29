@@ -1,5 +1,24 @@
 pub use crate::session::error::SlotOpFailure;
-pub use wakui::commands::SessionCommand;
+
+/// Session verbs shared by shell execution and view definitions. Owned here
+/// (execution owner), not by the framework: `wakui` transports opaque
+/// [`wakui::commands::CommandRef`] activations and never names these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionCommand {
+    Pause,
+    Resume,
+    TogglePause,
+    Reset,
+    CreateSlot,
+    SaveActiveSlotOrNew,
+    LoadActiveSlot,
+    SelectActiveSlot(u64),
+    SaveSlot(u64),
+    LoadSlot(u64),
+    DeleteSlot(u64),
+    SelectNextSlot,
+    SelectPreviousSlot,
+}
 
 /// Data-driven command vocabulary: every per-command answer lives on this trait.
 /// The executor matches once; [`SessionCommand`] is the sole implementor.

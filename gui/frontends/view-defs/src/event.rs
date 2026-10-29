@@ -1,14 +1,15 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
 use nerust_gui_shell::session::access::SessionControl;
-use wakui::commands::{MenuCommand, NativeRole};
 use wakui::pause::PauseOwner;
 use wakui::{
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
     session::{SessionError, SessionEvent},
 };
 
-use crate::{application::ApplicationHost, focus::AuxKind};
+use crate::application::ApplicationHost;
+use crate::commands::{MenuCommand, NativeRole};
+use crate::focus::AuxKind;
 use wakui::session::SessionEffect;
 
 impl EventHandler<AuxKind> for ApplicationHost {
@@ -19,7 +20,11 @@ impl EventHandler<AuxKind> for ApplicationHost {
     ) -> Result<EventOutcome<AuxKind>, SessionError> {
         let guarded = settings_open || self.owns_pause(PauseOwner::Settings);
         let blocked = match event {
-            EventCommand::Menu(command) => command != MenuCommand::Native(NativeRole::Quit),
+            // Stale ids resolve to nothing and stay blocked: only Quit passes.
+            EventCommand::Menu(activation) => {
+                self.menu_commands().resolve(activation)
+                    != Some(MenuCommand::Native(NativeRole::Quit))
+            }
             EventCommand::Session(
                 SessionEvent::Command(_)
                 | SessionEvent::Keyboard { .. }
@@ -36,28 +41,33 @@ impl EventHandler<AuxKind> for ApplicationHost {
             ..Default::default()
         };
         match event {
-            EventCommand::Menu(command) => match command {
-                MenuCommand::Open => outcome.effect = Some(CommandEffect::OpenRom),
-                MenuCommand::Close => SessionControl::unload(self),
-                MenuCommand::Settings => {
-                    outcome.effect = Some(CommandEffect::OpenAux(AuxKind::Settings));
+            EventCommand::Menu(activation) => {
+                let Some(command) = self.menu_commands().resolve(activation) else {
+                    return Ok(EventOutcome::default());
+                };
+                match command {
+                    MenuCommand::Open => outcome.effect = Some(CommandEffect::OpenRom),
+                    MenuCommand::Close => SessionControl::unload(self),
+                    MenuCommand::Settings => {
+                        outcome.effect = Some(CommandEffect::OpenAux(AuxKind::Settings));
+                    }
+                    MenuCommand::Debugger => {
+                        outcome.effect = Some(CommandEffect::OpenAux(AuxKind::Debug));
+                    }
+                    MenuCommand::NotificationHistory => {
+                        outcome.effect = Some(CommandEffect::OpenAux(AuxKind::History));
+                    }
+                    MenuCommand::Native(NativeRole::About) => {
+                        outcome.effect = Some(CommandEffect::About);
+                    }
+                    MenuCommand::Native(NativeRole::Quit) => {
+                        outcome.effect = Some(CommandEffect::Quit);
+                    }
+                    MenuCommand::Session(command) => {
+                        outcome.session = self.dispatch_session_command(command)?;
+                    }
                 }
-                MenuCommand::Debugger => {
-                    outcome.effect = Some(CommandEffect::OpenAux(AuxKind::Debug));
-                }
-                MenuCommand::NotificationHistory => {
-                    outcome.effect = Some(CommandEffect::OpenAux(AuxKind::History));
-                }
-                MenuCommand::Native(NativeRole::About) => {
-                    outcome.effect = Some(CommandEffect::About);
-                }
-                MenuCommand::Native(NativeRole::Quit) => {
-                    outcome.effect = Some(CommandEffect::Quit);
-                }
-                MenuCommand::Session(command) => {
-                    outcome.session = self.dispatch(SessionEvent::Command(command))?;
-                }
-            },
+            }
             EventCommand::Session(event) => outcome.session = self.dispatch(event)?,
             EventCommand::Focus(event) => {
                 self.focus_event(event);

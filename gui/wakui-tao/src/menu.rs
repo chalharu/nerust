@@ -55,7 +55,7 @@ pub(crate) mod imp {
     use tao::platform::windows::WindowExtWindows;
     use wakui_core::event::EventSink;
     use wakui_core::{
-        commands::{CommandDescriptor, CommandVisitor},
+        commands::{Command, CommandRef, CommandVisitor},
         menu::{
             MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
             NativeApplicationRole, Submenu as HostMenu,
@@ -64,7 +64,7 @@ pub(crate) mod imp {
     };
 
     use super::TaoWindow;
-    use crate::event::{MenuCommand, UserEvent};
+    use crate::event::UserEvent;
 
     /// Best-effort menu construction: a failed append (torn-down
     /// native menu) logs and leaves a partial menu instead of
@@ -78,8 +78,8 @@ pub(crate) mod imp {
     pub(crate) struct AppMenu {
         menu_bar: Menu,
         menus: HashMap<MenuId, Submenu>,
-        items: Vec<(MenuId, Option<MenuCommand>, MenuItem)>,
-        commands: Arc<RwLock<Vec<(muda::MenuId, MenuCommand)>>>,
+        items: Vec<(MenuId, Option<CommandRef>, MenuItem)>,
+        commands: Arc<RwLock<Vec<(muda::MenuId, CommandRef)>>>,
         presenter: Rc<MenuPresenter>,
         application_menu: Option<(Submenu, Vec<NativeApplicationEntry>)>,
     }
@@ -88,7 +88,7 @@ pub(crate) mod imp {
         pub(crate) fn new(sink: Arc<dyn EventSink + Send + Sync>) -> Self {
             let menu_bar = Menu::new();
 
-            let commands = Arc::new(RwLock::new(Vec::<(muda::MenuId, MenuCommand)>::new()));
+            let commands = Arc::new(RwLock::new(Vec::<(muda::MenuId, CommandRef)>::new()));
             let handler = commands.clone();
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 // Release the routing lock before dispatching into the loop.
@@ -185,15 +185,15 @@ pub(crate) mod imp {
         native: &'a mut AppMenu,
         stack: Vec<(MenuId, bool)>,
         root_rebuild: bool,
-        declarations: Vec<CommandDescriptor>,
+        declarations: Vec<Command>,
         visited_menus: Vec<MenuId>,
     }
 
     impl CommandVisitor for NativeVisitor<'_> {
-        fn command(&mut self, command: &CommandDescriptor) {
+        fn command(&mut self, command: &Command) {
             // Muda routes native IDs directly, not a named action registry.
             // Declarations still validate each binding and supply enablement.
-            self.declarations.push(*command);
+            self.declarations.push(command.clone());
         }
     }
 
@@ -259,12 +259,12 @@ pub(crate) mod imp {
         }
 
         fn item(&mut self, item: &HostItem) {
-            let declaration = item.command.and_then(|command| {
-                let (id, argument) = command.binding();
+            // Structural validation only: same opaque id plus same argument
+            // shape. Domain meaning (e.g. slot existence) resolved view-side.
+            let declaration = item.command.and_then(|activation| {
                 self.declarations
                     .iter()
-                    .find(|d| d.id == id)
-                    .filter(|d| d.bind(argument) == Some(command))
+                    .find(|declaration| declaration.accepts(activation))
             });
             let enabled = item.enabled && declaration.is_some_and(|d| d.enabled);
             let (parent, rebuild) = *self.stack.last().expect("host item parent");
@@ -342,16 +342,28 @@ pub(crate) mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::{MenuCommand, try_append};
-        use wakui_core::commands::MenuCommand as EventCommand;
-        use wakui_core::commands::NativeRole;
+        use super::try_append;
+        use crate::testkit::{FakeCommands, TestMenu, TestSession};
+        use wakui_core::commands::CommandRef;
+        use wakui_core::event::EventCommand as HostEvent;
 
         #[test]
-        fn native_commands_are_host_commands_without_conversion() {
-            let command: crate::event::MenuCommand = MenuCommand::Native(NativeRole::Quit);
-            assert_eq!(command, EventCommand::Native(NativeRole::Quit));
-            let about: crate::event::MenuCommand = MenuCommand::Native(NativeRole::About);
-            assert_eq!(about, EventCommand::Native(NativeRole::About));
+        fn opaque_refs_route_without_domain_knowledge() {
+            // The flavor never names domain commands: routing keys are
+            // opaque ids plus an optional argument, resolved view-side.
+            let commands = FakeCommands::new();
+            let open = commands.reference(TestMenu::Open);
+            let about = commands.reference(TestMenu::About);
+            assert_ne!(open, about);
+            assert_eq!(commands.resolve(open), Some(TestMenu::Open));
+            let transported: HostEvent = HostEvent::Menu(open);
+            assert!(matches!(transported, HostEvent::Menu(_)));
+            // Wrong shapes never resolve, like malformed native bindings.
+            let flipped = CommandRef {
+                id: open.id,
+                argument: Some(1),
+            };
+            assert_eq!(commands.resolve(flipped), None);
         }
 
         #[test]
@@ -375,11 +387,8 @@ pub(crate) mod imp {
 
             use gtk::prelude::*;
             use muda::{MenuItem, MenuItemKind};
-            use wakui_core::commands::SessionCommand as S;
-            use wakui_core::commands::{CommandDescriptor, CommandId, CommandParameter};
             use wakui_core::event::{EventCommand as HostEvent, EventSink};
-            use wakui_core::menu::MenuCommand;
-            use wakui_core::menu::{CommandModel, MenuEntry, MenuId, Menubar, Submenu};
+            use wakui_core::menu::{MenuEntry, MenuId, Menubar, Submenu};
 
             use super::AppMenu;
 
@@ -445,66 +454,39 @@ pub(crate) mod imp {
             /// Canned model with the production shape: File/Emulation roots,
             /// States nesting the four slot submenus, labels pre-localized.
             /// Native identity, routing, and enablement are what this test
-            /// owns; label copy lives view-side.
-            #[allow(clippy::too_many_arguments)]
+            /// owns; label copy and domain meaning live in the fake table.
             fn canned_bar(
+                commands: &FakeCommands,
                 loaded: bool,
                 paused: bool,
                 settings_open: bool,
                 slots: &[u64],
                 active: Option<u64>,
             ) -> Menubar {
-                use wakui_core::commands::MenuCommand as C;
-                let mut definitions = vec![];
-                for id in [
-                    CommandId::Open,
-                    CommandId::Close,
-                    CommandId::Settings,
-                    CommandId::Debugger,
-                    CommandId::NotificationHistory,
-                    CommandId::Quit,
-                    CommandId::Pause,
-                    CommandId::Resume,
-                    CommandId::Reset,
-                    CommandId::CreateSlot,
-                    CommandId::SaveActiveSlotOrNew,
-                    CommandId::LoadActiveSlot,
-                ] {
-                    definitions.push(CommandDescriptor {
-                        id,
-                        parameter: CommandParameter::None,
-                        enabled: true,
-                    });
-                }
-                for id in [
-                    CommandId::SelectActiveSlot,
-                    CommandId::SaveSlot,
-                    CommandId::LoadSlot,
-                    CommandId::DeleteSlot,
-                ] {
-                    definitions.push(CommandDescriptor {
-                        id,
-                        parameter: CommandParameter::SlotId,
-                        enabled: true,
-                    });
-                }
-                let item_enabled = |command: Option<MenuCommand>| -> bool {
+                use TestMenu as C;
+                use TestSession as S;
+                let reference = |command: TestMenu| commands.reference(command);
+                let item_enabled = |command: Option<CommandRef>| -> bool {
+                    let Some(command) = command.and_then(|activation| commands.resolve(activation))
+                    else {
+                        return false;
+                    };
                     match command {
-                        None => false,
-                        Some(C::Native(wakui_core::commands::NativeRole::Quit)) => true,
-                        Some(_) if settings_open => false,
-                        Some(C::Open | C::Settings | C::Debugger | C::NotificationHistory) => true,
-                        Some(C::Session(S::Pause)) => loaded && !paused,
-                        Some(C::Session(S::Resume)) => loaded && paused,
-                        Some(C::Session(S::LoadActiveSlot)) => loaded && active.is_some(),
-                        Some(_) => loaded,
+                        C::Quit => true,
+                        _ if settings_open => false,
+                        C::Open | C::Settings | C::Debugger | C::History => true,
+                        C::Session(S::Pause) => loaded && !paused,
+                        C::Session(S::Resume) => loaded && paused,
+                        C::Session(S::LoadActiveSlot) => loaded && active.is_some(),
+                        _ => loaded,
                     }
                 };
-                let leaf = |command: Option<MenuCommand>, label: &str| {
+                let leaf = |command: Option<TestMenu>, label: &str| {
+                    let activation = command.map(reference);
                     MenuEntry::Item(wakui_core::menu::MenuItem {
-                        command,
+                        command: activation,
                         label: label.to_string(),
-                        enabled: item_enabled(command),
+                        enabled: item_enabled(activation),
                     })
                 };
                 let slot_submenu =
@@ -519,11 +501,11 @@ pub(crate) mod imp {
                             slots
                                 .iter()
                                 .map(|slot| {
-                                    let command = C::Session(make_command(*slot));
+                                    let activation = reference(C::Session(make_command(*slot)));
                                     MenuEntry::Item(wakui_core::menu::MenuItem {
-                                        command: Some(command),
+                                        command: Some(activation),
                                         label: slot_label(*slot, active),
-                                        enabled: item_enabled(Some(command)),
+                                        enabled: item_enabled(Some(activation)),
                                     })
                                 })
                                 .collect::<Vec<_>>()
@@ -536,7 +518,7 @@ pub(crate) mod imp {
                         })
                     };
                 Menubar {
-                    commands: CommandModel { definitions },
+                    commands: commands.model(),
                     menus: vec![
                         Submenu {
                             id: MenuId::File,
@@ -547,11 +529,8 @@ pub(crate) mod imp {
                                 leaf(Some(C::Close), "Close"),
                                 leaf(Some(C::Settings), "Settings..."),
                                 leaf(Some(C::Debugger), "Open Debugger"),
-                                leaf(Some(C::NotificationHistory), "Notification History"),
-                                leaf(
-                                    Some(C::Native(wakui_core::commands::NativeRole::Quit)),
-                                    "Quit",
-                                ),
+                                leaf(Some(C::History), "Notification History"),
+                                leaf(Some(C::Quit), "Quit"),
                             ],
                         },
                         Submenu {
@@ -591,7 +570,7 @@ pub(crate) mod imp {
                 }
             }
 
-            fn item(menu: &AppMenu, command: MenuCommand) -> MenuItem {
+            fn item(menu: &AppMenu, command: CommandRef) -> MenuItem {
                 menu.items
                     .iter()
                     .find(|(_, value, _)| *value == Some(command))
@@ -600,7 +579,9 @@ pub(crate) mod imp {
                     .clone()
             }
 
+            #[allow(clippy::too_many_arguments)]
             fn sync_and_check(
+                commands: &FakeCommands,
                 menu: &mut AppMenu,
                 loaded: bool,
                 paused: bool,
@@ -609,7 +590,9 @@ pub(crate) mod imp {
                 active: Option<u64>,
                 bar: &gtk::MenuBar,
             ) {
-                use MenuCommand as C;
+                use TestMenu as C;
+                use TestSession as S;
+                let reference = |command: TestMenu| commands.reference(command);
 
                 // Fresh, owned allocations with equal content must not append
                 // duplicates or replace identities on repeated submissions.
@@ -624,7 +607,8 @@ pub(crate) mod imp {
                         .iter()
                         .map(|(id, menu)| (*id, menu.id().clone()))
                         .collect::<Vec<_>>();
-                    let menubar = canned_bar(loaded, paused, settings_open, slots, active);
+                    let menubar =
+                        canned_bar(commands, loaded, paused, settings_open, slots, active);
                     menu.update(&menubar);
                     let roots = menu.menu_bar.items();
                     assert_eq!(roots.len(), 2);
@@ -651,17 +635,14 @@ pub(crate) mod imp {
                         assert_eq!(menu.menus[&id].items().len(), count);
                     }
                     let mut expected = vec![
-                        (C::Open, EventCommand::Open),
-                        (C::Close, EventCommand::Close),
-                        (C::Settings, EventCommand::Settings),
-                        (
-                            C::Native(NativeRole::Quit),
-                            EventCommand::Native(NativeRole::Quit),
-                        ),
-                        (C::Debugger, EventCommand::Debugger),
-                        (C::NotificationHistory, EventCommand::NotificationHistory),
+                        reference(C::Open),
+                        reference(C::Close),
+                        reference(C::Settings),
+                        reference(C::Quit),
+                        reference(C::Debugger),
+                        reference(C::History),
                     ];
-                    for command in [
+                    for session in [
                         S::Pause,
                         S::Resume,
                         S::Reset,
@@ -669,7 +650,7 @@ pub(crate) mod imp {
                         S::SaveActiveSlotOrNew,
                         S::LoadActiveSlot,
                     ] {
-                        expected.push((C::Session(command), EventCommand::Session(command)));
+                        expected.push(reference(C::Session(session)));
                     }
                     for (id, make_command) in [
                         (MenuId::SelectSlot, S::SelectActiveSlot as fn(u64) -> S),
@@ -693,12 +674,11 @@ pub(crate) mod imp {
                             }));
                         } else {
                             for (child, slot) in children.iter().zip(slots) {
-                                let command = make_command(*slot);
+                                let activation = reference(C::Session(make_command(*slot)));
                                 let native = child.as_menuitem().unwrap();
-                                assert_eq!(native.id(), item(menu, C::Session(command)).id());
+                                assert_eq!(native.id(), item(menu, activation).id());
                                 assert_eq!(native.text(), slot_label(*slot, active));
-                                expected
-                                    .push((C::Session(command), EventCommand::Session(command)));
+                                expected.push(activation);
                             }
                         }
                     }
@@ -728,26 +708,34 @@ pub(crate) mod imp {
                             .find(|(id, _)| id == leaf.id())
                             .map(|(_, c)| *c);
                         assert_eq!(routed, command, "native ID must route its current command");
-                        let enabled = match command {
+                        let resolved = command.and_then(|activation| commands.resolve(activation));
+                        let enabled = match resolved {
                             None => false,
-                            Some(C::Native(NativeRole::Quit)) => true,
-                            Some(_) if settings_open => false,
-                            Some(C::Open | C::Settings | C::Debugger | C::NotificationHistory) => {
-                                true
+                            Some(TestMenu::Quit) => true,
+                            _ if settings_open => false,
+                            Some(
+                                TestMenu::Open
+                                | TestMenu::Settings
+                                | TestMenu::Debugger
+                                | TestMenu::History,
+                            ) => true,
+                            Some(TestMenu::Session(TestSession::Pause)) => loaded && !paused,
+                            Some(TestMenu::Session(TestSession::Resume)) => loaded && paused,
+                            Some(TestMenu::Session(TestSession::LoadActiveSlot)) => {
+                                loaded && active.is_some()
                             }
-                            Some(C::Session(S::Pause)) => loaded && !paused,
-                            Some(C::Session(S::Resume)) => loaded && paused,
-                            Some(C::Session(S::LoadActiveSlot)) => loaded && active.is_some(),
                             Some(_) => loaded,
                         };
                         assert_eq!(leaf.is_enabled(), enabled, "{command:?}");
                     }
-                    for (command, event) in expected {
-                        let native = item(menu, command);
+                    for activation in expected {
+                        let native = item(menu, activation);
                         let routed = routes.iter().find(|(id, _)| id == native.id()).unwrap().1;
-                        assert_eq!(routed, command);
-                        let transported: crate::event::MenuCommand = routed;
-                        assert_eq!(transported, event);
+                        assert_eq!(routed, activation);
+                        let HostEvent::Menu(transported) = HostEvent::Menu(routed) else {
+                            unreachable!();
+                        };
+                        assert_eq!(transported, activation);
                     }
                     for (parent, command, id) in old_items {
                         if let Some((_, _, current)) = menu
@@ -799,7 +787,11 @@ pub(crate) mod imp {
             let (mut loaded, mut paused, mut settings_open) = (false, false, false);
             let mut slots: Vec<u64> = Vec::new();
             let mut active_slot: Option<u64> = None;
+            // One opaque-id table for the whole scenario: repeated builds
+            // keep identities, like the view-side registry across frames.
+            let commands = FakeCommands::new();
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -820,16 +812,21 @@ pub(crate) mod imp {
                 .downcast::<gtk::MenuItem>()
                 .unwrap();
             old_open.activate();
+            let open = commands.reference(TestMenu::Open);
             assert!(matches!(
                 recording.0.lock().unwrap().as_slice(),
-                [HostEvent::Menu(MenuCommand::Open)]
+                [HostEvent::Menu(received)] if *received == open
             ));
             assert_eq!(menu.menus[&MenuId::File].text(), "File");
-            assert_eq!(item(&menu, MenuCommand::Debugger).text(), "Open Debugger");
+            assert_eq!(
+                item(&menu, commands.reference(TestMenu::Debugger)).text(),
+                "Open Debugger"
+            );
             loaded = true;
             slots = vec![42, 7];
             active_slot = Some(42);
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -840,6 +837,7 @@ pub(crate) mod imp {
             );
             paused = true;
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -850,6 +848,7 @@ pub(crate) mod imp {
             );
             settings_open = true;
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -861,6 +860,7 @@ pub(crate) mod imp {
             settings_open = false;
             active_slot = Some(7);
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -873,6 +873,7 @@ pub(crate) mod imp {
             // while the surviving slot and static items retain their IDs.
             slots = vec![7];
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -884,6 +885,7 @@ pub(crate) mod imp {
             slots = Vec::new();
             active_slot = None;
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -894,6 +896,7 @@ pub(crate) mod imp {
             );
             loaded = false;
             sync_and_check(
+                &commands,
                 &mut menu,
                 loaded,
                 paused,
@@ -908,7 +911,14 @@ pub(crate) mod imp {
             use wakui_core::menu::{
                 NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
             };
-            let mut root = canned_bar(loaded, paused, settings_open, &slots, active_slot);
+            let mut root = canned_bar(
+                &commands,
+                loaded,
+                paused,
+                settings_open,
+                &slots,
+                active_slot,
+            );
             root.application_menu = Some(NativeApplicationMenu {
                 label: "Host App".into(),
                 entries: vec![A::Role(R::About), A::Separator, A::Role(R::Quit)],

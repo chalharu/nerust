@@ -76,6 +76,13 @@ impl TestHost {
     pub(crate) fn with_failing_pick(pick: Option<PathBuf>) -> Self {
         Self::build(false, true, pick)
     }
+
+    pub(crate) fn menu_ref(
+        &self,
+        command: crate::testkit::TestMenu,
+    ) -> wakui_core::commands::CommandRef {
+        self.app.borrow().commands.reference(command)
+    }
 }
 
 pub(crate) struct HostState<K: Copy + Eq + std::hash::Hash + 'static> {

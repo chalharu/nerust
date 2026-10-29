@@ -80,6 +80,206 @@ impl TestAux {
     }
 }
 
+/// Flavor-local simulation vocabulary for headless tests.
+///
+/// Test doubles need *some* app to simulate. These types live in this
+/// crate's test code only: production paths forward opaque [`CommandRef`]s
+/// without interpretation, and no `nerust_*` type is named here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestSession {
+    Pause,
+    Resume,
+    TogglePause,
+    Reset,
+    CreateSlot,
+    SaveActiveSlotOrNew,
+    LoadActiveSlot,
+    SelectActiveSlot(u64),
+    SaveSlot(u64),
+    LoadSlot(u64),
+    DeleteSlot(u64),
+    SelectNextSlot,
+    SelectPreviousSlot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestMenu {
+    Open,
+    Close,
+    Settings,
+    Debugger,
+    History,
+    About,
+    Quit,
+    Session(TestSession),
+}
+
+use wakui_core::commands::CommandRef;
+
+impl TestSession {
+    fn template(self) -> Self {
+        match self {
+            Self::SelectActiveSlot(_) => Self::SelectActiveSlot(0),
+            Self::SaveSlot(_) => Self::SaveSlot(0),
+            Self::LoadSlot(_) => Self::LoadSlot(0),
+            Self::DeleteSlot(_) => Self::DeleteSlot(0),
+            other => other,
+        }
+    }
+
+    fn argument(self) -> Option<u64> {
+        match self {
+            Self::SelectActiveSlot(index)
+            | Self::SaveSlot(index)
+            | Self::LoadSlot(index)
+            | Self::DeleteSlot(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    fn fill(self, argument: Option<u64>) -> Option<Self> {
+        match argument {
+            None if self.template() == self => Some(self),
+            Some(index) => match self {
+                Self::SelectActiveSlot(_) => Some(Self::SelectActiveSlot(index)),
+                Self::SaveSlot(_) => Some(Self::SaveSlot(index)),
+                Self::LoadSlot(_) => Some(Self::LoadSlot(index)),
+                Self::DeleteSlot(_) => Some(Self::DeleteSlot(index)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+impl TestMenu {
+    pub(crate) fn template(self) -> Self {
+        match self {
+            Self::Session(session) => Self::Session(session.template()),
+            other => other,
+        }
+    }
+
+    fn argument(self) -> Option<u64> {
+        match self {
+            Self::Session(session) => session.argument(),
+            _ => None,
+        }
+    }
+
+    fn fill(self, argument: Option<u64>) -> Option<Self> {
+        match self {
+            Self::Session(session) => session.fill(argument).map(Self::Session),
+            other => match argument {
+                None => Some(other),
+                Some(_) => None,
+            },
+        }
+    }
+}
+
+impl wakui_core::commands::CommandSpec for TestMenu {
+    fn clone_box(&self) -> Box<dyn wakui_core::commands::CommandSpec> {
+        Box::new(*self)
+    }
+
+    fn equals(&self, other: &dyn wakui_core::commands::CommandSpec) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn argument(&self) -> Option<u64> {
+        // Template shape: indexed commands carry zero, never a default argument.
+        match self.template() {
+            Self::Session(session) => session.argument().map(|_| 0),
+            _ => None,
+        }
+    }
+}
+
+/// Opaque id table for the simulation vocabulary. Mirrors the view-side
+/// resolution table: flavors forward ids, meaning resolves here in tests.
+#[derive(Debug)]
+pub(crate) struct FakeCommands {
+    table: Vec<(wakui_core::commands::CommandId, TestMenu)>,
+}
+
+impl FakeCommands {
+    pub(crate) fn new() -> Self {
+        use TestMenu as M;
+        use TestSession as S;
+        let templates = [
+            M::Open,
+            M::Close,
+            M::Settings,
+            M::Debugger,
+            M::History,
+            M::About,
+            M::Quit,
+            M::Session(S::Pause),
+            M::Session(S::Resume),
+            M::Session(S::TogglePause),
+            M::Session(S::Reset),
+            M::Session(S::CreateSlot),
+            M::Session(S::SaveActiveSlotOrNew),
+            M::Session(S::LoadActiveSlot),
+            M::Session(S::SelectActiveSlot(0)),
+            M::Session(S::SaveSlot(0)),
+            M::Session(S::LoadSlot(0)),
+            M::Session(S::DeleteSlot(0)),
+            M::Session(S::SelectNextSlot),
+            M::Session(S::SelectPreviousSlot),
+        ];
+        Self {
+            table: templates
+                .into_iter()
+                .map(|template| (wakui_core::commands::CommandId::fresh(), template))
+                .collect(),
+        }
+    }
+
+    /// Opaque activation for a simulation command, like a native callback.
+    pub(crate) fn reference(&self, command: TestMenu) -> CommandRef {
+        let template = command.template();
+        let (id, _) = self
+            .table
+            .iter()
+            .find(|(_, entry)| *entry == template)
+            .expect("fake command");
+        CommandRef {
+            id: *id,
+            argument: command.argument(),
+        }
+    }
+
+    /// Resolve an opaque activation back to the simulated command.
+    pub(crate) fn resolve(&self, activation: CommandRef) -> Option<TestMenu> {
+        let (_, template) = self.table.iter().find(|(id, _)| *id == activation.id)?;
+        template.fill(activation.argument)
+    }
+
+    pub(crate) fn quit(&self) -> CommandRef {
+        self.reference(TestMenu::Quit)
+    }
+
+    pub(crate) fn model(&self) -> CommandModel {
+        CommandModel {
+            definitions: self
+                .table
+                .iter()
+                .map(|(id, template)| wakui_core::commands::Command {
+                    id: *id,
+                    enabled: true,
+                    spec: Box::new(*template),
+                })
+                .collect(),
+        }
+    }
+}
+
 fn find_control_in<'a>(layout: &'a Container, label: &str) -> Option<&'a Control> {
     for node in &layout.children {
         match node {
@@ -402,16 +602,18 @@ fn debug_screen() -> ControlScreen {
     screen(labels::DEBUGGER_TITLE, Vec::new(), Vec::new())
 }
 
-/// Canned menubar covering every canonical declaration, with slot submenus
+/// Canned menubar covering every simulated declaration, with slot submenus
 /// driven by the fake's slot list. Labels flip to Japanese when requested;
 /// the flip is test-double chrome, never the real i18n catalog.
 pub(crate) fn canned_menubar(
+    commands: &FakeCommands,
     slots: &[u64],
     active: Option<u64>,
     japanese: bool,
     loaded: bool,
 ) -> Menubar {
-    use wakui_core::commands::{CommandId, DECLARATIONS, MenuCommand, NativeRole, SessionCommand};
+    use TestMenu as M;
+    use TestSession as S;
     let t = |en: &str, ja: &str| {
         if japanese {
             ja.to_string()
@@ -419,44 +621,41 @@ pub(crate) fn canned_menubar(
             en.to_string()
         }
     };
-    let slot_command = |id: &CommandId| {
-        use CommandId as C;
-        matches!(
-            id,
-            C::SelectActiveSlot | C::SaveSlot | C::LoadSlot | C::DeleteSlot
-        )
-    };
-    // Session commands need a loaded core; slot commands additionally need
+    let reference = |command: TestMenu| commands.reference(command);
+    // Session commands need a loaded core; indexed commands additionally need
     // slots. This mirrors host enablement, never the real policy catalog.
-    let needs_core = |id: &CommandId| {
-        use CommandId as C;
-        !matches!(
-            id,
-            C::Open
-                | C::Settings
-                | C::Debugger
-                | C::NotificationHistory
-                | C::Quit
-                | C::About
-                | C::CreateSlot
-        )
+    let enabled_for = |template: TestMenu| {
+        let indexed = template.argument().is_some();
+        let needs_core = !matches!(
+            template,
+            M::Open
+                | M::Settings
+                | M::Debugger
+                | M::History
+                | M::Quit
+                | M::About
+                | M::Session(S::CreateSlot)
+        );
+        (!needs_core || loaded) && !(slots.is_empty() && indexed)
     };
-    let definitions = DECLARATIONS
-        .iter()
-        .map(|(id, _, command)| wakui_core::commands::CommandDescriptor {
-            id: *id,
-            parameter: command.parameter(),
-            enabled: (!needs_core(id) || loaded) && !(slots.is_empty() && slot_command(id)),
-        })
-        .collect();
-    let item = |command: MenuCommand, en: &str, ja: &str| {
+    let mut model = commands.model();
+    for declaration in &mut model.definitions {
+        let template = declaration
+            .downcast::<TestMenu>()
+            .copied()
+            .expect("fake spec");
+        declaration.enabled = enabled_for(template);
+    }
+    let definitions = model.definitions;
+    let item = |command: TestMenu, en: &str, ja: &str| {
+        let activation = reference(command);
         MenuEntry::Item(MenuItem {
-            command: Some(command),
+            command: Some(activation),
             label: t(en, ja),
-            enabled: loaded || !matches!(command, MenuCommand::Session(_)),
+            enabled: loaded || !matches!(command, M::Session(_)),
         })
     };
-    let slot_submenu = |id: MenuId, en: &str, ja: &str, make: fn(u64) -> SessionCommand| {
+    let slot_submenu = |id: MenuId, en: &str, ja: &str, make: fn(u64) -> TestSession| {
         let children = if slots.is_empty() {
             vec![MenuEntry::Item(MenuItem {
                 command: None,
@@ -472,8 +671,9 @@ pub(crate) fn canned_menubar(
                     } else {
                         format!("Slot {slot}")
                     };
+                    let activation = reference(M::Session(make(*slot)));
                     MenuEntry::Item(MenuItem {
-                        command: Some(MenuCommand::Session(make(*slot))),
+                        command: Some(activation),
                         label,
                         enabled: true,
                     })
@@ -495,9 +695,9 @@ pub(crate) fn canned_menubar(
                 label: t("File", "ファイル"),
                 enabled: true,
                 children: vec![
-                    item(MenuCommand::Open, "Open...", "開く..."),
-                    item(MenuCommand::Settings, "Settings...", "設定..."),
-                    item(MenuCommand::Native(NativeRole::Quit), "Quit", "終了"),
+                    item(M::Open, "Open...", "開く..."),
+                    item(M::Settings, "Settings...", "設定..."),
+                    item(M::Quit, "Quit", "終了"),
                 ],
             },
             Submenu {
@@ -505,12 +705,8 @@ pub(crate) fn canned_menubar(
                 label: t("Emulation", "エミュレーション"),
                 enabled: true,
                 children: vec![
-                    item(
-                        MenuCommand::Session(SessionCommand::Reset),
-                        "Reset",
-                        "リセット",
-                    ),
-                    item(MenuCommand::Debugger, "Debugger", "デバッガ"),
+                    item(M::Session(S::Reset), "Reset", "リセット"),
+                    item(M::Debugger, "Debugger", "デバッガ"),
                 ],
             },
             Submenu {
@@ -518,18 +714,14 @@ pub(crate) fn canned_menubar(
                 label: t("States", "ステート"),
                 enabled: true,
                 children: vec![
+                    item(M::Session(S::CreateSlot), "New slot", "新規スロット"),
                     item(
-                        MenuCommand::Session(SessionCommand::CreateSlot),
-                        "New slot",
-                        "新規スロット",
-                    ),
-                    item(
-                        MenuCommand::Session(SessionCommand::SaveActiveSlotOrNew),
+                        M::Session(S::SaveActiveSlotOrNew),
                         "Save active slot",
                         "アクティブスロットに保存",
                     ),
                     item(
-                        MenuCommand::Session(SessionCommand::LoadActiveSlot),
+                        M::Session(S::LoadActiveSlot),
                         "Load active slot",
                         "アクティブスロットを読込",
                     ),
@@ -537,25 +729,25 @@ pub(crate) fn canned_menubar(
                         MenuId::SelectSlot,
                         "Select slot",
                         "スロット選択",
-                        SessionCommand::SelectActiveSlot,
+                        TestSession::SelectActiveSlot,
                     ),
                     slot_submenu(
                         MenuId::SaveSlot,
                         "Save slot",
                         "スロットに保存",
-                        SessionCommand::SaveSlot,
+                        TestSession::SaveSlot,
                     ),
                     slot_submenu(
                         MenuId::LoadSlot,
                         "Load slot",
                         "スロットを読込",
-                        SessionCommand::LoadSlot,
+                        TestSession::LoadSlot,
                     ),
                     slot_submenu(
                         MenuId::DeleteSlot,
                         "Delete slot",
                         "スロットを削除",
-                        SessionCommand::DeleteSlot,
+                        TestSession::DeleteSlot,
                     ),
                 ],
             },
@@ -563,11 +755,7 @@ pub(crate) fn canned_menubar(
                 id: MenuId::Help,
                 label: t("Help", "ヘルプ"),
                 enabled: true,
-                children: vec![item(
-                    MenuCommand::Native(NativeRole::About),
-                    "About",
-                    "について",
-                )],
+                children: vec![item(M::About, "About", "について")],
             },
         ],
         application_menu: None,
@@ -623,10 +811,13 @@ pub(crate) struct FakeApp {
     pub active_slot: Option<u64>,
     owners: std::collections::HashSet<PauseOwner>,
     menu_gate: Option<(bool, bool, bool, Option<u64>, Menubar)>,
+    pub(crate) commands: FakeCommands,
 }
 
 impl FakeApp {
     pub(crate) fn new() -> Self {
+        let commands = FakeCommands::new();
+        let menu = canned_menubar(&commands, &[], None, false, false);
         Self {
             loaded: false,
             paused: false,
@@ -637,10 +828,11 @@ impl FakeApp {
             dispatched: Vec::new(),
             main: {
                 let mut window = Window::main();
-                window.menu = Some(canned_menubar(&[], None, false, false));
+                window.menu = Some(menu.clone());
                 window
             },
-            menu: canned_menubar(&[], None, false, false),
+            menu,
+            commands,
             menu_polls: 0,
             title: "wakui".to_string(),
             title_dirty: true,
@@ -684,6 +876,50 @@ impl FakeApp {
     pub(crate) fn history_screen(&self) -> ControlScreen {
         history_screen(&self.history_notes, self.history_filter)
     }
+
+    pub(crate) fn dispatch_session(
+        &mut self,
+        command: TestSession,
+    ) -> Result<SessionOutcome, SessionError> {
+        let mut outcome = SessionOutcome::default();
+        let executed = match command {
+            TestSession::Pause => {
+                if self.loaded {
+                    self.paused = true;
+                }
+                true
+            }
+            TestSession::Resume => {
+                if self.loaded {
+                    self.paused = false;
+                }
+                true
+            }
+            TestSession::TogglePause => {
+                if self.loaded {
+                    self.paused = !self.paused;
+                }
+                true
+            }
+            TestSession::Reset => true,
+            TestSession::CreateSlot => true,
+            TestSession::SaveActiveSlotOrNew => false,
+            TestSession::LoadActiveSlot => false,
+            TestSession::SelectActiveSlot(id) => {
+                self.active_slot = Some(id);
+                true
+            }
+            TestSession::SaveSlot(_) => true,
+            TestSession::LoadSlot(_) => true,
+            TestSession::DeleteSlot(_) => true,
+            TestSession::SelectNextSlot | TestSession::SelectPreviousSlot => true,
+        };
+        outcome.command = Some(CommandOutcome {
+            executed,
+            needs_redraw: false,
+        });
+        Ok(outcome)
+    }
 }
 
 impl EventHandler<TestAux> for FakeApp {
@@ -692,13 +928,14 @@ impl EventHandler<TestAux> for FakeApp {
         event: EventCommand,
         settings_open: bool,
     ) -> Result<EventOutcome<TestAux>, SessionError> {
-        use wakui_core::commands::{MenuCommand, NativeRole};
         self.events.push(event);
         // The host pause guard also applies without an aux reservation:
         // direct owner manipulation (tests) blocks the same commands.
+        let quit = self.commands.quit();
         let guarded = settings_open || self.owners.contains(&PauseOwner::Settings);
         let blocked = match event {
-            EventCommand::Menu(command) => command != MenuCommand::Native(NativeRole::Quit),
+            // Only the opaque Quit activation passes the host settings guard.
+            EventCommand::Menu(activation) => activation != quit,
             EventCommand::Session(
                 SessionEvent::Command(_)
                 | SessionEvent::Keyboard { .. }
@@ -714,30 +951,35 @@ impl EventHandler<TestAux> for FakeApp {
             ..Default::default()
         };
         match event {
-            EventCommand::Menu(command) => match command {
-                MenuCommand::Open => {
-                    outcome.effect = Some(CommandEffect::OpenRom);
+            EventCommand::Menu(activation) => {
+                let Some(command) = self.commands.resolve(activation) else {
+                    return Ok(EventOutcome::default());
+                };
+                match command {
+                    TestMenu::Open => {
+                        outcome.effect = Some(CommandEffect::OpenRom);
+                    }
+                    TestMenu::Close => self.unload(),
+                    TestMenu::Settings => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Settings));
+                    }
+                    TestMenu::Debugger => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                    }
+                    TestMenu::History => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::History));
+                    }
+                    TestMenu::About => {
+                        outcome.effect = Some(CommandEffect::About);
+                    }
+                    TestMenu::Quit => {
+                        outcome.effect = Some(CommandEffect::Quit);
+                    }
+                    TestMenu::Session(session) => {
+                        outcome.session = self.dispatch_session(session)?;
+                    }
                 }
-                MenuCommand::Close => self.unload(),
-                MenuCommand::Settings => {
-                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Settings));
-                }
-                MenuCommand::Debugger => {
-                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
-                }
-                MenuCommand::NotificationHistory => {
-                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::History));
-                }
-                MenuCommand::Native(NativeRole::About) => {
-                    outcome.effect = Some(CommandEffect::About);
-                }
-                MenuCommand::Native(NativeRole::Quit) => {
-                    outcome.effect = Some(CommandEffect::Quit);
-                }
-                MenuCommand::Session(command) => {
-                    outcome.session = self.dispatch(SessionEvent::Command(command))?;
-                }
-            },
+            }
             EventCommand::Session(event) => {
                 outcome.session = self.dispatch(event)?;
             }
@@ -899,47 +1141,14 @@ impl FrontendApp<TestAux> for FakeApp {
     fn reconcile_pause(&mut self) {}
 
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
-        use wakui_core::commands::SessionCommand;
         use wakui_core::session::ShortcutGesture;
         let mut outcome = SessionOutcome::default();
         match event {
-            SessionEvent::Command(command) => {
-                let executed = match command {
-                    SessionCommand::Pause => {
-                        if self.loaded {
-                            self.paused = true;
-                        }
-                        true
-                    }
-                    SessionCommand::Resume => {
-                        if self.loaded {
-                            self.paused = false;
-                        }
-                        true
-                    }
-                    SessionCommand::TogglePause => {
-                        if self.loaded {
-                            self.paused = !self.paused;
-                        }
-                        true
-                    }
-                    SessionCommand::Reset => true,
-                    SessionCommand::CreateSlot => true,
-                    SessionCommand::SaveActiveSlotOrNew => false,
-                    SessionCommand::LoadActiveSlot => false,
-                    SessionCommand::SelectActiveSlot(id) => {
-                        self.active_slot = Some(id);
-                        true
-                    }
-                    SessionCommand::SaveSlot(_) => true,
-                    SessionCommand::LoadSlot(_) => true,
-                    SessionCommand::DeleteSlot(_) => true,
-                    SessionCommand::SelectNextSlot | SessionCommand::SelectPreviousSlot => true,
+            SessionEvent::Command(activation) => {
+                let Some(TestMenu::Session(session)) = self.commands.resolve(activation) else {
+                    return Ok(outcome);
                 };
-                outcome.command = Some(CommandOutcome {
-                    executed,
-                    needs_redraw: false,
-                });
+                return self.dispatch_session(session);
             }
             SessionEvent::Keyboard { .. } => {}
             SessionEvent::Shortcut(gesture) => match gesture {
@@ -950,24 +1159,22 @@ impl FrontendApp<TestAux> for FakeApp {
                     outcome.effect = Some(SessionEffect::ToggleFullscreen);
                 }
                 ShortcutGesture::TogglePause => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::TogglePause));
+                    return self.dispatch_session(TestSession::TogglePause);
                 }
                 ShortcutGesture::SaveActiveSlot => {
-                    return self
-                        .dispatch(SessionEvent::Command(SessionCommand::SaveActiveSlotOrNew));
+                    return self.dispatch_session(TestSession::SaveActiveSlotOrNew);
                 }
                 ShortcutGesture::LoadActiveSlot => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::LoadActiveSlot));
+                    return self.dispatch_session(TestSession::LoadActiveSlot);
                 }
                 ShortcutGesture::SelectNextSlot => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::SelectNextSlot));
+                    return self.dispatch_session(TestSession::SelectNextSlot);
                 }
                 ShortcutGesture::SelectPreviousSlot => {
-                    return self
-                        .dispatch(SessionEvent::Command(SessionCommand::SelectPreviousSlot));
+                    return self.dispatch_session(TestSession::SelectPreviousSlot);
                 }
                 ShortcutGesture::Reset => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::Reset));
+                    return self.dispatch_session(TestSession::Reset);
                 }
             },
             SessionEvent::ClearInput => {}
@@ -999,30 +1206,35 @@ impl FrontendApp<TestAux> for FakeApp {
         _capabilities: MenuCapabilities,
     ) -> Option<Menubar> {
         self.menu_polls += 1;
-        let mut live = canned_menubar(&self.slots, self.active_slot, self.japanese, self.loaded);
+        let mut live = canned_menubar(
+            &self.commands,
+            &self.slots,
+            self.active_slot,
+            self.japanese,
+            self.loaded,
+        );
         if settings_open {
             // Host settings guard: only Quit stays available while the
             // settings dialog owns the pause.
-            use wakui_core::commands::{CommandId, MenuCommand, NativeRole};
+            let quit = self.commands.quit();
             for descriptor in &mut live.commands.definitions {
-                descriptor.enabled = descriptor.id == CommandId::Quit;
+                descriptor.enabled = descriptor.id == quit.id;
             }
-            fn gate_entry(entry: &mut MenuEntry) {
+            fn gate_entry(entry: &mut MenuEntry, quit: CommandRef) {
                 match entry {
                     MenuEntry::Item(item) => {
-                        item.enabled =
-                            matches!(item.command, Some(MenuCommand::Native(NativeRole::Quit)));
+                        item.enabled = item.command == Some(quit);
                     }
                     MenuEntry::Submenu(submenu) => {
                         for child in &mut submenu.children {
-                            gate_entry(child);
+                            gate_entry(child, quit);
                         }
                     }
                 }
             }
             for menu in &mut live.menus {
                 for child in &mut menu.children {
-                    gate_entry(child);
+                    gate_entry(child, quit);
                 }
             }
         }
