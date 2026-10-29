@@ -4,7 +4,7 @@
 
 use iced::keyboard::key::{Code, Physical};
 
-use wakui::Key;
+use wakui_core::Key;
 
 pub fn key_from_physical(physical: Physical) -> Option<Key> {
     Some(match physical {

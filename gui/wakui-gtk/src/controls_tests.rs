@@ -11,9 +11,9 @@ use super::*;
 use crate::testkit::TestAux;
 use crate::testkit::labels;
 use crate::window::{WindowExtend, tests as windows};
-use wakui::aux::AuxId;
-use wakui::control::*;
-use wakui::leaf::{ChoiceLeaf, NoteLeaf, NumberLeaf, ToggleLeaf};
+use wakui_core::aux::AuxId;
+use wakui_core::control::*;
+use wakui_core::leaf::{ChoiceLeaf, NoteLeaf, NumberLeaf, ToggleLeaf};
 
 struct Harness {
     window: crate::window::Window<TestAux>,
@@ -353,7 +353,7 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
     let close = controls(&h.screen())
         .into_iter()
         .rev()
-        .find(|c| c.downcast::<wakui::leaf::ActionLeaf>().is_some())
+        .find(|c| c.downcast::<wakui_core::leaf::ActionLeaf>().is_some())
         .unwrap()
         .id;
     h.action(close);

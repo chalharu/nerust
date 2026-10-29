@@ -3,7 +3,7 @@ authors.workspace = true
 description = "wakui platform backend for iced/tao: native control handlers and input mapping"
 edition.workspace = true
 license.workspace = true
-name = "wakui-tao"
+name = "wakui_tao"
 rust-version.workspace = true
 version.workspace = true
 
@@ -16,7 +16,7 @@ muda.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true
 tao.workspace = true
-wakui.workspace = true
+wakui_core.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 gtk = "=0.18.2"

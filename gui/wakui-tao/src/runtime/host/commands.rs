@@ -4,8 +4,8 @@ use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
-use wakui::focus::FocusEvent;
-use wakui::{
+use wakui_core::focus::FocusEvent;
+use wakui_core::{
     event::{CommandEffect, EventOutcome},
     session::SessionEvent,
 };
@@ -121,7 +121,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     #[cfg(test)]
-    fn apply_keyboard_shortcut(&mut self, gesture: wakui::session::ShortcutGesture) {
+    fn apply_keyboard_shortcut(&mut self, gesture: wakui_core::session::ShortcutGesture) {
         self.handle_native_event(UserEvent::Session(SessionEvent::Shortcut(gesture)), None);
     }
 }
@@ -133,8 +133,8 @@ mod tests {
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::testkit::StubAux;
-    use wakui::commands::NativeRole;
-    use wakui::commands::SessionCommand;
+    use wakui_core::commands::NativeRole;
+    use wakui_core::commands::SessionCommand;
 
     #[test]
     fn rom_filters_empty_without_cores() {
@@ -195,7 +195,7 @@ mod tests {
 
     fn settings_blocked_host() -> TestHost {
         use crate::testkit::TestAux;
-        use wakui::aux::OpenRequest;
+        use wakui_core::aux::OpenRequest;
         let support = TestHost::new();
         let mut host = support.host;
         let id = match host.reserve_aux_window(TestAux::Settings) {
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn open_settings_blocks_menu_commands() {
         use crate::event::MenuCommand as Cmd;
-        use wakui::commands::SessionCommand;
+        use wakui_core::commands::SessionCommand;
         let support = settings_blocked_host();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
@@ -252,22 +252,26 @@ mod tests {
     #[test]
     fn canonical_events_share_external_settings_guard_and_effects() {
         use crate::event::UserEvent;
-        use wakui::focus::FocusEvent;
-        use wakui::session::SessionEvent;
+        use wakui_core::focus::FocusEvent;
+        use wakui_core::session::SessionEvent;
         let support = settings_blocked_host();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         // Only the native registry is open: the external flag, not a Host
         // pause owner, must guard both commands and keyboard shortcuts.
-        assert!(!host.core.owns_pause(wakui::pause::PauseOwner::Settings));
+        assert!(
+            !host
+                .core
+                .owns_pause(wakui_core::pause::PauseOwner::Settings)
+        );
         for event in [
             UserEvent::Menu(MenuCommand::Native(NativeRole::About)),
             UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
             UserEvent::Session(SessionEvent::Shortcut(
-                wakui::session::ShortcutGesture::OpenDebugger,
+                wakui_core::session::ShortcutGesture::OpenDebugger,
             )),
             UserEvent::Session(SessionEvent::Keyboard {
-                key: wakui::Key::F4,
+                key: wakui_core::Key::F4,
                 pressed: true,
             }),
         ] {
@@ -298,13 +302,13 @@ mod tests {
     #[test]
     fn canonical_shortcut_effect_opens_native_debugger() {
         use crate::event::UserEvent;
-        use wakui::session::SessionEvent;
+        use wakui_core::session::SessionEvent;
         let mut host = TestHost::new().host;
         let opener = FakeOpener::failing("no display");
         assert_eq!(
             host.on_event(
                 UserEvent::Session(SessionEvent::Shortcut(
-                    wakui::session::ShortcutGesture::OpenDebugger
+                    wakui_core::session::ShortcutGesture::OpenDebugger
                 )),
                 &opener
             ),
@@ -404,7 +408,7 @@ mod tests {
 
     #[test]
     fn session_menu_runs_every_command_without_core() {
-        use wakui::commands::SessionCommand as Cmd;
+        use wakui_core::commands::SessionCommand as Cmd;
         let support = TestHost::new();
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
@@ -495,7 +499,7 @@ mod tests {
 
     #[test]
     fn dead_dialog_thread_unwedges_the_queue() {
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
         host.core.set_pause_owner(PauseOwner::Settings, true);
@@ -521,7 +525,7 @@ mod tests {
 
     #[test]
     fn disconnected_dialog_chains_through_native_presenter_before_modal_release() {
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
         let support = TestHost::new();
         let mut host = support.host;
         host.core.set_pause_owner(PauseOwner::Focus, true);
@@ -569,7 +573,7 @@ mod tests {
     #[test]
     fn keyboard_shortcuts_route_without_keys() {
         use crate::testkit::TestAux;
-        use wakui::session::ShortcutGesture;
+        use wakui_core::session::ShortcutGesture;
         let support = TestHost::new();
         let mut host = support.host;
         host.apply_keyboard_shortcut(ShortcutGesture::OpenDebugger);

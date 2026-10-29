@@ -5,7 +5,7 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use wakui::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
+use wakui_core::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 
 use crate::surface::{Surface, SurfaceCore};
 

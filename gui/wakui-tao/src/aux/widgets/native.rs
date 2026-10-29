@@ -5,8 +5,8 @@ use std::sync::{
 
 use iced_winit::program;
 use tao::event_loop::EventLoopWindowTarget;
-use wakui::control::{ControlEvent, ControlScreen};
-use wakui::{mailbox::WindowMailbox, window::Window};
+use wakui_core::control::{ControlEvent, ControlScreen};
+use wakui_core::{mailbox::WindowMailbox, window::Window};
 
 use super::bindings::{ControlsBinding, EventQueue, Message, SharedScreen};
 use crate::aux::shell::{AuxShell, AuxSurface};
@@ -35,7 +35,7 @@ where
     S: WidgetSignals<B>,
 {
     fn open(
-        window: wakui::window::Window,
+        window: wakui_core::window::Window,
         binding: B,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         signals: S,
@@ -129,7 +129,7 @@ impl ControlsWindowHandle {
         mailbox: WindowMailbox,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
     ) -> Option<Self> {
-        let wakui::window::WindowId::Auxiliary(_) = window.id else {
+        let wakui_core::window::WindowId::Auxiliary(_) = window.id else {
             unreachable!("widget windows are auxiliary windows");
         };
         let (binding, screen, queue) = ControlsBinding::new(*screen);

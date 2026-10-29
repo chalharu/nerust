@@ -41,7 +41,7 @@ pub(crate) struct AuxSurface {
     should_close: Arc<AtomicBool>,
     cursor: mouse::Cursor,
     clipboard: Clipboard,
-    retry: wakui::retry::RenderRetry,
+    retry: wakui_core::retry::RenderRetry,
 }
 
 /// Why an aux window failed to open: which window plus the native error.

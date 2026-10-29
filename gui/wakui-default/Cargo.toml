@@ -1,0 +1,14 @@
+[package]
+authors.workspace = true
+description = "Platform-default wakui backend selection (gtk on Linux/BSD, tao elsewhere)"
+edition.workspace = true
+license.workspace = true
+name = "wakui_default"
+rust-version.workspace = true
+version.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+wakui_gtk.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+wakui_tao.workspace = true
