@@ -23,19 +23,19 @@ use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     renderer::{OsdLayer, OsdSink, StripSink},
 };
-use wakui::app::FrontendApp as _;
-use wakui::commands::{Command, CommandRef};
-use wakui::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
-use wakui::event::{CommandEffect, EventCommand, EventHandler, EventSink};
-use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
-use wakui::menu::{
+use wakui::app::boundary::FrontendApp as _;
+use wakui::chrome::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
+use wakui::chrome::menu::{
     CommandVisitor, MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu,
 };
-use wakui::menu_presenter::MenuPresenter;
+use wakui::chrome::menu_presenter::MenuPresenter;
+use wakui::flow::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
+use wakui::input::commands::{Command, CommandRef};
+use wakui::input::event::{CommandEffect, EventCommand, EventHandler, EventSink};
 
 struct Common {
     app: ApplicationHost,
-    debug: Option<wakui::aux::AuxId>,
+    debug: Option<wakui::chrome::aux::AuxId>,
 }
 
 impl Drop for Common {
@@ -323,8 +323,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     // Open the debugger widget through the generic aux boundary.
     let mut windows =
-        wakui::aux::AuxWindows::<nerust_frontend_viewdefs::focus::AuxKind, u64, ()>::new();
-    let id: Option<wakui::aux::AuxId> = {
+        wakui::chrome::aux::AuxWindows::<nerust_frontend_viewdefs::focus::AuxKind, u64, ()>::new();
+    let id: Option<wakui::chrome::aux::AuxId> = {
         let mut common = native.common.borrow_mut();
         match common
             .app
@@ -334,7 +334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .expect("reservation")
         {
-            Some(wakui::aux::OpenRequest::Create(id)) => {
+            Some(wakui::chrome::aux::OpenRequest::Create(id)) => {
                 assert!(
                     common
                         .app

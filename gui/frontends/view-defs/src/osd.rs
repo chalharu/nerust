@@ -17,11 +17,11 @@ use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     renderer::{OsdLayer, OsdSink, StripSink, strip_pixels},
 };
-use wakui::cache::Versioned;
+use wakui::support::cache::Versioned;
 
 use crate::frame::FrameCtx;
-use wakui::dialog::{ModalAdvance, ModalPresentation, ModalToken};
-use wakui::loop_driver::WakeNeed;
+use wakui::chrome::dialog::{ModalAdvance, ModalPresentation, ModalToken};
+use wakui::flow::loop_driver::WakeNeed;
 
 #[derive(Debug, Default)]
 pub struct OsdTurn {

@@ -9,9 +9,9 @@ use crate::{
     focus::AuxKind,
     widget_session::{Pending, WidgetSession, WindowSubmission},
 };
-use wakui::aux::{AuxId, AuxWindows, OpenRequest};
-use wakui::session::SessionError;
-use wakui::window::WindowEffects;
+use wakui::chrome::aux::{AuxId, AuxWindows, OpenRequest};
+use wakui::chrome::window::WindowEffects;
+use wakui::input::session::SessionError;
 
 pub type WidgetWindowClose<H> = (Option<H>, Result<WindowEffects, SessionError>);
 

@@ -16,17 +16,17 @@ use gtk::{
     glib::variant::{StaticVariantType, ToVariant},
     prelude::*,
 };
-use wakui_core::control::ControlScreen;
-use wakui_core::event::{CommandEffect, EventCommand, EventSink};
-use wakui_core::session::SessionEvent;
+use wakui_core::input::event::{CommandEffect, EventCommand, EventSink};
+use wakui_core::input::session::SessionEvent;
+use wakui_core::scene::control::ControlScreen;
 use wakui_core::{
-    aux::{AuxId, AuxWindows, OpenRequest},
-    commands::{Command, CommandId, CommandRef, CommandVisitor},
-    focus::FocusEvent,
-    mailbox::WindowMailbox,
-    menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
-    menu_presenter::MenuPresenter,
-    window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
+    chrome::aux::{AuxId, AuxWindows, OpenRequest},
+    chrome::mailbox::WindowMailbox,
+    chrome::menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
+    chrome::menu_presenter::MenuPresenter,
+    chrome::window::{MainContents, Window as HostWindow, WindowEffects, WindowVisitor},
+    input::commands::{Command, CommandId, CommandRef, CommandVisitor},
+    input::focus::FocusEvent,
 };
 
 /// Bound once via `set_menubar`; host IDs retain the same native submenus
@@ -175,7 +175,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowVisitor for GtkWindowRender
         }
     }
 
-    fn visit_controls(&mut self, _screen: &wakui_core::control::ControlScreen) {
+    fn visit_controls(&mut self, _screen: &wakui_core::scene::control::ControlScreen) {
         let Self::Build(builder) = self else {
             return;
         };
@@ -1178,7 +1178,7 @@ fn show_rom_load_error<K: Copy + Eq + std::hash::Hash + 'static>(
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::testkit::TestAux;
-    use wakui_core::aux::AuxId;
+    use wakui_core::chrome::aux::AuxId;
 
     pub(crate) fn program(window: &super::Window<TestAux>, kind: TestAux) -> super::WidgetDialog {
         super::open_auxiliary(window, kind);
@@ -1397,7 +1397,7 @@ pub(crate) mod tests {
         let mut model = win.state().borrow().host.main_window().clone();
         assert!(matches!(
             model.contents.contents,
-            wakui_core::window::WidgetContents::Main(_)
+            wakui_core::chrome::window::WidgetContents::Main(_)
         ));
         model.title = "owned main chrome".into();
         model.menu.as_mut().unwrap().menus[0].label = "owned main menu".into();
@@ -1427,7 +1427,7 @@ pub(crate) mod tests {
                 let model = win.borrow().aux.window(id).cloned().unwrap();
                 assert!(matches!(
                     model.contents.contents,
-                    wakui_core::window::WidgetContents::Controls(_)
+                    wakui_core::chrome::window::WidgetContents::Controls(_)
                 ));
                 assert_eq!(
                     win.borrow_mut()
@@ -1496,7 +1496,7 @@ pub(crate) mod tests {
     fn common_auxiliary_contents_choose_native_groups_and_owned_titles() {
         use super::HostWindow;
         use gtk::prelude::WidgetExt;
-        use wakui_core::window::WindowId;
+        use wakui_core::chrome::window::WindowId;
         let win = bound_window().expect("run in an isolated Xvfb process");
         let main = win.window();
         let state = win.state();
@@ -1910,7 +1910,7 @@ pub(crate) mod tests {
     /// Drive the settings widget without native dialogs: reserve, prepare,
     /// dispatch a single choice by visible label, submit, close.
     fn apply_settings_choice(win: &super::Window<TestAux>, label: &str, needle: &str) {
-        use wakui_core::control::{
+        use wakui_core::scene::control::{
             Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlVisitor,
         };
         struct Find<'a>(&'a str, Option<ControlId>);
@@ -1921,7 +1921,7 @@ pub(crate) mod tests {
                 }
             }
         }
-        fn find(screen: &wakui_core::control::ControlScreen, label: &str) -> ControlId {
+        fn find(screen: &wakui_core::scene::control::ControlScreen, label: &str) -> ControlId {
             let mut find = Find(label, None);
             screen.visit(&mut find);
             find.1.unwrap_or_else(|| panic!("control {label:?}"))
@@ -1952,7 +1952,7 @@ pub(crate) mod tests {
         let choices = screen
             .control(control)
             .unwrap()
-            .downcast::<wakui_core::leaf::ChoiceLeaf>()
+            .downcast::<wakui_core::scene::leaf::ChoiceLeaf>()
             .unwrap()
             .choices
             .clone();
@@ -2439,7 +2439,7 @@ pub(crate) mod tests {
     fn generated_actions_send_typed_commands_to_dyn_sink_and_reject_bad_arguments() {
         use super::{CommandVisitor, EventCommand, EventSink, ToVariant};
         use std::{cell::RefCell, rc::Rc};
-        use wakui_core::commands::CommandRef;
+        use wakui_core::input::commands::CommandRef;
         #[derive(Default)]
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
@@ -2549,7 +2549,7 @@ pub(crate) mod tests {
             quit.clone().upcast::<gio::Action>()
         );
         let sink = win.event_sink();
-        let about_event = EventCommand::Menu(wakui_core::commands::CommandRef {
+        let about_event = EventCommand::Menu(wakui_core::input::commands::CommandRef {
             id: command_id(&win, TestMenu::About),
             argument: None,
         });
@@ -2737,7 +2737,7 @@ pub(crate) mod tests {
         let commands = FakeCommands::new();
         let mut model = crate::testkit::canned_menubar(&commands, &[1, 2], Some(2), false, true);
         fn disable_items(menu: &mut super::Submenu) {
-            use wakui_core::menu::MenuEntry;
+            use wakui_core::chrome::menu::MenuEntry;
             for entry in &mut menu.children {
                 match entry {
                     MenuEntry::Item(item) => item.enabled = false,

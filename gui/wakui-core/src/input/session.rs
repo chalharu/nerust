@@ -8,7 +8,7 @@
 //! new enum variants here.
 
 use crate::Key;
-use crate::commands::CommandRef;
+use crate::input::commands::CommandRef;
 
 /// Toolkit-independent input event. Native adapters translate callbacks
 /// into these intents; policy and ordering live view-side.

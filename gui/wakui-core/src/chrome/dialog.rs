@@ -14,7 +14,7 @@
 
 use std::sync::mpsc::Receiver;
 
-use crate::loop_driver::WakeNeed;
+use crate::flow::loop_driver::WakeNeed;
 
 /// Dialog severity. Flavors map this to their native message type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

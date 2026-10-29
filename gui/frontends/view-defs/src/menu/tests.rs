@@ -7,9 +7,9 @@ use nerust_settings_core::model::{
     input::{ShortcutBinding, default_shortcut_bindings},
     language::AppLanguage,
 };
-use wakui::commands::CommandRef;
-use wakui::control::IdRegistry;
-use wakui::menu::{CommandVisitor, MenuId, MenuModel, MenuVisitor, find_menu};
+use wakui::chrome::menu::{CommandVisitor, MenuId, MenuModel, MenuVisitor, find_menu};
+use wakui::input::commands::CommandRef;
+use wakui::scene::control::IdRegistry;
 
 const CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: true,
@@ -254,7 +254,7 @@ struct Recorder {
     rebuilds: Vec<MenuId>,
     root_rebuild: bool,
     commands: Vec<Option<CommandRef>>,
-    declarations: Vec<wakui::commands::CommandId>,
+    declarations: Vec<wakui::input::commands::CommandId>,
 }
 
 impl MenuVisitor for Recorder {
@@ -285,7 +285,7 @@ impl MenuVisitor for Recorder {
 }
 
 impl CommandVisitor for Recorder {
-    fn command(&mut self, command: &wakui::commands::Command) {
+    fn command(&mut self, command: &wakui::input::commands::Command) {
         assert!(self.root_open, "root precedes declarations");
         assert!(self.stack.is_empty(), "declarations precede menus");
         // Opaque framework ids only; the resolution table maps them back.

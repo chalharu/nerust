@@ -12,8 +12,8 @@
 
 use std::any::Any;
 
-use crate::control::{Control, ControlId, ControlInput, ControlVisitor};
-use crate::hints::LayoutHints;
+use crate::scene::control::{Control, ControlId, ControlInput, ControlVisitor};
+use crate::scene::hints::LayoutHints;
 
 /// Render core. Flavors depend only on this; cloning and diffing are
 /// separate traits so render-only clients are not forced to implement them.
@@ -137,7 +137,7 @@ impl ControlLeaf for ListLeaf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::{ControlDisplay, ControlMetadata};
+    use crate::scene::control::{ControlDisplay, ControlMetadata};
 
     fn cell(label: &str) -> Control {
         Control {

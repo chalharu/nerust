@@ -155,27 +155,29 @@ pub fn run() -> i32 {
 
 /// Composition-root launch arguments: file operands with flags already
 /// consumed by the CLI parse. Its own type rather than a bare `Vec<String>`,
-/// so the backend `run` bound ([`LaunchArguments`](wakui::app::LaunchArguments))
+/// so the backend `run` bound ([`LaunchArguments`](wakui::app::boundary::LaunchArguments))
 /// checks the bundle at compile time: the wrong arguments never mix in.
 struct EmulatorArguments(Vec<String>);
 
-impl wakui::app::LaunchArguments for EmulatorArguments {
+impl wakui::app::boundary::LaunchArguments for EmulatorArguments {
     fn files(&self) -> Vec<String> {
         self.0.clone()
     }
 }
 
 /// Composition-root boot: the only place that turns a [`FrontendContext`]
-/// into a frontend [`Application`](wakui::app::Application). Native
+/// into a frontend [`Application`](wakui::app::boundary::Application). Native
 /// frontends never name the context, session, or settings-path types.
 /// The composition root's own arguments type travels inside the bundle (see
-/// [`Application::builder`](wakui::app::ApplicationBuilder)); neither
+/// [`Application::builder`](wakui::app::boundary::ApplicationBuilder)); neither
 /// the framework nor the backends interpret it beyond file operands.
 fn boot_frontend(
     ctx: FrontendContext,
     supports_vsync: Option<bool>,
     arguments: EmulatorArguments,
-) -> Option<wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>> {
+) -> Option<
+    wakui::app::boundary::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+> {
     use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
     match boot(
         ctx,
@@ -200,7 +202,10 @@ fn boot_frontend(
 /// Crash containment and boot failure dialogs are shared (see `run_guarded`).
 /// Opaque launch arguments travel inside the bundle.
 fn run_frontend(
-    boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+    boot: wakui::app::boundary::Application<
+        nerust_frontend_viewdefs::focus::AuxKind,
+        EmulatorArguments,
+    >,
 ) -> i32 {
     run_guarded(boot, wakui::run)
 }
@@ -208,9 +213,15 @@ fn run_frontend(
 /// Crash containment lives here, in the composition root: a crash must
 /// never look like a clean exit. Frontend `run` functions stay unguarded.
 fn run_guarded(
-    boot: wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+    boot: wakui::app::boundary::Application<
+        nerust_frontend_viewdefs::focus::AuxKind,
+        EmulatorArguments,
+    >,
     runner: fn(
-        wakui::app::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
+        wakui::app::boundary::Application<
+            nerust_frontend_viewdefs::focus::AuxKind,
+            EmulatorArguments,
+        >,
     ) -> i32,
 ) -> i32 {
     // A crash must never look like a clean exit; the dialog runs first.
@@ -239,7 +250,7 @@ fn run_guarded(
 /// from the `wakui` facade's selected backend; vocabulary lives in
 /// `wakui::dialog`.
 fn show_error_dialog(title: &str, detail: &str) {
-    let dialog = wakui::dialog::MessageDialog::error(title, detail);
+    let dialog = wakui::chrome::dialog::MessageDialog::error(title, detail);
     wakui::show_message_dialog(&dialog);
 }
 
@@ -490,7 +501,7 @@ mod tests {
 
     #[test]
     fn emulator_arguments_expose_only_file_operands() {
-        use wakui::app::LaunchArguments as _;
+        use wakui::app::boundary::LaunchArguments as _;
         let arguments = super::EmulatorArguments(vec!["game.nes".to_string()]);
         assert_eq!(arguments.files(), ["game.nes"]);
         assert!(super::EmulatorArguments(Vec::new()).files().is_empty());
