@@ -6,17 +6,19 @@
 //! is covered in view-defs widget session tests. These tests pin the native
 //! interpreter: rendering a supplied screen, identity across refresh, page
 //! metadata, entry editing, history lifecycle, and OSD headless behavior.
-use super::renderer::{NativeControl, NativeKind, NodeId};
-use super::*;
+use super::binding::*;
+use super::render::{NativeControl, NativeKind, NodeId};
+use crate::chrome::window::{WindowExtend, tests as windows};
 use crate::testkit::TestAux;
 use crate::testkit::labels;
-use crate::window::{WindowExtend, tests as windows};
+use gtk::{glib, prelude::*};
+use std::rc::Rc;
 use wakui_core::chrome::aux::AuxId;
 use wakui_core::scene::control::*;
 use wakui_core::scene::leaf::{ChoiceLeaf, NoteLeaf, NumberLeaf, ToggleLeaf};
 
 struct Harness {
-    window: crate::window::Window<TestAux>,
+    window: crate::chrome::window::Window<TestAux>,
     id: AuxId,
     program: WidgetDialog,
 }
@@ -106,7 +108,7 @@ fn pump() {
 }
 
 fn assert_accessible_label(widget: &gtk::Widget, expected: &str) {
-    use glib::translate::{IntoGlib, ToGlibPtr};
+    use gtk::glib::translate::{IntoGlib, ToGlibPtr};
     unsafe extern "C" {
         fn gtk_test_accessible_check_property(
             accessible: *mut std::ffi::c_void,

@@ -11,7 +11,7 @@ use wakui_core::flow::loop_driver::{
     LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop,
 };
 
-use super::State;
+use crate::State;
 
 pub(crate) struct SurfaceCore<K: Copy + Eq + std::hash::Hash + 'static> {
     // The window owns the native frame callback, which owns Surface. Never
@@ -260,7 +260,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> SurfaceCore<K> {
         if let Some((_, modal)) = effects
             && let Some(presentation) = modal
         {
-            crate::native_dialog::present_modal(surface, &window, presentation);
+            crate::chrome::dialogs::present_modal(surface, &window, presentation);
         }
         if render_frame {
             Self::render_image_if_ready(&surface.borrow(), physical_width, physical_height);
@@ -289,7 +289,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> SurfaceCore<K> {
         };
         let result = window.surface().and_then(|surf| {
             let display = gdk::Display::default()?;
-            super::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
+            crate::gdk_raw::with_raw_handles(&surf, &display, |wh, dh| {
                 let region = ViewportRegion {
                     window: wh,
                     display: dh,
@@ -415,7 +415,7 @@ mod wake_tests {
             let window = gtk::ApplicationWindow::builder().build();
             let picture = gtk::Picture::new();
             window.set_child(Some(&picture));
-            let (state, fake) = crate::window::tests::model_state_shared();
+            let (state, fake) = crate::chrome::window::tests::model_state_shared();
             let surface = Surface::bind(&window, &picture, state.clone());
             Some(Self {
                 window,

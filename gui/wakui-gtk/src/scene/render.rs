@@ -15,7 +15,7 @@ use wakui_core::{
     },
 };
 
-use super::WidgetBinding;
+use super::binding::WidgetBinding;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum NodeId {
@@ -144,7 +144,7 @@ impl NativeControl {
                         // During setters ignore only the programmed selection.
                         let programmed = state.borrow().selected == Some(index);
                         if binding.refreshing.get() && !programmed {
-                            binding.send(super::ControlEvent::new(
+                            binding.send(wakui_core::scene::control::ControlEvent::new(
                                 id,
                                 ControlInput::Select(index as usize),
                             ));
