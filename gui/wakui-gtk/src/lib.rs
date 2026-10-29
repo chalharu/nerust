@@ -1,16 +1,15 @@
 //! `wakui_gtk`: wakui platform frontend for gtk4.
 //!
-//! Framework-only: depends on [`wakui`] plus gtk4. Never on view definitions,
+//! Framework-only: depends on `wakui` plus gtk4. Never on view definitions,
 //! sessions, or settings. Policy flows solely through
 //! [`wakui_core::app::boundary::FrontendApp`], injected as a boxed host at [`run`].
 //!
-//! Native frontends retain [`controls`] dialogs from
+//! Native frontends retain [`scene::binding`] dialogs from
 //! [`wakui_core::scene::control::ControlScreen`] snapshots, interpret them through the
-//! retained [`renderer`], and map native input through [`keyboard`].
+//! retained [`scene::render`], and map native input through [`input::keyboard`].
 //!
-//! Dialog lifecycle helpers live in [`dialog`]. Modal presentation stays
-//! native ([`native_dialog`]); the host retains the queue,
-//! and stale-ACK checks.
+//! Dialog lifecycle helpers live in `chrome::dialogs`. Modal presentation
+//! stays native; the host retains the queue and stale-ACK checks.
 
 pub mod backend;
 

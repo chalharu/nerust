@@ -1,6 +1,6 @@
 //! Framework command vocabulary: opaque identity plus an extensible spec.
 //!
-//! The same direction as [`crate::control`]: new commands are added as
+//! The same direction as [`crate::scene::control`]: new commands are added as
 //! `impl CommandSpec` outside this file, never as new enum variants here.
 //! `Command` carries a boxed spec plus an `enabled` flag; native adapters
 //! forward opaque [`CommandRef`] activations and resolve meaning view-side

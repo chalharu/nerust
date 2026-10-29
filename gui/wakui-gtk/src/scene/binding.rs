@@ -193,7 +193,7 @@ impl WidgetBinding {
     }
 
     /// Queue one control input for the host drain. The native host calls
-    /// this from retained widget signals; effects run on [`Self::drain`].
+    /// this from retained widget signals; effects run on drain.
     pub fn input(&self, id: ControlId, input: ControlInput) {
         if !self.live() || self.refreshing.get() {
             return;

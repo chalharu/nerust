@@ -2,7 +2,7 @@
 //! framework compliance by driving [`ConformanceBackend`] through
 //! [`run_conformance`]: screen visit order, construction-vs-patch mapper
 //! output, picker correlation, registry selection, and one
-//! [`drive_turn`](crate::flow::loop_driver::drive_turn) with a pending flight.
+//! [`drive_turn`] with a pending flight.
 //! `tao`/`gtk` stay native frontends and are not driven by this kit; it
 //! exists for future `wakui_*` backends and documents the backend contract
 //! in executable form.
