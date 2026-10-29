@@ -6,7 +6,7 @@ use wakui::{
     scene::leaf::{BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf},
 };
 
-use crate::settings::{SettingsControlId, SettingsSystemId, screen::StableKey};
+use crate::settings::screen::keys;
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::{
@@ -15,6 +15,7 @@ use nerust_settings_core::{
 };
 use wakui::chrome::window::WidgetContents;
 use wakui::chrome::window::WindowVisitor;
+use wakui::scene::inflate::{cell_key, row_key};
 
 fn settings(nes: bool) -> WidgetSession {
     let mut snapshot = SettingsSnapshot {
@@ -36,11 +37,41 @@ fn settings(nes: bool) -> WidgetSession {
     ))
 }
 
-fn token(session: &WidgetSession, domain: SettingsControlId) -> ControlId {
+fn token(session: &WidgetSession, key: impl AsRef<str>) -> ControlId {
     let State::Settings(controller) = &session.state else {
         panic!()
     };
-    controller.ids.borrow_mut().id(StableKey::Control(domain))
+    controller.ids.borrow_mut().ids.id(key.as_ref().to_string())
+}
+
+fn slot_token(session: &WidgetSession, system: &str, slot: &str) -> ControlId {
+    let tabns = row_key("input_tabs", system, 0);
+    let rowns = cell_key(&tabns, &row_key("slots", slot, 0));
+    token(session, cell_key(&rowns, "cell"))
+}
+
+fn binding_cell(session: &WidgetSession, target: &CaptureTarget) -> ControlId {
+    use crate::settings::screen::{binding_key, section_tab_id};
+    let State::Settings(controller) = &session.state else {
+        panic!()
+    };
+    let id = binding_key(target);
+    for vm in controller.vm.inputs().iter() {
+        let view = vm.view.get();
+        for (section_index, section) in view.sections.iter().enumerate() {
+            if section.rows.iter().any(|row| &row.target == target) {
+                let system = view.system_id.to_string();
+                let tabid = section_tab_id(&system, section_index, &section.rows);
+                let tabns = row_key("input_tabs", &system, 0);
+                let secns = cell_key(&tabns, &row_key("sections", &tabid, 0));
+                let rowns = cell_key(&secns, &row_key("binding_rows", &id, 0));
+                return token(session, cell_key(&rowns, "cell"));
+            }
+        }
+    }
+    let tabns = row_key("input_tabs", "shortcuts", 0);
+    let rowns = cell_key(&tabns, &row_key("shortcut_rows", &id, 0));
+    token(session, cell_key(&rowns, "cell"))
 }
 
 fn send(session: &mut WidgetSession, id: ControlId, input: ControlInput) {
@@ -58,6 +89,7 @@ impl ControlVisitor for Inventory {
     }
     fn control(&mut self, c: &Control) {
         self.0.push(c.clone());
+        wakui::scene::control::walk_control(c, self);
     }
 }
 
@@ -72,7 +104,7 @@ fn both_domains_use_the_same_real_scene_interpreter_and_input() {
     let mut session = settings(false);
     let screen = session.screen();
     assert_eq!(screen.pages.len(), 6);
-    let volume = token(&session, SettingsControlId::Volume);
+    let volume = token(&session, keys::VOLUME);
     send(&mut session, volume, ControlInput::Number(37));
     assert_eq!(
         session
@@ -185,7 +217,7 @@ fn history_controls_filter_actual_rows_and_reject_invalid_choice_indices() {
 #[test]
 fn clearing_mailbox_error_invalidates_even_when_the_input_value_is_unchanged() {
     let mut session = settings(false);
-    let volume = token(&session, SettingsControlId::Volume);
+    let volume = token(&session, keys::VOLUME);
     session.mailbox.apply_failed("save error".into());
     assert!(session.mailbox.take_invalidated());
     send(&mut session, volume, ControlInput::Number(100));
@@ -197,24 +229,22 @@ fn clearing_mailbox_error_invalidates_even_when_the_input_value_is_unchanged() {
 fn latest_topology_and_navigation_bind_old_callbacks_without_reusing_tokens() {
     let mut session = settings(true);
     let old = session.screen();
-    let volume = token(&session, SettingsControlId::Volume);
+    let volume = token(&session, keys::VOLUME);
     let State::Settings(controller) = &session.state else {
         panic!()
     };
     let view = controller.vm.inputs()[0].view.get();
     let slot = &view.slots[0];
-    let domain = SettingsControlId::ControllerSlot {
-        system: SettingsSystemId(view.system_id.to_string()),
-        slot: slot.slot_id,
-    };
-    let slot_id = token(&session, domain.clone());
+    let system = view.system_id.to_string();
+    let slot_key = slot.slot_id.as_str().to_string();
+    let slot_id = slot_token(&session, &system, &slot_key);
     let none = slot.choices.iter().position(|c| c.value.is_none()).unwrap();
     if let State::Settings(controller) = &mut session.state {
         controller.input_tab = Some(crate::settings::InputTab::Shortcuts);
     }
     send(&mut session, slot_id, ControlInput::Select(none));
-    assert_eq!(token(&session, domain), slot_id);
-    assert_eq!(token(&session, SettingsControlId::Volume), volume);
+    assert_eq!(slot_token(&session, &system, &slot_key), slot_id);
+    assert_eq!(token(&session, keys::VOLUME), volume);
     if let State::Settings(controller) = &session.state {
         assert_eq!(
             controller.input_tab,
@@ -264,7 +294,7 @@ fn minted_ids_survive_unrelated_rebuilds_and_never_alias() {
         .map(|c| (c.label.clone(), c.id))
         .collect();
     assert!(!before.is_empty());
-    let volume = token(&session, SettingsControlId::Volume);
+    let volume = token(&session, keys::VOLUME);
     send(&mut session, volume, ControlInput::Number(31));
     let after: Vec<(String, ControlId)> = inventory(&session.screen())
         .into_iter()
@@ -287,7 +317,7 @@ fn minted_ids_survive_unrelated_rebuilds_and_never_alias() {
 #[test]
 fn typed_ranges_latest_enable_visibility_and_validation_are_host_owned() {
     let mut session = settings(false);
-    let volume = token(&session, SettingsControlId::Volume);
+    let volume = token(&session, keys::VOLUME);
     for input in [
         ControlInput::Number(101),
         ControlInput::Number(u32::MAX),
@@ -305,12 +335,12 @@ fn typed_ranges_latest_enable_visibility_and_validation_are_host_owned() {
             .value,
         100
     );
-    let enabled = token(&session, SettingsControlId::InfoEnabled);
-    let duration = token(&session, SettingsControlId::InfoDuration);
+    let enabled = token(&session, keys::INFO_ENABLED);
+    let duration = token(&session, keys::INFO_DURATION);
     send(&mut session, enabled, ControlInput::Bool(false));
     send(&mut session, duration, ControlInput::Number(2000));
     assert!(!session.screen().control(duration).unwrap().metadata.enabled);
-    let storage = token(&session, SettingsControlId::StorageDirectory);
+    let storage = token(&session, keys::STORAGE_DIR);
     send(&mut session, storage, ControlInput::Text("ignored".into()));
     assert!(!session.screen().control(storage).unwrap().metadata.visible);
     if let State::Settings(controller) = &session.state {
@@ -320,7 +350,7 @@ fn typed_ranges_latest_enable_visibility_and_validation_are_host_owned() {
             .set_storage_policy(StoragePolicy::CustomDirectory)
             .unwrap();
     }
-    let submit = token(&session, SettingsControlId::Submit);
+    let submit = token(&session, keys::SUBMIT);
     send(&mut session, submit, ControlInput::Activate);
     assert!(!session.mailbox().has_pending());
     assert!(!session.mailbox().close_requested());
@@ -340,7 +370,7 @@ fn generic_picker_and_capture_results_need_no_domain_dto() {
             .set_storage_policy(StoragePolicy::CustomDirectory)
             .unwrap();
     }
-    let directory = token(&session, SettingsControlId::StorageDirectory);
+    let directory = token(&session, keys::STORAGE_DIR);
     let effects = session.dispatch(ControlEvent::new(directory, ControlInput::Activate));
     let [
         ControlEffect::PickDirectory {
@@ -376,10 +406,8 @@ fn generic_picker_and_capture_results_need_no_domain_dto() {
             .value,
         "/tmp"
     );
-    let binding = token(
-        &session,
-        SettingsControlId::Binding(CaptureTarget::Shortcut(ShortcutAction::TogglePause)),
-    );
+    let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+    let binding = binding_cell(&session, &target);
     send(&mut session, binding, ControlInput::Activate);
     assert_eq!(session.screen().capture.target, Some(binding));
     assert!(
@@ -449,7 +477,7 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
         }
     }
     let session = RefCell::new(settings(true));
-    let volume = token(&session.borrow(), SettingsControlId::Volume);
+    let volume = token(&session.borrow(), keys::VOLUME);
     let window = session
         .borrow()
         .window(wakui::chrome::aux::AuxId::from_raw(7));
@@ -538,16 +566,28 @@ fn find_by_label(screen: &ControlScreen, label: &str) -> Control {
 }
 
 fn controls_in(container: &Container) -> Vec<Control> {
-    use wakui::scene::control::Node;
-    container
-        .children
-        .iter()
-        .flat_map(|node| match node {
-            Node::Control(c) => vec![c.clone()],
-            Node::Container(inner) => controls_in(inner),
-            Node::Tabs(t) => t.tabs.iter().flat_map(|t| controls_in(&t.body)).collect(),
-        })
-        .collect()
+    use wakui::scene::control::{Node, walk_control};
+    struct All(Vec<Control>);
+    impl ControlVisitor for All {
+        fn control(&mut self, control: &Control) {
+            self.0.push(control.clone());
+            walk_control(control, self);
+        }
+    }
+    let mut all = All(Vec::new());
+    for node in &container.children {
+        match node {
+            Node::Control(c) => {
+                all.0.push(c.clone());
+                walk_control(c, &mut all);
+            }
+            Node::Container(inner) => all.0.extend(controls_in(inner)),
+            Node::Tabs(t) => all
+                .0
+                .extend(t.tabs.iter().flat_map(|t| controls_in(&t.body))),
+        }
+    }
+    all.0
 }
 
 #[derive(Default)]

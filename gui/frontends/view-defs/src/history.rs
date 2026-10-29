@@ -114,6 +114,8 @@ fn history_def(empty: bool) -> ScreenDef {
     let chrome = || ControlDef {
         key: String::new(),
         label: Binding::Literal(String::new()),
+        accessible: None,
+        help: None,
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
@@ -124,6 +126,8 @@ fn history_def(empty: bool) -> ScreenDef {
         NodeDef::Control(Box::new(ControlDef {
             key: "filter".into(),
             label: Binding::Localized("level".into()),
+            accessible: None,
+            help: None,
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
@@ -141,6 +145,8 @@ fn history_def(empty: bool) -> ScreenDef {
         NodeDef::Control(Box::new(ControlDef {
             key: "count".into(),
             label: Binding::Localized("count".into()),
+            accessible: None,
+            help: None,
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
@@ -152,6 +158,8 @@ fn history_def(empty: bool) -> ScreenDef {
         NodeDef::Control(Box::new(ControlDef {
             key: "table".into(),
             label: Binding::Localized("title".into()),
+            accessible: None,
+            help: None,
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
@@ -176,6 +184,8 @@ fn history_def(empty: bool) -> ScreenDef {
                             .map(|(column, path)| ControlDef {
                                 key: format!("cell{column}"),
                                 label: Binding::Field(path.into()),
+                                accessible: None,
+                                help: None,
                                 display: ControlDisplay::Standard,
                                 enabled: BoolBinding::Literal(true),
                                 visible: BoolBinding::Literal(true),
@@ -194,6 +204,8 @@ fn history_def(empty: bool) -> ScreenDef {
         body_children.push(NodeDef::Control(Box::new(ControlDef {
             key: "empty".into(),
             label: Binding::Localized("empty".into()),
+            accessible: None,
+            help: None,
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
@@ -232,6 +244,8 @@ fn history_def(empty: bool) -> ScreenDef {
             children: vec![NodeDef::Control(Box::new(ControlDef {
                 key: "close".into(),
                 label: Binding::Localized("close".into()),
+                accessible: None,
+                help: None,
                 display: ControlDisplay::Primary,
                 enabled: BoolBinding::Literal(true),
                 visible: BoolBinding::Literal(true),
