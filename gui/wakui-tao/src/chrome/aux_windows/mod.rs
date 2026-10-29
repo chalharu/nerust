@@ -4,9 +4,9 @@
 //! [`widgets`] binds control screens to native widgets.
 
 pub(crate) mod event_adapt;
+pub(crate) mod focus;
 /// Aux creation over the [`crate::host::HostState`]: reserve, create, finish.
 pub(crate) mod open;
-pub(crate) mod focus;
 pub(crate) mod registry;
 pub(crate) mod shell;
 pub(crate) mod widgets;

@@ -17,10 +17,10 @@ use wakui_core::scene::leaf::{
 };
 
 use super::super::bindings::tests::{controls, find, prepare};
+use crate::host::HostState;
 use crate::scene::binding::{El, Message};
 use crate::scene::render::gate;
 use crate::scene::render::{build_screen, control_element};
-use crate::host::HostState;
 use crate::testkit::TestAux;
 use wakui_core::chrome::aux::AuxId;
 use wakui_core::scene::control::ControlInput;

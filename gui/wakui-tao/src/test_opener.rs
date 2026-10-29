@@ -73,7 +73,9 @@ mod tests {
 
     #[test]
     fn fake_opener_records_each_aux_kind() {
-        use crate::chrome::aux_windows::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
+        use crate::chrome::aux_windows::widgets::bindings::tests::{
+            mailbox_of, prepare, screen_of,
+        };
         let opener = FakeOpener::failing("no display");
         let mut host = crate::host::TestHost::new().host;
         let id = prepare(&mut host, TestAux::Beta);
@@ -117,7 +119,9 @@ mod tests {
     #[test]
     fn fake_opener_records_remaining_aux_kinds() {
         let opener = FakeOpener::failing("no display");
-        use crate::chrome::aux_windows::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
+        use crate::chrome::aux_windows::widgets::bindings::tests::{
+            mailbox_of, prepare, screen_of,
+        };
         let mut host = crate::host::TestHost::new().host;
         let id = prepare(&mut host, TestAux::Alpha);
         assert!(

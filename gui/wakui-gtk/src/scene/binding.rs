@@ -1,5 +1,6 @@
-//! Domain-free retained controls and native lifetime. The app owns the draft;
-//! the binding holds only a screen snapshot, an event queue, and a mailbox.
+//! Scene binding: one retained [`WidgetBinding`] per control screen.
+//! The app owns the draft; the binding holds only a screen snapshot, an event
+//! queue, and a mailbox. Rendering itself lives in [`super::render`].
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
@@ -14,13 +15,7 @@ use wakui_core::scene::control::{
     ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen,
 };
 
-#[path = "renderer.rs"]
-pub mod renderer;
-
-#[cfg(test)]
-#[path = "controls_tests.rs"]
-mod controls_tests;
-use renderer::{ControlGtkVisitor, Registry};
+use super::render::{ControlGtkVisitor, Registry};
 
 /// Each callback completes its owner borrow before returning to native code.
 pub struct Callbacks {
@@ -47,25 +42,26 @@ impl Drop for FlagGuard<'_> {
 }
 
 pub struct WidgetBinding {
-    self_weak: Weak<Self>,
-    screen: RefCell<ControlScreen>,
-    mailbox: WindowMailbox,
-    callbacks: Callbacks,
-    dialog: glib::WeakRef<gtk::Dialog>,
-    stack: gtk::Stack,
-    sidebar: gtk::StackSidebar,
-    error_label: gtk::Label,
-    registry: RefCell<Registry>,
-    refreshing: Cell<bool>,
-    updating: Cell<bool>,
-    pending: Cell<bool>,
-    scheduled: Cell<bool>,
-    draining: Cell<bool>,
-    events: RefCell<VecDeque<ControlEvent>>,
-    chooser: RefCell<Option<gtk::FileChooserNative>>,
-    follow: RefCell<Option<glib::SourceId>>,
-    parent_finish: RefCell<Option<(glib::WeakRef<gtk::ApplicationWindow>, glib::SignalHandlerId)>>,
-    closed: Cell<bool>,
+    pub(crate) self_weak: Weak<Self>,
+    pub(crate) screen: RefCell<ControlScreen>,
+    pub(crate) mailbox: WindowMailbox,
+    pub(crate) callbacks: Callbacks,
+    pub(crate) dialog: glib::WeakRef<gtk::Dialog>,
+    pub(crate) stack: gtk::Stack,
+    pub(crate) sidebar: gtk::StackSidebar,
+    pub(crate) error_label: gtk::Label,
+    pub(crate) registry: RefCell<Registry>,
+    pub(crate) refreshing: Cell<bool>,
+    pub(crate) updating: Cell<bool>,
+    pub(crate) pending: Cell<bool>,
+    pub(crate) scheduled: Cell<bool>,
+    pub(crate) draining: Cell<bool>,
+    pub(crate) events: RefCell<VecDeque<ControlEvent>>,
+    pub(crate) chooser: RefCell<Option<gtk::FileChooserNative>>,
+    pub(crate) follow: RefCell<Option<glib::SourceId>>,
+    pub(crate) parent_finish:
+        RefCell<Option<(glib::WeakRef<gtk::ApplicationWindow>, glib::SignalHandlerId)>>,
+    pub(crate) closed: Cell<bool>,
 }
 
 impl WidgetBinding {
@@ -84,7 +80,7 @@ impl WidgetBinding {
     }
 
     /// Retained widget registry for host-driven pumps and assertions.
-    pub fn registry(&self) -> std::cell::Ref<'_, renderer::Registry> {
+    pub fn registry(&self) -> std::cell::Ref<'_, super::render::Registry> {
         self.registry.borrow()
     }
 
@@ -169,7 +165,7 @@ impl WidgetBinding {
                 if !capturing {
                     return glib::Propagation::Proceed;
                 }
-                if let Some(key) = crate::keyboard::key_from_gdk(key) {
+                if let Some(key) = crate::input::keyboard::key_from_gdk(key) {
                     binding.send(ControlEvent::capture_key(key));
                 }
                 glib::Propagation::Stop
@@ -205,7 +201,7 @@ impl WidgetBinding {
         self.send(ControlEvent::new(id, input));
     }
 
-    fn send(&self, event: ControlEvent) {
+    pub(crate) fn send(&self, event: ControlEvent) {
         if !self.live() {
             return;
         }
@@ -427,7 +423,7 @@ pub fn build(
             }
         }
     });
-    let finish: crate::dialog::FinishCallback = Rc::new(RefCell::new(Some(Box::new({
+    let finish: crate::chrome::dialogs::FinishCallback = Rc::new(RefCell::new(Some(Box::new({
         let weak = Rc::downgrade(&binding);
         move || {
             if let Some(binding) = weak.upgrade() {
@@ -435,7 +431,7 @@ pub fn build(
             }
         }
     }))));
-    crate::dialog::connect_finish(&dialog, &finish);
+    crate::chrome::dialogs::connect_finish(&dialog, &finish);
     let weak = Rc::downgrade(&binding);
     let source = glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
         let Some(binding) = weak.upgrade() else {
