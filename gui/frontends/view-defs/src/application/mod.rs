@@ -31,7 +31,8 @@ use nerust_gui_shell::{
 use nerust_gui_viewmodel::debugger::tile_hover_text;
 use wakui::retry::RenderRetry;
 
-use wakui::focus::{FocusCoordinator, FocusEffect, FocusEvent};
+use crate::focus::FocusTracker;
+use wakui::focus::FocusEvent;
 use wakui::menu::{MenuCapabilities, Menubar};
 use wakui::session::{SessionEvent, SessionOutcome};
 use wakui::window::Window;
@@ -50,7 +51,7 @@ use wakui::dialog::{ModalAdvance, ModalToken};
 pub struct ApplicationHost {
     pub(crate) session: SessionHandle,
     pause_policy: PausePolicy,
-    focus: FocusCoordinator,
+    focus: FocusTracker,
     frame_cache: FrameCache,
     render_retry: RenderRetry,
     debug: DebugRuntime,
@@ -79,7 +80,7 @@ impl ApplicationHost {
         Self {
             session,
             pause_policy: Default::default(),
-            focus: FocusCoordinator::new(),
+            focus: FocusTracker::new(),
             frame_cache: FrameCache::new(),
             render_retry: Default::default(),
             debug: DebugRuntime::new(),
@@ -304,18 +305,29 @@ impl ApplicationHost {
         self.resume();
     }
 
-    /// Coordinator and session effects commit atomically at the common boundary.
-    pub fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
-        let effect = self.focus.on(event);
-        match effect {
-            Some(FocusEffect::Resume) => self.release_focus_hold(),
-            Some(FocusEffect::Pause) if self.tick().loaded => {
-                self.set_pause_owner(pause_owners::FOCUS, true);
-                self.focus.note_protocol_pause();
+    /// Focus notification entry: departures arm, arrivals cancel and release
+    /// the focus hold when held, burst end commits. Resume reads the hold
+    /// itself, never a framework back-channel: the framework pauses nothing,
+    /// suspension is content behavior owned here.
+    pub fn focus_event(&mut self, event: FocusEvent) {
+        match event {
+            FocusEvent::Main(true) => {
+                self.focus.main(true);
+                self.release_focus_hold();
             }
-            _ => {}
+            FocusEvent::Main(false) => self.focus.main(false),
+            FocusEvent::Aux { resume, focused } => {
+                self.focus.aux(focused);
+                if focused && resume {
+                    self.release_focus_hold();
+                }
+            }
+            FocusEvent::BurstEnd => {
+                if self.focus.take_armed() && self.tick().loaded {
+                    self.set_pause_owner(pause_owners::FOCUS, true);
+                }
+            }
         }
-        effect
     }
     pub fn drive_aux_focus(&mut self, id: wakui::aux::AuxId, focused: bool) -> bool {
         let resume = self
@@ -333,7 +345,9 @@ impl ApplicationHost {
         self.focus.main_active()
     }
     pub fn note_main_arrival(&mut self) -> bool {
-        self.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume)
+        let held = self.owns_pause(pause_owners::FOCUS);
+        self.focus_event(FocusEvent::Main(true));
+        held
     }
     pub fn note_main_departure(&mut self) {
         self.focus_event(FocusEvent::Main(false));
