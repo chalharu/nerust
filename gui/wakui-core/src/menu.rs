@@ -7,7 +7,7 @@
 //! (including at most one action-less placeholder). Visitors reuse native
 //! objects by those identities. Labels and enablement are not identities.
 
-pub use crate::commands::{CommandModel, CommandVisitor, MenuCommand};
+pub use crate::commands::{CommandModel, CommandRef, CommandVisitor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuId {
@@ -31,8 +31,8 @@ pub struct MenuCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
-    /// Also the stable item identity within its parent. None is a placeholder.
-    pub command: Option<MenuCommand>,
+    /// Opaque activation routed back as `EventCommand::Menu`. `None` is a placeholder.
+    pub command: Option<CommandRef>,
     pub label: String,
     pub enabled: bool,
 }

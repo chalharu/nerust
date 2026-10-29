@@ -302,11 +302,7 @@ impl DebuggerDriver {
                     DebugAction::TogglePause => SessionCommand::TogglePause,
                     _ => unreachable!("pause actions only"),
                 };
-                let _ = crate::session::dispatch(
-                    session,
-                    pause,
-                    wakui::session::SessionEvent::Command(command),
-                );
+                let _ = crate::session::dispatch_command(session, pause, command);
                 session.tick_metrics().loaded
             });
             session.debug_drain_begin(

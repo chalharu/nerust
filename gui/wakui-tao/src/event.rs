@@ -1,7 +1,7 @@
 //! Host events transported unchanged through Tao's native event loop.
 
 use tao::event_loop::EventLoopProxy;
-pub(crate) use wakui_core::commands::MenuCommand;
+pub(crate) use wakui_core::commands::CommandRef;
 pub(crate) use wakui_core::event::EventCommand as UserEvent;
 use wakui_core::event::EventSink;
 
