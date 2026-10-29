@@ -336,8 +336,10 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 
     /// Title refresh after the host presented a frame. Result bookkeeping
     /// itself lives in the host; only the native title stays here.
+    /// Title refresh after the host presented a frame. Change detection
+    /// lives view-side; only a changed title touches the native window.
     pub(crate) fn refresh_title_after_present(&mut self) {
-        self.maybe_refresh_window_title(Instant::now());
+        self.refresh_window_title();
     }
 
     pub(crate) fn clear_event_handler(&self) {
