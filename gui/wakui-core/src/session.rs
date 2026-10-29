@@ -1,25 +1,16 @@
-//! Framework session vocabulary: gestures in, outcomes out.
-//! View definitions and shell execution share these boundary types; native
-//! frontends construct them without naming shell or settings types.
+//! Framework input vocabulary: opaque commands and keys in, outcomes out.
+//!
+//! View definitions and native frontends share these boundary types. Native
+//! adapters translate callbacks into these intents without naming shell,
+//! settings, or emulator types; meaning (shortcuts, settings guards, pause
+//! adoption, debugger/fullscreen routing) resolves view-side, the same
+//! direction as [`crate::commands`]: new meanings are added outside this
+//! file, never as new enum variants here.
 
 use crate::Key;
 use crate::commands::CommandRef;
 
-/// Native gesture: open the debugger, toggle fullscreen, or run a session
-/// command. Frontends never name the settings binding that produced it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShortcutGesture {
-    OpenDebugger,
-    ToggleFullscreen,
-    TogglePause,
-    SaveActiveSlot,
-    LoadActiveSlot,
-    SelectNextSlot,
-    SelectPreviousSlot,
-    Reset,
-}
-
-/// Toolkit-independent session event. Native adapters translate callbacks
+/// Toolkit-independent input event. Native adapters translate callbacks
 /// into these intents; policy and ordering live view-side.
 #[derive(Debug, Clone, Copy)]
 pub enum SessionEvent {
@@ -28,19 +19,8 @@ pub enum SessionEvent {
         key: Key,
         pressed: bool,
     },
-    Shortcut(ShortcutGesture),
+    /// Reset held-input state (e.g. on window close or content replacement).
     ClearInput,
-    /// Acquire before native creation; duplicate acquisition is a no-op.
-    SettingsOpened,
-    /// Roll back an unsuccessful native creation, just like a normal close.
-    SettingsOpenFailed,
-    SettingsClosed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionEffect {
-    NativeOpenDebugger,
-    ToggleFullscreen,
 }
 
 /// Command execution stripped to what native adapters observe.
@@ -53,13 +33,9 @@ pub struct CommandOutcome {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SessionOutcome {
     pub command: Option<CommandOutcome>,
-    pub effect: Option<SessionEffect>,
-    /// Whether this event acquired/released the Settings owner. Native chrome
-    /// can skip duplicate close notifications using this flag.
-    pub settings_changed: bool,
 }
 
-/// Boundary error: the shell cause rendered once, never matched on.
+/// Boundary error: the domain cause rendered once, never matched on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionError(pub String);
 

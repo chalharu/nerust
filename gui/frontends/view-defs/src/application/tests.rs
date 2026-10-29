@@ -78,16 +78,16 @@ impl Drop for Fixture {
 fn focus_modal_and_explicit_pause_compose_across_actual_media_replacement() {
     let mut fixture = Fixture::new();
     fixture.load();
-    fixture.core.set_pause_owner(PauseOwner::Modal, true);
+    fixture.core.set_pause_owner(pause_owners::MODAL, true);
     fixture.core.note_main_departure();
     fixture.core.tick_focus_sync();
-    assert!(fixture.core.owns_pause(PauseOwner::Focus));
+    assert!(fixture.core.owns_pause(pause_owners::FOCUS));
     fixture.load();
     assert!(fixture.core.tick().paused);
     assert!(fixture.core.note_main_arrival());
     assert!(fixture.core.tick().paused, "modal still owns pause");
     fixture.core.pause();
-    fixture.core.set_pause_owner(PauseOwner::Modal, false);
+    fixture.core.set_pause_owner(pause_owners::MODAL, false);
     assert!(fixture.core.tick().paused, "explicit pause survives ACK");
     fixture.core.resume();
     assert!(!fixture.core.tick().paused);
@@ -96,49 +96,28 @@ fn focus_modal_and_explicit_pause_compose_across_actual_media_replacement() {
 #[test]
 fn settings_cancel_and_apply_preserve_modal_focus_and_user_owners() {
     let mut fixture = Fixture::new();
-    assert!(
-        fixture
-            .core
-            .dispatch(SessionEvent::SettingsOpened)
-            .unwrap()
-            .settings_changed
-    );
+    assert!(fixture.core.note_settings_opened());
     fixture.load();
     assert!(fixture.core.tick().paused);
     assert_eq!(fixture.core.tick().frame_counter, 0);
-    assert!(
-        !fixture
-            .core
-            .dispatch(SessionEvent::SettingsOpened)
-            .unwrap()
-            .settings_changed
-    );
-    fixture.core.set_pause_owner(PauseOwner::Modal, true);
+    assert!(!fixture.core.note_settings_opened());
+    fixture.core.set_pause_owner(pause_owners::MODAL, true);
     fixture.core.note_main_departure();
     fixture.core.tick_focus_sync();
     let settings = fixture.core.settings_snapshot().clone();
     fixture.core.apply_settings(settings).unwrap();
     fixture.load();
-    fixture
-        .core
-        .dispatch(SessionEvent::SettingsOpenFailed)
-        .unwrap();
-    assert!(!fixture.core.owns_pause(PauseOwner::Settings));
-    assert!(fixture.core.owns_pause(PauseOwner::Modal));
-    assert!(fixture.core.owns_pause(PauseOwner::Focus));
+    fixture.core.note_settings_dismissed();
+    assert!(!fixture.core.owns_pause(pause_owners::SETTINGS));
+    assert!(fixture.core.owns_pause(pause_owners::MODAL));
+    assert!(fixture.core.owns_pause(pause_owners::FOCUS));
     fixture.core.pause();
     fixture.core.focus_event(FocusEvent::Main(true));
-    fixture.core.set_pause_owner(PauseOwner::Modal, false);
+    fixture.core.set_pause_owner(pause_owners::MODAL, false);
     assert!(fixture.core.tick().paused);
     fixture.core.resume();
     assert!(!fixture.core.tick().paused);
-    assert!(
-        !fixture
-            .core
-            .dispatch(SessionEvent::SettingsClosed)
-            .unwrap()
-            .settings_changed
-    );
+    assert!(!fixture.core.note_settings_dismissed());
 }
 
 #[test]
@@ -175,13 +154,13 @@ fn focus_effects_commit_before_capture_and_modal_ack_changes_late_truth() {
     fixture.core.tick_focus_sync();
     let captured = fixture.core.frame_ctx();
     assert!(captured.tick().paused);
-    fixture.core.set_pause_owner(PauseOwner::Modal, true);
+    fixture.core.set_pause_owner(pause_owners::MODAL, true);
     fixture.core.focus_event(FocusEvent::Aux {
         resume: AuxKind::Debug.resume_on_arrival(),
         focused: true,
     });
     assert!(fixture.core.tick().paused);
-    fixture.core.set_pause_owner(PauseOwner::Modal, false);
+    fixture.core.set_pause_owner(pause_owners::MODAL, false);
     assert!(!fixture.core.tick().paused);
     assert!(captured.tick().paused, "old capture is not liveness truth");
 }
@@ -211,11 +190,11 @@ fn application_close_flushes_exactly_once_after_resource_teardown() {
     assert!(fixture.core.flushed);
     assert_eq!(flushes.get(), 1);
     // Deliberately re-arm state: a duplicate close must not run the teardown again.
-    fixture.core.set_pause_owner(PauseOwner::Modal, true);
+    fixture.core.set_pause_owner(pause_owners::MODAL, true);
     assert!(!fixture.core.begin_close());
     fixture.core.finish_close_with(flush);
     assert_eq!(flushes.get(), 1);
-    assert!(fixture.core.owns_pause(PauseOwner::Modal));
+    assert!(fixture.core.owns_pause(pause_owners::MODAL));
 }
 
 #[test]
@@ -300,7 +279,7 @@ fn render_retry_and_notification_pause_are_owned_by_application() {
         .core
         .pump_notifications(&mut notifications, &ctx, Instant::now());
     assert!(report.modal_queued);
-    assert!(fixture.core.owns_pause(PauseOwner::Modal));
+    assert!(fixture.core.owns_pause(pause_owners::MODAL));
 }
 
 #[test]
@@ -314,40 +293,40 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
     assert!(fixture.core.menubar().is_none());
     let ctx = fixture.core.frame_ctx();
     assert!(fixture.core.menu_update(&ctx, false).is_some());
-    let first = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    let first = fixture.core.menubar_update(&ctx, caps).unwrap();
     assert_eq!(fixture.core.menubar(), Some(&first.menubar));
     assert!(std::ptr::eq(
         fixture.core.menubar().unwrap(),
         fixture.core.main_window().menu.as_ref().unwrap()
     ));
-    assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
+    assert!(fixture.core.menubar_update(&ctx, caps).is_none());
     let app_caps = wakui::menu::MenuCapabilities {
         application_menu: true,
         ..caps
     };
-    let next = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    let next = fixture.core.menubar_update(&ctx, app_caps).unwrap();
     assert!(!next.signature.loaded);
     assert!(next.menubar.application_menu.is_some());
-    assert!(fixture.core.menubar_update(&ctx, false, app_caps).is_none());
-    fixture.core.dispatch(SessionEvent::SettingsOpened).unwrap();
-    let guarded = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    assert!(fixture.core.menubar_update(&ctx, app_caps).is_none());
+    assert!(fixture.core.note_settings_opened());
+    let guarded = fixture.core.menubar_update(&ctx, app_caps).unwrap();
     assert!(guarded.signature.settings_open);
-    fixture.core.dispatch(SessionEvent::SettingsClosed).unwrap();
+    assert!(fixture.core.note_settings_dismissed());
     assert!(fixture.core.menu_update(&ctx, false).is_none());
-    let unguarded = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    let unguarded = fixture.core.menubar_update(&ctx, app_caps).unwrap();
     assert!(!unguarded.signature.settings_open);
     // Reallocated captures notify consumers, but equal trees do not repaint.
     let mut settings = fixture.core.settings_snapshot().clone();
     settings.local.notifications.info_duration_ms += 1;
     fixture.core.apply_settings(settings).unwrap();
     let ctx = fixture.core.frame_ctx();
-    let replaced = fixture.core.menubar_update(&ctx, false, app_caps).unwrap();
+    let replaced = fixture.core.menubar_update(&ctx, app_caps).unwrap();
     assert_eq!(replaced.menubar, unguarded.menubar);
     let presenter = wakui::menu_presenter::MenuPresenter::default();
     let plan = presenter.submit(unguarded.menubar).unwrap();
     assert!(presenter.complete(plan).is_none());
     assert!(presenter.submit(replaced.menubar).is_none());
-    assert!(fixture.core.menubar_update(&ctx, false, app_caps).is_none());
+    assert!(fixture.core.menubar_update(&ctx, app_caps).is_none());
 }
 
 #[test]
@@ -359,7 +338,7 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
         application_menu: false,
     };
     let ctx = fixture.core.frame_ctx();
-    let initial = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    let initial = fixture.core.menubar_update(&ctx, caps).unwrap();
     let select = fixture
         .core
         .menu_commands()
@@ -371,10 +350,10 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
         .core
         .dispatch(SessionEvent::Command(select))
         .unwrap();
-    let update = fixture.core.menubar_update(&ctx, false, caps).unwrap();
+    let update = fixture.core.menubar_update(&ctx, caps).unwrap();
     assert_eq!(update.signature.active_slot, Some(73));
     assert_eq!(initial.menubar, update.menubar);
-    assert!(fixture.core.menubar_update(&ctx, false, caps).is_none());
+    assert!(fixture.core.menubar_update(&ctx, caps).is_none());
 }
 
 #[test]
@@ -392,7 +371,6 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
     let ctx = fixture.core.frame_ctx();
     fixture.core.menubar_update(
         &ctx,
-        false,
         MenuCapabilities {
             about: false,
             dialog_ellipsis: false,
@@ -420,7 +398,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         .expect("OpenDebugger belongs to this main window's actual menu");
     let outcome = fixture
         .core
-        .handle_event(EventCommand::Menu(command), false)
+        .handle_event(EventCommand::Menu(command))
         .unwrap();
     let Some(CommandEffect::OpenAux(kind)) = outcome.effect else {
         panic!("expected auxiliary open");
@@ -463,7 +441,6 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
         .core
         .menubar_update(
             &ctx,
-            false,
             wakui::menu::MenuCapabilities {
                 about: true,
                 dialog_ellipsis: false,
@@ -478,6 +455,8 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
             table.activation(M::Session(command)).unwrap(),
         ))
     };
+    // The modal guard is view-side state: no guard flag crosses the boundary.
+    assert!(fixture.core.note_settings_opened());
     let host: &mut dyn EventHandler<AuxKind> = &mut fixture.core;
     for event in [
         menu(M::Open),
@@ -492,37 +471,27 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
             key: wakui::Key::F2,
             pressed: true,
         }),
-        C::Session(SessionEvent::Shortcut(
-            wakui::session::ShortcutGesture::OpenDebugger,
-        )),
     ] {
-        let result = host.handle_event(event, true).unwrap();
+        let result = host.handle_event(event).unwrap();
         assert!(!result.handled && result.effect.is_none() && result.session.command.is_none());
     }
     let quit = host
-        .handle_event(menu(M::Native(NativeRole::Quit)), true)
+        .handle_event(menu(M::Native(NativeRole::Quit)))
         .unwrap();
     assert_eq!(quit.effect, Some(E::Quit));
-    let tick = host.handle_event(C::LiveTick, true).unwrap();
+    let tick = host.handle_event(C::LiveTick).unwrap();
     assert_eq!(tick.effect, Some(E::LiveTick));
     let focus = host
-        .handle_event(C::Focus(FocusEvent::Main(false)), true)
+        .handle_event(C::Focus(FocusEvent::Main(false)))
         .unwrap();
     assert!(focus.handled);
     let clear = host
-        .handle_event(C::Session(SessionEvent::ClearInput), true)
+        .handle_event(C::Session(SessionEvent::ClearInput))
         .unwrap();
     assert!(clear.handled);
-    let opened = host
-        .handle_event(C::Session(SessionEvent::SettingsOpened), true)
-        .unwrap();
-    assert!(opened.session.settings_changed);
-    let guarded = host.handle_event(menu(M::Debugger), false).unwrap();
+    let guarded = host.handle_event(menu(M::Debugger)).unwrap();
     assert!(!guarded.handled, "owned Settings also guards");
-    let closed = host
-        .handle_event(C::Session(SessionEvent::SettingsClosed), true)
-        .unwrap();
-    assert!(closed.session.settings_changed);
+    assert!(fixture.core.note_settings_dismissed());
     assert!(!fixture.core.main_active());
     assert!(!fixture.core.pause_held());
 }
@@ -550,7 +519,6 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
             .core
             .menubar_update(
                 &ctx,
-                false,
                 wakui::menu::MenuCapabilities {
                     about: true,
                     dialog_ellipsis: false,
@@ -562,7 +530,7 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
     };
     let menu = |command: M| C::Menu(table.activation(command).unwrap());
     for (command, effect) in [
-        (M::Open, E::OpenRom),
+        (M::Open, E::OpenFile),
         (M::Settings, E::OpenAux(AuxKind::Settings)),
         (M::Debugger, E::OpenAux(AuxKind::Debug)),
         (M::NotificationHistory, E::OpenAux(AuxKind::History)),
@@ -574,29 +542,43 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
         let result = {
             let mut state = fixture.borrow_mut();
             let handler: &mut dyn EventHandler<AuxKind> = &mut state.core;
-            handler.handle_event(event, false).unwrap()
+            handler.handle_event(event).unwrap()
         };
         assert_eq!(result.effect, Some(effect));
         // Simulate a synchronously reentrant native operation after dispatch.
         assert!(fixture.try_borrow_mut().is_ok());
     }
     let mut state = fixture.borrow_mut();
-    for (shortcut, effect) in [
-        (
-            wakui::session::ShortcutGesture::OpenDebugger,
-            E::OpenAux(AuxKind::Debug),
-        ),
-        (
-            wakui::session::ShortcutGesture::ToggleFullscreen,
-            E::ToggleFullscreen,
-        ),
+    // Shortcuts arrive as framework keyboard events; the shell binding
+    // table resolves them view-side. Bind each action, then press F4.
+    use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
+    for (action, effect) in [
+        (ShortcutAction::OpenDebugger, E::OpenAux(AuxKind::Debug)),
+        (ShortcutAction::ToggleFullscreen, E::ToggleFullscreen),
     ] {
+        let mut settings = state.core.settings_snapshot().clone();
+        settings.shared.input.shortcuts.keyboard = vec![ShortcutBinding {
+            action,
+            key: Some(wakui::Key::F4),
+        }];
+        state.core.apply_settings(settings).unwrap();
         let result = state
             .core
-            .handle_event(C::Session(SessionEvent::Shortcut(shortcut)), false)
+            .handle_event(C::Session(SessionEvent::Keyboard {
+                key: wakui::Key::F4,
+                pressed: true,
+            }))
             .unwrap();
         assert_eq!(result.effect, Some(effect));
-        assert!(result.session.effect.is_some());
+        assert!(result.session.command.is_none());
+        // Release before the next binding so the press is not a repeat.
+        state
+            .core
+            .handle_event(C::Session(SessionEvent::Keyboard {
+                key: wakui::Key::F4,
+                pressed: false,
+            }))
+            .unwrap();
     }
     struct Dead;
     impl EventSink for Dead {
@@ -619,7 +601,6 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
         .core
         .menubar_update(
             &ctx,
-            false,
             wakui::menu::MenuCapabilities {
                 about: true,
                 dialog_ellipsis: false,
@@ -631,16 +612,16 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
     let menu = |command: M| C::Menu(table.activation(command).unwrap());
     fixture
         .core
-        .handle_event(menu(M::Session(S::SelectActiveSlot(73))), false)
+        .handle_event(menu(M::Session(S::SelectActiveSlot(73))))
         .unwrap();
     assert_eq!(fixture.core.session().active_slot_id(), Some(73));
-    let Err(error) = fixture.core.handle_event(menu(M::Session(S::Reset)), false) else {
+    let Err(error) = fixture.core.handle_event(menu(M::Session(S::Reset))) else {
         panic!("reset without a core must fail");
     };
     assert_eq!(error.0, "no emulation core active");
     let load = fixture
         .core
-        .handle_event(menu(M::Session(S::LoadActiveSlot)), false)
+        .handle_event(menu(M::Session(S::LoadActiveSlot)))
         .unwrap();
     assert!(
         load.session.command.is_some(),
@@ -649,36 +630,36 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
     fixture.load();
     fixture
         .core
-        .handle_event(menu(M::Session(S::TogglePause)), false)
+        .handle_event(menu(M::Session(S::TogglePause)))
         .unwrap();
     assert!(
         fixture.core.tick().paused,
         "double dispatch would toggle back"
     );
-    assert!(fixture.core.owns_pause(PauseOwner::User));
-    fixture.core.set_pause_owner(PauseOwner::Modal, true);
+    assert!(fixture.core.owns_pause(pause_owners::USER));
+    fixture.core.set_pause_owner(pause_owners::MODAL, true);
     fixture
         .core
-        .handle_event(menu(M::Session(S::Resume)), false)
+        .handle_event(menu(M::Session(S::Resume)))
         .unwrap();
-    assert!(!fixture.core.owns_pause(PauseOwner::User));
+    assert!(!fixture.core.owns_pause(pause_owners::USER));
     assert!(fixture.core.tick().paused, "modal still owns pause");
-    fixture.core.set_pause_owner(PauseOwner::Modal, false);
+    fixture.core.set_pause_owner(pause_owners::MODAL, false);
     assert!(!fixture.core.tick().paused);
     fixture
         .core
-        .handle_event(C::Focus(FocusEvent::Main(false)), false)
+        .handle_event(C::Focus(FocusEvent::Main(false)))
         .unwrap();
     fixture
         .core
-        .handle_event(C::Focus(FocusEvent::BurstEnd), false)
+        .handle_event(C::Focus(FocusEvent::BurstEnd))
         .unwrap();
-    assert!(fixture.core.owns_pause(PauseOwner::Focus));
+    assert!(fixture.core.owns_pause(pause_owners::FOCUS));
     fixture
         .core
-        .handle_event(C::Focus(FocusEvent::Main(true)), false)
+        .handle_event(C::Focus(FocusEvent::Main(true)))
         .unwrap();
     assert!(!fixture.core.tick().paused);
-    fixture.core.handle_event(menu(M::Close), false).unwrap();
+    fixture.core.handle_event(menu(M::Close)).unwrap();
     assert!(!fixture.core.tick().loaded);
 }

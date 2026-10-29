@@ -20,7 +20,7 @@ pub struct Window {
     pub contents: Widget,
 }
 
-/// Concrete native work after a Host operation. No settings domain result leaks.
+/// Concrete native work after a Host operation. No domain result leaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WindowEffects {
     pub rebuild_renderer: bool,
@@ -44,7 +44,7 @@ pub enum WidgetContents {
     PendingControls,
 }
 
-/// Grouped emulation surface. Renderer resources remain native-owned.
+/// Grouped main surface. Renderer resources remain native-owned.
 #[derive(Debug, Clone, Default)]
 pub struct MainContents;
 
@@ -62,10 +62,10 @@ impl Window {
         }
     }
 
-    pub fn main() -> Self {
+    pub fn main(title: &str) -> Self {
         Self {
             id: WindowId::Main,
-            title: "nerust".into(),
+            title: title.into(),
             menu: None,
             contents: Widget {
                 contents: WidgetContents::Main(MainContents),

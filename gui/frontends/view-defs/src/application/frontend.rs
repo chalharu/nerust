@@ -6,17 +6,16 @@
 
 use std::{path::Path, time::Instant};
 
-use nerust_gui_shell::session::access::{PauseControl, ResetControl, SlotIo, SlotNav};
 use wakui::{
     app::{FrontendApp, WidgetCloseOutcome},
     dialog::{DialogTurn, ModalAdvance, ModalToken},
-    session::{SessionError, SessionEvent as FrameworkEvent},
+    session::SessionError,
 };
 use wakui::{
     aux::{AuxId, AuxRegistryPort, OpenRequest},
     focus::{FocusEffect, FocusEvent},
     mailbox::WindowMailbox,
-    menu::{DialogTitles, MenuCapabilities, Menubar},
+    menu::{FileDialogTitles, MenuCapabilities, Menubar},
     viewport::{ViewportImage, ViewportPresent},
     window::{Window, WindowChromeSync, WindowEffects},
 };
@@ -380,10 +379,10 @@ impl ApplicationHost {
 }
 
 impl FrontendApp<AuxKind> for ApplicationHost {
-    fn load_rom(&mut self, path: &Path) -> Result<(), String> {
+    fn load_file(&mut self, path: &Path) -> Result<(), String> {
         let result = self.load_rom_inner(path);
         if result.is_ok() {
-            self.resume_session();
+            ApplicationHost::resume_session(self);
         }
         result
     }
@@ -412,7 +411,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::fail_window(self, detail);
     }
 
-    fn resume_session(&mut self) {
+    fn resume_content(&mut self) {
         ApplicationHost::resume_session(self);
     }
 
@@ -420,76 +419,20 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::swap_frame_buffer(self);
     }
 
-    fn tick_loaded(&self) -> bool {
+    fn content_loaded(&self) -> bool {
         self.session.tick_metrics().loaded
     }
 
-    fn tick_paused(&self) -> bool {
+    fn content_suspended(&self) -> bool {
         self.session.tick_metrics().paused
     }
 
-    fn active_slot_id(&self) -> Option<u64> {
-        self.session.active_slot_id()
-    }
-
-    fn clear_keys(&mut self) {
+    fn clear_input(&mut self) {
         ApplicationHost::clear_keys(self);
     }
 
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
         ApplicationHost::update_window_size(self, width, height).map_err(|error| error.to_string())
-    }
-
-    fn pause_session(&mut self) {
-        PauseControl::pause(self);
-    }
-
-    fn resume_session_command(&mut self) {
-        PauseControl::resume(self);
-    }
-
-    fn toggle_pause_session(&mut self) {
-        PauseControl::toggle_pause(self);
-    }
-
-    fn reset_session(&mut self) {
-        ResetControl::reset(self);
-    }
-
-    fn save_active_slot(&mut self) -> bool {
-        SlotIo::save_active_slot(self)
-    }
-
-    fn load_active_slot(&mut self) -> bool {
-        SlotIo::load_active_slot(self)
-    }
-
-    fn load_slot(&mut self, id: u64) -> bool {
-        SlotIo::load_slot(self, id)
-    }
-
-    fn save_slot(&mut self, id: u64) {
-        SlotIo::save_slot(self, id);
-    }
-
-    fn delete_slot(&mut self, id: u64) {
-        SlotIo::delete_slot(self, id);
-    }
-
-    fn select_slot(&mut self, id: u64) {
-        SlotNav::select_slot(self, id);
-    }
-
-    fn create_slot(&mut self) {
-        SlotNav::create_slot(self);
-    }
-
-    fn select_next_slot(&mut self) {
-        SlotNav::select_next_slot(self);
-    }
-
-    fn select_previous_slot(&mut self) {
-        SlotNav::select_previous_slot(self);
     }
 
     fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
@@ -520,22 +463,17 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         )
     }
 
-    fn dialog_titles(&self) -> DialogTitles {
+    fn dialog_titles(&self) -> FileDialogTitles {
         ApplicationHost::dialog_titles(self)
     }
 
-    fn rom_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
+    fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
         ApplicationHost::rom_dialog_filters(self)
     }
 
-    fn menubar_update(
-        &mut self,
-        settings_open: bool,
-        capabilities: MenuCapabilities,
-    ) -> Option<Menubar> {
+    fn menubar_update(&mut self, capabilities: MenuCapabilities) -> Option<Menubar> {
         let ctx = self.frame_cache.frame_ctx(&self.session);
-        ApplicationHost::menubar_update(self, &ctx, settings_open, capabilities)
-            .map(|update| update.menubar)
+        ApplicationHost::menubar_update(self, &ctx, capabilities).map(|update| update.menubar)
     }
 
     fn main_window(&self) -> &Window {
@@ -587,10 +525,6 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::remembered_window_size(self)
     }
 
-    fn liveness_inputs(&self) -> (bool, bool) {
-        ApplicationHost::liveness_inputs(self)
-    }
-
     fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
         ApplicationHost::focus_event(self, event)
     }
@@ -626,18 +560,10 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         let request = registry.request_open(kind, kind.title());
         if kind == AuxKind::Settings
             && let OpenRequest::Create(id) = request
+            && !ApplicationHost::note_settings_opened(self)
         {
-            match self.dispatch(FrameworkEvent::SettingsOpened) {
-                Ok(outcome) if outcome.settings_changed => (),
-                Ok(_) => {
-                    registry.cancel_open(id);
-                    return Ok(None);
-                }
-                Err(error) => {
-                    registry.cancel_open(id);
-                    return Err(error.to_string());
-                }
-            }
+            registry.cancel_open(id);
+            return Ok(None);
         }
         Ok(Some(request))
     }
@@ -648,7 +574,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
             return false;
         }
         if kind == Some(AuxKind::Settings) {
-            let _ = self.dispatch(FrameworkEvent::SettingsOpenFailed);
+            ApplicationHost::note_settings_dismissed(self);
         }
         true
     }
@@ -878,22 +804,12 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         })
     }
 
-    fn settings_closed(&mut self) -> bool {
-        ApplicationHost::settings_closed(self)
-    }
-
     fn report_host_error(&mut self, detail: String) {
         ApplicationHost::report_host_error(self, detail);
     }
 
-    fn history_changed(&self) -> bool {
-        self.history_key.get().is_none()
-    }
-
-    fn settings_open(&self) -> bool {
-        self.widget_sessions
-            .values()
-            .any(|session| session.kind() == AuxKind::Settings)
+    fn modal_guard_active(&self) -> bool {
+        ApplicationHost::modal_guard_active(self)
     }
 
     fn close_background_flights(&mut self) {
@@ -928,7 +844,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
     }
 
     fn tick_widget(&mut self, id: AuxId) {
-        if !(self.tick_loaded() && !self.tick_paused()) {
+        if !(self.content_loaded() && !self.content_suspended()) {
             return;
         }
         let Some(handle) = self

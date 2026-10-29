@@ -9,16 +9,25 @@
 
 pub use crate::commands::{CommandModel, CommandRef, CommandVisitor};
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Opaque menu identity. Minted view-side from a stable domain table
+/// (opaque ids stay stable across rebuilds, like [`crate::control::Id`]);
+/// never a position or a framework-known skeleton.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MenuId {
-    File,
-    Emulation,
-    States,
-    SelectSlot,
-    SaveSlot,
-    LoadSlot,
-    DeleteSlot,
-    Help,
+pub struct MenuId(u64);
+
+impl MenuId {
+    /// Mint a fresh process-unique token.
+    pub fn fresh() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Stable token for the view-side skeleton table and tests.
+    pub const fn from_raw(value: u64) -> Self {
+        Self(value)
+    }
 }
 
 /// Explicit frontend differences; no toolkit or target dependencies in host.
@@ -102,7 +111,8 @@ fn same_children(left: &[MenuEntry], right: &[MenuEntry]) -> bool {
 }
 
 /// Find a submenu by id, depth-first. View-side tests and native adapters
-/// navigate built models without reimplementing the traversal.
+/// navigate built models without reimplementing the traversal. Identity is
+/// the opaque [`MenuId`]; labels and enablement are not identities.
 pub fn find_menu(menus: &[Submenu], id: MenuId) -> Option<&Submenu> {
     for menu in menus {
         if menu.id == id {
@@ -146,7 +156,7 @@ pub trait MenuVisitor: CommandVisitor {
 
 impl Menubar {
     /// Balanced preorder. Compare direct identities/labels only, not enabled
-    /// state or descendants: slot changes do not rebuild their ancestors.
+    /// state or descendants: child changes do not rebuild their ancestors.
     pub fn visit(&self, previous: Option<&Self>, visitor: &mut dyn MenuVisitor) {
         visitor.begin_menubar(
             self,
@@ -167,11 +177,12 @@ impl Menubar {
     }
 }
 
-/// Pre-localized dialog titles. Frontends render and pass these verbatim
-/// instead of calling into the i18n catalog themselves.
+/// Pre-localized file-dialog titles. Frontends render and pass these verbatim
+/// instead of calling into the i18n catalog themselves. Values (e.g. ROM
+/// wording) are view-side data; the framework only transports the strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DialogTitles {
+pub struct FileDialogTitles {
     pub open: String,
     pub error: String,
-    pub rom_load_failed: String,
+    pub load_failed: String,
 }

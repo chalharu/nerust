@@ -10,7 +10,7 @@ use wakui_core::{
 
 struct MainPresentation<'a> {
     native: Option<&'a tao::window::Window>,
-    menu: Option<(&'a mut dyn crate::menu::MenuSink, bool, bool, bool)>,
+    menu: Option<(&'a mut dyn crate::menu::MenuSink, bool, bool)>,
 }
 
 impl WindowVisitor for MainPresentation<'_> {
@@ -21,8 +21,8 @@ impl WindowVisitor for MainPresentation<'_> {
     }
 
     fn visit_menu(&mut self, menu: &Menubar) {
-        if let Some((sink, loaded, paused, settings_open)) = self.menu.as_mut() {
-            sink.update(*loaded, *paused, *settings_open, menu);
+        if let Some((sink, loaded, paused)) = self.menu.as_mut() {
+            sink.update(*loaded, *paused, menu);
         }
     }
 }
@@ -47,19 +47,17 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 
     /// Menu sync using scalar state and immutable snapshot identities only.
     pub(crate) fn sync_menu_state(&mut self) {
-        let settings_open = self.settings_open();
-        let loaded = self.core.tick_loaded();
-        let paused = self.core.tick_paused();
-        let Some(_menubar) = self
-            .core
-            .menubar_update(settings_open, TAO_MENU_CAPABILITIES)
-        else {
+        // The modal guard is view-side state; the model already carries
+        // guarded enablement, so flavors never name the guard kind.
+        let loaded = self.core.content_loaded();
+        let paused = self.core.content_suspended();
+        let Some(_menubar) = self.core.menubar_update(TAO_MENU_CAPABILITIES) else {
             return;
         };
         let window = self.core.main_window().clone();
         window.visit(&mut MainPresentation {
             native: None,
-            menu: Some((self.app_menu.as_mut(), loaded, paused, settings_open)),
+            menu: Some((self.app_menu.as_mut(), loaded, paused)),
         });
     }
 
@@ -102,7 +100,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     /// Refresh chrome after a ROM (re)load: menu, title, frame.
-    pub(super) fn after_rom_load(&mut self) {
+    pub(super) fn after_file_load(&mut self) {
         self.core.reconcile_pause();
         self.sync_chrome(true);
         if self.core.polled_widget().is_some() {
@@ -185,7 +183,7 @@ mod tests {
     fn rom_load_refresh_routes_through_chrome() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.after_rom_load();
+        host.after_file_load();
         assert_eq!(support.menu.updates().len(), 1);
     }
 

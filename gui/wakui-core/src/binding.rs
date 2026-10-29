@@ -1,7 +1,6 @@
 //! Generic view/binder contracts shared by every domain.
-//! Implemented by view definitions (`SettingsScreen`, `HistoryModel`),
-//! bound instances (`SettingsController`, `HistorySession`) and native
-//! picker sinks. See the `wakui` separation design for the full picture.
+//! Implemented by view definitions, bound controllers, and native picker
+//! sinks. See the `wakui` separation design for the full picture.
 
 use crate::control::{ControlId, ControlInput, Id};
 

@@ -30,8 +30,8 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     fn dispatch_event(&mut self, event: UserEvent) -> Option<EventOutcome<K>> {
-        let settings_open = self.settings_open();
-        match self.core.handle_event(event, settings_open) {
+        // The modal guard lives view-side; flavors forward every event.
+        match self.core.handle_event(event) {
             Ok(outcome) => Some(outcome),
             Err(_) => {
                 self.sync_chrome(false);
@@ -55,9 +55,9 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
             None => return HostAction::None,
         };
         match outcome.effect {
-            Some(CommandEffect::OpenRom) => {
-                if self.open_rom_dialog() {
-                    HostAction::RomLoaded
+            Some(CommandEffect::OpenFile) => {
+                if self.open_file_dialog() {
+                    HostAction::FileLoaded
                 } else {
                     HostAction::None
                 }
@@ -85,7 +85,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
                 if matches!(event, UserEvent::Focus(_))
                     || (effect.is_none()
                         && outcome.session.command.is_none()
-                        && !outcome.session.settings_changed
                         && matches!(event, UserEvent::Session(_)))
                 {
                     return HostAction::None;
@@ -107,10 +106,10 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         }
     }
 
-    fn open_rom_dialog(&mut self) -> bool {
+    fn open_file_dialog(&mut self) -> bool {
         let titles = self.core.dialog_titles();
-        let filters = self.core.rom_dialog_filters();
-        let Some(path) = self.dialogs.pick_rom_file(titles.open, filters) else {
+        let filters = self.core.file_dialog_filters();
+        let Some(path) = self.dialogs.pick_file(titles.open, filters) else {
             return false;
         };
         if let Err(detail) = self.load_path(&path) {
@@ -121,8 +120,15 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     #[cfg(test)]
-    fn apply_keyboard_shortcut(&mut self, gesture: wakui_core::session::ShortcutGesture) {
-        self.handle_native_event(UserEvent::Session(SessionEvent::Shortcut(gesture)), None);
+    fn apply_keyboard_f4(&mut self) {
+        use wakui_core::Key;
+        self.handle_native_event(
+            UserEvent::Session(SessionEvent::Keyboard {
+                key: Key::F4,
+                pressed: true,
+            }),
+            None,
+        );
     }
 }
 
@@ -132,47 +138,48 @@ mod tests {
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::testkit::{StubAux, TestMenu as M, TestSession as S};
+    use wakui_core::app::FrontendApp as _;
 
     #[test]
-    fn rom_filters_empty_without_cores() {
+    fn file_filters_empty_without_cores() {
         let support = TestHost::new();
-        assert!(support.host.core.rom_dialog_filters().is_empty());
+        assert!(support.host.core.file_dialog_filters().is_empty());
     }
 
     #[test]
-    fn rom_filters_list_canned_kinds() {
+    fn file_filters_list_canned_kinds() {
         let support = TestHost::with_nes();
-        let filters = support.host.core.rom_dialog_filters();
+        let filters = support.host.core.file_dialog_filters();
         assert_eq!(filters.len(), 1);
         assert_eq!(filters[0].0, "ROM files");
         assert_eq!(filters[0].1, ["nes"]);
     }
 
     #[test]
-    fn rom_dialog_cancel_picks_nothing() {
+    fn file_dialog_cancel_picks_nothing() {
         let support = TestHost::with_pick(None);
         let mut host = support.host;
-        assert!(!host.open_rom_dialog());
+        assert!(!host.open_file_dialog());
         assert!(support.app.borrow().load_paths.clone().is_empty());
         assert!(support.dialogs.errors().is_empty());
     }
 
     #[test]
-    fn rom_dialog_success_loads_picked_path() {
+    fn file_dialog_success_loads_picked_path() {
         let path = std::path::PathBuf::from("/tmp/game.nes");
         let support = TestHost::with_pick(Some(path.clone()));
         let mut host = support.host;
-        assert!(host.open_rom_dialog());
+        assert!(host.open_file_dialog());
         assert_eq!(support.app.borrow().load_paths.clone(), [path]);
         assert!(support.dialogs.errors().is_empty());
     }
 
     #[test]
-    fn rom_dialog_failure_surfaces_error() {
+    fn file_dialog_failure_surfaces_error() {
         let path = std::path::PathBuf::from("/tmp/broken.nes");
         let support = TestHost::with_failing_pick(Some(path.clone()));
         let mut host = support.host;
-        assert!(!host.open_rom_dialog());
+        assert!(!host.open_file_dialog());
         assert_eq!(support.app.borrow().load_paths.clone(), [path]);
         assert_eq!(support.dialogs.errors(), ["fake load failed"]);
     }
@@ -200,7 +207,7 @@ mod tests {
         assert!(host.prepare_widget(id));
         host.aux
             .insert_for_test(TestAux::Settings, Box::new(StubAux::new()));
-        assert!(host.settings_open());
+        assert!(host.core.modal_guard_active());
         TestHost {
             host,
             menu: support.menu,
@@ -253,19 +260,13 @@ mod tests {
         let quit = support.menu_ref(M::Quit);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        // Only the native registry is open: the external flag, not a Host
-        // pause owner, must guard both commands and keyboard shortcuts.
-        assert!(
-            !host
-                .core
-                .owns_pause(wakui_core::pause::PauseOwner::Settings)
-        );
+        // The guard comes from the open widget alone: no suspension owner
+        // is held, yet commands and keyboard input stay blocked.
+        assert!(!host.core.owns_pause(crate::testkit::owners::SETTINGS));
+        assert!(host.core.modal_guard_active());
         for event in [
             UserEvent::Menu(about),
             UserEvent::Session(SessionEvent::Command(select)),
-            UserEvent::Session(SessionEvent::Shortcut(
-                wakui_core::session::ShortcutGesture::OpenDebugger,
-            )),
             UserEvent::Session(SessionEvent::Keyboard {
                 key: wakui_core::Key::F4,
                 pressed: true,
@@ -273,7 +274,7 @@ mod tests {
         ] {
             assert_eq!(host.on_event(event, &opener), HostAction::None);
         }
-        assert!(host.core.active_slot_id().is_none());
+        assert!(support.app.borrow().active_slot_id().is_none());
         assert!(support.menu.updates().is_empty());
         assert!(opener.calls().is_empty());
         assert_eq!(
@@ -293,16 +294,19 @@ mod tests {
     }
 
     #[test]
-    fn canonical_shortcut_effect_opens_native_debugger() {
+    fn keyboard_f4_effect_opens_native_debugger() {
         use crate::event::UserEvent;
         use wakui_core::session::SessionEvent;
         let mut host = TestHost::new().host;
         let opener = FakeOpener::failing("no display");
+        // The fake binds F4 to the debugger, like the default view-side
+        // binding. Production flavors never interpret keys.
         assert_eq!(
             host.on_event(
-                UserEvent::Session(SessionEvent::Shortcut(
-                    wakui_core::session::ShortcutGesture::OpenDebugger
-                )),
+                UserEvent::Session(SessionEvent::Keyboard {
+                    key: wakui_core::Key::F4,
+                    pressed: true,
+                }),
                 &opener
             ),
             HostAction::None
@@ -339,7 +343,7 @@ mod tests {
         let open = support.menu_ref(M::Open);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(host.on_menu_command(open, &opener), HostAction::RomLoaded);
+        assert_eq!(host.on_menu_command(open, &opener), HostAction::FileLoaded);
         assert_eq!(support.app.borrow().load_paths.clone(), [path]);
     }
 
@@ -420,30 +424,31 @@ mod tests {
     fn session_delegates_stay_total_without_core() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(!host.core.tick_paused());
-        host.core.pause_session();
-        host.core.resume_session_command();
-        host.core.toggle_pause_session();
-        assert!(!host.core.tick_paused());
-        assert!(!host.core.save_active_slot());
-        assert!(!host.core.load_active_slot());
-        host.core.select_next_slot();
-        host.core.select_previous_slot();
-        assert!(!host.core.load_slot(99));
-        host.core.save_slot(99);
-        host.core.delete_slot(99);
-        host.core.select_slot(99);
-        host.core.create_slot();
-        host.core.reset_session();
+        let app = support.app.clone();
+        assert!(!app.borrow().content_suspended());
+        app.borrow_mut().pause_session();
+        app.borrow_mut().resume_session();
+        app.borrow_mut().toggle_pause_session();
+        assert!(!app.borrow().content_suspended());
+        assert!(!app.borrow_mut().save_active_slot());
+        assert!(!app.borrow_mut().load_active_slot());
+        app.borrow_mut().select_next_slot();
+        app.borrow_mut().select_previous_slot();
+        assert!(!app.borrow_mut().load_slot(99));
+        app.borrow_mut().save_slot(99);
+        app.borrow_mut().delete_slot(99);
+        app.borrow_mut().select_slot(99);
+        app.borrow_mut().create_slot();
+        app.borrow_mut().reset_session();
         host.core.unload();
-        assert!(!host.core.tick_loaded());
+        assert!(!app.borrow().content_loaded());
     }
 
     #[test]
     fn history_key_starts_changed_and_survives_failed_save() {
         let support = TestHost::new();
-        let host = support.host;
-        assert!(host.core.history_changed());
+        let _host = support.host;
+        assert!(support.app.borrow().history_changed());
     }
 
     #[test]
@@ -451,7 +456,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         let _ = host.core.persist_fullscreen_default(true);
-        assert!(!host.core.tick_loaded());
+        assert!(!host.core.content_loaded());
     }
 
     #[test]
@@ -476,10 +481,10 @@ mod tests {
 
     #[test]
     fn dead_dialog_thread_unwedges_the_queue() {
-        use wakui_core::pause::PauseOwner;
+        use crate::testkit::owners;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.set_pause_owner(PauseOwner::Settings, true);
+        host.core.set_pause_owner(owners::SETTINGS, true);
         // Simulate a dialog thread that died before acking: the
         // sender is dropped without sending (Disconnected).
         let (tx, rx) = std::sync::mpsc::channel::<()>();
@@ -491,21 +496,21 @@ mod tests {
             .modal
             .unwrap();
         assert!(host.core.attach_dialog_receiver(presentation.token, rx));
-        assert!(host.core.owns_pause(PauseOwner::Modal));
+        assert!(host.core.owns_pause(owners::MODAL));
         host.poll_notifications();
         // Reaped as a failed ack: flight gone, queue unblocked.
         assert!(!host.core.dialog_pending());
         assert_eq!(host.core.dialog_queue_len(), 0);
-        assert!(!host.core.owns_pause(PauseOwner::Modal));
-        assert!(host.core.owns_pause(PauseOwner::Settings));
+        assert!(!host.core.owns_pause(owners::MODAL));
+        assert!(host.core.owns_pause(owners::SETTINGS));
     }
 
     #[test]
     fn disconnected_dialog_chains_through_native_presenter_before_modal_release() {
-        use wakui_core::pause::PauseOwner;
+        use crate::testkit::owners;
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.set_pause_owner(PauseOwner::Focus, true);
+        host.core.set_pause_owner(owners::FOCUS, true);
         host.core.report_host_error("dead first dialog".into());
         let first = host
             .core
@@ -522,15 +527,15 @@ mod tests {
         assert!(support.dialogs.errors()[0].contains("chained native dialog"));
         assert!(host.core.dialog_pending());
         assert!(host.core.dialog_flight_pending());
-        assert!(host.core.owns_pause(PauseOwner::Modal));
-        assert!(host.core.owns_pause(PauseOwner::Focus));
+        assert!(host.core.owns_pause(owners::MODAL));
+        assert!(host.core.owns_pause(owners::FOCUS));
         assert_eq!(host.core.dialog_queue_len(), 0);
 
         host.poll_notifications();
         assert!(!host.core.dialog_pending());
         assert!(!host.core.dialog_flight_pending());
-        assert!(!host.core.owns_pause(PauseOwner::Modal));
-        assert!(host.core.owns_pause(PauseOwner::Focus));
+        assert!(!host.core.owns_pause(owners::MODAL));
+        assert!(host.core.owns_pause(owners::FOCUS));
         assert_eq!(support.dialogs.errors().len(), 1);
     }
 
@@ -544,34 +549,29 @@ mod tests {
         host.poll_notifications();
         assert!(support.dialogs.errors().is_empty());
         assert_eq!(host.core.dialog_queue_len(), 0);
-        assert!(host.core.history_changed());
+        assert!(support.app.borrow().history_changed());
     }
 
     #[test]
-    fn keyboard_shortcuts_route_without_keys() {
+    fn keyboard_f4_routes_without_menu_sync() {
         use crate::testkit::TestAux;
-        use wakui_core::session::ShortcutGesture;
         let support = TestHost::new();
         let mut host = support.host;
-        host.apply_keyboard_shortcut(ShortcutGesture::OpenDebugger);
+        host.apply_keyboard_f4();
         assert!(host.core.take_open_request(TestAux::Debug));
         assert!(support.menu.updates().is_empty());
-        host.apply_keyboard_shortcut(ShortcutGesture::TogglePause);
-        host.apply_keyboard_shortcut(ShortcutGesture::ToggleFullscreen);
-        // dirty gate: the pause sync pushes once (headless toggle
-        // without a window adds no second change).
-        assert_eq!(support.menu.updates().len(), 1);
     }
 
     #[test]
     fn session_verbs_stay_total_without_core() {
         let support = TestHost::new();
         let mut host = support.host;
-        host.core.resume_session();
-        host.core.pause_session();
-        host.core.clear_keys();
+        let app = support.app.clone();
+        host.core.resume_content();
+        app.borrow_mut().pause_session();
+        host.core.clear_input();
         host.sync_fullscreen_from_settings();
         let _ = host.core.persist_fullscreen_default(false);
-        assert!(!host.core.tick_loaded());
+        assert!(!host.core.content_loaded());
     }
 }
