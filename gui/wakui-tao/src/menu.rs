@@ -1,5 +1,5 @@
 use tao::window::Window as TaoWindow;
-use wakui_core::menu::{MenuCapabilities, Menubar};
+use wakui_core::chrome::menu::{MenuCapabilities, Menubar};
 
 pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
     about: false,
@@ -53,14 +53,14 @@ pub(crate) mod imp {
     use tao::platform::unix::WindowExtUnix;
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
-    use wakui_core::event::EventSink;
+    use wakui_core::input::event::EventSink;
     use wakui_core::{
-        commands::{Command, CommandRef, CommandVisitor},
-        menu::{
+        chrome::menu::{
             MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
             NativeApplicationRole, Submenu as HostMenu,
         },
-        menu_presenter::MenuPresenter,
+        chrome::menu_presenter::MenuPresenter,
+        input::commands::{Command, CommandRef, CommandVisitor},
     };
 
     use super::TaoWindow;
@@ -344,8 +344,8 @@ pub(crate) mod imp {
     mod tests {
         use super::try_append;
         use crate::testkit::{FakeCommands, TestMenu, TestSession, menu_id};
-        use wakui_core::commands::CommandRef;
-        use wakui_core::event::EventCommand as HostEvent;
+        use wakui_core::input::commands::CommandRef;
+        use wakui_core::input::event::EventCommand as HostEvent;
 
         #[test]
         fn opaque_refs_route_without_domain_knowledge() {
@@ -387,8 +387,8 @@ pub(crate) mod imp {
 
             use gtk::prelude::*;
             use muda::{MenuItem, MenuItemKind};
-            use wakui_core::event::{EventCommand as HostEvent, EventSink};
-            use wakui_core::menu::{MenuEntry, MenuId, Menubar, Submenu};
+            use wakui_core::chrome::menu::{MenuEntry, MenuId, Menubar, Submenu};
+            use wakui_core::input::event::{EventCommand as HostEvent, EventSink};
 
             use super::AppMenu;
 
@@ -483,7 +483,7 @@ pub(crate) mod imp {
                 };
                 let leaf = |command: Option<TestMenu>, label: &str| {
                     let activation = command.map(reference);
-                    MenuEntry::Item(wakui_core::menu::MenuItem {
+                    MenuEntry::Item(wakui_core::chrome::menu::MenuItem {
                         command: activation,
                         label: label.to_string(),
                         enabled: item_enabled(activation),
@@ -492,7 +492,7 @@ pub(crate) mod imp {
                 let item_submenu =
                     |id: MenuId, label: &str, make_command: fn(u64) -> S| -> MenuEntry {
                         let children: Vec<MenuEntry> = if items.is_empty() {
-                            vec![MenuEntry::Item(wakui_core::menu::MenuItem {
+                            vec![MenuEntry::Item(wakui_core::chrome::menu::MenuItem {
                                 command: None,
                                 label: "No items".to_string(),
                                 enabled: false,
@@ -502,7 +502,7 @@ pub(crate) mod imp {
                                 .iter()
                                 .map(|item| {
                                     let activation = reference(C::Session(make_command(*item)));
-                                    MenuEntry::Item(wakui_core::menu::MenuItem {
+                                    MenuEntry::Item(wakui_core::chrome::menu::MenuItem {
                                         command: Some(activation),
                                         label: item_label(*item, active),
                                         enabled: item_enabled(Some(activation)),
@@ -899,7 +899,7 @@ pub(crate) mod imp {
 
             // Root structure comes from Host, even when exercising a standard
             // application menu on this test platform rather than macOS.
-            use wakui_core::menu::{
+            use wakui_core::chrome::menu::{
                 NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
             };
             let mut root = canned_bar(&commands, loaded, paused, guard_open, &items, active_item);
@@ -966,8 +966,8 @@ pub(crate) mod imp {
 pub(crate) mod imp {
     use super::TaoWindow;
     use std::sync::Arc;
-    use wakui_core::event::EventSink;
-    use wakui_core::menu::Menubar;
+    use wakui_core::chrome::menu::Menubar;
+    use wakui_core::input::event::EventSink;
 
     pub(crate) struct AppMenu;
 

@@ -12,7 +12,7 @@ mod window;
 pub use crate::menu::MenuSig;
 pub use auxiliary::WidgetWindowClose;
 use debug::DebugRuntime;
-pub use wakui::menu::FileDialogTitles;
+pub use wakui::chrome::menu::FileDialogTitles;
 pub use window::MainState;
 
 use std::{path::Path, time::Instant};
@@ -29,20 +29,20 @@ use nerust_gui_shell::{
     },
 };
 use nerust_gui_viewmodel::debugger::tile_hover_text;
-use wakui::retry::RenderRetry;
+use wakui::flow::retry::RenderRetry;
 
 use crate::focus::FocusTracker;
-use wakui::focus::FocusEvent;
-use wakui::menu::{MenuCapabilities, Menubar};
-use wakui::session::{SessionEvent, SessionOutcome};
-use wakui::window::Window;
+use wakui::chrome::menu::{MenuCapabilities, Menubar};
+use wakui::chrome::window::Window;
+use wakui::input::focus::FocusEvent;
+use wakui::input::session::{SessionEvent, SessionOutcome};
 
 use crate::{
     debugger::BridgeLock,
     frame::{FrameCache, FrameCtx},
     osd::OsdNotifications,
 };
-use wakui::dialog::{ModalAdvance, ModalToken};
+use wakui::chrome::dialog::{ModalAdvance, ModalToken};
 
 /// One session and one source of truth for its application-level policies.
 /// Native adapters should use policy-aware host methods for commands and pause
@@ -58,7 +58,7 @@ pub struct ApplicationHost {
     debug_sessions: std::collections::HashMap<u64, frontend::DebugSession>,
     debug_next: u64,
     widget_sessions:
-        std::collections::HashMap<wakui::aux::AuxId, crate::widget_session::WidgetSession>,
+        std::collections::HashMap<wakui::chrome::aux::AuxId, crate::widget_session::WidgetSession>,
     loader: Option<Box<dyn nerust_gui_shell::load::RomLoader>>,
     osd: osd::OsdRuntime,
     chrome: chrome::ChromeSync,
@@ -70,8 +70,9 @@ pub struct ApplicationHost {
     close: MainState,
     flushed: bool,
     shell: nerust_gui_runtime::shell::NativeShellState,
-    history_key: wakui::cache::Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
-    menu_command_ids: wakui::control::IdRegistry<crate::commands::MenuCommandId>,
+    history_key:
+        wakui::support::cache::Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    menu_command_ids: wakui::scene::control::IdRegistry<crate::commands::MenuCommandId>,
     menu_commands: crate::commands::CommandTable,
 }
 
@@ -131,7 +132,7 @@ impl ApplicationHost {
     pub fn dispatch(
         &mut self,
         event: SessionEvent,
-    ) -> Result<SessionOutcome, wakui::session::SessionError> {
+    ) -> Result<SessionOutcome, wakui::input::session::SessionError> {
         crate::session::dispatch(
             &mut self.session,
             &mut self.pause_policy,
@@ -144,7 +145,7 @@ impl ApplicationHost {
     pub fn dispatch_session_command(
         &mut self,
         command: nerust_gui_shell::session::commands::SessionCommand,
-    ) -> Result<SessionOutcome, wakui::session::SessionError> {
+    ) -> Result<SessionOutcome, wakui::input::session::SessionError> {
         crate::session::dispatch_command(&mut self.session, &mut self.pause_policy, command)
     }
 
@@ -269,12 +270,12 @@ impl ApplicationHost {
         self.owns_pause(pause_owners::SETTINGS)
     }
 
-    /// View-side driver entry for the [`wakui::event::EventHandler`] impl:
+    /// View-side driver entry for the [`wakui::input::event::EventHandler`] impl:
     /// opaque inputs in, effects and settings transitions out.
     pub(crate) fn dispatch_driver_event(
         &mut self,
         event: SessionEvent,
-    ) -> Result<crate::session::DriverOutcome, wakui::session::SessionError> {
+    ) -> Result<crate::session::DriverOutcome, wakui::input::session::SessionError> {
         crate::session::dispatch_driver(
             &mut self.session,
             &mut self.pause_policy,
@@ -292,10 +293,12 @@ impl ApplicationHost {
     pub fn apply_settings(
         &mut self,
         settings: SettingsSnapshot,
-    ) -> Result<nerust_gui_shell::session::access::SettingsResult, wakui::session::SessionError>
-    {
+    ) -> Result<
+        nerust_gui_shell::session::access::SettingsResult,
+        wakui::input::session::SessionError,
+    > {
         crate::session::apply_settings(&mut self.session, &self.pause_policy, settings)
-            .map_err(|error| wakui::session::SessionError(error.to_string()))
+            .map_err(|error| wakui::input::session::SessionError(error.to_string()))
     }
     pub fn release_focus_hold(&mut self) {
         self.set_pause_owner(pause_owners::FOCUS, false);
@@ -329,7 +332,7 @@ impl ApplicationHost {
             }
         }
     }
-    pub fn drive_aux_focus(&mut self, id: wakui::aux::AuxId, focused: bool) -> bool {
+    pub fn drive_aux_focus(&mut self, id: wakui::chrome::aux::AuxId, focused: bool) -> bool {
         let resume = self
             .widget_sessions
             .get(&id)
@@ -572,7 +575,7 @@ impl ApplicationHost {
         debug_open: bool,
         ppu_open: bool,
         bridge: &crate::debugger::DebugBridge,
-    ) -> wakui::loop_driver::WakeNeed {
+    ) -> wakui::flow::loop_driver::WakeNeed {
         self.pump_live_debug(debug_open, ppu_open, bridge);
         let pending = self.poll_debug(bridge);
         self.debug_wake(debug_open, ppu_open, pending)
@@ -585,7 +588,7 @@ impl ApplicationHost {
         debug_open: bool,
         ppu_open: bool,
         drain_pending: bool,
-    ) -> wakui::loop_driver::WakeNeed {
+    ) -> wakui::flow::loop_driver::WakeNeed {
         self.debug
             .wake(&self.session, debug_open, ppu_open, drain_pending)
     }
@@ -713,7 +716,7 @@ impl ApplicationHost {
     pub fn window_chrome_sync(
         &mut self,
         native_fullscreen: bool,
-    ) -> wakui::window::WindowChromeSync {
+    ) -> wakui::chrome::window::WindowChromeSync {
         use nerust_settings_core::model::local::ScalingMode;
         let request = self.fullscreen_request(native_fullscreen);
         let ends_windowed = !request.unwrap_or(native_fullscreen);
@@ -727,7 +730,7 @@ impl ApplicationHost {
             } else {
                 None
             };
-        wakui::window::WindowChromeSync {
+        wakui::chrome::window::WindowChromeSync {
             restore_size,
             set_fullscreen: request,
         }

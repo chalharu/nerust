@@ -3,17 +3,17 @@
 //! one turn. Run with `cargo run -p wakui --example backend_smoke`.
 
 use wakui_core::{
-    backend::BackendRegistry,
-    binding::PickerSink,
-    conformance::{ConformanceBackend, conformance_screen, run_conformance},
-    control::ControlVisitor,
-    mapper::map_updates,
+    app::backend::BackendRegistry,
+    app::binding::PickerSink,
+    flow::mapper::map_updates,
+    scene::control::ControlVisitor,
+    support::conformance::{ConformanceBackend, conformance_screen, run_conformance},
 };
 
 struct Printer;
 
 impl ControlVisitor for Printer {
-    fn control(&mut self, control: &wakui_core::control::Control) {
+    fn control(&mut self, control: &wakui_core::scene::control::Control) {
         println!("control: {}", control.label);
     }
 }
@@ -21,8 +21,8 @@ impl ControlVisitor for Printer {
 impl PickerSink<String> for Printer {
     fn submit(
         &mut self,
-        _target: wakui_core::control::ControlId,
-        _request: wakui_core::control::Id,
+        _target: wakui_core::scene::control::ControlId,
+        _request: wakui_core::scene::control::Id,
         _payload: Option<String>,
     ) {
     }
@@ -34,7 +34,7 @@ fn main() {
     let mut printer = Printer;
     screen.visit(&mut printer);
     let first = match &screen.pages[0].body.children[0] {
-        wakui_core::control::Node::Control(control) => control.clone(),
+        wakui_core::scene::control::Node::Control(control) => control.clone(),
         _ => panic!("conformance screen keeps its toggle"),
     };
     let updates = map_updates(None, &first);

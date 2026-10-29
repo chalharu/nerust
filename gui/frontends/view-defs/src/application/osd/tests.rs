@@ -6,7 +6,7 @@ use nerust_render_traits::{ReservedStrip, renderer::OsdLayer};
 use super::*;
 use crate::application::tests::Fixture;
 use crate::osd::OsdLayerUpdate;
-use wakui::dialog::{ModalPresentation, ModalPresenter};
+use wakui::chrome::dialog::{ModalPresentation, ModalPresenter};
 
 fn size() -> SurfaceSize {
     SurfaceSize::new(320, 240)

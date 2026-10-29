@@ -1,10 +1,10 @@
 //! Native auxiliary creation and settings effects. Policy lives view-side;
 //! native code routes handles, screens, and mailboxes through the app trait.
 use super::HostState;
-use wakui_core::aux::{AuxId, OpenRequest};
+use wakui_core::chrome::aux::{AuxId, OpenRequest};
 
-use wakui_core::control::ControlEffect;
-use wakui_core::window::WindowEffects;
+use wakui_core::chrome::window::WindowEffects;
+use wakui_core::scene::control::ControlEffect;
 
 use crate::ports::{AuxOpenParams, WindowOpener};
 
@@ -180,7 +180,7 @@ mod tests {
     fn pending_history_open_skips_creation_and_content_cache_updates() {
         use crate::test_opener::FakeOpener;
         use crate::testkit::TestAux;
-        use wakui_core::aux::OpenRequest;
+        use wakui_core::chrome::aux::OpenRequest;
         let support = TestHost::new();
         let mut host = support.host;
         let OpenRequest::Create(id) = host.aux.request_open(TestAux::Beta, TestAux::Beta.title())

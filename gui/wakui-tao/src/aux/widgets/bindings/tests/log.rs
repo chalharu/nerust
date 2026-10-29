@@ -6,11 +6,11 @@ use crate::handler::WidgetBinding;
 use crate::runtime::host::{HostState, TestHost};
 use crate::testkit::TestAux;
 use crate::window::WindowProgram;
-use wakui_core::aux::AuxId;
-use wakui_core::control::{
+use wakui_core::chrome::aux::AuxId;
+use wakui_core::scene::control::{
     Container, Control, ControlInput, ControlVisitor, RowPolicy, TablePolicy, policy,
 };
-use wakui_core::leaf::{ChoiceLeaf, ListLeaf, NoteLeaf};
+use wakui_core::scene::leaf::{ChoiceLeaf, ListLeaf, NoteLeaf};
 
 fn fixture() -> (HostState<TestAux>, AuxId) {
     let mut host = TestHost::new().host;
@@ -176,7 +176,7 @@ fn sync_consumes_refresh_flag_not_close_flag() {
 
 #[test]
 fn owned_note_text_renders_verbatim_without_recounting() {
-    use wakui_core::control::Node;
+    use wakui_core::scene::control::Node;
     let (host, id) = fixture();
     let message = "Paused \u{d7}3".to_string();
     // The native interpreter receives only the owned cell text: it must

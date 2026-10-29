@@ -1,5 +1,5 @@
 //! Composition-root launch bundle. The composition root builds the session,
-//! factory, and loader into an opaque [`Application`](wakui::app::Application);
+//! factory, and loader into an opaque [`Application`](wakui::app::boundary::Application);
 //! native frontends receive only this struct and never name shell, runtime,
 //! or render types.
 
@@ -36,14 +36,14 @@ pub fn backend_capabilities(
 /// `settings_root` overrides the platform settings directory (`None` keeps
 /// the default); test harnesses pass a temp dir. `arguments` travel inside
 /// the bundle for the backends' platform file-open convention; their type
-/// is the composition root's own (see [`LaunchArguments`](wakui::app::LaunchArguments)),
+/// is the composition root's own (see [`LaunchArguments`](wakui::app::boundary::LaunchArguments)),
 /// never interpreted here.
-pub fn boot<A: wakui::app::LaunchArguments>(
+pub fn boot<A: wakui::app::boundary::LaunchArguments>(
     ctx: FrontendContext,
     capabilities: HostBackendCapabilities,
     settings_root: Option<PathBuf>,
     arguments: A,
-) -> Result<wakui::app::Application<crate::focus::AuxKind, A>, String> {
+) -> Result<wakui::app::boundary::Application<crate::focus::AuxKind, A>, String> {
     let FrontendContext {
         gpu_factory,
         registry,
@@ -68,7 +68,7 @@ pub fn boot<A: wakui::app::LaunchArguments>(
     // signatures never name the pipeline type.
     host.set_gpu_factory(gpu_factory);
     host.set_rom_loader(rom_loader);
-    Ok(wakui::app::Application::builder(Box::new(host))
+    Ok(wakui::app::boundary::Application::builder(Box::new(host))
         .arguments(arguments)
         .build())
 }

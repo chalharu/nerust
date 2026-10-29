@@ -38,7 +38,7 @@ use nerust_system_traits::factory::{
 };
 use wakui::Key;
 
-use wakui::sync::lock_recovered;
+use wakui::support::sync::lock_recovered;
 
 pub(crate) mod screen;
 pub use screen::*;
@@ -129,7 +129,7 @@ impl SettingsMailbox {
     }
 }
 
-impl wakui::binding::BindingTarget for SettingsController {
+impl wakui::app::binding::BindingTarget for SettingsController {
     type DomainEvent = SettingsEvent;
     type Effect = SettingsEffect;
 
@@ -138,7 +138,7 @@ impl wakui::binding::BindingTarget for SettingsController {
     }
 }
 
-impl wakui::binding::Invalidatable for SettingsMailbox {
+impl wakui::app::binding::Invalidatable for SettingsMailbox {
     fn invalidate(&self) {
         self.view_invalidated.store(true, Ordering::Release);
     }

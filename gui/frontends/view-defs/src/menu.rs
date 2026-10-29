@@ -2,17 +2,17 @@
 //! Schema (ids, models, visitors) lives in the framework
 //! (`wakui::menu`).
 
-use wakui::control::IdRegistry;
-use wakui::menu::{
+use wakui::chrome::menu::{
     FileDialogTitles, MenuCapabilities, MenuEntry, MenuItem, Menubar, NativeApplicationEntry,
     NativeApplicationMenu, NativeApplicationRole, Submenu,
 };
+use wakui::scene::control::IdRegistry;
 
 /// View-side menu skeleton: what each opaque [`MenuId`] means. The framework
 /// only tracks the ids for native reuse; the File/Emulation/States shape,
 /// slot submenus, and Help live here.
 pub mod menu_id {
-    use wakui::menu::MenuId;
+    use wakui::chrome::menu::MenuId;
 
     pub const FILE: MenuId = MenuId::from_raw(0);
     pub const EMULATION: MenuId = MenuId::from_raw(1);

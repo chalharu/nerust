@@ -12,7 +12,7 @@ use nerust_gui_shell::{
     session::{SessionHandle, commands::SessionCommand},
 };
 use std::{task::Poll, time::Instant};
-use wakui::loop_driver::WakeNeed;
+use wakui::flow::loop_driver::WakeNeed;
 
 pub struct DebugRuntime {
     schedule: AuxSchedule<AuxKind>,

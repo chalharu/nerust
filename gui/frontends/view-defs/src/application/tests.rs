@@ -131,7 +131,7 @@ fn session_verbs_stay_total_headless() {
 
 #[test]
 fn readonly_aux_arrival_cancels_pending_without_resuming_for_main_arrival() {
-    use wakui::focus::FocusEvent;
+    use wakui::input::focus::FocusEvent;
     let mut fixture = Fixture::new();
     fixture.load();
     // Read-only arrival cancels the armed departure: nothing suspends.
@@ -312,7 +312,7 @@ fn render_retry_and_notification_pause_are_owned_by_application() {
 #[test]
 fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
     let mut fixture = Fixture::new();
-    let caps = wakui::menu::MenuCapabilities {
+    let caps = wakui::chrome::menu::MenuCapabilities {
         about: false,
         dialog_ellipsis: false,
         application_menu: false,
@@ -327,7 +327,7 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
         fixture.core.main_window().menu.as_ref().unwrap()
     ));
     assert!(fixture.core.menubar_update(&ctx, caps).is_none());
-    let app_caps = wakui::menu::MenuCapabilities {
+    let app_caps = wakui::chrome::menu::MenuCapabilities {
         application_menu: true,
         ..caps
     };
@@ -349,7 +349,7 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
     let ctx = fixture.core.frame_ctx();
     let replaced = fixture.core.menubar_update(&ctx, app_caps).unwrap();
     assert_eq!(replaced.menubar, unguarded.menubar);
-    let presenter = wakui::menu_presenter::MenuPresenter::default();
+    let presenter = wakui::chrome::menu_presenter::MenuPresenter::default();
     let plan = presenter.submit(unguarded.menubar).unwrap();
     assert!(presenter.complete(plan).is_none());
     assert!(presenter.submit(replaced.menubar).is_none());
@@ -359,7 +359,7 @@ fn menubar_gate_is_independent_and_observes_capabilities_and_owned_settings() {
 #[test]
 fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
     let mut fixture = Fixture::new();
-    let caps = wakui::menu::MenuCapabilities {
+    let caps = wakui::chrome::menu::MenuCapabilities {
         about: false,
         dialog_ellipsis: true,
         application_menu: false,
@@ -386,12 +386,12 @@ fn menubar_delivers_signature_only_changes_without_frontend_fallbacks() {
 #[test]
 fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
     use crate::commands::MenuCommand;
-    use wakui::aux::{AuxWindows, OpenRequest};
-    use wakui::window::WindowVisitor;
+    use wakui::chrome::aux::{AuxWindows, OpenRequest};
+    use wakui::chrome::window::WindowVisitor;
     use wakui::{
-        event::{CommandEffect, EventCommand, EventHandler},
-        menu::MenuEntry,
-        window::{WidgetContents, Window},
+        chrome::menu::MenuEntry,
+        chrome::window::{WidgetContents, Window},
+        input::event::{CommandEffect, EventCommand, EventHandler},
     };
 
     let mut fixture = Fixture::new();
@@ -448,7 +448,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         fn visit_menu(&mut self, _: &Menubar) {
             self.0 = true;
         }
-        fn visit_main(&mut self, _: &wakui::window::MainContents) {
+        fn visit_main(&mut self, _: &wakui::chrome::window::MainContents) {
             assert!(self.0, "menu is visited before contents");
         }
     }
@@ -461,14 +461,14 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
 fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() {
     use crate::commands::{MenuCommand as M, NativeRole};
     use nerust_gui_shell::session::commands::SessionCommand as S;
-    use wakui::event::{CommandEffect as E, EventCommand as C, EventHandler};
+    use wakui::input::event::{CommandEffect as E, EventCommand as C, EventHandler};
     let mut fixture = Fixture::new();
     let ctx = fixture.core.frame_ctx();
     fixture
         .core
         .menubar_update(
             &ctx,
-            wakui::menu::MenuCapabilities {
+            wakui::chrome::menu::MenuCapabilities {
                 about: true,
                 dialog_ellipsis: false,
                 application_menu: false,
@@ -527,8 +527,8 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
 fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
     use crate::commands::{MenuCommand as M, NativeRole};
     use std::{cell::RefCell, rc::Rc};
-    use wakui::event::EventSink;
-    use wakui::event::{CommandEffect as E, EventCommand as C, EventHandler};
+    use wakui::input::event::EventSink;
+    use wakui::input::event::{CommandEffect as E, EventCommand as C, EventHandler};
     struct Sink(Rc<RefCell<Vec<C>>>);
     impl EventSink for Sink {
         fn send(&self, event: C) -> bool {
@@ -546,7 +546,7 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
             .core
             .menubar_update(
                 &ctx,
-                wakui::menu::MenuCapabilities {
+                wakui::chrome::menu::MenuCapabilities {
                     about: true,
                     dialog_ellipsis: false,
                     application_menu: false,
@@ -621,14 +621,14 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
 fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
     use crate::commands::MenuCommand as M;
     use nerust_gui_shell::session::commands::SessionCommand as S;
-    use wakui::event::{EventCommand as C, EventHandler};
+    use wakui::input::event::{EventCommand as C, EventHandler};
     let mut fixture = Fixture::new();
     let ctx = fixture.core.frame_ctx();
     fixture
         .core
         .menubar_update(
             &ctx,
-            wakui::menu::MenuCapabilities {
+            wakui::chrome::menu::MenuCapabilities {
                 about: true,
                 dialog_ellipsis: false,
                 application_menu: false,

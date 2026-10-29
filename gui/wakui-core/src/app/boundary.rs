@@ -8,22 +8,22 @@
 use std::{path::Path, time::Instant};
 
 use crate::{
-    control::{ControlEffect, ControlEvent, ControlScreen},
-    viewport::ViewportRegion,
+    chrome::viewport::ViewportRegion,
+    scene::control::{ControlEffect, ControlEvent, ControlScreen},
 };
 
 use crate::{
-    aux::AuxRegistryPort,
-    dialog::{DialogTurn, ModalAdvance, ModalToken},
-    focus::FocusEvent,
-    mailbox::WindowMailbox,
-    menu::{MenuCapabilities, Menubar},
-    viewport::{ViewportImage, ViewportPresent},
-    window::{Window, WindowChromeSync, WindowEffects},
+    chrome::aux::AuxRegistryPort,
+    chrome::dialog::{DialogTurn, ModalAdvance, ModalToken},
+    chrome::mailbox::WindowMailbox,
+    chrome::menu::{MenuCapabilities, Menubar},
+    chrome::viewport::{ViewportImage, ViewportPresent},
+    chrome::window::{Window, WindowChromeSync, WindowEffects},
+    input::focus::FocusEvent,
 };
 use crate::{
-    event::EventHandler,
-    session::{SessionError, SessionEvent, SessionOutcome},
+    input::event::EventHandler,
+    input::session::{SessionError, SessionEvent, SessionOutcome},
 };
 
 /// Opaque close outcome: the native handle leaves as type-erased storage
@@ -194,7 +194,7 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError>;
 
     // -- chrome, menus, titles (generic file dialogs) ---------------------
-    fn dialog_titles(&self) -> crate::menu::FileDialogTitles;
+    fn dialog_titles(&self) -> crate::chrome::menu::FileDialogTitles;
     fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)>;
     fn menubar_update(&mut self, capabilities: MenuCapabilities) -> Option<Menubar>;
     fn main_window(&self) -> &Window;
@@ -221,14 +221,14 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn note_main_arrival(&mut self) -> bool;
     fn note_main_departure(&mut self);
     /// View-side resolves `id` to its kind and applies its focus policy.
-    fn drive_aux_focus(&mut self, id: crate::aux::AuxId, focused: bool) -> bool;
+    fn drive_aux_focus(&mut self, id: crate::chrome::aux::AuxId, focused: bool) -> bool;
 
     // -- aux widget windows (id-keyed; sessions owned view-side) ---------
     fn reserve_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<K>,
         kind: K,
-    ) -> Result<Option<crate::aux::OpenRequest>, String>;
+    ) -> Result<Option<crate::chrome::aux::OpenRequest>, String>;
     /// Collect and consume deferred aux open requests (e.g. a viewer
     /// requested from a widget gesture). Flavors open each kind through
     /// the normal `reserve_widget`/`prepare_widget` path.
@@ -236,30 +236,33 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn cancel_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<K>,
-        id: crate::aux::AuxId,
+        id: crate::chrome::aux::AuxId,
     ) -> bool;
     fn prepare_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<K>,
-        id: crate::aux::AuxId,
+        id: crate::chrome::aux::AuxId,
     ) -> Result<bool, String>;
-    fn widget_screen(&self, id: crate::aux::AuxId) -> Option<ControlScreen>;
-    fn widget_window(&self, id: crate::aux::AuxId) -> Option<Window>;
-    fn widget_mailbox(&self, id: crate::aux::AuxId) -> Option<WindowMailbox>;
-    fn widget_dispatch(&mut self, id: crate::aux::AuxId, event: ControlEvent)
-    -> Vec<ControlEffect>;
+    fn widget_screen(&self, id: crate::chrome::aux::AuxId) -> Option<ControlScreen>;
+    fn widget_window(&self, id: crate::chrome::aux::AuxId) -> Option<Window>;
+    fn widget_mailbox(&self, id: crate::chrome::aux::AuxId) -> Option<WindowMailbox>;
+    fn widget_dispatch(
+        &mut self,
+        id: crate::chrome::aux::AuxId,
+        event: ControlEvent,
+    ) -> Vec<ControlEffect>;
     fn widget_submit_picker(
         &mut self,
-        id: crate::aux::AuxId,
-        target: crate::control::ControlId,
-        request: crate::control::Id,
+        id: crate::chrome::aux::AuxId,
+        target: crate::scene::control::ControlId,
+        request: crate::scene::control::Id,
         payload: Option<std::path::PathBuf>,
     );
-    fn widget_refresh(&mut self, id: crate::aux::AuxId);
+    fn widget_refresh(&mut self, id: crate::chrome::aux::AuxId);
     fn close_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<K>,
-        id: crate::aux::AuxId,
+        id: crate::chrome::aux::AuxId,
         close: bool,
     ) -> Option<WidgetCloseOutcome>;
     fn report_host_error(&mut self, detail: String);
@@ -276,11 +279,11 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     // never names the domain: it only polls the widget
     // the view-side marks as needing background work.
     /// Widget id needing background polling, if any.
-    fn polled_widget(&self) -> Option<crate::aux::AuxId>;
+    fn polled_widget(&self) -> Option<crate::chrome::aux::AuxId>;
     /// Poll background work for `id`, refresh its cached screen when due.
-    fn poll_widget(&mut self, id: crate::aux::AuxId) -> crate::loop_driver::WakeNeed;
+    fn poll_widget(&mut self, id: crate::chrome::aux::AuxId) -> crate::flow::loop_driver::WakeNeed;
     /// Live-tick follow for `id` (images-only refresh while running).
-    fn tick_widget(&mut self, id: crate::aux::AuxId);
+    fn tick_widget(&mut self, id: crate::chrome::aux::AuxId);
     /// Drop background flights (ordered host teardown).
     fn close_background_flights(&mut self);
     /// Generic aux open latch + window position memory, keyed by view-side kind.

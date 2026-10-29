@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use crate::window::Window;
+use crate::chrome::window::Window;
 
 /// Registry-issued identity. Never reused within the issuing registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -32,7 +32,7 @@ pub enum OpenRequest {
 struct Entry<K, N, H> {
     kind: K,
     window: Window,
-    mailbox: Option<crate::mailbox::WindowMailbox>,
+    mailbox: Option<crate::chrome::mailbox::WindowMailbox>,
     native: Option<N>,
     handle: Option<H>,
 }
@@ -155,11 +155,11 @@ impl<K: Copy + Eq + Hash, N: Copy + Eq + Hash, H> AuxWindows<K, N, H> {
     }
 
     /// Opaque shared lifecycle signals, available during native creation too.
-    pub fn mailbox(&self, id: AuxId) -> Option<crate::mailbox::WindowMailbox> {
+    pub fn mailbox(&self, id: AuxId) -> Option<crate::chrome::mailbox::WindowMailbox> {
         self.entries.get(&id)?.mailbox.clone()
     }
 
-    pub fn set_mailbox(&mut self, id: AuxId, mailbox: crate::mailbox::WindowMailbox) {
+    pub fn set_mailbox(&mut self, id: AuxId, mailbox: crate::chrome::mailbox::WindowMailbox) {
         self.entries
             .get_mut(&id)
             .expect("current reservation")
@@ -240,8 +240,8 @@ pub trait AuxRegistryPort<K: Copy + Eq + Hash> {
     fn kind_of_id(&self, id: AuxId) -> Option<K>;
     fn window(&self, id: AuxId) -> Option<&Window>;
     fn window_mut(&mut self, id: AuxId) -> Option<&mut Window>;
-    fn mailbox(&self, id: AuxId) -> Option<crate::mailbox::WindowMailbox>;
-    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::mailbox::WindowMailbox);
+    fn mailbox(&self, id: AuxId) -> Option<crate::chrome::mailbox::WindowMailbox>;
+    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::chrome::mailbox::WindowMailbox);
     fn contains(&self, kind: K) -> bool;
     fn has_native(&self, kind: K) -> bool;
     fn remove_native(&mut self, id: AuxId) -> Option<Box<dyn std::any::Any>>;
@@ -265,10 +265,10 @@ impl<K: Copy + Eq + Hash + 'static, N: Copy + Eq + Hash + 'static, H: 'static> A
     fn window_mut(&mut self, id: AuxId) -> Option<&mut Window> {
         AuxWindows::window_mut(self, id)
     }
-    fn mailbox(&self, id: AuxId) -> Option<crate::mailbox::WindowMailbox> {
+    fn mailbox(&self, id: AuxId) -> Option<crate::chrome::mailbox::WindowMailbox> {
         AuxWindows::mailbox(self, id)
     }
-    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::mailbox::WindowMailbox) {
+    fn set_mailbox(&mut self, id: AuxId, mailbox: crate::chrome::mailbox::WindowMailbox) {
         AuxWindows::set_mailbox(self, id, mailbox);
     }
     fn contains(&self, kind: K) -> bool {

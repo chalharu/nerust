@@ -2,8 +2,8 @@
 
 pub use crate::handler::WidgetBinding;
 use iced_winit::program::Program;
-use wakui_core::control::ControlScreen;
-use wakui_core::window::{Window, WindowVisitor};
+use wakui_core::chrome::window::{Window, WindowVisitor};
+use wakui_core::scene::control::ControlScreen;
 
 pub struct WindowProgram<P> {
     pub window: Window,

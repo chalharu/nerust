@@ -3,7 +3,7 @@
 //! Clone a window under the owner's borrow, release it, then visit the snapshot:
 //! native callbacks may synchronously reenter the host or auxiliary registry.
 
-use crate::{aux::AuxId, menu::Menubar};
+use crate::{chrome::aux::AuxId, chrome::menu::Menubar};
 
 /// Semantic destination. Generation-sensitive callbacks must still use `AuxId`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,7 +39,7 @@ pub struct Widget {
 #[derive(Debug, Clone)]
 pub enum WidgetContents {
     Main(MainContents),
-    Controls(Box<crate::control::ControlScreen>),
+    Controls(Box<crate::scene::control::ControlScreen>),
     /// Reservation exists, but no generic control screen has been supplied yet.
     PendingControls,
 }
@@ -51,7 +51,7 @@ pub struct MainContents;
 impl Window {
     /// Fully generic auxiliary window: the view definition owns the kind and
     /// title, the framework only tracks the generation-sensitive `AuxId`.
-    pub fn controls(id: AuxId, screen: crate::control::ControlScreen) -> Self {
+    pub fn controls(id: AuxId, screen: crate::scene::control::ControlScreen) -> Self {
         Self {
             id: WindowId::Auxiliary(id),
             title: screen.title.clone(),
@@ -119,7 +119,7 @@ pub trait WindowVisitor {
     fn begin_widget(&mut self, _widget: &Widget) {}
     fn end_widget(&mut self, _widget: &Widget) {}
     fn visit_main(&mut self, _contents: &MainContents) {}
-    fn visit_controls(&mut self, _screen: &crate::control::ControlScreen) {}
+    fn visit_controls(&mut self, _screen: &crate::scene::control::ControlScreen) {}
     fn visit_pending_controls(&mut self) {}
 }
 

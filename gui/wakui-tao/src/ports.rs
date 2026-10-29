@@ -9,11 +9,11 @@ use tao::{
 };
 
 use rfd::FileDialog;
-use wakui_core::control::ControlScreen;
+use wakui_core::scene::control::ControlScreen;
 use wakui_core::{
-    aux::AuxId,
-    mailbox::WindowMailbox,
-    window::{Window, WindowVisitor},
+    chrome::aux::AuxId,
+    chrome::mailbox::WindowMailbox,
+    chrome::window::{Window, WindowVisitor},
 };
 
 use crate::aux::registry::AuxController;
@@ -117,13 +117,17 @@ impl ModalActor {
 
 /// Blocking modal body: runs only on the actor worker thread.
 fn show_blocking(title: &str, detail: &str) {
-    crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
+    crate::show_message_dialog(&wakui_core::chrome::dialog::MessageDialog::error(
+        title, detail,
+    ));
 }
 
 /// Surface file load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
 pub(crate) fn show_file_load_error(title: String, detail: &str) {
-    crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
+    crate::show_message_dialog(&wakui_core::chrome::dialog::MessageDialog::error(
+        title, detail,
+    ));
 }
 
 /// Aux-window open parameters. Every aux window is a generic controls

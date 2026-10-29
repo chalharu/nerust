@@ -49,7 +49,9 @@ impl TestHost {
         let menu = crate::test_menu::MenuRecorderHandle::default();
         let dialogs = crate::test_dialogs::FakeDialogs::with_pick(pick);
         let host = HostState::new(
-            wakui_core::app::Application::new(Box::new(SharedApp::new(std::rc::Rc::clone(&app)))),
+            wakui_core::app::boundary::Application::new(Box::new(SharedApp::new(
+                std::rc::Rc::clone(&app),
+            ))),
             menu.clone().into_box(),
             std::sync::Arc::new(dialogs.clone()),
         );
@@ -80,7 +82,7 @@ impl TestHost {
     pub(crate) fn menu_ref(
         &self,
         command: crate::testkit::TestMenu,
-    ) -> wakui_core::commands::CommandRef {
+    ) -> wakui_core::input::commands::CommandRef {
         self.app.borrow().commands.reference(command)
     }
 }
@@ -90,7 +92,7 @@ pub(crate) struct HostState<K: Copy + Eq + std::hash::Hash + 'static> {
     pub(super) windows: WindowCluster,
     /// The single policy owner, injected by the composition root.
     /// Native code drives it through the trait only.
-    pub(crate) core: Box<dyn wakui_core::app::FrontendApp<K>>,
+    pub(crate) core: Box<dyn wakui_core::app::boundary::FrontendApp<K>>,
     app_menu: Box<dyn MenuSink>,
     dialogs: std::sync::Arc<dyn DialogPorts>,
     /// Aux-window route table: every secondary window lives here.
@@ -106,7 +108,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     pub(crate) fn new<A>(
-        app: wakui_core::app::Application<K, A>,
+        app: wakui_core::app::boundary::Application<K, A>,
         app_menu: Box<dyn MenuSink>,
         dialogs: std::sync::Arc<dyn DialogPorts>,
     ) -> Self {
@@ -134,14 +136,14 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     /// Id of the aux window behind this native id, if registered.
-    pub(super) fn aux_id_of(&self, id: WindowId) -> Option<wakui_core::aux::AuxId> {
+    pub(super) fn aux_id_of(&self, id: WindowId) -> Option<wakui_core::chrome::aux::AuxId> {
         self.aux.id_of(crate::aux::native::native_id_of(id))
     }
 
     /// Pump one domain event through the matching aux entry.
     pub(super) fn aux_on_event(
         &mut self,
-        id: wakui_core::aux::AuxId,
+        id: wakui_core::chrome::aux::AuxId,
         event: crate::native_input::AuxNativeEvent,
     ) -> Option<crate::aux::registry::AuxOutcome> {
         self.aux.on_event(id, event)
@@ -150,7 +152,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// Render the aux window behind this id, if open.
     pub(super) fn render_aux(
         &mut self,
-        id: wakui_core::aux::AuxId,
+        id: wakui_core::chrome::aux::AuxId,
     ) -> Option<crate::aux::registry::AuxOutcome> {
         self.aux.render_id(id)
     }
@@ -217,8 +219,9 @@ mod tests {
     #[test]
     fn production_constructor_delegates_to_temp_paths() {
         use crate::test_menu::MenuRecorderHandle;
-        let boot =
-            wakui_core::app::Application::new(Box::new(crate::testkit::SharedApp::for_test()));
+        let boot = wakui_core::app::boundary::Application::new(Box::new(
+            crate::testkit::SharedApp::for_test(),
+        ));
         let host = super::HostState::new(
             boot,
             MenuRecorderHandle::default().into_box(),

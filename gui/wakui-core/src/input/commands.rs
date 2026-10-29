@@ -4,7 +4,7 @@
 //! `impl CommandSpec` outside this file, never as new enum variants here.
 //! `Command` carries a boxed spec plus an `enabled` flag; native adapters
 //! forward opaque [`CommandRef`] activations and resolve meaning view-side
-//! against the latest model, like [`crate::control::ControlEvent`].
+//! against the latest model, like [`crate::scene::control::ControlEvent`].
 //!
 //! Two base specs cover the framework primitives: [`UnitSpec`] (no argument)
 //! and [`IndexedSpec`] (one `u64` argument, e.g. an item index chosen
@@ -13,10 +13,10 @@
 
 use std::any::Any;
 
-use crate::control::Id;
+use crate::scene::control::Id;
 
 /// Process-unique opaque command identity. Minted view-side from a stable
-/// domain key via [`crate::control::IdRegistry`]; never a position or label.
+/// domain key via [`crate::scene::control::IdRegistry`]; never a position or label.
 pub type CommandId = Id;
 
 /// Extensible command shape. Only `clone_box` is mandatory; `equals` degrades
@@ -81,7 +81,7 @@ impl CommandSpec for IndexedSpec {
 
 /// Opaque activation: what native adapters forward. The view side resolves
 /// the id against its latest [`CommandModel`] plus argument shape, exactly
-/// like views resolve [`crate::control::ControlId`] via `BindingTable`.
+/// like views resolve [`crate::scene::control::ControlId`] via `BindingTable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandRef {
     pub id: CommandId,

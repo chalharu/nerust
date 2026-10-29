@@ -2,21 +2,21 @@
 //! framework compliance by driving [`ConformanceBackend`] through
 //! [`run_conformance`]: screen visit order, construction-vs-patch mapper
 //! output, picker correlation, registry selection, and one
-//! [`drive_turn`](crate::loop_driver::drive_turn) with a pending flight.
+//! [`drive_turn`](crate::flow::loop_driver::drive_turn) with a pending flight.
 //! `tao`/`gtk` stay native frontends and are not driven by this kit; it
 //! exists for future `wakui_*` backends and documents the backend contract
 //! in executable form.
 
 use crate::{
-    backend::BackendRegistry,
-    binding::PickerSink,
-    control::{
+    app::backend::BackendRegistry,
+    app::binding::PickerSink,
+    flow::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn, flight_backstop},
+    flow::mapper::map_updates,
+    scene::control::{
         Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlMetadata,
         ControlScreen, ControlVisitor, Id, Node, Page,
     },
-    leaf::{ActionLeaf, ControlLeaf, ToggleLeaf},
-    loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn, flight_backstop},
-    mapper::map_updates,
+    scene::leaf::{ActionLeaf, ControlLeaf, ToggleLeaf},
 };
 
 fn control(label: &str, leaf: impl ControlLeaf) -> Control {
@@ -108,7 +108,7 @@ impl ControlVisitor for ConformanceBackend {
     fn control(&mut self, control: &Control) {
         self.visited.push(control.label.clone());
         // Surface nested controls exactly once, like flavors do.
-        let ctx = crate::leaf::LeafCtx {
+        let ctx = crate::scene::leaf::LeafCtx {
             id: control.id,
             hints: control.metadata.hints,
         };

@@ -2,13 +2,13 @@
 //!
 //! Framework-only: depends on [`wakui`] plus the iced/tao toolkits.
 //! Never on view definitions, sessions, or settings. Native frontends
-//! render [`wakui_core::control::ControlScreen`] snapshots through [`controls`],
+//! render [`wakui_core::scene::control::ControlScreen`] snapshots through [`controls`],
 //! adapt them to host windows through [`binding`], and map native input
 //! through [`keyboard`], [`tao_map`], and [`convert`].
 //!
 //! A third-party app builds UI with `wakui` plus this crate only:
 //! see `examples/backend_smoke.rs`. The entry point is [`run`]; the
-//! composition root injects a boxed [`wakui_core::app::FrontendApp`].
+//! composition root injects a boxed [`wakui_core::app::boundary::FrontendApp`].
 
 pub mod app;
 pub mod backend;
@@ -48,8 +48,8 @@ pub(crate) mod testkit;
 
 pub use backend::{TaoBackend, register};
 
-use wakui_core::app::Application;
-use wakui_core::app::LaunchArguments;
+use wakui_core::app::boundary::Application;
+use wakui_core::app::boundary::LaunchArguments;
 
 /// Exit status for the binary wrapper: the library never terminates the process.
 /// Crash containment and boot failure dialogs live in the composition root.
@@ -68,17 +68,17 @@ pub fn run<K: Copy + Eq + std::hash::Hash + 'static, A: LaunchArguments>(
 /// Standalone blocking message dialog for boot-failure and crash paths.
 /// No event loop is running here (or it just died); `rfd` is an internal
 /// detail of this flavor, never named by the composition root.
-pub fn show_message_dialog(dialog: &wakui_core::dialog::MessageDialog) {
+pub fn show_message_dialog(dialog: &wakui_core::chrome::dialog::MessageDialog) {
     rfd::MessageDialog::new()
         .set_title(&dialog.title)
         .set_description(&dialog.description)
         .set_level(match dialog.level {
-            wakui_core::dialog::MessageLevel::Info => rfd::MessageLevel::Info,
-            wakui_core::dialog::MessageLevel::Warning => rfd::MessageLevel::Warning,
-            wakui_core::dialog::MessageLevel::Error => rfd::MessageLevel::Error,
+            wakui_core::chrome::dialog::MessageLevel::Info => rfd::MessageLevel::Info,
+            wakui_core::chrome::dialog::MessageLevel::Warning => rfd::MessageLevel::Warning,
+            wakui_core::chrome::dialog::MessageLevel::Error => rfd::MessageLevel::Error,
         })
         .set_buttons(match dialog.buttons {
-            wakui_core::dialog::MessageButtons::Ok => rfd::MessageButtons::Ok,
+            wakui_core::chrome::dialog::MessageButtons::Ok => rfd::MessageButtons::Ok,
         })
         .show();
 }
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn builder_defaults_to_no_arguments() {
-        use wakui_core::app::LaunchArguments as _;
+        use wakui_core::app::boundary::LaunchArguments as _;
         let app = Application::new(Box::new(crate::testkit::FakeApp::new()));
         assert_eq!(app.arguments(), &());
         assert!(app.arguments().files().is_empty());

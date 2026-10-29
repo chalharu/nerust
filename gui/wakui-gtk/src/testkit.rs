@@ -1,4 +1,4 @@
-//! Headless fake app: canned [`wakui_core::app::FrontendApp`] for backend tests.
+//! Headless fake app: canned [`wakui_core::app::boundary::FrontendApp`] for backend tests.
 //!
 //! Production code never touches this module. The fake owns canned settings
 //! and history screens (stable English labels mirroring the real catalog),
@@ -13,25 +13,27 @@ use std::{
 };
 
 use wakui_core::{
-    app::{FrontendApp, WidgetCloseOutcome},
-    aux::{AuxId, AuxRegistryPort, OpenRequest},
-    control::{
-        Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
-        ControlInput, ControlMetadata, ControlScreen, Id, Node, Page,
-    },
-    dialog::{DialogTurn, ModalAdvance, ModalPresentation, ModalToken},
-    event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
-    focus::FocusEvent,
-    leaf::{ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf},
-    loop_driver::WakeNeed,
-    mailbox::{MailboxDomain, WindowMailbox},
-    menu::{
+    app::boundary::{FrontendApp, WidgetCloseOutcome},
+    chrome::aux::{AuxId, AuxRegistryPort, OpenRequest},
+    chrome::dialog::{DialogTurn, ModalAdvance, ModalPresentation, ModalToken},
+    chrome::mailbox::{MailboxDomain, WindowMailbox},
+    chrome::menu::{
         CommandModel, FileDialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar,
         Submenu,
     },
-    session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome},
-    viewport::{ViewportImage, ViewportPresent, ViewportRegion},
-    window::{Window, WindowChromeSync, WindowEffects},
+    chrome::viewport::{ViewportImage, ViewportPresent, ViewportRegion},
+    chrome::window::{Window, WindowChromeSync, WindowEffects},
+    flow::loop_driver::WakeNeed,
+    input::event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
+    input::focus::FocusEvent,
+    input::session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome},
+    scene::control::{
+        Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
+        ControlInput, ControlMetadata, ControlScreen, Id, Node, Page,
+    },
+    scene::leaf::{
+        ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
+    },
 };
 
 /// Stable English labels mirroring the real catalog. Native-flow tests look
@@ -99,7 +101,7 @@ pub(crate) mod owners {
 /// Flavor-local menu skeleton. The framework tracks opaque ids only;
 /// this table mirrors a view-side skeleton in tests only.
 pub(crate) mod menu_id {
-    use wakui_core::menu::MenuId;
+    use wakui_core::chrome::menu::MenuId;
 
     pub(crate) const GROUP_A: MenuId = MenuId::from_raw(0);
     pub(crate) const GROUP_B: MenuId = MenuId::from_raw(1);
@@ -145,7 +147,7 @@ pub(crate) enum TestMenu {
     Session(TestSession),
 }
 
-use wakui_core::commands::CommandRef;
+use wakui_core::input::commands::CommandRef;
 
 impl TestSession {
     fn template(self) -> Self {
@@ -208,12 +210,12 @@ impl TestMenu {
     }
 }
 
-impl wakui_core::commands::CommandSpec for TestMenu {
-    fn clone_box(&self) -> Box<dyn wakui_core::commands::CommandSpec> {
+impl wakui_core::input::commands::CommandSpec for TestMenu {
+    fn clone_box(&self) -> Box<dyn wakui_core::input::commands::CommandSpec> {
         Box::new(*self)
     }
 
-    fn equals(&self, other: &dyn wakui_core::commands::CommandSpec) -> bool {
+    fn equals(&self, other: &dyn wakui_core::input::commands::CommandSpec) -> bool {
         other.as_any().downcast_ref::<Self>() == Some(self)
     }
 
@@ -234,7 +236,7 @@ impl wakui_core::commands::CommandSpec for TestMenu {
 /// resolution table: flavors forward ids, meaning resolves here in tests.
 #[derive(Debug)]
 pub(crate) struct FakeCommands {
-    table: Vec<(wakui_core::commands::CommandId, TestMenu)>,
+    table: Vec<(wakui_core::input::commands::CommandId, TestMenu)>,
 }
 
 impl FakeCommands {
@@ -266,7 +268,7 @@ impl FakeCommands {
         Self {
             table: templates
                 .into_iter()
-                .map(|template| (wakui_core::commands::CommandId::fresh(), template))
+                .map(|template| (wakui_core::input::commands::CommandId::fresh(), template))
                 .collect(),
         }
     }
@@ -300,7 +302,7 @@ impl FakeCommands {
             definitions: self
                 .table
                 .iter()
-                .map(|(id, template)| wakui_core::commands::Command {
+                .map(|(id, template)| wakui_core::input::commands::Command {
                     id: *id,
                     enabled: true,
                     spec: Box::new(*template),
@@ -385,7 +387,7 @@ impl MailboxDomain for FakeDomain {
 fn control(
     label: &str,
     display: ControlDisplay,
-    kind: impl wakui_core::leaf::ControlLeaf,
+    kind: impl wakui_core::scene::leaf::ControlLeaf,
 ) -> Control {
     Control {
         id: Id::fresh(),
@@ -1210,7 +1212,7 @@ impl FrontendApp<TestAux> for FakeApp {
     fn title_update(&mut self) -> Option<String> {
         if self.title_dirty {
             self.title_dirty = false;
-                Some(self.title.clone())
+            Some(self.title.clone())
         } else {
             None
         }
@@ -1347,7 +1349,7 @@ impl FrontendApp<TestAux> for FakeApp {
         &mut self,
         id: AuxId,
         event: ControlEvent,
-    ) -> Vec<wakui_core::control::ControlEffect> {
+    ) -> Vec<wakui_core::scene::control::ControlEffect> {
         self.dispatched.push((id, event.clone()));
         let Some(screen) = self.widget_screens.get_mut(&id) else {
             return Vec::new();
@@ -1477,7 +1479,7 @@ impl FrontendApp<TestAux> for FakeApp {
                 .downcast::<TextLeaf>()
                 .is_some_and(|leaf| leaf.browse_label.is_some())
             {
-                return vec![wakui_core::control::ControlEffect::PickDirectory {
+                return vec![wakui_core::scene::control::ControlEffect::PickDirectory {
                     title: control.label.clone(),
                     target,
                     request: Id::fresh(),
@@ -2019,7 +2021,7 @@ impl FrontendApp<TestAux> for SharedApp {
         &mut self,
         id: AuxId,
         event: ControlEvent,
-    ) -> Vec<wakui_core::control::ControlEffect> {
+    ) -> Vec<wakui_core::scene::control::ControlEffect> {
         self.inner.borrow_mut().widget_dispatch(id, event)
     }
     fn widget_submit_picker(

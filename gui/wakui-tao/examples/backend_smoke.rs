@@ -3,16 +3,16 @@
 //! input through the backend, and runs the framework conformance kit.
 //! Run with `cargo run -p wakui_tao --example backend_smoke`.
 
-use wakui_core::backend::BackendRegistry;
-use wakui_core::binding::PickerSink;
-use wakui_core::conformance::{ConformanceBackend, conformance_screen, run_conformance};
-use wakui_core::control::ControlVisitor;
+use wakui_core::app::backend::BackendRegistry;
+use wakui_core::app::binding::PickerSink;
+use wakui_core::scene::control::ControlVisitor;
+use wakui_core::support::conformance::{ConformanceBackend, conformance_screen, run_conformance};
 use wakui_tao::{controls, keyboard, register};
 
 struct Printer;
 
 impl ControlVisitor for Printer {
-    fn control(&mut self, control: &wakui_core::control::Control) {
+    fn control(&mut self, control: &wakui_core::scene::control::Control) {
         println!("control: {}", control.label);
     }
 }
@@ -20,8 +20,8 @@ impl ControlVisitor for Printer {
 impl PickerSink<String> for Printer {
     fn submit(
         &mut self,
-        _target: wakui_core::control::ControlId,
-        _request: wakui_core::control::Id,
+        _target: wakui_core::scene::control::ControlId,
+        _request: wakui_core::scene::control::Id,
         _payload: Option<String>,
     ) {
     }

@@ -1,7 +1,7 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
-use crate::session::{SessionError, SessionEvent, SessionOutcome};
-use crate::{commands::CommandRef, focus::FocusEvent};
+use crate::input::session::{SessionError, SessionEvent, SessionOutcome};
+use crate::{input::commands::CommandRef, input::focus::FocusEvent};
 
 #[derive(Debug, Clone, Copy)]
 pub enum EventCommand {
@@ -44,7 +44,7 @@ impl<K: Copy + Eq + std::hash::Hash> Default for EventOutcome<K> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandEffect<K: Copy + Eq + std::hash::Hash> {
-    /// Open a file (values like ROM wording arrive via [`crate::menu::FileDialogTitles`]).
+    /// Open a file (values like ROM wording arrive via [`crate::chrome::menu::FileDialogTitles`]).
     OpenFile,
     OpenAux(K),
     About,

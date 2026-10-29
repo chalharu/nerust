@@ -1,19 +1,19 @@
 //! PPU viewer definition: chrome, pictures, and generic control projection.
 //!
-//! The viewer renders as a generic [`wakui::control::ControlScreen`] with
+//! The viewer renders as a generic [`wakui::scene::control::ControlScreen`] with
 //! image leaves; native frontends never
 //! name this module. Hover positions arrive as generic
-//! [`wakui::control::ControlInput::Hover`] events and are formatted here.
+//! [`wakui::scene::control::ControlInput::Hover`] events and are formatted here.
 
 use nerust_gui_viewmodel::debugger::{
     DisplayCache, format_panels, scale2x_nearest, tile_hover_text,
 };
 use nerust_settings_core::model::language::AppLanguage;
-use wakui::control::{
+use wakui::scene::control::{
     Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
     ControlInput, ControlMetadata, ControlScreen, IdRegistry, Node, Page,
 };
-use wakui::leaf::{ActionLeaf, ImageLeaf, NoteLeaf};
+use wakui::scene::leaf::{ActionLeaf, ImageLeaf, NoteLeaf};
 
 /// Pre-localized PPU viewer chrome. Frontends render verbatim.
 #[derive(Debug, Clone, Default)]
@@ -66,7 +66,7 @@ pub fn panels_text(display: &DisplayCache) -> String {
     format_panels(&display.panels)
 }
 
-fn layout_id(ids: &mut IdRegistry<String>, key: &str) -> wakui::control::LayoutId {
+fn layout_id(ids: &mut IdRegistry<String>, key: &str) -> wakui::scene::control::LayoutId {
     ids.id(key.to_string())
 }
 

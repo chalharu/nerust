@@ -2,8 +2,8 @@
 
 use nerust_gui_shell::session::access::SessionControl;
 use wakui::{
-    event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
-    session::{SessionError, SessionEvent},
+    input::event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
+    input::session::{SessionError, SessionEvent},
 };
 
 use crate::application::ApplicationHost;

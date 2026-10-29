@@ -9,12 +9,12 @@ use nerust_input_traits::AttachmentId;
 use nerust_settings_core::{editor::CaptureTarget, model::language::AppLanguage};
 use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
 use wakui::Key;
-use wakui::control::{
+use wakui::scene::control::{
     Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlInput,
     ControlMetadata, ControlScreen, GroupPolicy, IdRegistry, LayoutPolicy, Node, Page, RowPolicy,
     Tabs,
 };
-use wakui::leaf::{
+use wakui::scene::leaf::{
     ActionLeaf, BindingLeaf, ChoiceLeaf, ControlLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
 };
 
@@ -173,7 +173,7 @@ impl BindingTable {
         id: &ControlId,
         input: ControlInput,
     ) -> Option<Vec<SettingsEvent>> {
-        use wakui::control::ControlInput as I;
+        use wakui::scene::control::ControlInput as I;
         let control = screen.control(*id)?;
         if !control.metadata.enabled || !control.metadata.visible {
             return None;
@@ -262,15 +262,15 @@ impl SettingsScreen {
     }
 }
 
-impl wakui::binding::ViewDefinition for SettingsScreen {
+impl wakui::app::binding::ViewDefinition for SettingsScreen {
     type ViewId = ControlId;
     type ViewInput = ControlInput;
     type DomainEvent = SettingsEvent;
 
     /// Settings has no raster images; hover never binds here.
-    fn convert(input: wakui::control::ControlInput) -> Option<ControlInput> {
+    fn convert(input: wakui::scene::control::ControlInput) -> Option<ControlInput> {
         match input {
-            wakui::control::ControlInput::Hover { .. } => None,
+            wakui::scene::control::ControlInput::Hover { .. } => None,
             other => Some(other),
         }
     }
@@ -512,7 +512,7 @@ impl<'a> Builder<'a> {
         selected: Option<usize>,
         tabs: Vec<TabSpec>,
     ) -> Node {
-        let built: Vec<wakui::control::Tab> = tabs
+        let built: Vec<wakui::scene::control::Tab> = tabs
             .into_iter()
             .map(
                 |TabSpec {
@@ -555,7 +555,7 @@ impl<'a> Builder<'a> {
                     };
                     self.table
                         .push(token, ControlBinding::Action(event), select_context);
-                    wakui::control::Tab {
+                    wakui::scene::control::Tab {
                         id: self.ids.id(match &empty_content {
                             Some(key) => StableKey::EmptyTab(key.clone()),
                             None => StableKey::Tab(id.clone()),

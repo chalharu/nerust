@@ -10,8 +10,8 @@ use tao::{
     event::{Event, StartCause},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
-use wakui_core::viewport::ViewportPresent;
-use wakui_core::{app::Application, event::EventSink};
+use wakui_core::chrome::viewport::ViewportPresent;
+use wakui_core::{app::boundary::Application, input::event::EventSink};
 
 use self::host::{HostAction, HostState};
 use crate::event::{TaoEventSink, UserEvent};
@@ -207,7 +207,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowRuntime<K> {
         let Some((raw_window, (width, height), xid)) = self.host.surface_target() else {
             return;
         };
-        let region = wakui_core::viewport::ViewportRegion {
+        let region = wakui_core::chrome::viewport::ViewportRegion {
             window: raw_window,
             display: raw_display,
             width,

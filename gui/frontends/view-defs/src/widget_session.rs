@@ -14,14 +14,14 @@ use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine};
 use nerust_settings_core::model::language::AppLanguage;
 
 use wakui::{
-    binding::{BindingTarget, PickerSink, ViewDefinition, drive},
-    control::{ControlEffect, ControlEvent, ControlId, ControlScreen, Id},
-    leaf::TextLeaf,
+    app::binding::{BindingTarget, PickerSink, ViewDefinition, drive},
+    scene::control::{ControlEffect, ControlEvent, ControlId, ControlScreen, Id},
+    scene::leaf::TextLeaf,
 };
 
-use wakui::mailbox::{MailboxDomain, WindowMailbox};
-use wakui::sync::lock_recovered;
-use wakui::window::Window;
+use wakui::chrome::mailbox::{MailboxDomain, WindowMailbox};
+use wakui::chrome::window::Window;
+use wakui::support::sync::lock_recovered;
 
 use crate::{
     focus::AuxKind,
@@ -29,7 +29,7 @@ use crate::{
     settings::{SettingsController, SettingsEffect, SettingsEvent},
 };
 
-use wakui::control::IdRegistry;
+use wakui::scene::control::IdRegistry;
 
 struct SettingsDomain {
     pending: Arc<Mutex<Option<SettingsSnapshot>>>,
@@ -123,7 +123,7 @@ pub(crate) struct HistorySession {
     clear: Arc<AtomicBool>,
 }
 
-impl wakui::binding::BindingTarget for HistorySession {
+impl wakui::app::binding::BindingTarget for HistorySession {
     type DomainEvent = HistoryEvent;
     type Effect = HistoryEffect;
 
@@ -275,7 +275,7 @@ impl WidgetSession {
         screen
     }
 
-    pub fn window(&self, id: wakui::aux::AuxId) -> Window {
+    pub fn window(&self, id: wakui::chrome::aux::AuxId) -> Window {
         Window::controls(id, self.screen())
     }
 

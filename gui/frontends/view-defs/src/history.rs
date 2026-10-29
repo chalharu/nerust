@@ -9,11 +9,11 @@ use nerust_settings_core::{
     i18n::{UiText, history_count, text as ui_text},
     model::language::AppLanguage,
 };
-use wakui::control::{
+use wakui::scene::control::{
     Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlMetadata,
     ControlScreen, IdRegistry, Node, Page,
 };
-use wakui::leaf::{ActionLeaf, ChoiceLeaf, ColumnDef, ItemRow, ListLeaf, NoteLeaf};
+use wakui::scene::leaf::{ActionLeaf, ChoiceLeaf, ColumnDef, ItemRow, ListLeaf, NoteLeaf};
 
 /// Localized chrome, including headers in datetime/level/module/message order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,7 +238,7 @@ fn container(ids: &mut IdRegistry<HistoryKey>, key: HistoryKey, children: Vec<No
     }
 }
 
-fn simple<L: wakui::leaf::ControlLeaf>(
+fn simple<L: wakui::scene::leaf::ControlLeaf>(
     ids: &mut IdRegistry<HistoryKey>,
     key: HistoryKey,
     label: String,
@@ -311,14 +311,14 @@ pub enum HistoryEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryEffect {}
 
-impl wakui::binding::ViewDefinition for HistoryModel {
+impl wakui::app::binding::ViewDefinition for HistoryModel {
     type ViewId = HistoryViewId;
     type ViewInput = HistoryInput;
     type DomainEvent = HistoryEvent;
 
     /// Partial: history controls accept only Select/Activate.
-    fn convert(input: wakui::control::ControlInput) -> Option<HistoryInput> {
-        use wakui::control::ControlInput as I;
+    fn convert(input: wakui::scene::control::ControlInput) -> Option<HistoryInput> {
+        use wakui::scene::control::ControlInput as I;
         Some(match input {
             I::Select(index) => HistoryInput::Select(index),
             I::Activate => HistoryInput::Activate,

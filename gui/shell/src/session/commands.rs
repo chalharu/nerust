@@ -2,7 +2,7 @@ pub use crate::session::error::SlotOpFailure;
 
 /// Session verbs shared by shell execution and view definitions. Owned here
 /// (execution owner), not by the framework: `wakui` transports opaque
-/// [`wakui::commands::CommandRef`] activations and never names these.
+/// [`wakui::input::commands::CommandRef`] activations and never names these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionCommand {
     Pause,

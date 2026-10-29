@@ -1,7 +1,9 @@
 use super::*;
 use wakui::{
-    control::{Container, Control, ControlInput, ControlVisitor, IdRegistry, Page, Tab, Tabs},
-    leaf::{BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf},
+    scene::control::{
+        Container, Control, ControlInput, ControlVisitor, IdRegistry, Page, Tab, Tabs,
+    },
+    scene::leaf::{BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf},
 };
 
 use crate::settings::{SettingsControlId, SettingsSystemId, screen::StableKey};
@@ -11,8 +13,8 @@ use nerust_settings_core::{
     editor::CaptureTarget,
     model::{input::ShortcutAction, shared::StoragePolicy},
 };
-use wakui::window::WidgetContents;
-use wakui::window::WindowVisitor;
+use wakui::chrome::window::WidgetContents;
+use wakui::chrome::window::WindowVisitor;
 
 fn settings(nes: bool) -> WidgetSession {
     let mut snapshot = SettingsSnapshot {
@@ -108,7 +110,7 @@ fn both_domains_use_the_same_real_scene_interpreter_and_input() {
     assert!(history.mailbox().close_requested());
     for session in [session, history] {
         let WidgetContents::Controls(screen) = session
-            .window(wakui::aux::AuxId::from_raw(7))
+            .window(wakui::chrome::aux::AuxId::from_raw(7))
             .contents
             .contents
         else {
@@ -157,7 +159,7 @@ fn history_controls_filter_actual_rows_and_reject_invalid_choice_indices() {
     let rows = |session: &WidgetSession| {
         let mut out = Vec::new();
         for control in inventory(&session.screen()) {
-            if let Some(list) = control.downcast::<wakui::leaf::ListLeaf>() {
+            if let Some(list) = control.downcast::<wakui::scene::leaf::ListLeaf>() {
                 for row in &list.rows {
                     for cell in &row.cells {
                         if let Some(note) = cell.downcast::<NoteLeaf>()
@@ -404,7 +406,7 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
     struct Reenter<'a> {
         session: &'a RefCell<WidgetSession>,
         volume: ControlId,
-        stack: Vec<wakui::control::Id>,
+        stack: Vec<wakui::scene::control::Id>,
         count: usize,
     }
     impl ControlVisitor for Reenter<'_> {
@@ -449,7 +451,9 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
     }
     let session = RefCell::new(settings(true));
     let volume = token(&session.borrow(), SettingsControlId::Volume);
-    let window = session.borrow().window(wakui::aux::AuxId::from_raw(7));
+    let window = session
+        .borrow()
+        .window(wakui::chrome::aux::AuxId::from_raw(7));
     let mut visitor = Reenter {
         session: &session,
         volume,
@@ -475,7 +479,7 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
 #[test]
 fn page_and_tab_activation_marks_selection() {
     let mut session = settings(true);
-    let pages: Vec<(wakui::control::PageId, ControlId)> = session
+    let pages: Vec<(wakui::scene::control::PageId, ControlId)> = session
         .screen()
         .pages
         .iter()
@@ -494,10 +498,10 @@ fn page_and_tab_activation_marks_selection() {
                 .selected
         );
     }
-    let tabs: Vec<(wakui::control::TabId, ControlId)> = {
-        struct Tabs(Vec<(wakui::control::TabId, ControlId)>);
+    let tabs: Vec<(wakui::scene::control::TabId, ControlId)> = {
+        struct Tabs(Vec<(wakui::scene::control::TabId, ControlId)>);
         impl ControlVisitor for Tabs {
-            fn begin_tab(&mut self, tab: &wakui::control::Tab) {
+            fn begin_tab(&mut self, tab: &wakui::scene::control::Tab) {
                 self.0.push((tab.id, tab.select.id));
             }
         }
@@ -508,11 +512,11 @@ fn page_and_tab_activation_marks_selection() {
     for (tab_id, select) in tabs {
         send(&mut session, select, ControlInput::Activate);
         struct Probe {
-            target: wakui::control::TabId,
+            target: wakui::scene::control::TabId,
             selected: bool,
         }
         impl ControlVisitor for Probe {
-            fn begin_tab(&mut self, tab: &wakui::control::Tab) {
+            fn begin_tab(&mut self, tab: &wakui::scene::control::Tab) {
                 if tab.id == self.target {
                     self.selected = tab.selected;
                 }
@@ -535,7 +539,7 @@ fn find_by_label(screen: &ControlScreen, label: &str) -> Control {
 }
 
 fn controls_in(container: &Container) -> Vec<Control> {
-    use wakui::control::Node;
+    use wakui::scene::control::Node;
     container
         .children
         .iter()
@@ -557,7 +561,7 @@ impl ControlVisitor for TabInventory {
 
 #[test]
 fn capture_key_resolves_current_capture_and_clear_reaches_model() {
-    use wakui::control::ControlEvent;
+    use wakui::scene::control::ControlEvent;
     let mut session = settings(false);
     let id = inventory(&session.screen())
         .into_iter()
@@ -589,7 +593,7 @@ fn capture_key_resolves_current_capture_and_clear_reaches_model() {
 
 #[test]
 fn text_validation_footer_submit_and_cancel_follow_model_policy() {
-    use wakui::window::Window;
+    use wakui::chrome::window::Window;
     let mut session = settings(false);
     let policy = find_by_label(&session.screen(), "Save storage policy");
     let choices = &policy.downcast::<ChoiceLeaf>().unwrap().choices;
@@ -608,7 +612,7 @@ fn text_validation_footer_submit_and_cancel_follow_model_policy() {
     assert!(!session.mailbox().has_pending());
     let effects = session.dispatch(ControlEvent::new(directory, ControlInput::Activate));
     assert!(
-        matches!(effects.as_slice(), [wakui::control::ControlEffect::PickDirectory { target, .. }] if *target == directory)
+        matches!(effects.as_slice(), [wakui::scene::control::ControlEffect::PickDirectory { target, .. }] if *target == directory)
     );
     send(&mut session, directory, ControlInput::Text("/tmp".into()));
     assert!(session.screen().control(submit).unwrap().metadata.enabled);
@@ -625,7 +629,7 @@ fn text_validation_footer_submit_and_cancel_follow_model_policy() {
 
 #[test]
 fn topology_change_rejects_removed_binding_and_uses_latest_capture() {
-    use wakui::control::ControlEvent;
+    use wakui::scene::control::ControlEvent;
     let mut session = settings(true);
     let mut tabs = TabInventory::default();
     session.screen().visit(&mut tabs);

@@ -19,7 +19,7 @@ impl NativeWindowId {
     }
 }
 
-pub use wakui_core::aux::AuxId;
+pub use wakui_core::chrome::aux::AuxId;
 
 /// Domain mouse button: only mapped buttons cross the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

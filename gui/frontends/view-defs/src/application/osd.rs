@@ -13,8 +13,8 @@ use crate::{
     frame::FrameCtx,
     osd::{OsdLayerSync, OsdNotifications, OsdTurn, OsdUpdate},
 };
-use wakui::dialog::{ModalAdvance, ModalToken};
-use wakui::loop_driver::WakeNeed;
+use wakui::chrome::dialog::{ModalAdvance, ModalToken};
+use wakui::flow::loop_driver::WakeNeed;
 
 #[derive(Default)]
 pub(super) struct OsdRuntime {

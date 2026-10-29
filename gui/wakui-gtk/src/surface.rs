@@ -5,11 +5,11 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use wakui_core::dialog::ModalPresentation;
-use wakui_core::loop_driver::{
+use wakui_core::chrome::dialog::ModalPresentation;
+use wakui_core::chrome::viewport::ViewportRegion;
+use wakui_core::flow::loop_driver::{
     LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop,
 };
-use wakui_core::viewport::ViewportRegion;
 
 use super::State;
 
@@ -23,7 +23,7 @@ pub(crate) struct SurfaceCore<K: Copy + Eq + std::hash::Hash + 'static> {
     picture: gtk::Picture,
     pub(crate) state: Rc<RefCell<State<K>>>,
     output_generation: Cell<Option<u64>>,
-    retry: RefCell<wakui_core::retry::RenderRetry>,
+    retry: RefCell<wakui_core::flow::retry::RenderRetry>,
     wake: RefCell<WakeAt>,
 }
 

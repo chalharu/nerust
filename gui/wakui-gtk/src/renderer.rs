@@ -3,16 +3,16 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{glib, prelude::*};
 use wakui_core::{
-    control::{
+    flow::mapper::{PropertyUpdate, map_updates},
+    scene::control::{
         Container, Control, ControlDisplay, ControlId, ControlInput, ControlMetadata,
         ControlScreen, ControlVisitor, GroupPolicy, LayoutId, Page, PageId, RowPolicy, Tab, TabId,
         TablePolicy, Tabs, TabsId, policy,
     },
-    leaf::{
+    scene::leaf::{
         ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, LeafUpdate, ListLeaf, NoteLeaf, NumberLeaf,
         TextLeaf, ToggleLeaf,
     },
-    mapper::{PropertyUpdate, map_updates},
 };
 
 use super::WidgetBinding;
@@ -655,12 +655,12 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             .metadata
             .hints
             .spacing
-            .unwrap_or(wakui_core::hints::DEFAULT_SPACING);
+            .unwrap_or(wakui_core::scene::hints::DEFAULT_SPACING);
         let indent = container
             .metadata
             .hints
             .indent
-            .unwrap_or(wakui_core::hints::DEFAULT_INDENT);
+            .unwrap_or(wakui_core::scene::hints::DEFAULT_INDENT);
         let node = self.node(NodeId::Layout(layout.id, kind), || {
             if kind == 3 {
                 return NativeNode {
@@ -871,7 +871,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 body.remove(&current);
             }
             self.frames.push(Frame::Box(body.clone(), Vec::new()));
-            wakui_core::control::walk_control(control, self);
+            wakui_core::scene::control::walk_control(control, self);
             if let Some(Frame::Box(parent, children)) = self.frames.pop() {
                 reconcile_box(&parent, &children);
             }
@@ -905,7 +905,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         native.update(control);
         // Unknown container-like leaves degrade to siblings: surface their
         // children explicitly. Base leaves no-op here.
-        wakui_core::control::walk_control(control, self);
+        wakui_core::scene::control::walk_control(control, self);
         // Footer actions live in the dialog action area (right-aligned
         // with dialog margins), never in the content row. The input
         // event flow is unchanged; only placement differs from content.

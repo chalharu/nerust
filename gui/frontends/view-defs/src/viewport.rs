@@ -16,11 +16,11 @@ use nerust_render_traits::{
     },
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-use wakui::viewport::ViewportRegion;
+use wakui::chrome::viewport::ViewportRegion;
 
 use crate::{application::ApplicationHost, frame::FrameCtx, osd::OsdUpdate};
 
-pub(crate) use wakui::viewport::{ViewportImage, ViewportPresent};
+pub(crate) use wakui::chrome::viewport::{ViewportImage, ViewportPresent};
 
 /// Pipeline ownership plus attach/generation bookkeeping. Profile, frames,
 /// and OSD content arrive from `ApplicationHost`; the driver never touches

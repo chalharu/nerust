@@ -2,7 +2,7 @@
 //! Implemented by view definitions, bound controllers, and native picker
 //! sinks. See the `wakui` separation design for the full picture.
 
-use crate::control::{ControlId, ControlInput, Id};
+use crate::scene::control::{ControlId, ControlInput, Id};
 
 /// Pure view side: input validation and domain-event mapping.
 /// Native code and controller ownership never appear here.

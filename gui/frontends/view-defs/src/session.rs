@@ -3,7 +3,7 @@
 //!
 //! Domain meanings live here, not in `wakui`: shortcuts (debugger, slots,
 //! fullscreen), the settings open/close protocol, and the pause-owner table.
-//! The framework only transports opaque [`wakui::session::SessionEvent`]
+//! The framework only transports opaque [`wakui::input::session::SessionEvent`]
 //! inputs; this module resolves them to typed shell commands.
 
 use crate::pause::{PauseOwner, PausePolicy};
@@ -13,7 +13,7 @@ use nerust_gui_shell::session::{
     commands::SessionCommandOutcome,
 };
 use nerust_settings_core::model::input::ShortcutAction;
-use wakui::session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome};
+use wakui::input::session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome};
 
 use crate::commands::{CommandTable, MenuCommand};
 
@@ -45,7 +45,7 @@ enum ViewShortcut {
 }
 
 /// View-side session effect. Flavors never see these; [`crate::event`]
-/// maps them to native [`wakui::event::CommandEffect`]s.
+/// maps them to native [`wakui::input::event::CommandEffect`]s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverEffect {
     OpenDebugger,
@@ -53,7 +53,7 @@ pub enum DriverEffect {
 }
 
 /// Driver outcome: the framework [`SessionOutcome`] plus view-side routing.
-/// The [`FrontendApp::dispatch`](wakui::app::FrontendApp::dispatch) boundary
+/// The [`FrontendApp::dispatch`](wakui::app::boundary::FrontendApp::dispatch) boundary
 /// exposes only the command half; effects and settings transitions stay here.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DriverOutcome {

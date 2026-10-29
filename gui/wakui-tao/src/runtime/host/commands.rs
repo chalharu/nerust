@@ -4,10 +4,10 @@ use super::HostState;
 use super::{HostAction, element_state_to_pressed};
 use tao::event::KeyEvent;
 
-use wakui_core::focus::FocusEvent;
+use wakui_core::input::focus::FocusEvent;
 use wakui_core::{
-    event::{CommandEffect, EventOutcome},
-    session::SessionEvent,
+    input::event::{CommandEffect, EventOutcome},
+    input::session::SessionEvent,
 };
 
 #[cfg(test)]
@@ -138,7 +138,7 @@ mod tests {
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::testkit::{StubAux, TestMenu as M, TestSession as S};
-    use wakui_core::app::FrontendApp as _;
+    use wakui_core::app::boundary::FrontendApp as _;
 
     #[test]
     fn file_filters_empty_without_cores() {
@@ -197,7 +197,7 @@ mod tests {
 
     fn guard_blocked_host() -> TestHost {
         use crate::testkit::TestAux;
-        use wakui_core::aux::OpenRequest;
+        use wakui_core::chrome::aux::OpenRequest;
         let support = TestHost::new();
         let mut host = support.host;
         let id = match host.reserve_aux_window(TestAux::Alpha) {
@@ -252,8 +252,8 @@ mod tests {
     #[test]
     fn canonical_events_share_external_modal_guard_and_effects() {
         use crate::event::UserEvent;
-        use wakui_core::focus::FocusEvent;
-        use wakui_core::session::SessionEvent;
+        use wakui_core::input::focus::FocusEvent;
+        use wakui_core::input::session::SessionEvent;
         let support = guard_blocked_host();
         let about = support.menu_ref(M::About);
         let select = support.menu_ref(M::Session(S::Select(42)));
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn keyboard_f4_effect_opens_native_aux() {
         use crate::event::UserEvent;
-        use wakui_core::session::SessionEvent;
+        use wakui_core::input::session::SessionEvent;
         let mut host = TestHost::new().host;
         let opener = FakeOpener::failing("no display");
         // The fake binds F4 to aux gamma, like the default view-side
