@@ -8,7 +8,13 @@ use iced::{
     },
     keyboard::{self, key},
 };
-use wakui::control::{Control, ControlEvent, ControlId, ControlKind, ControlVisitor, Tab};
+use wakui::control::{
+    ColumnPolicy, Container, Control, ControlEvent, ControlId, ControlVisitor, RowPolicy, Tab,
+    TablePolicy,
+};
+use wakui::leaf::{
+    ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
+};
 
 use super::super::bindings::tests::{controls, find};
 use super::*;
@@ -100,15 +106,43 @@ fn native_layout(element: &mut El<'static>) -> (iced_tiny_skia::Renderer, Tree, 
 }
 
 // Domain-free scenes: no history/settings presenter or content-specific widths.
-fn table_layout(children: Vec<wakui::control::Node>) -> super::Layout {
+fn table_layout(children: Vec<wakui::control::Node>) -> Container {
+    plain_layout(children, 8, 0, Box::new(ColumnPolicy))
+}
+
+fn table_grid(children: Vec<wakui::control::Node>, spacing: u16, indent: u16) -> Container {
+    plain_layout(children, spacing, indent, Box::new(TablePolicy))
+}
+
+fn plain_layout(
+    children: Vec<wakui::control::Node>,
+    spacing: u16,
+    indent: u16,
+    policy: Box<dyn wakui::control::LayoutPolicy>,
+) -> Container {
     let mut ids = wakui::control::IdRegistry::default();
-    super::Layout {
+    Container {
         id: ids.id(()),
         label: String::new(),
         metadata: ControlMetadata::new("layout"),
-        spacing: 8,
-        indent: 0,
+        spacing,
+        indent,
         header: None,
+        policy,
+        children,
+    }
+}
+
+fn row_layout(children: Vec<wakui::control::Node>, spacing: u16, indent: u16) -> Container {
+    let mut ids = wakui::control::IdRegistry::default();
+    Container {
+        id: ids.id(()),
+        label: String::new(),
+        metadata: ControlMetadata::new("layout"),
+        spacing,
+        indent,
+        header: None,
+        policy: Box::new(RowPolicy),
         children,
     }
 }
@@ -124,21 +158,23 @@ fn table_note(value: &str, heading: bool) -> Control {
         } else {
             ControlDisplay::Note
         },
-        kind: ControlKind::Note { text: value.into() },
+        leaf: Box::new(NoteLeaf { text: value.into() }),
     }
 }
 
 fn table_row(values: &[&str], heading: bool) -> wakui::control::Node {
     use wakui::control::Node;
-    Node::Row(table_layout(
+    Node::Container(Box::new(row_layout(
         values
             .iter()
             .map(|value| Node::Control(table_note(value, heading)))
             .collect(),
-    ))
+        8,
+        0,
+    )))
 }
 
-fn table_screen(body: super::Layout) -> ControlScreen {
+fn table_screen(body: wakui::control::Container) -> ControlScreen {
     let mut ids = wakui::control::IdRegistry::default();
     ControlScreen {
         title: "Generic controls".into(),
@@ -147,7 +183,7 @@ fn table_screen(body: super::Layout) -> ControlScreen {
             label: "Page".into(),
             selected: true,
             select: Control {
-                kind: ControlKind::Action,
+                leaf: Box::new(ActionLeaf),
                 ..table_note("Page", false)
             },
             body,
@@ -179,16 +215,20 @@ fn horizontal_rows<'a>(node: Layout<'a>, columns: usize, rows: &mut Vec<Layout<'
 fn generic_table_shares_real_column_offsets_and_wraps_variable_content() {
     use wakui::control::Node;
     let long = "a long message with variable content ".repeat(80);
-    let mut table = table_layout(vec![
-        table_row(&["Time", "Severity", "Source", "Message"], true),
-        table_row(&["12:34:56.789", "I", "subsystem", "short"], false),
-        table_row(&["1", "Warning", "X", &long], false),
-        table_row(&["ragged", "row"], false),
-    ]);
+    let mut table = table_grid(
+        vec![
+            table_row(&["Time", "Severity", "Source", "Message"], true),
+            table_row(&["12:34:56.789", "I", "subsystem", "short"], false),
+            table_row(&["1", "Warning", "X", &long], false),
+            table_row(&["ragged", "row"], false),
+        ],
+        8,
+        0,
+    );
     table.label = "Table title".into();
     table.header = Some(table_note("Table description", false));
     table.indent = 11;
-    let screen = table_screen(table_layout(vec![Node::Table(table)]));
+    let screen = table_screen(table_layout(vec![Node::Container(Box::new(table))]));
     for width in [960.0, 640.0] {
         let mut element = build_screen(&screen);
         let renderer =
@@ -229,30 +269,43 @@ fn generic_table_preserves_nested_layouts_headers_visibility_and_disabled_input(
     use wakui::control::Node;
     let mut action = table_note("Action", false);
     action.label = "Action".into();
-    action.kind = ControlKind::Action;
-    let mut inner = table_layout(vec![table_row(&["nested", "table", "cells"], false)]);
+    action.leaf = Box::new(ActionLeaf);
+    let mut inner = table_grid(vec![table_row(&["nested", "table", "cells"], false)], 8, 0);
     inner.header = Some(table_note("Nested header", true));
-    let mut hidden = table_layout(vec![table_row(&["hidden"; 4], false)]);
+    let mut hidden = table_grid(vec![table_row(&["hidden"; 4], false)], 8, 0);
     hidden.metadata.visible = false;
-    let mut disabled_row = table_layout(vec![
-        Node::Control(action.clone()),
-        Node::Column(table_layout(vec![Node::Table(inner)])),
-        Node::Control(table_note("third", false)),
-        Node::Control(table_note("fourth", false)),
-    ]);
+    let mut disabled_row = row_layout(
+        vec![
+            Node::Control(action.clone()),
+            Node::Container(Box::new(plain_layout(
+                vec![Node::Container(Box::new(inner))],
+                8,
+                0,
+                Box::new(ColumnPolicy),
+            ))),
+            Node::Control(table_note("third", false)),
+            Node::Control(table_note("fourth", false)),
+        ],
+        13,
+        9,
+    );
     disabled_row.metadata.enabled = false;
     disabled_row.indent = 9;
     disabled_row.spacing = 13;
-    let mut table = table_layout(vec![
-        table_row(&["one", "two", "three", "four"], true),
-        Node::Row(disabled_row),
-        Node::Table(hidden),
-    ]);
+    let mut table = table_grid(
+        vec![
+            table_row(&["one", "two", "three", "four"], true),
+            Node::Container(Box::new(disabled_row)),
+            Node::Container(Box::new(hidden)),
+        ],
+        17,
+        5,
+    );
     table.header = Some(table_note("Visible table header", true));
     table.spacing = 17;
     table.indent = 5;
-    let mut element = build_screen(&table_screen(table_layout(vec![Node::Table(
-        table.clone(),
+    let mut element = build_screen(&table_screen(table_layout(vec![Node::Container(
+        Box::new(table.clone()),
     )])));
     let (renderer, mut tree, node) = native_layout(&mut element);
     let mut rows = vec![];
@@ -277,12 +330,12 @@ fn generic_table_preserves_nested_layouts_headers_visibility_and_disabled_input(
     assert!(feed(&mut element, &renderer, &mut tree, &node, &click(), point).is_empty());
 
     // Positive control proves the pointer really targets the native button.
-    let Node::Row(row) = &mut table.children[1] else {
+    let Node::Container(row) = &mut table.children[1] else {
         unreachable!()
     };
     row.metadata.enabled = true;
-    let mut element = build_screen(&table_screen(table_layout(vec![Node::Table(
-        table.clone(),
+    let mut element = build_screen(&table_screen(table_layout(vec![Node::Container(
+        Box::new(table.clone()),
     )])));
     let (renderer, mut tree, node) = native_layout(&mut element);
     assert_eq!(
@@ -291,7 +344,9 @@ fn generic_table_preserves_nested_layouts_headers_visibility_and_disabled_input(
     );
 
     table.metadata.visible = false;
-    let mut element = build_screen(&table_screen(table_layout(vec![Node::Table(table)])));
+    let mut element = build_screen(&table_screen(table_layout(vec![Node::Container(
+        Box::new(table),
+    )])));
     let (_, _, node) = native_layout(&mut element);
     let mut rows = vec![];
     horizontal_rows(Layout::new(&node), 4, &mut rows);
@@ -427,14 +482,14 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
     // Positive control: these are real slider keyboard events, not just modifier updates.
     let mut control = fix.field("Duration (ms)");
     control.metadata.enabled = true;
-    control.kind = ControlKind::Number {
+    control.leaf = Box::new(NumberLeaf {
         value: 10,
         min: 10,
         max: 30,
         step: 5,
         unit: "ticks".into(),
         formatted: "10 ticks".into(),
-    };
+    });
     let mut element = control_element(&control, true, iced::Font::default());
     let (renderer, mut tree, node) = native_layout(&mut element);
     let point = Layout::new(&node)
@@ -467,16 +522,18 @@ fn disabled_native_controls_ignore_actual_key_presses_and_releases() {
         control.metadata.enabled = false;
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
-        let point = match control.kind {
-            ControlKind::Choice { .. } | ControlKind::Number { .. } | ControlKind::Text { .. } => {
-                Layout::new(&node)
-                    .children()
-                    .nth(1)
-                    .unwrap()
-                    .bounds()
-                    .center()
-            }
-            _ => Layout::new(&node).bounds().center(),
+        let leafy = control.downcast::<ChoiceLeaf>().is_some()
+            || control.downcast::<NumberLeaf>().is_some()
+            || control.downcast::<TextLeaf>().is_some();
+        let point = if leafy {
+            Layout::new(&node)
+                .children()
+                .nth(1)
+                .unwrap()
+                .bounds()
+                .center()
+        } else {
+            Layout::new(&node).bounds().center()
         };
         assert_ignored(&mut element, &renderer, &mut tree, &node, &events, point);
     }
@@ -554,14 +611,14 @@ fn disabling_a_dragging_native_slider_ignores_motion_and_release() {
     for parent_enabled in [true, false] {
         let mut control = fix.field("Duration (ms)");
         control.metadata.enabled = true;
-        control.kind = ControlKind::Number {
+        control.leaf = Box::new(NumberLeaf {
             value: 10,
             min: 10,
             max: 30,
             step: 5,
             unit: "ticks".into(),
             formatted: "10 ticks".into(),
-        };
+        });
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
         let bounds = Layout::new(&node).children().nth(1).unwrap().bounds();
@@ -808,24 +865,34 @@ fn every_control_variant_builds_enabled_and_disabled_without_borrowed_labels() {
         label: "Tiles".to_string(),
         metadata: ControlMetadata::new("Tiles"),
         display: ControlDisplay::Standard,
-        kind: ControlKind::Image {
+        leaf: Box::new(ImageLeaf {
             width: 2,
             height: 2,
             rgba: vec![0xff; 2 * 2 * 4],
-        },
+        }),
     });
     let mut kinds = [false; 8];
     for mut control in controls {
-        kinds[match control.kind {
-            ControlKind::Toggle { .. } => 0,
-            ControlKind::Choice { .. } => 1,
-            ControlKind::Number { .. } => 2,
-            ControlKind::Text { .. } => 3,
-            ControlKind::Binding { .. } => 4,
-            ControlKind::Action => 5,
-            ControlKind::Note { .. } => 6,
-            ControlKind::Image { .. } => 7,
-        }] = true;
+        let index = if control.downcast::<ToggleLeaf>().is_some() {
+            0
+        } else if control.downcast::<ChoiceLeaf>().is_some() {
+            1
+        } else if control.downcast::<NumberLeaf>().is_some() {
+            2
+        } else if control.downcast::<TextLeaf>().is_some() {
+            3
+        } else if control.downcast::<BindingLeaf>().is_some() {
+            4
+        } else if control.downcast::<ActionLeaf>().is_some() {
+            5
+        } else if control.downcast::<NoteLeaf>().is_some() {
+            6
+        } else if control.downcast::<ImageLeaf>().is_some() {
+            7
+        } else {
+            panic!("uncovered leaf");
+        };
+        kinds[index] = true;
         for enabled in [true, false] {
             control.metadata.enabled = enabled;
             let mut element = control_element(&control, true, iced::Font::default());
@@ -841,7 +908,7 @@ fn stale_disabled_hidden_wrong_kind_and_missing_callbacks_are_ignored() {
     let mut fix = fixture();
     let info = controls(&fix.screen())
         .into_iter()
-        .find(|c| matches!(c.kind, ControlKind::Toggle { .. }))
+        .find(|c| c.downcast::<ToggleLeaf>().is_some())
         .unwrap();
     fix.send(info.id, ControlInput::Bool(true));
     let callback = Message::new(fix.field("Duration (ms)").id, ControlInput::Number(2000));
@@ -875,14 +942,14 @@ fn numeric_native_slider_honors_model_range_step_and_emits_ids() {
     let fix = fixture();
     let mut control = fix.field("Duration (ms)");
     control.metadata.enabled = true;
-    control.kind = ControlKind::Number {
+    control.leaf = Box::new(NumberLeaf {
         value: 10,
         min: 10,
         max: 30,
         step: 5,
         unit: "ticks".into(),
         formatted: "10 ticks".into(),
-    };
+    });
     let mut element = control_element(&control, true, iced::Font::default());
     let (renderer, mut tree, node) = native_layout(&mut element);
     let slider = Layout::new(&node).children().nth(1).unwrap().bounds();
@@ -917,16 +984,18 @@ fn disabled_native_controls_never_publish_or_open_overlays() {
         control.metadata.enabled = false;
         let mut element = control_element(&control, true, iced::Font::default());
         let (renderer, mut tree, node) = native_layout(&mut element);
-        let point = match control.kind {
-            ControlKind::Choice { .. } | ControlKind::Number { .. } | ControlKind::Text { .. } => {
-                Layout::new(&node)
-                    .children()
-                    .nth(1)
-                    .unwrap()
-                    .bounds()
-                    .center()
-            }
-            _ => Layout::new(&node).bounds().center(),
+        let leafy = control.downcast::<ChoiceLeaf>().is_some()
+            || control.downcast::<NumberLeaf>().is_some()
+            || control.downcast::<TextLeaf>().is_some();
+        let point = if leafy {
+            Layout::new(&node)
+                .children()
+                .nth(1)
+                .unwrap()
+                .bounds()
+                .center()
+        } else {
+            Layout::new(&node).bounds().center()
         };
         let mut events = click().to_vec();
         events.push(Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
@@ -969,10 +1038,10 @@ fn disabled_native_controls_never_publish_or_open_overlays() {
 fn native_choice_uses_indices_even_when_labels_are_identical() {
     let fix = fixture();
     let mut control = fix.field("Scaling");
-    control.kind = ControlKind::Choice {
+    control.leaf = Box::new(ChoiceLeaf {
         choices: vec!["same".into(), "same".into()],
         selected: Some(0),
-    };
+    });
     let mut element = control_element(&control, true, iced::Font::default());
     drop(control);
     let (renderer, mut tree, node) = native_layout(&mut element);
@@ -1012,7 +1081,7 @@ fn native_browse_change_clear_buttons_emit_only_current_control_ids() {
     let screen = fix.screen();
     let binding = controls(&screen)
         .iter()
-        .find(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .find(|c| c.downcast::<BindingLeaf>().is_some())
         .unwrap()
         .id;
     for (id, child, expected) in [

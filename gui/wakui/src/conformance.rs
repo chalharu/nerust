@@ -11,49 +11,51 @@ use crate::{
     backend::BackendRegistry,
     binding::PickerSink,
     control::{
-        Capture, Control, ControlDisplay, ControlId, ControlKind, ControlMetadata, ControlScreen,
-        ControlVisitor, Id, Layout, LayoutKind, Node, Page,
+        Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlMetadata,
+        ControlScreen, ControlVisitor, Id, Node, Page,
     },
+    leaf::{ActionLeaf, ControlLeaf, ToggleLeaf},
     loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn, flight_backstop},
     mapper::map_updates,
 };
 
-fn control(label: &str, kind: ControlKind) -> Control {
+fn control(label: &str, leaf: impl ControlLeaf) -> Control {
     Control {
         id: Id::fresh(),
         label: label.to_string(),
         metadata: ControlMetadata::new(label),
         display: ControlDisplay::Standard,
-        kind,
+        leaf: Box::new(leaf),
     }
 }
 
-fn layout(children: Vec<Node>) -> Layout {
-    Layout {
+fn layout(children: Vec<Node>) -> Container {
+    Container {
         id: Id::fresh(),
         label: String::new(),
         metadata: ControlMetadata::new("conformance"),
-        spacing: 0,
+        spacing: 12,
         indent: 0,
         header: None,
+        policy: Box::new(ColumnPolicy),
         children,
     }
 }
 
 /// Minimal two-control screen: one toggle in a page, one action in the footer.
 pub fn conformance_screen() -> ControlScreen {
-    let toggle = control("Mute", ControlKind::Toggle { value: false });
+    let toggle = control("Mute", ToggleLeaf { value: false });
     let page = Page {
         id: Id::fresh(),
         label: "Audio".to_string(),
         selected: true,
-        select: control("Audio", ControlKind::Action),
+        select: control("Audio", ActionLeaf),
         body: layout(vec![Node::Control(toggle)]),
     };
     ControlScreen {
         title: "Conformance".to_string(),
         pages: vec![page],
-        footer: layout(vec![Node::Control(control("OK", ControlKind::Action))]),
+        footer: layout(vec![Node::Control(control("OK", ActionLeaf))]),
         message: None,
         capture: Capture {
             target: None,
@@ -104,6 +106,12 @@ impl Default for ConformanceBackend {
 impl ControlVisitor for ConformanceBackend {
     fn control(&mut self, control: &Control) {
         self.visited.push(control.label.clone());
+        // Surface nested controls exactly once, like flavors do.
+        let ctx = crate::leaf::LeafCtx {
+            id: control.id,
+            hints: control.metadata.hints,
+        };
+        control.leaf.walk(&ctx, self);
     }
 }
 
@@ -162,7 +170,7 @@ pub fn run_conformance(backend: &mut ConformanceBackend) {
     let no_op = map_updates(Some(&toggle), &toggle);
     assert!(no_op.is_empty(), "unchanged controls patch to nothing");
     let mut flipped = toggle.clone();
-    flipped.kind = ControlKind::Toggle { value: true };
+    flipped.leaf = Box::new(ToggleLeaf { value: true });
     let patched = map_updates(Some(&toggle), &flipped);
     assert!(!patched.is_empty(), "a value flip patches");
     backend.patched += patched.len();
@@ -191,7 +199,7 @@ pub fn run_conformance(backend: &mut ConformanceBackend) {
         deadline >= flight_backstop(before),
         "deadline honors the 30ms flight backstop"
     );
-    let _ = LayoutKind::Column;
+    let _ = ColumnPolicy;
 }
 
 #[cfg(test)]

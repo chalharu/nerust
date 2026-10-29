@@ -9,8 +9,12 @@ use iced::{
 };
 use wakui::{
     control::{
-        Control, ControlDisplay, ControlInput, ControlKind, ControlMetadata, ControlScreen,
-        ControlVisitor, Layout, LayoutKind, Page, Tab, Tabs,
+        Container, Control, ControlDisplay, ControlInput, ControlMetadata, ControlScreen,
+        ControlVisitor, GroupPolicy, Page, RowPolicy, Tab, TablePolicy, Tabs, policy,
+    },
+    leaf::{
+        ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, ListLeaf, NoteLeaf, NumberLeaf, TextLeaf,
+        ToggleLeaf,
     },
     mapper::{PropertyUpdate, map_updates},
 };
@@ -98,8 +102,9 @@ impl IcedControlVisitor {
         }
     }
 
-    fn finish_layout(&mut self, layout: &Layout, kind: LayoutKind) {
-        let mut frame = self.stack.pop().expect("layout frame");
+    fn finish_container(&mut self, container: &Container) {
+        let mut frame = self.stack.pop().expect("container frame");
+        let layout = container;
         if !frame.visible {
             return;
         }
@@ -111,7 +116,7 @@ impl IcedControlVisitor {
             return;
         }
         let spacing = f32::from(layout.spacing);
-        let element = if matches!(kind, LayoutKind::Row) {
+        let element = if policy::<RowPolicy>(container).is_some() {
             if !layout.label.is_empty() {
                 frame
                     .children
@@ -130,7 +135,7 @@ impl IcedControlVisitor {
                 .align_y(Alignment::Center)
                 .padding(iced::padding::left(f32::from(layout.indent)))
                 .into()
-        } else if matches!(kind, LayoutKind::Group) {
+        } else if policy::<GroupPolicy>(container).is_some() {
             // Title stands alone; the group header action (e.g. the
             // notification Enable toggle) renders as the first indented
             // row below it, matching GTK's header-below-title order.
@@ -167,7 +172,7 @@ impl IcedControlVisitor {
     }
 }
 
-fn table_element(children: Vec<TableChild>, layout: &Layout, font: iced::Font) -> El<'static> {
+fn table_element(children: Vec<TableChild>, layout: &Container, font: iced::Font) -> El<'static> {
     // All rows use the same tracks, including short/ragged rows. Gutter and
     // indentation are shared minima, never content-dependent shrink widths.
     let (columns, spacing, indent) = children.iter().fold((0, 0, 0), |sizes, child| {
@@ -270,14 +275,14 @@ impl ControlVisitor for IcedControlVisitor {
         }
     }
 
-    fn begin_layout(&mut self, layout: &Layout, kind: LayoutKind) {
-        self.push_metadata(&layout.metadata);
-        if matches!(kind, LayoutKind::Table) {
+    fn begin_container(&mut self, container: &Container) {
+        self.push_metadata(&container.metadata);
+        if policy::<TablePolicy>(container).is_some() {
             self.stack.last_mut().expect("table frame").table = Some(Vec::new());
         }
     }
-    fn end_layout(&mut self, layout: &Layout, kind: LayoutKind) {
-        self.finish_layout(layout, kind);
+    fn end_container(&mut self, container: &Container) {
+        self.finish_container(container);
     }
 
     fn begin_tabs(&mut self, tabs: &Tabs) {
@@ -315,6 +320,13 @@ impl ControlVisitor for IcedControlVisitor {
         let frame = self.stack.last().expect("control frame");
         if frame.visible && control.metadata.visible {
             self.append(control_element(control, frame.enabled, self.font));
+            // Container-like leaves degrade flat in immediate mode.
+            // Base leaves no-op here.
+            let ctx = wakui::leaf::LeafCtx {
+                id: control.id,
+                hints: control.metadata.hints,
+            };
+            control.leaf.walk(&ctx, self);
         }
     }
 }
@@ -328,7 +340,7 @@ fn chrome(control: &Control) -> (bool, String, ControlDisplay) {
     for update in map_updates(None, control) {
         match update {
             PropertyUpdate::SetEnabled(v) => enabled = v,
-            PropertyUpdate::SetLabel(t) => label = t.to_owned(),
+            PropertyUpdate::SetLabel(t) => label = t,
             PropertyUpdate::SetDisplay(d) => display = d,
             _ => {}
         }
@@ -392,158 +404,147 @@ pub fn control_element(control: &Control, parent_enabled: bool, font: iced::Font
     let id = control.id;
     let input = move |value| Message::new(id, value);
     let label_text = || text(label.clone()).font(font).width(Length::Fixed(220.0));
-    let element: El<'static> = match &control.kind {
-        ControlKind::Toggle { value } => checkbox(*value)
+    let element: El<'static> = if let Some(leaf) = control.downcast::<ToggleLeaf>() {
+        checkbox(leaf.value)
             .label(label.to_owned())
             .on_toggle_maybe(enabled.then_some(move |v| input(ControlInput::Bool(v))))
-            .into(),
-        ControlKind::Choice { choices, selected } => {
-            let options: Vec<_> = choices
-                .iter()
-                .enumerate()
-                .map(|(index, label)| Choice {
-                    index,
-                    label: label.clone(),
-                })
-                .collect();
-            let selected = selected.and_then(|i| options.get(i)).cloned();
-            let pick = pick_list(options, selected, move |v: Choice| {
-                input(ControlInput::Select(v.index))
-            })
-            .width(Length::Fill)
-            .font(font)
-            .style(move |theme, status| {
-                let mut style = pick_list::default(
-                    theme,
-                    if enabled {
-                        status
-                    } else {
-                        pick_list::Status::Active
-                    },
-                );
-                if !enabled {
-                    style.text_color = theme.extended_palette().secondary.base.color;
-                    style.handle_color = style.text_color;
-                }
-                style
-            });
-            row![label_text(), crate::disabled::gate(pick.into(), enabled)]
-                .spacing(12)
-                .into()
-        }
-        ControlKind::Number {
-            value,
-            min,
-            max,
-            step,
-            formatted,
-            ..
-        } => {
-            let native = slider(*min..=*max, *value, move |v| input(ControlInput::Number(v)))
-                .step(*step)
-                .style(move |theme, status| {
-                    let mut style = slider::default(
-                        theme,
-                        if enabled {
-                            status
-                        } else {
-                            slider::Status::Active
-                        },
-                    );
-                    if !enabled {
-                        let color = theme.extended_palette().secondary.base.color;
-                        style.rail.backgrounds.0 = color.into();
-                        style.handle.background = color.into();
-                    }
-                    style
-                });
-            row![
-                label_text(),
-                crate::disabled::gate(native.into(), enabled),
-                text(formatted.clone()).font(font)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
             .into()
-        }
-        ControlKind::Text {
-            value,
-            placeholder,
-            browse_label,
-        } => {
-            let edit_id = control.id;
-            let edit = text_input(placeholder, value)
-                .font(font)
-                .width(Length::Fill)
-                .on_input_maybe(
-                    enabled.then_some(move |v| Message::new(edit_id, ControlInput::Text(v))),
-                );
-            let mut items = row![label_text(), crate::disabled::gate(edit.into(), enabled)]
-                .spacing(12)
-                .align_y(Alignment::Center);
-            if let Some(browse) = browse_label {
-                items = items.push(
-                    button(text(browse.clone()).font(font))
-                        .on_press_maybe(enabled.then(|| input(ControlInput::Activate))),
-                );
+    } else if let Some(leaf) = control.downcast::<ChoiceLeaf>() {
+        let options: Vec<_> = leaf
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(index, label)| Choice {
+                index,
+                label: label.clone(),
+            })
+            .collect();
+        let selected = leaf.selected.and_then(|i| options.get(i)).cloned();
+        let pick = pick_list(options, selected, move |v: Choice| {
+            input(ControlInput::Select(v.index))
+        })
+        .width(Length::Fill)
+        .font(font)
+        .style(move |theme, status| {
+            let mut style = pick_list::default(
+                theme,
+                if enabled {
+                    status
+                } else {
+                    pick_list::Status::Active
+                },
+            );
+            if !enabled {
+                style.text_color = theme.extended_palette().secondary.base.color;
+                style.handle_color = style.text_color;
             }
-            items.into()
-        }
-        ControlKind::Binding {
-            text: value,
-            change_label,
-            clear_label,
-            ..
-        } => row![
+            style
+        });
+        row![label_text(), crate::disabled::gate(pick.into(), enabled)]
+            .spacing(12)
+            .into()
+    } else if let Some(leaf) = control.downcast::<NumberLeaf>() {
+        let native = slider(leaf.min..=leaf.max, leaf.value, move |v| {
+            input(ControlInput::Number(v))
+        })
+        .step(leaf.step)
+        .style(move |theme, status| {
+            let mut style = slider::default(
+                theme,
+                if enabled {
+                    status
+                } else {
+                    slider::Status::Active
+                },
+            );
+            if !enabled {
+                let color = theme.extended_palette().secondary.base.color;
+                style.rail.backgrounds.0 = color.into();
+                style.handle.background = color.into();
+            }
+            style
+        });
+        row![
             label_text(),
-            text(value.clone()).font(font).width(Length::Fill),
-            button(text(change_label.clone()).font(font))
+            crate::disabled::gate(native.into(), enabled),
+            text(leaf.formatted.clone()).font(font)
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .into()
+    } else if let Some(leaf) = control.downcast::<TextLeaf>() {
+        let edit_id = control.id;
+        let edit = text_input(&leaf.placeholder, &leaf.value)
+            .font(font)
+            .width(Length::Fill)
+            .on_input_maybe(
+                enabled.then_some(move |v| Message::new(edit_id, ControlInput::Text(v))),
+            );
+        let mut items = row![label_text(), crate::disabled::gate(edit.into(), enabled)]
+            .spacing(12)
+            .align_y(Alignment::Center);
+        if let Some(browse) = &leaf.browse_label {
+            items = items.push(
+                button(text(browse.clone()).font(font))
+                    .on_press_maybe(enabled.then(|| input(ControlInput::Activate))),
+            );
+        }
+        items.into()
+    } else if let Some(leaf) = control.downcast::<BindingLeaf>() {
+        row![
+            label_text(),
+            text(leaf.text.clone()).font(font).width(Length::Fill),
+            button(text(leaf.change_label.clone()).font(font))
                 .on_press_maybe(enabled.then(|| input(ControlInput::Activate))),
-            button(text(clear_label.clone()).font(font))
+            button(text(leaf.clear_label.clone()).font(font))
                 .on_press_maybe(enabled.then(|| input(ControlInput::CaptureClear)))
         ]
         .spacing(12)
         .align_y(Alignment::Center)
-        .into(),
-        ControlKind::Action => button(text(label.to_owned()).font(font))
+        .into()
+    } else if control.downcast::<ActionLeaf>().is_some() {
+        button(text(label.to_owned()).font(font))
             .style(if display == ControlDisplay::Primary {
                 button::primary
             } else {
                 button::secondary
             })
             .on_press_maybe(enabled.then(|| input(ControlInput::Activate)))
-            .into(),
-        ControlKind::Note { text: value } => {
-            let note = text(value.clone())
-                .font(font)
-                .size(if display == ControlDisplay::Heading {
-                    16
-                } else {
-                    13
-                });
-            if label.is_empty() {
-                note.into()
+            .into()
+    } else if let Some(leaf) = control.downcast::<NoteLeaf>() {
+        let note = text(leaf.text.clone())
+            .font(font)
+            .size(if display == ControlDisplay::Heading {
+                16
             } else {
-                row![label_text(), note].spacing(12).into()
-            }
+                13
+            });
+        if label.is_empty() {
+            note.into()
+        } else {
+            row![label_text(), note].spacing(12).into()
         }
-        ControlKind::Image {
-            width,
-            height,
-            rgba,
-        } => {
-            let handle = iced::widget::image::Handle::from_rgba(*width, *height, rgba.clone());
-            let shown = iced_image(handle);
-            // Hover positions arrive as image pixels; floor the float point.
-            mouse_area(shown)
-                .on_move(move |point| {
-                    input(ControlInput::Hover {
-                        x: point.x.max(0.0) as u32,
-                        y: point.y.max(0.0) as u32,
-                    })
+    } else if let Some(leaf) = control.downcast::<ImageLeaf>() {
+        let handle =
+            iced::widget::image::Handle::from_rgba(leaf.width, leaf.height, leaf.rgba.clone());
+        let shown = iced_image(handle);
+        // Hover positions arrive as image pixels; floor the float point.
+        mouse_area(shown)
+            .on_move(move |point| {
+                input(ControlInput::Hover {
+                    x: point.x.max(0.0) as u32,
+                    y: point.y.max(0.0) as u32,
                 })
-                .into()
-        }
+            })
+            .into()
+    } else if control.downcast::<ListLeaf>().is_some() {
+        // Immediate mode degrades lists flat: rows arrive through the
+        // explicit walk in `control()` as sibling notes.
+        iced::widget::Space::new().width(Length::Shrink).into()
+    } else {
+        // Unknown future leaf: read-only label with the pre-localized
+        // control label. Never fail construction.
+        text(label.to_owned()).font(font).into()
     };
     // Help surfaces as hover tooltips in GTK; Tao has no hover affordance,
     // so a permanent subtitle (e.g. "Occupied by another slot") only adds
@@ -559,9 +560,10 @@ mod tests {
         advanced::{Shell, layout, mouse, widget::Tree},
     };
     use wakui::control::{
-        Capture, ControlDisplay, ControlEvent, ControlId, ControlMetadata, Id, LayoutKind, Node,
-        Page,
+        Capture, ColumnPolicy, Container, ControlDisplay, ControlEvent, ControlId, ControlMetadata,
+        Id, Node, Page,
     };
+    use wakui::leaf::ActionLeaf;
 
     fn action_control(label: &str) -> Control {
         Control {
@@ -569,23 +571,24 @@ mod tests {
             label: label.to_string(),
             metadata: ControlMetadata::new(label),
             display: ControlDisplay::Standard,
-            kind: ControlKind::Action,
+            leaf: Box::new(ActionLeaf),
         }
     }
 
-    fn group(children: Vec<Control>) -> Layout {
-        Layout {
+    fn group(children: Vec<Control>) -> Container {
+        Container {
             id: Id::fresh(),
             label: String::new(),
             metadata: ControlMetadata::new("group"),
             spacing: 0,
             indent: 0,
             header: None,
+            policy: Box::new(GroupPolicy),
             children: children.into_iter().map(Node::Control).collect(),
         }
     }
 
-    fn page(label: &str, selected: bool, body: Layout) -> Page {
+    fn page(label: &str, selected: bool, body: Container) -> Page {
         Page {
             id: Id::fresh(),
             label: label.to_string(),
@@ -599,13 +602,14 @@ mod tests {
         ControlScreen {
             title: "Test".to_string(),
             pages,
-            footer: Layout {
+            footer: Container {
                 id: Id::fresh(),
                 label: String::new(),
                 metadata: ControlMetadata::new("footer"),
                 spacing: 0,
                 indent: 0,
                 header: None,
+                policy: Box::new(ColumnPolicy),
                 children: Vec::new(),
             },
             message: None,
@@ -627,20 +631,20 @@ mod tests {
         visitor.begin_page(&screen.pages[0]);
         let mut group = screen.pages[0].body.clone();
         group.metadata.visible = false;
-        visitor.begin_layout(&group, LayoutKind::Group);
+        visitor.begin_container(&group);
         visitor.control(&action_control("Mute"));
         assert!(visitor.stack.last().unwrap().children.is_empty());
-        visitor.end_layout(&group, LayoutKind::Group);
+        visitor.end_container(&group);
         assert!(visitor.stack.last().unwrap().children.is_empty());
         group.metadata.visible = true;
         group.metadata.enabled = false;
-        visitor.begin_layout(&group, LayoutKind::Column);
+        visitor.begin_container(&group);
         assert!(!visitor.stack.last().unwrap().enabled);
-        visitor.begin_layout(&group, LayoutKind::Row);
+        visitor.begin_container(&group);
         assert!(!visitor.stack.last().unwrap().enabled);
         visitor.control(&action_control("Mute"));
-        visitor.end_layout(&group, LayoutKind::Row);
-        visitor.end_layout(&group, LayoutKind::Column);
+        visitor.end_container(&group);
+        visitor.end_container(&group);
         visitor.end_page(&screen.pages[0]);
         visitor.end_screen(&screen);
         assert!(visitor.stack.is_empty());

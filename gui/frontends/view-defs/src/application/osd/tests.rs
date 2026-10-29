@@ -5,7 +5,7 @@ use nerust_render_traits::{ReservedStrip, renderer::OsdLayer};
 
 use super::*;
 use crate::application::tests::Fixture;
-use crate::osd::{OsdLayerUpdate, OsdVisitor};
+use crate::osd::OsdLayerUpdate;
 use wakui::dialog::{ModalPresentation, ModalPresenter};
 
 fn size() -> SurfaceSize {
@@ -59,12 +59,16 @@ struct ReentrantOutput<'a> {
     calls: Vec<&'static str>,
 }
 
-impl OsdVisitor for ReentrantOutput<'_> {
-    fn reserved_strip(&mut self, _: ReservedStrip) {
-        self.fixture.borrow_mut().core.note_redraw();
-        self.calls.push("strip");
+impl std::fmt::Debug for ReentrantOutput<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReentrantOutput")
+            .field("calls", &self.calls)
+            .finish_non_exhaustive()
     }
-    fn layer(&mut self, layer: Option<OsdLayer>) {
+}
+
+impl nerust_render_traits::renderer::OsdSink for ReentrantOutput<'_> {
+    fn set_osd_layer(&mut self, layer: Option<OsdLayer>) {
         assert_eq!(self.fixture.borrow().core.osd_layer_live(), layer.is_some());
         self.fixture.borrow_mut().core.note_redraw();
         self.calls
@@ -72,8 +76,16 @@ impl OsdVisitor for ReentrantOutput<'_> {
     }
 }
 
+impl nerust_render_traits::renderer::StripSink for ReentrantOutput<'_> {
+    fn set_reserved_strip(&mut self, strip: ReservedStrip) {
+        let _ = strip;
+        self.fixture.borrow_mut().core.note_redraw();
+        self.calls.push("strip");
+    }
+}
+
 #[test]
-fn dyn_visitor_reborrows_application_and_visits_strip_before_layer_skipping_empty() {
+fn owned_apply_reborrows_application_and_visits_strip_before_layer_skipping_empty() {
     let fixture = RefCell::new(Fixture::new());
     let now = Instant::now();
     let update = {
@@ -85,16 +97,15 @@ fn dyn_visitor_reborrows_application_and_visits_strip_before_layer_skipping_empt
         fixture: &fixture,
         calls: vec![],
     };
-    let port: &mut dyn OsdVisitor = &mut output;
-    update.visit(port);
-    OsdUpdate::default().visit(port);
+    update.apply(&mut output);
+    OsdUpdate::default().apply(&mut output);
     assert_eq!(output.calls, ["strip", "set"]);
     let update = {
         let mut state = fixture.borrow_mut();
         let ctx = status(&mut state.core, false);
         state.core.prepare_osd(size(), 480, &ctx, now)
     };
-    update.visit(&mut output);
+    update.apply(&mut output);
     assert_eq!(output.calls, ["strip", "set", "clear"]);
 }
 

@@ -9,9 +9,10 @@ use std::collections::HashMap;
 
 use crate::debugger::{DebugSnapshot, DebuggerEvent};
 use wakui::control::{
-    Capture, Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlKind,
-    ControlMetadata, ControlScreen, IdRegistry, Layout, Node, Page,
+    Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
+    ControlInput, ControlMetadata, ControlScreen, GroupPolicy, IdRegistry, Node, Page,
 };
+use wakui::leaf::{ActionLeaf, NoteLeaf, TextLeaf, ToggleLeaf};
 
 /// Text input targets: each maps to its `*InputChanged` event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -435,7 +436,7 @@ impl DebuggerScreenSession {
             label: label.clone(),
             metadata: ControlMetadata::new(label),
             display: ControlDisplay::Standard,
-            kind: ControlKind::Action,
+            leaf: Box::new(ActionLeaf),
         }
     }
 
@@ -446,7 +447,7 @@ impl DebuggerScreenSession {
             label: label.clone(),
             metadata: ControlMetadata::new(label),
             display: ControlDisplay::Standard,
-            kind: ControlKind::Action,
+            leaf: Box::new(ActionLeaf),
         }
     }
 
@@ -457,7 +458,7 @@ impl DebuggerScreenSession {
             label: label.clone(),
             metadata: ControlMetadata::new(label),
             display: ControlDisplay::Standard,
-            kind: ControlKind::Toggle { value },
+            leaf: Box::new(ToggleLeaf { value }),
         }
     }
 
@@ -469,11 +470,11 @@ impl DebuggerScreenSession {
             label: label.to_string(),
             metadata: ControlMetadata::new(label),
             display: ControlDisplay::Standard,
-            kind: ControlKind::Text {
+            leaf: Box::new(TextLeaf {
                 value,
                 placeholder: String::new(),
                 browse_label: None,
-            },
+            }),
         }
     }
 
@@ -483,30 +484,32 @@ impl DebuggerScreenSession {
             label: label.to_string(),
             metadata: ControlMetadata::new(label),
             display,
-            kind: ControlKind::Note { text },
+            leaf: Box::new(NoteLeaf { text }),
         }
     }
 
     fn group(&mut self, key: &str, title: String, children: Vec<Node>) -> Node {
-        Node::Group(Layout {
+        Node::Container(Box::new(Container {
             id: self.ids.id(format!("group:{key}")),
             label: title.clone(),
             metadata: ControlMetadata::new(title),
             spacing: 8,
             indent: 0,
             header: None,
+            policy: Box::new(GroupPolicy),
             children,
-        })
+        }))
     }
 
-    fn column(&mut self, key: &str, children: Vec<Node>) -> Layout {
-        Layout {
+    fn column(&mut self, key: &str, children: Vec<Node>) -> Container {
+        Container {
             id: self.ids.id(format!("layout:{key}")),
             label: String::new(),
             metadata: ControlMetadata::new(key),
             spacing: 12,
             indent: 0,
             header: None,
+            policy: Box::new(ColumnPolicy),
             children,
         }
     }
@@ -523,26 +526,28 @@ fn placeholder(ids: &mut IdRegistry<String>) -> ControlScreen {
         label: String::new(),
         metadata: ControlMetadata::new("empty"),
         display: ControlDisplay::Standard,
-        kind: ControlKind::Note {
+        leaf: Box::new(NoteLeaf {
             text: "…".to_string(),
-        },
+        }),
     };
-    let body = Layout {
+    let body = Container {
         id: ids.id("layout:body".to_string()),
         label: String::new(),
         metadata: ControlMetadata::new("body"),
         spacing: 12,
         indent: 0,
         header: None,
+        policy: Box::new(ColumnPolicy),
         children: vec![Node::Control(note)],
     };
-    let footer = Layout {
+    let footer = Container {
         id: ids.id("layout:footer".to_string()),
         label: String::new(),
         metadata: ControlMetadata::new("footer"),
         spacing: 0,
         indent: 0,
         header: None,
+        policy: Box::new(ColumnPolicy),
         children: Vec::new(),
     };
     ControlScreen {
@@ -556,7 +561,7 @@ fn placeholder(ids: &mut IdRegistry<String>) -> ControlScreen {
                 label: "Debugger".to_string(),
                 metadata: ControlMetadata::new("Debugger"),
                 display: ControlDisplay::Standard,
-                kind: ControlKind::Action,
+                leaf: Box::new(ActionLeaf),
             },
             body,
         }],
@@ -700,7 +705,7 @@ mod tests {
         assert_eq!(events, vec![DebuggerEvent::FollowTarget(0x8001)]);
         // Mem + dis inputs share the addr label; both must map distinctly.
         let addr_targets = find_all_controls(&screen, |c| {
-            matches!(&c.kind, ControlKind::Text { .. }) && c.label == "Addr"
+            c.downcast::<TextLeaf>().is_some() && c.label == "Addr"
         });
         assert_eq!(addr_targets.len(), 2);
         let mut mapped: Vec<_> = addr_targets
@@ -727,7 +732,7 @@ mod tests {
         let events = session.events(&ControlEvent::new(jump, ControlInput::Activate));
         assert_eq!(events, vec![DebuggerEvent::BookmarkJump(0x8000)]);
         // Follow toggle: same value is a no-op.
-        let follow = find_control(&screen, |c| matches!(&c.kind, ControlKind::Toggle { .. }));
+        let follow = find_control(&screen, |c| c.downcast::<ToggleLeaf>().is_some());
         assert!(
             session
                 .events(&ControlEvent::new(follow, ControlInput::Bool(true)))
