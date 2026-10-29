@@ -121,7 +121,7 @@ fn find(container: &Container, id: ControlId) -> Option<&Control> {
         return Some(control);
     }
     container.children.iter().find_map(|node| match node {
-        Node::Control(control) => (control.id == id).then_some(control),
+        Node::Control(control) => find_control(control, id),
         Node::Container(inner) => find(inner, id),
         Node::Tabs(tabs) => tabs.tabs.iter().find_map(|tab| {
             if tab.select.id == id {
@@ -131,6 +131,26 @@ fn find(container: &Container, id: ControlId) -> Option<&Control> {
             }
         }),
     })
+}
+
+/// Identity lookup reaching into list cells. Cells are real controls with
+/// stable IDs; without this descent every list-row gesture would miss the
+/// dispatch gate. External container-like leaves keep surfacing through
+/// `walk_control`; only the framework-owned list degrades into lookup here.
+fn find_control(control: &Control, id: ControlId) -> Option<&Control> {
+    if control.id == id {
+        return Some(control);
+    }
+    if let Some(list) = control.downcast::<crate::scene::leaf::ListLeaf>() {
+        for row in &list.rows {
+            for cell in &row.cells {
+                if let Some(found) = find_control(cell, id) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Downcast a container policy. Flavors branch on the static type,

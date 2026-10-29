@@ -55,6 +55,14 @@ pub enum NumBinding {
     Bound { source: String, path: String },
 }
 
+/// Generic raster image bound to outer picture data. `path` resolves through
+/// [`crate::scene::inflate::Lists`] to a [`crate::scene::inflate::Value::Image`];
+/// anything else degrades to an empty image, mirroring `Field` silence.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ImageDef {
+    pub path: String,
+}
+
 /// L1 column header: the id is stable, the header text resolves per frame
 /// so definitions stay language-independent.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -87,6 +95,9 @@ pub enum LeafDef {
         value: NumBinding,
         min: u32,
         max: u32,
+    },
+    Image {
+        path: String,
     },
     List {
         columns: Vec<ListColumnDef>,
