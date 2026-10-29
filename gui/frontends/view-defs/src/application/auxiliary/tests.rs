@@ -18,7 +18,7 @@ fn prepare(
     };
     let session = host.prepare_widget_window(windows, id).unwrap().unwrap();
     assert!(matches!(
-        windows.window(id).unwrap().contents.contents,
+        windows.window(id).unwrap().contents,
         WidgetContents::Controls(_)
     ));
     assert!(windows.complete_open(id, Some(1), ()).is_ok());
@@ -247,7 +247,7 @@ fn generic_history_filter_clear_close_mutate_real_session_and_publish_rows() {
     host.refresh_widget_session(&mut session);
     assert!(mailbox.take_invalidated());
     assert!(matches!(
-        session.window(id).contents.contents,
+        session.window(id).contents,
         WidgetContents::Controls(_)
     ));
     let close_label =

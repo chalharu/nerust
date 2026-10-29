@@ -112,7 +112,6 @@ fn both_domains_use_the_same_real_scene_interpreter_and_input() {
         let WidgetContents::Controls(screen) = session
             .window(wakui::chrome::aux::AuxId::from_raw(7))
             .contents
-            .contents
         else {
             panic!("both domains must use the generic native interpreter")
         };
@@ -463,7 +462,7 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
     window.visit(&mut visitor as &mut dyn WindowVisitor);
     assert!(visitor.stack.is_empty());
     assert!(visitor.count > 30);
-    let WidgetContents::Controls(old) = window.contents.contents else {
+    let WidgetContents::Controls(old) = window.contents else {
         panic!()
     };
     assert_eq!(

@@ -250,7 +250,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         }
 
         let fullscreen = self.core.fullscreen_request(false).unwrap_or(false);
-        self.core.refresh_window_title();
+        self.core.title_update();
         let model = self.core.main_window().clone();
         let mut visitor = CreateMain {
             opener,
@@ -339,7 +339,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// Title refresh after the host presented a frame. Change detection
     /// lives view-side; only a changed title touches the native window.
     pub(crate) fn refresh_title_after_present(&mut self) {
-        self.refresh_window_title();
+        self.title_update();
     }
 
     pub(crate) fn clear_event_handler(&self) {
