@@ -684,7 +684,6 @@ pub(crate) struct FakeApp {
     modal: Option<(ModalToken, Option<std::sync::mpsc::Receiver<()>>)>,
     modal_seq: u64,
     error_queue: std::collections::VecDeque<String>,
-    last_title_at: Instant,
     live_consumed: bool,
     last_live: Option<Instant>,
     pub active_item: Option<u64>,
@@ -741,7 +740,6 @@ impl FakeApp {
             modal: None,
             modal_seq: 0,
             error_queue: std::collections::VecDeque::new(),
-            last_title_at: Instant::now(),
             live_consumed: false,
             last_live: None,
         }
@@ -1042,7 +1040,6 @@ impl FrontendApp<TestAux> for FakeApp {
         self.loaded = true;
         self.paused = false;
         self.title_dirty = true;
-        self.last_title_at = Instant::now();
         Ok(())
     }
 
@@ -1158,15 +1155,10 @@ impl FrontendApp<TestAux> for FakeApp {
     fn title_update(&mut self) -> Option<String> {
         if self.title_dirty {
             self.title_dirty = false;
-            self.last_title_at = Instant::now();
-            Some(self.title.clone())
+                Some(self.title.clone())
         } else {
             None
         }
-    }
-
-    fn title_refresh_due(&mut self, now: Instant) -> bool {
-        self.title_dirty && now.duration_since(self.last_title_at).as_millis() >= 500
     }
 
     fn refresh_window_title(&mut self) -> Option<String> {
@@ -1798,9 +1790,6 @@ impl FrontendApp<TestAux> for SharedApp {
             self.main.title.clone_from(title);
         }
         title
-    }
-    fn title_refresh_due(&mut self, now: Instant) -> bool {
-        self.inner.borrow_mut().title_refresh_due(now)
     }
     fn refresh_window_title(&mut self) -> Option<String> {
         self.title_update()
