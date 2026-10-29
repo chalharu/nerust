@@ -9,11 +9,15 @@ use nerust_settings_core::{
     i18n::{UiText, history_count, text as ui_text},
     model::language::AppLanguage,
 };
-use wakui::scene::control::{
-    Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlMetadata,
-    ControlScreen, IdRegistry, Node, Page,
+use wakui::scene::control::{ControlDisplay, ControlId, ControlScreen};
+use wakui::scene::def::{
+    Binding, BoolBinding, ChoicesDef, ContainerDef, ControlDef, LeafDef, ListColumnDef, NodeDef,
+    PageDef, PolicyDef, RowTemplateDef, RowsDef, ScreenDef, SelectedDef,
 };
-use wakui::scene::leaf::{ActionLeaf, ChoiceLeaf, ColumnDef, ItemRow, ListLeaf, NoteLeaf};
+use wakui::scene::hints::LayoutHints;
+use wakui::scene::inflate::{
+    Choices, CustomLeaves, Flags, InflateCtx, Lists, Texts, Value, inflate,
+};
 
 /// Localized chrome, including headers in datetime/level/module/message order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,126 +82,252 @@ impl HistoryModel {
         }
     }
 
-    /// Project the model as a generic control screen. Rows become a single
-    /// [`ListLeaf`]; flavors render it virtualized or degrade to flat notes.
-    /// Returns the screen plus the stable action IDs for filter/clear/close.
-    pub fn screen(&self, ids: &mut IdRegistry<HistoryKey>) -> (ControlScreen, HistoryIds) {
-        let c = &self.captions;
-        let filter = simple(
-            ids,
-            HistoryKey::Filter,
-            c.level.clone(),
-            ChoiceLeaf {
-                choices: self.options.iter().map(|o| o.label.clone()).collect(),
-                selected: self.options.iter().position(|o| o.filter == self.filter),
-            },
+    /// Project the model as a generic control screen through the L1
+    /// definition below. Returns the screen plus the stable action IDs
+    /// for filter/clear/close.
+    pub fn screen(&self, ctx: &mut InflateCtx<String>) -> (ControlScreen, HistoryIds) {
+        let resolver = HistoryResolver { model: self };
+        let (screen, live) = inflate(
+            &history_def(self.rows.is_empty()),
+            ctx,
+            |key| key.to_string(),
+            &resolver,
         );
-        let clear = simple(ids, HistoryKey::Clear, c.clear.clone(), ActionLeaf);
-        let close = history_close(ids, c.close.clone());
-        let count = simple_note(ids, HistoryKey::Count, String::new(), c.count.clone());
-        let columns: Vec<ColumnDef> = c
-            .headers
-            .iter()
-            .enumerate()
-            .map(|(column, text)| ColumnDef {
-                id: column.to_string(),
-                header: text.clone(),
-                width: None,
-            })
-            .collect();
-        let mut live = std::collections::HashSet::new();
-        let mut rows = Vec::new();
-        for (index, view) in self.rows.iter().enumerate() {
-            // Equal duplicate rows get disjoint paths. This is an occurrence
-            // within equal semantic keys, not a table-position identity.
-            let occurrence = self.rows[..index].iter().filter(|r| *r == view).count();
-            let cells = [
-                &view.datetime,
-                &view.level.to_string(),
-                &view.module,
-                &view.message,
-            ]
-            .into_iter()
-            .enumerate()
-            .map(|(column, text)| {
-                let id = ids.id(HistoryKey::Cell(view.clone(), occurrence, column));
-                live.insert(id);
-                Control {
-                    id,
-                    label: String::new(),
-                    metadata: ControlMetadata::new(text),
-                    display: ControlDisplay::Standard,
-                    leaf: Box::new(NoteLeaf { text: text.clone() }),
-                }
-            })
-            .collect();
-            let id = ids.id(HistoryKey::Row(view.clone(), occurrence));
-            live.insert(id);
-            rows.push(ItemRow {
-                id,
-                depth: 0,
-                expanded: None,
-                cells,
-            });
-        }
-        // Only history content expires. Chrome keys retain their identity.
-        // Returning keys receive fresh IDs; previously issued IDs can never
-        // identify different content.
-        ids.retain(|key, id| match key {
-            HistoryKey::Row(..) | HistoryKey::Cell(..) => live.contains(&id),
-            _ => true,
-        });
-        let table = Control {
-            id: ids.id(HistoryKey::Table),
-            label: c.title.clone(),
-            metadata: ControlMetadata::new(c.title.clone()),
-            display: ControlDisplay::Standard,
-            leaf: Box::new(ListLeaf { columns, rows }),
-        };
-        let empty = if self.rows.is_empty() {
-            Some(Node::Control(simple_note(
-                ids,
-                HistoryKey::Empty,
-                String::new(),
-                c.empty.clone(),
-            )))
-        } else {
-            None
-        };
-        let mut children = vec![
-            Node::Control(filter.clone()),
-            Node::Control(clear.clone()),
-            Node::Control(count),
-            Node::Control(table),
-        ];
-        children.extend(empty);
-        let body = container(ids, HistoryKey::Body, children);
-        let screen = ControlScreen {
-            title: c.title.clone(),
-            pages: vec![Page {
-                id: ids.id(HistoryKey::Page),
-                label: c.title.clone(),
-                selected: true,
-                select: simple_note(ids, HistoryKey::Select, c.title.clone(), c.title.clone()),
-                body,
-            }],
-            footer: container(ids, HistoryKey::Footer, vec![Node::Control(close.clone())]),
-            message: None,
-            capture: Capture {
-                target: None,
-                prompt: String::new(),
-            },
-        };
+        ctx.retain_rows(&live);
+        let ids = &mut ctx.ids;
+        let mut id = |key: &str| ids.id(key.to_string());
         (
             screen,
             HistoryIds {
-                filter: filter.id,
-                clear: clear.id,
-                close: close.id,
+                filter: id("filter"),
+                clear: id("clear"),
+                close: id("close"),
             },
         )
     }
 }
+
+/// Static L1 definition for the history screen. Language-independent: every
+/// string is a [`Binding`] resolved per frame by [`HistoryResolver`].
+/// `empty` toggles the empty-state note; L1 itself holds no conditionals.
+fn history_def(empty: bool) -> ScreenDef {
+    let chrome = || ControlDef {
+        key: String::new(),
+        label: Binding::Literal(String::new()),
+        display: ControlDisplay::Standard,
+        enabled: BoolBinding::Literal(true),
+        visible: BoolBinding::Literal(true),
+        hints: LayoutHints::default(),
+        leaf: LeafDef::Action,
+    };
+    let mut body_children = vec![
+        NodeDef::Control(Box::new(ControlDef {
+            key: "filter".into(),
+            label: Binding::Localized("level".into()),
+            display: ControlDisplay::Standard,
+            enabled: BoolBinding::Literal(true),
+            visible: BoolBinding::Literal(true),
+            hints: LayoutHints::default(),
+            leaf: LeafDef::Choice {
+                choices: ChoicesDef::Bound("filter".into()),
+                selected: SelectedDef::Bound("filter".into()),
+            },
+        })),
+        NodeDef::Control(Box::new(ControlDef {
+            key: "clear".into(),
+            label: Binding::Localized("clear".into()),
+            ..chrome()
+        })),
+        NodeDef::Control(Box::new(ControlDef {
+            key: "count".into(),
+            label: Binding::Localized("count".into()),
+            display: ControlDisplay::Standard,
+            enabled: BoolBinding::Literal(true),
+            visible: BoolBinding::Literal(true),
+            hints: LayoutHints::default(),
+            leaf: LeafDef::Note {
+                text: Binding::Localized("count".into()),
+            },
+        })),
+        NodeDef::Control(Box::new(ControlDef {
+            key: "table".into(),
+            label: Binding::Localized("title".into()),
+            display: ControlDisplay::Standard,
+            enabled: BoolBinding::Literal(true),
+            visible: BoolBinding::Literal(true),
+            hints: LayoutHints::default(),
+            leaf: LeafDef::List {
+                columns: ["h0", "h1", "h2", "h3"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(column, key)| ListColumnDef {
+                        id: column.to_string(),
+                        header: Binding::Localized(key.into()),
+                        width: None,
+                    })
+                    .collect(),
+                rows: RowsDef::Bound {
+                    source: "history".into(),
+                    template: RowTemplateDef {
+                        id_field: "row".into(),
+                        cells: ["datetime", "level", "module", "message"]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(column, path)| ControlDef {
+                                key: format!("cell{column}"),
+                                label: Binding::Field(path.into()),
+                                display: ControlDisplay::Standard,
+                                enabled: BoolBinding::Literal(true),
+                                visible: BoolBinding::Literal(true),
+                                hints: LayoutHints::default(),
+                                leaf: LeafDef::Note {
+                                    text: Binding::Field(path.into()),
+                                },
+                            })
+                            .collect(),
+                    },
+                },
+            },
+        })),
+    ];
+    if empty {
+        body_children.push(NodeDef::Control(Box::new(ControlDef {
+            key: "empty".into(),
+            label: Binding::Localized("empty".into()),
+            display: ControlDisplay::Standard,
+            enabled: BoolBinding::Literal(true),
+            visible: BoolBinding::Literal(true),
+            hints: LayoutHints::default(),
+            leaf: LeafDef::Note {
+                text: Binding::Localized("empty".into()),
+            },
+        })));
+    }
+    let chrome_hints = LayoutHints {
+        spacing: Some(12.0),
+        indent: Some(0.0),
+        ..LayoutHints::default()
+    };
+    ScreenDef {
+        title: Binding::Localized("title".into()),
+        pages: vec![PageDef {
+            key: "page".into(),
+            label: Binding::Localized("title".into()),
+            selected: true,
+            body: ContainerDef {
+                key: "body".into(),
+                label: Binding::Literal(String::new()),
+                hints: chrome_hints,
+                header: None,
+                policy: PolicyDef::Column,
+                children: body_children,
+            },
+        }],
+        footer: ContainerDef {
+            key: "footer".into(),
+            label: Binding::Literal(String::new()),
+            hints: chrome_hints,
+            header: None,
+            policy: PolicyDef::Column,
+            children: vec![NodeDef::Control(Box::new(ControlDef {
+                key: "close".into(),
+                label: Binding::Localized("close".into()),
+                display: ControlDisplay::Primary,
+                enabled: BoolBinding::Literal(true),
+                visible: BoolBinding::Literal(true),
+                hints: LayoutHints::default(),
+                leaf: LeafDef::Action,
+            }))],
+        },
+    }
+}
+
+/// Outer-owned resolution for [`history_def`]: captions, filter options,
+/// and row fields. The engine never names these domain types.
+struct HistoryResolver<'m> {
+    model: &'m HistoryModel,
+}
+
+impl Texts for HistoryResolver<'_> {
+    fn text(&self, key: &str) -> String {
+        let captions = &self.model.captions;
+        match key {
+            "title" => captions.title.clone(),
+            "close" => captions.close.clone(),
+            "level" => captions.level.clone(),
+            "clear" => captions.clear.clone(),
+            "count" => captions.count.clone(),
+            "empty" => captions.empty.clone(),
+            "h0" => captions.headers[0].clone(),
+            "h1" => captions.headers[1].clone(),
+            "h2" => captions.headers[2].clone(),
+            "h3" => captions.headers[3].clone(),
+            _ => String::new(),
+        }
+    }
+}
+
+impl Flags for HistoryResolver<'_> {}
+
+impl Lists for HistoryResolver<'_> {
+    fn list_len(&self, source: &str) -> usize {
+        if source == "history" {
+            self.model.rows.len()
+        } else {
+            0
+        }
+    }
+
+    fn value(&self, source: &str, index: usize, path: &str) -> Value {
+        if source != "history" {
+            return Value::Text(String::new());
+        }
+        let Some(view) = self.model.rows.get(index) else {
+            return Value::Text(String::new());
+        };
+        match path {
+            "datetime" => Value::Text(view.datetime.clone()),
+            "level" => Value::Text(view.level.to_string()),
+            "module" => Value::Text(view.module.clone()),
+            "message" => Value::Text(view.message.clone()),
+            // Full-row identity: equal duplicate rows share the key and
+            // the engine disambiguates them by occurrence.
+            "row" => Value::Text(
+                [
+                    view.datetime.as_str(),
+                    view.level,
+                    view.module.as_str(),
+                    view.message.as_str(),
+                ]
+                .join(""),
+            ),
+            _ => Value::Text(String::new()),
+        }
+    }
+}
+
+impl Choices for HistoryResolver<'_> {
+    fn choices(&self, source: &str) -> Vec<String> {
+        if source == "filter" {
+            self.model.options.iter().map(|o| o.label.clone()).collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn selected(&self, source: &str) -> Option<usize> {
+        if source == "filter" {
+            self.model
+                .options
+                .iter()
+                .position(|o| o.filter == self.model.filter)
+        } else {
+            None
+        }
+    }
+}
+
+impl CustomLeaves for HistoryResolver<'_> {}
 
 /// Stable action IDs minted for the history chrome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,82 +335,6 @@ pub struct HistoryIds {
     pub filter: ControlId,
     pub clear: ControlId,
     pub close: ControlId,
-}
-
-/// Stable registry keys for history controls and rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HistoryKey {
-    Filter,
-    Clear,
-    Close,
-    Page,
-    Select,
-    Body,
-    Footer,
-    Table,
-    Count,
-    Empty,
-    Row(HistoryRowView, usize),
-    Cell(HistoryRowView, usize, usize),
-}
-
-fn container(ids: &mut IdRegistry<HistoryKey>, key: HistoryKey, children: Vec<Node>) -> Container {
-    let mut metadata = ControlMetadata::new("");
-    metadata.hints.spacing = Some(12.0);
-    metadata.hints.indent = Some(0.0);
-    Container {
-        id: ids.id(key),
-        label: String::new(),
-        metadata,
-        header: None,
-        policy: Box::new(ColumnPolicy),
-        children,
-    }
-}
-
-fn simple<L: wakui::scene::leaf::ControlLeaf>(
-    ids: &mut IdRegistry<HistoryKey>,
-    key: HistoryKey,
-    label: String,
-    leaf: L,
-) -> Control {
-    Control {
-        id: ids.id(key),
-        label: label.clone(),
-        metadata: ControlMetadata::new(label),
-        display: ControlDisplay::Standard,
-        leaf: Box::new(leaf),
-    }
-}
-
-fn simple_note(
-    ids: &mut IdRegistry<HistoryKey>,
-    key: HistoryKey,
-    label: String,
-    text: String,
-) -> Control {
-    let accessible = if label.is_empty() {
-        text.clone()
-    } else {
-        label.clone()
-    };
-    Control {
-        id: ids.id(key),
-        label,
-        metadata: ControlMetadata::new(accessible),
-        display: ControlDisplay::Standard,
-        leaf: Box::new(NoteLeaf { text }),
-    }
-}
-
-fn history_close(ids: &mut IdRegistry<HistoryKey>, label: String) -> Control {
-    Control {
-        id: ids.id(HistoryKey::Close),
-        label: label.clone(),
-        metadata: ControlMetadata::new(label),
-        display: ControlDisplay::Primary,
-        leaf: Box::new(ActionLeaf),
-    }
 }
 
 /// Domain-side identity for bindable history controls.

@@ -21,6 +21,7 @@ use nerust_gui_shell::{
 
 use super::*;
 use crate::application::ApplicationHost;
+use wakui::scene::inflate::InflateCtx;
 
 fn lines() -> Vec<HistoryLine> {
     [
@@ -184,8 +185,8 @@ fn screen_projects_list_with_source_order_and_chrome() {
     }
     for lines in [lines(), vec![]] {
         let model = HistoryModel::build(&lines, AppLanguage::English, HistoryFilter::All);
-        let mut ids = IdRegistry::default();
-        let (screen, action_ids) = model.screen(&mut ids);
+        let mut ctx = InflateCtx::default();
+        let (screen, action_ids) = model.screen(&mut ctx);
         assert_eq!(screen.title, "Notification history");
         assert_eq!(screen.pages.len(), 1);
         // Action IDs resolve back to chrome controls.
@@ -375,8 +376,8 @@ fn screen_visit_reborrows_external_host_and_controller_without_changing_snapshot
             .update(host.session_mut(), HistoryFilter::All)
             .unwrap();
         let before = model.clone();
-        let mut ids = IdRegistry::default();
-        (model.screen(&mut ids).0, before)
+        let mut ctx = InflateCtx::default();
+        (model.screen(&mut ctx).0, before)
     };
     let mut visitor = Reenter {
         shared: &shared,
