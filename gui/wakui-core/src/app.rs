@@ -199,8 +199,11 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn menubar_update(&mut self, capabilities: MenuCapabilities) -> Option<Menubar>;
     fn main_window(&self) -> &Window;
     fn window_usable(&self) -> bool;
+    /// Pull the current title; `Some` only when it changed since the last
+    /// pull. Flavors call this at chrome-sync points (handled events,
+    /// presented frames): updates are immediate and notification-driven,
+    /// never timer-polled. Change detection lives view-side.
     fn title_update(&mut self) -> Option<String>;
-    fn title_refresh_due(&mut self, now: Instant) -> bool;
     fn refresh_window_title(&mut self) -> Option<String>;
     fn observe_fullscreen(&mut self, native: bool) -> bool;
     fn fullscreen_request(&mut self, native: bool) -> Option<bool>;

@@ -1,7 +1,6 @@
 //! Session presentation sync: menu, title, and fullscreen state.
 use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
-use std::time::Instant;
 
 use wakui_core::{
     menu::Menubar,
@@ -72,10 +71,12 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         }
     }
 
-    pub(super) fn maybe_refresh_window_title(&mut self, now: Instant) {
-        if self.core.title_refresh_due(now) {
-            self.refresh_window_title();
-        }
+    /// Chrome pump for the control-flow pass: native state plus title.
+    /// Title pulls are change-gated view-side, so every pass sees the
+    /// latest title immediately without any timer.
+    pub(super) fn tick_chrome_sync(&mut self) {
+        self.sync_fullscreen_default_from_window();
+        self.refresh_window_title();
     }
 
     pub(super) fn toggle_fullscreen(&mut self) {
@@ -116,12 +117,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         if redraw {
             self.request_redraw();
         }
-    }
-
-    /// Chrome pump for the control-flow pass: native state plus throttled title.
-    pub(super) fn tick_chrome_sync(&mut self) {
-        self.sync_fullscreen_default_from_window();
-        self.maybe_refresh_window_title(Instant::now());
     }
 
     pub(super) fn sync_fullscreen_from_settings(&mut self) {
@@ -189,14 +184,14 @@ mod tests {
     }
 
     #[test]
-    fn title_throttle_blocks_back_to_back_refresh() {
+    fn title_refresh_publishes_once_then_stays_quiet_until_change() {
         let support = TestHost::new();
         let mut host = support.host;
-        let now = std::time::Instant::now();
-        // Fresh shell just stamped the title clock, so an immediate
-        // refresh stays gated until the interval elapses.
-        host.maybe_refresh_window_title(now);
-        // The first computation still publishes once; repeats stay quiet.
+        // Change-gated, not time-gated: the first pull publishes, repeats
+        // stay quiet until the underlying state changes.
+        host.refresh_title_after_present();
+        assert!(host.core.refresh_window_title().is_none());
+        host.load_test_file();
         assert!(host.core.refresh_window_title().is_some());
         assert!(host.core.refresh_window_title().is_none());
     }

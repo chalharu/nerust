@@ -476,10 +476,6 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::title_update(self, &tick)
     }
 
-    fn title_refresh_due(&mut self, now: Instant) -> bool {
-        ApplicationHost::title_refresh_due(self, now)
-    }
-
     fn refresh_window_title(&mut self) -> Option<String> {
         ApplicationHost::refresh_window_title(self)
     }

@@ -448,9 +448,6 @@ impl ApplicationHost {
     pub fn frame_presented(&mut self, counter: u64) {
         self.shell.on_frame_presented(counter);
     }
-    pub fn title_refresh_due(&mut self, now: Instant) -> bool {
-        self.shell.should_refresh_title(now)
-    }
     pub fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), SessionError> {
         Ok(self.session.update_window_size(width, height)?)
     }
