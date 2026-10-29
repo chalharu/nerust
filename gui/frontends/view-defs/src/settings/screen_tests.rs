@@ -723,6 +723,81 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
 }
 
 #[test]
+fn input_tab_kind_gates_list_visibility() {
+    // Each input tab shares one template body; per-kind lists resolve
+    // through row flags so system tabs never show shortcuts (and the
+    // shortcuts tab never shows conflicts, slots, or sections).
+    let controller = state(true);
+    let view = controller.screen();
+    let sys = controller.vm.inputs()[0].view.get().system_id.to_string();
+    let list_key = |tab: &str, list: &str| cell_key(&input_ns(tab), list);
+    for (tab, conflicts, slots, shortcuts) in [
+        (sys.as_str(), true, true, false),
+        ("shortcuts", false, false, true),
+    ] {
+        let conflicts_id = token(&controller, list_key(tab, "conflicts"));
+        let slots_id = token(&controller, list_key(tab, "slots"));
+        let shortcuts_id = token(&controller, list_key(tab, "shortcuts"));
+        assert_eq!(
+            view.screen.control(conflicts_id).unwrap().metadata.visible,
+            conflicts,
+            "conflicts list on {tab}"
+        );
+        assert_eq!(
+            view.screen.control(slots_id).unwrap().metadata.visible,
+            slots,
+            "slots list on {tab}"
+        );
+        assert_eq!(
+            view.screen.control(shortcuts_id).unwrap().metadata.visible,
+            shortcuts,
+            "shortcuts list on {tab}"
+        );
+        // Hidden lists reject input through the same metadata gate.
+        if !conflicts {
+            assert!(view.bind(&conflicts_id, I::Activate).is_none());
+        }
+        if !shortcuts {
+            assert!(view.bind(&shortcuts_id, I::Activate).is_none());
+        }
+    }
+    // Sections exist only under system tabs; the shortcuts tab template
+    // projects an empty tab set that native hosts collapse.
+    struct TabsInventory(Vec<(ControlId, usize)>);
+    impl ControlVisitor for TabsInventory {
+        fn begin_tabs(&mut self, tabs: &wakui::scene::control::Tabs) {
+            self.0.push((tabs.id, tabs.tabs.len()));
+        }
+    }
+    let mut tabs_inventory = TabsInventory(Vec::new());
+    view.screen.visit(&mut tabs_inventory);
+    let sections_id = |tab: &str| cell_key(&input_ns(tab), "tabs");
+    let sections_len = |tab: &str| {
+        tabs_inventory
+            .0
+            .iter()
+            .find(|(id, _)| *id == token(&controller, sections_id(tab)))
+            .map(|(_, len)| *len)
+            .expect("sections tab set")
+    };
+    assert_eq!(
+        sections_len(&sys),
+        controller.vm.inputs()[0].view.get().sections.len(),
+        "system tab sections"
+    );
+    assert_eq!(sections_len("shortcuts"), 0, "shortcuts tab sections");
+    // List hosts carry the retired row-container gap for native bodies.
+    for key in ["conflicts", "slots", "shortcuts"] {
+        let id = token(&controller, list_key(&sys, key));
+        assert_eq!(
+            view.screen.control(id).unwrap().metadata.hints.spacing,
+            Some(12.0),
+            "list gap on {key}"
+        );
+    }
+}
+
+#[test]
 fn occupied_multiport_controller_is_disabled_and_topology_changes_are_scoped() {
     let controller = state(true);
     let initial = controller.screen();

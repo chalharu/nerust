@@ -265,6 +265,14 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         indent: Some(0.0),
         ..LayoutHints::default()
     };
+    // Row gap for list hosts that replaced the old flat group children.
+    // GTK list bodies read this from the host metadata; Tao rows inherit
+    // the group gap. Matches the retired group spacing.
+    let list_hints = LayoutHints {
+        spacing: Some(8.0),
+        indent: Some(0.0),
+        ..LayoutHints::default()
+    };
     let group = |key: &str, title: Binding, children: Vec<NodeDef>| {
         NodeDef::Container(Box::new(ContainerDef {
             key: key.into(),
@@ -316,7 +324,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
-        hints: LayoutHints::default(),
+        hints: list_hints,
         leaf: LeafDef::List {
             columns: Vec::new(),
             rows: RowsDef::Bound {
@@ -388,7 +396,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
-            hints: LayoutHints::default(),
+            hints: list_hints,
             leaf: LeafDef::List {
                 columns: Vec::new(),
                 rows: RowsDef::Bound {
@@ -503,7 +511,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
                         visible: BoolBinding::Literal(true),
-                        hints: LayoutHints::default(),
+                        hints: list_hints,
                         leaf: LeafDef::List {
                             columns: Vec::new(),
                             rows: RowsDef::Bound {
@@ -597,7 +605,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
                         visible: BoolBinding::Literal(true),
-                        hints: LayoutHints::default(),
+                        hints: list_hints,
                         leaf: LeafDef::List {
                             columns: Vec::new(),
                             rows: RowsDef::Bound {

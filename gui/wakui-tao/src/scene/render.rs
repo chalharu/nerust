@@ -313,9 +313,11 @@ impl ControlVisitor for IcedControlVisitor {
     fn begin_tabs(&mut self, tabs: &Tabs) {
         self.push_metadata(&tabs.metadata);
     }
-    fn end_tabs(&mut self, _: &Tabs) {
+    fn end_tabs(&mut self, tabs: &Tabs) {
         let frame = self.stack.pop().expect("tabs frame");
-        if frame.visible {
+        // An empty tab set reserves no space: the shortcuts tab carries no
+        // sections, and hidden lists never reach the navigation.
+        if frame.visible && !tabs.tabs.is_empty() {
             // Segmented control: borderless segments in one bordered
             // track; the selected segment carries the primary fill.
             let track = row(frame.navigation).spacing(0);
