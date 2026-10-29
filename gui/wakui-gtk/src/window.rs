@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    State, TITLE_POLL_INTERVAL,
+    State,
     surface::{Surface, SurfaceExtend},
     surface_state::surface_gone,
 };
@@ -817,23 +817,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
             });
         }
         window.add_controller(key_controller);
-
-        {
-            let weak = Rc::downgrade(&result);
-            let _ = glib::timeout_add_local(TITLE_POLL_INTERVAL, move || {
-                let Some(result) = weak.upgrade() else {
-                    return glib::ControlFlow::Break;
-                };
-                let due = result
-                    .state()
-                    .borrow_mut()
-                    .title_refresh_due(std::time::Instant::now());
-                if due {
-                    result.event_sink().send(EventCommand::LiveTick);
-                }
-                glib::ControlFlow::Continue
-            });
-        }
 
         // Generic aux pump: deferred opens (e.g. one aux view from another gesture)
         // plus the polled-widget refresh/poll/live-tick without kinds.

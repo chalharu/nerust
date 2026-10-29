@@ -31,7 +31,7 @@ mod window;
 pub use backend::{GtkBackend, register};
 pub use message_dialog::show_message_dialog;
 
-use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use gtk::{
     gdk::prelude::SurfaceExt as _,
@@ -45,12 +45,6 @@ use wakui_core::app::Application;
 use wakui_core::app::LaunchArguments;
 
 use self::window::{MenubarModels, Window, WindowExtend};
-
-/// Poll cadence for the title gate: pure transport timing, not policy.
-/// Throttling lives view-side (`title_refresh_due`); this only bounds how
-/// often the native timer asks. Any value at or below the view-side throttle
-/// behaves identically.
-const TITLE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
     pub(crate) host: Box<dyn wakui_core::app::FrontendApp<K>>,
@@ -84,10 +78,6 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
 
     pub(crate) fn title_update(&mut self) -> Option<String> {
         self.host.title_update()
-    }
-
-    pub(crate) fn title_refresh_due(&mut self, now: std::time::Instant) -> bool {
-        self.host.title_refresh_due(now)
     }
 
     /// Ignore intermediate native observations while awaiting the target.
