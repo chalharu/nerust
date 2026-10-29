@@ -1,12 +1,12 @@
-//! Single tao mapping leaf: codes, buttons, modifiers (tao to domain only).
-//! Iced conversion lives in [`crate::convert`] (domain to iced).
+//! Single tao mapping leaf: codes, buttons, modifiers (tao to native input only).
+//! Iced conversion lives in [`crate::convert`] (native input to iced).
 
-use super::domain::{AuxButton, AuxModifiers, ModifierFlag};
+use super::native_input::{AuxButton, AuxModifiers, ModifierFlag};
 use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
 use wakui_core::Key;
 
 /// Convert Tao modifiers to domain modifiers.
-pub fn tao_modifiers_to_domain(m: TaoModifiers) -> AuxModifiers {
+pub fn tao_modifiers_to_native(m: TaoModifiers) -> AuxModifiers {
     let mut out = AuxModifiers::empty();
     if m.contains(TaoModifiers::SHIFT) {
         out = out.with_flag(ModifierFlag::Shift);
@@ -239,12 +239,12 @@ mod tests {
 
     #[test]
     fn modifiers_map_each_flag_to_domain() {
-        assert_eq!(tao_modifiers_to_domain(M::empty()), AuxModifiers::empty());
-        assert!(tao_modifiers_to_domain(M::SHIFT).shift());
-        assert!(tao_modifiers_to_domain(M::CONTROL).ctrl());
-        assert!(tao_modifiers_to_domain(M::ALT).alt());
-        assert!(tao_modifiers_to_domain(M::SUPER).logo());
-        let all = tao_modifiers_to_domain(M::SHIFT | M::CONTROL | M::ALT | M::SUPER);
+        assert_eq!(tao_modifiers_to_native(M::empty()), AuxModifiers::empty());
+        assert!(tao_modifiers_to_native(M::SHIFT).shift());
+        assert!(tao_modifiers_to_native(M::CONTROL).ctrl());
+        assert!(tao_modifiers_to_native(M::ALT).alt());
+        assert!(tao_modifiers_to_native(M::SUPER).logo());
+        let all = tao_modifiers_to_native(M::SHIFT | M::CONTROL | M::ALT | M::SUPER);
         assert!(all.shift() && all.ctrl() && all.alt() && all.logo());
     }
 

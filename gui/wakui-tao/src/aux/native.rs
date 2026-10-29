@@ -3,8 +3,8 @@
 
 use tao::event::WindowEvent;
 
-use crate::domain::{AuxNativeEvent, NativeWindowId};
-use crate::tao_map::{keycode_to_key, tao_button_to_aux, tao_modifiers_to_domain};
+use crate::native_input::{AuxNativeEvent, NativeWindowId};
+use crate::tao_map::{keycode_to_key, tao_button_to_aux, tao_modifiers_to_native};
 
 /// Map a toolkit window id to the domain routing key.
 /// Hashing stays in this outer adapter; the domain never names `tao`.
@@ -44,7 +44,7 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
             AuxNativeEvent::ScaleChanged(*scale_factor as f32)
         }
         WindowEvent::ModifiersChanged(state) => {
-            AuxNativeEvent::ModifiersChanged(tao_modifiers_to_domain(*state))
+            AuxNativeEvent::ModifiersChanged(tao_modifiers_to_native(*state))
         }
         WindowEvent::CursorMoved { position, .. } => {
             AuxNativeEvent::CursorMoved(position.x, position.y)
@@ -90,7 +90,7 @@ pub(crate) fn adapt_event(event: &WindowEvent) -> AuxNativeEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{AuxButton, AuxModifiers};
+    use crate::native_input::{AuxButton, AuxModifiers};
 
     #[test]
     fn native_id_mapping_is_stable_and_toolkit_free() {
@@ -199,7 +199,7 @@ mod tests {
             adapt_event(&WindowEvent::ModifiersChanged(
                 tao::keyboard::ModifiersState::SHIFT
             )),
-            AuxNativeEvent::ModifiersChanged(crate::tao_map::tao_modifiers_to_domain(
+            AuxNativeEvent::ModifiersChanged(crate::tao_map::tao_modifiers_to_native(
                 tao::keyboard::ModifiersState::SHIFT
             ))
         );

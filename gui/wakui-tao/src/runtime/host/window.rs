@@ -210,7 +210,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
     }
 
     fn pump_dialog(&mut self, _ctx: &Self::Frame) -> WakeNeed {
-        self.tick_osd_pump()
+        self.tick_dialog_pump()
     }
 
     fn pump_aux(&mut self) -> WakeNeed {

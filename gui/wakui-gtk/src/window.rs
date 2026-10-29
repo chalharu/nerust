@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    State, TITLE_UPDATE_INTERVAL,
+    State, TITLE_POLL_INTERVAL,
     surface::{Surface, SurfaceExtend},
     surface_state::surface_gone,
 };
@@ -820,7 +820,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> WindowExtend<K> for Window<K> {
 
         {
             let weak = Rc::downgrade(&result);
-            let _ = glib::timeout_add_local(TITLE_UPDATE_INTERVAL, move || {
+            let _ = glib::timeout_add_local(TITLE_POLL_INTERVAL, move || {
                 let Some(result) = weak.upgrade() else {
                     return glib::ControlFlow::Break;
                 };

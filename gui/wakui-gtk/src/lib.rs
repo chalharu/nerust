@@ -9,7 +9,7 @@
 //! retained [`renderer`], and map native input through [`keyboard`].
 //!
 //! Dialog lifecycle helpers live in [`dialog`]. Modal presentation stays
-//! native (`native::dialog`); the host retains the queue,
+//! native ([`native_dialog`]); the host retains the queue,
 //! and stale-ACK checks.
 
 pub mod backend;
@@ -19,7 +19,7 @@ pub mod keyboard;
 
 mod gdk_raw;
 mod message_dialog;
-mod native;
+mod native_dialog;
 mod surface;
 mod surface_state;
 #[cfg(test)]
@@ -46,7 +46,11 @@ use wakui_core::app::LaunchArguments;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
-const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+/// Poll cadence for the title gate: pure transport timing, not policy.
+/// Throttling lives view-side (`title_refresh_due`); this only bounds how
+/// often the native timer asks. Any value at or below the view-side throttle
+/// behaves identically.
+const TITLE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
     pub(crate) host: Box<dyn wakui_core::app::FrontendApp<K>>,

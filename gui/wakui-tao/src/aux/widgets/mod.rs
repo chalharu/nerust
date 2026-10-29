@@ -1,5 +1,6 @@
 //! Native widget interpretation and bindings, hosted by the common Window program.
+#[cfg(test)]
 pub(crate) mod bindings;
+#[cfg(test)]
 pub(crate) mod controls;
-mod disabled;
 pub(crate) mod native;

@@ -2,6 +2,7 @@
 //! Production code never touches this module.
 
 use std::sync::{Arc, Mutex};
+use wakui_core::sync::lock_recovered;
 
 /// Recorded window-creation request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,12 +25,12 @@ pub(crate) struct FakeOpener {
 impl FakeOpener {
     pub(crate) fn failing(detail: &str) -> Self {
         let opener = Self::default();
-        *crate::aux::bridge::lock_recovered(&opener.main_detail) = detail.to_string();
+        *lock_recovered(&opener.main_detail) = detail.to_string();
         opener
     }
 
     pub(crate) fn calls(&self) -> Vec<OpenerCall> {
-        crate::aux::bridge::lock_recovered(&self.calls).clone()
+        lock_recovered(&self.calls).clone()
     }
 }
 
@@ -38,8 +39,8 @@ impl crate::ports::WindowOpener for FakeOpener {
         &self,
         _builder: tao::window::WindowBuilder,
     ) -> Result<Arc<tao::window::Window>, String> {
-        crate::aux::bridge::lock_recovered(&self.calls).push(OpenerCall::Main);
-        Err(crate::aux::bridge::lock_recovered(&self.main_detail).clone())
+        lock_recovered(&self.calls).push(OpenerCall::Main);
+        Err(lock_recovered(&self.main_detail).clone())
     }
 
     fn create_aux(
@@ -59,7 +60,7 @@ impl crate::ports::WindowOpener for FakeOpener {
             title if title == TestAux::Beta.title() => OpenerCall::Beta,
             _ => return None,
         };
-        crate::aux::bridge::lock_recovered(&self.calls).push(call);
+        lock_recovered(&self.calls).push(call);
         None
     }
 }

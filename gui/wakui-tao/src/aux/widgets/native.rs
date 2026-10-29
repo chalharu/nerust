@@ -8,9 +8,9 @@ use tao::event_loop::EventLoopWindowTarget;
 use wakui_core::control::{ControlEvent, ControlScreen};
 use wakui_core::{mailbox::WindowMailbox, window::Window};
 
-use super::bindings::{ControlsBinding, EventQueue, Message, SharedScreen};
 use crate::aux::shell::{AuxShell, AuxSurface};
-use crate::aux::window::{WidgetBinding, WindowProgram};
+use crate::binding::{ControlsBinding, EventQueue, Message, SharedScreen};
+use crate::window::{WidgetBinding, WindowProgram};
 
 /// A native window owns only surface/shell and typed widget signals.
 pub(crate) struct WidgetWindow<B, S>
@@ -178,7 +178,7 @@ impl WidgetSignals<ControlsBinding> for WindowSignals {
             ..
         }) = mapped
         {
-            super::bindings::keyboard_key_from_physical(*physical_key).map(Message::capture_key)
+            crate::binding::keyboard_key_from_physical(*physical_key).map(Message::capture_key)
         } else {
             None
         }

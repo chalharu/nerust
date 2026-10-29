@@ -5,6 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+use wakui_core::sync::lock_recovered;
 
 /// `DialogPorts` with a canned pick, recording shown errors. Clone
 /// shares state like the loader above.
@@ -22,26 +23,26 @@ struct FakeDialogsInner {
 impl FakeDialogs {
     pub(crate) fn with_pick(pick: Option<PathBuf>) -> Self {
         let dialogs = Self::default();
-        *crate::aux::bridge::lock_recovered(&dialogs.inner.pick) = pick;
+        *lock_recovered(&dialogs.inner.pick) = pick;
         dialogs
     }
 
     pub(crate) fn errors(&self) -> Vec<String> {
-        crate::aux::bridge::lock_recovered(&self.inner.errors).clone()
+        lock_recovered(&self.inner.errors).clone()
     }
 }
 
 impl crate::ports::DialogPorts for FakeDialogs {
     fn pick_file(&self, _title: String, _filters: Vec<(String, Vec<String>)>) -> Option<PathBuf> {
-        crate::aux::bridge::lock_recovered(&self.inner.pick).clone()
+        lock_recovered(&self.inner.pick).clone()
     }
 
     fn show_load_error(&self, _title: String, detail: &str) {
-        crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail.to_string());
+        lock_recovered(&self.inner.errors).push(detail.to_string());
     }
 
     fn show_error_async(&self, _title: String, detail: String) -> std::sync::mpsc::Receiver<()> {
-        crate::aux::bridge::lock_recovered(&self.inner.errors).push(detail);
+        lock_recovered(&self.inner.errors).push(detail);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let _ = done_tx.send(());
         done_rx

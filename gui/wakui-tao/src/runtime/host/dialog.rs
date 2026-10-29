@@ -1,4 +1,7 @@
-//! Native dialog effects; the overlay layer lives renderer-side.
+//! Native dialog pump: presents queued view-side modal requests through
+//! native dialogs and reports their wake need. Dialog content, queueing, and
+//! stale-ACK policy live view-side; this only executes native effects after
+//! the application borrow ends.
 
 use std::time::Instant;
 
@@ -27,12 +30,12 @@ impl ModalPresenter for DialogPresenter<'_> {
 impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// A fresh destination has neither the layer nor the reserved strip.
     #[cfg(test)]
-    pub(crate) fn poll_notifications(&mut self) {
-        self.tick_osd_pump();
+    pub(crate) fn poll_dialog(&mut self) {
+        self.tick_dialog_pump();
     }
 
     /// Execute only native effects after the application borrow ends.
-    pub(super) fn tick_osd_pump(&mut self) -> WakeNeed {
+    pub(super) fn tick_dialog_pump(&mut self) -> WakeNeed {
         let turn = self.core.pump_dialog(Instant::now());
         if let Some(presentation) = turn.modal {
             let token = presentation.token;
@@ -76,13 +79,13 @@ mod tests {
         let (ack, done) = std::sync::mpsc::channel();
         let presentation = host.core.pump_dialog(Instant::now()).modal.unwrap();
         assert!(host.core.attach_dialog_receiver(presentation.token, done));
-        let wake = host.tick_osd_pump();
+        let wake = host.tick_dialog_pump();
         assert!(
             wake.flight_pending,
             "ACK must wake a paused, unfocused loop"
         );
         ack.send(()).unwrap();
-        host.tick_osd_pump();
+        host.tick_dialog_pump();
         assert!(host.core.content_suspended(), "focus still holds");
         assert!(!support.app.borrow().owns_pause(owners::MODAL));
         assert!(host.core.note_main_arrival());
@@ -94,7 +97,7 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         assert!(host.core.dialog_wakeup(std::time::Instant::now()).is_none());
-        let wake = host.tick_osd_pump();
+        let wake = host.tick_dialog_pump();
         assert!(wake.overlay_deadline.is_none());
         assert!(wake.live_tick.is_none());
         assert!(!wake.flight_pending);
@@ -133,37 +136,5 @@ mod tests {
         );
         host.prepare_close();
         assert!(host.core.pump_dialog(Instant::now()).modal.is_none());
-    }
-
-    #[test]
-    fn history_open_records_request_and_stays_closed() {
-        use crate::test_opener::{FakeOpener, OpenerCall};
-        use crate::testkit::TestAux;
-        let support = TestHost::new();
-        let mut host = support.host;
-        let opener = FakeOpener::failing("no display");
-        host.open_aux_window(TestAux::Beta, &opener);
-        host.open_aux_window(TestAux::Beta, &opener);
-        assert_eq!(opener.calls(), [OpenerCall::Beta, OpenerCall::Beta]);
-        assert!(!host.aux.contains(TestAux::Beta));
-        assert!(support.app.borrow().log_changed());
-    }
-
-    #[test]
-    fn pending_history_open_skips_creation_and_content_cache_updates() {
-        use crate::test_opener::FakeOpener;
-        use crate::testkit::TestAux;
-        use wakui_core::aux::OpenRequest;
-        let support = TestHost::new();
-        let mut host = support.host;
-        let OpenRequest::Create(id) = host.aux.request_open(TestAux::Beta, TestAux::Beta.title())
-        else {
-            panic!("expected reservation")
-        };
-        let opener = FakeOpener::failing("no display");
-        host.open_aux_window(TestAux::Beta, &opener);
-        assert!(opener.calls().is_empty());
-        assert_eq!(host.aux.route_id(TestAux::Beta), Some(id));
-        assert!(host.core.modal_guard_active() || host.aux.contains(TestAux::Beta) || true);
     }
 }

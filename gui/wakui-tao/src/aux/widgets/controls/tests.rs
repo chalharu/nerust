@@ -9,19 +9,21 @@ use iced::{
     keyboard::{self, key},
 };
 use wakui_core::control::{
-    ColumnPolicy, Container, Control, ControlEvent, ControlId, ControlVisitor, RowPolicy, Tab,
-    TablePolicy,
+    ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId, ControlMetadata,
+    ControlScreen, ControlVisitor, Page, RowPolicy, Tab, TablePolicy,
 };
 use wakui_core::leaf::{
     ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
 };
 
-use super::super::bindings::tests::{controls, find};
-use super::*;
-use crate::aux::widgets::bindings::tests::prepare;
+use super::super::bindings::tests::{controls, find, prepare};
+use crate::binding::{El, Message};
+use crate::controls::{build_screen, control_element};
+use crate::disabled::gate;
 use crate::runtime::host::HostState;
 use crate::testkit::TestAux;
 use wakui_core::aux::AuxId;
+use wakui_core::control::ControlInput;
 
 struct Fixture {
     host: HostState<TestAux>,
@@ -62,8 +64,6 @@ impl Fixture {
 
 #[test]
 fn outer_window_consumes_the_actual_screen_and_program_title_uses_window_title() {
-    use wakui_core::window::WindowVisitor;
-
     let mut fix = fixture();
     let page = fix.screen().pages[3].clone();
     fix.send(page.select.id, ControlInput::Activate);
@@ -77,12 +77,7 @@ fn outer_window_consumes_the_actual_screen_and_program_title_uses_window_title()
             .any(|current| current.selected && current.id == page.id)
     );
     let window = fix.window();
-    let mut visitor = ControlsWindowVisitor::default();
-    let outer: &mut dyn WindowVisitor = &mut visitor;
-    window.visit(outer);
-    let mut element = visitor
-        .output
-        .expect("outer visitor must invoke nested settings visitor");
+    let mut element = crate::controls::build(&window);
     let (_, tree, _) = native_layout(&mut element);
     assert!(!tree.children.is_empty());
     // The title port reads the common window, not a standalone screen title.
@@ -707,7 +702,7 @@ fn disabled_gate_prevents_operating_real_editable_descendants() {
     let mut control = fix.field("Text A");
     control.metadata.enabled = true;
     for enabled in [true, false] {
-        let mut element = super::super::disabled::gate(
+        let mut element = gate(
             control_element(&control, true, iced::Font::default()),
             enabled,
         );
@@ -766,7 +761,7 @@ fn disabled_gate_never_calls_inner_operate() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for enabled in [true, false] {
         calls.store(0, Ordering::Relaxed);
-        let mut element = super::super::disabled::gate(
+        let mut element = gate(
             iced::Element::new(OperationSentinel(calls.clone())),
             enabled,
         );
@@ -821,7 +816,7 @@ fn all_six_pages_build_native_trees_from_owned_empty_and_real_models() {
             fix.send(page.select.id, ControlInput::Activate);
             let before = fix.screen();
             // Temporary screen is gone before iced even performs layout.
-            let mut element: El<'static> = build(&fix.window());
+            let mut element: El<'static> = crate::controls::build(&fix.window());
             let (_, tree, node) = native_layout(&mut element);
             assert!(!tree.children.is_empty());
             assert!(node.size().width > 0.0 && node.size().height > 0.0);

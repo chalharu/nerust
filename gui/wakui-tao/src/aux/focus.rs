@@ -2,7 +2,7 @@
 //! Aux handles implement [`AuxWindow`] + [`AuxEvents`]; runtime only drives them.
 
 use crate::aux::shell::AuxShellOps;
-use crate::domain::{AuxNativeEvent, NativeWindowId};
+use crate::native_input::{AuxNativeEvent, NativeWindowId};
 
 /// Identity half: routing, liveness, and redraw requests.
 pub(crate) trait AuxIdentity {
