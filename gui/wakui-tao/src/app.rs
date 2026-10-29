@@ -2,7 +2,7 @@ use std::path::Path;
 
 use wakui_core::app::boundary::Application;
 
-use crate::event_loop::WindowRuntime;
+use crate::flow::runtime::WindowRuntime;
 
 pub struct Window<K: Copy + Eq + std::hash::Hash + 'static> {
     runtime: Box<WindowRuntime<K>>,
