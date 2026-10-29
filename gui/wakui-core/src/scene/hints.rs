@@ -6,7 +6,7 @@
 //! Toolkit types are never named here.
 
 /// Physical-edge-agnostic margin/padding hint.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Thickness {
     pub left: f64,
     pub top: f64,
@@ -15,7 +15,7 @@ pub struct Thickness {
 }
 
 /// MAUI `LayoutOptions` analog: placement request, never a pixel value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LayoutAlign {
     Start,
     Center,
@@ -25,7 +25,7 @@ pub enum LayoutAlign {
 
 /// Framework primitive rectangle. Only `AbsolutePolicy` reads it;
 /// ordinary policies ignore it.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Rect {
     pub x: f64,
     pub y: f64,
@@ -35,7 +35,7 @@ pub struct Rect {
 
 /// Optional placement requests carried by metadata (`ControlMetadata.hints`).
 /// `None` means native default / automatic measurement.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LayoutHints {
     pub margin: Option<Thickness>,
     /// `None` means auto.
