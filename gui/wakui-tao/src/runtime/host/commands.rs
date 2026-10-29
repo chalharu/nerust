@@ -469,11 +469,11 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.core.report_host_error("test error".into());
-        host.poll_notifications();
+        host.poll_dialog();
         // Bounded wait for the background ack; FakeDialogs answers instantly.
         let mut tries = 0;
         while support.dialogs.errors().is_empty() || host.core.dialog_pending() {
-            host.poll_notifications();
+            host.poll_dialog();
             tries += 1;
             assert!(tries < 500, "modal ack never arrived");
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -505,7 +505,7 @@ mod tests {
             .unwrap();
         assert!(host.core.attach_dialog_receiver(presentation.token, rx));
         assert!(support.app.borrow().owns_pause(owners::MODAL));
-        host.poll_notifications();
+        host.poll_dialog();
         // Reaped as a failed ack: flight gone, queue unblocked.
         assert!(!host.core.dialog_pending());
         assert_eq!(host.core.dialog_queue_len(), 0);
@@ -533,7 +533,7 @@ mod tests {
         host.core.report_host_error("chained native dialog".into());
         drop(sender);
 
-        host.poll_notifications();
+        host.poll_dialog();
         assert_eq!(support.dialogs.errors().len(), 1);
         assert!(support.dialogs.errors()[0].contains("chained native dialog"));
         assert!(host.core.dialog_pending());
@@ -542,7 +542,7 @@ mod tests {
         assert!(support.app.borrow().owns_pause(owners::FOCUS));
         assert_eq!(host.core.dialog_queue_len(), 0);
 
-        host.poll_notifications();
+        host.poll_dialog();
         assert!(!host.core.dialog_pending());
         assert!(!host.core.dialog_flight_pending());
         assert!(!support.app.borrow().owns_pause(owners::MODAL));
@@ -556,8 +556,8 @@ mod tests {
         let mut host = support.host;
         // No notifications, no windows: drain, expiry, dirty gate,
         // and the history fast path all no-op without a core.
-        host.poll_notifications();
-        host.poll_notifications();
+        host.poll_dialog();
+        host.poll_dialog();
         assert!(support.dialogs.errors().is_empty());
         assert_eq!(host.core.dialog_queue_len(), 0);
         assert!(support.app.borrow().log_changed());

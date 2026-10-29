@@ -223,7 +223,7 @@ fn controls_parts(params: AuxOpenParams) -> Option<ControlsParts> {
 mod tests {
     use super::*;
     use crate::aux::focus::{AuxEvents, AuxIdentity, AuxRender};
-    use crate::domain::{AuxNativeEvent, NativeWindowId};
+    use crate::native_input::{AuxNativeEvent, NativeWindowId};
 
     /// Port owner's contract double: the trait home must not depend
     /// on the shared fake, or the test graph cycles back on itself.
