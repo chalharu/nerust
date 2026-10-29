@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 use wakui_core::support::sync::lock_recovered;
 
-use crate::native_menu::MenuSink;
+use crate::chrome::menu::MenuSink;
 use wakui_core::chrome::menu::Menubar;
 
 /// `MenuSink` that records sync snapshots for assertions.

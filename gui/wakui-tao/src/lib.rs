@@ -12,16 +12,15 @@
 
 pub mod app;
 pub mod backend;
-pub mod control_binding;
-pub mod control_renderer;
 pub mod event_sink;
 pub mod input;
-pub mod native_menu;
 pub mod ports;
-pub mod window_program;
 
-pub(crate) mod aux_windows;
-pub(crate) mod event_loop;
+pub mod scene;
+
+pub(crate) mod chrome;
+pub(crate) mod flow;
+pub(crate) mod host;
 
 #[cfg(any(
     target_os = "linux",
