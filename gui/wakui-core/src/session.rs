@@ -3,6 +3,7 @@
 //! frontends construct them without naming shell or settings types.
 
 use crate::Key;
+use crate::commands::CommandRef;
 
 /// Native gesture: open the debugger, toggle fullscreen, or run a session
 /// command. Frontends never name the settings binding that produced it.
@@ -22,7 +23,7 @@ pub enum ShortcutGesture {
 /// into these intents; policy and ordering live view-side.
 #[derive(Debug, Clone, Copy)]
 pub enum SessionEvent {
-    Command(crate::commands::SessionCommand),
+    Command(CommandRef),
     Keyboard {
         key: Key,
         pressed: bool,

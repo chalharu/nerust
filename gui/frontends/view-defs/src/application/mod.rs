@@ -69,6 +69,8 @@ pub struct ApplicationHost {
     flushed: bool,
     shell: nerust_gui_runtime::shell::NativeShellState,
     history_key: wakui::cache::Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    menu_command_ids: wakui::control::IdRegistry<crate::commands::MenuCommandId>,
+    menu_commands: crate::commands::CommandTable,
 }
 
 impl ApplicationHost {
@@ -95,6 +97,8 @@ impl ApplicationHost {
             flushed: false,
             shell: Default::default(),
             history_key: Default::default(),
+            menu_command_ids: Default::default(),
+            menu_commands: Default::default(),
         }
     }
 
@@ -126,15 +130,25 @@ impl ApplicationHost {
         &mut self,
         event: SessionEvent,
     ) -> Result<SessionOutcome, wakui::session::SessionError> {
-        crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
+        crate::session::dispatch(
+            &mut self.session,
+            &mut self.pause_policy,
+            &self.menu_commands,
+            event,
+        )
     }
 
-    // The shared narrow-shell port macro uses this spelling, also used by older adapters.
-    fn dispatch_session(
+    /// Typed command entry for menu-resolved domain commands.
+    pub fn dispatch_session_command(
         &mut self,
-        event: SessionEvent,
+        command: nerust_gui_shell::session::commands::SessionCommand,
     ) -> Result<SessionOutcome, wakui::session::SessionError> {
-        self.dispatch(event)
+        crate::session::dispatch_command(&mut self.session, &mut self.pause_policy, command)
+    }
+
+    /// Latest menu resolution table for opaque native activations.
+    pub fn menu_commands(&self) -> &crate::commands::CommandTable {
+        &self.menu_commands
     }
 
     pub fn frame_ctx(&mut self) -> FrameCtx {
@@ -581,7 +595,9 @@ impl ApplicationHost {
                     .expect("menubar signature initialized")
                     .clone(),
             };
-        let menubar = crate::menu::build_menubar(&signature, capabilities);
+        let (menubar, table) =
+            crate::menu::build_menubar(&mut self.menu_command_ids, &signature, capabilities);
+        self.menu_commands = table;
         self.menu_capabilities = Some(capabilities);
         self.main_window.menu = Some(menubar.clone());
         Some(MenubarUpdate { signature, menubar })

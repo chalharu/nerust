@@ -21,7 +21,7 @@ use wakui_core::event::{CommandEffect, EventCommand, EventSink};
 use wakui_core::session::SessionEvent;
 use wakui_core::{
     aux::{AuxId, AuxWindows, OpenRequest},
-    commands::{CommandDescriptor, CommandId, CommandParameter, CommandVisitor},
+    commands::{Command, CommandId, CommandRef, CommandVisitor},
     focus::FocusEvent,
     mailbox::WindowMailbox,
     menu::{MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu},
@@ -568,12 +568,41 @@ fn apply_window_effects<K: Copy + Eq + std::hash::Hash + 'static>(
 }
 
 /// Shared identity cache only; no borrow may survive a native call.
+/// Names are derived from the opaque id alone, so menu-item references
+/// (`win.<name>`) stay stable across rebuilds without domain knowledge.
 #[derive(Clone, Default)]
 pub(crate) struct ActionRegistry(Rc<RefCell<HashMap<CommandId, gio::SimpleAction>>>);
 
 impl ActionRegistry {
     fn get(&self, id: CommandId) -> Option<gio::SimpleAction> {
         self.0.borrow().get(&id).cloned()
+    }
+
+    pub(crate) fn action_name(id: CommandId) -> String {
+        format!("{:?}", id)
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+    }
+
+    fn name(&self, id: CommandId) -> Option<String> {
+        self.0
+            .borrow()
+            .contains_key(&id)
+            .then(|| Self::action_name(id))
+    }
+
+    fn get_or_insert(
+        &self,
+        id: CommandId,
+        parameter_type: Option<&glib::VariantTy>,
+    ) -> gio::SimpleAction {
+        if let Some(action) = self.get(id) {
+            return action;
+        }
+        let action = gio::SimpleAction::new(&Self::action_name(id), parameter_type);
+        self.0.borrow_mut().insert(id, action.clone());
+        action
     }
 }
 
@@ -1010,44 +1039,43 @@ impl GtkMenuVisitor {
 }
 
 /// Decode strictly before binding: a bad or missing slot is never slot zero.
-fn send_action(
-    sink: &dyn EventSink,
-    descriptor: &CommandDescriptor,
-    value: Option<&glib::Variant>,
-) {
-    let argument = match (descriptor.parameter, value) {
-        (CommandParameter::None, None) => None,
-        (CommandParameter::SlotId, Some(value)) => {
+/// Shape comes from the generic spec (`None` vs `Some`); domain meaning of
+/// the index resolves view-side.
+fn send_action(sink: &dyn EventSink, descriptor: &Command, value: Option<&glib::Variant>) {
+    let indexed = descriptor.spec.argument().is_some();
+    let argument = match (indexed, value) {
+        (false, None) => None,
+        (true, Some(value)) => {
             let Some(id) = value.get::<u64>() else { return };
             Some(id)
         }
         _ => return,
     };
-    if let Some(command) = descriptor.bind(argument) {
-        sink.send(EventCommand::Menu(command));
-    }
+    sink.send(EventCommand::Menu(CommandRef {
+        id: descriptor.id,
+        argument,
+    }));
 }
 
 impl CommandVisitor for GtkMenuVisitor {
-    fn command(&mut self, descriptor: &CommandDescriptor) {
+    fn command(&mut self, descriptor: &Command) {
         let action = if let Some(action) = self.actions.get(descriptor.id) {
             action
         } else {
-            let parameter_type = match descriptor.parameter {
-                CommandParameter::None => None,
-                CommandParameter::SlotId => Some(u64::static_variant_type()),
-            };
-            let action = gio::SimpleAction::new(descriptor.id.name(), parameter_type.as_deref());
+            let parameter_type = descriptor
+                .spec
+                .argument()
+                .is_some()
+                .then(u64::static_variant_type);
+            let action = self
+                .actions
+                .get_or_insert(descriptor.id, parameter_type.as_deref());
             if let Some(sink) = self.sink.clone() {
-                let descriptor = *descriptor;
+                let descriptor = descriptor.clone();
                 action.connect_activate(move |_, parameter| {
                     send_action(sink.as_ref(), &descriptor, parameter);
                 });
             }
-            self.actions
-                .0
-                .borrow_mut()
-                .insert(descriptor.id, action.clone());
             if let Some(window) = &self.window {
                 window.add_action(&action);
             }
@@ -1079,13 +1107,17 @@ impl MenuVisitor for GtkMenuVisitor {
     }
 
     fn item(&mut self, item: &MenuItem) {
-        let action = item.command.map(|command| command.binding());
+        let action = item.command.and_then(|activation| {
+            self.actions
+                .name(activation.id)
+                .map(|name| (name, activation.argument))
+        });
         let (parent, rebuild) = self.stack.last().expect("host item parent");
         if *rebuild {
             let native = gio::MenuItem::new(Some(&item.label), None);
-            if let Some((id, target)) = action {
+            if let Some((name, target)) = action {
                 native.set_action_and_target_value(
-                    Some(&format!("win.{}", id.name())),
+                    Some(&format!("win.{name}")),
                     target.map(|id| id.to_variant()).as_ref(),
                 );
             }
@@ -1203,6 +1235,27 @@ pub(crate) mod tests {
         WindowExtend, key_event_pressed,
     };
     use crate::surface_state::surface_gone;
+    use crate::testkit::{TestMenu, TestSession};
+
+    /// Opaque id for a simulated command, found in the window's latest
+    /// menubar by downcasting the generic spec. Native registries key on
+    /// these, never on domain names or debug strings.
+    pub(crate) fn command_id(window: &super::Window<TestAux>, command: TestMenu) -> CommandId {
+        let state = window.state();
+        let borrowed = state.borrow();
+        let menu = borrowed
+            .host
+            .main_window()
+            .menu
+            .as_ref()
+            .expect("menubar built");
+        menu.commands
+            .definitions
+            .iter()
+            .find(|descriptor| descriptor.downcast::<TestMenu>() == Some(&command.template()))
+            .expect("command declaration")
+            .id
+    }
 
     #[test]
     fn test_aux_titles_and_resume_mirror_view_defs() {
@@ -1703,7 +1756,7 @@ pub(crate) mod tests {
                 assert!(
                     !win.borrow()
                         .actions
-                        .get(CommandId::Settings)
+                        .get(command_id(&win, TestMenu::Settings))
                         .unwrap()
                         .is_enabled()
                 );
@@ -1778,7 +1831,11 @@ pub(crate) mod tests {
         };
         let notifications = Rc::new(Cell::new(0));
         let borrow_free = Rc::new(Cell::new(true));
-        let action = win.borrow().actions.get(CommandId::Open).unwrap();
+        let action = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::Open))
+            .unwrap();
         let weak = Rc::downgrade(&win);
         let count = notifications.clone();
         let available = borrow_free.clone();
@@ -1810,7 +1867,7 @@ pub(crate) mod tests {
         assert!(
             !win.borrow()
                 .actions
-                .get(CommandId::Settings)
+                .get(command_id(&win, TestMenu::Settings))
                 .unwrap()
                 .is_enabled()
         );
@@ -1822,7 +1879,7 @@ pub(crate) mod tests {
         assert!(
             win.borrow()
                 .actions
-                .get(CommandId::Settings)
+                .get(command_id(&win, TestMenu::Settings))
                 .unwrap()
                 .is_enabled()
         );
@@ -2016,8 +2073,16 @@ pub(crate) mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let action = win.borrow().actions.get(CommandId::Open).unwrap();
-        let quit = win.borrow().actions.get(CommandId::Quit).unwrap();
+        let action = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::Open))
+            .unwrap();
+        let quit = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::Quit))
+            .unwrap();
         let super::OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
@@ -2044,21 +2109,21 @@ pub(crate) mod tests {
         assert!(
             win.borrow()
                 .actions
-                .get(CommandId::Settings)
+                .get(command_id(&win, TestMenu::Settings))
                 .unwrap()
                 .is_enabled()
         );
         assert!(
             win.borrow()
                 .actions
-                .get(CommandId::Debugger)
+                .get(command_id(&win, TestMenu::Debugger))
                 .unwrap()
                 .is_enabled()
         );
         assert!(
             win.borrow()
                 .actions
-                .get(CommandId::NotificationHistory)
+                .get(command_id(&win, TestMenu::History))
                 .unwrap()
                 .is_enabled()
         );
@@ -2069,7 +2134,7 @@ pub(crate) mod tests {
         assert!(
             !win.borrow()
                 .actions
-                .get(CommandId::Close)
+                .get(command_id(&win, TestMenu::Close))
                 .unwrap()
                 .is_enabled()
         );
@@ -2141,7 +2206,11 @@ pub(crate) mod tests {
                 TestAux::Debug => super::open_auxiliary(&win, TestAux::Debug),
                 TestAux::History => super::open_auxiliary(&win, TestAux::History),
                 TestAux::Settings => {
-                    let action = win.borrow().actions.get(CommandId::Settings).unwrap();
+                    let action = win
+                        .borrow()
+                        .actions
+                        .get(command_id(&win, TestMenu::Settings))
+                        .unwrap();
                     super::open_auxiliary(&win, TestAux::Settings);
                     assert!(action.is_enabled());
                 }
@@ -2194,7 +2263,11 @@ pub(crate) mod tests {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        let action = win.borrow().actions.get(CommandId::Settings).unwrap();
+        let action = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::Settings))
+            .unwrap();
         action.activate(None);
         let old_id = win.borrow().aux.route_id(TestAux::Settings).unwrap();
         let Some(NativeAux::Controls(program)) = win.borrow().aux.get(TestAux::Settings).cloned()
@@ -2266,7 +2339,7 @@ pub(crate) mod tests {
 
     #[test]
     fn command_declarations_generate_and_reuse_every_action() {
-        use super::{CommandParameter, StaticVariantType};
+        use super::StaticVariantType;
         use gio::prelude::MenuModelExt;
         let state = model_state();
         let model = {
@@ -2287,15 +2360,19 @@ pub(crate) mod tests {
             .definitions
             .iter()
             .map(|descriptor| {
+                // Names derive from the opaque id alone, never domain vocabulary.
+                let expected = super::ActionRegistry::action_name(descriptor.id);
                 let action = visitor.actions.get(descriptor.id).unwrap();
-                assert_eq!(action.name().as_str(), descriptor.id.name());
+                assert_eq!(action.name().as_str(), expected);
                 assert_eq!(action.is_enabled(), descriptor.enabled);
                 assert_eq!(
                     action.parameter_type(),
-                    match descriptor.parameter {
-                        CommandParameter::None => None,
-                        CommandParameter::SlotId => Some(u64::static_variant_type().into_owned()),
-                    }
+                    descriptor
+                        .spec
+                        .argument()
+                        .is_some()
+                        .then(u64::static_variant_type)
+                        .map(|variant| variant.into_owned())
                 );
                 (descriptor.id, action)
             })
@@ -2304,12 +2381,26 @@ pub(crate) mod tests {
         for (id, action) in actions {
             assert_eq!(visitor.actions.get(id).unwrap(), action);
         }
+        let quit = model
+            .commands
+            .definitions
+            .iter()
+            .find(|descriptor| descriptor.downcast::<TestMenu>() == Some(&TestMenu::Quit))
+            .expect("quit declaration")
+            .id;
+        let about = model
+            .commands
+            .definitions
+            .iter()
+            .find(|descriptor| descriptor.downcast::<TestMenu>() == Some(&TestMenu::About))
+            .expect("about declaration")
+            .id;
         let file = visitor.menubar.submenu(MenuId::File);
         assert_eq!(
             file.item_attribute_value(file.n_items() - 1, "action", None)
                 .unwrap()
                 .str(),
-            Some("win.quit")
+            Some(format!("win.{}", super::ActionRegistry::action_name(quit)).as_str())
         );
         assert_eq!(
             visitor
@@ -2318,7 +2409,7 @@ pub(crate) mod tests {
                 .item_attribute_value(0, "action", None)
                 .unwrap()
                 .str(),
-            Some("win.about")
+            Some(format!("win.{}", super::ActionRegistry::action_name(about)).as_str())
         );
     }
 
@@ -2326,7 +2417,7 @@ pub(crate) mod tests {
     fn generated_actions_send_typed_commands_to_dyn_sink_and_reject_bad_arguments() {
         use super::{CommandVisitor, EventCommand, EventSink, ToVariant};
         use std::{cell::RefCell, rc::Rc};
-        use wakui_core::commands::{MenuCommand, SessionCommand};
+        use wakui_core::commands::CommandRef;
         #[derive(Default)]
         struct RecordingSink(RefCell<Vec<EventCommand>>);
         impl EventSink for RecordingSink {
@@ -2347,22 +2438,41 @@ pub(crate) mod tests {
         let mut visitor = GtkMenuVisitor::new(MenubarModels::new());
         visitor.sink = Some(recording.clone());
         for descriptor in &model.commands.definitions {
-            let mut descriptor = *descriptor;
+            let mut descriptor = descriptor.clone();
             descriptor.enabled = true;
             visitor.command(&descriptor);
         }
-        let reset = visitor.actions.get(CommandId::Reset).unwrap();
-        let slot = visitor.actions.get(CommandId::LoadSlot).unwrap();
-        reset.activate(None);
-        slot.activate(Some(&42_u64.to_variant()));
+        let find = |command: TestMenu| {
+            model
+                .commands
+                .definitions
+                .iter()
+                .find(|descriptor| descriptor.downcast::<TestMenu>() == Some(&command))
+                .expect("declaration")
+                .id
+        };
+        let reset = find(TestMenu::Session(TestSession::Reset));
+        let load_slot = find(TestMenu::Session(TestSession::LoadSlot(0)));
+        let reset_ref = CommandRef {
+            id: reset,
+            argument: None,
+        };
+        let load_ref = |index: u64| CommandRef {
+            id: load_slot,
+            argument: Some(index),
+        };
+        visitor.actions.get(reset).unwrap().activate(None);
+        visitor
+            .actions
+            .get(load_slot)
+            .unwrap()
+            .activate(Some(&42_u64.to_variant()));
         assert!(matches!(
             recording.0.borrow().as_slice(),
-            [
-                EventCommand::Menu(MenuCommand::Session(SessionCommand::Reset)),
-                EventCommand::Menu(MenuCommand::Session(SessionCommand::LoadSlot(42))),
-            ]
+            [EventCommand::Menu(a), EventCommand::Menu(b)]
+                if *a == reset_ref && *b == load_ref(42)
         ));
-        let descriptor = model.commands.get(CommandId::LoadSlot).unwrap();
+        let descriptor = model.commands.get(load_slot).unwrap();
         let sink: Rc<dyn EventSink> = recording.clone();
         // Exercise the callback decoder directly: GAction itself also rejects
         // these before emitting activate, which would otherwise mask a bug here.
@@ -2371,17 +2481,19 @@ pub(crate) mod tests {
         super::send_action(sink.as_ref(), descriptor, Some(&42_i32.to_variant()));
         super::send_action(
             sink.as_ref(),
-            model.commands.get(CommandId::Reset).unwrap(),
+            model.commands.get(reset).unwrap(),
             Some(&42_u64.to_variant()),
         );
         assert_eq!(recording.0.borrow().len(), 2);
-        slot.activate(Some(&0_u64.to_variant()));
+        visitor
+            .actions
+            .get(load_slot)
+            .unwrap()
+            .activate(Some(&0_u64.to_variant()));
         assert!(
             matches!(
                 recording.0.borrow().last(),
-                Some(EventCommand::Menu(MenuCommand::Session(
-                    SessionCommand::LoadSlot(0)
-                )))
+                Some(EventCommand::Menu(last)) if *last == load_ref(0)
             ),
             "explicit zero is valid, never a missing-argument fallback"
         );
@@ -2390,26 +2502,38 @@ pub(crate) mod tests {
     #[test]
     fn native_roles_go_through_host_settings_guard_but_quit_remains_available() {
         use super::{EventCommand, OpenRequest};
-        use wakui_core::commands::{MenuCommand, NativeRole};
         use wakui_core::pause::PauseOwner;
         let Some(win) = bound_window() else {
             eprintln!("SKIP: window widget test needs a display");
             return;
         };
-        assert!(win.application().lookup_action("about").is_none());
-        assert!(win.application().lookup_action("quit").is_none());
-        let about = win.borrow().actions.get(CommandId::About).unwrap();
-        let quit = win.borrow().actions.get(CommandId::Quit).unwrap();
+        let about_name = super::ActionRegistry::action_name(command_id(&win, TestMenu::About));
+        let quit_name = super::ActionRegistry::action_name(command_id(&win, TestMenu::Quit));
+        assert!(win.application().lookup_action(&about_name).is_none());
+        assert!(win.application().lookup_action(&quit_name).is_none());
+        let about = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::About))
+            .unwrap();
+        let quit = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::Quit))
+            .unwrap();
         assert_eq!(
-            win.window().lookup_action("about").unwrap(),
+            win.window().lookup_action(&about_name).unwrap(),
             about.clone().upcast::<gio::Action>()
         );
         assert_eq!(
-            win.window().lookup_action("quit").unwrap(),
+            win.window().lookup_action(&quit_name).unwrap(),
             quit.clone().upcast::<gio::Action>()
         );
         let sink = win.event_sink();
-        let about_event = EventCommand::Menu(MenuCommand::Native(NativeRole::About));
+        let about_event = EventCommand::Menu(wakui_core::commands::CommandRef {
+            id: command_id(&win, TestMenu::About),
+            argument: None,
+        });
         let OpenRequest::Create(id) = win
             .borrow_mut()
             .aux
@@ -2496,7 +2620,11 @@ pub(crate) mod tests {
                 }
             }
         });
-        let about = win.borrow().actions.get(CommandId::About).unwrap();
+        let about = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::About))
+            .unwrap();
         about.activate(None);
         assert_eq!(mapped.get(), 1);
         let dialog = win.borrow().about_dialog.clone().unwrap();
@@ -2514,7 +2642,11 @@ pub(crate) mod tests {
         };
         let weak = Rc::downgrade(&win);
         let sink = win.event_sink();
-        let action = win.borrow().actions.get(CommandId::About).unwrap();
+        let action = win
+            .borrow()
+            .actions
+            .get(command_id(&win, TestMenu::About))
+            .unwrap();
         let native = win.window();
         drop(win);
         assert!(weak.upgrade().is_none());
@@ -2559,13 +2691,15 @@ pub(crate) mod tests {
 
     #[test]
     fn slot_menu_explains_empty_state() {
+        use crate::testkit::FakeCommands;
         use gio::prelude::MenuModelExt;
         let bars = MenubarModels::new();
-        let model = crate::testkit::canned_menubar(&[], None, false, true);
+        let commands = FakeCommands::new();
+        let model = crate::testkit::canned_menubar(&commands, &[], None, false, true);
         let mut visitor = GtkMenuVisitor::new(bars.clone());
         model.visit(None, &mut visitor);
         for descriptor in &model.commands.definitions {
-            if descriptor.parameter == super::CommandParameter::SlotId {
+            if descriptor.spec.argument().is_some() {
                 assert!(!visitor.actions.get(descriptor.id).unwrap().is_enabled());
             }
         }
@@ -2589,9 +2723,11 @@ pub(crate) mod tests {
 
     #[test]
     fn slot_menu_lists_slots_with_action_targets() {
+        use crate::testkit::FakeCommands;
         use gio::prelude::MenuModelExt;
         let bars = MenubarModels::new();
-        let mut model = crate::testkit::canned_menubar(&[1, 2], Some(2), false, true);
+        let commands = FakeCommands::new();
+        let mut model = crate::testkit::canned_menubar(&commands, &[1, 2], Some(2), false, true);
         fn disable_items(menu: &mut super::Submenu) {
             use wakui_core::menu::MenuEntry;
             for entry in &mut menu.children {
@@ -2606,12 +2742,18 @@ pub(crate) mod tests {
         }
         let mut visitor = GtkMenuVisitor::new(bars.clone());
         model.visit(None, &mut visitor);
+        let load_slot = model
+            .commands
+            .definitions
+            .iter()
+            .find(|descriptor| {
+                descriptor.downcast::<TestMenu>()
+                    == Some(&TestMenu::Session(TestSession::LoadSlot(0)))
+            })
+            .expect("load slot declaration")
+            .id;
         assert!(
-            visitor
-                .actions
-                .get(CommandId::LoadSlot)
-                .unwrap()
-                .is_enabled(),
+            visitor.actions.get(load_slot).unwrap().is_enabled(),
             "slot entries cannot overwrite shared declaration enablement"
         );
         let menu = bars.submenu(MenuId::LoadSlot);
@@ -2627,7 +2769,7 @@ pub(crate) mod tests {
                 menu.item_attribute_value(index, "action", None)
                     .unwrap()
                     .str(),
-                Some("win.state-load-slot")
+                Some(format!("win.{}", super::ActionRegistry::action_name(load_slot)).as_str())
             );
         }
     }

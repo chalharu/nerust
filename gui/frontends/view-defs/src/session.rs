@@ -3,14 +3,16 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::session::{
-    KeyboardShortcut, SessionHandle, access::SettingsResult, commands::SessionCommandOutcome,
+    KeyboardShortcut, SessionHandle, access::SettingsResult, commands::SessionCommand,
+    commands::SessionCommandOutcome,
 };
 use nerust_settings_core::model::input::ShortcutAction;
-use wakui::commands::SessionCommand;
 use wakui::pause::{PauseOwner, PausePolicy};
 use wakui::session::{
     CommandOutcome, SessionEffect, SessionError, SessionEvent, SessionOutcome, ShortcutGesture,
 };
+
+use crate::commands::{CommandTable, MenuCommand};
 
 fn convert_error(error: nerust_gui_shell::session::SessionError) -> SessionError {
     SessionError(error.to_string())
@@ -36,34 +38,57 @@ fn gesture(shortcut: KeyboardShortcut) -> ShortcutGesture {
 pub struct SessionDriver<'a> {
     session: &'a mut SessionHandle,
     policy: &'a mut PausePolicy,
+    table: &'a CommandTable,
 }
 
 impl<'a> SessionDriver<'a> {
-    pub fn new(session: &'a mut SessionHandle, policy: &'a mut PausePolicy) -> Self {
-        Self { session, policy }
+    pub fn new(
+        session: &'a mut SessionHandle,
+        policy: &'a mut PausePolicy,
+        table: &'a CommandTable,
+    ) -> Self {
+        Self {
+            session,
+            policy,
+            table,
+        }
+    }
+
+    /// Typed command entry: pause ownership plus shell execution. Opaque
+    /// activations resolve here first; direct callers (debugger drain,
+    /// shell ports) already hold typed commands.
+    pub fn dispatch_command(
+        &mut self,
+        command: SessionCommand,
+    ) -> Result<SessionOutcome, SessionError> {
+        let mut outcome = SessionOutcome::default();
+        let executed = match command {
+            SessionCommand::Pause | SessionCommand::Resume | SessionCommand::TogglePause => {
+                let active = match command {
+                    SessionCommand::Pause => true,
+                    SessionCommand::Resume => false,
+                    _ => !self.session.tick_metrics().paused,
+                };
+                set_pause_owner(self.session, self.policy, PauseOwner::User, active)
+            }
+            command => self.session.run_command(command).map_err(convert_error)?,
+        };
+        outcome.command = Some(CommandOutcome {
+            executed: executed.executed,
+            needs_redraw: executed.needs_redraw,
+        });
+        Ok(outcome)
     }
 
     pub fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         let mut outcome = SessionOutcome::default();
         match event {
-            SessionEvent::Command(command) => {
-                let executed = match command {
-                    SessionCommand::Pause
-                    | SessionCommand::Resume
-                    | SessionCommand::TogglePause => {
-                        let active = match command {
-                            SessionCommand::Pause => true,
-                            SessionCommand::Resume => false,
-                            _ => !self.session.tick_metrics().paused,
-                        };
-                        set_pause_owner(self.session, self.policy, PauseOwner::User, active)
-                    }
-                    command => self.session.run_command(command).map_err(convert_error)?,
+            SessionEvent::Command(activation) => {
+                // Stale ids (previous model) resolve to nothing and are ignored.
+                let Some(MenuCommand::Session(command)) = self.table.resolve(activation) else {
+                    return Ok(outcome);
                 };
-                outcome.command = Some(CommandOutcome {
-                    executed: executed.executed,
-                    needs_redraw: executed.needs_redraw,
-                });
+                return self.dispatch_command(command);
             }
             SessionEvent::Keyboard { key, pressed } => {
                 if !self.policy.owns(PauseOwner::Settings)
@@ -80,24 +105,22 @@ impl<'a> SessionDriver<'a> {
                     outcome.effect = Some(SessionEffect::ToggleFullscreen);
                 }
                 ShortcutGesture::TogglePause => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::TogglePause));
+                    return self.dispatch_command(SessionCommand::TogglePause);
                 }
                 ShortcutGesture::SaveActiveSlot => {
-                    return self
-                        .dispatch(SessionEvent::Command(SessionCommand::SaveActiveSlotOrNew));
+                    return self.dispatch_command(SessionCommand::SaveActiveSlotOrNew);
                 }
                 ShortcutGesture::LoadActiveSlot => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::LoadActiveSlot));
+                    return self.dispatch_command(SessionCommand::LoadActiveSlot);
                 }
                 ShortcutGesture::SelectNextSlot => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::SelectNextSlot));
+                    return self.dispatch_command(SessionCommand::SelectNextSlot);
                 }
                 ShortcutGesture::SelectPreviousSlot => {
-                    return self
-                        .dispatch(SessionEvent::Command(SessionCommand::SelectPreviousSlot));
+                    return self.dispatch_command(SessionCommand::SelectPreviousSlot);
                 }
                 ShortcutGesture::Reset => {
-                    return self.dispatch(SessionEvent::Command(SessionCommand::Reset));
+                    return self.dispatch_command(SessionCommand::Reset);
                 }
             },
             SessionEvent::ClearInput => self.session.clear_input(),
@@ -122,9 +145,20 @@ impl<'a> SessionDriver<'a> {
 pub fn dispatch(
     session: &mut SessionHandle,
     policy: &mut PausePolicy,
+    table: &CommandTable,
     event: SessionEvent,
 ) -> Result<SessionOutcome, SessionError> {
-    SessionDriver::new(session, policy).dispatch(event)
+    SessionDriver::new(session, policy, table).dispatch(event)
+}
+
+/// Typed command entry for direct callers holding domain commands
+/// (debugger drain, shell ports). Opaque activations go through [`dispatch`].
+pub fn dispatch_command(
+    session: &mut SessionHandle,
+    policy: &mut PausePolicy,
+    command: SessionCommand,
+) -> Result<SessionOutcome, SessionError> {
+    SessionDriver::new(session, policy, &CommandTable::default()).dispatch_command(command)
 }
 
 /// Ownership changes are retained even without a core. The execution hold gates
@@ -184,84 +218,84 @@ macro_rules! impl_session_controls {
     ($host:ty) => {
         impl nerust_gui_shell::session::access::PauseControl for $host {
             fn pause(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::Pause,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::Pause,
+                );
             }
             fn resume(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::Resume,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::Resume,
+                );
             }
             fn toggle_pause(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::TogglePause,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::TogglePause,
+                );
             }
         }
         impl nerust_gui_shell::session::access::SlotIo for $host {
             fn save_active_slot(&mut self) -> bool {
-                self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::SaveActiveSlotOrNew,
-                ))
+                self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::SaveActiveSlotOrNew,
+                )
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn load_active_slot(&mut self) -> bool {
-                self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::LoadActiveSlot,
-                ))
+                self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::LoadActiveSlot,
+                )
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn load_slot(&mut self, id: u64) -> bool {
-                self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::LoadSlot(id),
-                ))
+                self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::LoadSlot(id),
+                )
                 .ok()
                 .and_then(|out| out.command)
                 .is_some_and(|out| out.executed)
             }
             fn save_slot(&mut self, id: u64) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::SaveSlot(id),
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::SaveSlot(id),
+                );
             }
             fn delete_slot(&mut self, id: u64) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::DeleteSlot(id),
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::DeleteSlot(id),
+                );
             }
         }
         impl nerust_gui_shell::session::access::SlotNav for $host {
             fn select_next_slot(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::SelectNextSlot,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::SelectNextSlot,
+                );
             }
             fn select_previous_slot(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::SelectPreviousSlot,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::SelectPreviousSlot,
+                );
             }
             fn select_slot(&mut self, id: u64) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::SelectActiveSlot(id),
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::SelectActiveSlot(id),
+                );
             }
             fn create_slot(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::CreateSlot,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::CreateSlot,
+                );
             }
         }
         impl nerust_gui_shell::session::access::ResetControl for $host {
             fn reset(&mut self) {
-                let _ = self.dispatch_session(wakui::session::SessionEvent::Command(
-                    wakui::commands::SessionCommand::Reset,
-                ));
+                let _ = self.dispatch_session_command(
+                    nerust_gui_shell::session::commands::SessionCommand::Reset,
+                );
             }
         }
     };
@@ -334,11 +368,27 @@ mod tests {
             &mut self,
             event: SessionEvent,
         ) -> Result<SessionOutcome, SessionError> {
-            dispatch(&mut self.session, &mut self.policy, event)
+            dispatch(
+                &mut self.session,
+                &mut self.policy,
+                &CommandTable::default(),
+                event,
+            )
+        }
+
+        fn dispatch_session_command(
+            &mut self,
+            command: SessionCommand,
+        ) -> Result<SessionOutcome, SessionError> {
+            dispatch_command(&mut self.session, &mut self.policy, command)
         }
 
         fn event(&mut self, event: SessionEvent) -> SessionOutcome {
             self.dispatch_session(event).unwrap()
+        }
+
+        fn command(&mut self, command: SessionCommand) -> SessionOutcome {
+            self.dispatch_session_command(command).unwrap()
         }
 
         fn owner(&mut self, owner: PauseOwner, active: bool) {
@@ -474,7 +524,7 @@ mod tests {
         assert!(host.policy.owns(PauseOwner::User));
         assert!(host.session.tick_metrics().paused);
         assert!(host.key(Key::F2, true).command.is_none());
-        host.event(SessionEvent::Command(SessionCommand::Resume));
+        host.command(SessionCommand::Resume);
         assert!(!host.policy.paused());
         assert!(!host.session.tick_metrics().paused);
         host.key(Key::F2, false);
@@ -505,13 +555,13 @@ mod tests {
         host.event(SessionEvent::SettingsClosed);
         host.owner(PauseOwner::Focus, false);
         assert!(host.session.tick_metrics().paused, "modal still holds");
-        host.event(SessionEvent::Command(SessionCommand::Pause));
+        host.command(SessionCommand::Pause);
         host.owner(PauseOwner::Modal, false);
         assert!(
             host.session.tick_metrics().paused,
             "explicit pause survives modal release"
         );
-        host.event(SessionEvent::Command(SessionCommand::Resume));
+        host.command(SessionCommand::Resume);
         assert!(!host.session.tick_metrics().paused);
     }
 
@@ -547,7 +597,7 @@ mod tests {
         assert!(host.policy.owns(PauseOwner::User));
         host.event(SessionEvent::SettingsClosed);
         assert!(host.session.tick_metrics().paused);
-        host.event(SessionEvent::Command(SessionCommand::Resume));
+        host.command(SessionCommand::Resume);
         host.session.run_command(SessionCommand::Pause).unwrap();
         assert!(!host.event(SessionEvent::SettingsClosed).settings_changed);
         assert!(
@@ -566,9 +616,9 @@ mod tests {
     fn resume_under_settings_hold_clears_only_user_ownership() {
         let mut host = TestHost::new(true);
         host.load_nes();
-        host.event(SessionEvent::Command(SessionCommand::Pause));
+        host.command(SessionCommand::Pause);
         host.event(SessionEvent::SettingsOpened);
-        host.event(SessionEvent::Command(SessionCommand::Resume));
+        host.command(SessionCommand::Resume);
         assert!(!host.policy.owns(PauseOwner::User));
         assert!(host.session.tick_metrics().paused);
         host.event(SessionEvent::SettingsClosed);

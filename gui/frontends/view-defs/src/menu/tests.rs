@@ -1,9 +1,13 @@
 use super::*;
+use crate::commands::{CommandTable, MenuCommand, NativeRole};
+use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
 use nerust_settings_core::model::{
     input::{ShortcutBinding, default_shortcut_bindings},
     language::AppLanguage,
 };
+use wakui::commands::CommandRef;
+use wakui::control::IdRegistry;
 use wakui::menu::{CommandVisitor, MenuModel, MenuVisitor, find_menu};
 
 const CAPABILITIES: MenuCapabilities = MenuCapabilities {
@@ -35,6 +39,10 @@ fn slot(id: u64) -> StateSlotSummary {
     }
 }
 
+fn built(sig: &MenuSig, capabilities: MenuCapabilities) -> (MenuModel, CommandTable) {
+    build_menubar(&mut IdRegistry::default(), sig, capabilities)
+}
+
 fn items(menu: &Submenu) -> Vec<&MenuItem> {
     menu.children
         .iter()
@@ -45,18 +53,27 @@ fn items(menu: &Submenu) -> Vec<&MenuItem> {
         .collect()
 }
 
-fn command_item(model: &MenuModel, command: MenuCommand) -> &MenuItem {
+fn activation(table: &CommandTable, command: MenuCommand) -> CommandRef {
+    table.activation(command).expect("activation")
+}
+
+fn command_item<'a>(
+    model: &'a MenuModel,
+    table: &CommandTable,
+    command: MenuCommand,
+) -> &'a MenuItem {
+    let activation = activation(table, command);
     model
         .menus
         .iter()
         .flat_map(items)
-        .find(|item| item.command == Some(command))
+        .find(|item| item.command == Some(activation))
         .unwrap()
 }
 
 #[test]
 fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
-    let model = build_menubar(&sig(), CAPABILITIES);
+    let (model, table) = built(&sig(), CAPABILITIES);
     assert_eq!(
         model.menus.iter().map(|menu| menu.id).collect::<Vec<_>>(),
         [MenuId::File, MenuId::Emulation, MenuId::Help]
@@ -67,10 +84,10 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
             .map(|item| item.command.unwrap())
             .collect::<Vec<_>>(),
         [
-            MenuCommand::Open,
-            MenuCommand::Close,
-            MenuCommand::Settings,
-            MenuCommand::Native(NativeRole::Quit),
+            activation(&table, MenuCommand::Open),
+            activation(&table, MenuCommand::Close),
+            activation(&table, MenuCommand::Settings),
+            activation(&table, MenuCommand::Native(NativeRole::Quit)),
         ]
     );
     let states = find_menu(&model.menus, MenuId::States).unwrap();
@@ -92,7 +109,7 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
             text(AppLanguage::English, UiText::NoSaveSlots)
         );
     }
-    let tao = build_menubar(
+    let (tao, tao_table) = built(
         &sig(),
         MenuCapabilities {
             about: false,
@@ -101,7 +118,11 @@ fn semantic_tree_owns_order_roles_and_disabled_placeholders() {
         },
     );
     assert!(find_menu(&tao.menus, MenuId::Help).is_none());
-    assert!(command_item(&tao, MenuCommand::Open).label.ends_with("..."));
+    assert!(
+        command_item(&tao, &tao_table, MenuCommand::Open)
+            .label
+            .ends_with("...")
+    );
 }
 
 #[test]
@@ -110,14 +131,15 @@ fn translation_shortcut_and_slot_labels_have_typed_commands() {
     sig.loaded = true;
     sig.slots = vec![slot(42)].into();
     sig.active_slot = Some(42);
-    let model = build_menubar(&sig, CAPABILITIES);
+    let (model, table) = built(&sig, CAPABILITIES);
     assert_eq!(
-        command_item(&model, MenuCommand::Debugger).label,
+        command_item(&model, &table, MenuCommand::Debugger).label,
         "Open Debugger (F4)"
     );
     assert_eq!(
         command_item(
             &model,
+            &table,
             MenuCommand::Session(SessionCommand::SaveActiveSlotOrNew)
         )
         .label,
@@ -129,7 +151,7 @@ fn translation_shortcut_and_slot_labels_have_typed_commands() {
         SessionCommand::LoadSlot(42),
         SessionCommand::DeleteSlot(42),
     ] {
-        let item = command_item(&model, MenuCommand::Session(command));
+        let item = command_item(&model, &table, MenuCommand::Session(command));
         assert_eq!(item.label, slot_label(&slot(42), Some(42)));
         assert!(item.enabled);
     }
@@ -139,10 +161,10 @@ fn translation_shortcut_and_slot_labels_have_typed_commands() {
         key: None,
     }]
     .into();
-    let japanese = build_menubar(&sig, CAPABILITIES);
+    let (japanese, japanese_table) = built(&sig, CAPABILITIES);
     assert_eq!(japanese.menus[0].label, "ファイル");
     assert_eq!(
-        command_item(&japanese, MenuCommand::Debugger).label,
+        command_item(&japanese, &japanese_table, MenuCommand::Debugger).label,
         text(sig.language, UiText::OpenDebugger)
     );
 }
@@ -152,56 +174,75 @@ fn coreless_debugger_history_and_settings_guard_including_quit() {
     let mut sig = sig();
     sig.slots = vec![slot(1)].into();
     sig.active_slot = Some(1);
-    let model = build_menubar(&sig, CAPABILITIES);
+    let (model, table) = built(&sig, CAPABILITIES);
+    let unit = |command| activation(&table, command).argument.is_none();
     for item in model.menus.iter().flat_map(items) {
+        let Some(activation) = item.command else {
+            continue;
+        };
+        let resolved = table.resolve(activation).unwrap();
         assert_eq!(
             item.enabled,
-            matches!(
-                item.command,
-                Some(
+            unit(resolved)
+                && matches!(
+                    resolved,
                     MenuCommand::Open
                         | MenuCommand::Settings
                         | MenuCommand::Debugger
                         | MenuCommand::NotificationHistory
                         | MenuCommand::Native(_)
                 )
-            )
         );
     }
     sig.loaded = true;
     sig.settings_open = true;
-    let model = build_menubar(&sig, CAPABILITIES);
+    let (model, table) = built(&sig, CAPABILITIES);
     for item in model.menus.iter().flat_map(items) {
         assert_eq!(
             item.enabled,
-            item.command == Some(MenuCommand::Native(NativeRole::Quit))
+            item.command == Some(activation(&table, MenuCommand::Native(NativeRole::Quit)))
         );
     }
-    assert!(command_item(&model, MenuCommand::Native(NativeRole::Quit)).enabled);
+    assert!(command_item(&model, &table, MenuCommand::Native(NativeRole::Quit)).enabled);
 }
 
 #[test]
 fn pause_and_active_slot_gates_preserve_save_without_existing_slot() {
     let mut sig = sig();
     sig.loaded = true;
-    let model = build_menubar(&sig, CAPABILITIES);
-    assert!(command_item(&model, MenuCommand::Session(SessionCommand::Pause)).enabled);
-    assert!(!command_item(&model, MenuCommand::Session(SessionCommand::Resume)).enabled);
+    let (model, table) = built(&sig, CAPABILITIES);
+    assert!(command_item(&model, &table, MenuCommand::Session(SessionCommand::Pause)).enabled);
+    assert!(!command_item(&model, &table, MenuCommand::Session(SessionCommand::Resume)).enabled);
     assert!(
         command_item(
             &model,
+            &table,
             MenuCommand::Session(SessionCommand::SaveActiveSlotOrNew)
         )
         .enabled
     );
-    assert!(!command_item(&model, MenuCommand::Session(SessionCommand::LoadActiveSlot)).enabled);
+    assert!(
+        !command_item(
+            &model,
+            &table,
+            MenuCommand::Session(SessionCommand::LoadActiveSlot)
+        )
+        .enabled
+    );
     sig.paused = true;
     sig.active_slot = Some(1);
     sig.slots = vec![slot(1)].into();
-    let model = build_menubar(&sig, CAPABILITIES);
-    assert!(!command_item(&model, MenuCommand::Session(SessionCommand::Pause)).enabled);
-    assert!(command_item(&model, MenuCommand::Session(SessionCommand::Resume)).enabled);
-    assert!(command_item(&model, MenuCommand::Session(SessionCommand::LoadActiveSlot)).enabled);
+    let (model, table) = built(&sig, CAPABILITIES);
+    assert!(!command_item(&model, &table, MenuCommand::Session(SessionCommand::Pause)).enabled);
+    assert!(command_item(&model, &table, MenuCommand::Session(SessionCommand::Resume)).enabled);
+    assert!(
+        command_item(
+            &model,
+            &table,
+            MenuCommand::Session(SessionCommand::LoadActiveSlot)
+        )
+        .enabled
+    );
 }
 
 #[derive(Default)]
@@ -211,7 +252,7 @@ struct Recorder {
     preorder: Vec<MenuId>,
     rebuilds: Vec<MenuId>,
     root_rebuild: bool,
-    commands: Vec<Option<MenuCommand>>,
+    commands: Vec<Option<CommandRef>>,
     declarations: Vec<wakui::commands::CommandId>,
 }
 
@@ -243,17 +284,18 @@ impl MenuVisitor for Recorder {
 }
 
 impl CommandVisitor for Recorder {
-    fn command(&mut self, command: &wakui::commands::CommandDescriptor) {
+    fn command(&mut self, command: &wakui::commands::Command) {
         assert!(self.root_open, "root precedes declarations");
         assert!(self.stack.is_empty(), "declarations precede menus");
+        // Opaque framework ids only; the resolution table maps them back.
         self.declarations.push(command.id);
     }
 }
 
 #[test]
 fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
-    let mut sig = sig();
-    let first = build_menubar(&sig, CAPABILITIES);
+    let mut signature = sig();
+    let (first, _) = built(&signature, CAPABILITIES);
     let mut record = Recorder::default();
     first.visit(None, &mut record);
     assert_eq!(record.declarations.len(), first.commands.definitions.len());
@@ -272,15 +314,18 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
     );
     assert_eq!(record.rebuilds, record.preorder);
     assert!(record.root_rebuild);
-    sig.loaded = true;
-    sig.settings_open = true;
-    let next = build_menubar(&sig, CAPABILITIES);
+    signature.loaded = true;
+    signature.settings_open = true;
+    // Same registry: opaque ids stay stable, so only enablement changes.
+    let mut ids = IdRegistry::default();
+    let (next, _) = build_menubar(&mut ids, &signature, CAPABILITIES);
+    let (first, _) = build_menubar(&mut ids, &sig(), CAPABILITIES);
     let mut record = Recorder::default();
     next.visit(Some(&first), &mut record);
     assert!(record.rebuilds.is_empty());
     assert!(!record.root_rebuild);
-    sig.slots = vec![slot(1)].into();
-    let slots = build_menubar(&sig, CAPABILITIES);
+    signature.slots = vec![slot(1)].into();
+    let (slots, _) = build_menubar(&mut ids, &signature, CAPABILITIES);
     let mut record = Recorder::default();
     slots.visit(Some(&next), &mut record);
     assert_eq!(
@@ -293,12 +338,14 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
         ]
     );
     assert!(!record.root_rebuild);
-    sig.slots = sig.slots.to_vec().into();
-    let reallocated = build_menubar(&sig, CAPABILITIES);
+    signature.slots = signature.slots.to_vec().into();
+    let (reallocated, _) = build_menubar(&mut ids, &signature, CAPABILITIES);
     assert_eq!(reallocated, slots);
-    sig.shortcuts = Vec::new().into();
+    signature.shortcuts = Vec::new().into();
     let mut record = Recorder::default();
-    build_menubar(&sig, CAPABILITIES).visit(Some(&slots), &mut record);
+    build_menubar(&mut ids, &signature, CAPABILITIES)
+        .0
+        .visit(Some(&slots), &mut record);
     assert_eq!(record.rebuilds, [MenuId::Emulation, MenuId::States]);
     assert!(!record.root_rebuild);
 }
@@ -307,9 +354,13 @@ fn visitor_balanced_preorder_and_incremental_enable_vs_structure() {
 fn application_menu_is_host_owned_and_part_of_root_diff_through_dyn_visitor() {
     use NativeApplicationEntry::{Role, Separator};
     use NativeApplicationRole as R;
-    let first = build_menubar(&sig(), CAPABILITIES);
+    // One registry: opaque command ids stay stable across both builds, so
+    // only the application-menu addition rebuilds the root.
+    let mut ids = IdRegistry::default();
+    let (first, _) = build_menubar(&mut ids, &sig(), CAPABILITIES);
     assert!(first.application_menu.is_none());
-    let next = build_menubar(
+    let (next, _) = build_menubar(
+        &mut ids,
         &sig(),
         MenuCapabilities {
             application_menu: true,

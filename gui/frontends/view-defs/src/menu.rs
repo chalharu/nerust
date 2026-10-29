@@ -2,14 +2,16 @@
 //! Schema (ids, models, visitors) lives in the framework
 //! (`wakui::menu`).
 
+use wakui::control::IdRegistry;
 use wakui::menu::{
     DialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar, NativeApplicationEntry,
     NativeApplicationMenu, NativeApplicationRole, Submenu,
 };
 
-use wakui::commands::{MenuCommand, NativeRole, SessionCommand};
-
-use crate::commands::{build_command_model, command_enabled};
+use crate::commands::{
+    MenuCommand, MenuCommandId, NativeRole, build_command_model, command_enabled,
+};
+use nerust_gui_shell::session::commands::SessionCommand;
 
 use nerust_gui_runtime::{menu_labels::shortcut_hint, slots::slot_label};
 use nerust_settings_core::{
@@ -40,15 +42,29 @@ pub struct MenuSig {
     pub shortcuts: std::sync::Arc<[nerust_settings_core::model::input::ShortcutBinding]>,
 }
 
-pub fn build_menubar(sig: &MenuSig, capabilities: MenuCapabilities) -> Menubar {
+/// Build the generic menubar plus its resolution table. The caller keeps
+/// `ids` across frames so opaque command ids stay stable while labels and
+/// enablement refresh, mirroring settings stable-id minting.
+pub fn build_menubar(
+    ids: &mut IdRegistry<MenuCommandId>,
+    sig: &MenuSig,
+    capabilities: MenuCapabilities,
+) -> (Menubar, crate::commands::CommandTable) {
     use MenuCommand as C;
     use SessionCommand as S;
-    let commands = build_command_model(sig);
+    let (commands, table) = build_command_model(ids, sig);
     let label = |key| text(sig.language, key).to_owned();
-    let item = |command: C, key| MenuItem {
-        command: Some(command),
-        label: label(key),
-        enabled: command_enabled(command, sig),
+    // Opaque activation for a domain command: id from the table, argument
+    // from the typed value. Flavors forward this without interpretation.
+    let activation = |command: C| table.activation(command).expect("command activation");
+    let item = |command: C, key: UiText| {
+        let label = label(key);
+        let enabled = command_enabled(command, sig);
+        MenuItem {
+            command: Some(activation(command)),
+            label,
+            enabled,
+        }
     };
     let hinted = |command, key, shortcut| {
         let mut entry = item(command, key);
@@ -91,8 +107,12 @@ pub fn build_menubar(sig: &MenuSig, capabilities: MenuCapabilities) -> Menubar {
         (MenuId::LoadSlot, UiText::LoadSlot, S::LoadSlot),
         (MenuId::DeleteSlot, UiText::DeleteSlot, S::DeleteSlot),
     ] {
+        let template_opaque = table
+            .activation(C::Session(command(0)))
+            .map(|activation| activation.id)
+            .expect("command activation");
         let enabled = commands
-            .get(C::Session(command(0)).binding().0)
+            .get(template_opaque)
             .expect("slot command declaration")
             .enabled;
         let children = if sig.slots.is_empty() {
@@ -107,7 +127,7 @@ pub fn build_menubar(sig: &MenuSig, capabilities: MenuCapabilities) -> Menubar {
                 .map(|slot| {
                     let command = C::Session(command(slot.slot_id));
                     MenuEntry::Item(MenuItem {
-                        command: Some(command),
+                        command: Some(activation(command)),
                         label: slot_label(slot, sig.active_slot),
                         // This entry comes directly from the current slots;
                         // do not rescan the entire list for every item.
@@ -177,11 +197,14 @@ pub fn build_menubar(sig: &MenuSig, capabilities: MenuCapabilities) -> Menubar {
             ],
         }
     });
-    Menubar {
-        commands,
-        menus,
-        application_menu,
-    }
+    (
+        Menubar {
+            commands,
+            menus,
+            application_menu,
+        },
+        table,
+    )
 }
 
 #[cfg(test)]

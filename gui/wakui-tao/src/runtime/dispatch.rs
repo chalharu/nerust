@@ -182,16 +182,20 @@ mod tests {
 
     #[test]
     fn menu_quit_defers_teardown_to_ordered_begin_close() {
-        use crate::event::MenuCommand;
         use crate::runtime::host::HostAction;
-        let (mut runtime, _) = test_runtime();
+        use crate::testkit::TestMenu;
+        let support = TestHost::new();
+        let quit = support.menu_ref(TestMenu::Quit);
+        let mut runtime = WindowRuntime {
+            event_loop: None,
+            event_sink: None,
+            host: support.host,
+            surface_xid: None,
+        };
         let opener = FakeOpener::failing("no display");
         // Menu Quit returns the exit intent only: host teardown waits.
         assert_eq!(
-            runtime.host.on_menu_command(
-                MenuCommand::Native(wakui_core::commands::NativeRole::Quit),
-                &opener
-            ),
+            runtime.host.on_menu_command(quit, &opener),
             HostAction::Exit
         );
         assert!(!runtime.host.core.close_exited());

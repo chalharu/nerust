@@ -24,7 +24,7 @@ use nerust_render_traits::{
     renderer::{OsdLayer, OsdSink, StripSink},
 };
 use wakui::app::FrontendApp as _;
-use wakui::commands::{CommandDescriptor, MenuCommand};
+use wakui::commands::{Command, CommandRef};
 use wakui::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 use wakui::event::{CommandEffect, EventCommand, EventHandler, EventSink};
 use wakui::loop_driver::{LoopHost, TurnLiveness, WakeNeed, drive_turn};
@@ -64,10 +64,10 @@ struct NativeMenus {
 }
 
 impl CommandVisitor for NativeMenus {
-    fn command(&mut self, command: &CommandDescriptor) {
+    fn command(&mut self, command: &Command) {
         assert!(self.common.try_borrow_mut().is_ok());
         assert_eq!(self.depth, 0);
-        assert!(!command.id.name().is_empty());
+        assert!(!command.spec.debug_name().is_empty());
         self.declarations += 1;
     }
 }
@@ -349,9 +349,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     native.common.borrow_mut().debug = id;
+    // Build chrome once so the resolution table holds the latest model,
+    // like a native menu built before the first click.
+    drive_turn(&mut native);
     let events = NativeEvents(Rc::new(RefCell::new(Vec::new())));
     let sink: &dyn EventSink = &events;
-    assert!(sink.send(EventCommand::Menu(MenuCommand::Open)));
+    // Opaque activation from the latest menubar, like a native menu callback.
+    let open: CommandRef = {
+        let common = native.common.borrow();
+        common
+            .app
+            .menu_commands()
+            .activation(nerust_frontend_viewdefs::commands::MenuCommand::Open)
+            .expect("open activation")
+    };
+    assert!(sink.send(EventCommand::Menu(open)));
     let event = events.0.borrow_mut().pop().unwrap();
     let outcome = {
         let mut common = native.common.borrow_mut();

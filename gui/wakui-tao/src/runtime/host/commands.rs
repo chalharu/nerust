@@ -11,7 +11,7 @@ use wakui_core::{
 };
 
 #[cfg(test)]
-use crate::event::MenuCommand;
+use crate::event::CommandRef;
 use crate::event::UserEvent;
 use crate::ports::WindowOpener;
 
@@ -19,7 +19,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     #[cfg(test)]
     pub(crate) fn on_menu_command(
         &mut self,
-        command: MenuCommand,
+        command: CommandRef,
         opener: &dyn WindowOpener,
     ) -> HostAction {
         self.on_event(UserEvent::Menu(command), opener)
@@ -128,13 +128,10 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 
 #[cfg(test)]
 mod tests {
-    use crate::event::MenuCommand;
     use crate::runtime::host::HostAction;
     use crate::runtime::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
-    use crate::testkit::StubAux;
-    use wakui_core::commands::NativeRole;
-    use wakui_core::commands::SessionCommand;
+    use crate::testkit::{StubAux, TestMenu as M, TestSession as S};
 
     #[test]
     fn rom_filters_empty_without_cores() {
@@ -183,12 +180,10 @@ mod tests {
     #[test]
     fn settings_open_guard_swallows_non_quit() {
         let support = TestHost::new();
+        let open = support.menu_ref(M::Open);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Open, &opener),
-            HostAction::None
-        );
+        assert_eq!(host.on_menu_command(open, &opener), HostAction::None);
         assert!(opener.calls().is_empty());
         assert!(support.app.borrow().load_paths.clone().is_empty());
     }
@@ -216,19 +211,19 @@ mod tests {
 
     #[test]
     fn open_settings_blocks_menu_commands() {
-        use crate::event::MenuCommand as Cmd;
-        use wakui_core::commands::SessionCommand;
         let support = settings_blocked_host();
+        let commands = [
+            M::Open,
+            M::Close,
+            M::Settings,
+            M::Debugger,
+            M::History,
+            M::Session(S::TogglePause),
+        ]
+        .map(|command| support.menu_ref(command));
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        for command in [
-            Cmd::Open,
-            Cmd::Close,
-            Cmd::Settings,
-            Cmd::Debugger,
-            Cmd::NotificationHistory,
-            Cmd::Session(SessionCommand::TogglePause),
-        ] {
+        for command in commands {
             assert_eq!(host.on_menu_command(command, &opener), HostAction::None);
         }
         assert!(opener.calls().is_empty());
@@ -239,12 +234,10 @@ mod tests {
     #[test]
     fn open_settings_lets_quit_through() {
         let support = settings_blocked_host();
+        let quit = support.menu_ref(M::Quit);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Native(NativeRole::Quit), &opener),
-            HostAction::Exit
-        );
+        assert_eq!(host.on_menu_command(quit, &opener), HostAction::Exit);
         // Intent only: host teardown waits for the runtime's ordered close.
         assert!(!host.core.close_exited());
     }
@@ -255,6 +248,9 @@ mod tests {
         use wakui_core::focus::FocusEvent;
         use wakui_core::session::SessionEvent;
         let support = settings_blocked_host();
+        let about = support.menu_ref(M::About);
+        let select = support.menu_ref(M::Session(S::SelectActiveSlot(42)));
+        let quit = support.menu_ref(M::Quit);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         // Only the native registry is open: the external flag, not a Host
@@ -265,8 +261,8 @@ mod tests {
                 .owns_pause(wakui_core::pause::PauseOwner::Settings)
         );
         for event in [
-            UserEvent::Menu(MenuCommand::Native(NativeRole::About)),
-            UserEvent::Session(SessionEvent::Command(SessionCommand::SelectActiveSlot(42))),
+            UserEvent::Menu(about),
+            UserEvent::Session(SessionEvent::Command(select)),
             UserEvent::Session(SessionEvent::Shortcut(
                 wakui_core::session::ShortcutGesture::OpenDebugger,
             )),
@@ -290,10 +286,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(
-            host.on_event(
-                UserEvent::Menu(MenuCommand::Native(NativeRole::Quit)),
-                &opener
-            ),
+            host.on_event(UserEvent::Menu(quit), &opener),
             HostAction::Exit
         );
         assert!(!host.core.close_exited());
@@ -320,12 +313,10 @@ mod tests {
     #[test]
     fn history_menu_records_open_attempt() {
         let support = TestHost::new();
+        let history = support.menu_ref(M::History);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::NotificationHistory, &opener),
-            HostAction::None
-        );
+        assert_eq!(host.on_menu_command(history, &opener), HostAction::None);
         assert_eq!(opener.calls(), [OpenerCall::History]);
         assert!(!host.aux.contains(crate::testkit::TestAux::History));
     }
@@ -333,12 +324,10 @@ mod tests {
     #[test]
     fn quit_exits_and_closes() {
         let support = TestHost::new();
+        let quit = support.menu_ref(M::Quit);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Native(NativeRole::Quit), &opener),
-            HostAction::Exit
-        );
+        assert_eq!(host.on_menu_command(quit, &opener), HostAction::Exit);
         // Intent only: no teardown before the runtime's ordered close.
         assert!(!host.core.close_exited());
     }
@@ -347,48 +336,40 @@ mod tests {
     fn open_menu_routes_dialog_result() {
         let path = std::path::PathBuf::from("/tmp/game.nes");
         let support = TestHost::with_pick(Some(path.clone()));
+        let open = support.menu_ref(M::Open);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Open, &opener),
-            HostAction::RomLoaded
-        );
+        assert_eq!(host.on_menu_command(open, &opener), HostAction::RomLoaded);
         assert_eq!(support.app.borrow().load_paths.clone(), [path]);
     }
 
     #[test]
     fn close_menu_unloads_without_core() {
         let support = TestHost::new();
+        let close = support.menu_ref(M::Close);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Close, &opener),
-            HostAction::None
-        );
+        assert_eq!(host.on_menu_command(close, &opener), HostAction::None);
         assert_eq!(support.menu.updates().len(), 1);
     }
 
     #[test]
     fn session_menu_runs_command_and_syncs() {
         let support = TestHost::new();
+        let toggle = support.menu_ref(M::Session(S::TogglePause));
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Session(SessionCommand::TogglePause), &opener,),
-            HostAction::None
-        );
+        assert_eq!(host.on_menu_command(toggle, &opener), HostAction::None);
         assert_eq!(support.menu.updates().len(), 1);
     }
 
     #[test]
     fn settings_menu_records_open_attempt() {
         let support = TestHost::new();
+        let settings = support.menu_ref(M::Settings);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Settings, &opener),
-            HostAction::None
-        );
+        assert_eq!(host.on_menu_command(settings, &opener), HostAction::None);
         assert_eq!(opener.calls(), [OpenerCall::Settings]);
         assert!(host.aux.windows.ids().is_empty());
     }
@@ -396,42 +377,38 @@ mod tests {
     #[test]
     fn debugger_menu_records_open_attempt() {
         let support = TestHost::new();
+        let debugger = support.menu_ref(M::Debugger);
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
-        assert_eq!(
-            host.on_menu_command(MenuCommand::Debugger, &opener),
-            HostAction::None
-        );
+        assert_eq!(host.on_menu_command(debugger, &opener), HostAction::None);
         assert_eq!(opener.calls(), [OpenerCall::Debug]);
         assert!(host.aux.windows.ids().is_empty());
     }
 
     #[test]
     fn session_menu_runs_every_command_without_core() {
-        use wakui_core::commands::SessionCommand as Cmd;
         let support = TestHost::new();
+        let activations = [
+            S::Pause,
+            S::Resume,
+            S::TogglePause,
+            S::Reset,
+            S::CreateSlot,
+            S::SaveActiveSlotOrNew,
+            S::LoadActiveSlot,
+            S::SelectActiveSlot(7),
+            S::SaveSlot(7),
+            S::LoadSlot(7),
+            S::DeleteSlot(7),
+            S::SelectNextSlot,
+            S::SelectPreviousSlot,
+        ]
+        .map(|command| support.menu_ref(M::Session(command)));
         let mut host = support.host;
         let opener = FakeOpener::failing("no display");
         let before = support.menu.updates().len();
-        for command in [
-            Cmd::Pause,
-            Cmd::Resume,
-            Cmd::TogglePause,
-            Cmd::Reset,
-            Cmd::CreateSlot,
-            Cmd::SaveActiveSlotOrNew,
-            Cmd::LoadActiveSlot,
-            Cmd::SelectActiveSlot(7),
-            Cmd::SaveSlot(7),
-            Cmd::LoadSlot(7),
-            Cmd::DeleteSlot(7),
-            Cmd::SelectNextSlot,
-            Cmd::SelectPreviousSlot,
-        ] {
-            assert_eq!(
-                host.on_menu_command(MenuCommand::Session(command), &opener),
-                HostAction::None
-            );
+        for command in activations {
+            assert_eq!(host.on_menu_command(command, &opener), HostAction::None);
         }
         // dirty gate: identical chrome skips the IPC. Only the
         // first sync and the active-slot selection change the sig.

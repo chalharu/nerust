@@ -512,7 +512,12 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         &mut self,
         event: wakui::session::SessionEvent,
     ) -> Result<wakui::session::SessionOutcome, SessionError> {
-        crate::session::dispatch(&mut self.session, &mut self.pause_policy, event)
+        crate::session::dispatch(
+            &mut self.session,
+            &mut self.pause_policy,
+            &self.menu_commands,
+            event,
+        )
     }
 
     fn dialog_titles(&self) -> DialogTitles {

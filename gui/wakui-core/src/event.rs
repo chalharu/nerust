@@ -1,11 +1,11 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
 use crate::session::{SessionError, SessionEvent, SessionOutcome};
-use crate::{commands::MenuCommand, focus::FocusEvent};
+use crate::{commands::CommandRef, focus::FocusEvent};
 
 #[derive(Debug, Clone, Copy)]
 pub enum EventCommand {
-    Menu(MenuCommand),
+    Menu(CommandRef),
     Session(SessionEvent),
     Focus(FocusEvent),
     LiveTick,

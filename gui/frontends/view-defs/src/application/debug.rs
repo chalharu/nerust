@@ -13,7 +13,6 @@ use nerust_gui_shell::{
 use std::{task::Poll, time::Instant};
 use wakui::loop_driver::WakeNeed;
 use wakui::pause::PausePolicy;
-use wakui::session::SessionEvent;
 
 pub struct DebugRuntime {
     schedule: AuxSchedule<AuxKind>,
@@ -80,7 +79,7 @@ impl DebugRuntime {
                     DebugAction::TogglePause => SessionCommand::TogglePause,
                     _ => unreachable!("pause actions only"),
                 };
-                let _ = crate::session::dispatch(session, pause, SessionEvent::Command(command));
+                let _ = crate::session::dispatch_command(session, pause, command);
                 session.tick_metrics().loaded
             });
             session.debug_drain_begin(
