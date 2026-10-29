@@ -40,12 +40,6 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         fn end_window(&mut self, _: &Window) {
             self.0.push("/window");
         }
-        fn begin_widget(&mut self, _: &Widget) {
-            self.0.push("widget");
-        }
-        fn end_widget(&mut self, _: &Widget) {
-            self.0.push("/widget");
-        }
         fn visit_main(&mut self, _: &MainContents) {
             self.0.push("main");
         }
@@ -71,7 +65,7 @@ fn defaults_visit_each_group_with_balanced_outer_structure() {
         let mut visitor = Visitor::default();
         let dynamic: &mut dyn WindowVisitor = &mut visitor;
         window.visit(dynamic);
-        assert_eq!(visitor.0, ["window", "widget", group, "/widget", "/window"]);
+        assert_eq!(visitor.0, ["window", group, "/window"]);
     }
 }
 
@@ -89,10 +83,7 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
                 .borrow_mut()
                 .dispatch(ControlEvent::new(self.volume, ControlInput::Number(19)));
             let nested = self.session.borrow().window(aux_id(7));
-            assert!(matches!(
-                nested.contents.contents,
-                WidgetContents::Controls(_)
-            ));
+            assert!(matches!(nested.contents, WidgetContents::Controls(_)));
             let dynamic: &mut dyn ControlVisitor = self;
             screen.visit(dynamic);
         }
@@ -126,7 +117,7 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
         .dispatch(ControlEvent::new(volume, ControlInput::Number(37)));
     let window = session.borrow().window(aux_id(7));
     assert_eq!(window.id, WindowId::Auxiliary(aux_id(7)));
-    let WidgetContents::Controls(screen) = &window.contents.contents else {
+    let WidgetContents::Controls(screen) = &window.contents else {
         panic!("generic tree must be owned by the widget");
     };
     assert_eq!(window.title, screen.title);
@@ -150,7 +141,7 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
     );
     let latest = session.borrow().window(aux_id(7));
     drop(session);
-    let WidgetContents::Controls(screen) = latest.contents.contents else {
+    let WidgetContents::Controls(screen) = latest.contents else {
         panic!()
     };
     assert_eq!(
@@ -173,10 +164,7 @@ fn reservation_owns_group_before_native_creation_and_reentrant_open() {
         };
         let snapshot = windows.borrow().window(id).unwrap().clone();
         assert_eq!(snapshot.id, WindowId::Auxiliary(id));
-        assert!(matches!(
-            snapshot.contents.contents,
-            WidgetContents::PendingControls
-        ));
+        assert!(matches!(snapshot.contents, WidgetContents::PendingControls));
         struct Reenter<'a> {
             windows: &'a RefCell<AuxWindows<AuxKind, u64, ()>>,
             id: wakui::chrome::aux::AuxId,
@@ -218,7 +206,7 @@ fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
     let id = old;
     *windows.window_mut(old).unwrap() = session().window(id);
     assert!(matches!(
-        windows.window(old).unwrap().contents.contents,
+        windows.window(old).unwrap().contents,
         WidgetContents::Controls(_)
     ));
     assert!(windows.cancel_open(old));
@@ -231,7 +219,7 @@ fn blueprint_lifetime_matches_reservation_retry_removal_and_clear() {
     };
     assert_ne!(old, current);
     assert!(matches!(
-        windows.window(current).unwrap().contents.contents,
+        windows.window(current).unwrap().contents,
         WidgetContents::PendingControls
     ));
     assert_eq!(windows.complete_open(old, Some(1), ()), Err(()));

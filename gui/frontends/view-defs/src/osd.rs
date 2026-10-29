@@ -17,7 +17,7 @@ use nerust_render_traits::{
     ReservedStrip, SurfaceSize,
     renderer::{OsdLayer, OsdSink, StripSink, strip_pixels},
 };
-use wakui::support::cache::Versioned;
+use wakui::support::cache::ChangeGate;
 
 use crate::frame::FrameCtx;
 use wakui::chrome::dialog::{ModalAdvance, ModalPresentation, ModalToken};
@@ -238,8 +238,8 @@ pub struct OsdLayerSync {
     raster: nerust_render_osd::OsdRaster,
     presenter: OsdPresenter,
     layer_live: bool,
-    last_strip: Versioned<ReservedStrip>,
-    last_sync_geometry: Versioned<(u32, u32, OsdChrome)>,
+    last_strip: ChangeGate<ReservedStrip>,
+    last_sync_geometry: ChangeGate<(u32, u32, OsdChrome)>,
 }
 
 impl Default for OsdLayerSync {
@@ -248,8 +248,8 @@ impl Default for OsdLayerSync {
             raster: nerust_render_osd::OsdRaster::new(),
             presenter: OsdPresenter::new(),
             layer_live: false,
-            last_strip: Versioned::new(),
-            last_sync_geometry: Versioned::new(),
+            last_strip: ChangeGate::new(),
+            last_sync_geometry: ChangeGate::new(),
         }
     }
 }

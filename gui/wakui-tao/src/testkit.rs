@@ -17,7 +17,13 @@ use std::{
 };
 
 use wakui_core::{
-    app::boundary::{FrontendApp, WidgetCloseOutcome},
+    app::{
+        boundary::{FrontendApp, WidgetCloseOutcome},
+        roles::{
+            AuxPorts, ChromePorts, ContentPorts, DialogPorts, FocusPorts, LifecyclePorts,
+            PollPorts, ViewportPorts,
+        },
+    },
     chrome::aux::{AuxId, AuxRegistryPort, OpenRequest},
     chrome::dialog::{DialogTurn, ModalAdvance, ModalPresentation, ModalToken},
     chrome::mailbox::{MailboxDomain, WindowMailbox},
@@ -836,7 +842,7 @@ impl EventHandler<TestAux> for FakeApp {
         let guarded = self.modal_guard_active();
         let blocked = match event {
             // Only the opaque Quit activation passes the modal guard.
-            EventCommand::Menu(activation) => activation != quit,
+            EventCommand::Command(activation) => activation != quit,
             // ClearInput resets held input even under the guard, like the
             // view-side handler: only commands and keys are gated.
             EventCommand::Session(SessionEvent::Command(_) | SessionEvent::Keyboard { .. }) => true,
@@ -850,7 +856,7 @@ impl EventHandler<TestAux> for FakeApp {
             ..Default::default()
         };
         match event {
-            EventCommand::Menu(activation) => {
+            EventCommand::Command(activation) => {
                 let Some(command) = self.commands.resolve(activation) else {
                     return Ok(EventOutcome::default());
                 };
@@ -1036,7 +1042,7 @@ impl FakeApp {
     }
 }
 
-impl FrontendApp<TestAux> for FakeApp {
+impl LifecyclePorts for FakeApp {
     fn load_file(&mut self, path: &Path) -> Result<(), String> {
         self.load_paths.push(path.to_path_buf());
         if self.failing_load {
@@ -1083,9 +1089,9 @@ impl FrontendApp<TestAux> for FakeApp {
     fn resume_content(&mut self) {
         self.paused = false;
     }
+}
 
-    fn swap_frame_buffer(&mut self) {}
-
+impl ContentPorts for FakeApp {
     fn content_loaded(&self) -> bool {
         self.loaded
     }
@@ -1115,7 +1121,9 @@ impl FrontendApp<TestAux> for FakeApp {
         }
         Ok(outcome)
     }
+}
 
+impl ChromePorts for FakeApp {
     fn dialog_titles(&self) -> FileDialogTitles {
         FileDialogTitles {
             open: "Open file".to_string(),
@@ -1166,10 +1174,6 @@ impl FrontendApp<TestAux> for FakeApp {
         }
     }
 
-    fn refresh_window_title(&mut self) -> Option<String> {
-        self.title_update()
-    }
-
     fn observe_fullscreen(&mut self, _native: bool) -> bool {
         false
     }
@@ -1199,7 +1203,9 @@ impl FrontendApp<TestAux> for FakeApp {
     fn remembered_window_size(&self) -> Option<(u32, u32)> {
         self.remembered_size
     }
+}
 
+impl FocusPorts for FakeApp {
     fn focus_event(&mut self, _event: FocusEvent) {}
 
     fn main_active(&self) -> bool {
@@ -1219,7 +1225,9 @@ impl FrontendApp<TestAux> for FakeApp {
     fn drive_aux_focus(&mut self, _id: AuxId, focused: bool) -> bool {
         focused
     }
+}
 
+impl AuxPorts<TestAux> for FakeApp {
     fn reserve_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<TestAux>,
@@ -1483,18 +1491,6 @@ impl FrontendApp<TestAux> for FakeApp {
             .any(|kind| *kind == TestAux::Alpha)
     }
 
-    fn polled_widget(&self) -> Option<AuxId> {
-        self.widget_kinds
-            .iter()
-            .find_map(|(id, kind)| (*kind == TestAux::Gamma).then_some(*id))
-    }
-
-    fn poll_widget(&mut self, _id: AuxId) -> WakeNeed {
-        WakeNeed::default()
-    }
-
-    fn tick_widget(&mut self, _id: AuxId) {}
-
     fn drain_open_requests(&mut self) -> Vec<TestAux> {
         let mut kinds = Vec::new();
         if std::mem::take(&mut self.gamma_open_requested) {
@@ -1505,8 +1501,6 @@ impl FrontendApp<TestAux> for FakeApp {
         }
         kinds
     }
-
-    fn close_background_flights(&mut self) {}
 
     fn take_open_request(&mut self, kind: TestAux) -> bool {
         match kind {
@@ -1531,6 +1525,22 @@ impl FrontendApp<TestAux> for FakeApp {
     fn remember_window_pos(&mut self, kind: TestAux, x: i32, y: i32) {
         self.window_pos.insert(kind, (x, y));
     }
+}
+
+impl PollPorts for FakeApp {
+    fn polled_widget(&self) -> Option<AuxId> {
+        self.widget_kinds
+            .iter()
+            .find_map(|(id, kind)| (*kind == TestAux::Gamma).then_some(*id))
+    }
+
+    fn poll_widget(&mut self, _id: AuxId) -> WakeNeed {
+        WakeNeed::default()
+    }
+
+    fn tick_widget(&mut self, _id: AuxId) {}
+
+    fn close_background_flights(&mut self) {}
 
     fn live_armed(&self) -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(false))
@@ -1554,7 +1564,9 @@ impl FrontendApp<TestAux> for FakeApp {
         self.last_live = Some(now);
         true
     }
+}
 
+impl DialogPorts for FakeApp {
     fn pump_dialog(&mut self, _now: Instant) -> DialogTurn {
         // Reap a settled or dead receiver before presenting the next error.
         if let Some((_, Some(receiver))) = &self.modal {
@@ -1636,6 +1648,10 @@ impl FrontendApp<TestAux> for FakeApp {
     }
 
     fn invalidate_overlay(&mut self) {}
+}
+
+impl ViewportPorts for FakeApp {
+    fn swap_frame_buffer(&mut self) {}
 
     fn viewport_sync(&mut self, _region: ViewportRegion, _force: bool) -> Result<bool, String> {
         self.viewport_attached = true;
@@ -1700,6 +1716,8 @@ impl FrontendApp<TestAux> for FakeApp {
     }
 }
 
+impl FrontendApp<TestAux> for FakeApp {}
+
 /// Shared ownership bridge: `HostState` owns the only `Box<dyn FrontendApp>`,
 /// tests observe and steer the same [`FakeApp`] through the [`Rc`].
 /// The native [`Window`] lives here (not in the `RefCell`) so
@@ -1729,7 +1747,7 @@ impl EventHandler<TestAux> for SharedApp {
     }
 }
 
-impl FrontendApp<TestAux> for SharedApp {
+impl LifecyclePorts for SharedApp {
     fn load_file(&mut self, path: &Path) -> Result<(), String> {
         self.inner.borrow_mut().load_file(path)
     }
@@ -1754,9 +1772,9 @@ impl FrontendApp<TestAux> for SharedApp {
     fn resume_content(&mut self) {
         self.inner.borrow_mut().resume_content()
     }
-    fn swap_frame_buffer(&mut self) {
-        self.inner.borrow_mut().swap_frame_buffer()
-    }
+}
+
+impl ContentPorts for SharedApp {
     fn content_loaded(&self) -> bool {
         self.inner.borrow().content_loaded()
     }
@@ -1772,6 +1790,9 @@ impl FrontendApp<TestAux> for SharedApp {
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         self.inner.borrow_mut().dispatch(event)
     }
+}
+
+impl ChromePorts for SharedApp {
     fn dialog_titles(&self) -> FileDialogTitles {
         self.inner.borrow().dialog_titles()
     }
@@ -1795,9 +1816,6 @@ impl FrontendApp<TestAux> for SharedApp {
             self.main.title.clone_from(title);
         }
         title
-    }
-    fn refresh_window_title(&mut self) -> Option<String> {
-        self.title_update()
     }
     fn observe_fullscreen(&mut self, native: bool) -> bool {
         self.inner.borrow_mut().observe_fullscreen(native)
@@ -1824,6 +1842,9 @@ impl FrontendApp<TestAux> for SharedApp {
     fn remembered_window_size(&self) -> Option<(u32, u32)> {
         self.inner.borrow().remembered_window_size()
     }
+}
+
+impl FocusPorts for SharedApp {
     fn focus_event(&mut self, event: FocusEvent) {
         self.inner.borrow_mut().focus_event(event)
     }
@@ -1839,6 +1860,9 @@ impl FrontendApp<TestAux> for SharedApp {
     fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
         self.inner.borrow_mut().drive_aux_focus(id, focused)
     }
+}
+
+impl AuxPorts<TestAux> for SharedApp {
     fn reserve_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<TestAux>,
@@ -1900,20 +1924,8 @@ impl FrontendApp<TestAux> for SharedApp {
     fn modal_guard_active(&self) -> bool {
         self.inner.borrow().modal_guard_active()
     }
-    fn polled_widget(&self) -> Option<AuxId> {
-        self.inner.borrow().polled_widget()
-    }
-    fn poll_widget(&mut self, id: AuxId) -> WakeNeed {
-        self.inner.borrow_mut().poll_widget(id)
-    }
-    fn tick_widget(&mut self, id: AuxId) {
-        self.inner.borrow_mut().tick_widget(id)
-    }
     fn drain_open_requests(&mut self) -> Vec<TestAux> {
         self.inner.borrow_mut().drain_open_requests()
-    }
-    fn close_background_flights(&mut self) {
-        self.inner.borrow_mut().close_background_flights()
     }
     fn take_open_request(&mut self, kind: TestAux) -> bool {
         self.inner.borrow_mut().take_open_request(kind)
@@ -1927,6 +1939,21 @@ impl FrontendApp<TestAux> for SharedApp {
     fn remember_window_pos(&mut self, kind: TestAux, x: i32, y: i32) {
         self.inner.borrow_mut().remember_window_pos(kind, x, y)
     }
+}
+
+impl PollPorts for SharedApp {
+    fn polled_widget(&self) -> Option<AuxId> {
+        self.inner.borrow().polled_widget()
+    }
+    fn poll_widget(&mut self, id: AuxId) -> WakeNeed {
+        self.inner.borrow_mut().poll_widget(id)
+    }
+    fn tick_widget(&mut self, id: AuxId) {
+        self.inner.borrow_mut().tick_widget(id)
+    }
+    fn close_background_flights(&mut self) {
+        self.inner.borrow_mut().close_background_flights()
+    }
     fn live_armed(&self) -> Arc<AtomicBool> {
         self.inner.borrow().live_armed()
     }
@@ -1939,6 +1966,9 @@ impl FrontendApp<TestAux> for SharedApp {
     fn live_due(&mut self, now: Instant) -> bool {
         self.inner.borrow_mut().live_due(now)
     }
+}
+
+impl DialogPorts for SharedApp {
     fn pump_dialog(&mut self, now: Instant) -> DialogTurn {
         self.inner.borrow_mut().pump_dialog(now)
     }
@@ -1974,6 +2004,12 @@ impl FrontendApp<TestAux> for SharedApp {
     }
     fn invalidate_overlay(&mut self) {
         self.inner.borrow_mut().invalidate_overlay()
+    }
+}
+
+impl ViewportPorts for SharedApp {
+    fn swap_frame_buffer(&mut self) {
+        self.inner.borrow_mut().swap_frame_buffer()
     }
     fn viewport_sync(&mut self, region: ViewportRegion, force: bool) -> Result<bool, String> {
         self.inner.borrow_mut().viewport_sync(region, force)
@@ -2016,3 +2052,5 @@ impl FrontendApp<TestAux> for SharedApp {
         self.inner.borrow_mut().render_succeeded()
     }
 }
+
+impl FrontendApp<TestAux> for SharedApp {}

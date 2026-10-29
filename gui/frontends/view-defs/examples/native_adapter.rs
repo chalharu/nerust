@@ -24,6 +24,7 @@ use nerust_render_traits::{
     renderer::{OsdLayer, OsdSink, StripSink},
 };
 use wakui::app::boundary::FrontendApp as _;
+use wakui::app::roles::{AuxPorts, DialogPorts, PollPorts as _};
 use wakui::chrome::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
 use wakui::chrome::menu::{
     CommandVisitor, MenuCapabilities, MenuId, MenuItem, MenuVisitor, Menubar, Submenu,
@@ -362,7 +363,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .activation(nerust_frontend_viewdefs::commands::MenuCommand::Open)
             .expect("open activation")
     };
-    assert!(sink.send(EventCommand::Menu(open)));
+    assert!(sink.send(EventCommand::Command(open)));
     let event = events.0.borrow_mut().pop().unwrap();
     let outcome = {
         let mut common = native.common.borrow_mut();

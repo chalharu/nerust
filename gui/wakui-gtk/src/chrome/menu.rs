@@ -134,7 +134,7 @@ pub(crate) fn send_action(
         }
         _ => return,
     };
-    sink.send(EventCommand::Menu(CommandRef {
+    sink.send(EventCommand::Command(CommandRef {
         id: descriptor.id,
         argument,
     }));

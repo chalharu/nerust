@@ -16,7 +16,7 @@ impl EventHandler<AuxKind> for ApplicationHost {
         let guarded = self.modal_guard_active();
         let blocked = match event {
             // Stale ids resolve to nothing and stay blocked: only Quit passes.
-            EventCommand::Menu(activation) => {
+            EventCommand::Command(activation) => {
                 self.menu_commands().resolve(activation)
                     != Some(MenuCommand::Native(NativeRole::Quit))
             }
@@ -32,7 +32,7 @@ impl EventHandler<AuxKind> for ApplicationHost {
             ..Default::default()
         };
         match event {
-            EventCommand::Menu(activation) => {
+            EventCommand::Command(activation) => {
                 let Some(command) = self.menu_commands().resolve(activation) else {
                     return Ok(EventOutcome::default());
                 };

@@ -98,7 +98,7 @@ pub(crate) mod imp {
                     .iter()
                     .find_map(|(id, command)| (event.id() == id).then_some(*command));
                 if let Some(command) = command
-                    && !sink.send(UserEvent::Menu(command))
+                    && !sink.send(UserEvent::Command(command))
                 {
                     log::debug!("menu event dropped after loop exit");
                 }
@@ -356,8 +356,8 @@ pub(crate) mod imp {
             let about = commands.reference(TestMenu::About);
             assert_ne!(open, about);
             assert_eq!(commands.resolve(open), Some(TestMenu::Open));
-            let transported: HostEvent = HostEvent::Menu(open);
-            assert!(matches!(transported, HostEvent::Menu(_)));
+            let transported: HostEvent = HostEvent::Command(open);
+            assert!(matches!(transported, HostEvent::Command(_)));
             // Wrong shapes never resolve, like malformed native bindings.
             let flipped = CommandRef {
                 id: open.id,
@@ -723,7 +723,7 @@ pub(crate) mod imp {
                         let native = item(menu, activation);
                         let routed = routes.iter().find(|(id, _)| id == native.id()).unwrap().1;
                         assert_eq!(routed, activation);
-                        let HostEvent::Menu(transported) = HostEvent::Menu(routed) else {
+                        let HostEvent::Command(transported) = HostEvent::Command(routed) else {
                             unreachable!();
                         };
                         assert_eq!(transported, activation);
@@ -806,7 +806,7 @@ pub(crate) mod imp {
             let open = commands.reference(TestMenu::Open);
             assert!(matches!(
                 recording.0.lock().unwrap().as_slice(),
-                [HostEvent::Menu(received)] if *received == open
+                [HostEvent::Command(received)] if *received == open
             ));
             assert_eq!(menu.menus[&menu_id::GROUP_A].text(), "Group A");
             assert_eq!(

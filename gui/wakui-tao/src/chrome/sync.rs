@@ -37,7 +37,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         match self.core.persist_fullscreen_default(is_fullscreen) {
             Ok(true) => {
                 self.sync_chrome(true);
-                self.refresh_window_title();
+                self.title_update();
             }
             Ok(false) => (),
             Err(error) => log::warn!("failed to persist fullscreen setting: {error}"),
@@ -61,8 +61,8 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     }
 
     /// Title-only gate over the cached session title: one format per change.
-    pub(crate) fn refresh_window_title(&mut self) {
-        if self.core.refresh_window_title().is_some() {
+    pub(crate) fn title_update(&mut self) {
+        if self.core.title_update().is_some() {
             let window = self.core.main_window().clone();
             window.visit(&mut MainPresentation {
                 native: self.windows.live().map(AsRef::as_ref),
@@ -76,7 +76,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// latest title immediately without any timer.
     pub(crate) fn tick_chrome_sync(&mut self) {
         self.sync_fullscreen_default_from_window();
-        self.refresh_window_title();
+        self.title_update();
     }
 
     pub(crate) fn toggle_fullscreen(&mut self) {
@@ -113,7 +113,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// Single chrome-sync choke point: menu, title, and optionally a frame.
     pub(crate) fn sync_chrome(&mut self, redraw: bool) {
         self.sync_menu_state();
-        self.refresh_window_title();
+        self.title_update();
         if redraw {
             self.request_redraw();
         }
@@ -152,9 +152,9 @@ mod tests {
     fn title_gate_pushes_once_per_change() {
         let support = TestHost::new();
         let mut host = support.host;
-        assert!(host.core.refresh_window_title().is_some());
-        assert!(host.core.refresh_window_title().is_none());
-        assert!(host.core.refresh_window_title().is_none());
+        assert!(host.core.title_update().is_some());
+        assert!(host.core.title_update().is_none());
+        assert!(host.core.title_update().is_none());
     }
 
     #[test]
@@ -163,7 +163,7 @@ mod tests {
         let mut host = support.host;
         host.sync_chrome(true);
         assert_eq!(support.menu.updates().len(), 1);
-        assert!(host.core.refresh_window_title().is_none());
+        assert!(host.core.title_update().is_none());
     }
 
     #[test]
@@ -190,9 +190,9 @@ mod tests {
         // Change-gated, not time-gated: the first pull publishes, repeats
         // stay quiet until the underlying state changes.
         host.refresh_title_after_present();
-        assert!(host.core.refresh_window_title().is_none());
+        assert!(host.core.title_update().is_none());
         host.load_test_file();
-        assert!(host.core.refresh_window_title().is_some());
-        assert!(host.core.refresh_window_title().is_none());
+        assert!(host.core.title_update().is_some());
+        assert!(host.core.title_update().is_none());
     }
 }

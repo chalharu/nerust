@@ -1,7 +1,5 @@
 //! Owned semantic menus: ids, capabilities, models, and visitors.
 //! Labels arrive pre-localized; building from the signature stays view-side.
-
-//! Owned semantic menus. Native visitors supply controls, never menu policy.
 //!
 //! Menu IDs are unique in a model; item commands are unique within each parent
 //! (including at most one action-less placeholder). Visitors reuse native
@@ -40,7 +38,7 @@ pub struct MenuCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem {
-    /// Opaque activation routed back as `EventCommand::Menu`. `None` is a placeholder.
+    /// Opaque activation routed back as `EventCommand::Command`. `None` is a placeholder.
     pub command: Option<CommandRef>,
     pub label: String,
     pub enabled: bool,
@@ -67,6 +65,7 @@ pub struct Menubar {
     pub application_menu: Option<NativeApplicationMenu>,
 }
 
+/// Canonical name is [`Menubar`]; kept for model-builder call sites.
 pub type MenuModel = Menubar;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,12 +176,7 @@ impl Menubar {
     }
 }
 
-/// Pre-localized file-dialog titles. Frontends render and pass these verbatim
-/// instead of calling into the i18n catalog themselves. Values (e.g. ROM
-/// wording) are view-side data; the framework only transports the strings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileDialogTitles {
-    pub open: String,
-    pub error: String,
-    pub load_failed: String,
-}
+/// Re-exported at its owning layer: [`FileDialogTitles`] is defined in
+/// [`crate::chrome::dialog`] (same layer as the modal queue); this keeps
+/// `chrome::menu::FileDialogTitles` paths resolving during migration.
+pub use crate::chrome::dialog::FileDialogTitles;

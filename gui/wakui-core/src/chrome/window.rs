@@ -17,7 +17,7 @@ pub struct Window {
     pub id: WindowId,
     pub title: String,
     pub menu: Option<Menubar>,
-    pub contents: Widget,
+    pub contents: WidgetContents,
 }
 
 /// Concrete native work after a Host operation. No domain result leaks.
@@ -31,11 +31,8 @@ pub struct WindowEffects {
     pub refresh_chrome: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct Widget {
-    pub contents: WidgetContents,
-}
-
+/// What an aux or main window shows: the main surface, a generic control
+/// screen, or a reservation awaiting its first screen.
 #[derive(Debug, Clone)]
 pub enum WidgetContents {
     Main(MainContents),
@@ -48,6 +45,15 @@ pub enum WidgetContents {
 #[derive(Debug, Clone, Default)]
 pub struct MainContents;
 
+/// Window chrome sync decision. Frontends apply `set_fullscreen` to the
+/// native window and `restore_size` via their default-size API; the scaling
+/// policy behind the restore stays view-side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WindowChromeSync {
+    pub restore_size: Option<(i32, i32)>,
+    pub set_fullscreen: Option<bool>,
+}
+
 impl Window {
     /// Fully generic auxiliary window: the view definition owns the kind and
     /// title, the framework only tracks the generation-sensitive `AuxId`.
@@ -56,9 +62,7 @@ impl Window {
             id: WindowId::Auxiliary(id),
             title: screen.title.clone(),
             menu: None,
-            contents: Widget {
-                contents: WidgetContents::Controls(Box::new(screen)),
-            },
+            contents: WidgetContents::Controls(Box::new(screen)),
         }
     }
 
@@ -67,9 +71,7 @@ impl Window {
             id: WindowId::Main,
             title: title.into(),
             menu: None,
-            contents: Widget {
-                contents: WidgetContents::Main(MainContents),
-            },
+            contents: WidgetContents::Main(MainContents),
         }
     }
 
@@ -81,9 +83,7 @@ impl Window {
             id: WindowId::Auxiliary(id),
             title: title.into(),
             menu: None,
-            contents: Widget {
-                contents: WidgetContents::PendingControls,
-            },
+            contents: WidgetContents::PendingControls,
         }
     }
 
@@ -92,20 +92,12 @@ impl Window {
         if let Some(menu) = &self.menu {
             visitor.visit_menu(menu);
         }
-        self.contents.visit(visitor);
-        visitor.end_window(self);
-    }
-}
-
-impl Widget {
-    pub fn visit(&self, visitor: &mut dyn WindowVisitor) {
-        visitor.begin_widget(self);
         match &self.contents {
             WidgetContents::Main(contents) => visitor.visit_main(contents),
             WidgetContents::Controls(screen) => visitor.visit_controls(screen),
             WidgetContents::PendingControls => visitor.visit_pending_controls(),
         }
-        visitor.end_widget(self);
+        visitor.end_window(self);
     }
 }
 
@@ -116,18 +108,7 @@ pub trait WindowVisitor {
     fn begin_window(&mut self, _window: &Window) {}
     fn end_window(&mut self, _window: &Window) {}
     fn visit_menu(&mut self, _menu: &Menubar) {}
-    fn begin_widget(&mut self, _widget: &Widget) {}
-    fn end_widget(&mut self, _widget: &Widget) {}
     fn visit_main(&mut self, _contents: &MainContents) {}
     fn visit_controls(&mut self, _screen: &crate::scene::control::ControlScreen) {}
     fn visit_pending_controls(&mut self) {}
-}
-
-/// Window chrome sync decision. Frontends apply `set_fullscreen` to the
-/// native window and `restore_size` via their default-size API; the scaling
-/// policy behind the restore stays view-side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct WindowChromeSync {
-    pub restore_size: Option<(i32, i32)>,
-    pub set_fullscreen: Option<bool>,
 }

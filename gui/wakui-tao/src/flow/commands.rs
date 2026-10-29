@@ -21,7 +21,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         command: CommandRef,
         opener: &dyn WindowOpener,
     ) -> HostAction {
-        self.on_event(UserEvent::Menu(command), opener)
+        self.on_event(UserEvent::Command(command), opener)
     }
 
     pub(crate) fn on_event(&mut self, event: UserEvent, opener: &dyn WindowOpener) -> HostAction {
@@ -137,7 +137,7 @@ mod tests {
     use crate::host::TestHost;
     use crate::test_opener::{FakeOpener, OpenerCall};
     use crate::testkit::{StubAux, TestMenu as M, TestSession as S};
-    use wakui_core::app::boundary::FrontendApp as _;
+    use wakui_core::app::roles::ContentPorts as _;
 
     #[test]
     fn file_filters_empty_without_cores() {
@@ -269,7 +269,7 @@ mod tests {
         );
         assert!(host.core.modal_guard_active());
         for event in [
-            UserEvent::Menu(about),
+            UserEvent::Command(about),
             UserEvent::Session(SessionEvent::Command(select)),
             UserEvent::Session(SessionEvent::Keyboard {
                 key: wakui_core::Key::F4,
@@ -291,7 +291,7 @@ mod tests {
             HostAction::None
         );
         assert_eq!(
-            host.on_event(UserEvent::Menu(quit), &opener),
+            host.on_event(UserEvent::Command(quit), &opener),
             HostAction::Exit
         );
         assert!(!host.core.close_exited());

@@ -207,7 +207,7 @@ mod tests {
     fn host_accessors_expose_session_and_factory() {
         let support = TestHost::new();
         let mut host = support.host;
-        let _ = host.core.refresh_window_title();
+        let _ = host.core.title_update();
         assert!(!host.core.content_loaded());
     }
 

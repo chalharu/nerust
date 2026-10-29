@@ -137,7 +137,7 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
     assert!(!binding.0.boot_pending());
     assert_eq!(*state.screen.borrow(), updated);
     assert!(matches!(
-        host.aux.window(id).expect("window").contents.contents,
+        host.aux.window(id).expect("window").contents,
         wakui_core::chrome::window::WidgetContents::Controls(_)
     ));
 }

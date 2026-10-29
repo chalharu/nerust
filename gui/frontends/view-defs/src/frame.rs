@@ -90,7 +90,7 @@ impl FrameSnapshot {
     }
 }
 
-/// Versioned frame cache: hot passes reuse the cached `Arc`.
+/// Change-gated frame cache: hot passes reuse the cached `Arc`.
 #[derive(Default)]
 pub struct FrameCache {
     entry: Option<Arc<ChromeSnapshot>>,

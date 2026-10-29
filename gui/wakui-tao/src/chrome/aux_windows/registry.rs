@@ -352,10 +352,7 @@ mod tests {
             panic!("expected reservation");
         };
         let window = registry.borrow().window(old).unwrap().clone();
-        assert!(matches!(
-            window.contents.contents,
-            WidgetContents::PendingControls
-        ));
+        assert!(matches!(window.contents, WidgetContents::PendingControls));
         struct Reenter<'a>(&'a RefCell<AuxRegistry<TestAux>>, AuxId, bool);
         impl WindowVisitor for Reenter<'_> {
             fn visit_pending_controls(&mut self) {

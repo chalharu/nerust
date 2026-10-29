@@ -1,14 +1,14 @@
-//! Shared versioned change gates for small frontend keys.
+//! Shared change gates for small frontend keys.
 
-/// Versioned change gate: true when `value` differs from memory.
+/// Change gate: true when `value` differs from memory.
 /// False means the downstream push can be skipped.
 #[derive(Debug, Default)]
-pub struct Versioned<T: PartialEq> {
+pub struct ChangeGate<T: PartialEq> {
     last: Option<T>,
     version: u64,
 }
 
-impl<T: PartialEq> Versioned<T> {
+impl<T: PartialEq> ChangeGate<T> {
     /// Empty gate: nothing remembered yet.
     pub fn new() -> Self {
         Self {
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn check_gates_repeats() {
-        let mut memo: Versioned<(u64, u8)> = Versioned::new();
+        let mut memo: ChangeGate<(u64, u8)> = ChangeGate::new();
         assert!(memo.check(&(1, 2)));
         assert!(!memo.check(&(1, 2)));
         assert!(memo.check(&(1, 3)));
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn version_bumps_once_per_change() {
-        let mut memo: Versioned<String> = Versioned::new();
+        let mut memo: ChangeGate<String> = ChangeGate::new();
         assert_eq!(memo.version(), 0);
         assert!(memo.check(&"a".to_string()));
         assert_eq!(memo.version(), 1);
