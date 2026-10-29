@@ -103,9 +103,9 @@ mod tests {
         use crate::aux::registry::{AuxRegistry, test_double::StubAux};
         use crate::testkit::TestAux;
         let mut registry = AuxRegistry::<TestAux>::new();
-        let first = registry.insert_for_test(TestAux::Debug, Box::new(StubAux::new()));
-        assert_eq!(registry.route_id(TestAux::Debug), Some(first));
-        let second = registry.insert_for_test(TestAux::Debug, Box::new(StubAux::new()));
+        let first = registry.insert_for_test(TestAux::Gamma, Box::new(StubAux::new()));
+        assert_eq!(registry.route_id(TestAux::Gamma), Some(first));
+        let second = registry.insert_for_test(TestAux::Gamma, Box::new(StubAux::new()));
         assert_ne!(first, second);
     }
 

@@ -7,7 +7,7 @@
 //! against the latest model, like [`crate::control::ControlEvent`].
 //!
 //! Two base specs cover the framework primitives: [`UnitSpec`] (no argument)
-//! and [`IndexedSpec`] (one `u64` argument, e.g. a slot index chosen
+//! and [`IndexedSpec`] (one `u64` argument, e.g. an item index chosen
 //! view-side). Flavors downcast via `as_any`, never via domain types or
 //! debug names.
 
@@ -58,7 +58,7 @@ impl CommandSpec for UnitSpec {
 }
 
 /// Indexed command: one `u64` argument. The framework never interprets the
-/// index; view definitions map it (e.g. to a slot id).
+/// index; view definitions map it (e.g. to an item id).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IndexedSpec {
     pub index: u64,
@@ -81,7 +81,7 @@ impl CommandSpec for IndexedSpec {
 
 /// Opaque activation: what native adapters forward. The view side resolves
 /// the id against its latest [`CommandModel`] plus argument shape, exactly
-/// like settings resolves [`crate::control::ControlId`] via `BindingTable`.
+/// like views resolve [`crate::control::ControlId`] via `BindingTable`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandRef {
     pub id: CommandId,
@@ -139,7 +139,7 @@ impl Command {
     }
 
     /// Whether this declaration accepts the activation: same id and same
-    /// argument shape. Domain validity (e.g. slot existence) stays view-side.
+    /// argument shape. View-side validity (e.g. item existence) stays view-side.
     pub fn accepts(&self, activation: CommandRef) -> bool {
         self.id == activation.id && self.spec.argument().is_some() == activation.argument.is_some()
     }

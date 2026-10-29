@@ -245,10 +245,10 @@ mod tests {
     fn deferred_open_request_reaches_opener_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.core.request_open(TestAux::Debug);
+        runtime.host.core.request_open(TestAux::Gamma);
         assert_eq!(
             runtime.host.core.drain_open_requests(),
-            vec![TestAux::Debug]
+            vec![TestAux::Gamma]
         );
         // Consumed: a second drain without re-arm stays quiet.
         assert!(runtime.host.core.drain_open_requests().is_empty());
@@ -260,7 +260,7 @@ mod tests {
         // Widget arrivals cancel/resume through the trait without touching
         // the main-active flag; departures only arm the deferred pause.
         let (mut runtime, menu) = test_runtime();
-        let Some(id) = open_widget(&mut runtime, TestAux::Settings) else {
+        let Some(id) = open_widget(&mut runtime, TestAux::Alpha) else {
             panic!("widget");
         };
         runtime.on_aux_event(id, WindowEvent::Focused(true), &FakeOpener::failing("x"));
@@ -284,14 +284,11 @@ mod tests {
     fn widget_moved_remembers_position() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        let Some(id) = open_widget(&mut runtime, TestAux::Settings) else {
+        let Some(id) = open_widget(&mut runtime, TestAux::Alpha) else {
             panic!("widget");
         };
         runtime.on_aux_event(id, WindowEvent::Moved(PhysicalPosition::new(9, 9)), &opener);
-        assert_eq!(
-            runtime.host.core.window_pos(TestAux::Settings),
-            Some((9, 9))
-        );
+        assert_eq!(runtime.host.core.window_pos(TestAux::Alpha), Some((9, 9)));
     }
 
     #[test]
@@ -308,21 +305,21 @@ mod tests {
     }
 
     #[test]
-    fn deferred_ppu_request_opens_once() {
+    fn deferred_delta_request_opens_once() {
         let (mut runtime, _) = test_runtime();
         let opener = FakeOpener::failing("no display");
-        runtime.host.core.request_open(TestAux::Ppu);
+        runtime.host.core.request_open(TestAux::Delta);
         runtime.host.pump_deferred_opens(&opener);
-        // Headless creation fails: Debug never counted, PPU never opened.
-        assert_eq!(opener.calls(), [OpenerCall::Ppu]);
+        // Headless creation fails: Gamma never counted, Delta never opened.
+        assert_eq!(opener.calls(), [OpenerCall::Delta]);
         runtime.host.pump_deferred_opens(&opener);
-        assert_eq!(opener.calls(), [OpenerCall::Ppu]);
+        assert_eq!(opener.calls(), [OpenerCall::Delta]);
     }
 
     #[test]
     fn widget_destroyed_closes_window() {
         let (mut runtime, menu) = test_runtime();
-        let Some(id) = open_widget(&mut runtime, TestAux::Settings) else {
+        let Some(id) = open_widget(&mut runtime, TestAux::Alpha) else {
             panic!("widget");
         };
         let opener = FakeOpener::failing("no display");
@@ -346,7 +343,7 @@ mod tests {
     fn host_focus_drive_reports_arrival_only() {
         // Shared host port: arrival reports true, departure reports false.
         let (mut runtime, menu) = test_runtime();
-        let Some(id) = open_widget(&mut runtime, TestAux::Settings) else {
+        let Some(id) = open_widget(&mut runtime, TestAux::Alpha) else {
             panic!("widget");
         };
         assert!(runtime.host.core.drive_aux_focus(id, true));
@@ -362,7 +359,7 @@ mod tests {
     #[test]
     fn drive_focus_reports_arrival_only() {
         let (mut runtime, menu) = test_runtime();
-        let Some(id) = open_widget(&mut runtime, TestAux::Settings) else {
+        let Some(id) = open_widget(&mut runtime, TestAux::Alpha) else {
             panic!("widget");
         };
         let opener = FakeOpener::failing("x");

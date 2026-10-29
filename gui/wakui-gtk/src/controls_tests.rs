@@ -24,8 +24,8 @@ struct Harness {
 impl Harness {
     fn settings() -> Option<Self> {
         let window = windows::bound_window()?;
-        let program = windows::program(&window, TestAux::Settings);
-        let id = windows::route(&window, TestAux::Settings).expect("settings route");
+        let program = windows::program(&window, TestAux::Alpha);
+        let id = windows::route(&window, TestAux::Alpha).expect("settings route");
         Some(Self {
             window,
             id,
@@ -35,8 +35,8 @@ impl Harness {
 
     fn history() -> Option<Self> {
         let window = windows::bound_window()?;
-        let program = windows::program(&window, TestAux::History);
-        let id = windows::route(&window, TestAux::History).expect("history route");
+        let program = windows::program(&window, TestAux::Beta);
+        let id = windows::route(&window, TestAux::Beta).expect("history route");
         Some(Self {
             window,
             id,
@@ -167,7 +167,7 @@ fn common_renderer_uses_supplied_screen() {
     // OK submits through the close path without destroying the dialog.
     h.action(h.id(labels::OK));
     assert!(h.screen().title.contains(&title[..title.len().min(8)]));
-    assert!(windows::route(&h.window, TestAux::Settings).is_some());
+    assert!(windows::route(&h.window, TestAux::Alpha).is_some());
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn retained_entry_preserves_identity_and_single_edit() {
         eprintln!("SKIP: widget test needs a display");
         return;
     };
-    let mute = h.id(labels::MUTE);
+    let mute = h.id(labels::TOGGLE_A);
     let native = h.native(mute);
     let NativeKind::Toggle(check) = &native.kind else {
         panic!("toggle")
@@ -270,7 +270,7 @@ fn retained_choice_and_submit_stage_mailbox() {
         eprintln!("SKIP: widget test needs a display");
         return;
     };
-    let policy = h.id(labels::STORAGE_POLICY);
+    let policy = h.id(labels::CHOICE_B);
     let screen = h.screen();
     let choices = screen
         .control(policy)
@@ -301,7 +301,11 @@ fn retained_native_stack_notebooks_and_context_reset_mirror_model() {
         return;
     };
     let screen = h.screen();
-    let page = screen.pages.iter().find(|p| p.label == "Input").unwrap();
+    let page = screen
+        .pages
+        .iter()
+        .find(|p| p.label == "Section B")
+        .unwrap();
     let widget = h
         .binding()
         .registry()
@@ -348,7 +352,7 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
         .unwrap()
         .id;
     h.input(filter, ControlInput::Select(1));
-    h.action(h.id(labels::CLEAR_HISTORY));
+    h.action(h.id(labels::CLEAR_LOG));
     h.binding().sync();
     let close = controls(&h.screen())
         .into_iter()
@@ -357,8 +361,8 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
         .unwrap()
         .id;
     h.action(close);
-    assert!(windows::route(&h.window, TestAux::History).is_none());
-    let rebuilt = windows::program(&h.window, TestAux::History);
+    assert!(windows::route(&h.window, TestAux::Beta).is_none());
+    let rebuilt = windows::program(&h.window, TestAux::Beta);
     assert_ne!(rebuilt.dialog, h.program.dialog);
     rebuilt.dialog.destroy();
 }

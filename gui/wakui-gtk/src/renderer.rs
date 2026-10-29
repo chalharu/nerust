@@ -265,7 +265,7 @@ impl NativeControl {
     fn apply_update(&self, control: &Control, update: PropertyUpdate) {
         match update {
             // Master parity: sensitivity stays on the leaf input only,
-            // never labels or rows, so an empty slot reads normal
+            // never labels or rows, so an empty item reads normal
             // while its combo dims.
             PropertyUpdate::SetEnabled(enabled) => self.input.set_sensitive(enabled),
             PropertyUpdate::SetVisible(visible) => {
@@ -938,7 +938,7 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         // are no longer pages. Remove only members of its actual page model.
         let pages = self.binding.stack.pages();
 
-        // Single-panel screens (e.g. notification history) need no tab
+        // Single-panel screens (e.g. single-section screens) need no tab
         // switching chrome; the content fills the dialog instead.
         self.binding.sidebar.set_visible(self.pages.len() > 1);
         let children: Vec<_> = (0..pages.n_items())

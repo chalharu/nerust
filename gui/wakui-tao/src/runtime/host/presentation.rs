@@ -99,12 +99,12 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         }
     }
 
-    /// Refresh chrome after a ROM (re)load: menu, title, frame.
+    /// Refresh chrome after a file (re)load: menu, title, frame.
     pub(super) fn after_file_load(&mut self) {
         self.core.reconcile_pause();
         self.sync_chrome(true);
         if self.core.polled_widget().is_some() {
-            self.refresh_open_debugger();
+            self.refresh_open_polled();
         }
     }
 

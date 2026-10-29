@@ -213,8 +213,8 @@ mod tests {
         AuxIdentity::request_redraw(&win);
         assert_eq!(win.shell.redraws.get(), 1);
         // Render fans out with the window title as tag.
-        AuxRender::render(&mut win, "Settings");
-        assert_eq!(*win.shell.seen_tag.borrow(), Some("Settings".to_string()));
+        AuxRender::render(&mut win, "Aux Alpha");
+        assert_eq!(*win.shell.seen_tag.borrow(), Some("Aux Alpha".to_string()));
         win.shell.close = true;
         assert!(AuxIdentity::close_requested(&win));
     }

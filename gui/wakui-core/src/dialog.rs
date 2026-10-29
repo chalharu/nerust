@@ -42,7 +42,7 @@ pub struct MessageDialog {
 
 impl MessageDialog {
     /// Error acknowledgment: the only shape boot/crash paths need.
-    /// Copy stays inline and English; it must not depend on the settings
+    /// Copy stays inline and English; it must not depend on the caller
     /// stack that may have just died.
     pub fn error(title: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
@@ -60,8 +60,8 @@ mod tests {
 
     #[test]
     fn error_acknowledgment_carries_text_and_severity() {
-        let dialog = MessageDialog::error("nerust", "boom");
-        assert_eq!(dialog.title, "nerust");
+        let dialog = MessageDialog::error("app", "boom");
+        assert_eq!(dialog.title, "app");
         assert_eq!(dialog.description, "boom");
         assert_eq!(dialog.level, MessageLevel::Error);
         assert_eq!(dialog.buttons, MessageButtons::Ok);
