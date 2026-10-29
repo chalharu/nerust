@@ -150,13 +150,10 @@ fn status_area_message_reaches_viewmodel() {
     }
     let screen = screen_of(&host, id);
     let c = find(&screen, "Status area");
-    assert!(matches!(
-        c.kind,
-        wakui::control::ControlKind::Choice {
-            selected: Some(1),
-            ..
-        }
-    ));
+    assert_eq!(
+        c.downcast::<wakui::leaf::ChoiceLeaf>().unwrap().selected,
+        Some(1)
+    );
     drop(super::super::controls::build_screen(&screen));
 }
 

@@ -13,6 +13,7 @@ use crate::testkit::labels;
 use crate::window::{WindowExtend, tests as windows};
 use wakui::aux::AuxId;
 use wakui::control::*;
+use wakui::leaf::{ChoiceLeaf, NoteLeaf, NumberLeaf, ToggleLeaf};
 
 struct Harness {
     window: crate::window::Window<TestAux>,
@@ -141,9 +142,7 @@ fn assert_accessible_label(widget: &gtk::Widget, expected: &str) {
 fn assert_note(h: &Harness, id: ControlId) -> String {
     let screen = h.screen();
     let c = screen.control(id).unwrap();
-    let ControlKind::Note { text } = &c.kind else {
-        panic!("note")
-    };
+    let text = &c.downcast::<NoteLeaf>().unwrap().text;
     assert!(!text.is_empty());
     let native = h.native(id);
     let NativeKind::Note(label) = &native.kind else {
@@ -186,7 +185,10 @@ fn retained_note_accessible_name_survives_refresh() {
     h.binding().sync();
     let id = controls(&h.screen())
         .into_iter()
-        .find(|c| matches!(&c.kind, ControlKind::Note { text } if text == "history note"))
+        .find(|c| {
+            c.downcast::<NoteLeaf>()
+                .is_some_and(|leaf| leaf.text == "history note")
+        })
         .expect("history note")
         .id;
     let label = assert_note(&h, id);
@@ -213,28 +215,25 @@ fn retained_all_pages_metadata_ranges_and_values_follow_host() {
         assert_eq!(native.root.property::<bool>("visible"), c.metadata.visible);
         assert_eq!(native.input.is_sensitive(), c.metadata.enabled);
         assert_accessible_label(&native.input, &c.metadata.accessible_label);
-        match (&native.kind, &c.kind) {
-            (NativeKind::Toggle(check), ControlKind::Toggle { value }) => {
-                assert_eq!(check.is_active(), *value)
+        match &native.kind {
+            NativeKind::Toggle(check) => {
+                assert_eq!(check.is_active(), c.downcast::<ToggleLeaf>().unwrap().value);
             }
-            (NativeKind::Choice(combo, _), ControlKind::Choice { selected, .. }) => {
-                assert_eq!(combo.active(), selected.map(|i| i as u32))
+            NativeKind::Choice(combo, _) => {
+                assert_eq!(
+                    combo.active(),
+                    c.downcast::<ChoiceLeaf>()
+                        .unwrap()
+                        .selected
+                        .map(|i| i as u32)
+                );
             }
-            (
-                NativeKind::Number(spin, label),
-                ControlKind::Number {
-                    value,
-                    min,
-                    max,
-                    step,
-                    unit,
-                    ..
-                },
-            ) => {
-                assert_eq!(spin.value(), f64::from(*value));
-                assert_eq!(spin.range(), (f64::from(*min), f64::from(*max)));
-                assert_eq!(spin.increments().0, f64::from(*step));
-                assert_eq!(label.text().as_str(), unit);
+            NativeKind::Number(spin, label) => {
+                let leaf = c.downcast::<NumberLeaf>().unwrap();
+                assert_eq!(spin.value(), f64::from(leaf.value));
+                assert_eq!(spin.range(), (f64::from(leaf.min), f64::from(leaf.max)));
+                assert_eq!(spin.increments().0, f64::from(leaf.step));
+                assert_eq!(label.text().as_str(), leaf.unit);
             }
             _ => (),
         }
@@ -273,9 +272,13 @@ fn retained_choice_and_submit_stage_mailbox() {
     };
     let policy = h.id(labels::STORAGE_POLICY);
     let screen = h.screen();
-    let ControlKind::Choice { choices, .. } = &screen.control(policy).unwrap().kind else {
-        panic!("choice")
-    };
+    let choices = screen
+        .control(policy)
+        .unwrap()
+        .downcast::<ChoiceLeaf>()
+        .unwrap()
+        .choices
+        .clone();
     h.input(policy, ControlInput::Select(choices.len() - 1));
     h.input(h.id(labels::OK), ControlInput::Activate);
     // The staged submission flags the mailbox; closing stays native.
@@ -341,7 +344,7 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
     };
     let filter = controls(&h.screen())
         .into_iter()
-        .find(|c| matches!(c.kind, ControlKind::Choice { .. }))
+        .find(|c| c.downcast::<ChoiceLeaf>().is_some())
         .unwrap()
         .id;
     h.input(filter, ControlInput::Select(1));
@@ -350,7 +353,7 @@ fn history_dialog_lifecycle_runs_without_display_errors() {
     let close = controls(&h.screen())
         .into_iter()
         .rev()
-        .find(|c| matches!(c.kind, ControlKind::Action))
+        .find(|c| c.downcast::<wakui::leaf::ActionLeaf>().is_some())
         .unwrap()
         .id;
     h.action(close);

@@ -13,13 +13,16 @@ use std::{
 
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_frontend_viewdefs::{
-    application::ApplicationHost, debugger::DebuggerEvent, frame::FrameCtx, osd::OsdVisitor,
+    application::ApplicationHost, debugger::DebuggerEvent, frame::FrameCtx,
 };
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
 };
 use nerust_gui_shell::{registry::SystemRegistry, session::SessionHandle};
-use nerust_render_traits::{ReservedStrip, SurfaceSize, renderer::OsdLayer};
+use nerust_render_traits::{
+    ReservedStrip, SurfaceSize,
+    renderer::{OsdLayer, OsdSink, StripSink},
+};
 use wakui::app::FrontendApp as _;
 use wakui::commands::{CommandDescriptor, MenuCommand};
 use wakui::dialog::{ModalAdvance, ModalPresentation, ModalPresenter};
@@ -103,11 +106,20 @@ impl EventSink for NativeEvents {
 
 struct NativeOsd(Rc<RefCell<Common>>);
 
-impl OsdVisitor for NativeOsd {
-    fn reserved_strip(&mut self, _strip: ReservedStrip) {
+impl std::fmt::Debug for NativeOsd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeOsd").finish_non_exhaustive()
+    }
+}
+
+impl OsdSink for NativeOsd {
+    fn set_osd_layer(&mut self, _layer: Option<OsdLayer>) {
         assert!(self.0.try_borrow_mut().is_ok());
     }
-    fn layer(&mut self, _layer: Option<OsdLayer>) {
+}
+
+impl StripSink for NativeOsd {
+    fn set_reserved_strip(&mut self, _strip: ReservedStrip) {
         assert!(self.0.try_borrow_mut().is_ok());
     }
 }
@@ -235,8 +247,7 @@ impl LoopHost for NativeAdapter {
                 .app
                 .prepare_osd(SurfaceSize::new(320, 240), 480, ctx, now);
         let mut native = NativeOsd(self.common.clone());
-        let port: &mut dyn OsdVisitor = &mut native;
-        update.visit(port);
+        update.apply(&mut native);
         let state = self.common.borrow();
         WakeNeed {
             overlay_deadline: state.app.osd_wakeup(Instant::now()),

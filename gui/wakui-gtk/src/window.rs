@@ -1870,10 +1870,13 @@ pub(crate) mod tests {
             .widget_screen(id)
             .expect("settings screen");
         let control = find(&screen, label);
-        let kind = screen.control(control).unwrap().kind.clone();
-        let wakui::control::ControlKind::Choice { choices, .. } = kind else {
-            panic!("choice {label:?}");
-        };
+        let choices = screen
+            .control(control)
+            .unwrap()
+            .downcast::<wakui::leaf::ChoiceLeaf>()
+            .unwrap()
+            .choices
+            .clone();
         let index = choices
             .iter()
             .position(|choice| choice.contains(needle))

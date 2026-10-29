@@ -40,7 +40,7 @@ use wakui::Key;
 
 use wakui::sync::lock_recovered;
 
-mod screen;
+pub(crate) mod screen;
 pub use screen::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +149,7 @@ impl wakui::binding::Invalidatable for SettingsMailbox {
 }
 
 pub struct SettingsController {
+    pub(crate) ids: std::cell::RefCell<crate::settings::screen::StableKeyRegistry>,
     pub mailbox: SettingsMailbox,
     pub vm: SettingsViewModel,
     _revision_subscription: Subscription,
@@ -288,6 +289,7 @@ impl SettingsController {
                 .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_default(),
             error_message: None,
+            ids: std::cell::RefCell::new(crate::settings::screen::StableKeyRegistry::default()),
         }
     }
 
