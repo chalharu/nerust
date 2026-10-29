@@ -9,9 +9,9 @@ use tao::{
 use wakui_core::chrome::viewport::ViewportPresent;
 use wakui_core::{app::boundary::Application, input::event::EventSink};
 
-use crate::host::{HostAction, HostState};
-use crate::event_sink::{TaoEventSink, UserEvent};
 use crate::chrome::menu::imp::AppMenu;
+use crate::event_sink::{TaoEventSink, UserEvent};
+use crate::host::{HostAction, HostState};
 use crate::ports::{NativeDialogs, TaoWindowOpener};
 
 pub(crate) struct WindowRuntime<K: Copy + Eq + std::hash::Hash + 'static> {
