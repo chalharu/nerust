@@ -14,10 +14,10 @@ use nerust_settings_core::{
     },
 };
 use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
-use wakui::control::{
+use wakui::scene::control::{
     Container, Control, ControlInput, ControlScreen, ControlVisitor, GroupPolicy, Tab, policy,
 };
-use wakui::leaf::{
+use wakui::scene::leaf::{
     ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
 };
 
@@ -119,7 +119,7 @@ struct Inventory {
 }
 
 impl ControlVisitor for Inventory {
-    fn begin_page(&mut self, page: &wakui::control::Page) {
+    fn begin_page(&mut self, page: &wakui::scene::control::Page) {
         self.controls.push(page.select.clone());
     }
     fn begin_container(&mut self, container: &Container) {
@@ -976,10 +976,10 @@ fn object_safe_visitor_is_balanced_and_reenters_without_controller_borrows() {
         fn end_screen(&mut self, _: &ControlScreen) {
             self.pop("screen", ());
         }
-        fn begin_page(&mut self, p: &wakui::control::Page) {
+        fn begin_page(&mut self, p: &wakui::scene::control::Page) {
             self.push("page", p.id);
         }
-        fn end_page(&mut self, p: &wakui::control::Page) {
+        fn end_page(&mut self, p: &wakui::scene::control::Page) {
             self.pop("page", p.id);
         }
         fn begin_container(&mut self, c: &Container) {
@@ -988,10 +988,10 @@ fn object_safe_visitor_is_balanced_and_reenters_without_controller_borrows() {
         fn end_container(&mut self, c: &Container) {
             self.pop("container", c.id);
         }
-        fn begin_tabs(&mut self, t: &wakui::control::Tabs) {
+        fn begin_tabs(&mut self, t: &wakui::scene::control::Tabs) {
             self.push("tabs", t.id);
         }
-        fn end_tabs(&mut self, t: &wakui::control::Tabs) {
+        fn end_tabs(&mut self, t: &wakui::scene::control::Tabs) {
             self.pop("tabs", t.id);
         }
         fn begin_tab(&mut self, t: &Tab) {

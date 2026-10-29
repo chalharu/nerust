@@ -1,5 +1,5 @@
 //! View-side auxiliary kinds and focus-transition policy. The framework's
-//! [`FocusEvent`](wakui::focus::FocusEvent) carries only a `resume` flag;
+//! [`FocusEvent`](wakui::input::focus::FocusEvent) carries only a `resume` flag;
 //! this module resolves the concrete kind to that flag and to log tags,
 //! and owns the burst-debounce tracker: departures arm, arrivals cancel,
 //! burst end commits. Resume decisions read the suspension holds, never a

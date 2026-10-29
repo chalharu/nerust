@@ -2,10 +2,10 @@
 //! Production code never touches this module.
 
 use std::sync::{Arc, Mutex};
-use wakui_core::sync::lock_recovered;
+use wakui_core::support::sync::lock_recovered;
 
 use crate::menu::MenuSink;
-use wakui_core::menu::Menubar;
+use wakui_core::chrome::menu::Menubar;
 
 /// `MenuSink` that records sync snapshots for assertions.
 #[derive(Debug, Default)]

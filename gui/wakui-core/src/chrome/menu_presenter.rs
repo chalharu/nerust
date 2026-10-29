@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use crate::menu::{MenuModel, MenuVisitor};
+use crate::chrome::menu::{MenuModel, MenuVisitor};
 
 #[derive(Default)]
 struct RenderQueue {

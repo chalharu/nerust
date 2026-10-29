@@ -3,8 +3,8 @@ use super::HostState;
 use crate::menu::TAO_MENU_CAPABILITIES;
 
 use wakui_core::{
-    menu::Menubar,
-    window::{Window, WindowVisitor},
+    chrome::menu::Menubar,
+    chrome::window::{Window, WindowVisitor},
 };
 
 struct MainPresentation<'a> {

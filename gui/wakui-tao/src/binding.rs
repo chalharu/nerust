@@ -3,8 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use iced::{Task, Theme};
 use wakui_core::Key;
-use wakui_core::control::{ControlEvent, ControlScreen};
-use wakui_core::window::Window;
+use wakui_core::chrome::window::Window;
+use wakui_core::scene::control::{ControlEvent, ControlScreen};
 
 use crate::{convert::default_font, handler::WidgetBinding};
 
@@ -105,7 +105,7 @@ mod binding_tests {
 
     #[test]
     fn boot_moves_the_prepared_screen_and_queue_exactly_once() {
-        let screen = wakui_core::conformance::conformance_screen();
+        let screen = wakui_core::support::conformance::conformance_screen();
         let (binding, shared, queue) = ControlsBinding::new(screen);
         assert!(binding.initial.borrow().is_some());
         let (mut state, _) = binding.boot();

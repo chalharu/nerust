@@ -8,22 +8,22 @@ use iced::{
     },
 };
 use wakui_core::{
-    control::{
+    flow::mapper::{PropertyUpdate, map_updates},
+    scene::control::{
         Container, Control, ControlDisplay, ControlInput, ControlMetadata, ControlScreen,
         ControlVisitor, GroupPolicy, Page, RowPolicy, Tab, TablePolicy, Tabs, policy,
     },
-    leaf::{
+    scene::leaf::{
         ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, ListLeaf, NoteLeaf, NumberLeaf, TextLeaf,
         ToggleLeaf,
     },
-    mapper::{PropertyUpdate, map_updates},
 };
 
 use crate::binding::{El, Message};
 
 /// All labels and callback IDs are owned; the snapshot may be dropped.
 #[cfg(test)]
-pub fn build(window: &wakui_core::window::Window) -> El<'static> {
+pub fn build(window: &wakui_core::chrome::window::Window) -> El<'static> {
     let mut visitor = ControlsWindowVisitor::default();
     window.visit(&mut visitor);
     visitor
@@ -38,7 +38,7 @@ struct ControlsWindowVisitor {
 }
 
 #[cfg(test)]
-impl wakui_core::window::WindowVisitor for ControlsWindowVisitor {
+impl wakui_core::chrome::window::WindowVisitor for ControlsWindowVisitor {
     fn visit_controls(&mut self, screen: &ControlScreen) {
         self.output = Some(build_screen(screen));
     }
@@ -119,12 +119,12 @@ impl IcedControlVisitor {
             .metadata
             .hints
             .spacing
-            .unwrap_or(wakui_core::hints::DEFAULT_SPACING)) as f32;
+            .unwrap_or(wakui_core::scene::hints::DEFAULT_SPACING)) as f32;
         let indent_px = (layout
             .metadata
             .hints
             .indent
-            .unwrap_or(wakui_core::hints::DEFAULT_INDENT)) as f32;
+            .unwrap_or(wakui_core::scene::hints::DEFAULT_INDENT)) as f32;
         let element = if policy::<RowPolicy>(container).is_some() {
             if !layout.label.is_empty() {
                 frame
@@ -138,12 +138,12 @@ impl IcedControlVisitor {
                         .metadata
                         .hints
                         .spacing
-                        .unwrap_or(wakui_core::hints::DEFAULT_SPACING),
+                        .unwrap_or(wakui_core::scene::hints::DEFAULT_SPACING),
                     indent: layout
                         .metadata
                         .hints
                         .indent
-                        .unwrap_or(wakui_core::hints::DEFAULT_INDENT),
+                        .unwrap_or(wakui_core::scene::hints::DEFAULT_INDENT),
                 });
                 return;
             }
@@ -227,12 +227,12 @@ fn table_element(children: Vec<TableChild>, layout: &Container, font: iced::Font
         .metadata
         .hints
         .spacing
-        .unwrap_or(wakui_core::hints::DEFAULT_SPACING)) as f32;
+        .unwrap_or(wakui_core::scene::hints::DEFAULT_SPACING)) as f32;
     let indent_px = (layout
         .metadata
         .hints
         .indent
-        .unwrap_or(wakui_core::hints::DEFAULT_INDENT)) as f32;
+        .unwrap_or(wakui_core::scene::hints::DEFAULT_INDENT)) as f32;
     let mut body = column(rows).width(Length::Fill).spacing(spacing);
     if !layout.label.is_empty() {
         body = column![text(layout.label.clone()).font(font), body]
@@ -347,7 +347,7 @@ impl ControlVisitor for IcedControlVisitor {
             self.append(control_element(control, frame.enabled, self.font));
             // Container-like leaves degrade flat in immediate mode.
             // Base leaves no-op here.
-            wakui_core::control::walk_control(control, self);
+            wakui_core::scene::control::walk_control(control, self);
         }
     }
 }
@@ -580,11 +580,11 @@ mod tests {
         Event, Point, Rectangle, Size,
         advanced::{Shell, layout, mouse, widget::Tree},
     };
-    use wakui_core::control::{
+    use wakui_core::scene::control::{
         Capture, ColumnPolicy, Container, ControlDisplay, ControlEvent, ControlId, ControlMetadata,
         Id, Node, Page,
     };
-    use wakui_core::leaf::ActionLeaf;
+    use wakui_core::scene::leaf::ActionLeaf;
 
     fn action_control(label: &str) -> Control {
         Control {

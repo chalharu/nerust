@@ -6,8 +6,8 @@
 //! builders. Payloads borrow the new snapshot; executors apply them
 //! synchronously, so no allocation is forced on either side.
 
-use crate::control::Control;
-use crate::leaf::LeafUpdate;
+use crate::scene::control::Control;
+use crate::scene::leaf::LeafUpdate;
 
 /// Single property change, in canonical application order:
 /// enabled, visible, label, value, display, then accessibility.
@@ -19,7 +19,7 @@ pub enum PropertyUpdate {
     SetVisible(bool),
     SetLabel(String),
     SetValue(LeafUpdate),
-    SetDisplay(crate::control::ControlDisplay),
+    SetDisplay(crate::scene::control::ControlDisplay),
     SetAccessibleLabel(String),
     SetHelp(Option<String>),
 }
@@ -38,8 +38,8 @@ pub fn map_updates(old: Option<&Control>, new: &Control) -> Vec<PropertyUpdate> 
     if old.map(|o| o.label.clone()) != Some(new.label.clone()) {
         updates.push(PropertyUpdate::SetLabel(new.label.clone()));
     }
-    let old_leaf: Option<&dyn crate::leaf::Leaf> =
-        old.map(|o| o.leaf.as_ref() as &dyn crate::leaf::Leaf);
+    let old_leaf: Option<&dyn crate::scene::leaf::Leaf> =
+        old.map(|o| o.leaf.as_ref() as &dyn crate::scene::leaf::Leaf);
     for value in new.leaf.updates(old_leaf) {
         updates.push(PropertyUpdate::SetValue(value));
     }
@@ -82,8 +82,8 @@ pub fn map_updates_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::control::{ControlDisplay, ControlId, ControlMetadata};
-    use crate::leaf::ToggleLeaf;
+    use crate::scene::control::{ControlDisplay, ControlId, ControlMetadata};
+    use crate::scene::leaf::ToggleLeaf;
 
     fn control(value: bool) -> Control {
         Control {

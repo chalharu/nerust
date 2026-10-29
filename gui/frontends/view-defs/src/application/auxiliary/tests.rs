@@ -4,9 +4,9 @@ use crate::session::pause_owners;
 use crate::widget_session::WidgetSession;
 use crate::widget_session::take_submission;
 use nerust_gui_shell::registry::SystemRegistry;
-use wakui::control::{Control, ControlDisplay, ControlEvent, ControlInput, ControlVisitor};
-use wakui::leaf::{ChoiceLeaf, NumberLeaf};
-use wakui::window::WidgetContents;
+use wakui::chrome::window::WidgetContents;
+use wakui::scene::control::{Control, ControlDisplay, ControlEvent, ControlInput, ControlVisitor};
+use wakui::scene::leaf::{ChoiceLeaf, NumberLeaf};
 
 fn prepare(
     host: &mut ApplicationHost,
@@ -50,10 +50,10 @@ fn input(session: &mut WidgetSession, predicate: impl Fn(&Control) -> bool, valu
 fn history_texts(session: &WidgetSession) -> Vec<String> {
     let mut out = Vec::new();
     for control in controls(session) {
-        if let Some(list) = control.downcast::<wakui::leaf::ListLeaf>() {
+        if let Some(list) = control.downcast::<wakui::scene::leaf::ListLeaf>() {
             for row in &list.rows {
                 for cell in &row.cells {
-                    if let Some(note) = cell.downcast::<wakui::leaf::NoteLeaf>() {
+                    if let Some(note) = cell.downcast::<wakui::scene::leaf::NoteLeaf>() {
                         out.push(note.text.clone());
                     }
                 }

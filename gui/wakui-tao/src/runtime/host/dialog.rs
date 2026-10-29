@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use wakui_core::dialog::{ModalPresentation, ModalPresenter};
+use wakui_core::chrome::dialog::{ModalPresentation, ModalPresenter};
 
 use super::HostState;
 use super::window::WakeNeed;
@@ -65,7 +65,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 mod tests {
     use super::*;
     use crate::runtime::host::TestHost;
-    use wakui_core::focus::FocusEvent;
+    use wakui_core::input::focus::FocusEvent;
 
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn close_retires_owned_modal_receiver_queue() {
         use crate::testkit::owners;
-        use wakui_core::dialog::ModalAdvance;
+        use wakui_core::chrome::dialog::ModalAdvance;
         let support = TestHost::new();
         let mut host = support.host;
         support

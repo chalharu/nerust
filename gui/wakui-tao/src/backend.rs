@@ -1,6 +1,6 @@
 //! Backend registration for the iced/tao platform handler.
 
-use wakui_core::backend::{Backend, BackendRegistry};
+use wakui_core::app::backend::{Backend, BackendRegistry};
 
 /// Stable backend name used for composition-root selection.
 pub const NAME: &str = "tao";

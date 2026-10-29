@@ -8,11 +8,11 @@ use iced::{
     },
     keyboard::{self, key},
 };
-use wakui_core::control::{
+use wakui_core::scene::control::{
     ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId, ControlMetadata,
     ControlScreen, ControlVisitor, Page, RowPolicy, Tab, TablePolicy,
 };
-use wakui_core::leaf::{
+use wakui_core::scene::leaf::{
     ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
 };
 
@@ -22,8 +22,8 @@ use crate::controls::{build_screen, control_element};
 use crate::disabled::gate;
 use crate::runtime::host::HostState;
 use crate::testkit::TestAux;
-use wakui_core::aux::AuxId;
-use wakui_core::control::ControlInput;
+use wakui_core::chrome::aux::AuxId;
+use wakui_core::scene::control::ControlInput;
 
 struct Fixture {
     host: HostState<TestAux>,
@@ -38,7 +38,7 @@ fn fixture() -> Fixture {
 }
 
 impl Fixture {
-    fn screen(&self) -> wakui_core::control::ControlScreen {
+    fn screen(&self) -> wakui_core::scene::control::ControlScreen {
         self.host.core.widget_screen(self.id).expect("screen")
     }
 
@@ -49,7 +49,7 @@ impl Fixture {
             .widget_dispatch(self.id, Message::new(id, input));
     }
 
-    fn dispatch(&mut self, event: ControlEvent) -> Vec<wakui_core::control::ControlEffect> {
+    fn dispatch(&mut self, event: ControlEvent) -> Vec<wakui_core::scene::control::ControlEffect> {
         self.host.core.widget_dispatch(self.id, event)
     }
 
@@ -57,7 +57,7 @@ impl Fixture {
         find(&self.screen(), label)
     }
 
-    fn window(&self) -> wakui_core::window::Window {
+    fn window(&self) -> wakui_core::chrome::window::Window {
         self.host.aux.window(self.id).expect("window").clone()
     }
 }
@@ -101,21 +101,25 @@ fn native_layout(element: &mut El<'static>) -> (iced_tiny_skia::Renderer, Tree, 
 }
 
 // Domain-free scenes: no history/settings presenter or content-specific widths.
-fn table_layout(children: Vec<wakui_core::control::Node>) -> Container {
+fn table_layout(children: Vec<wakui_core::scene::control::Node>) -> Container {
     plain_layout(children, 8.0, 0.0, Box::new(ColumnPolicy))
 }
 
-fn table_grid(children: Vec<wakui_core::control::Node>, spacing: f64, indent: f64) -> Container {
+fn table_grid(
+    children: Vec<wakui_core::scene::control::Node>,
+    spacing: f64,
+    indent: f64,
+) -> Container {
     plain_layout(children, spacing, indent, Box::new(TablePolicy))
 }
 
 fn plain_layout(
-    children: Vec<wakui_core::control::Node>,
+    children: Vec<wakui_core::scene::control::Node>,
     spacing: f64,
     indent: f64,
-    policy: Box<dyn wakui_core::control::LayoutPolicy>,
+    policy: Box<dyn wakui_core::scene::control::LayoutPolicy>,
 ) -> Container {
-    let mut ids = wakui_core::control::IdRegistry::default();
+    let mut ids = wakui_core::scene::control::IdRegistry::default();
     let mut metadata = ControlMetadata::new("layout");
     metadata.hints.spacing = Some(spacing);
     metadata.hints.indent = Some(indent);
@@ -129,12 +133,16 @@ fn plain_layout(
     }
 }
 
-fn row_layout(children: Vec<wakui_core::control::Node>, spacing: f64, indent: f64) -> Container {
+fn row_layout(
+    children: Vec<wakui_core::scene::control::Node>,
+    spacing: f64,
+    indent: f64,
+) -> Container {
     plain_layout(children, spacing, indent, Box::new(RowPolicy))
 }
 
 fn table_note(value: &str, heading: bool) -> Control {
-    let mut ids = wakui_core::control::IdRegistry::default();
+    let mut ids = wakui_core::scene::control::IdRegistry::default();
     Control {
         id: ids.id(()),
         label: String::new(),
@@ -148,8 +156,8 @@ fn table_note(value: &str, heading: bool) -> Control {
     }
 }
 
-fn table_row(values: &[&str], heading: bool) -> wakui_core::control::Node {
-    use wakui_core::control::Node;
+fn table_row(values: &[&str], heading: bool) -> wakui_core::scene::control::Node {
+    use wakui_core::scene::control::Node;
     Node::Container(Box::new(row_layout(
         values
             .iter()
@@ -160,8 +168,8 @@ fn table_row(values: &[&str], heading: bool) -> wakui_core::control::Node {
     )))
 }
 
-fn table_screen(body: wakui_core::control::Container) -> ControlScreen {
-    let mut ids = wakui_core::control::IdRegistry::default();
+fn table_screen(body: wakui_core::scene::control::Container) -> ControlScreen {
+    let mut ids = wakui_core::scene::control::IdRegistry::default();
     ControlScreen {
         title: "Generic controls".into(),
         pages: vec![Page {
@@ -176,7 +184,7 @@ fn table_screen(body: wakui_core::control::Container) -> ControlScreen {
         }],
         footer: table_layout(vec![]),
         message: None,
-        capture: wakui_core::control::Capture {
+        capture: wakui_core::scene::control::Capture {
             target: None,
             prompt: String::new(),
         },
@@ -199,7 +207,7 @@ fn horizontal_rows<'a>(node: Layout<'a>, columns: usize, rows: &mut Vec<Layout<'
 
 #[test]
 fn generic_table_shares_real_column_offsets_and_wraps_variable_content() {
-    use wakui_core::control::Node;
+    use wakui_core::scene::control::Node;
     let long = "a long message with variable content ".repeat(80);
     let mut table = table_grid(
         vec![
@@ -252,7 +260,7 @@ fn generic_table_shares_real_column_offsets_and_wraps_variable_content() {
 
 #[test]
 fn generic_table_preserves_nested_layouts_headers_visibility_and_disabled_input() {
-    use wakui_core::control::Node;
+    use wakui_core::scene::control::Node;
     let mut action = table_note("Action", false);
     action.label = "Action".into();
     action.leaf = Box::new(ActionLeaf);

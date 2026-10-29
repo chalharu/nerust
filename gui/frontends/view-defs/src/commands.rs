@@ -8,10 +8,10 @@
 //! `BindingTable`.
 
 use nerust_gui_shell::session::commands::SessionCommand;
-use wakui::commands::{
+use wakui::input::commands::{
     Command, CommandId, CommandModel, CommandRef, CommandSpec, IndexedSpec, UnitSpec,
 };
-use wakui::control::IdRegistry;
+use wakui::scene::control::IdRegistry;
 
 use crate::menu::MenuSig;
 

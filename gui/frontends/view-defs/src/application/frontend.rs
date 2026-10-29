@@ -1,29 +1,29 @@
 //! Framework app implementation: [`FrontendApp`] over the owned session.
 //!
 //! Native frontends hold the app behind `Box<dyn FrontendApp>` (see
-//! [`Application`](wakui::app::Application)) and never name
+//! [`Application`](wakui::app::boundary::Application)) and never name
 //! shell, runtime, or ViewModel types. All ViewModel contact lives here.
 
 use std::{path::Path, time::Instant};
 
 use wakui::{
-    app::{FrontendApp, WidgetCloseOutcome},
-    dialog::{DialogTurn, ModalAdvance, ModalToken},
-    session::SessionError,
+    app::binding::PickerSink as _,
+    chrome::viewport::ViewportRegion,
+    flow::loop_driver::WakeNeed,
+    scene::control::{ControlEffect, ControlEvent, ControlId, ControlScreen},
 };
 use wakui::{
-    aux::{AuxId, AuxRegistryPort, OpenRequest},
-    focus::FocusEvent,
-    mailbox::WindowMailbox,
-    menu::{FileDialogTitles, MenuCapabilities, Menubar},
-    viewport::{ViewportImage, ViewportPresent},
-    window::{Window, WindowChromeSync, WindowEffects},
+    app::boundary::{FrontendApp, WidgetCloseOutcome},
+    chrome::dialog::{DialogTurn, ModalAdvance, ModalToken},
+    input::session::SessionError,
 };
 use wakui::{
-    binding::PickerSink as _,
-    control::{ControlEffect, ControlEvent, ControlId, ControlScreen},
-    loop_driver::WakeNeed,
-    viewport::ViewportRegion,
+    chrome::aux::{AuxId, AuxRegistryPort, OpenRequest},
+    chrome::mailbox::WindowMailbox,
+    chrome::menu::{FileDialogTitles, MenuCapabilities, Menubar},
+    chrome::viewport::{ViewportImage, ViewportPresent},
+    chrome::window::{Window, WindowChromeSync, WindowEffects},
+    input::focus::FocusEvent,
 };
 
 use super::ApplicationHost;
@@ -440,8 +440,8 @@ impl FrontendApp<AuxKind> for ApplicationHost {
 
     fn dispatch(
         &mut self,
-        event: wakui::session::SessionEvent,
-    ) -> Result<wakui::session::SessionOutcome, SessionError> {
+        event: wakui::input::session::SessionEvent,
+    ) -> Result<wakui::input::session::SessionOutcome, SessionError> {
         crate::session::dispatch(
             &mut self.session,
             &mut self.pause_policy,
@@ -681,7 +681,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         &mut self,
         id: AuxId,
         target: ControlId,
-        request: wakui::control::Id,
+        request: wakui::scene::control::Id,
         payload: Option<std::path::PathBuf>,
     ) {
         if let Some(session) = self.widget_session_mut(id) {
