@@ -16,6 +16,7 @@ use nerust_settings_core::model::language::AppLanguage;
 use wakui::{
     app::binding::{BindingTarget, PickerSink, ViewDefinition, drive},
     scene::control::{ControlEffect, ControlEvent, ControlId, ControlScreen, Id},
+    scene::inflate::InflateCtx,
     scene::leaf::TextLeaf,
 };
 
@@ -25,11 +26,9 @@ use wakui::support::sync::lock_recovered;
 
 use crate::{
     focus::AuxKind,
-    history::{HistoryEffect, HistoryEvent, HistoryKey, HistoryModel},
+    history::{HistoryEffect, HistoryEvent, HistoryModel},
     settings::{SettingsController, SettingsEffect, SettingsEvent},
 };
-
-use wakui::scene::control::IdRegistry;
 
 struct SettingsDomain {
     pending: Arc<Mutex<Option<SettingsSnapshot>>>,
@@ -118,7 +117,7 @@ pub(crate) struct HistorySession {
     lines: Arc<[HistoryLine]>,
     language: AppLanguage,
     filter: HistoryFilter,
-    ids: RefCell<IdRegistry<HistoryKey>>,
+    ids: RefCell<InflateCtx<String>>,
     mailbox: WindowMailbox,
     clear: Arc<AtomicBool>,
 }
@@ -176,7 +175,7 @@ impl WidgetSession {
                 lines,
                 language,
                 filter: HistoryFilter::All,
-                ids: RefCell::new(IdRegistry::default()),
+                ids: RefCell::new(InflateCtx::default()),
                 mailbox: mailbox.clone(),
                 clear,
             }),
