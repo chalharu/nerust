@@ -130,7 +130,7 @@ impl<P: Program<Theme = iced::Theme, Renderer = Renderer>> UiShell<P> {
             self.deadline = None;
         }
         // Disjoint tree fields: the interface borrows the instance
-        // while the cache slot is taken out and folded back.
+        // while the cache item is taken out and folded back.
         let mut ui = Self::build_transient(
             &self.tree.instance,
             self.tree.window_id,

@@ -1,4 +1,4 @@
-//! History exercises the same controls binding, not a second toolbar/program.
+//! Beta exercises the same controls binding, not a second toolbar/program.
 use super::*;
 use crate::aux::widgets::controls::build_screen;
 use wakui_core::control::{
@@ -9,7 +9,7 @@ use wakui_core::leaf::{ChoiceLeaf, ListLeaf, NoteLeaf};
 fn fixture() -> (HostState<TestAux>, AuxId) {
     let mut host = TestHost::new().host;
     host.core.report_host_error("history test error".into());
-    let id = prepare(&mut host, TestAux::History);
+    let id = prepare(&mut host, TestAux::Beta);
     (host, id)
 }
 
@@ -71,22 +71,18 @@ fn outer_history_window_uses_common_title_and_controls_pipeline() {
 }
 
 #[test]
-fn history_view_builds_empty_and_filtered() {
+fn beta_view_builds_empty_and_filtered() {
     let mut host = TestHost::new().host;
-    let id = prepare(&mut host, TestAux::History);
+    let id = prepare(&mut host, TestAux::Beta);
     let screen = screen_of(&host, id);
     drop(build_screen(&screen));
     filter(&mut host, id, 1);
-    assert!(
-        notes(&host, id)
-            .iter()
-            .any(|t| t.contains("No notifications"))
-    );
+    assert!(notes(&host, id).iter().any(|t| t.contains("No entries")));
     drop(build_screen(&screen_of(&host, id)));
 }
 
 #[test]
-fn history_refresh_preserves_filter_and_error_note() {
+fn beta_refresh_preserves_filter_and_error_note() {
     let (mut host, id) = fixture();
     filter(&mut host, id, 3);
     let before = screen_of(&host, id);
@@ -110,7 +106,7 @@ fn history_refresh_preserves_filter_and_error_note() {
 }
 
 #[test]
-fn history_view_builds_without_a_window() {
+fn beta_view_builds_without_a_window() {
     let (mut host, id) = fixture();
     let screen = screen_of(&host, id);
     let (binding, _, _) = ControlsBinding::new(screen);
@@ -128,10 +124,10 @@ fn history_view_builds_without_a_window() {
 }
 
 #[test]
-fn history_clear_applies_without_close_and_refreshes_same_filter() {
+fn beta_clear_applies_without_close_and_refreshes_same_filter() {
     let (mut host, id) = fixture();
     filter(&mut host, id, 3);
-    activate(&mut host, id, "Clear History");
+    activate(&mut host, id, "Clear log");
     let mailbox = mailbox_of(&host, id);
     assert!(mailbox.has_pending());
     assert!(!mailbox.close_requested());

@@ -2,7 +2,7 @@
 //!
 //! Production code never touches this module. The fake owns canned settings
 //! and history screens (stable English labels mirroring the real catalog),
-//! a canned debugger snapshot, and recording flags. Native-flow tests drive
+//! a canned aux snapshot, and recording flags. Native-flow tests drive
 //! `HostState` against it without view definitions, shell, or settings.
 
 pub(crate) use crate::aux::registry::test_double::StubAux;
@@ -42,43 +42,43 @@ use wakui_core::{
 /// Stable English labels mirroring the real catalog. Native-flow tests look
 /// controls up by these; the fake screens below use the same strings.
 pub(crate) mod labels {
-    pub(crate) const LANGUAGE: &str = "UI Language";
-    pub(crate) const MUTE: &str = "Mute";
+    pub(crate) const CHOICE_A: &str = "Choice A";
+    pub(crate) const TOGGLE_A: &str = "Toggle A";
     pub(crate) const OK: &str = "OK";
     pub(crate) const CANCEL: &str = "Cancel";
-    pub(crate) const STORAGE_POLICY: &str = "Save storage policy";
-    pub(crate) const STORAGE_DIRECTORY: &str = "Save storage directory";
+    pub(crate) const CHOICE_B: &str = "Choice B";
+    pub(crate) const TEXT_A: &str = "Text A";
     pub(crate) const BROWSE: &str = "Browse";
-    pub(crate) const SCALING: &str = "Scaling";
-    pub(crate) const STATUS_DISPLAY: &str = "Status display";
-    pub(crate) const DURATION: &str = "Duration (ms)";
-    pub(crate) const POSITION: &str = "Position";
-    pub(crate) const STATUS_POSITION: &str = "Status position";
-    pub(crate) const STATUS_AREA: &str = "Status area";
-    pub(crate) const CLEAR_HISTORY: &str = "Clear History";
-    pub(crate) const HISTORY_TITLE: &str = "Notification History";
-    pub(crate) const SETTINGS_TITLE: &str = "Settings";
-    pub(crate) const DEBUGGER_TITLE: &str = "Debugger";
-    pub(crate) const PPU_TITLE: &str = "PPU Viewer";
+    pub(crate) const CHOICE_C: &str = "Choice C";
+    pub(crate) const TOGGLE_B: &str = "Toggle B";
+    pub(crate) const NUMBER_A: &str = "Number A";
+    pub(crate) const CHOICE_D: &str = "Choice D";
+    pub(crate) const CHOICE_E: &str = "Choice E";
+    pub(crate) const CHOICE_F: &str = "Choice F";
+    pub(crate) const CLEAR_LOG: &str = "Clear log";
+    pub(crate) const TITLE_BETA: &str = "Aux Beta";
+    pub(crate) const TITLE_ALPHA: &str = "Aux Alpha";
+    pub(crate) const TITLE_GAMMA: &str = "Aux Gamma";
+    pub(crate) const TITLE_DELTA: &str = "Aux Delta";
 }
 
 /// Headless aux kind: mirrors the view-side kinds without naming them.
 /// Production code stays generic over `K`; tests instantiate with this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum TestAux {
-    Settings,
-    History,
-    Debug,
-    Ppu,
+    Alpha,
+    Beta,
+    Gamma,
+    Delta,
 }
 
 impl TestAux {
     pub(crate) fn title(self) -> &'static str {
         match self {
-            TestAux::Settings => labels::SETTINGS_TITLE,
-            TestAux::History => labels::HISTORY_TITLE,
-            TestAux::Debug => labels::DEBUGGER_TITLE,
-            TestAux::Ppu => "PPU Viewer",
+            TestAux::Alpha => labels::TITLE_ALPHA,
+            TestAux::Beta => labels::TITLE_BETA,
+            TestAux::Gamma => labels::TITLE_GAMMA,
+            TestAux::Delta => "Aux Delta",
         }
     }
 }
@@ -90,7 +90,7 @@ pub(crate) mod owners {
 
     pub(crate) const FOCUS: PauseOwner = PauseOwner::new(1);
     pub(crate) const MODAL: PauseOwner = PauseOwner::new(2);
-    pub(crate) const SETTINGS: PauseOwner = PauseOwner::new(3);
+    pub(crate) const GUARD: PauseOwner = PauseOwner::new(3);
 }
 
 /// Flavor-local menu skeleton. The framework tracks opaque ids only;
@@ -98,13 +98,13 @@ pub(crate) mod owners {
 pub(crate) mod menu_id {
     use wakui_core::menu::MenuId;
 
-    pub(crate) const FILE: MenuId = MenuId::from_raw(0);
-    pub(crate) const EMULATION: MenuId = MenuId::from_raw(1);
-    pub(crate) const STATES: MenuId = MenuId::from_raw(2);
-    pub(crate) const SELECT_SLOT: MenuId = MenuId::from_raw(3);
-    pub(crate) const SAVE_SLOT: MenuId = MenuId::from_raw(4);
-    pub(crate) const LOAD_SLOT: MenuId = MenuId::from_raw(5);
-    pub(crate) const DELETE_SLOT: MenuId = MenuId::from_raw(6);
+    pub(crate) const GROUP_A: MenuId = MenuId::from_raw(0);
+    pub(crate) const GROUP_B: MenuId = MenuId::from_raw(1);
+    pub(crate) const GROUP_C: MenuId = MenuId::from_raw(2);
+    pub(crate) const SUB_A: MenuId = MenuId::from_raw(3);
+    pub(crate) const SUB_B: MenuId = MenuId::from_raw(4);
+    pub(crate) const SUB_C: MenuId = MenuId::from_raw(5);
+    pub(crate) const SUB_D: MenuId = MenuId::from_raw(6);
 }
 
 /// Flavor-local simulation vocabulary for headless tests.
@@ -116,26 +116,26 @@ pub(crate) mod menu_id {
 pub(crate) enum TestSession {
     Pause,
     Resume,
-    TogglePause,
-    Reset,
-    CreateSlot,
-    SaveActiveSlotOrNew,
-    LoadActiveSlot,
-    SelectActiveSlot(u64),
-    SaveSlot(u64),
-    LoadSlot(u64),
-    DeleteSlot(u64),
-    SelectNextSlot,
-    SelectPreviousSlot,
+    Toggle,
+    Restart,
+    Create,
+    SaveActiveOrNew,
+    LoadActive,
+    Select(u64),
+    Save(u64),
+    Load(u64),
+    Delete(u64),
+    Next,
+    Previous,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TestMenu {
     Open,
     Close,
-    Settings,
-    Debugger,
-    History,
+    AuxAlpha,
+    AuxGamma,
+    AuxBeta,
     About,
     Quit,
     Session(TestSession),
@@ -144,20 +144,19 @@ pub(crate) enum TestMenu {
 impl TestSession {
     fn template(self) -> Self {
         match self {
-            Self::SelectActiveSlot(_) => Self::SelectActiveSlot(0),
-            Self::SaveSlot(_) => Self::SaveSlot(0),
-            Self::LoadSlot(_) => Self::LoadSlot(0),
-            Self::DeleteSlot(_) => Self::DeleteSlot(0),
+            Self::Select(_) => Self::Select(0),
+            Self::Save(_) => Self::Save(0),
+            Self::Load(_) => Self::Load(0),
+            Self::Delete(_) => Self::Delete(0),
             other => other,
         }
     }
 
     fn argument(self) -> Option<u64> {
         match self {
-            Self::SelectActiveSlot(index)
-            | Self::SaveSlot(index)
-            | Self::LoadSlot(index)
-            | Self::DeleteSlot(index) => Some(index),
+            Self::Select(index) | Self::Save(index) | Self::Load(index) | Self::Delete(index) => {
+                Some(index)
+            }
             _ => None,
         }
     }
@@ -166,10 +165,10 @@ impl TestSession {
         match argument {
             None if self.template() == self => Some(self),
             Some(index) => match self {
-                Self::SelectActiveSlot(_) => Some(Self::SelectActiveSlot(index)),
-                Self::SaveSlot(_) => Some(Self::SaveSlot(index)),
-                Self::LoadSlot(_) => Some(Self::LoadSlot(index)),
-                Self::DeleteSlot(_) => Some(Self::DeleteSlot(index)),
+                Self::Select(_) => Some(Self::Select(index)),
+                Self::Save(_) => Some(Self::Save(index)),
+                Self::Load(_) => Some(Self::Load(index)),
+                Self::Delete(_) => Some(Self::Delete(index)),
                 _ => None,
             },
             _ => None,
@@ -239,24 +238,24 @@ impl FakeCommands {
         let templates = [
             M::Open,
             M::Close,
-            M::Settings,
-            M::Debugger,
-            M::History,
+            M::AuxAlpha,
+            M::AuxGamma,
+            M::AuxBeta,
             M::About,
             M::Quit,
             M::Session(S::Pause),
             M::Session(S::Resume),
-            M::Session(S::TogglePause),
-            M::Session(S::Reset),
-            M::Session(S::CreateSlot),
-            M::Session(S::SaveActiveSlotOrNew),
-            M::Session(S::LoadActiveSlot),
-            M::Session(S::SelectActiveSlot(0)),
-            M::Session(S::SaveSlot(0)),
-            M::Session(S::LoadSlot(0)),
-            M::Session(S::DeleteSlot(0)),
-            M::Session(S::SelectNextSlot),
-            M::Session(S::SelectPreviousSlot),
+            M::Session(S::Toggle),
+            M::Session(S::Restart),
+            M::Session(S::Create),
+            M::Session(S::SaveActiveOrNew),
+            M::Session(S::LoadActive),
+            M::Session(S::Select(0)),
+            M::Session(S::Save(0)),
+            M::Session(S::Load(0)),
+            M::Session(S::Delete(0)),
+            M::Session(S::Next),
+            M::Session(S::Previous),
         ];
         Self {
             table: templates
@@ -407,9 +406,9 @@ fn screen(title: &str, pages: Vec<Page>, footer: Vec<Control>) -> ControlScreen 
 }
 
 /// Canned settings screen: six pages, stable labels, submittable footer.
-fn settings_screen() -> ControlScreen {
+fn alpha_screen() -> ControlScreen {
     let language = control(
-        labels::LANGUAGE,
+        labels::CHOICE_A,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["English".to_string(), "日本語".to_string()],
@@ -417,12 +416,12 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let mute = control(
-        labels::MUTE,
+        labels::TOGGLE_A,
         ControlDisplay::Standard,
         ToggleLeaf { value: false },
     );
     let policy = control(
-        labels::STORAGE_POLICY,
+        labels::CHOICE_B,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec![
@@ -434,7 +433,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let directory = control(
-        labels::STORAGE_DIRECTORY,
+        labels::TEXT_A,
         ControlDisplay::Standard,
         TextLeaf {
             value: String::new(),
@@ -443,7 +442,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let scaling = control(
-        labels::SCALING,
+        labels::CHOICE_C,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["1x".to_string(), "2x".to_string()],
@@ -451,12 +450,12 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let status = control(
-        labels::STATUS_DISPLAY,
+        labels::TOGGLE_B,
         ControlDisplay::Standard,
         ToggleLeaf { value: false },
     );
     let duration = control(
-        labels::DURATION,
+        labels::NUMBER_A,
         ControlDisplay::Standard,
         NumberLeaf {
             value: 3000,
@@ -468,7 +467,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let position = control(
-        labels::POSITION,
+        labels::CHOICE_D,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["Top".to_string(), "Bottom".to_string()],
@@ -476,7 +475,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let status_position = control(
-        labels::STATUS_POSITION,
+        labels::CHOICE_E,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["Top".to_string(), "Bottom".to_string()],
@@ -484,7 +483,7 @@ fn settings_screen() -> ControlScreen {
         },
     );
     let status_area = control(
-        labels::STATUS_AREA,
+        labels::CHOICE_F,
         ControlDisplay::Standard,
         ChoiceLeaf {
             choices: vec!["Full".to_string(), "Compact".to_string()],
@@ -494,15 +493,15 @@ fn settings_screen() -> ControlScreen {
     let ok = control(labels::OK, ControlDisplay::Primary, ActionLeaf);
     let cancel = control(labels::CANCEL, ControlDisplay::Secondary, ActionLeaf);
     screen(
-        labels::SETTINGS_TITLE,
+        labels::TITLE_ALPHA,
         vec![
-            page("General", true, vec![language, mute]),
+            page("Section A", true, vec![language, mute]),
             page(
-                "Input",
+                "Section B",
                 false,
                 vec![
                     control(
-                        "Reset Key",
+                        "Sample key",
                         ControlDisplay::Standard,
                         BindingLeaf {
                             text: String::new(),
@@ -512,29 +511,29 @@ fn settings_screen() -> ControlScreen {
                         },
                     ),
                     control(
-                        "Shortcuts apply immediately",
+                        "Applies immediately",
                         ControlDisplay::Standard,
                         NoteLeaf {
-                            text: "Shortcuts apply immediately".to_string(),
+                            text: "Applies immediately".to_string(),
                         },
                     ),
                 ],
             ),
-            page("Video", false, vec![scaling]),
-            page("Audio", false, vec![]),
+            page("Section C", false, vec![scaling]),
+            page("Section D", false, vec![]),
             page(
-                "Storage",
+                "Section E",
                 false,
                 vec![policy, directory, status, duration, position],
             ),
-            page("Notifications", false, vec![status_position, status_area]),
+            page("Section F", false, vec![status_position, status_area]),
         ],
         vec![ok, cancel],
     )
 }
 
-fn history_body(children: Vec<Node>) -> Container {
-    let mut metadata = ControlMetadata::new("history");
+fn log_body(children: Vec<Node>) -> Container {
+    let mut metadata = ControlMetadata::new("log");
     metadata.hints.spacing = Some(0.0);
     metadata.hints.indent = Some(0.0);
     Container {
@@ -548,7 +547,7 @@ fn history_body(children: Vec<Node>) -> Container {
 }
 
 /// Canned history screen: filter choice, notes, clear/close actions.
-fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
+fn log_screen(notes: &[String], filter: usize) -> ControlScreen {
     let filter_control = control(
         "Filter",
         ControlDisplay::Standard,
@@ -565,10 +564,10 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     let mut children = vec![Node::Control(filter_control)];
     if notes.is_empty() {
         children.push(Node::Control(control(
-            "No notifications",
+            "No entries",
             ControlDisplay::Standard,
             NoteLeaf {
-                text: "No notifications".to_string(),
+                text: "No entries".to_string(),
             },
         )));
     } else {
@@ -580,16 +579,16 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
             )));
         }
     }
-    let clear = control(labels::CLEAR_HISTORY, ControlDisplay::Standard, ActionLeaf);
+    let clear = control(labels::CLEAR_LOG, ControlDisplay::Standard, ActionLeaf);
     let close = control("Close", ControlDisplay::Primary, ActionLeaf);
     ControlScreen {
-        title: labels::HISTORY_TITLE.to_string(),
+        title: labels::TITLE_BETA.to_string(),
         pages: vec![Page {
             id: Id::fresh(),
-            label: labels::HISTORY_TITLE.to_string(),
+            label: labels::TITLE_BETA.to_string(),
             selected: true,
-            select: control(labels::HISTORY_TITLE, ControlDisplay::Standard, ActionLeaf),
-            body: history_body(children),
+            select: control(labels::TITLE_BETA, ControlDisplay::Standard, ActionLeaf),
+            body: log_body(children),
         }],
         footer: layout(vec![Node::Control(clear), Node::Control(close)]),
         message: None,
@@ -607,8 +606,8 @@ fn canned_menubar() -> Menubar {
         },
         menus: vec![
             Submenu {
-                id: menu_id::FILE,
-                label: "File".to_string(),
+                id: menu_id::GROUP_A,
+                label: "Group A".to_string(),
                 enabled: true,
                 children: vec![
                     MenuEntry::Item(MenuItem {
@@ -618,20 +617,20 @@ fn canned_menubar() -> Menubar {
                     }),
                     MenuEntry::Item(MenuItem {
                         command: None,
-                        label: "Settings...".to_string(),
+                        label: "Aux Alpha...".to_string(),
                         enabled: true,
                     }),
                 ],
             },
             Submenu {
-                id: menu_id::EMULATION,
-                label: "Emulation".to_string(),
+                id: menu_id::GROUP_B,
+                label: "Group B".to_string(),
                 enabled: true,
                 children: vec![],
             },
             Submenu {
                 id: MenuId::from_raw(7),
-                label: "Help".to_string(),
+                label: "Group D".to_string(),
                 enabled: true,
                 children: vec![],
             },
@@ -657,11 +656,11 @@ pub(crate) struct FakeApp {
     pub title_dirty: bool,
     pub fullscreen_default: bool,
     pub window_size: (f32, f32),
-    pub history_notes: Vec<String>,
-    pub history_filter: usize,
+    pub log_notes: Vec<String>,
+    pub log_filter: usize,
     pub error: Option<String>,
-    pub debug_open_requested: bool,
-    pub ppu_open_requested: bool,
+    pub gamma_open_requested: bool,
+    pub delta_open_requested: bool,
     pub mailboxes: HashMap<AuxId, WindowMailbox>,
     pub mailbox_flags: HashMap<AuxId, Arc<Mutex<bool>>>,
     pub widget_kinds: HashMap<AuxId, TestAux>,
@@ -683,7 +682,7 @@ pub(crate) struct FakeApp {
     last_title_at: Instant,
     live_consumed: bool,
     last_live: Option<Instant>,
-    pub active_slot: Option<u64>,
+    pub active_item: Option<u64>,
     owners: std::collections::HashSet<PauseOwner>,
     menu_gate: Option<(bool, bool, bool, Option<u64>, Menubar)>,
     pub(crate) commands: FakeCommands,
@@ -710,11 +709,11 @@ impl FakeApp {
             title_dirty: true,
             fullscreen_default: false,
             window_size: (960.0, 720.0),
-            history_notes: Vec::new(),
-            history_filter: 0,
+            log_notes: Vec::new(),
+            log_filter: 0,
             error: None,
-            debug_open_requested: false,
-            ppu_open_requested: false,
+            gamma_open_requested: false,
+            delta_open_requested: false,
             mailboxes: HashMap::new(),
             mailbox_flags: HashMap::new(),
             widget_kinds: HashMap::new(),
@@ -726,7 +725,7 @@ impl FakeApp {
             retry_due: false,
             prepared: std::collections::HashSet::new(),
             remembered_size: None,
-            active_slot: None,
+            active_item: None,
             owners: std::collections::HashSet::new(),
             menu_gate: None,
             commands: FakeCommands::new(),
@@ -743,17 +742,17 @@ impl FakeApp {
         }
     }
 
-    pub(crate) fn history_screen(&self) -> ControlScreen {
-        history_screen(&self.history_notes, self.history_filter)
+    pub(crate) fn log_screen(&self) -> ControlScreen {
+        log_screen(&self.log_notes, self.log_filter)
     }
 }
 
-pub(crate) fn ppu_screen() -> ControlScreen {
+pub(crate) fn delta_screen() -> ControlScreen {
     let note = control(
-        "tiles",
+        "note",
         ControlDisplay::Standard,
         NoteLeaf {
-            text: "tiles".to_string(),
+            text: "note".to_string(),
         },
     );
     let mut ppu_meta = ControlMetadata::new("ppu");
@@ -768,12 +767,12 @@ pub(crate) fn ppu_screen() -> ControlScreen {
         children: vec![Node::Control(note)],
     };
     ControlScreen {
-        title: labels::PPU_TITLE.to_string(),
+        title: labels::TITLE_DELTA.to_string(),
         pages: vec![Page {
             id: Id::fresh(),
-            label: labels::PPU_TITLE.to_string(),
+            label: labels::TITLE_DELTA.to_string(),
             selected: true,
-            select: control(labels::PPU_TITLE, ControlDisplay::Standard, ActionLeaf),
+            select: control(labels::TITLE_DELTA, ControlDisplay::Standard, ActionLeaf),
             body,
         }],
         footer: layout(vec![]),
@@ -785,8 +784,8 @@ pub(crate) fn ppu_screen() -> ControlScreen {
     }
 }
 
-pub(crate) fn debug_screen() -> ControlScreen {
-    let pause = control(labels::MUTE, ControlDisplay::Standard, ActionLeaf);
+pub(crate) fn gamma_screen() -> ControlScreen {
+    let pause = control(labels::TOGGLE_A, ControlDisplay::Standard, ActionLeaf);
     let mut debug_meta = ControlMetadata::new("debug");
     debug_meta.hints.spacing = Some(8.0);
     debug_meta.hints.indent = Some(0.0);
@@ -799,12 +798,12 @@ pub(crate) fn debug_screen() -> ControlScreen {
         children: vec![Node::Control(pause)],
     };
     ControlScreen {
-        title: labels::DEBUGGER_TITLE.to_string(),
+        title: labels::TITLE_GAMMA.to_string(),
         pages: vec![Page {
             id: Id::fresh(),
-            label: labels::DEBUGGER_TITLE.to_string(),
+            label: labels::TITLE_GAMMA.to_string(),
             selected: true,
-            select: control(labels::DEBUGGER_TITLE, ControlDisplay::Standard, ActionLeaf),
+            select: control(labels::TITLE_GAMMA, ControlDisplay::Standard, ActionLeaf),
             body,
         }],
         footer: layout(vec![Node::Control(control(
@@ -852,14 +851,14 @@ impl EventHandler<TestAux> for FakeApp {
                         outcome.effect = Some(CommandEffect::OpenFile);
                     }
                     TestMenu::Close => self.unload(),
-                    TestMenu::Settings => {
-                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Settings));
+                    TestMenu::AuxAlpha => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Alpha));
                     }
-                    TestMenu::Debugger => {
-                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                    TestMenu::AuxGamma => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Gamma));
                     }
-                    TestMenu::History => {
-                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::History));
+                    TestMenu::AuxBeta => {
+                        outcome.effect = Some(CommandEffect::OpenAux(TestAux::Beta));
                     }
                     TestMenu::About => {
                         outcome.effect = Some(CommandEffect::About);
@@ -873,11 +872,11 @@ impl EventHandler<TestAux> for FakeApp {
                 }
             }
             EventCommand::Session(SessionEvent::Keyboard { key, pressed }) => {
-                // Test-double shortcut: F4 opens the debugger, like the
+                // Test-double shortcut: F4 opens aux gamma, like the
                 // default view-side binding. Production flavors never
                 // interpret keys; meaning resolves view-side.
                 if pressed && key == wakui_core::Key::F4 {
-                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Debug));
+                    outcome.effect = Some(CommandEffect::OpenAux(TestAux::Gamma));
                 }
                 outcome.session = self.dispatch(SessionEvent::Keyboard { key, pressed })?;
             }
@@ -920,24 +919,24 @@ impl FakeApp {
                 }
                 true
             }
-            TestSession::TogglePause => {
+            TestSession::Toggle => {
                 if self.loaded {
                     self.paused = !self.paused;
                 }
                 true
             }
-            TestSession::Reset => true,
-            TestSession::CreateSlot => true,
-            TestSession::SaveActiveSlotOrNew => false,
-            TestSession::LoadActiveSlot => false,
-            TestSession::SelectActiveSlot(id) => {
-                self.active_slot = Some(id);
+            TestSession::Restart => true,
+            TestSession::Create => true,
+            TestSession::SaveActiveOrNew => false,
+            TestSession::LoadActive => false,
+            TestSession::Select(id) => {
+                self.active_item = Some(id);
                 true
             }
-            TestSession::SaveSlot(_) => true,
-            TestSession::LoadSlot(_) => true,
-            TestSession::DeleteSlot(_) => true,
-            TestSession::SelectNextSlot | TestSession::SelectPreviousSlot => true,
+            TestSession::Save(_) => true,
+            TestSession::Load(_) => true,
+            TestSession::Delete(_) => true,
+            TestSession::Next | TestSession::Previous => true,
         };
         outcome.command = Some(CommandOutcome {
             executed,
@@ -970,37 +969,37 @@ impl FakeApp {
 
     pub(crate) fn reset_session(&mut self) {}
 
-    pub(crate) fn save_active_slot(&mut self) -> bool {
+    pub(crate) fn save_active_item(&mut self) -> bool {
         false
     }
 
-    pub(crate) fn load_active_slot(&mut self) -> bool {
+    pub(crate) fn load_active_item(&mut self) -> bool {
         false
     }
 
-    pub(crate) fn load_slot(&mut self, _id: u64) -> bool {
+    pub(crate) fn load_item(&mut self, _id: u64) -> bool {
         false
     }
 
-    pub(crate) fn save_slot(&mut self, _id: u64) {}
+    pub(crate) fn save_item(&mut self, _id: u64) {}
 
-    pub(crate) fn delete_slot(&mut self, _id: u64) {}
+    pub(crate) fn delete_item(&mut self, _id: u64) {}
 
-    pub(crate) fn select_slot(&mut self, id: u64) {
-        self.active_slot = Some(id);
+    pub(crate) fn select_item(&mut self, id: u64) {
+        self.active_item = Some(id);
     }
 
-    pub(crate) fn create_slot(&mut self) {}
+    pub(crate) fn create_item(&mut self) {}
 
-    pub(crate) fn select_next_slot(&mut self) {}
+    pub(crate) fn select_next(&mut self) {}
 
-    pub(crate) fn select_previous_slot(&mut self) {}
+    pub(crate) fn select_previous(&mut self) {}
 
-    pub(crate) fn active_slot_id(&self) -> Option<u64> {
-        self.active_slot
+    pub(crate) fn active_item_id(&self) -> Option<u64> {
+        self.active_item
     }
 
-    pub(crate) fn history_changed(&self) -> bool {
+    pub(crate) fn log_changed(&self) -> bool {
         true
     }
 }
@@ -1114,20 +1113,20 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn file_dialog_filters(&self) -> Vec<(String, Vec<String>)> {
         if self.loaded {
-            vec![("ROM files".to_string(), vec!["nes".to_string()])]
+            vec![("Data files".to_string(), vec!["dat".to_string()])]
         } else {
             Vec::new()
         }
     }
 
     fn menubar_update(&mut self, _capabilities: MenuCapabilities) -> Option<Menubar> {
-        let settings_open = self.owners.contains(&owners::SETTINGS);
+        let guard_open = self.owners.contains(&owners::GUARD);
         self.menu_polls += 1;
         let gate = (
-            settings_open,
+            guard_open,
             self.loaded,
             self.paused,
-            self.active_slot,
+            self.active_item,
             self.menu.clone(),
         );
         if self.menu_gate.as_ref() == Some(&gate) {
@@ -1247,12 +1246,12 @@ impl FrontendApp<TestAux> for FakeApp {
             .widget_kinds
             .get(&id)
             .copied()
-            .unwrap_or(TestAux::Settings);
+            .unwrap_or(TestAux::Alpha);
         let screen = match kind {
-            TestAux::History => self.history_screen(),
-            TestAux::Debug => debug_screen(),
-            TestAux::Ppu => ppu_screen(),
-            _ => settings_screen(),
+            TestAux::Beta => self.log_screen(),
+            TestAux::Gamma => gamma_screen(),
+            TestAux::Delta => delta_screen(),
+            _ => alpha_screen(),
         };
         self.widget_screens.insert(id, screen.clone());
         let mailbox = if let Some(mailbox) = self.mailboxes.get(&id) {
@@ -1269,8 +1268,8 @@ impl FrontendApp<TestAux> for FakeApp {
             return Ok(false);
         }
         self.prepared.insert(id);
-        if let Some(slot) = registry.window_mut(id) {
-            *slot = Window::controls(id, screen);
+        if let Some(item) = registry.window_mut(id) {
+            *item = Window::controls(id, screen);
         }
         Ok(true)
     }
@@ -1345,7 +1344,7 @@ impl FrontendApp<TestAux> for FakeApp {
         };
         // Walk pages, footer, and history notes by id.
         let mut hit = false;
-        let is_history = self.widget_kinds.get(&id) == Some(&TestAux::History);
+        let is_history = self.widget_kinds.get(&id) == Some(&TestAux::Beta);
         let mut activate_page: Option<usize> = None;
         for (index, page) in screen.pages.iter_mut().enumerate() {
             if page.select.id == target {
@@ -1369,7 +1368,7 @@ impl FrontendApp<TestAux> for FakeApp {
             && is_history
             && let ControlInput::Select(index) = event.input
         {
-            self.history_filter = index;
+            self.log_filter = index;
         }
         if !hit {
             for node in &mut screen.footer.children {
@@ -1383,13 +1382,12 @@ impl FrontendApp<TestAux> for FakeApp {
         }
         // Activation semantics mirror the app policy just enough for
         // native-flow tests: submissions stage, Cancel/Close only flag the
-        // mailbox, Clear History clears notes, Browse opens the picker.
+        // mailbox, Clear log clears notes, Browse opens the picker.
         if hit
             && matches!(event.input, ControlInput::Activate)
             && let Some(control) = screen.control(target).cloned()
         {
-            if (control.display == ControlDisplay::Primary
-                || control.label == labels::CLEAR_HISTORY)
+            if (control.display == ControlDisplay::Primary || control.label == labels::CLEAR_LOG)
                 && let Some(flag) = self.mailbox_flags.get(&id)
             {
                 *flag.lock().unwrap() = true;
@@ -1399,8 +1397,8 @@ impl FrontendApp<TestAux> for FakeApp {
             {
                 mailbox.request_close();
             }
-            if control.label == labels::CLEAR_HISTORY {
-                self.history_notes.clear();
+            if control.label == labels::CLEAR_LOG {
+                self.log_notes.clear();
             }
             if control
                 .downcast::<TextLeaf>()
@@ -1442,8 +1440,8 @@ impl FrontendApp<TestAux> for FakeApp {
     }
 
     fn widget_refresh(&mut self, id: AuxId) {
-        if self.widget_kinds.get(&id) == Some(&TestAux::History) {
-            let screen = self.history_screen();
+        if self.widget_kinds.get(&id) == Some(&TestAux::Beta) {
+            let screen = self.log_screen();
             self.widget_screens.insert(id, screen);
         }
     }
@@ -1473,20 +1471,20 @@ impl FrontendApp<TestAux> for FakeApp {
     }
 
     fn report_host_error(&mut self, detail: String) {
-        self.history_notes.push(detail.clone());
+        self.log_notes.push(detail.clone());
         self.error_queue.push_back(detail);
     }
 
     fn modal_guard_active(&self) -> bool {
         self.widget_kinds
             .values()
-            .any(|kind| *kind == TestAux::Settings)
+            .any(|kind| *kind == TestAux::Alpha)
     }
 
     fn polled_widget(&self) -> Option<AuxId> {
         self.widget_kinds
             .iter()
-            .find_map(|(id, kind)| (*kind == TestAux::Debug).then_some(*id))
+            .find_map(|(id, kind)| (*kind == TestAux::Gamma).then_some(*id))
     }
 
     fn poll_widget(&mut self, _id: AuxId) -> WakeNeed {
@@ -1497,11 +1495,11 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn drain_open_requests(&mut self) -> Vec<TestAux> {
         let mut kinds = Vec::new();
-        if std::mem::take(&mut self.debug_open_requested) {
-            kinds.push(TestAux::Debug);
+        if std::mem::take(&mut self.gamma_open_requested) {
+            kinds.push(TestAux::Gamma);
         }
-        if std::mem::take(&mut self.ppu_open_requested) {
-            kinds.push(TestAux::Ppu);
+        if std::mem::take(&mut self.delta_open_requested) {
+            kinds.push(TestAux::Delta);
         }
         kinds
     }
@@ -1510,16 +1508,16 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn take_open_request(&mut self, kind: TestAux) -> bool {
         match kind {
-            TestAux::Debug => std::mem::take(&mut self.debug_open_requested),
-            TestAux::Ppu => std::mem::take(&mut self.ppu_open_requested),
+            TestAux::Gamma => std::mem::take(&mut self.gamma_open_requested),
+            TestAux::Delta => std::mem::take(&mut self.delta_open_requested),
             _ => false,
         }
     }
 
     fn request_open(&mut self, kind: TestAux) {
         match kind {
-            TestAux::Debug => self.debug_open_requested = true,
-            TestAux::Ppu => self.ppu_open_requested = true,
+            TestAux::Gamma => self.gamma_open_requested = true,
+            TestAux::Delta => self.delta_open_requested = true,
             _ => {}
         }
     }
@@ -1590,10 +1588,10 @@ impl FrontendApp<TestAux> for FakeApp {
         token: ModalToken,
         receiver: std::sync::mpsc::Receiver<()>,
     ) -> bool {
-        if let Some((active, slot)) = &mut self.modal
+        if let Some((active, item)) = &mut self.modal
             && *active == token
         {
-            *slot = Some(receiver);
+            *item = Some(receiver);
             self.owners.insert(owners::MODAL);
             return true;
         }

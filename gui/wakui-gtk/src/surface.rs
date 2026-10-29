@@ -85,7 +85,7 @@ impl Drop for WakeAt {
     }
 }
 
-/// Main-window ports plus the generic debugger-widget drain (no kinds).
+/// Main-window ports plus the generic polled-widget drain (no kinds).
 /// The 250ms aux timer owns native pushes and live ticks; this frame pump
 /// keeps the view-side session fresh and folds poll wakes into the deadline.
 struct GtkTurn<'a, K: Copy + Eq + std::hash::Hash + 'static> {
@@ -146,7 +146,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for GtkTurn<'_, K> {
             present: self.state.host.content_loaded(),
             suspended: self.state.host.content_suspended(),
             main_active: self.window.is_active(),
-            // Follow belongs to the separate debugger/PPU native window.
+            // Follow belongs to a separate aux native window.
             live_follow: false,
         }
     }

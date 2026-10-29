@@ -80,7 +80,7 @@ pub struct ColumnDef {
 /// so no per-domain enum grows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemRow {
-    /// Stable framework id minted from the domain-side key.
+    /// Stable framework id minted from the view-side key.
     pub id: ControlId,
     pub depth: u16,
     pub expanded: Option<bool>,

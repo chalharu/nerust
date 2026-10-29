@@ -1,4 +1,4 @@
-//! Headless dialogs: canned ROM picks with recorded errors.
+//! Headless dialogs: canned file picks with recorded errors.
 //! Production code never touches this module.
 
 use std::{
