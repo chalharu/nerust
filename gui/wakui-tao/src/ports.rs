@@ -16,8 +16,8 @@ use wakui_core::{
     chrome::window::{Window, WindowVisitor},
 };
 
-use crate::aux::registry::AuxController;
-use crate::event::UserEvent;
+use crate::aux_windows::registry::AuxController;
+use crate::event_sink::UserEvent;
 
 /// Native file/error dialogs, seamed for headless tests. Production talks to rfd; fakes return
 /// canned picks and record errors. `Send + Sync`: error dialogs run on the modal actor so the event loop never stalls behind a modal (see `ModalFlight`).
@@ -194,7 +194,7 @@ impl WindowVisitor for CreateAux<'_> {
                 .take()
                 .and_then(controls_parts)
                 .and_then(|(_id, screen, mailbox)| {
-                    crate::aux::widgets::native::ControlsWindowHandle::new(
+                    crate::aux_windows::widgets::widget_window::ControlsWindowHandle::new(
                         self.window.clone(),
                         screen,
                         mailbox,
@@ -226,8 +226,8 @@ fn controls_parts(params: AuxOpenParams) -> Option<ControlsParts> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aux::focus::{AuxEvents, AuxIdentity, AuxRender};
-    use crate::native_input::{AuxNativeEvent, NativeWindowId};
+    use crate::aux_windows::focus::{AuxEvents, AuxIdentity, AuxRender};
+    use crate::input::vocab::{AuxNativeEvent, NativeWindowId};
 
     /// Port owner's contract double: the trait home must not depend
     /// on the shared fake, or the test graph cycles back on itself.
@@ -282,8 +282,8 @@ mod tests {
         // Kind routing guarantees the variant; a foreign variant is a
         // caller bug answered with `None`, never a logged mismatch.
         fn history_params() -> AuxOpenParams {
-            let mut host = crate::runtime::host::TestHost::new().host;
-            let id = crate::aux::widgets::bindings::tests::prepare(
+            let mut host = crate::event_loop::host::TestHost::new().host;
+            let id = crate::aux_windows::widgets::bindings::tests::prepare(
                 &mut host,
                 crate::testkit::TestAux::Beta,
             );

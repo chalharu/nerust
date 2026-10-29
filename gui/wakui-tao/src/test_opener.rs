@@ -47,7 +47,7 @@ impl crate::ports::WindowOpener for FakeOpener {
         &self,
         window: wakui_core::chrome::window::Window,
         _params: crate::ports::AuxOpenParams,
-    ) -> Option<Box<dyn crate::aux::registry::AuxController>> {
+    ) -> Option<Box<dyn crate::aux_windows::registry::AuxController>> {
         use crate::testkit::TestAux;
         let wakui_core::chrome::window::WindowId::Auxiliary(_) = window.id else {
             return None;
@@ -73,9 +73,9 @@ mod tests {
 
     #[test]
     fn fake_opener_records_each_aux_kind() {
-        use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
+        use crate::aux_windows::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
         let opener = FakeOpener::failing("no display");
-        let mut host = crate::runtime::host::TestHost::new().host;
+        let mut host = crate::event_loop::host::TestHost::new().host;
         let id = prepare(&mut host, TestAux::Beta);
         assert!(
             opener
@@ -117,8 +117,8 @@ mod tests {
     #[test]
     fn fake_opener_records_remaining_aux_kinds() {
         let opener = FakeOpener::failing("no display");
-        use crate::aux::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
-        let mut host = crate::runtime::host::TestHost::new().host;
+        use crate::aux_windows::widgets::bindings::tests::{mailbox_of, prepare, screen_of};
+        let mut host = crate::event_loop::host::TestHost::new().host;
         let id = prepare(&mut host, TestAux::Alpha);
         assert!(
             opener

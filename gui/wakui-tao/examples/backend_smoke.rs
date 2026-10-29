@@ -7,7 +7,7 @@ use wakui_core::app::backend::BackendRegistry;
 use wakui_core::app::binding::PickerSink;
 use wakui_core::scene::control::ControlVisitor;
 use wakui_core::support::conformance::{ConformanceBackend, conformance_screen, run_conformance};
-use wakui_tao::{controls, keyboard, register};
+use wakui_tao::{control_renderer, input::keyboard, register};
 
 struct Printer;
 
@@ -32,7 +32,7 @@ fn main() {
     let screen = conformance_screen();
     let mut printer = Printer;
     screen.visit(&mut printer);
-    let element = controls::build_screen(&screen);
+    let element = control_renderer::build_screen(&screen);
     drop(element);
 
     // Native input maps without the app crates.
