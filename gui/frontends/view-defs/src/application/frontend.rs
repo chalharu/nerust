@@ -13,7 +13,13 @@ use wakui::{
     scene::control::{ControlEffect, ControlEvent, ControlId, ControlScreen},
 };
 use wakui::{
-    app::boundary::{FrontendApp, WidgetCloseOutcome},
+    app::{
+        boundary::{FrontendApp, WidgetCloseOutcome},
+        roles::{
+            AuxPorts, ChromePorts, ContentPorts, DialogPorts, FocusPorts, LifecyclePorts,
+            PollPorts, ViewportPorts,
+        },
+    },
     chrome::dialog::{DialogTurn, ModalAdvance, ModalToken},
     input::session::SessionError,
 };
@@ -377,7 +383,7 @@ impl ApplicationHost {
     }
 }
 
-impl FrontendApp<AuxKind> for ApplicationHost {
+impl LifecyclePorts for ApplicationHost {
     fn load_file(&mut self, path: &Path) -> Result<(), String> {
         let result = self.load_rom_inner(path);
         if result.is_ok() {
@@ -417,11 +423,9 @@ impl FrontendApp<AuxKind> for ApplicationHost {
     fn resume_content(&mut self) {
         ApplicationHost::resume_session(self);
     }
+}
 
-    fn swap_frame_buffer(&mut self) {
-        ApplicationHost::swap_frame_buffer(self);
-    }
-
+impl ContentPorts for ApplicationHost {
     fn content_loaded(&self) -> bool {
         self.session.tick_metrics().loaded
     }
@@ -449,7 +453,9 @@ impl FrontendApp<AuxKind> for ApplicationHost {
             event,
         )
     }
+}
 
+impl ChromePorts for ApplicationHost {
     fn dialog_titles(&self) -> FileDialogTitles {
         ApplicationHost::dialog_titles(self)
     }
@@ -474,10 +480,6 @@ impl FrontendApp<AuxKind> for ApplicationHost {
     fn title_update(&mut self) -> Option<String> {
         let tick = self.session.tick_metrics();
         ApplicationHost::title_update(self, &tick)
-    }
-
-    fn refresh_window_title(&mut self) -> Option<String> {
-        ApplicationHost::refresh_window_title(self)
     }
 
     fn observe_fullscreen(&mut self, native: bool) -> bool {
@@ -507,7 +509,9 @@ impl FrontendApp<AuxKind> for ApplicationHost {
     fn remembered_window_size(&self) -> Option<(u32, u32)> {
         ApplicationHost::remembered_window_size(self)
     }
+}
 
+impl FocusPorts for ApplicationHost {
     fn focus_event(&mut self, event: FocusEvent) {
         ApplicationHost::focus_event(self, event)
     }
@@ -527,7 +531,9 @@ impl FrontendApp<AuxKind> for ApplicationHost {
     fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
         ApplicationHost::drive_aux_focus(self, id, focused)
     }
+}
 
+impl AuxPorts<AuxKind> for ApplicationHost {
     fn reserve_widget(
         &mut self,
         registry: &mut dyn AuxRegistryPort<AuxKind>,
@@ -791,6 +797,36 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::modal_guard_active(self)
     }
 
+    fn take_open_request(&mut self, kind: AuxKind) -> bool {
+        self.debug.schedule_mut().take_open_request(kind)
+    }
+
+    fn drain_open_requests(&mut self) -> Vec<AuxKind> {
+        [
+            AuxKind::Debug,
+            AuxKind::Ppu,
+            AuxKind::History,
+            AuxKind::Settings,
+        ]
+        .into_iter()
+        .filter(|kind| self.debug.schedule_mut().take_open_request(*kind))
+        .collect()
+    }
+
+    fn request_open(&mut self, kind: AuxKind) {
+        self.debug.schedule_mut().request_open(kind);
+    }
+
+    fn window_pos(&self, kind: AuxKind) -> Option<(i32, i32)> {
+        self.debug.schedule().window_pos(kind)
+    }
+
+    fn remember_window_pos(&mut self, kind: AuxKind, x: i32, y: i32) {
+        self.debug.schedule_mut().remember_window_pos(kind, x, y);
+    }
+}
+
+impl PollPorts for ApplicationHost {
     fn close_background_flights(&mut self) {
         ApplicationHost::close_debug_flights(self);
     }
@@ -837,34 +873,6 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         self.widget_refresh(id);
     }
 
-    fn take_open_request(&mut self, kind: AuxKind) -> bool {
-        self.debug.schedule_mut().take_open_request(kind)
-    }
-
-    fn drain_open_requests(&mut self) -> Vec<AuxKind> {
-        [
-            AuxKind::Debug,
-            AuxKind::Ppu,
-            AuxKind::History,
-            AuxKind::Settings,
-        ]
-        .into_iter()
-        .filter(|kind| self.debug.schedule_mut().take_open_request(*kind))
-        .collect()
-    }
-
-    fn request_open(&mut self, kind: AuxKind) {
-        self.debug.schedule_mut().request_open(kind);
-    }
-
-    fn window_pos(&self, kind: AuxKind) -> Option<(i32, i32)> {
-        self.debug.schedule().window_pos(kind)
-    }
-
-    fn remember_window_pos(&mut self, kind: AuxKind, x: i32, y: i32) {
-        self.debug.schedule_mut().remember_window_pos(kind, x, y);
-    }
-
     fn live_armed(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         self.debug.schedule().live_armed()
     }
@@ -880,7 +888,9 @@ impl FrontendApp<AuxKind> for ApplicationHost {
     fn live_due(&mut self, now: std::time::Instant) -> bool {
         self.debug.schedule_mut().live_due(now)
     }
+}
 
+impl DialogPorts for ApplicationHost {
     fn pump_dialog(&mut self, now: Instant) -> DialogTurn {
         let ctx = self.frame_cache.frame_ctx(&self.session);
         let turn = ApplicationHost::pump_osd(self, &ctx, now);
@@ -928,6 +938,12 @@ impl FrontendApp<AuxKind> for ApplicationHost {
 
     fn invalidate_overlay(&mut self) {
         ApplicationHost::invalidate_osd(self);
+    }
+}
+
+impl ViewportPorts for ApplicationHost {
+    fn swap_frame_buffer(&mut self) {
+        ApplicationHost::swap_frame_buffer(self);
     }
 
     fn viewport_sync(&mut self, region: ViewportRegion, force: bool) -> Result<bool, String> {
@@ -988,3 +1004,5 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::render_succeeded(self);
     }
 }
+
+impl FrontendApp<AuxKind> for ApplicationHost {}

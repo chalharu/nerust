@@ -1,11 +1,11 @@
 //! Object-safe event boundary. Return owned native effects, never callbacks.
 
 use crate::input::session::{SessionError, SessionEvent, SessionOutcome};
-use crate::{input::commands::CommandRef, input::focus::FocusEvent};
+use crate::input::{commands::CommandRef, focus::FocusEvent};
 
 #[derive(Debug, Clone, Copy)]
 pub enum EventCommand {
-    Menu(CommandRef),
+    Command(CommandRef),
     Session(SessionEvent),
     Focus(FocusEvent),
     LiveTick,
@@ -42,13 +42,7 @@ impl<K: Copy + Eq + std::hash::Hash> Default for EventOutcome<K> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CommandEffect<K: Copy + Eq + std::hash::Hash> {
-    /// Open a file (values like ROM wording arrive via [`crate::chrome::menu::FileDialogTitles`]).
-    OpenFile,
-    OpenAux(K),
-    About,
-    Quit,
-    ToggleFullscreen,
-    LiveTick,
-}
+/// Re-exported at its owning layer: [`CommandEffect`] is defined in
+/// [`crate::input::commands`] (same layer as [`CommandRef`]); this keeps
+/// `input::event::CommandEffect` paths resolving during migration.
+pub use crate::input::commands::CommandEffect;
