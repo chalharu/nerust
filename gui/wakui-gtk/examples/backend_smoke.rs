@@ -4,8 +4,8 @@
 //! the display-gated backend test, not here.
 //! Run with `cargo run -p wakui_gtk --example backend_smoke`.
 
-use wakui_core::backend::BackendRegistry;
-use wakui_core::conformance::{ConformanceBackend, run_conformance};
+use wakui_core::app::backend::BackendRegistry;
+use wakui_core::support::conformance::{ConformanceBackend, run_conformance};
 use wakui_gtk::{keyboard, register};
 
 fn main() {

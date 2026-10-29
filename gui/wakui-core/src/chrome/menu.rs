@@ -7,12 +7,12 @@
 //! (including at most one action-less placeholder). Visitors reuse native
 //! objects by those identities. Labels and enablement are not identities.
 
-pub use crate::commands::{CommandModel, CommandRef, CommandVisitor};
+pub use crate::input::commands::{CommandModel, CommandRef, CommandVisitor};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque menu identity. Minted view-side from a stable domain table
-/// (opaque ids stay stable across rebuilds, like [`crate::control::Id`]);
+/// (opaque ids stay stable across rebuilds, like [`crate::scene::control::Id`]);
 /// never a position or a framework-known skeleton.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MenuId(u64);

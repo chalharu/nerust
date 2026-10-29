@@ -7,8 +7,10 @@ use crate::{
 };
 use std::rc::Rc;
 use wakui_core::Key;
-use wakui_core::aux::{AuxId, OpenRequest};
-use wakui_core::control::{Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor};
+use wakui_core::chrome::aux::{AuxId, OpenRequest};
+use wakui_core::scene::control::{
+    Control, ControlEvent, ControlInput, ControlScreen, ControlVisitor,
+};
 
 mod log;
 
@@ -27,7 +29,7 @@ pub(crate) fn screen_of(host: &HostState<TestAux>, id: AuxId) -> ControlScreen {
 pub(crate) fn mailbox_of(
     host: &HostState<TestAux>,
     id: AuxId,
-) -> wakui_core::mailbox::WindowMailbox {
+) -> wakui_core::chrome::mailbox::WindowMailbox {
     host.core.widget_mailbox(id).expect("widget mailbox")
 }
 
@@ -35,7 +37,7 @@ pub(crate) fn dispatch(
     host: &mut HostState<TestAux>,
     id: AuxId,
     event: ControlEvent,
-) -> Vec<wakui_core::control::ControlEffect> {
+) -> Vec<wakui_core::scene::control::ControlEffect> {
     host.core.widget_dispatch(id, event)
 }
 
@@ -136,7 +138,7 @@ fn prepared_window_contains_the_controller_moved_into_boot() {
     assert_eq!(*state.screen.borrow(), updated);
     assert!(matches!(
         host.aux.window(id).expect("window").contents.contents,
-        wakui_core::window::WidgetContents::Controls(_)
+        wakui_core::chrome::window::WidgetContents::Controls(_)
     ));
 }
 
@@ -157,7 +159,7 @@ fn status_area_message_reaches_viewmodel() {
     let screen = screen_of(&host, id);
     let c = find(&screen, "Choice F");
     assert_eq!(
-        c.downcast::<wakui_core::leaf::ChoiceLeaf>()
+        c.downcast::<wakui_core::scene::leaf::ChoiceLeaf>()
             .unwrap()
             .selected,
         Some(1)

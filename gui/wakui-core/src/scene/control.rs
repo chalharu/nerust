@@ -10,9 +10,9 @@
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::hints::LayoutHints;
-use crate::key::Key;
-use crate::leaf::{ControlLeaf, LeafCtx};
+use crate::input::key::Key;
+use crate::scene::hints::LayoutHints;
+use crate::scene::leaf::{ControlLeaf, LeafCtx};
 
 /// Process-unique opaque token. Neither position nor a hash of a domain key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,7 +127,7 @@ impl PartialEq for Control {
             && self.display == other.display
             && self
                 .leaf
-                .equals(other.leaf.as_ref() as &dyn crate::leaf::Leaf)
+                .equals(other.leaf.as_ref() as &dyn crate::scene::leaf::Leaf)
     }
 }
 
@@ -189,7 +189,7 @@ impl ControlEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEffect {
     /// Ask the native side to open a folder picker. The result comes back
-    /// through [`crate::binding::PickerSink`], never through [`ControlInput`].
+    /// through [`crate::app::binding::PickerSink`], never through [`ControlInput`].
     PickDirectory {
         title: String,
         target: ControlId,
@@ -243,7 +243,7 @@ pub struct FlexPolicy;
 /// for exceptional overlay use; ordinary screens never set it.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct AbsolutePolicy {
-    pub bounds: Option<crate::hints::Rect>,
+    pub bounds: Option<crate::scene::hints::Rect>,
 }
 
 unit_policy!(RowPolicy);

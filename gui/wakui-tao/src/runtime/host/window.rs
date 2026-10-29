@@ -13,7 +13,7 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
 
-use wakui_core::window::{MainContents, Window, WindowVisitor};
+use wakui_core::chrome::window::{MainContents, Window, WindowVisitor};
 
 struct CreateMain<'a> {
     opener: &'a dyn WindowOpener,
@@ -37,10 +37,10 @@ impl WindowVisitor for CreateMain<'_> {
     }
 }
 
-pub(crate) use wakui_core::loop_driver::WakeNeed;
-use wakui_core::loop_driver::{LoopHost, TurnLiveness, drive_turn};
+pub(crate) use wakui_core::flow::loop_driver::WakeNeed;
+use wakui_core::flow::loop_driver::{LoopHost, TurnLiveness, drive_turn};
 #[cfg(test)]
-pub(crate) use wakui_core::loop_driver::{earliest_wake, flight_backstop, update_flow};
+pub(crate) use wakui_core::flow::loop_driver::{earliest_wake, flight_backstop, update_flow};
 
 /// Native main-window handle and surface target.
 /// ApplicationHost owns liveness, close, and fullscreen synchronization.
@@ -194,7 +194,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> LoopHost for HostState<K> {
     type Frame = ();
 
     fn before_turn(&mut self) {
-        self.on_focus_event(wakui_core::focus::FocusEvent::BurstEnd);
+        self.on_focus_event(wakui_core::input::focus::FocusEvent::BurstEnd);
     }
 
     fn frame_ctx(&mut self) {}
@@ -558,8 +558,8 @@ mod tests {
 
     #[test]
     fn redraw_flag_sets_without_native_window() {
-        use wakui_core::viewport::ViewportPresent;
-        use wakui_core::viewport::ViewportRegion;
+        use wakui_core::chrome::viewport::ViewportPresent;
+        use wakui_core::chrome::viewport::ViewportRegion;
         let support = TestHost::new();
         let mut host = support.host;
         // No pipeline headless: present is a no-op that changes nothing.

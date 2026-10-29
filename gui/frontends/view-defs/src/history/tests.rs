@@ -170,13 +170,13 @@ fn shell_rendered_merge_suffix_is_not_appended_twice() {
 
 #[test]
 fn screen_projects_list_with_source_order_and_chrome() {
-    use wakui::control::ControlVisitor;
-    use wakui::leaf::ListLeaf;
+    use wakui::scene::control::ControlVisitor;
+    use wakui::scene::leaf::ListLeaf;
 
     #[derive(Default)]
     struct Lists(Vec<ListLeaf>);
     impl ControlVisitor for Lists {
-        fn control(&mut self, control: &wakui::control::Control) {
+        fn control(&mut self, control: &wakui::scene::control::Control) {
             if let Some(list) = control.downcast::<ListLeaf>() {
                 self.0.push(list.clone());
             }
@@ -212,7 +212,7 @@ fn screen_projects_list_with_source_order_and_chrome() {
                 .cells
                 .iter()
                 .map(|cell| {
-                    cell.downcast::<wakui::leaf::NoteLeaf>()
+                    cell.downcast::<wakui::scene::leaf::NoteLeaf>()
                         .unwrap()
                         .text
                         .clone()
@@ -343,7 +343,7 @@ fn controller_gates_unchanged_inputs_but_delivers_filter_language_clear_and_inva
 
 #[test]
 fn screen_visit_reborrows_external_host_and_controller_without_changing_snapshot() {
-    use wakui::control::{Control, ControlVisitor};
+    use wakui::scene::control::{Control, ControlVisitor};
     struct Reenter<'a> {
         shared: &'a RefCell<(ApplicationHost, HistoryController)>,
         calls: Vec<&'static str>,

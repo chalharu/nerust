@@ -93,7 +93,7 @@ impl WindowMailbox {
     }
 }
 
-impl crate::binding::Invalidatable for WindowMailbox {
+impl crate::app::binding::Invalidatable for WindowMailbox {
     fn invalidate(&self) {
         WindowMailbox::invalidate(self);
     }

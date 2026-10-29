@@ -1,8 +1,8 @@
 use super::*;
 use nerust_gui_shell::session::commands::SessionCommand;
 use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
-use wakui::commands::{Command, CommandRef, CommandVisitor};
-use wakui::control::IdRegistry;
+use wakui::input::commands::{Command, CommandRef, CommandVisitor};
+use wakui::scene::control::IdRegistry;
 
 fn signature() -> MenuSig {
     MenuSig {

@@ -8,11 +8,11 @@
 use std::collections::HashMap;
 
 use crate::debugger::{DebugSnapshot, DebuggerEvent};
-use wakui::control::{
+use wakui::scene::control::{
     Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
     ControlInput, ControlMetadata, ControlScreen, GroupPolicy, IdRegistry, Node, Page,
 };
-use wakui::leaf::{ActionLeaf, NoteLeaf, TextLeaf, ToggleLeaf};
+use wakui::scene::leaf::{ActionLeaf, NoteLeaf, TextLeaf, ToggleLeaf};
 
 /// Text input targets: each maps to its `*InputChanged` event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -499,7 +499,7 @@ impl DebuggerScreenSession {
         )))
     }
 
-    fn container<P: wakui::control::LayoutPolicy>(
+    fn container<P: wakui::scene::control::LayoutPolicy>(
         &mut self,
         key: &str,
         label: String,
@@ -785,7 +785,7 @@ mod tests {
             }
         };
         struct V<'a, F: FnMut(&Control)>(&'a mut F);
-        impl<F: FnMut(&Control)> wakui::control::ControlVisitor for V<'_, F> {
+        impl<F: FnMut(&Control)> wakui::scene::control::ControlVisitor for V<'_, F> {
             fn control(&mut self, c: &Control) {
                 (self.0)(c);
             }

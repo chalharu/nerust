@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use wakui_core::sync::lock_recovered;
+use wakui_core::support::sync::lock_recovered;
 
 /// `DialogPorts` with a canned pick, recording shown errors. Clone
 /// shares state like the loader above.

@@ -8,7 +8,7 @@ use gtk::{glib, prelude::*};
 
 /// Show a native acknowledgment dialog and block until it is dismissed.
 /// Returns immediately when no display is available.
-pub fn show_message_dialog(dialog: &wakui_core::dialog::MessageDialog) {
+pub fn show_message_dialog(dialog: &wakui_core::chrome::dialog::MessageDialog) {
     if !gtk::is_initialized() && gtk::init().is_err() {
         return;
     }
@@ -16,12 +16,12 @@ pub fn show_message_dialog(dialog: &wakui_core::dialog::MessageDialog) {
         None::<&gtk::Window>,
         gtk::DialogFlags::MODAL,
         match dialog.level {
-            wakui_core::dialog::MessageLevel::Info => gtk::MessageType::Info,
-            wakui_core::dialog::MessageLevel::Warning => gtk::MessageType::Warning,
-            wakui_core::dialog::MessageLevel::Error => gtk::MessageType::Error,
+            wakui_core::chrome::dialog::MessageLevel::Info => gtk::MessageType::Info,
+            wakui_core::chrome::dialog::MessageLevel::Warning => gtk::MessageType::Warning,
+            wakui_core::chrome::dialog::MessageLevel::Error => gtk::MessageType::Error,
         },
         match dialog.buttons {
-            wakui_core::dialog::MessageButtons::Ok => gtk::ButtonsType::Ok,
+            wakui_core::chrome::dialog::MessageButtons::Ok => gtk::ButtonsType::Ok,
         },
         &dialog.description,
     );

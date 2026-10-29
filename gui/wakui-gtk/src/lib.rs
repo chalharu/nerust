@@ -2,10 +2,10 @@
 //!
 //! Framework-only: depends on [`wakui`] plus gtk4. Never on view definitions,
 //! sessions, or settings. Policy flows solely through
-//! [`wakui_core::app::FrontendApp`], injected as a boxed host at [`run`].
+//! [`wakui_core::app::boundary::FrontendApp`], injected as a boxed host at [`run`].
 //!
 //! Native frontends retain [`controls`] dialogs from
-//! [`wakui_core::control::ControlScreen`] snapshots, interpret them through the
+//! [`wakui_core::scene::control::ControlScreen`] snapshots, interpret them through the
 //! retained [`renderer`], and map native input through [`keyboard`].
 //!
 //! Dialog lifecycle helpers live in [`dialog`]. Modal presentation stays
@@ -41,13 +41,13 @@ use gtk::{
         GtkWindowExt as _, NativeExt as _, WidgetExt as _,
     },
 };
-use wakui_core::app::Application;
-use wakui_core::app::LaunchArguments;
+use wakui_core::app::boundary::Application;
+use wakui_core::app::boundary::LaunchArguments;
 
 use self::window::{MenubarModels, Window, WindowExtend};
 
 pub(crate) struct State<K: Copy + Eq + std::hash::Hash + 'static> {
-    pub(crate) host: Box<dyn wakui_core::app::FrontendApp<K>>,
+    pub(crate) host: Box<dyn wakui_core::app::boundary::FrontendApp<K>>,
     renderer_reload_pending: bool,
 }
 
@@ -116,10 +116,12 @@ impl State<crate::testkit::TestAux> {
 
 impl<K: Copy + Eq + std::hash::Hash + 'static> State<K> {
     pub(crate) fn tick_focus_sync(&mut self) {
-        use wakui_core::focus::FocusEvent;
+        use wakui_core::input::focus::FocusEvent;
         let _ = self
             .host
-            .handle_event(wakui_core::event::EventCommand::Focus(FocusEvent::BurstEnd));
+            .handle_event(wakui_core::input::event::EventCommand::Focus(
+                FocusEvent::BurstEnd,
+            ));
     }
 }
 
