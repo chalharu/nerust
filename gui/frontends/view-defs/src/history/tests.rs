@@ -168,34 +168,58 @@ fn shell_rendered_merge_suffix_is_not_appended_twice() {
     }
 }
 
-#[derive(Default)]
-struct Recorder(Vec<String>);
-
-impl HistoryVisitor for Recorder {
-    fn begin(&mut self, model: &HistoryModel) {
-        self.0.push(model.captions.title.clone());
-    }
-
-    fn row(&mut self, row: &HistoryRowView) {
-        self.0.push(row.message.clone());
-    }
-
-    fn end(&mut self) {
-        self.0.push("end".to_string());
-    }
-}
-
 #[test]
-fn dyn_visitor_begins_then_visits_source_order_then_ends_even_when_empty() {
+fn screen_projects_list_with_source_order_and_chrome() {
+    use wakui::control::ControlVisitor;
+    use wakui::leaf::ListLeaf;
+
+    #[derive(Default)]
+    struct Lists(Vec<ListLeaf>);
+    impl ControlVisitor for Lists {
+        fn control(&mut self, control: &wakui::control::Control) {
+            if let Some(list) = control.downcast::<ListLeaf>() {
+                self.0.push(list.clone());
+            }
+        }
+    }
     for lines in [lines(), vec![]] {
         let model = HistoryModel::build(&lines, AppLanguage::English, HistoryFilter::All);
-        let mut recorder = Recorder::default();
-        let visitor: &mut dyn HistoryVisitor = &mut recorder;
-        model.visit(visitor);
-        let mut expected = vec!["Notification history".to_string()];
-        expected.extend(lines.iter().map(|line| line.text.clone()));
-        expected.push("end".to_string());
-        assert_eq!(recorder.0, expected);
+        let mut ids = IdRegistry::default();
+        let (screen, action_ids) = model.screen(&mut ids);
+        assert_eq!(screen.title, "Notification history");
+        assert_eq!(screen.pages.len(), 1);
+        // Action IDs resolve back to chrome controls.
+        assert_eq!(screen.control(action_ids.filter).unwrap().label, "Level");
+        assert_eq!(
+            screen.control(action_ids.clear).unwrap().label,
+            "Clear History"
+        );
+        assert_eq!(screen.control(action_ids.close).unwrap().label, "Close");
+        let mut lists = Lists::default();
+        screen.visit(&mut lists);
+        assert_eq!(lists.0.len(), 1);
+        let list = &lists.0[0];
+        assert_eq!(
+            list.columns
+                .iter()
+                .map(|c| c.header.as_str())
+                .collect::<Vec<_>>(),
+            ["Datetime", "Level", "Module", "Message"]
+        );
+        assert_eq!(list.rows.len(), lines.len());
+        for (row, line) in list.rows.iter().zip(&lines) {
+            let texts: Vec<_> = row
+                .cells
+                .iter()
+                .map(|cell| {
+                    cell.downcast::<wakui::leaf::NoteLeaf>()
+                        .unwrap()
+                        .text
+                        .clone()
+                })
+                .collect();
+            assert_eq!(texts[3], line.text);
+        }
     }
 }
 
@@ -318,66 +342,49 @@ fn controller_gates_unchanged_inputs_but_delivers_filter_language_clear_and_inva
 }
 
 #[test]
-fn visitor_can_reborrow_external_host_and_controller_without_changing_snapshot() {
+fn screen_visit_reborrows_external_host_and_controller_without_changing_snapshot() {
+    use wakui::control::{Control, ControlVisitor};
     struct Reenter<'a> {
         shared: &'a RefCell<(ApplicationHost, HistoryController)>,
         calls: Vec<&'static str>,
     }
-    impl HistoryVisitor for Reenter<'_> {
-        fn begin(&mut self, model: &HistoryModel) {
+    impl ControlVisitor for Reenter<'_> {
+        fn control(&mut self, _: &Control) {
             let mut borrowed = self.shared.borrow_mut();
             let (host, controller) = &mut *borrowed;
-            assert!(
-                controller
-                    .update(host.session_mut(), model.filter)
-                    .is_none()
-            );
-            host.clear_history();
-            self.calls.push("begin");
-        }
-
-        fn row(&mut self, row: &HistoryRowView) {
-            let mut borrowed = self.shared.borrow_mut();
-            let (host, controller) = &mut *borrowed;
-            assert!(
-                controller
-                    .update(host.session_mut(), HistoryFilter::All)
-                    .unwrap()
-                    .rows
-                    .is_empty()
-            );
-            assert!(row.message.contains("before clear"));
-            self.calls.push("row");
-        }
-
-        fn end(&mut self) {
-            let mut borrowed = self.shared.borrow_mut();
-            let (host, controller) = &mut *borrowed;
-            controller.invalidate();
-            assert!(
-                controller
-                    .update(host.session_mut(), HistoryFilter::All)
-                    .is_some()
-            );
-            self.calls.push("end");
+            if self.calls.is_empty() {
+                assert!(
+                    controller
+                        .update(host.session_mut(), HistoryFilter::All)
+                        .is_none()
+                );
+                host.clear_history();
+            } else if let Some(model) = controller.update(host.session_mut(), HistoryFilter::All) {
+                assert!(model.rows.is_empty());
+            }
+            self.calls.push("control");
         }
     }
     let (_root, mut session) = session();
     session.report_external_error(FailureOrigin::Host, "before clear".into());
     let shared = RefCell::new((ApplicationHost::new(session), HistoryController::new()));
-    let model = {
+    let (screen, before) = {
         let mut borrowed = shared.borrow_mut();
         let (host, controller) = &mut *borrowed;
-        controller
+        let model = controller
             .update(host.session_mut(), HistoryFilter::All)
-            .unwrap()
+            .unwrap();
+        let before = model.clone();
+        let mut ids = IdRegistry::default();
+        (model.screen(&mut ids).0, before)
     };
-    let before = model.clone();
     let mut visitor = Reenter {
         shared: &shared,
         calls: vec![],
     };
-    model.visit(&mut visitor as &mut dyn HistoryVisitor);
-    assert_eq!(visitor.calls, ["begin", "row", "end"]);
-    assert_eq!(model, before);
+    screen.visit(&mut visitor);
+    // One call per visited control (filter, clear, count, list host, close).
+    assert!(!visitor.calls.is_empty());
+    assert_eq!(before.rows.len(), 1);
+    assert!(before.rows[0].message.contains("before clear"));
 }

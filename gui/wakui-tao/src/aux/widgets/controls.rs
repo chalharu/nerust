@@ -7,7 +7,7 @@ pub(crate) use crate::controls::*;
 #[cfg(test)]
 use crate::binding::{El, Message};
 #[cfg(test)]
-use wakui::control::{ControlDisplay, ControlInput, ControlMetadata, ControlScreen, Layout, Page};
+use wakui::control::{ControlDisplay, ControlInput, ControlMetadata, ControlScreen, Page};
 
 #[cfg(test)]
 mod tests;

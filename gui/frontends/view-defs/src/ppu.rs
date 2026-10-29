@@ -1,7 +1,7 @@
 //! PPU viewer definition: chrome, pictures, and generic control projection.
 //!
 //! The viewer renders as a generic [`wakui::control::ControlScreen`] with
-//! [`wakui::control::ControlKind::Image`] controls; native frontends never
+//! image leaves; native frontends never
 //! name this module. Hover positions arrive as generic
 //! [`wakui::control::ControlInput::Hover`] events and are formatted here.
 
@@ -10,9 +10,10 @@ use nerust_gui_viewmodel::debugger::{
 };
 use nerust_settings_core::model::language::AppLanguage;
 use wakui::control::{
-    Capture, Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlKind,
-    ControlMetadata, ControlScreen, IdRegistry, Layout, Node, Page,
+    Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
+    ControlInput, ControlMetadata, ControlScreen, IdRegistry, Node, Page,
 };
+use wakui::leaf::{ActionLeaf, ImageLeaf, NoteLeaf};
 
 /// Pre-localized PPU viewer chrome. Frontends render verbatim.
 #[derive(Debug, Clone, Default)]
@@ -85,7 +86,7 @@ fn note_control(
         label: label.to_string(),
         metadata: ControlMetadata::new(label),
         display,
-        kind: ControlKind::Note { text },
+        leaf: Box::new(NoteLeaf { text }),
     }
 }
 
@@ -95,22 +96,23 @@ fn image_control(ids: &mut IdRegistry<String>, key: &str, picture: &PpuPicture) 
         label: picture.label.clone(),
         metadata: ControlMetadata::new(picture.label.clone()),
         display: ControlDisplay::Standard,
-        kind: ControlKind::Image {
+        leaf: Box::new(ImageLeaf {
             width: picture.width,
             height: picture.height,
             rgba: picture.rgba.clone(),
-        },
+        }),
     }
 }
 
-fn column_layout(ids: &mut IdRegistry<String>, key: &str, children: Vec<Node>) -> Layout {
-    Layout {
+fn column_layout(ids: &mut IdRegistry<String>, key: &str, children: Vec<Node>) -> Container {
+    Container {
         id: layout_id(ids, key),
         label: String::new(),
         metadata: ControlMetadata::new(key),
         spacing: 12,
         indent: 0,
         header: None,
+        policy: Box::new(ColumnPolicy),
         children,
     }
 }
@@ -262,7 +264,7 @@ impl PpuSession {
                     label: title.clone(),
                     metadata: ControlMetadata::new(title.clone()),
                     display: ControlDisplay::Standard,
-                    kind: ControlKind::Action,
+                    leaf: Box::new(ActionLeaf),
                 },
                 body,
             }],
@@ -290,9 +292,10 @@ impl PpuSession {
         let Some(control) = screen.control(id) else {
             return false;
         };
-        let ControlKind::Image { width, height, .. } = &control.kind else {
+        let Some(image) = control.downcast::<ImageLeaf>() else {
             return false;
         };
+        let (width, height) = (image.width, image.height);
         // Source geometry is half the displayed size (2x scale).
         let (src_w, src_h) = (width / 2, height / 2);
         let line = tile_hover_text(
@@ -383,7 +386,7 @@ mod tests {
             .children
             .iter()
             .find_map(|node| match node {
-                Node::Control(c) if matches!(c.kind, ControlKind::Note { .. }) => Some(c.id),
+                Node::Control(c) if c.downcast::<NoteLeaf>().is_some() => Some(c.id),
                 _ => None,
             })
             .unwrap();
@@ -419,22 +422,20 @@ mod tests {
         out
     }
 
-    fn collect_layout_notes(layout: &Layout, out: &mut Vec<String>) {
+    fn collect_layout_notes(layout: &Container, out: &mut Vec<String>) {
         if let Some(header) = &layout.header
-            && let ControlKind::Note { text } = &header.kind
+            && let Some(note) = header.downcast::<NoteLeaf>()
         {
-            out.push(text.clone());
+            out.push(note.text.clone());
         }
         for node in &layout.children {
             match node {
                 Node::Control(c) => {
-                    if let ControlKind::Note { text } = &c.kind {
-                        out.push(text.clone());
+                    if let Some(note) = c.downcast::<NoteLeaf>() {
+                        out.push(note.text.clone());
                     }
                 }
-                Node::Row(l) | Node::Column(l) | Node::Group(l) | Node::Table(l) => {
-                    collect_layout_notes(l, out)
-                }
+                Node::Container(l) => collect_layout_notes(l, out),
                 Node::Tabs(tabs) => {
                     for tab in &tabs.tabs {
                         collect_layout_notes(&tab.body, out);
@@ -452,17 +453,15 @@ mod tests {
         out
     }
 
-    fn collect_layout_images(layout: &Layout, out: &mut Vec<ControlId>) {
+    fn collect_layout_images(layout: &Container, out: &mut Vec<ControlId>) {
         for node in &layout.children {
             match node {
                 Node::Control(c) => {
-                    if matches!(c.kind, ControlKind::Image { .. }) {
+                    if c.downcast::<ImageLeaf>().is_some() {
                         out.push(c.id);
                     }
                 }
-                Node::Row(l) | Node::Column(l) | Node::Group(l) | Node::Table(l) => {
-                    collect_layout_images(l, out)
-                }
+                Node::Container(l) => collect_layout_images(l, out),
                 Node::Tabs(_) => {}
             }
         }

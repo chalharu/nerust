@@ -16,12 +16,13 @@ use wakui::{
     app::{FrontendApp, WidgetCloseOutcome},
     aux::{AuxId, AuxRegistryPort, OpenRequest},
     control::{
-        Capture, Control, ControlDisplay, ControlEvent, ControlId, ControlInput, ControlKind,
-        ControlMetadata, ControlScreen, Id, Layout, Node, Page,
+        Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlEvent, ControlId,
+        ControlInput, ControlMetadata, ControlScreen, Id, Node, Page,
     },
     dialog::{DialogTurn, ModalAdvance, ModalPresentation, ModalToken},
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
     focus::{FocusEffect, FocusEvent},
+    leaf::{ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf},
     loop_driver::WakeNeed,
     mailbox::{MailboxDomain, WindowMailbox},
     menu::{
@@ -79,11 +80,11 @@ impl TestAux {
     }
 }
 
-fn find_control_in<'a>(layout: &'a Layout, label: &str) -> Option<&'a Control> {
+fn find_control_in<'a>(layout: &'a Container, label: &str) -> Option<&'a Control> {
     for node in &layout.children {
         match node {
             Node::Control(control) if control.label == label => return Some(control),
-            Node::Row(inner) | Node::Column(inner) | Node::Group(inner) | Node::Table(inner) => {
+            Node::Container(inner) => {
                 if let Some(found) = find_control_in(inner, label) {
                     return Some(found);
                 }
@@ -101,7 +102,7 @@ fn find_control_in<'a>(layout: &'a Layout, label: &str) -> Option<&'a Control> {
     None
 }
 
-fn find_control_mut(layout: &mut Layout, id: ControlId) -> Option<&mut Control> {
+fn find_control_mut(layout: &mut Container, id: ControlId) -> Option<&mut Control> {
     if let Some(header) = layout.header.as_mut()
         && header.id == id
     {
@@ -110,7 +111,7 @@ fn find_control_mut(layout: &mut Layout, id: ControlId) -> Option<&mut Control> 
     for node in &mut layout.children {
         match node {
             Node::Control(control) if control.id == id => return Some(control),
-            Node::Row(inner) | Node::Column(inner) | Node::Group(inner) | Node::Table(inner) => {
+            Node::Container(inner) => {
                 if let Some(found) = find_control_mut(inner, id) {
                     return Some(found);
                 }
@@ -151,24 +152,25 @@ impl MailboxDomain for FakeDomain {
     }
 }
 
-fn control(label: &str, display: ControlDisplay, kind: ControlKind) -> Control {
+fn control(label: &str, display: ControlDisplay, kind: impl wakui::leaf::ControlLeaf) -> Control {
     Control {
         id: Id::fresh(),
         label: label.to_string(),
         metadata: ControlMetadata::new(label),
         display,
-        kind,
+        leaf: Box::new(kind),
     }
 }
 
-fn layout(children: Vec<Node>) -> Layout {
-    Layout {
+fn layout(children: Vec<Node>) -> Container {
+    Container {
         id: Id::fresh(),
         label: String::new(),
         metadata: ControlMetadata::new("layout"),
         spacing: 0,
         indent: 0,
         header: None,
+        policy: Box::new(ColumnPolicy),
         children,
     }
 }
@@ -178,7 +180,7 @@ fn page(label: &str, selected: bool, controls: Vec<Control>) -> Page {
         id: Id::fresh(),
         label: label.to_string(),
         selected,
-        select: control(label, ControlDisplay::Standard, ControlKind::Action),
+        select: control(label, ControlDisplay::Standard, ActionLeaf),
         body: layout(controls.into_iter().map(Node::Control).collect()),
     }
 }
@@ -201,7 +203,7 @@ fn settings_screen() -> ControlScreen {
     let language = control(
         labels::LANGUAGE,
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec!["English".to_string(), "日本語".to_string()],
             selected: Some(0),
         },
@@ -209,12 +211,12 @@ fn settings_screen() -> ControlScreen {
     let mute = control(
         labels::MUTE,
         ControlDisplay::Standard,
-        ControlKind::Toggle { value: false },
+        ToggleLeaf { value: false },
     );
     let policy = control(
         labels::STORAGE_POLICY,
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec![
                 "Portable".to_string(),
                 "System".to_string(),
@@ -226,7 +228,7 @@ fn settings_screen() -> ControlScreen {
     let directory = control(
         labels::STORAGE_DIRECTORY,
         ControlDisplay::Standard,
-        ControlKind::Text {
+        TextLeaf {
             value: String::new(),
             placeholder: String::new(),
             browse_label: Some(labels::BROWSE.to_string()),
@@ -235,7 +237,7 @@ fn settings_screen() -> ControlScreen {
     let scaling = control(
         labels::SCALING,
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec!["1x".to_string(), "2x".to_string()],
             selected: Some(0),
         },
@@ -243,12 +245,12 @@ fn settings_screen() -> ControlScreen {
     let status = control(
         labels::STATUS_DISPLAY,
         ControlDisplay::Standard,
-        ControlKind::Toggle { value: false },
+        ToggleLeaf { value: false },
     );
     let duration = control(
         labels::DURATION,
         ControlDisplay::Standard,
-        ControlKind::Number {
+        NumberLeaf {
             value: 3000,
             min: 500,
             max: 10000,
@@ -260,7 +262,7 @@ fn settings_screen() -> ControlScreen {
     let position = control(
         labels::POSITION,
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec!["Top".to_string(), "Bottom".to_string()],
             selected: Some(0),
         },
@@ -268,7 +270,7 @@ fn settings_screen() -> ControlScreen {
     let status_position = control(
         labels::STATUS_POSITION,
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec!["Top".to_string(), "Bottom".to_string()],
             selected: Some(0),
         },
@@ -276,17 +278,13 @@ fn settings_screen() -> ControlScreen {
     let status_area = control(
         labels::STATUS_AREA,
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec!["Full".to_string(), "Compact".to_string()],
             selected: Some(0),
         },
     );
-    let ok = control(labels::OK, ControlDisplay::Primary, ControlKind::Action);
-    let cancel = control(
-        labels::CANCEL,
-        ControlDisplay::Secondary,
-        ControlKind::Action,
-    );
+    let ok = control(labels::OK, ControlDisplay::Primary, ActionLeaf);
+    let cancel = control(labels::CANCEL, ControlDisplay::Secondary, ActionLeaf);
     screen(
         labels::SETTINGS_TITLE,
         vec![
@@ -298,7 +296,7 @@ fn settings_screen() -> ControlScreen {
                     control(
                         "Reset Key",
                         ControlDisplay::Standard,
-                        ControlKind::Binding {
+                        BindingLeaf {
                             text: String::new(),
                             capturing: false,
                             change_label: "Change".to_string(),
@@ -308,7 +306,7 @@ fn settings_screen() -> ControlScreen {
                     control(
                         "Shortcuts apply immediately",
                         ControlDisplay::Standard,
-                        ControlKind::Note {
+                        NoteLeaf {
                             text: "Shortcuts apply immediately".to_string(),
                         },
                     ),
@@ -332,7 +330,7 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
     let filter_control = control(
         "Filter",
         ControlDisplay::Standard,
-        ControlKind::Choice {
+        ChoiceLeaf {
             choices: vec![
                 "All".to_string(),
                 "Info".to_string(),
@@ -347,7 +345,7 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
         children.push(Node::Control(control(
             "No notifications",
             ControlDisplay::Standard,
-            ControlKind::Note {
+            NoteLeaf {
                 text: "No notifications".to_string(),
             },
         )));
@@ -356,34 +354,27 @@ fn history_screen(notes: &[String], filter: usize) -> ControlScreen {
             children.push(Node::Control(control(
                 "",
                 ControlDisplay::Standard,
-                ControlKind::Note { text: note.clone() },
+                NoteLeaf { text: note.clone() },
             )));
         }
     }
-    let clear = control(
-        labels::CLEAR_HISTORY,
-        ControlDisplay::Standard,
-        ControlKind::Action,
-    );
-    let close = control("Close", ControlDisplay::Primary, ControlKind::Action);
+    let clear = control(labels::CLEAR_HISTORY, ControlDisplay::Standard, ActionLeaf);
+    let close = control("Close", ControlDisplay::Primary, ActionLeaf);
     ControlScreen {
         title: labels::HISTORY_TITLE.to_string(),
         pages: vec![Page {
             id: Id::fresh(),
             label: labels::HISTORY_TITLE.to_string(),
             selected: true,
-            select: control(
-                labels::HISTORY_TITLE,
-                ControlDisplay::Standard,
-                ControlKind::Action,
-            ),
-            body: Layout {
+            select: control(labels::HISTORY_TITLE, ControlDisplay::Standard, ActionLeaf),
+            body: Container {
                 id: Id::fresh(),
                 label: String::new(),
                 metadata: ControlMetadata::new("history"),
                 spacing: 0,
                 indent: 0,
                 header: None,
+                policy: Box::new(ColumnPolicy),
                 children,
             },
         }],
@@ -1216,25 +1207,42 @@ impl FrontendApp<TestAux> for FakeApp {
             if !control.metadata.enabled || !control.metadata.visible {
                 return false;
             }
-            match (&mut control.kind, &event.input) {
-                (ControlKind::Toggle { value }, ControlInput::Bool(next)) => {
-                    *value = *next;
-                    true
-                }
-                (ControlKind::Choice { choices, selected }, ControlInput::Select(index)) => {
-                    if *index < choices.len() {
-                        *selected = Some(*index);
-                        true
-                    } else {
-                        false
+            match &event.input {
+                ControlInput::Bool(next) => {
+                    if control.downcast::<ToggleLeaf>().is_none() {
+                        return false;
                     }
-                }
-                (ControlKind::Text { value, .. }, ControlInput::Text(next)) => {
-                    *value = next.clone();
+                    control.leaf = Box::new(ToggleLeaf { value: *next });
                     true
                 }
-                (ControlKind::Action, ControlInput::Activate)
-                | (ControlKind::Binding { .. }, ControlInput::Activate) => true,
+                ControlInput::Select(index) => {
+                    let Some(leaf) = control.downcast::<ChoiceLeaf>() else {
+                        return false;
+                    };
+                    if *index >= leaf.choices.len() {
+                        return false;
+                    }
+                    control.leaf = Box::new(ChoiceLeaf {
+                        choices: leaf.choices.clone(),
+                        selected: Some(*index),
+                    });
+                    true
+                }
+                ControlInput::Text(next) => {
+                    let Some(leaf) = control.downcast::<TextLeaf>() else {
+                        return false;
+                    };
+                    control.leaf = Box::new(TextLeaf {
+                        value: next.clone(),
+                        placeholder: leaf.placeholder.clone(),
+                        browse_label: leaf.browse_label.clone(),
+                    });
+                    true
+                }
+                ControlInput::Activate => {
+                    control.downcast::<ActionLeaf>().is_some()
+                        || control.downcast::<BindingLeaf>().is_some()
+                }
                 _ => false,
             }
         };
@@ -1306,20 +1314,17 @@ impl FrontendApp<TestAux> for FakeApp {
                 let mut staged = None;
                 for page in &screen.pages {
                     if let Some(found) = find_control_in(&page.body, labels::LANGUAGE) {
-                        if let ControlKind::Choice { selected, .. } = &found.kind {
-                            staged = Some(*selected);
-                        }
+                        staged = found.downcast::<ChoiceLeaf>().unwrap().selected;
                         break;
                     }
                 }
                 if staged.is_some() {
-                    self.japanese = staged == Some(Some(1));
+                    self.japanese = staged == Some(1);
                 }
             }
-            if let ControlKind::Text {
-                browse_label: Some(_),
-                ..
-            } = control.kind
+            if control
+                .downcast::<TextLeaf>()
+                .is_some_and(|leaf| leaf.browse_label.is_some())
             {
                 return vec![wakui::control::ControlEffect::PickDirectory {
                     title: control.label.clone(),
@@ -1343,10 +1348,14 @@ impl FrontendApp<TestAux> for FakeApp {
         };
         let path = payload.map(|path| path.to_string_lossy().into_owned());
         for page in &mut screen.pages {
-            if let Some(control) = find_control_mut(&mut page.body, target) {
-                if let ControlKind::Text { value, .. } = &mut control.kind {
-                    *value = path.clone().unwrap_or_default();
-                }
+            if let Some(control) = find_control_mut(&mut page.body, target)
+                && let Some(leaf) = control.downcast::<TextLeaf>()
+            {
+                control.leaf = Box::new(TextLeaf {
+                    value: path.clone().unwrap_or_default(),
+                    placeholder: leaf.placeholder.clone(),
+                    browse_label: leaf.browse_label.clone(),
+                });
                 break;
             }
         }
@@ -1366,7 +1375,7 @@ impl FrontendApp<TestAux> for FakeApp {
         let mut reused: Vec<ControlId> = Vec::new();
         for node in page.body.children.iter() {
             if let Node::Control(control) = node
-                && matches!(control.kind, ControlKind::Note { .. })
+                && control.downcast::<NoteLeaf>().is_some()
             {
                 reused.push(control.id);
             }
@@ -1377,9 +1386,11 @@ impl FrontendApp<TestAux> for FakeApp {
             _ => None,
         }) {
             let mut filter = filter;
-            if let ControlKind::Choice { selected, .. } = &mut filter.kind {
-                *selected = Some(self.history_filter);
-            }
+            let staged = filter.downcast::<ChoiceLeaf>().unwrap();
+            filter.leaf = Box::new(ChoiceLeaf {
+                choices: staged.choices.clone(),
+                selected: Some(self.history_filter),
+            });
             children.push(Node::Control(filter));
         }
         if self.history_notes.is_empty() {
@@ -1389,7 +1400,7 @@ impl FrontendApp<TestAux> for FakeApp {
                 ..control(
                     "No notifications",
                     ControlDisplay::Standard,
-                    ControlKind::Note {
+                    NoteLeaf {
                         text: "No notifications".to_string(),
                     },
                 )
@@ -1403,7 +1414,7 @@ impl FrontendApp<TestAux> for FakeApp {
                     ..control(
                         "",
                         ControlDisplay::Standard,
-                        ControlKind::Note { text: text.clone() },
+                        NoteLeaf { text: text.clone() },
                     )
                 }));
             }

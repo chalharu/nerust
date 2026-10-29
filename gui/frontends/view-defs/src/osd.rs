@@ -48,37 +48,18 @@ pub struct OsdUpdate {
     pub layer: OsdLayerUpdate,
 }
 
-/// Object-safe native drawing port; operations may synchronously reenter the host.
-pub trait OsdVisitor {
-    fn reserved_strip(&mut self, strip: ReservedStrip);
-    fn layer(&mut self, layer: Option<OsdLayer>);
-}
-
 impl OsdUpdate {
-    pub fn visit(self, visitor: &mut dyn OsdVisitor) {
+    /// Apply the owned difference to the renderer sinks directly. There is
+    /// no visitor: raster vocabulary belongs to the renderer, not to views.
+    pub fn apply<S: OsdSink + StripSink + ?Sized>(self, sink: &mut S) {
         if let Some(strip) = self.strip {
-            visitor.reserved_strip(strip);
+            sink.set_reserved_strip(strip);
         }
         match self.layer {
             OsdLayerUpdate::Skip => {}
-            OsdLayerUpdate::Clear => visitor.layer(None),
-            OsdLayerUpdate::Set(layer) => visitor.layer(Some(layer)),
+            OsdLayerUpdate::Clear => sink.set_osd_layer(None),
+            OsdLayerUpdate::Set(layer) => sink.set_osd_layer(Some(layer)),
         }
-    }
-
-    pub fn apply<S: OsdSink + StripSink + ?Sized>(self, sink: &mut S) {
-        self.visit(&mut SinkVisitor(sink));
-    }
-}
-
-struct SinkVisitor<'a, S: ?Sized>(&'a mut S);
-
-impl<S: OsdSink + StripSink + ?Sized> OsdVisitor for SinkVisitor<'_, S> {
-    fn reserved_strip(&mut self, strip: ReservedStrip) {
-        self.0.set_reserved_strip(strip);
-    }
-    fn layer(&mut self, layer: Option<OsdLayer>) {
-        self.0.set_osd_layer(layer);
     }
 }
 
@@ -398,15 +379,12 @@ impl OsdLayerSync {
         ctx: &FrameCtx,
         now: Instant,
     ) {
-        struct LayerVisitor<'a, S: ?Sized>(&'a mut S);
-        impl<S: OsdSink + ?Sized> OsdVisitor for LayerVisitor<'_, S> {
-            fn reserved_strip(&mut self, _: ReservedStrip) {}
-            fn layer(&mut self, layer: Option<OsdLayer>) {
-                self.0.set_osd_layer(layer);
-            }
+        let update = self.prepare_layer(manager, size, ctx, now);
+        match update.layer {
+            OsdLayerUpdate::Skip => {}
+            OsdLayerUpdate::Clear => sink.set_osd_layer(None),
+            OsdLayerUpdate::Set(layer) => sink.set_osd_layer(Some(layer)),
         }
-        self.prepare_layer(manager, size, ctx, now)
-            .visit(&mut LayerVisitor(sink));
     }
 }
 

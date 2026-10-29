@@ -1,9 +1,9 @@
 use std::{cell::RefCell, sync::Arc};
 
 use wakui::control::{
-    Control, ControlEvent, ControlId, ControlInput, ControlKind, ControlScreen, ControlVisitor,
-    Page,
+    Control, ControlEvent, ControlId, ControlInput, ControlScreen, ControlVisitor, Page,
 };
+use wakui::leaf::NumberLeaf;
 
 use nerust_frontend_viewdefs::{
     focus::AuxKind, settings::SettingsController, widget_session::WidgetSession,
@@ -109,7 +109,10 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
     struct Volume(Option<ControlId>);
     impl ControlVisitor for Volume {
         fn control(&mut self, control: &Control) {
-            if matches!(control.kind, ControlKind::Number { max: 100, .. }) {
+            if control
+                .downcast::<NumberLeaf>()
+                .is_some_and(|leaf| leaf.max == 100)
+            {
                 self.0 = Some(control.id);
             }
         }
@@ -136,19 +139,29 @@ fn settings_window_owns_latest_tree_and_nested_dyn_visitors_allow_reentry() {
     window.visit(&mut visitor as &mut dyn WindowVisitor);
     assert_eq!(visitor.pages, 6);
     assert!(visitor.controls > 20);
-    assert!(matches!(
-        screen.control(volume).unwrap().kind,
-        ControlKind::Number { value: 37, .. }
-    ));
+    assert_eq!(
+        screen
+            .control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        37
+    );
     let latest = session.borrow().window(aux_id(7));
     drop(session);
     let WidgetContents::Controls(screen) = latest.contents.contents else {
         panic!()
     };
-    assert!(matches!(
-        screen.control(volume).unwrap().kind,
-        ControlKind::Number { value: 19, .. }
-    ));
+    assert_eq!(
+        screen
+            .control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        19
+    );
 }
 
 #[test]

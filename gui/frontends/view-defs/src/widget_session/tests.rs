@@ -1,13 +1,10 @@
 use super::*;
 use wakui::{
-    binding::PickerSink as _,
-    control::{
-        Control, ControlInput, ControlKind, ControlVisitor, IdRegistry, Layout, LayoutKind, Page,
-        Tab, Tabs,
-    },
+    control::{Container, Control, ControlInput, ControlVisitor, IdRegistry, Page, Tab, Tabs},
+    leaf::{BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf},
 };
 
-use crate::settings::{SettingsControlId, SettingsSystemId};
+use crate::settings::{SettingsControlId, SettingsSystemId, screen::StableKey};
 use nerust_core_traits::audio::AudioBackendRegistry;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::{
@@ -41,15 +38,7 @@ fn token(session: &WidgetSession, domain: SettingsControlId) -> ControlId {
     let State::Settings(controller) = &session.state else {
         panic!()
     };
-    session
-        .scene
-        .borrow_mut()
-        .settings(&controller.screen())
-        .1
-        .into_iter()
-        .find(|(_, id)| *id == domain)
-        .unwrap()
-        .0
+    controller.ids.borrow_mut().id(StableKey::Control(domain))
 }
 
 fn send(session: &mut WidgetSession, id: ControlId, input: ControlInput) {
@@ -83,29 +72,38 @@ fn both_domains_use_the_same_real_scene_interpreter_and_input() {
     assert_eq!(screen.pages.len(), 6);
     let volume = token(&session, SettingsControlId::Volume);
     send(&mut session, volume, ControlInput::Number(37));
-    assert!(matches!(
-        session.screen().control(volume).unwrap().kind,
-        ControlKind::Number { value: 37, .. }
-    ));
+    assert_eq!(
+        session
+            .screen()
+            .control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        37
+    );
 
     let mut history = WidgetSession::history(Arc::new([]), AppLanguage::English);
-    let filter = history.scene.borrow_mut().history_filter();
+    let filter = history.history_ids().filter;
     send(&mut history, filter, ControlInput::Select(3));
-    assert!(matches!(
-        history.screen().control(filter).unwrap().kind,
-        ControlKind::Choice {
-            selected: Some(3),
-            ..
-        }
-    ));
-    let clear = history.scene.borrow_mut().history_clear();
+    assert_eq!(
+        history
+            .screen()
+            .control(filter)
+            .unwrap()
+            .downcast::<ChoiceLeaf>()
+            .unwrap()
+            .selected,
+        Some(3)
+    );
+    let clear = history.history_ids().clear;
     send(&mut history, clear, ControlInput::Activate);
     assert!(history.mailbox().has_pending());
     assert!(matches!(
         take_submission(&history.mailbox()).unwrap().take(),
         Some(Pending::ClearHistory)
     ));
-    let close = history.scene.borrow_mut().history_close();
+    let close = history.history_ids().close;
     send(&mut history, close, ControlInput::Activate);
     assert!(history.mailbox().close_requested());
     for session in [session, history] {
@@ -155,15 +153,23 @@ fn history_controls_filter_actual_rows_and_reject_invalid_choice_indices() {
         count: 1,
     });
     let mut session = WidgetSession::history(lines.into(), AppLanguage::English);
-    let filter = session.scene.borrow_mut().history_filter();
+    let filter = session.history_ids().filter;
     let rows = |session: &WidgetSession| {
-        inventory(&session.screen())
-            .into_iter()
-            .filter_map(|c| match c.kind {
-                ControlKind::Note { text } if text.starts_with("row-") => Some(text),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
+        let mut out = Vec::new();
+        for control in inventory(&session.screen()) {
+            if let Some(list) = control.downcast::<wakui::leaf::ListLeaf>() {
+                for row in &list.rows {
+                    for cell in &row.cells {
+                        if let Some(note) = cell.downcast::<NoteLeaf>()
+                            && note.text.starts_with("row-")
+                        {
+                            out.push(note.text.clone());
+                        }
+                    }
+                }
+            }
+        }
+        out
     };
     assert_eq!(rows(&session).len(), 3);
     send(&mut session, filter, ControlInput::Select(2));
@@ -172,7 +178,7 @@ fn history_controls_filter_actual_rows_and_reject_invalid_choice_indices() {
     assert_eq!(rows(&session).len(), 2);
     send(&mut session, filter, ControlInput::Select(3));
     assert_eq!(rows(&session), ["row-Error"]);
-    assert_eq!(session.scene.borrow_mut().history_filter(), filter);
+    assert_eq!(session.history_ids().filter, filter);
 }
 
 #[test]
@@ -237,101 +243,43 @@ fn latest_topology_and_navigation_bind_old_callbacks_without_reusing_tokens() {
         assert!(session.screen().capture.target.is_none());
     }
     send(&mut session, volume, ControlInput::Number(29));
-    assert!(matches!(
-        session.screen().control(volume).unwrap().kind,
-        ControlKind::Number { value: 29, .. }
-    ));
+    assert_eq!(
+        session
+            .screen()
+            .control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        29
+    );
 }
 
 #[test]
-fn legacy_positional_empty_tabs_and_conflicts_use_semantic_tokens_after_reorder() {
-    use crate::settings::{SettingsControlKind, SettingsLayoutId, SettingsNode, SettingsTabId};
-    let session = settings(false);
-    let State::Settings(controller) = &session.state else {
-        panic!()
-    };
-    let mut typed = controller.screen();
-    let SettingsNode::Tabs(tabs) = &mut typed.pages[1].body.children[0] else {
-        panic!()
-    };
-    let template = tabs.tabs[0].clone();
-    let system = SettingsSystemId("semantic-system".into());
-    tabs.tabs = ["empty-a", "empty-b"]
+fn minted_ids_survive_unrelated_rebuilds_and_never_alias() {
+    let mut session = settings(true);
+    let before: Vec<(String, ControlId)> = inventory(&session.screen())
         .into_iter()
-        .enumerate()
-        .map(|(index, label)| {
-            let mut tab = template.clone();
-            tab.id = SettingsTabId::EmptyAttachment {
-                system: system.clone(),
-                index,
-            };
-            tab.label = label.into();
-            tab.select.id = SettingsControlId::Tab(tab.id.clone());
-            tab.select.label = label.into();
-            tab.body.id = SettingsLayoutId::Tab(tab.id.clone());
-            tab.body.children.clear();
-            tab
-        })
+        .map(|c| (c.label.clone(), c.id))
         .collect();
-    let template = typed
-        .control(&SettingsControlId::NoSystems)
-        .unwrap()
-        .clone();
-    for (index, label) in ["conflict-a", "conflict-b"].into_iter().enumerate() {
-        let mut control = template.clone();
-        control.id = SettingsControlId::Conflict {
-            system: system.clone(),
-            index,
-        };
-        control.label = label.into();
-        control.kind = SettingsControlKind::Note { text: label.into() };
-        typed.pages[0]
-            .body
-            .children
-            .push(SettingsNode::Control(control));
-    }
-    let mut scene = scene::SceneBuilder::default();
-    let (old, _) = scene.settings(&typed);
-    let ids = inventory(&old)
+    assert!(!before.is_empty());
+    let volume = token(&session, SettingsControlId::Volume);
+    send(&mut session, volume, ControlInput::Number(31));
+    let after: Vec<(String, ControlId)> = inventory(&session.screen())
         .into_iter()
-        .filter(|c| c.label.starts_with("empty-") || c.label.starts_with("conflict-"))
-        .collect::<Vec<_>>();
-    assert_eq!(ids.len(), 4);
-    let SettingsNode::Tabs(tabs) = &mut typed.pages[1].body.children[0] else {
-        panic!()
-    };
-    tabs.tabs.reverse();
-    for (index, tab) in tabs.tabs.iter_mut().enumerate() {
-        tab.id = SettingsTabId::EmptyAttachment {
-            system: system.clone(),
-            index,
-        };
-        tab.select.id = SettingsControlId::Tab(tab.id.clone());
-        tab.body.id = SettingsLayoutId::Tab(tab.id.clone());
-    }
-    typed.pages[0].body.children.reverse();
-    let mut index = 0;
-    for node in &mut typed.pages[0].body.children {
-        if let SettingsNode::Control(c) = node
-            && matches!(c.id, SettingsControlId::Conflict { .. })
-        {
-            c.id = SettingsControlId::Conflict {
-                system: system.clone(),
-                index,
-            };
-            index += 1;
-        }
-    }
-    let (latest, bindings) = scene.settings(&typed);
-    for control in ids {
-        assert_eq!(latest.control(control.id).unwrap().label, control.label);
-        let domain = &bindings.iter().find(|(id, _)| *id == control.id).unwrap().1;
-        let old_index = if control.label.ends_with('a') { 0 } else { 1 };
-        match domain {
-            SettingsControlId::Tab(SettingsTabId::EmptyAttachment { index, .. })
-            | SettingsControlId::Conflict { index, .. } => assert_ne!(*index, old_index),
-            _ => panic!("retained token must bind the latest typed identity"),
-        }
+        .map(|c| (c.label.clone(), c.id))
+        .collect();
+    assert_eq!(before, after, "unrelated edits must not reissue IDs");
+    let history = WidgetSession::history(Arc::new([]), AppLanguage::English);
+    let history_ids: Vec<ControlId> = inventory(&history.screen())
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    for (_, id) in &before {
+        assert!(
+            !history_ids.contains(id),
+            "fresh registries must not alias another owner"
+        );
     }
 }
 
@@ -346,10 +294,16 @@ fn typed_ranges_latest_enable_visibility_and_validation_are_host_owned() {
     ] {
         send(&mut session, volume, input);
     }
-    assert!(matches!(
-        session.screen().control(volume).unwrap().kind,
-        ControlKind::Number { value: 100, .. }
-    ));
+    assert_eq!(
+        session
+            .screen()
+            .control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        100
+    );
     let enabled = token(&session, SettingsControlId::InfoEnabled);
     let duration = token(&session, SettingsControlId::InfoDuration);
     send(&mut session, enabled, ControlInput::Bool(false));
@@ -400,11 +354,27 @@ fn generic_picker_and_capture_results_need_no_domain_dto() {
     assert!(!title.is_empty());
     assert_eq!(*target, directory);
     session.submit(directory, *request, Some("/tmp".into()));
-    assert!(matches!(&session.screen().control(directory).unwrap().kind,
-        ControlKind::Text { value, .. } if value == "/tmp"));
+    assert_eq!(
+        session
+            .screen()
+            .control(directory)
+            .unwrap()
+            .downcast::<TextLeaf>()
+            .unwrap()
+            .value,
+        "/tmp"
+    );
     session.submit(directory, *request, Some("/stale".into()));
-    assert!(matches!(&session.screen().control(directory).unwrap().kind,
-        ControlKind::Text { value, .. } if value == "/tmp"));
+    assert_eq!(
+        session
+            .screen()
+            .control(directory)
+            .unwrap()
+            .downcast::<TextLeaf>()
+            .unwrap()
+            .value,
+        "/tmp"
+    );
     let binding = token(
         &session,
         SettingsControlId::Binding(CaptureTarget::Shortcut(ShortcutAction::TogglePause)),
@@ -417,8 +387,16 @@ fn generic_picker_and_capture_results_need_no_domain_dto() {
             .is_empty()
     );
     assert!(session.screen().capture.target.is_none());
-    assert!(matches!(&session.screen().control(binding).unwrap().kind,
-        ControlKind::Binding { capturing: false, text, .. } if text.contains("Space")));
+    let screen = session.screen();
+    let bound = screen.control(binding).unwrap();
+    assert!(!bound.downcast::<BindingLeaf>().unwrap().capturing);
+    assert!(
+        bound
+            .downcast::<BindingLeaf>()
+            .unwrap()
+            .text
+            .contains("Space")
+    );
 }
 
 #[test]
@@ -436,11 +414,11 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
         fn end_page(&mut self, page: &Page) {
             assert_eq!(self.stack.pop(), Some(page.id));
         }
-        fn begin_layout(&mut self, layout: &Layout, _: LayoutKind) {
-            self.stack.push(layout.id);
+        fn begin_container(&mut self, container: &Container) {
+            self.stack.push(container.id);
         }
-        fn end_layout(&mut self, layout: &Layout, _: LayoutKind) {
-            assert_eq!(self.stack.pop(), Some(layout.id));
+        fn end_container(&mut self, container: &Container) {
+            assert_eq!(self.stack.pop(), Some(container.id));
         }
         fn begin_tabs(&mut self, tabs: &Tabs) {
             self.stack.push(tabs.id);
@@ -484,10 +462,14 @@ fn owned_generic_visitors_reenter_with_no_controller_borrow() {
     let WidgetContents::Controls(old) = window.contents.contents else {
         panic!()
     };
-    assert!(matches!(
-        old.control(volume).unwrap().kind,
-        ControlKind::Number { value: 100, .. }
-    ));
+    assert_eq!(
+        old.control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        100
+    );
 }
 
 #[test]
@@ -552,14 +534,14 @@ fn find_by_label(screen: &ControlScreen, label: &str) -> Control {
         .unwrap_or_else(|| panic!("control {label:?} not found"))
 }
 
-fn controls_in(layout: &Layout) -> Vec<Control> {
+fn controls_in(container: &Container) -> Vec<Control> {
     use wakui::control::Node;
-    layout
+    container
         .children
         .iter()
         .flat_map(|node| match node {
             Node::Control(c) => vec![c.clone()],
-            Node::Row(l) | Node::Column(l) | Node::Group(l) | Node::Table(l) => controls_in(l),
+            Node::Container(inner) => controls_in(inner),
             Node::Tabs(t) => t.tabs.iter().flat_map(|t| controls_in(&t.body)).collect(),
         })
         .collect()
@@ -579,7 +561,7 @@ fn capture_key_resolves_current_capture_and_clear_reaches_model() {
     let mut session = settings(false);
     let id = inventory(&session.screen())
         .into_iter()
-        .find(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .find(|c| c.downcast::<BindingLeaf>().is_some())
         .unwrap()
         .id;
     session.dispatch(ControlEvent::capture_key(wakui::Key::KeyZ));
@@ -588,15 +570,21 @@ fn capture_key_resolves_current_capture_and_clear_reaches_model() {
     assert_eq!(session.screen().capture.target, Some(id));
     session.dispatch(ControlEvent::capture_key(wakui::Key::KeyZ));
     assert!(session.screen().capture.target.is_none());
-    assert!(matches!(
-        &session.screen().control(id).unwrap().kind,
-        ControlKind::Binding { text, capturing: false, .. } if text.contains('Z')
-    ));
+    let screen = session.screen();
+    let bound = screen.control(id).unwrap();
+    assert!(!bound.downcast::<BindingLeaf>().unwrap().capturing);
+    assert!(bound.downcast::<BindingLeaf>().unwrap().text.contains('Z'));
     send(&mut session, id, ControlInput::CaptureClear);
-    assert!(matches!(
-        &session.screen().control(id).unwrap().kind,
-        ControlKind::Binding { text, capturing: false, .. } if !text.contains('Z')
-    ));
+    let cleared_screen = session.screen();
+    let cleared = cleared_screen.control(id).unwrap();
+    assert!(!cleared.downcast::<BindingLeaf>().unwrap().capturing);
+    assert!(
+        !cleared
+            .downcast::<BindingLeaf>()
+            .unwrap()
+            .text
+            .contains('Z')
+    );
 }
 
 #[test]
@@ -604,9 +592,7 @@ fn text_validation_footer_submit_and_cancel_follow_model_policy() {
     use wakui::window::Window;
     let mut session = settings(false);
     let policy = find_by_label(&session.screen(), "Save storage policy");
-    let ControlKind::Choice { choices, .. } = &policy.kind else {
-        unreachable!()
-    };
+    let choices = &policy.downcast::<ChoiceLeaf>().unwrap().choices;
     let custom = choices
         .iter()
         .position(|c| c.to_lowercase().contains("custom"))
@@ -648,19 +634,20 @@ fn topology_change_rejects_removed_binding_and_uses_latest_capture() {
         .iter()
         .find(|t| {
             controls_in(&t.body).iter().any(|c| {
-                matches!(&c.kind, ControlKind::Choice { choices, .. } if choices.iter().any(|s| s.contains("None")))
+                c.downcast::<ChoiceLeaf>()
+                    .is_some_and(|leaf| leaf.choices.iter().any(|s| s.contains("None")))
             })
         })
         .unwrap()
         .clone();
     let old: Vec<_> = controls_in(&input.body)
         .iter()
-        .filter(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .filter(|c| c.downcast::<BindingLeaf>().is_some())
         .map(|c| c.id)
         .collect();
     for slot in controls_in(&input.body) {
-        if let ControlKind::Choice { choices, .. } = &slot.kind
-            && let Some(none) = choices.iter().position(|c| c.contains("None"))
+        if let Some(leaf) = slot.downcast::<ChoiceLeaf>()
+            && let Some(none) = leaf.choices.iter().position(|c| c.contains("None"))
         {
             send(&mut session, slot.id, ControlInput::Select(none));
         }
@@ -675,7 +662,7 @@ fn topology_change_rejects_removed_binding_and_uses_latest_capture() {
     assert!(session.screen().capture.target.is_none());
     let bindings: Vec<_> = inventory(&session.screen())
         .into_iter()
-        .filter(|c| matches!(c.kind, ControlKind::Binding { .. }))
+        .filter(|c| c.downcast::<BindingLeaf>().is_some())
         .collect();
     let first = bindings[0].id;
     let second = bindings[1].id;
@@ -683,8 +670,16 @@ fn topology_change_rejects_removed_binding_and_uses_latest_capture() {
     send(&mut session, second, ControlInput::Activate);
     session.dispatch(ControlEvent::capture_key(wakui::Key::KeyZ));
     assert!(session.screen().capture.target.is_none());
-    assert!(matches!(&session.screen().control(second).unwrap().kind,
-        ControlKind::Binding { text, capturing: false, .. } if text.contains('Z')));
+    let screen = session.screen();
+    let second_leaf = screen.control(second).unwrap();
+    assert!(!second_leaf.downcast::<BindingLeaf>().unwrap().capturing);
+    assert!(
+        second_leaf
+            .downcast::<BindingLeaf>()
+            .unwrap()
+            .text
+            .contains('Z')
+    );
 }
 
 #[test]
@@ -701,11 +696,12 @@ fn dynamic_ids_restore_context_before_editing_instead_of_selected_target() {
         .clone();
     let candidate = controls_in(&system.body)
         .into_iter()
-        .find(|c| matches!(&c.kind, ControlKind::Choice { choices, .. } if choices.len() > 1))
+        .find(|c| {
+            c.downcast::<ChoiceLeaf>()
+                .is_some_and(|leaf| leaf.choices.len() > 1)
+        })
         .unwrap();
-    let ControlKind::Choice { selected, .. } = candidate.kind else {
-        unreachable!()
-    };
+    let selected = candidate.downcast::<ChoiceLeaf>().unwrap().selected;
     let index = usize::from(selected == Some(0));
     send(
         &mut session,
@@ -713,8 +709,15 @@ fn dynamic_ids_restore_context_before_editing_instead_of_selected_target() {
         ControlInput::Activate,
     );
     send(&mut session, candidate.id, ControlInput::Select(index));
-    assert!(
-        matches!(session.screen().control(candidate.id).unwrap().kind, ControlKind::Choice { selected: Some(i), .. } if i == index)
+    assert_eq!(
+        session
+            .screen()
+            .control(candidate.id)
+            .unwrap()
+            .downcast::<ChoiceLeaf>()
+            .unwrap()
+            .selected,
+        Some(index)
     );
     let mut current = TabInventory::default();
     session.screen().visit(&mut current);
@@ -731,8 +734,8 @@ fn dynamic_ids_restore_context_before_editing_instead_of_selected_target() {
         .iter()
         .find(|tab| {
             controls_in(&tab.body).iter().any(|c| {
-                matches!(&c.kind, ControlKind::Choice { choices, .. }
-                    if choices.iter().any(|choice| choice.contains("None")))
+                c.downcast::<ChoiceLeaf>()
+                    .is_some_and(|leaf| leaf.choices.iter().any(|choice| choice.contains("None")))
             })
         })
         .unwrap()
@@ -740,13 +743,11 @@ fn dynamic_ids_restore_context_before_editing_instead_of_selected_target() {
     let slot = controls_in(&input.body)
         .into_iter()
         .find(|c| {
-            matches!(&c.kind, ControlKind::Choice { choices, .. }
-                if choices.iter().any(|choice| choice.contains("None")))
+            c.downcast::<ChoiceLeaf>()
+                .is_some_and(|leaf| leaf.choices.iter().any(|choice| choice.contains("None")))
         })
         .unwrap();
-    let ControlKind::Choice { choices, .. } = &slot.kind else {
-        unreachable!()
-    };
+    let choices = &slot.downcast::<ChoiceLeaf>().unwrap().choices;
     let none = choices
         .iter()
         .position(|choice| choice.contains("None"))
@@ -758,10 +759,16 @@ fn dynamic_ids_restore_context_before_editing_instead_of_selected_target() {
         .unwrap();
     send(&mut session, shortcuts.select.id, ControlInput::Activate);
     send(&mut session, slot.id, ControlInput::Select(none));
-    assert!(matches!(
-        session.screen().control(slot.id).unwrap().kind,
-        ControlKind::Choice { selected: Some(index), .. } if index == none
-    ));
+    assert_eq!(
+        session
+            .screen()
+            .control(slot.id)
+            .unwrap()
+            .downcast::<ChoiceLeaf>()
+            .unwrap()
+            .selected,
+        Some(none)
+    );
     let mut current = TabInventory::default();
     session.screen().visit(&mut current);
     assert!(

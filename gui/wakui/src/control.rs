@@ -1,9 +1,18 @@
 //! Domain-free, owned control scenes. Render snapshots outside all owner borrows;
 //! callbacks carry opaque IDs and are resolved against the latest scene.
+//!
+//! Layout is data-driven: `Container` carries a boxed `LayoutPolicy`
+//! (`Row`/`Column`/`Group`/`Table`/`Flex`/`Absolute`). New arrangements are
+//! added as `impl LayoutPolicy` outside this file; the `Node` enum is fixed
+//! to `Control`/`Container`/`Tabs`. `Group` is a header-bearing container,
+//! `Tabs` a selection-bearing container.
 
+use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::hints::LayoutHints;
 use crate::key::Key;
+use crate::leaf::ControlLeaf;
 
 /// Process-unique opaque token. Neither position nor a hash of a domain key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -58,21 +67,24 @@ impl<K: Eq> IdRegistry<K> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ControlMetadata {
     pub enabled: bool,
     pub visible: bool,
     pub accessible_label: String,
     pub help: Option<String>,
+    pub hints: LayoutHints,
 }
 
 impl ControlMetadata {
     pub fn new(label: impl Into<String>) -> Self {
+        let label = label.into();
         Self {
+            accessible_label: label,
             enabled: true,
             visible: true,
-            accessible_label: label.into(),
             help: None,
+            hints: LayoutHints::default(),
         }
     }
 }
@@ -86,55 +98,37 @@ pub enum ControlDisplay {
     Heading,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ControlKind {
-    Toggle {
-        value: bool,
-    },
-    Choice {
-        choices: Vec<String>,
-        selected: Option<usize>,
-    },
-    Number {
-        value: u32,
-        min: u32,
-        max: u32,
-        step: u32,
-        unit: String,
-        formatted: String,
-    },
-    Text {
-        value: String,
-        placeholder: String,
-        browse_label: Option<String>,
-    },
-    Binding {
-        text: String,
-        capturing: bool,
-        change_label: String,
-        clear_label: String,
-    },
-    Action,
-    Note {
-        text: String,
-    },
-    /// Generic raster image (RGBA8, row-major). View definitions supply
-    /// the bytes; backends render verbatim and report pointer positions
-    /// as [`ControlInput::Hover`]. Any view may show images.
-    Image {
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Control {
     pub id: ControlId,
     pub label: String,
     pub metadata: ControlMetadata,
     pub display: ControlDisplay,
-    pub kind: ControlKind,
+    pub leaf: Box<dyn ControlLeaf>,
+}
+
+impl Clone for Control {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            label: self.label.clone(),
+            metadata: self.metadata.clone(),
+            display: self.display,
+            leaf: self.leaf.clone_box(),
+        }
+    }
+}
+
+impl PartialEq for Control {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.label == other.label
+            && self.metadata == other.metadata
+            && self.display == other.display
+            && self
+                .leaf
+                .equals(other.leaf.as_ref() as &dyn crate::leaf::Leaf)
+    }
 }
 
 impl Control {
@@ -143,33 +137,13 @@ impl Control {
         if !self.metadata.enabled || !self.metadata.visible {
             return false;
         }
-        match (&self.kind, input) {
-            (ControlKind::Toggle { .. }, ControlInput::Bool(_)) => true,
-            (ControlKind::Choice { choices, .. }, ControlInput::Select(index)) => {
-                *index < choices.len()
-            }
-            (ControlKind::Number { min, max, .. }, ControlInput::Number(n)) => {
-                (*min..=*max).contains(n)
-            }
-            (ControlKind::Text { .. }, ControlInput::Text(_)) => true,
-            (
-                ControlKind::Text {
-                    browse_label: Some(_),
-                    ..
-                },
-                ControlInput::Activate,
-            ) => true,
-            (ControlKind::Action | ControlKind::Binding { .. }, ControlInput::Activate) => true,
-            (ControlKind::Binding { .. }, ControlInput::CaptureClear) => true,
-            (
-                ControlKind::Binding {
-                    capturing: true, ..
-                },
-                ControlInput::CaptureKey(_),
-            ) => true,
-            (ControlKind::Image { .. }, ControlInput::Hover { .. }) => true,
-            _ => false,
-        }
+        self.leaf.accepts(input)
+    }
+
+    /// Downcast the leaf to a concrete framework-provided or external type.
+    /// Dispatch via `TypeId`, never via debug names or view-definition types.
+    pub fn downcast<T: 'static>(&self) -> Option<&T> {
+        self.leaf.as_any().downcast_ref::<T>()
     }
 }
 
@@ -182,7 +156,7 @@ pub enum ControlInput {
     Activate,
     CaptureClear,
     CaptureKey(Key),
-    /// Pointer position over an [`ControlKind::Image`], in image pixels.
+    /// Pointer position over an image leaf, in image pixels.
     /// Integer to keep `Eq`; natives floor their float coordinates.
     Hover {
         x: u32,
@@ -223,28 +197,127 @@ pub enum ControlEffect {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Layout {
+/// Open arrangement vocabulary. New arrangements implement this trait;
+/// containers never grow new enum variants for them.
+pub trait LayoutPolicy: std::fmt::Debug + Send + 'static {
+    fn debug_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+    fn clone_box(&self) -> Box<dyn LayoutPolicy>;
+    fn equals(&self, other: &dyn LayoutPolicy) -> bool;
+    fn as_any(&self) -> &dyn Any;
+}
+
+macro_rules! unit_policy {
+    ($t:ty) => {
+        impl LayoutPolicy for $t {
+            fn clone_box(&self) -> Box<dyn LayoutPolicy> {
+                Box::new(*self)
+            }
+            fn equals(&self, other: &dyn LayoutPolicy) -> bool {
+                other.as_any().downcast_ref::<Self>().is_some()
+            }
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+        }
+    };
+}
+
+/// Horizontal stack.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowPolicy;
+/// Vertical stack.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ColumnPolicy;
+/// Framed group with an optional header control.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GroupPolicy;
+/// Grid arrangement.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TablePolicy;
+/// Flowing arrangement.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlexPolicy;
+/// Absolute arrangement. The only policy carrying a rectangle, and only
+/// for exceptional overlay use; ordinary screens never set it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct AbsolutePolicy {
+    pub bounds: Option<crate::hints::Rect>,
+}
+
+unit_policy!(RowPolicy);
+unit_policy!(ColumnPolicy);
+unit_policy!(GroupPolicy);
+unit_policy!(TablePolicy);
+unit_policy!(FlexPolicy);
+
+impl LayoutPolicy for AbsolutePolicy {
+    fn clone_box(&self) -> Box<dyn LayoutPolicy> {
+        Box::new(*self)
+    }
+    fn equals(&self, other: &dyn LayoutPolicy) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Generic container: identity plus a boxed arrangement policy.
+/// `Group` is a container with `GroupPolicy` and a header; selection
+/// lives in `Tabs`, never in policies.
+#[derive(Debug)]
+pub struct Container {
     pub id: LayoutId,
     pub label: String,
     pub metadata: ControlMetadata,
+    /// Gap between children, in logical pixels. Container padding owned by
+    /// the framework (MAUI `Spacing` analog); arrangement stays native.
     pub spacing: u16,
+    /// Leading inset, in logical pixels (MAUI `Padding` analog).
     pub indent: u16,
     pub header: Option<Control>,
+    pub policy: Box<dyn LayoutPolicy>,
     pub children: Vec<Node>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl Clone for Container {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            label: self.label.clone(),
+            metadata: self.metadata.clone(),
+            spacing: self.spacing,
+            indent: self.indent,
+            header: self.header.clone(),
+            policy: self.policy.clone_box(),
+            children: self.children.clone(),
+        }
+    }
+}
+
+impl PartialEq for Container {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.label == other.label
+            && self.metadata == other.metadata
+            && self.spacing == other.spacing
+            && self.indent == other.indent
+            && self.header == other.header
+            && self.policy.equals(other.policy.as_ref())
+            && self.children == other.children
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
-    Row(Layout),
-    Column(Layout),
-    Group(Layout),
-    Table(Layout),
+    Container(Box<Container>),
     Tabs(Tabs),
     Control(Control),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tabs {
     pub id: TabsId,
     pub metadata: ControlMetadata,
@@ -252,35 +325,35 @@ pub struct Tabs {
     pub tabs: Vec<Tab>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tab {
     pub id: TabId,
     pub label: String,
     pub selected: bool,
     pub select: Control,
-    pub body: Layout,
+    pub body: Container,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Page {
     pub id: PageId,
     pub label: String,
     pub selected: bool,
     pub select: Control,
-    pub body: Layout,
+    pub body: Container,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Capture {
     pub target: Option<ControlId>,
     pub prompt: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ControlScreen {
     pub title: String,
     pub pages: Vec<Page>,
-    pub footer: Layout,
+    pub footer: Container,
     pub message: Option<String>,
     pub capture: Capture,
 }
@@ -302,23 +375,23 @@ impl ControlScreen {
         visitor.begin_screen(self);
         for page in &self.pages {
             visitor.begin_page(page);
-            visit_layout(&page.body, LayoutKind::Column, visitor);
+            visit_container(&page.body, visitor);
             visitor.end_page(page);
         }
-        visit_layout(&self.footer, LayoutKind::Row, visitor);
+        visit_container(&self.footer, visitor);
         visitor.end_screen(self);
     }
 }
 
-fn find(layout: &Layout, id: ControlId) -> Option<&Control> {
-    if let Some(control) = &layout.header
+fn find(container: &Container, id: ControlId) -> Option<&Control> {
+    if let Some(control) = &container.header
         && control.id == id
     {
         return Some(control);
     }
-    layout.children.iter().find_map(|node| match node {
+    container.children.iter().find_map(|node| match node {
         Node::Control(control) => (control.id == id).then_some(control),
-        Node::Row(l) | Node::Column(l) | Node::Group(l) | Node::Table(l) => find(l, id),
+        Node::Container(inner) => find(inner, id),
         Node::Tabs(tabs) => tabs.tabs.iter().find_map(|tab| {
             if tab.select.id == id {
                 Some(&tab.select)
@@ -329,12 +402,10 @@ fn find(layout: &Layout, id: ControlId) -> Option<&Control> {
     })
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum LayoutKind {
-    Row,
-    Column,
-    Group,
-    Table,
+/// Downcast a container policy. Flavors branch on the static type,
+/// never on view-definition types or debug names.
+pub fn policy<T: 'static>(container: &Container) -> Option<&T> {
+    container.policy.as_any().downcast_ref::<T>()
 }
 
 pub trait ControlVisitor {
@@ -342,8 +413,8 @@ pub trait ControlVisitor {
     fn end_screen(&mut self, _screen: &ControlScreen) {}
     fn begin_page(&mut self, _page: &Page) {}
     fn end_page(&mut self, _page: &Page) {}
-    fn begin_layout(&mut self, _layout: &Layout, _kind: LayoutKind) {}
-    fn end_layout(&mut self, _layout: &Layout, _kind: LayoutKind) {}
+    fn begin_container(&mut self, _container: &Container) {}
+    fn end_container(&mut self, _container: &Container) {}
     fn begin_tabs(&mut self, _tabs: &Tabs) {}
     fn end_tabs(&mut self, _tabs: &Tabs) {}
     fn begin_tab(&mut self, _tab: &Tab) {}
@@ -351,28 +422,29 @@ pub trait ControlVisitor {
     fn control(&mut self, _control: &Control) {}
 }
 
-fn visit_layout(layout: &Layout, kind: LayoutKind, visitor: &mut dyn ControlVisitor) {
-    visitor.begin_layout(layout, kind);
-    if let Some(control) = &layout.header {
+fn visit_container(container: &Container, visitor: &mut dyn ControlVisitor) {
+    visitor.begin_container(container);
+    if let Some(control) = &container.header {
         visitor.control(control);
     }
-    for node in &layout.children {
+    for node in &container.children {
         match node {
-            Node::Control(c) => visitor.control(c),
-            Node::Row(l) => visit_layout(l, LayoutKind::Row, visitor),
-            Node::Column(l) => visit_layout(l, LayoutKind::Column, visitor),
-            Node::Group(l) => visit_layout(l, LayoutKind::Group, visitor),
-            Node::Table(l) => visit_layout(l, LayoutKind::Table, visitor),
+            // Container-like leaves expose their children through an
+            // explicit `walk` by the flavor (retained grouping) or the
+            // immediate builder (flat degrade). The framework never walks
+            // implicitly, so each control is visited exactly once.
+            Node::Control(control) => visitor.control(control),
+            Node::Container(inner) => visit_container(inner, visitor),
             Node::Tabs(tabs) => {
                 visitor.begin_tabs(tabs);
                 for tab in &tabs.tabs {
                     visitor.begin_tab(tab);
-                    visit_layout(&tab.body, LayoutKind::Column, visitor);
+                    visit_container(&tab.body, visitor);
                     visitor.end_tab(tab);
                 }
                 visitor.end_tabs(tabs);
             }
         }
     }
-    visitor.end_layout(layout, kind);
+    visitor.end_container(container);
 }

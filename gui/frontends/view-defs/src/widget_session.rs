@@ -14,8 +14,9 @@ use nerust_gui_shell::session::osd::{HistoryFilter, HistoryLine};
 use nerust_settings_core::model::language::AppLanguage;
 
 use wakui::{
-    binding::{BindingTarget, ViewDefinition, drive},
-    control::{ControlEffect, ControlEvent, ControlId, ControlKind, ControlScreen},
+    binding::{BindingTarget, PickerSink, ViewDefinition, drive},
+    control::{ControlEffect, ControlEvent, ControlId, ControlScreen, Id},
+    leaf::TextLeaf,
 };
 
 use wakui::mailbox::{MailboxDomain, WindowMailbox};
@@ -24,11 +25,11 @@ use wakui::window::Window;
 
 use crate::{
     focus::AuxKind,
-    history::{HistoryEffect, HistoryEvent, HistoryModel},
-    settings::{SettingsController, SettingsEffect, SettingsEvent, SettingsScreen},
+    history::{HistoryEffect, HistoryEvent, HistoryKey, HistoryModel},
+    settings::{SettingsController, SettingsEffect, SettingsEvent},
 };
 
-mod scene;
+use wakui::control::IdRegistry;
 
 struct SettingsDomain {
     pending: Arc<Mutex<Option<SettingsSnapshot>>>,
@@ -85,7 +86,7 @@ pub enum Pending {
 #[derive(Clone)]
 pub struct WindowSubmission {
     pub mailbox: WindowMailbox,
-    pending: Arc<Mutex<Option<Pending>>>,
+    pub pending: Arc<Mutex<Option<Pending>>>,
 }
 
 impl WindowSubmission {
@@ -111,12 +112,13 @@ struct DebugWidget {
     session: RefCell<crate::debugger::DebuggerScreenSession>,
 }
 
-/// Bound history instance. Owns filter state and mailbox effects;
-/// the view itself stays a fresh `HistoryModel` snapshot.
+/// Bound history instance. Owns filter state plus the stable ID registry;
+/// the view itself stays a fresh snapshot pair each frame.
 pub(crate) struct HistorySession {
     lines: Arc<[HistoryLine]>,
     language: AppLanguage,
     filter: HistoryFilter,
+    ids: RefCell<IdRegistry<HistoryKey>>,
     mailbox: WindowMailbox,
     clear: Arc<AtomicBool>,
 }
@@ -145,9 +147,8 @@ impl wakui::binding::BindingTarget for HistorySession {
 /// Native code owns one of these, without knowing which domain controller it wraps.
 pub struct WidgetSession {
     state: State,
-    scene: RefCell<scene::SceneBuilder>,
     mailbox: WindowMailbox,
-    picker: Option<(ControlId, wakui::control::Id)>,
+    picker: Option<(ControlId, Id)>,
 }
 
 impl WidgetSession {
@@ -160,7 +161,6 @@ impl WidgetSession {
         controller.mailbox.view_invalidated = mailbox.flags().invalidated.clone();
         Self {
             state: State::Settings(Box::new(controller)),
-            scene: RefCell::new(Default::default()),
             mailbox,
             picker: None,
         }
@@ -176,10 +176,10 @@ impl WidgetSession {
                 lines,
                 language,
                 filter: HistoryFilter::All,
+                ids: RefCell::new(IdRegistry::default()),
                 mailbox: mailbox.clone(),
                 clear,
             }),
-            scene: RefCell::new(Default::default()),
             mailbox,
             picker: None,
         }
@@ -204,7 +204,6 @@ impl WidgetSession {
                 )),
                 language,
             }),
-            scene: RefCell::new(Default::default()),
             mailbox,
             picker: None,
         }
@@ -223,7 +222,6 @@ impl WidgetSession {
                 handle,
                 session: RefCell::new(crate::debugger::DebuggerScreenSession::new()),
             })),
-            scene: RefCell::new(Default::default()),
             mailbox,
             picker: None,
         }
@@ -262,16 +260,14 @@ impl WidgetSession {
     }
 
     pub fn screen(&self) -> ControlScreen {
-        let mut scene = self.scene.borrow_mut();
         let mut screen = match &self.state {
-            State::Settings(controller) => scene.settings(&controller.screen()).0,
+            State::Settings(controller) => controller.screen().screen,
             State::Ppu(state) => state.session.borrow_mut().screen(),
             State::Debug(widget) => widget.session.borrow_mut().screen(),
-            State::History(session) => scene.history(&HistoryModel::build(
-                &session.lines,
-                session.language,
-                session.filter,
-            )),
+            State::History(session) => {
+                let model = HistoryModel::build(&session.lines, session.language, session.filter);
+                model.screen(&mut session.ids.borrow_mut()).0
+            }
         };
         if let Some(error) = lock_recovered(&self.mailbox.flags().error).clone() {
             screen.message = Some(error);
@@ -339,18 +335,11 @@ impl WidgetSession {
         }
         match &mut self.state {
             State::Settings(controller) => {
-                let typed = controller.screen();
-                let (_, bindings) = self.scene.borrow_mut().settings(&typed);
-                let Some((_, domain_id)) = bindings.iter().find(|(token, _)| *token == id) else {
-                    return Vec::new();
-                };
-                let Some(input) = SettingsScreen::convert(event.input) else {
-                    return Vec::new();
-                };
+                let view = controller.screen();
                 let mut effects = Vec::new();
-                for effect in drive(&typed, domain_id, input, &mut **controller) {
+                for effect in drive(&view, &id, event.input, &mut **controller) {
                     let SettingsEffect::BrowseStorageDirectory { title } = effect;
-                    let request = wakui::control::Id::fresh();
+                    let request = Id::fresh();
                     self.picker = Some((id, request));
                     effects.push(ControlEffect::PickDirectory {
                         title,
@@ -361,14 +350,23 @@ impl WidgetSession {
                 effects
             }
             State::History(session) => {
-                let action = match self.scene.borrow_mut().history_action(id) {
-                    Some(action) => action,
-                    None => return Vec::new(),
+                let model = HistoryModel::build(&session.lines, session.language, session.filter);
+                let (_, ids) = model.screen(&mut session.ids.borrow_mut());
+                let action = if id == ids.filter {
+                    Some(crate::history::HistoryViewId::Filter)
+                } else if id == ids.clear {
+                    Some(crate::history::HistoryViewId::Clear)
+                } else if id == ids.close {
+                    Some(crate::history::HistoryViewId::Close)
+                } else {
+                    None
+                };
+                let Some(action) = action else {
+                    return Vec::new();
                 };
                 let Some(input) = HistoryModel::convert(event.input) else {
                     return Vec::new();
                 };
-                let model = HistoryModel::build(&session.lines, session.language, session.filter);
                 let _ = drive(&model, &action, input, session);
                 Vec::new()
             }
@@ -393,17 +391,22 @@ impl WidgetSession {
             }
         }
     }
+
+    /// Mint history action IDs without projecting rows. Used by tests.
+    #[cfg(test)]
+    pub(crate) fn history_ids(&mut self) -> crate::history::HistoryIds {
+        let State::History(session) = &mut self.state else {
+            panic!("history session required");
+        };
+        let model = HistoryModel::build(&session.lines, session.language, session.filter);
+        model.screen(&mut session.ids.borrow_mut()).1
+    }
 }
 
-impl wakui::binding::PickerSink<std::path::PathBuf> for WidgetSession {
+impl PickerSink<std::path::PathBuf> for WidgetSession {
     /// Deliver a native folder-picker result. Validates the pending request
     /// and the target's current browse affordance, mirroring dispatch's gates.
-    fn submit(
-        &mut self,
-        target: ControlId,
-        request: wakui::control::Id,
-        payload: Option<std::path::PathBuf>,
-    ) {
+    fn submit(&mut self, target: ControlId, request: Id, payload: Option<std::path::PathBuf>) {
         if self.picker != Some((target, request)) {
             return;
         }
@@ -417,13 +420,8 @@ impl wakui::binding::PickerSink<std::path::PathBuf> for WidgetSession {
             return;
         };
         let browseable = screen.control(target).is_some_and(|c| {
-            matches!(
-                &c.kind,
-                ControlKind::Text {
-                    browse_label: Some(_),
-                    ..
-                }
-            )
+            c.downcast::<TextLeaf>()
+                .is_some_and(|leaf| leaf.browse_label.is_some())
         });
         if !browseable {
             return;

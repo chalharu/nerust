@@ -4,9 +4,13 @@ use std::{cell::RefCell, rc::Rc};
 use gtk::{glib, prelude::*};
 use wakui::{
     control::{
-        Control, ControlDisplay, ControlId, ControlInput, ControlKind, ControlMetadata,
-        ControlScreen, ControlVisitor, Layout, LayoutId, LayoutKind, Page, PageId, Tab, TabId,
-        Tabs, TabsId,
+        Container, Control, ControlDisplay, ControlId, ControlInput, ControlMetadata,
+        ControlScreen, ControlVisitor, GroupPolicy, LayoutId, Page, PageId, RowPolicy, Tab, TabId,
+        TablePolicy, Tabs, TabsId, policy,
+    },
+    leaf::{
+        ActionLeaf, BindingLeaf, ChoiceLeaf, ImageLeaf, LeafUpdate, ListLeaf, NoteLeaf, NumberLeaf,
+        TextLeaf, ToggleLeaf,
     },
     mapper::{PropertyUpdate, map_updates},
 };
@@ -82,6 +86,9 @@ pub enum NativeKind {
     Action(gtk::Button),
     Note(gtk::Label),
     Image(gtk::Picture),
+    /// Generic list host. Rows arrive through leaf traversal and reuse
+    /// their own stable control entries; this box only groups them.
+    List(gtk::Box),
 }
 
 #[derive(Default)]
@@ -91,18 +98,18 @@ pub struct ChoiceState {
 }
 
 impl NativeControl {
-    fn accepts(&self, kind: &ControlKind) -> bool {
-        matches!(
-            (&self.kind, kind),
-            (NativeKind::Toggle(_), ControlKind::Toggle { .. })
-                | (NativeKind::Choice(..), ControlKind::Choice { .. })
-                | (NativeKind::Number(..), ControlKind::Number { .. })
-                | (NativeKind::Text(..), ControlKind::Text { .. })
-                | (NativeKind::Binding(..), ControlKind::Binding { .. })
-                | (NativeKind::Action(_), ControlKind::Action)
-                | (NativeKind::Note(_), ControlKind::Note { .. })
-                | (NativeKind::Image(_), ControlKind::Image { .. })
-        )
+    fn accepts(&self, control: &Control) -> bool {
+        match &self.kind {
+            NativeKind::Toggle(_) => control.downcast::<ToggleLeaf>().is_some(),
+            NativeKind::Choice(..) => control.downcast::<ChoiceLeaf>().is_some(),
+            NativeKind::Number(..) => control.downcast::<NumberLeaf>().is_some(),
+            NativeKind::Text(..) => control.downcast::<TextLeaf>().is_some(),
+            NativeKind::Binding(..) => control.downcast::<BindingLeaf>().is_some(),
+            NativeKind::Action(_) => control.downcast::<ActionLeaf>().is_some(),
+            NativeKind::Note(_) => control.downcast::<NoteLeaf>().is_some(),
+            NativeKind::Image(_) => control.downcast::<ImageLeaf>().is_some(),
+            NativeKind::List(_) => control.downcast::<ListLeaf>().is_some(),
+        }
     }
 
     fn new(binding: &WidgetBinding, control: &Control) -> Self {
@@ -112,123 +119,115 @@ impl NativeControl {
         label.set_width_chars(24);
         row.append(&label);
         let id = control.id;
-        let (input, kind): (gtk::Widget, NativeKind) = match &control.kind {
-            ControlKind::Toggle { .. } => {
-                let check = gtk::CheckButton::new();
-                check.connect_toggled({
-                    let weak = binding.self_weak.clone();
-                    move |check| {
-                        if let Some(binding) = weak.upgrade() {
-                            binding.input(id, ControlInput::Bool(check.is_active()));
-                        }
+        let leaf = &control.leaf;
+        let (input, kind): (gtk::Widget, NativeKind) = if leaf.as_any().is::<ToggleLeaf>() {
+            let check = gtk::CheckButton::new();
+            check.connect_toggled({
+                let weak = binding.self_weak.clone();
+                move |check| {
+                    if let Some(binding) = weak.upgrade() {
+                        binding.input(id, ControlInput::Bool(check.is_active()));
                     }
-                });
-                (check.clone().upcast(), NativeKind::Toggle(check))
-            }
-            ControlKind::Choice { .. } => {
-                let combo = gtk::ComboBoxText::new();
-                let state = Rc::new(RefCell::new(ChoiceState::default()));
-                combo.connect_changed({
-                    let weak = binding.self_weak.clone();
-                    let state = state.clone();
-                    move |combo| {
-                        if let Some(binding) = weak.upgrade()
-                            && let Some(index) = combo.active()
-                        {
-                            // During setters ignore only the programmed selection.
-                            let programmed = state.borrow().selected == Some(index);
-                            if binding.refreshing.get() && !programmed {
-                                binding.send(super::ControlEvent::new(
-                                    id,
-                                    ControlInput::Select(index as usize),
-                                ));
-                            } else {
-                                binding.input(id, ControlInput::Select(index as usize));
-                            }
-                        }
-                    }
-                });
-                (combo.clone().upcast(), NativeKind::Choice(combo, state))
-            }
-            ControlKind::Number { min, max, step, .. } => {
-                let spin = gtk::SpinButton::with_range(
-                    (*min).into(),
-                    (*max).into(),
-                    (*step).max(1).into(),
-                );
-                spin.set_numeric(true);
-                spin.connect_value_changed({
-                    let weak = binding.self_weak.clone();
-                    move |spin| {
-                        if let Some(binding) = weak.upgrade() {
-                            binding.input(id, ControlInput::Number(spin.value() as u32));
-                        }
-                    }
-                });
-                (
-                    spin.clone().upcast(),
-                    NativeKind::Number(spin, gtk::Label::new(None)),
-                )
-            }
-            ControlKind::Text { .. } => {
-                let entry = gtk::Entry::new();
-                entry.set_hexpand(true);
-                entry.connect_changed({
-                    let weak = binding.self_weak.clone();
-                    move |entry| {
-                        if let Some(binding) = weak.upgrade() {
-                            binding.input(id, ControlInput::Text(entry.text().to_string()));
-                        }
-                    }
-                });
-                let browse = action_button(binding, id, ControlInput::Activate);
-                (entry.clone().upcast(), NativeKind::Text(entry, browse))
-            }
-            ControlKind::Binding { .. } => {
-                let value = gtk::Label::new(None);
-                value.set_xalign(0.0);
-                value.set_hexpand(true);
-                let change = action_button(binding, id, ControlInput::Activate);
-                let clear = action_button(binding, id, ControlInput::CaptureClear);
-                (
-                    change.clone().upcast(),
-                    NativeKind::Binding(value, change, clear),
-                )
-            }
-            ControlKind::Action => {
-                let button = action_button(binding, id, ControlInput::Activate);
-                (button.clone().upcast(), NativeKind::Action(button))
-            }
-            ControlKind::Note { .. } => {
-                let note = gtk::Label::new(None);
-                note.set_xalign(0.0);
-                note.set_wrap(true);
-                (note.clone().upcast(), NativeKind::Note(note))
-            }
-            ControlKind::Image {
-                width,
-                height,
-                rgba,
-            } => {
-                let picture = paintable_image(*width, *height, rgba);
-                let motion = gtk::EventControllerMotion::new();
-                {
-                    let weak = binding.self_weak.clone();
-                    motion.connect_motion(move |_, x, y| {
-                        if let Some(binding) = weak.upgrade() {
-                            binding.input(
-                                id,
-                                ControlInput::Hover {
-                                    x: x.max(0.0) as u32,
-                                    y: y.max(0.0) as u32,
-                                },
-                            );
-                        }
-                    });
                 }
-                picture.add_controller(motion);
-                (picture.clone().upcast(), NativeKind::Image(picture))
+            });
+            (check.clone().upcast(), NativeKind::Toggle(check))
+        } else if leaf.as_any().is::<ChoiceLeaf>() {
+            let combo = gtk::ComboBoxText::new();
+            let state = Rc::new(RefCell::new(ChoiceState::default()));
+            combo.connect_changed({
+                let weak = binding.self_weak.clone();
+                let state = state.clone();
+                move |combo| {
+                    if let Some(binding) = weak.upgrade()
+                        && let Some(index) = combo.active()
+                    {
+                        // During setters ignore only the programmed selection.
+                        let programmed = state.borrow().selected == Some(index);
+                        if binding.refreshing.get() && !programmed {
+                            binding.send(super::ControlEvent::new(
+                                id,
+                                ControlInput::Select(index as usize),
+                            ));
+                        } else {
+                            binding.input(id, ControlInput::Select(index as usize));
+                        }
+                    }
+                }
+            });
+            (combo.clone().upcast(), NativeKind::Choice(combo, state))
+        } else if let Some(number) = control.downcast::<NumberLeaf>() {
+            let (min, max, step) = (number.min, number.max, number.step);
+            let spin = gtk::SpinButton::with_range(min.into(), max.into(), step.max(1).into());
+            spin.set_numeric(true);
+            spin.connect_value_changed({
+                let weak = binding.self_weak.clone();
+                move |spin| {
+                    if let Some(binding) = weak.upgrade() {
+                        binding.input(id, ControlInput::Number(spin.value() as u32));
+                    }
+                }
+            });
+            (
+                spin.clone().upcast(),
+                NativeKind::Number(spin, gtk::Label::new(None)),
+            )
+        } else if leaf.as_any().is::<TextLeaf>() {
+            let entry = gtk::Entry::new();
+            entry.set_hexpand(true);
+            entry.connect_changed({
+                let weak = binding.self_weak.clone();
+                move |entry| {
+                    if let Some(binding) = weak.upgrade() {
+                        binding.input(id, ControlInput::Text(entry.text().to_string()));
+                    }
+                }
+            });
+            let browse = action_button(binding, id, ControlInput::Activate);
+            (entry.clone().upcast(), NativeKind::Text(entry, browse))
+        } else if leaf.as_any().is::<BindingLeaf>() {
+            let value = gtk::Label::new(None);
+            value.set_xalign(0.0);
+            value.set_hexpand(true);
+            let change = action_button(binding, id, ControlInput::Activate);
+            let clear = action_button(binding, id, ControlInput::CaptureClear);
+            (
+                change.clone().upcast(),
+                NativeKind::Binding(value, change, clear),
+            )
+        } else if leaf.as_any().is::<ActionLeaf>() {
+            let button = action_button(binding, id, ControlInput::Activate);
+            (button.clone().upcast(), NativeKind::Action(button))
+        } else if leaf.as_any().is::<NoteLeaf>() {
+            let note = gtk::Label::new(None);
+            note.set_xalign(0.0);
+            note.set_wrap(true);
+            (note.clone().upcast(), NativeKind::Note(note))
+        } else if let Some(image) = control.downcast::<ImageLeaf>() {
+            let picture = paintable_image(image.width, image.height, &image.rgba);
+            let motion = gtk::EventControllerMotion::new();
+            {
+                let weak = binding.self_weak.clone();
+                motion.connect_motion(move |_, x, y| {
+                    if let Some(binding) = weak.upgrade() {
+                        binding.input(
+                            id,
+                            ControlInput::Hover {
+                                x: x.max(0.0) as u32,
+                                y: y.max(0.0) as u32,
+                            },
+                        );
+                    }
+                });
             }
+            picture.add_controller(motion);
+            (picture.clone().upcast(), NativeKind::Image(picture))
+        } else {
+            // Unknown future leaf: degrade to a read-only label showing
+            // the pre-localized control label. Never fail construction.
+            let note = gtk::Label::new(None);
+            note.set_xalign(0.0);
+            note.set_wrap(true);
+            (note.clone().upcast(), NativeKind::Note(note))
         };
         match &kind {
             NativeKind::Binding(value, change, clear) => {
@@ -263,7 +262,7 @@ impl NativeControl {
         *self.last.borrow_mut() = Some(control.clone());
     }
 
-    fn apply_update(&self, control: &Control, update: PropertyUpdate<'_>) {
+    fn apply_update(&self, control: &Control, update: PropertyUpdate) {
         match update {
             // Master parity: sensitivity stays on the leaf input only,
             // never labels or rows, so an empty slot reads normal
@@ -274,14 +273,14 @@ impl NativeControl {
                 self.input.set_visible(visible);
             }
             PropertyUpdate::SetLabel(label) => {
-                self.label.set_text(label);
+                self.label.set_text(&label);
                 self.label.set_visible(
                     !label.is_empty()
                         && !matches!(self.kind, NativeKind::Toggle(_) | NativeKind::Action(_)),
                 );
                 match &self.kind {
-                    NativeKind::Toggle(check) => check.set_label(Some(label)),
-                    NativeKind::Action(button) => button.set_label(label),
+                    NativeKind::Toggle(check) => check.set_label(Some(&label)),
+                    NativeKind::Action(button) => button.set_label(&label),
                     _ => (),
                 }
             }
@@ -302,19 +301,19 @@ impl NativeControl {
             PropertyUpdate::SetAccessibleLabel(accessible) => {
                 accessible_text(
                     self.root.upcast_ref(),
-                    accessible,
+                    &accessible,
                     control.metadata.help.as_deref().unwrap_or(""),
                 );
                 accessible_text(
                     self.input.upcast_ref(),
-                    accessible,
+                    &accessible,
                     control.metadata.help.as_deref().unwrap_or(""),
                 );
             }
             PropertyUpdate::SetHelp(help) => {
-                self.root.set_tooltip_text(help);
-                self.input.set_tooltip_text(help);
-                let help = help.unwrap_or("");
+                self.root.set_tooltip_text(help.as_deref());
+                self.input.set_tooltip_text(help.as_deref());
+                let help = help.as_deref().unwrap_or("");
                 accessible_text(
                     self.root.upcast_ref(),
                     &control.metadata.accessible_label,
@@ -332,27 +331,33 @@ impl NativeControl {
         }
     }
 
-    fn apply_value(&self, control: &Control, kind: &ControlKind) {
-        match (&self.kind, kind) {
-            (NativeKind::Toggle(check), ControlKind::Toggle { value }) => {
+    /// Retained value refresh. The mapper only reports that the value
+    /// changed; every field is re-read from the new leaf. Kinds were
+    /// checked on lookup, so a missing downcast is a programming error.
+    fn apply_value(&self, control: &Control, update: LeafUpdate) {
+        let _ = update;
+        match &self.kind {
+            NativeKind::Toggle(check) => {
+                let leaf = control.downcast::<ToggleLeaf>().unwrap();
                 check.set_label(Some(&control.label));
-                if check.is_active() != *value {
-                    check.set_active(*value);
+                if check.is_active() != leaf.value {
+                    check.set_active(leaf.value);
                 }
             }
-            (NativeKind::Choice(combo, state), ControlKind::Choice { choices, selected }) => {
-                let changed = state.borrow().labels != *choices;
-                let selected = selected.map(|i| i as u32);
+            NativeKind::Choice(combo, state) => {
+                let leaf = control.downcast::<ChoiceLeaf>().unwrap();
+                let changed = state.borrow().labels != leaf.choices;
+                let selected = leaf.selected.map(|i| i as u32);
                 {
                     let mut state = state.borrow_mut();
                     state.selected = selected;
                     if changed {
-                        state.labels = choices.clone();
+                        state.labels = leaf.choices.clone();
                     }
                 }
                 if changed {
                     combo.remove_all();
-                    for choice in choices {
+                    for choice in &leaf.choices {
                         combo.append_text(choice);
                     }
                 }
@@ -360,87 +365,68 @@ impl NativeControl {
                     combo.set_active(selected);
                 }
             }
-            (
-                NativeKind::Number(spin, unit_label),
-                ControlKind::Number {
-                    value,
-                    min,
-                    max,
-                    step,
-                    unit,
-                    ..
-                },
-            ) => {
-                if spin.range() != (f64::from(*min), f64::from(*max)) {
-                    spin.set_range((*min).into(), (*max).into());
+            NativeKind::Number(spin, unit_label) => {
+                let leaf = control.downcast::<NumberLeaf>().unwrap();
+                if spin.range() != (f64::from(leaf.min), f64::from(leaf.max)) {
+                    spin.set_range(leaf.min.into(), leaf.max.into());
                 }
-                spin.set_increments((*step).max(1).into(), (*step).max(1) as f64 * 10.0);
-                if spin.value() != f64::from(*value) {
-                    spin.set_value((*value).into());
+                spin.set_increments(leaf.step.max(1).into(), leaf.step.max(1) as f64 * 10.0);
+                if spin.value() != f64::from(leaf.value) {
+                    spin.set_value(leaf.value.into());
                 }
-                unit_label.set_text(unit);
+                unit_label.set_text(&leaf.unit);
             }
-            (
-                NativeKind::Text(entry, browse),
-                ControlKind::Text {
-                    value,
-                    placeholder,
-                    browse_label,
-                },
-            ) => {
+            NativeKind::Text(entry, browse) => {
+                let leaf = control.downcast::<TextLeaf>().unwrap();
                 // Stable widget, equal text: preserve focus, selection and IME.
-                if entry.text().as_str() != value {
-                    entry.set_text(value);
+                if entry.text().as_str() != leaf.value {
+                    entry.set_text(&leaf.value);
                 }
-                if entry.placeholder_text().as_deref() != Some(placeholder.as_str()) {
-                    entry.set_placeholder_text(Some(placeholder));
+                if entry.placeholder_text().as_deref() != Some(leaf.placeholder.as_str()) {
+                    entry.set_placeholder_text(Some(&leaf.placeholder));
                 }
-                browse.set_visible(browse_label.is_some());
-                if let Some(label) = browse_label {
+                browse.set_visible(leaf.browse_label.is_some());
+                if let Some(label) = &leaf.browse_label {
                     browse.set_label(label);
                     accessible_text(browse.upcast_ref(), label, "");
                 }
             }
-            (
-                NativeKind::Binding(label, change, clear),
-                ControlKind::Binding {
-                    text,
-                    change_label,
-                    clear_label,
-                    ..
-                },
-            ) => {
-                label.set_text(text);
-                change.set_label(change_label);
-                clear.set_label(clear_label);
+            NativeKind::Binding(label, change, clear) => {
+                let leaf = control.downcast::<BindingLeaf>().unwrap();
+                label.set_text(&leaf.text);
+                change.set_label(&leaf.change_label);
+                clear.set_label(&leaf.clear_label);
                 accessible_text(
                     clear.upcast_ref(),
-                    &format!("{}: {}", control.metadata.accessible_label, clear_label),
+                    &format!(
+                        "{}: {}",
+                        control.metadata.accessible_label, leaf.clear_label
+                    ),
                     "",
                 );
             }
-            (NativeKind::Action(button), ControlKind::Action) => button.set_label(&control.label),
-            (NativeKind::Note(label), ControlKind::Note { text }) => label.set_text(text),
-            (
-                NativeKind::Image(picture),
-                ControlKind::Image {
-                    width,
-                    height,
-                    rgba,
-                },
-            ) => {
-                let stride = (*width as usize).saturating_mul(4);
+            NativeKind::Action(button) => button.set_label(&control.label),
+            NativeKind::Note(label) => {
+                let leaf = control.downcast::<NoteLeaf>().unwrap();
+                label.set_text(&leaf.text);
+            }
+            NativeKind::Image(picture) => {
+                let leaf = control.downcast::<ImageLeaf>().unwrap();
+                let stride = (leaf.width as usize).saturating_mul(4);
                 let texture = gtk::gdk::MemoryTexture::new(
-                    *width as i32,
-                    *height as i32,
+                    leaf.width as i32,
+                    leaf.height as i32,
                     gtk::gdk::MemoryFormat::R8g8b8a8,
-                    &gtk::glib::Bytes::from(rgba),
+                    &gtk::glib::Bytes::from(&leaf.rgba),
                     stride,
                 );
                 picture.set_paintable(Some(&texture));
-                picture.set_size_request(*width as i32, *height as i32);
+                picture.set_size_request(leaf.width as i32, leaf.height as i32);
             }
-            _ => unreachable!("control kind checked on lookup"),
+            NativeKind::List(_) => {
+                // List rows refresh through leaf traversal in `control()`;
+                // a bare value update never reaches here.
+            }
         }
     }
 }
@@ -645,20 +631,26 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         self.end_container();
     }
 
-    fn begin_layout(&mut self, layout: &Layout, kind: LayoutKind) {
+    fn begin_container(&mut self, container: &Container) {
         // Footer actions (Cancel/OK) belong to the dialog action area,
         // not the content: master parity for placement and margins.
-        // No frame is pushed; end_layout skips symmetrically.
-        if self.footer == Some(layout.id) {
+        // No frame is pushed; end_container skips symmetrically.
+        if self.footer == Some(container.id) {
             self.in_footer = true;
             return;
         }
-        let kind = match kind {
-            LayoutKind::Row => 0,
-            LayoutKind::Column => 1,
-            LayoutKind::Group => 2,
-            LayoutKind::Table => 3,
+        // Unknown future policies degrade to a vertical stack, preserving
+        // order and visibility while placement degrades.
+        let kind = if policy::<RowPolicy>(container).is_some() {
+            0
+        } else if policy::<GroupPolicy>(container).is_some() {
+            2
+        } else if policy::<TablePolicy>(container).is_some() {
+            3
+        } else {
+            1
         };
+        let layout = container;
         let node = self.node(NodeId::Layout(layout.id, kind), || {
             if kind == 3 {
                 return NativeNode {
@@ -719,8 +711,8 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         metadata(&node.widget, &layout.metadata);
     }
 
-    fn end_layout(&mut self, layout: &Layout, _kind: LayoutKind) {
-        if self.in_footer && self.footer == Some(layout.id) {
+    fn end_container(&mut self, container: &Container) {
+        if self.in_footer && self.footer == Some(container.id) {
             self.in_footer = false;
             return;
         }
@@ -827,8 +819,61 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
 
     fn control(&mut self, control: &Control) {
         self.controls.push(control.id);
+        // Generic list hosts group their rows: clear the box, expose the
+        // rows through leaf traversal (reusing stable row entries), then
+        // reconcile. Chrome applies directly; values never go through
+        // the single-control mapper path.
+        if control.downcast::<ListLeaf>().is_some() {
+            let native = if let Some(old) = self.binding.registry.borrow().control(&control.id)
+                && matches!(old.kind, NativeKind::List(_))
+            {
+                old
+            } else {
+                let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                let native = Rc::new(NativeControl {
+                    root: body.clone().upcast(),
+                    input: body.clone().upcast(),
+                    label: gtk::Label::new(None),
+                    kind: NativeKind::List(body),
+                    last: RefCell::new(None),
+                });
+                let mut registry = self.binding.registry.borrow_mut();
+                if let Some(index) = registry
+                    .controls
+                    .iter()
+                    .position(|(id, _)| id == &control.id)
+                {
+                    registry.controls[index].1 = native.clone();
+                } else {
+                    registry.controls.push((control.id, native.clone()));
+                }
+                native
+            };
+            let NativeKind::List(body) = &native.kind else {
+                return;
+            };
+            body.set_visible(control.metadata.visible);
+            body.set_sensitive(control.metadata.enabled);
+            *native.last.borrow_mut() = Some(control.clone());
+            let mut child = body.first_child();
+            while let Some(current) = child {
+                child = current.next_sibling();
+                body.remove(&current);
+            }
+            self.frames.push(Frame::Box(body.clone(), Vec::new()));
+            let ctx = wakui::leaf::LeafCtx {
+                id: control.id,
+                hints: control.metadata.hints,
+            };
+            control.leaf.walk(&ctx, self);
+            if let Some(Frame::Box(parent, children)) = self.frames.pop() {
+                reconcile_box(&parent, &children);
+            }
+            self.append(&native.root);
+            return;
+        }
         let old = self.binding.registry.borrow().control(&control.id);
-        let native = if let Some(old) = old.filter(|old| old.accepts(&control.kind)) {
+        let native = if let Some(old) = old.filter(|old| old.accepts(control)) {
             old
         } else {
             let native = Rc::new(NativeControl::new(self.binding, control));
@@ -852,6 +897,13 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             native
         };
         native.update(control);
+        // Unknown container-like leaves degrade to siblings: surface their
+        // children explicitly. Base leaves no-op here.
+        let ctx = wakui::leaf::LeafCtx {
+            id: control.id,
+            hints: control.metadata.hints,
+        };
+        control.leaf.walk(&ctx, self);
         // Footer actions live in the dialog action area (right-aligned
         // with dialog margins), never in the content row. The input
         // event flow is unchanged; only placement differs from content.

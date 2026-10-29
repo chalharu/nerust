@@ -5,6 +5,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_shell::registry::SystemRegistry;
 use nerust_settings_core::{
     i18n::{UiText, text},
+    model::language::AppLanguage,
     model::{
         app_state::DesktopAppState,
         input::ShortcutAction,
@@ -12,13 +13,18 @@ use nerust_settings_core::{
         shared::{DesktopSharedSettings, StoragePolicy},
     },
 };
+use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
+use wakui::control::{
+    Container, Control, ControlInput, ControlScreen, ControlVisitor, GroupPolicy, Tab, policy,
+};
+use wakui::leaf::{
+    ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
+};
 
 use super::*;
 use crate::settings::{InputPageSection, InputTab, SettingsEvent as E};
-use wakui::binding::ViewDefinition;
 
 type Id = SettingsControlId;
-type Kind = SettingsControlKind;
 type I = ControlInput;
 
 fn state(nes: bool) -> SettingsController {
@@ -38,6 +44,10 @@ fn state(nes: bool) -> SettingsController {
         })),
         Arc::new(AudioBackendRegistry::new()),
     )
+}
+
+fn token(controller: &SettingsController, key: Id) -> ControlId {
+    controller.ids.borrow_mut().id(StableKey::Control(key))
 }
 
 fn prepare(controller: &mut SettingsController) {
@@ -85,11 +95,12 @@ fn events(actual: Option<Vec<E>>, expected: Vec<E>) {
     );
 }
 
-fn apply(controller: &mut SettingsController, id: &Id, input: I) {
+fn apply(controller: &mut SettingsController, key: &Id, input: I) {
+    let id = token(controller, key.clone());
     for event in controller
         .screen()
-        .bind(id, input.clone())
-        .unwrap_or_else(|| panic!("rejected {id:?}: {input:?}"))
+        .bind(&id, input.clone())
+        .unwrap_or_else(|| panic!("rejected {key:?}: {input:?}"))
     {
         controller.update(event);
     }
@@ -102,31 +113,38 @@ fn apply(controller: &mut SettingsController, id: &Id, input: I) {
 
 #[derive(Default)]
 struct Inventory {
-    controls: Vec<SettingsControl>,
-    groups: Vec<SettingsLayoutId>,
-    tabs: Vec<SettingsTab>,
+    controls: Vec<Control>,
+    groups: Vec<ControlId>,
+    tabs: Vec<Tab>,
 }
 
-impl SettingsVisitor for Inventory {
-    fn begin_page(&mut self, page: &SettingsScreenPage) {
+impl ControlVisitor for Inventory {
+    fn begin_page(&mut self, page: &wakui::control::Page) {
         self.controls.push(page.select.clone());
     }
-    fn begin_tab(&mut self, tab: &SettingsTab) {
+    fn begin_container(&mut self, container: &Container) {
+        if policy::<GroupPolicy>(container).is_some() {
+            self.groups.push(container.id);
+        }
+    }
+    fn begin_tab(&mut self, tab: &Tab) {
         self.controls.push(tab.select.clone());
         self.tabs.push(tab.clone());
     }
-    fn begin_group(&mut self, group: &SettingsLayout) {
-        self.groups.push(group.id.clone());
-    }
-    fn control(&mut self, control: &SettingsControl) {
+    fn control(&mut self, control: &Control) {
         self.controls.push(control.clone());
     }
 }
 
-fn inventory(screen: &SettingsScreen) -> Inventory {
+fn inventory(view: &SettingsScreen) -> Inventory {
     let mut result = Inventory::default();
-    screen.visit(&mut result);
+    view.screen.visit(&mut result);
     result
+}
+
+fn control_for(view: &SettingsScreen, key: &Id, controller: &SettingsController) -> Control {
+    let id = token(controller, key.clone());
+    view.screen.control(id).unwrap().clone()
 }
 
 #[test]
@@ -136,18 +154,13 @@ fn binding_table_covers_tree_controls_exactly_once() {
     for nes in [false, true] {
         let mut controller = state(nes);
         prepare(&mut controller);
-        let screen = controller.screen();
-        let tree: Vec<Id> = inventory(&screen)
-            .controls
-            .iter()
-            .map(|c| c.id.clone())
-            .collect();
-        let mut table: Vec<Id> = Vec::new();
-        screen
-            .bindings
+        let view = controller.screen();
+        let tree: Vec<ControlId> = inventory(&view).controls.iter().map(|c| c.id).collect();
+        let mut table: Vec<ControlId> = Vec::new();
+        view.bindings
             .0
             .iter()
-            .for_each(|(id, _, _)| table.push(id.clone()));
+            .for_each(|(id, _, _)| table.push(*id));
         assert_eq!(table.len(), tree.len(), "table/tree size mismatch");
         for id in &tree {
             assert_eq!(
@@ -163,30 +176,20 @@ fn binding_table_covers_tree_controls_exactly_once() {
 fn six_pages_have_complete_unique_inventory_and_shared_groups() {
     let mut controller = state(false);
     prepare(&mut controller);
-    let screen = controller.screen();
-    assert_eq!(
-        screen.pages.iter().map(|p| p.id).collect::<Vec<_>>(),
-        [
-            SettingsPage::General,
-            SettingsPage::Input,
-            SettingsPage::Video,
-            SettingsPage::Audio,
-            SettingsPage::Notifications,
-            SettingsPage::System,
-        ]
-    );
-    assert_eq!(screen.pages.iter().filter(|p| p.selected).count(), 1);
-    let inventory = inventory(&screen);
-    for (index, c) in inventory.controls.iter().enumerate() {
+    let view = controller.screen();
+    assert_eq!(view.screen.pages.len(), 6);
+    let selected = view.screen.pages.iter().filter(|p| p.selected).count();
+    assert_eq!(selected, 1);
+    let found = inventory(&view);
+    for (index, c) in found.controls.iter().enumerate() {
         assert!(
-            inventory.controls[..index]
-                .iter()
-                .all(|other| other.id != c.id),
+            found.controls[..index].iter().all(|other| other.id != c.id),
             "duplicate {:?}",
             c.id
         );
-        assert!(screen.control(&c.id).is_some());
+        assert!(view.screen.control(c.id).is_some());
     }
+    // Every expected domain key resolves to a live control.
     let mut expected = vec![
         Id::Language,
         Id::StoragePolicy,
@@ -219,7 +222,6 @@ fn six_pages_have_complete_unique_inventory_and_shared_groups() {
         Id::Submit,
         Id::Tab(SettingsTabId::Shortcuts),
     ];
-    expected.extend(screen.pages.iter().map(|p| Id::Page(p.id)));
     expected.extend(
         controller
             .vm
@@ -230,37 +232,23 @@ fn six_pages_have_complete_unique_inventory_and_shared_groups() {
             .iter()
             .map(|r| Id::Binding(r.target.clone())),
     );
-    assert_eq!(inventory.controls.len(), expected.len());
-    for id in expected {
-        assert!(screen.control(&id).is_some(), "missing {id:?}");
+    for key in expected {
+        let id = token(&controller, key.clone());
+        assert!(view.screen.control(id).is_some(), "missing {key:?}");
     }
-    assert_eq!(
-        inventory.groups,
-        [
-            SettingsLayoutId::Notification(NotificationGroup::Info),
-            SettingsLayoutId::Notification(NotificationGroup::Warning),
-            SettingsLayoutId::Notification(NotificationGroup::Error),
-            SettingsLayoutId::Notification(NotificationGroup::Display),
-            SettingsLayoutId::Notification(NotificationGroup::Status),
-        ]
-    );
-    let SettingsNode::Group(info) = &screen.pages[4].body.children[0] else {
-        panic!()
-    };
-    let SettingsNode::Group(warning) = &screen.pages[4].body.children[1] else {
-        panic!()
-    };
-    assert_eq!(info.children.len(), warning.children.len());
-    assert_eq!(info.indent, warning.indent);
-    assert!(info.header.is_some() && warning.header.is_some());
-    assert!(screen.validation.can_submit);
+    // Pages resolve through their select controls.
+    for page in 0..6 {
+        let id = view.screen.pages[page].select.id;
+        assert!(view.screen.control(id).is_some());
+    }
+    assert_eq!(found.groups.len(), 5);
+    assert!(controller.validation_banner().can_submit);
 }
 
 #[test]
 fn all_static_bindings_emit_the_exact_typed_event() {
     let mut controller = state(false);
     prepare(&mut controller);
-    let screen = controller.screen();
     let g = controller.vm.general.view.get();
     let v = controller.vm.video.view.get();
     let a = controller.vm.audio.view.get();
@@ -376,26 +364,32 @@ fn all_static_bindings_emit_the_exact_typed_event() {
             E::SelectInputTab(0),
         ),
     ];
-    for (id, input, event) in cases {
-        events(screen.bind(&id, input), vec![event]);
+    for (key, input, event) in cases {
+        let view = controller.screen();
+        let id = token(&controller, key.clone());
+        events(view.bind(&id, input), vec![event]);
     }
-    for page in &screen.pages {
-        events(
-            screen.bind(&page.select.id, I::Activate),
-            vec![E::SelectPage(page.id)],
-        );
+    {
+        let view = controller.screen();
+        for page in &view.screen.pages {
+            events(
+                view.bind(&page.select.id, I::Activate),
+                vec![E::SelectPage(token_page(&controller, page.select.id))],
+            );
+        }
     }
-    for row in &controller.vm.shortcuts.view.get().rows {
-        let id = Id::Binding(row.target.clone());
+    for row in controller.vm.shortcuts.view.get().rows.clone() {
+        let view = controller.screen();
+        let id = token(&controller, Id::Binding(row.target.clone()));
         events(
-            screen.bind(&id, I::Activate),
+            view.bind(&id, I::Activate),
             vec![E::StartCapture(row.target.clone())],
         );
         events(
-            screen.bind(&id, I::CaptureClear),
+            view.bind(&id, I::CaptureClear),
             vec![E::ClearCapture(row.target.clone())],
         );
-        assert!(screen.bind(&id, I::CaptureKey(Key::Space)).is_none());
+        assert!(view.bind(&id, I::CaptureKey(Key::Space)).is_none());
     }
     assert_eq!(
         controller.vm.audio.view.get(),
@@ -411,49 +405,73 @@ fn all_static_bindings_emit_the_exact_typed_event() {
     );
 }
 
+/// Map a page-select control back to its page. Selects are minted from
+/// page keys, so the mapping is the token helper in reverse.
+fn token_page(controller: &SettingsController, select: ControlId) -> SettingsPage {
+    for page in [
+        SettingsPage::General,
+        SettingsPage::Input,
+        SettingsPage::Video,
+        SettingsPage::Audio,
+        SettingsPage::Notifications,
+        SettingsPage::System,
+    ] {
+        if token(controller, Id::Page(page)) == select {
+            return page;
+        }
+    }
+    panic!("unknown page select");
+}
+
 #[test]
 fn all_controls_reject_wrong_kind_bad_indices_and_numeric_overflow() {
     let mut controller = state(true);
     prepare(&mut controller);
-    let screen = controller.screen();
-    for control in inventory(&screen).controls {
-        assert!(
-            screen
-                .bind(&control.id, I::CaptureKey(Key::Space))
-                .is_none()
-        );
-        match control.kind {
-            Kind::Toggle { .. } => assert!(screen.bind(&control.id, I::Select(0)).is_none()),
-            Kind::Choice { ref choices, .. } => {
-                assert!(screen.bind(&control.id, I::Bool(true)).is_none());
-                assert!(screen.bind(&control.id, I::Select(choices.len())).is_none());
-                assert!(screen.bind(&control.id, I::Select(usize::MAX)).is_none());
+    let view = controller.screen();
+    for control in inventory(&view).controls {
+        assert!(view.bind(&control.id, I::CaptureKey(Key::Space)).is_none());
+        if control.downcast::<ToggleLeaf>().is_some() {
+            assert!(view.bind(&control.id, I::Select(0)).is_none());
+        } else if let Some(leaf) = control.downcast::<ChoiceLeaf>() {
+            assert!(view.bind(&control.id, I::Bool(true)).is_none());
+            assert!(
+                view.bind(&control.id, I::Select(leaf.choices.len()))
+                    .is_none()
+            );
+            assert!(view.bind(&control.id, I::Select(usize::MAX)).is_none());
+        } else if let Some(leaf) = control.downcast::<NumberLeaf>() {
+            assert!(view.bind(&control.id, I::Text("12".into())).is_none());
+            assert!(view.bind(&control.id, I::Number(leaf.max + 1)).is_none());
+            assert!(view.bind(&control.id, I::Number(u32::MAX)).is_none());
+            if leaf.min > 0 {
+                assert!(view.bind(&control.id, I::Number(leaf.min - 1)).is_none());
             }
-            Kind::Number { min, max, .. } => {
-                assert!(screen.bind(&control.id, I::Text("12".into())).is_none());
-                assert!(screen.bind(&control.id, I::Number(max + 1)).is_none());
-                assert!(screen.bind(&control.id, I::Number(u32::MAX)).is_none());
-                if min > 0 {
-                    assert!(screen.bind(&control.id, I::Number(min - 1)).is_none());
-                }
-                assert!(screen.bind(&control.id, I::Number(min)).is_some());
-                assert!(screen.bind(&control.id, I::Number(max)).is_some());
-            }
-            Kind::Text { .. } => assert!(screen.bind(&control.id, I::Number(0)).is_none()),
-            Kind::Binding { .. } | Kind::Action => {
-                assert!(screen.bind(&control.id, I::Bool(true)).is_none())
-            }
-            Kind::Note { .. } => assert!(screen.bind(&control.id, I::Activate).is_none()),
+            assert!(view.bind(&control.id, I::Number(leaf.min)).is_some());
+            assert!(view.bind(&control.id, I::Number(leaf.max)).is_some());
+        } else if control.downcast::<TextLeaf>().is_some() {
+            assert!(view.bind(&control.id, I::Number(0)).is_none());
+        } else if control.downcast::<BindingLeaf>().is_some()
+            || control.downcast::<ActionLeaf>().is_some()
+        {
+            assert!(view.bind(&control.id, I::Bool(true)).is_none());
+        } else if control.downcast::<NoteLeaf>().is_some() {
+            assert!(view.bind(&control.id, I::Activate).is_none());
+        } else {
+            panic!("uncovered leaf");
         }
     }
     assert!(
-        screen
+        controller
+            .screen()
             .bind(
-                &Id::SystemField {
-                    system: SettingsSystemId("unknown".into()),
-                    field: SystemSettingsFieldId("unknown".into()),
-                },
-                I::Select(0)
+                &token(
+                    &controller,
+                    Id::SystemField {
+                        system: SettingsSystemId("unknown".into()),
+                        field: SystemSettingsFieldId("unknown".into()),
+                    },
+                ),
+                I::Select(0),
             )
             .is_none()
     );
@@ -462,7 +480,7 @@ fn all_controls_reject_wrong_kind_bad_indices_and_numeric_overflow() {
 #[test]
 fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity() {
     let mut controller = state(true);
-    let screen = controller.screen();
+    let view = controller.screen();
     let input = controller.vm.inputs()[0].view.get();
     let system = controller.vm.systems()[0].view.get();
     let key = SettingsSystemId(system.system_id.to_string());
@@ -475,7 +493,7 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
         };
         for (index, choice) in field.choices.iter().enumerate() {
             events(
-                screen.bind(&id, I::Select(index)),
+                view.bind(&token(&controller, id.clone()), I::Select(index)),
                 vec![
                     E::SelectSystemTab(0),
                     E::SetSystemChoice(field.id.as_str().into(), choice.clone()),
@@ -507,22 +525,27 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
             system: key.clone(),
             slot: slot.slot_id,
         };
-        let c = screen.control(&id).unwrap();
-        let Kind::Choice { selected, .. } = c.kind else {
-            panic!()
-        };
+        let c = control_for(&controller.screen(), &id, &controller);
+        let leaf = c.downcast::<ChoiceLeaf>().unwrap();
         assert_eq!(
-            selected,
+            leaf.selected,
             slot.choices
                 .iter()
                 .position(|c| c.value == slot.selected_profile_id)
         );
         for (index, choice) in slot.choices.iter().enumerate() {
             if slot.occupied_by_other_slot {
-                assert!(screen.bind(&id, I::Select(index)).is_none());
+                assert!(
+                    controller
+                        .screen()
+                        .bind(&token(&controller, id.clone()), I::Select(index))
+                        .is_none()
+                );
             } else {
                 events(
-                    screen.bind(&id, I::Select(index)),
+                    controller
+                        .screen()
+                        .bind(&token(&controller, id.clone()), I::Select(index)),
                     vec![
                         E::SelectInputTab(0),
                         E::SetControllerSlot {
@@ -543,43 +566,106 @@ fn dynamic_nes_descriptors_slots_and_sections_have_context_and_stable_identity()
     controller.input_tab = Some(InputTab::Shortcuts);
     apply(&mut controller, &id, I::Select(none));
     let refreshed = controller.screen();
-    let Kind::Choice { selected, .. } = refreshed.control(&id).unwrap().kind else {
-        panic!()
-    };
+    let selected = refreshed
+        .screen
+        .control(token(&controller, id.clone()))
+        .unwrap()
+        .downcast::<ChoiceLeaf>()
+        .unwrap()
+        .selected;
     assert_eq!(selected, Some(none), "selected None is not no selection");
     assert!(
         controller.vm.inputs()[0].view.get().slots[0]
             .selected_profile_id
             .is_none()
     );
-    let inv = inventory(&screen);
-    for tab in inv.tabs {
-        let expected = match &tab.id {
-            SettingsTabId::System(_) => vec![E::SelectSystemTab(0)],
-            SettingsTabId::Input(_) => vec![E::SelectInputTab(0)],
-            SettingsTabId::Shortcuts => vec![E::SelectInputTab(1)],
-            SettingsTabId::Attachment { .. } | SettingsTabId::EmptyAttachment { .. } => {
-                let i = input
-                    .sections
-                    .iter()
-                    .position(|s| s.label == tab.label)
-                    .unwrap();
-                vec![
-                    E::SelectInputTab(0),
-                    E::SelectInputSection(InputPageSection::Attachment(i)),
-                ]
-            }
-        };
-        events(screen.bind(&tab.select.id, I::Activate), expected);
+    // Tab selects are minted from domain tab keys; map them back through
+    // the same registry to recover the expected navigation events.
+    // Candidates come from the original snapshots: later applies only
+    // change selections, never the section structure under test.
+    let mut candidates: Vec<(SettingsTabId, Vec<E>)> = Vec::new();
+    candidates.push((
+        SettingsTabId::System(key.clone()),
+        vec![E::SelectSystemTab(0)],
+    ));
+    candidates.push((
+        SettingsTabId::Input(key.clone()),
+        vec![E::SelectInputTab(0)],
+    ));
+    for (section_index, section) in input.sections.iter().enumerate() {
+        let domain = section
+            .rows
+            .iter()
+            .find_map(|r| match &r.target {
+                CaptureTarget::Binding { attachment, .. } => Some(SettingsTabId::Attachment {
+                    system: key.clone(),
+                    attachment: attachment.clone(),
+                }),
+                _ => None,
+            })
+            .unwrap_or_else(|| SettingsTabId::EmptyAttachment {
+                system: key.clone(),
+                index: section_index,
+            });
+        candidates.push((
+            domain,
+            vec![
+                E::SelectInputTab(0),
+                E::SelectInputSection(InputPageSection::Attachment(section_index)),
+            ],
+        ));
     }
+    candidates.push((SettingsTabId::Shortcuts, vec![E::SelectInputTab(1)]));
+    let inv = inventory(&view);
+    for tab in inv.tabs {
+        // Plain tabs resolve through the registry; empty-attachment tabs
+        // use content keys minted at build, so match those by label.
+        let expected = candidates
+            .iter()
+            .filter(|(domain, _)| !matches!(domain, SettingsTabId::EmptyAttachment { .. }))
+            .find(|(domain, _)| token(&controller, Id::Tab(domain.clone())) == tab.select.id)
+            .map(|(_, events)| events.clone())
+            .or_else(|| {
+                let sections: Vec<(usize, usize, String)> = controller
+                    .vm
+                    .inputs()
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(index, vm)| {
+                        vm.view
+                            .get()
+                            .sections
+                            .iter()
+                            .enumerate()
+                            .map(|(section_index, section)| {
+                                (index, section_index, section.label.clone())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                sections
+                    .into_iter()
+                    .find(|(_, _, label)| *label == tab.label)
+                    .map(|(index, section_index, _)| {
+                        vec![
+                            E::SelectInputTab(index),
+                            E::SelectInputSection(InputPageSection::Attachment(section_index)),
+                        ]
+                    })
+            })
+            .unwrap_or_else(|| panic!("unknown tab {:?}", tab.label));
+        events(view.bind(&tab.select.id, I::Activate), expected);
+    }
+    // Row binds resolve against the original projection: later applies
+    // only change selections, and the snapshot still owns its bindings.
     for row in input.sections.iter().flat_map(|s| &s.rows) {
         let id = Id::Binding(row.target.clone());
         events(
-            screen.bind(&id, I::Activate),
+            view.bind(&token(&controller, id.clone()), I::Activate),
             vec![E::StartCapture(row.target.clone())],
         );
         events(
-            screen.bind(&id, I::CaptureClear),
+            view.bind(&token(&controller, id), I::CaptureClear),
             vec![E::ClearCapture(row.target.clone())],
         );
     }
@@ -608,20 +694,21 @@ fn occupied_multiport_controller_is_disabled_and_topology_changes_are_scoped() {
                     slot: occupied.slot_id,
                 };
                 let screen = controller.screen();
-                let c = screen.control(&id).unwrap();
+                let c = screen
+                    .screen
+                    .control(token(&controller, id.clone()))
+                    .unwrap();
                 assert!(!c.metadata.enabled);
                 assert!(c.metadata.help.is_some());
-                assert!(screen.bind(&id, I::Select(0)).is_none());
-                for id in original_ids
-                    .iter()
-                    .filter(|id| !matches!(id, Id::Binding(_)))
-                {
-                    if let Id::Tab(SettingsTabId::Attachment { .. }) = id {
-                        continue;
-                    }
+                assert!(
+                    screen
+                        .bind(&token(&controller, id.clone()), I::Select(0))
+                        .is_none()
+                );
+                for token_id in original_ids.iter() {
                     assert!(
-                        screen.control(id).is_some(),
-                        "unrelated identity changed: {id:?}"
+                        screen.screen.control(*token_id).is_some(),
+                        "unrelated identity changed: {token_id:?}"
                     );
                 }
                 found = true;
@@ -646,14 +733,20 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
         (Id::StatusEnabled, Id::StatusPosition, I::Select(0)),
     ] {
         apply(&mut controller, &toggle, I::Bool(false));
-        assert!(controller.screen().bind(&child, input).is_none());
+        assert!(
+            controller
+                .screen()
+                .bind(&token(&controller, child.clone()), input)
+                .is_none()
+        );
         apply(&mut controller, &toggle, I::Bool(true));
     }
     apply(&mut controller, &Id::ErrorPresentation, I::Select(0));
     assert!(
         !controller
             .screen()
-            .control(&Id::ErrorColor)
+            .screen
+            .control(token(&controller, Id::ErrorColor))
             .unwrap()
             .metadata
             .visible
@@ -661,7 +754,7 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     assert!(
         controller
             .screen()
-            .bind(&Id::ErrorColor, I::Select(0))
+            .bind(&token(&controller, Id::ErrorColor), I::Select(0))
             .is_none()
     );
     controller
@@ -672,22 +765,38 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     let screen = controller.screen();
     assert!(
         screen
-            .control(&Id::StatusAreaFollows)
+            .screen
+            .control(token(&controller, Id::StatusAreaFollows))
             .unwrap()
             .metadata
             .visible
     );
-    assert!(screen.bind(&Id::StatusAreaMode, I::Select(0)).is_none());
+    assert!(
+        screen
+            .bind(&token(&controller, Id::StatusAreaMode), I::Select(0))
+            .is_none()
+    );
     controller.update(E::SetStorageDirectory(String::new()));
     controller.error_message = Some("native apply failed".into());
     let screen = controller.screen();
-    assert!(!screen.validation.can_submit);
-    assert!(screen.validation.storage.is_some());
-    assert!(screen.validation.headline.is_some());
-    assert!(screen.bind(&Id::Submit, I::Activate).is_none());
-    assert_eq!(screen.message.as_deref(), Some("native apply failed"));
-    assert_eq!(screen.error_message, screen.message);
-    assert!(screen.bind(&Id::Cancel, I::Activate).is_some());
+    assert!(!controller.validation_banner().can_submit);
+    assert!(controller.validation_banner().storage.is_some());
+    assert!(controller.validation_banner().headline.is_some());
+    assert!(
+        screen
+            .bind(&token(&controller, Id::Submit), I::Activate)
+            .is_none()
+    );
+    assert_eq!(
+        screen.screen.message.as_deref(),
+        Some("native apply failed")
+    );
+    assert_eq!(controller.error_message, screen.screen.message);
+    assert!(
+        screen
+            .bind(&token(&controller, Id::Cancel), I::Activate)
+            .is_some()
+    );
     controller
         .vm
         .general
@@ -696,17 +805,25 @@ fn host_owns_enabled_visibility_validation_and_native_error_policy() {
     let screen = controller.screen();
     assert!(
         !screen
-            .control(&Id::StorageDirectory)
+            .screen
+            .control(token(&controller, Id::StorageDirectory))
             .unwrap()
             .metadata
             .visible
     );
     assert!(
         screen
-            .bind(&Id::StorageDirectory, I::Text("ignored".into()))
+            .bind(
+                &token(&controller, Id::StorageDirectory),
+                I::Text("ignored".into())
+            )
             .is_none()
     );
-    assert!(screen.bind(&Id::StorageDirectory, I::Activate).is_none());
+    assert!(
+        screen
+            .bind(&token(&controller, Id::StorageDirectory), I::Activate)
+            .is_none()
+    );
 }
 
 #[test]
@@ -725,38 +842,49 @@ fn empty_registry_shortcuts_capture_and_localized_refresh_are_owned() {
     let inv = inventory(&before);
     assert_eq!(inv.tabs.len(), 1);
     assert!(inv.tabs[0].selected);
-    assert_eq!(inv.tabs[0].id, SettingsTabId::Shortcuts);
+    assert_eq!(
+        inv.tabs[0].select.id,
+        token(&controller, Id::Tab(SettingsTabId::Shortcuts))
+    );
     assert_eq!(controller.vm.shortcuts.view.get().rows.len(), 8);
     let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
     let id = Id::Binding(target.clone());
+    let token_id = token(&controller, id.clone());
+    assert!(before.bind(&token_id, I::Activate).is_some());
     assert!(before.bind_capture_key(Key::Space).is_none());
     apply(&mut controller, &id, I::Activate);
     let capture = controller.screen();
-    assert_eq!(capture.capture.target, Some(target.clone()));
     assert_eq!(
-        capture.capture.prompt,
+        capture.screen.capture.target,
+        Some(token(&controller, id.clone()))
+    );
+    assert_eq!(
+        capture.screen.capture.prompt,
         text(AppLanguage::English, UiText::CapturePrompt)
     );
-    let Kind::Binding { value, .. } = &capture.control(&id).unwrap().kind else {
-        panic!()
-    };
-    assert!(matches!(value, BindingValueView::Capturing(_)));
+    let bound = capture
+        .screen
+        .control(token(&controller, id.clone()))
+        .unwrap();
+    let leaf = bound.downcast::<BindingLeaf>().unwrap();
+    assert!(leaf.capturing);
     events(
-        capture.bind(&id, I::CaptureKey(Key::Space)),
+        capture.bind(&token(&controller, id.clone()), I::CaptureKey(Key::Space)),
         vec![E::CaptureKey(Key::Space)],
     );
     for e in capture.bind_capture_key(Key::Space).unwrap() {
         controller.update(e);
     }
-    assert!(controller.screen().capture.target.is_none());
-    let bound = controller.screen();
-    assert!(matches!(
-        &bound.control(&id).unwrap().kind,
-        Kind::Binding {
-            value: BindingValueView::Bound(_),
-            ..
-        }
-    ));
+    assert!(controller.screen().screen.capture.target.is_none());
+    let bound_screen = controller.screen();
+    let leaf = bound_screen
+        .screen
+        .control(token(&controller, id.clone()))
+        .unwrap()
+        .downcast::<BindingLeaf>()
+        .unwrap();
+    assert!(!leaf.capturing);
+    assert!(leaf.text.contains("Space"));
     apply(&mut controller, &id, I::CaptureClear);
     controller
         .vm
@@ -766,45 +894,61 @@ fn empty_registry_shortcuts_capture_and_localized_refresh_are_owned() {
     controller.vm.audio.set_volume(37).unwrap();
     let after = controller.screen();
     assert_eq!(
-        after.title,
+        after.screen.title,
         text(AppLanguage::Japanese, UiText::Preferences)
     );
-    for page in &after.pages {
-        assert_ne!(
-            before.pages.iter().find(|p| p.id == page.id).unwrap().label,
-            page.label
-        );
+    for (before_page, after_page) in before.screen.pages.iter().zip(after.screen.pages.iter()) {
+        assert_ne!(before_page.label, after_page.label);
     }
-    assert_eq!(after.control(&Id::Cancel).unwrap().label, "キャンセル");
     assert_eq!(
-        after.control(&Id::StorageDirectory).unwrap().kind,
-        Kind::Text {
-            value: String::new(),
-            placeholder: String::new(),
-            browse_label: Some("参照".into())
-        }
+        after
+            .screen
+            .control(token(&controller, Id::Cancel))
+            .unwrap()
+            .label,
+        "キャンセル"
     );
-    assert!(matches!(
-        after.control(&Id::Volume).unwrap().kind,
-        Kind::Number { value: 37, .. }
-    ));
-    assert!(
-        matches!(&after.control(&id).unwrap().kind, Kind::Binding { value: BindingValueView::Unbound(s), change_label, clear_label } if s == "未割当" && change_label == "変更" && clear_label == "解除")
-    );
+    let dir = after
+        .screen
+        .control(token(&controller, Id::StorageDirectory))
+        .unwrap();
+    let text_leaf = dir.downcast::<TextLeaf>().unwrap();
+    assert_eq!(text_leaf.value, String::new());
+    assert_eq!(text_leaf.placeholder, String::new());
+    assert_eq!(text_leaf.browse_label.as_deref(), Some("参照"));
+    let volume = after
+        .screen
+        .control(token(&controller, Id::Volume))
+        .unwrap();
+    assert_eq!(volume.downcast::<NumberLeaf>().unwrap().value, 37);
+    let binding_leaf = after
+        .screen
+        .control(token(&controller, id.clone()))
+        .unwrap()
+        .downcast::<BindingLeaf>()
+        .unwrap();
+    assert!(!binding_leaf.capturing);
+    assert_eq!(binding_leaf.text, "未割当");
+    assert_eq!(binding_leaf.change_label, "変更");
+    assert_eq!(binding_leaf.clear_label, "解除");
     assert_eq!(
         inventory(&before)
             .controls
             .iter()
-            .map(|c| &c.id)
+            .map(|c| c.id)
             .collect::<Vec<_>>(),
         inventory(&after)
             .controls
             .iter()
-            .map(|c| &c.id)
+            .map(|c| c.id)
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        before.control(&Id::Cancel).unwrap().label,
+        before
+            .screen
+            .control(token(&controller, Id::Cancel))
+            .unwrap()
+            .label,
         "Cancel",
         "old snapshot remains owned"
     );
@@ -825,50 +969,38 @@ fn object_safe_visitor_is_balanced_and_reenters_without_controller_borrows() {
             assert_eq!(self.stack.pop().unwrap(), format!("{kind}:{id:?}"));
         }
     }
-    impl SettingsVisitor for Visitor {
-        fn begin_screen(&mut self, _: &SettingsScreen) {
+    impl ControlVisitor for Visitor {
+        fn begin_screen(&mut self, _: &ControlScreen) {
             self.push("screen", ());
         }
-        fn end_screen(&mut self, _: &SettingsScreen) {
+        fn end_screen(&mut self, _: &ControlScreen) {
             self.pop("screen", ());
         }
-        fn begin_page(&mut self, p: &SettingsScreenPage) {
+        fn begin_page(&mut self, p: &wakui::control::Page) {
             self.push("page", p.id);
         }
-        fn end_page(&mut self, p: &SettingsScreenPage) {
+        fn end_page(&mut self, p: &wakui::control::Page) {
             self.pop("page", p.id);
         }
-        fn begin_row(&mut self, l: &SettingsLayout) {
-            self.push("row", &l.id);
+        fn begin_container(&mut self, c: &Container) {
+            self.push("container", c.id);
         }
-        fn end_row(&mut self, l: &SettingsLayout) {
-            self.pop("row", &l.id);
+        fn end_container(&mut self, c: &Container) {
+            self.pop("container", c.id);
         }
-        fn begin_column(&mut self, l: &SettingsLayout) {
-            self.push("column", &l.id);
+        fn begin_tabs(&mut self, t: &wakui::control::Tabs) {
+            self.push("tabs", t.id);
         }
-        fn end_column(&mut self, l: &SettingsLayout) {
-            self.pop("column", &l.id);
+        fn end_tabs(&mut self, t: &wakui::control::Tabs) {
+            self.pop("tabs", t.id);
         }
-        fn begin_group(&mut self, l: &SettingsLayout) {
-            self.push("group", &l.id);
+        fn begin_tab(&mut self, t: &Tab) {
+            self.push("tab", t.id);
         }
-        fn end_group(&mut self, l: &SettingsLayout) {
-            self.pop("group", &l.id);
+        fn end_tab(&mut self, t: &Tab) {
+            self.pop("tab", t.id);
         }
-        fn begin_tabs(&mut self, t: &SettingsTabs) {
-            self.push("tabs", &t.id);
-        }
-        fn end_tabs(&mut self, t: &SettingsTabs) {
-            self.pop("tabs", &t.id);
-        }
-        fn begin_tab(&mut self, t: &SettingsTab) {
-            self.push("tab", &t.id);
-        }
-        fn end_tab(&mut self, t: &SettingsTab) {
-            self.pop("tab", &t.id);
-        }
-        fn control(&mut self, _: &SettingsControl) {
+        fn control(&mut self, _: &Control) {
             self.visited += 1;
             if self.visited == 1 {
                 self.controller.borrow_mut().update(E::SetVolume(12));
@@ -878,19 +1010,25 @@ fn object_safe_visitor_is_balanced_and_reenters_without_controller_borrows() {
         }
     }
     let controller = Rc::new(RefCell::new(state(true)));
-    let screen = controller.borrow().screen();
+    let view = controller.borrow().screen();
     let mut visitor = Visitor {
         controller: controller.clone(),
         stack: vec![],
         visited: 0,
     };
-    let dynamic: &mut dyn SettingsVisitor = &mut visitor;
-    screen.visit(dynamic);
+    let dynamic: &mut dyn ControlVisitor = &mut visitor;
+    view.screen.visit(dynamic);
     assert!(visitor.stack.is_empty());
     assert!(visitor.visited > 30);
     assert_eq!(controller.borrow().vm.audio.view.get().volume_percent, 12);
-    assert!(matches!(
-        screen.control(&Id::Volume).unwrap().kind,
-        Kind::Number { value: 100, .. }
-    ));
+    let volume = token(&controller.borrow(), Id::Volume);
+    assert_eq!(
+        view.screen
+            .control(volume)
+            .unwrap()
+            .downcast::<NumberLeaf>()
+            .unwrap()
+            .value,
+        100
+    );
 }

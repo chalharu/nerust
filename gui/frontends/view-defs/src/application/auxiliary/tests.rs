@@ -3,9 +3,8 @@ use crate::application::tests::Fixture;
 use crate::widget_session::WidgetSession;
 use crate::widget_session::take_submission;
 use nerust_gui_shell::registry::SystemRegistry;
-use wakui::control::{
-    Control, ControlDisplay, ControlEvent, ControlInput, ControlKind, ControlVisitor,
-};
+use wakui::control::{Control, ControlDisplay, ControlEvent, ControlInput, ControlVisitor};
+use wakui::leaf::{ChoiceLeaf, NumberLeaf};
 use wakui::pause::PauseOwner;
 use wakui::window::WidgetContents;
 
@@ -48,10 +47,29 @@ fn input(session: &mut WidgetSession, predicate: impl Fn(&Control) -> bool, valu
     assert!(session.dispatch(ControlEvent::new(id, value)).is_empty());
 }
 
+fn history_texts(session: &WidgetSession) -> Vec<String> {
+    let mut out = Vec::new();
+    for control in controls(session) {
+        if let Some(list) = control.downcast::<wakui::leaf::ListLeaf>() {
+            for row in &list.rows {
+                for cell in &row.cells {
+                    if let Some(note) = cell.downcast::<wakui::leaf::NoteLeaf>() {
+                        out.push(note.text.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn volume(session: &mut WidgetSession, value: u32) {
     input(
         session,
-        |c| matches!(c.kind, ControlKind::Number { max: 100, .. }),
+        |c| {
+            c.downcast::<NumberLeaf>()
+                .is_some_and(|leaf| leaf.max == 100)
+        },
         ControlInput::Number(value),
     );
 }
@@ -164,14 +182,10 @@ fn save_failure_rolls_back_but_preserves_window_draft_and_pause_for_retry() {
     assert!(!mailbox.close_requested());
     assert!(mailbox.take_invalidated());
     assert!(session.screen().message.is_some());
-    assert!(controls(&session).iter().any(|c| matches!(
-        c.kind,
-        ControlKind::Number {
-            value: 26,
-            max: 100,
-            ..
-        }
-    )));
+    assert!(controls(&session).iter().any(|c| {
+        c.downcast::<NumberLeaf>()
+            .is_some_and(|leaf| leaf.value == 26 && leaf.max == 100)
+    }));
     std::fs::remove_dir(&path).unwrap();
     submit(&mut session);
     let pending = take_submission(&mailbox).unwrap();
@@ -202,14 +216,16 @@ fn generic_history_filter_clear_close_mutate_real_session_and_publish_rows() {
     let mut windows = AuxWindows::new();
     let (id, mut session) = prepare(host, &mut windows, AuxKind::History);
     assert!(!host.pause_held());
-    input(
-        &mut session,
-        |c| matches!(&c.kind, ControlKind::Note { text } if text.contains("generic history row")),
-        ControlInput::Activate,
+    // Row text lives in list cells now; selecting the filter is the
+    // first real input. Presence is asserted on the projected rows.
+    assert!(
+        history_texts(&session)
+            .iter()
+            .any(|text| text.contains("generic history row"))
     );
     input(
         &mut session,
-        |c| matches!(c.kind, ControlKind::Choice { .. }),
+        |c| c.downcast::<ChoiceLeaf>().is_some(),
         ControlInput::Select(3),
     );
     let language = host.settings_snapshot().shared.general.language;
@@ -442,9 +458,7 @@ fn invalid_draft_cannot_submit_and_cancel_releases_only_settings_pause() {
         .into_iter()
         .find(|c| c.label == text(language, UiText::SaveStoragePolicy))
         .unwrap();
-    let ControlKind::Choice { choices, .. } = policy.kind else {
-        panic!("storage choices")
-    };
+    let choices = policy.downcast::<ChoiceLeaf>().unwrap().choices.clone();
     let custom = choices
         .iter()
         .position(|label| label == text(language, UiText::CustomDirectory))

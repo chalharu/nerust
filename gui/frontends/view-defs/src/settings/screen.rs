@@ -1,16 +1,21 @@
-//! Owned settings presentation. No editor borrows or native widgets survive construction.
+//! Owned settings dialog state, projected directly as a generic [`ControlScreen`].
 //!
-//! Retain IDs in callbacks, then resolve against a fresh screen before binding:
-//! a snapshot intentionally does not track later topology/enabled-state changes.
+//! There is no intermediate settings widget tree: the builder emits
+//! framework controls with stable [`ControlId`]s minted from the domain key
+//! enums below, and [`BindingTable`] maps those IDs back to domain events.
+//! Native adapters only see the projected screen.
 
-use nerust_gui_viewmodel::settings::{
-    ValidationBanner,
-    dto::{BindingValueView, CaptureStateView},
-};
 use nerust_input_traits::AttachmentId;
 use nerust_settings_core::{editor::CaptureTarget, model::language::AppLanguage};
 use nerust_system_traits::factory::descriptor::SystemSettingsFieldId;
 use wakui::Key;
+use wakui::control::{
+    Capture, ColumnPolicy, Container, Control, ControlDisplay, ControlId, ControlInput,
+    ControlMetadata, ControlScreen, GroupPolicy, IdRegistry, Node, Page, RowPolicy, Tabs,
+};
+use wakui::leaf::{
+    ActionLeaf, BindingLeaf, ChoiceLeaf, ControlLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf,
+};
 
 use super::{SettingsController, SettingsEvent, SettingsPage};
 
@@ -53,6 +58,7 @@ pub enum SettingsTabsId {
     Attachments(SettingsSystemId),
 }
 
+/// Stable domain key for a bindable settings control.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsControlId {
     Page(SettingsPage),
@@ -101,6 +107,7 @@ pub enum SettingsControlId {
     Submit,
 }
 
+/// Stable domain key for a settings container.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsLayoutId {
     Page(SettingsPage),
@@ -112,74 +119,33 @@ pub enum SettingsLayoutId {
     Footer,
 }
 
-/// Visibility is intrinsic, not whether an ancestor page/tab is selected.
-/// Visitors can retain hidden-page widgets; immediate-mode visitors use `selected`.
+/// Internal stable key unifying every minted ID, including content-addressed
+/// legacy rows that lack domain identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingsMetadata {
-    pub enabled: bool,
-    pub visible: bool,
-    pub accessible_label: String,
-    pub help: Option<String>,
+pub(crate) enum StableKey {
+    Control(SettingsControlId),
+    Layout(SettingsLayoutId),
+    Tabs(SettingsTabsId),
+    Tab(SettingsTabId),
+    Page(SettingsPage),
+    EmptyControl(ContentKey),
+    EmptyLayout(ContentKey),
+    EmptyTab(ContentKey),
+    Conflict(ContentKey),
+    ConflictRow(ContentKey),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SettingsDisplay {
-    Standard,
-    Primary,
-    Secondary,
-    Note,
-    Heading,
-}
+pub(crate) type StableKeyRegistry = IdRegistry<StableKey>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SettingsControlKind {
-    Toggle {
-        value: bool,
-    },
-    Choice {
-        choices: Vec<String>,
-        /// None means no matching choice; Some(index) may select a domain None.
-        selected: Option<usize>,
-    },
-    Number {
-        value: u32,
-        min: u32,
-        max: u32,
-        /// Increment hint only, not a divisibility constraint.
-        step: u32,
-        unit: String,
-        formatted: String,
-    },
-    Text {
-        value: String,
-        placeholder: String,
-        /// Activate on this text control means browse; Text means edit.
-        browse_label: Option<String>,
-    },
-    Binding {
-        value: BindingValueView,
-        change_label: String,
-        clear_label: String,
-    },
-    Action,
-    Note {
-        text: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ControlInput {
-    Bool(bool),
-    Select(usize),
-    Number(u32),
-    Text(String),
-    Activate,
-    CaptureClear,
-    CaptureKey(Key),
+pub(crate) struct ContentKey {
+    pub system: SettingsSystemId,
+    pub label: String,
+    pub occurrence: usize,
 }
 
 #[derive(Debug, Clone)]
-enum ControlBinding {
+pub(crate) enum ControlBinding {
     Toggle(fn(bool) -> SettingsEvent),
     Choice(Vec<SettingsEvent>),
     Number(fn(u32) -> SettingsEvent),
@@ -189,80 +155,74 @@ enum ControlBinding {
     None,
 }
 
-#[derive(Debug, Clone)]
-pub struct SettingsControl {
-    pub id: SettingsControlId,
-    pub label: String,
-    pub metadata: SettingsMetadata,
-    pub display: SettingsDisplay,
-    pub kind: SettingsControlKind,
-}
-
-/// Domain binding table, kept separate from the pure view tree.
-/// The screen owns both; controls never carry their own binding.
+/// Domain binding table, keyed by minted [`ControlId`].
 #[derive(Debug, Clone, Default)]
-pub struct BindingTable(Vec<(SettingsControlId, ControlBinding, Vec<SettingsEvent>)>);
+pub struct BindingTable(Vec<(ControlId, ControlBinding, Vec<SettingsEvent>)>);
 
 impl BindingTable {
-    fn push(
-        &mut self,
-        id: SettingsControlId,
-        binding: ControlBinding,
-        context: Vec<SettingsEvent>,
-    ) {
+    fn push(&mut self, id: ControlId, binding: ControlBinding, context: Vec<SettingsEvent>) {
         self.0.push((id, binding, context));
     }
 
     /// Rejects wrong input kinds, unknown indices, invalid ranges, and disabled
-    /// or intrinsically hidden controls. Apply the returned events in order.
+    /// or hidden controls. Apply the returned events in order.
     pub(crate) fn bind(
         &self,
-        screen: &SettingsScreen,
-        id: &SettingsControlId,
+        screen: &ControlScreen,
+        id: &ControlId,
         input: ControlInput,
     ) -> Option<Vec<SettingsEvent>> {
-        use ControlInput as I;
-        use SettingsControlKind as K;
-        let control = screen.control(id)?;
+        use wakui::control::ControlInput as I;
+        let control = screen.control(*id)?;
         if !control.metadata.enabled || !control.metadata.visible {
             return None;
         }
         let (_, binding, context) = self.0.iter().find(|(entry, _, _)| entry == id)?;
-        let event = match (&control.kind, binding, input) {
-            (K::Toggle { .. }, ControlBinding::Toggle(event), I::Bool(value)) => event(value),
-            (K::Choice { choices, .. }, ControlBinding::Choice(events), I::Select(index)) => {
-                choices.get(index)?;
-                events.get(index)?.clone()
-            }
-            (K::Number { min, max, .. }, ControlBinding::Number(event), I::Number(value))
-                if (*min..=*max).contains(&value) =>
-            {
+        let event = match (binding, input) {
+            (ControlBinding::Toggle(event), I::Bool(value)) => {
+                control.downcast::<ToggleLeaf>()?;
                 event(value)
             }
-            (K::Text { .. }, ControlBinding::Text(event), I::Text(value)) => event(value),
-            (
-                K::Text {
-                    browse_label: Some(_),
-                    ..
-                },
-                ControlBinding::Text(_),
-                I::Activate,
-            ) => SettingsEvent::BrowseStorageDirectory,
-            (K::Action, ControlBinding::Action(event), I::Activate) => event.clone(),
-            (K::Binding { .. }, ControlBinding::Capture(target), I::Activate) => {
+            (ControlBinding::Choice(events), I::Select(index)) => {
+                let leaf = control.downcast::<ChoiceLeaf>()?;
+                leaf.choices.get(index)?;
+                events.get(index)?.clone()
+            }
+            (ControlBinding::Number(event), I::Number(value)) => {
+                let leaf = control.downcast::<NumberLeaf>()?;
+                if !(leaf.min..=leaf.max).contains(&value) {
+                    return None;
+                }
+                event(value)
+            }
+            (ControlBinding::Text(event), I::Text(value)) => {
+                control.downcast::<TextLeaf>()?;
+                event(value)
+            }
+            (ControlBinding::Text(_), I::Activate) => {
+                let leaf = control.downcast::<TextLeaf>()?;
+                leaf.browse_label.as_ref()?;
+                SettingsEvent::BrowseStorageDirectory
+            }
+            (ControlBinding::Action(event), I::Activate) => {
+                control.downcast::<ActionLeaf>()?;
+                event.clone()
+            }
+            (ControlBinding::Capture(target), I::Activate) => {
+                control.downcast::<BindingLeaf>()?;
                 SettingsEvent::StartCapture(target.clone())
             }
-            (K::Binding { .. }, ControlBinding::Capture(target), I::CaptureClear) => {
+            (ControlBinding::Capture(target), I::CaptureClear) => {
+                control.downcast::<BindingLeaf>()?;
                 SettingsEvent::ClearCapture(target.clone())
             }
-            (
-                K::Binding {
-                    value: BindingValueView::Capturing(_),
-                    ..
-                },
-                ControlBinding::Capture(_),
-                I::CaptureKey(key),
-            ) => SettingsEvent::CaptureKey(key),
+            (ControlBinding::Capture(_), I::CaptureKey(key)) => {
+                let leaf = control.downcast::<BindingLeaf>()?;
+                if !leaf.capturing {
+                    return None;
+                }
+                SettingsEvent::CaptureKey(key)
+            }
             _ => return None,
         };
         let mut events = context.clone();
@@ -271,217 +231,388 @@ impl BindingTable {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SettingsLayout {
-    pub id: SettingsLayoutId,
-    pub label: String,
-    pub metadata: SettingsMetadata,
-    pub spacing: u16,
-    pub indent: u16,
-    /// Group header action (e.g. notification enable), visited before children.
-    pub header: Option<SettingsControl>,
-    pub children: Vec<SettingsNode>,
-}
-
-#[derive(Debug, Clone)]
-pub enum SettingsNode {
-    Row(SettingsLayout),
-    Column(SettingsLayout),
-    Group(SettingsLayout),
-    Tabs(SettingsTabs),
-    Control(SettingsControl),
-}
-
-#[derive(Debug, Clone)]
-pub struct SettingsTabs {
-    pub id: SettingsTabsId,
-    pub metadata: SettingsMetadata,
-    pub selected: Option<usize>,
-    pub tabs: Vec<SettingsTab>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SettingsTab {
-    pub id: SettingsTabId,
-    pub label: String,
-    pub selected: bool,
-    pub select: SettingsControl,
-    pub body: SettingsLayout,
-}
-
-#[derive(Debug, Clone)]
-pub struct SettingsScreenPage {
-    pub id: SettingsPage,
-    pub label: String,
-    pub selected: bool,
-    pub select: SettingsControl,
-    pub body: SettingsLayout,
-}
-
-#[derive(Debug, Clone)]
+/// Projected settings screen: the generic control tree plus its binding table.
 pub struct SettingsScreen {
-    pub title: String,
-    pub language: AppLanguage,
-    pub pages: Vec<SettingsScreenPage>,
-    pub validation: ValidationBanner,
-    pub error_message: Option<String>,
-    /// Ready-to-render native error, otherwise validation headline.
-    pub message: Option<String>,
-    pub capture: CaptureStateView,
-    pub footer: SettingsLayout,
-    /// Domain bindings, separate from the pure view tree above.
-    pub bindings: BindingTable,
+    pub screen: ControlScreen,
+    bindings: BindingTable,
 }
 
 impl SettingsController {
     pub fn screen(&self) -> SettingsScreen {
-        builder::build(self)
+        builder::build(self, &mut self.ids.borrow_mut())
     }
 }
 
 impl SettingsScreen {
-    /// Includes every page/tab regardless of selection. Begin/end calls always
-    /// balance. Navigation controls are supplied on page/tab, not emitted twice.
-    pub fn visit(&self, visitor: &mut dyn SettingsVisitor) {
-        visitor.begin_screen(self);
-        for page in &self.pages {
-            visitor.begin_page(page);
-            visit_layout(&page.body, LayoutKind::Column, visitor);
-            visitor.end_page(page);
-        }
-        visit_layout(&self.footer, LayoutKind::Row, visitor);
-        visitor.end_screen(self);
+    /// Resolve a retained native ID against current values before handling input.
+    pub fn control(&self, id: ControlId) -> Option<&Control> {
+        self.screen.control(id)
     }
 
     /// Resolve retained native IDs against current values before handling input.
-    pub fn control(&self, id: &SettingsControlId) -> Option<&SettingsControl> {
-        for page in &self.pages {
-            if &page.select.id == id {
-                return Some(&page.select);
-            }
-            if let Some(control) = find_layout(&page.body, id) {
-                return Some(control);
-            }
-        }
-        find_layout(&self.footer, id)
+    pub fn bind(&self, id: &ControlId, input: ControlInput) -> Option<Vec<SettingsEvent>> {
+        self.bindings.bind(&self.screen, id, input)
     }
 
     /// Native keyboard adapters need no knowledge of the selected input page.
     pub fn bind_capture_key(&self, key: Key) -> Option<Vec<SettingsEvent>> {
-        self.capture.target.as_ref()?;
+        self.screen.capture.target?;
         Some(vec![SettingsEvent::CaptureKey(key)])
     }
 }
 
 impl wakui::binding::ViewDefinition for SettingsScreen {
-    type ViewId = SettingsControlId;
+    type ViewId = ControlId;
     type ViewInput = ControlInput;
     type DomainEvent = SettingsEvent;
 
-    /// Total 1:1 variant mapping; domain validity stays in `bind`.
+    /// Settings has no raster images; hover never binds here.
     fn convert(input: wakui::control::ControlInput) -> Option<ControlInput> {
-        use wakui::control::ControlInput as I;
-        Some(match input {
-            I::Bool(v) => ControlInput::Bool(v),
-            I::Select(v) => ControlInput::Select(v),
-            I::Number(v) => ControlInput::Number(v),
-            I::Text(v) => ControlInput::Text(v),
-            I::Activate => ControlInput::Activate,
-            I::CaptureClear => ControlInput::CaptureClear,
-            I::CaptureKey(v) => ControlInput::CaptureKey(v),
-            // Settings has no raster images; hover never binds here.
-            I::Hover { .. } => return None,
-        })
+        match input {
+            wakui::control::ControlInput::Hover { .. } => None,
+            other => Some(other),
+        }
     }
 
     /// Resolve retained native IDs against current values before handling input.
-    fn bind(&self, id: &SettingsControlId, input: ControlInput) -> Option<Vec<SettingsEvent>> {
-        self.bindings.bind(self, id, input)
+    fn bind(&self, id: &ControlId, input: ControlInput) -> Option<Vec<SettingsEvent>> {
+        self.bind(id, input)
     }
 }
 
-fn find_layout<'a>(
-    layout: &'a SettingsLayout,
-    id: &SettingsControlId,
-) -> Option<&'a SettingsControl> {
-    if let Some(header) = &layout.header
-        && &header.id == id
-    {
-        return Some(header);
-    }
-    layout.children.iter().find_map(|node| match node {
-        SettingsNode::Control(control) => (&control.id == id).then_some(control),
-        SettingsNode::Row(layout) | SettingsNode::Column(layout) | SettingsNode::Group(layout) => {
-            find_layout(layout, id)
-        }
-        SettingsNode::Tabs(tabs) => tabs.tabs.iter().find_map(|tab| {
-            if &tab.select.id == id {
-                Some(&tab.select)
-            } else {
-                find_layout(&tab.body, id)
-            }
-        }),
-    })
+/// Screen builder: mints stable [`ControlId`]s from domain keys and fills the
+/// binding table. View definitions stay declarative: this struct only
+/// assembles framework controls, never walks or diffs them.
+pub(crate) struct Builder<'a> {
+    pub ids: &'a mut IdRegistry<StableKey>,
+    pub table: BindingTable,
+    empty_keys: Vec<(SettingsTabId, ContentKey)>,
+    conflict_keys: Vec<(SettingsControlId, ContentKey)>,
 }
 
-/// Object-safe and intentionally unconstrained by Send or a native Widget type.
-/// All arguments refer only to the owned snapshot, so callbacks may reenter the
-/// controller after its construction borrow has been released.
-pub trait SettingsVisitor {
-    fn begin_screen(&mut self, _screen: &SettingsScreen) {}
-    fn end_screen(&mut self, _screen: &SettingsScreen) {}
-    fn begin_page(&mut self, _page: &SettingsScreenPage) {}
-    fn end_page(&mut self, _page: &SettingsScreenPage) {}
-    fn begin_row(&mut self, _layout: &SettingsLayout) {}
-    fn end_row(&mut self, _layout: &SettingsLayout) {}
-    fn begin_column(&mut self, _layout: &SettingsLayout) {}
-    fn end_column(&mut self, _layout: &SettingsLayout) {}
-    fn begin_group(&mut self, _layout: &SettingsLayout) {}
-    fn end_group(&mut self, _layout: &SettingsLayout) {}
-    fn begin_tabs(&mut self, _tabs: &SettingsTabs) {}
-    fn end_tabs(&mut self, _tabs: &SettingsTabs) {}
-    fn begin_tab(&mut self, _tab: &SettingsTab) {}
-    fn end_tab(&mut self, _tab: &SettingsTab) {}
-    fn control(&mut self, _control: &SettingsControl) {}
-}
-
-#[derive(Clone, Copy)]
-enum LayoutKind {
-    Row,
-    Column,
-    Group,
-}
-
-fn visit_layout(layout: &SettingsLayout, kind: LayoutKind, visitor: &mut dyn SettingsVisitor) {
-    match kind {
-        LayoutKind::Row => visitor.begin_row(layout),
-        LayoutKind::Column => visitor.begin_column(layout),
-        LayoutKind::Group => visitor.begin_group(layout),
-    }
-    if let Some(header) = &layout.header {
-        visitor.control(header);
-    }
-    for node in &layout.children {
-        match node {
-            SettingsNode::Row(layout) => visit_layout(layout, LayoutKind::Row, visitor),
-            SettingsNode::Column(layout) => visit_layout(layout, LayoutKind::Column, visitor),
-            SettingsNode::Group(layout) => visit_layout(layout, LayoutKind::Group, visitor),
-            SettingsNode::Control(control) => visitor.control(control),
-            SettingsNode::Tabs(tabs) => {
-                visitor.begin_tabs(tabs);
-                for tab in &tabs.tabs {
-                    visitor.begin_tab(tab);
-                    visit_layout(&tab.body, LayoutKind::Column, visitor);
-                    visitor.end_tab(tab);
-                }
-                visitor.end_tabs(tabs);
-            }
+impl<'a> Builder<'a> {
+    pub(crate) fn from_registry(ids: &'a mut IdRegistry<StableKey>) -> Self {
+        Self {
+            ids,
+            table: BindingTable::default(),
+            empty_keys: Vec::new(),
+            conflict_keys: Vec::new(),
         }
     }
-    match kind {
-        LayoutKind::Row => visitor.end_row(layout),
-        LayoutKind::Column => visitor.end_column(layout),
-        LayoutKind::Group => visitor.end_group(layout),
+
+    fn empty_key(
+        &mut self,
+        id: &SettingsTabId,
+        system: &SettingsSystemId,
+        label: &str,
+    ) -> ContentKey {
+        if let Some((_, key)) = self.empty_keys.iter().find(|(domain, _)| domain == id) {
+            return key.clone();
+        }
+        let occurrence = self
+            .empty_keys
+            .iter()
+            .filter(|(_, key)| key.system == *system && key.label == label)
+            .count();
+        let key = ContentKey {
+            system: system.clone(),
+            label: label.to_string(),
+            occurrence,
+        };
+        self.empty_keys.push((id.clone(), key.clone()));
+        key
+    }
+
+    fn conflict_key(
+        &mut self,
+        id: &SettingsControlId,
+        system: &SettingsSystemId,
+        label: &str,
+    ) -> ContentKey {
+        if let Some((_, key)) = self.conflict_keys.iter().find(|(domain, _)| domain == id) {
+            return key.clone();
+        }
+        let occurrence = self
+            .conflict_keys
+            .iter()
+            .filter(|(_, key)| key.system == *system && key.label == label)
+            .count();
+        let key = ContentKey {
+            system: system.clone(),
+            label: label.to_string(),
+            occurrence,
+        };
+        self.conflict_keys.push((id.clone(), key.clone()));
+        key
+    }
+
+    fn control_key(&mut self, id: &SettingsControlId, label: &str) -> StableKey {
+        match id {
+            SettingsControlId::Tab(tab @ SettingsTabId::EmptyAttachment { .. }) => {
+                let system = match tab {
+                    SettingsTabId::EmptyAttachment { system, .. } => system.clone(),
+                    _ => unreachable!(),
+                };
+                StableKey::EmptyControl(self.empty_key(tab, &system, label))
+            }
+            conflict @ SettingsControlId::Conflict { system, .. } => {
+                StableKey::Conflict(self.conflict_key(conflict, system, label))
+            }
+            _ => StableKey::Control(id.clone()),
+        }
+    }
+
+    /// Mint a page control (navigation) with its binding registered.
+    pub(crate) fn page_select(&mut self, id: SettingsPage, label: String) -> Control {
+        let token = self.ids.id(StableKey::Control(SettingsControlId::Page(id)));
+        self.table.push(
+            token,
+            ControlBinding::Action(SettingsEvent::SelectPage(id)),
+            Vec::new(),
+        );
+        Control {
+            id: token,
+            label: label.clone(),
+            metadata: ControlMetadata::new(label),
+            display: ControlDisplay::Standard,
+            leaf: Box::new(ActionLeaf),
+        }
+    }
+
+    pub(crate) fn page_body(&mut self, id: SettingsPage, children: Vec<Node>) -> Container {
+        Container {
+            id: self.ids.id(StableKey::Layout(SettingsLayoutId::Page(id))),
+            label: String::new(),
+            metadata: ControlMetadata::new(""),
+            spacing: 12,
+            indent: 0,
+            header: None,
+            policy: Box::new(ColumnPolicy),
+            children,
+        }
+    }
+
+    pub(crate) fn footer(&mut self, children: Vec<Node>) -> Container {
+        Container {
+            id: self.ids.id(StableKey::Layout(SettingsLayoutId::Footer)),
+            label: String::new(),
+            metadata: ControlMetadata::new(""),
+            spacing: 12,
+            indent: 0,
+            header: None,
+            policy: Box::new(RowPolicy),
+            children,
+        }
+    }
+
+    pub(crate) fn row(&mut self, control: Control, control_key: &SettingsControlId) -> Node {
+        let layout = Container {
+            id: self.ids.id(StableKey::Layout(SettingsLayoutId::Row(
+                control_key.clone(),
+            ))),
+            label: String::new(),
+            metadata: ControlMetadata::new(""),
+            spacing: 12,
+            indent: 0,
+            header: None,
+            policy: Box::new(RowPolicy),
+            children: vec![Node::Control(control)],
+        };
+        Node::Container(Box::new(layout))
+    }
+
+    pub(crate) fn conflict_row(
+        &mut self,
+        control: Control,
+        id: &SettingsControlId,
+        label: &str,
+    ) -> Node {
+        let system = match id {
+            SettingsControlId::Conflict { system, .. } => system.clone(),
+            _ => unreachable!(),
+        };
+        let row_key = self.conflict_key(id, &system, label);
+        let layout = Container {
+            id: self.ids.id(StableKey::ConflictRow(row_key)),
+            label: String::new(),
+            metadata: ControlMetadata::new(""),
+            spacing: 12,
+            indent: 0,
+            header: None,
+            policy: Box::new(RowPolicy),
+            children: vec![Node::Control(control)],
+        };
+        Node::Container(Box::new(layout))
+    }
+
+    pub(crate) fn group(
+        &mut self,
+        language: AppLanguage,
+        group: NotificationGroup,
+        title: String,
+        header: Option<Control>,
+        children: Vec<Node>,
+        indent: u16,
+    ) -> Node {
+        use nerust_settings_core::i18n::{notification_group_label, text};
+        let layout = Container {
+            id: self
+                .ids
+                .id(StableKey::Layout(SettingsLayoutId::Notification(group))),
+            label: title.clone(),
+            metadata: ControlMetadata::new(title.clone()),
+            spacing: 8,
+            indent,
+            header: header.map(|mut header| {
+                header.metadata.accessible_label = if group == NotificationGroup::Status {
+                    text(
+                        language,
+                        nerust_settings_core::i18n::UiText::NotificationStatus,
+                    )
+                    .into()
+                } else {
+                    notification_group_label(language, &title)
+                };
+                header
+            }),
+            policy: Box::new(GroupPolicy),
+            children,
+        };
+        Node::Container(Box::new(layout))
+    }
+
+    pub(crate) fn column(&mut self, key: SettingsLayoutId, children: Vec<Node>) -> Node {
+        Node::Container(Box::new(Container {
+            id: self.ids.id(StableKey::Layout(key)),
+            label: String::new(),
+            metadata: ControlMetadata::new(""),
+            spacing: 12,
+            indent: 0,
+            header: None,
+            policy: Box::new(ColumnPolicy),
+            children,
+        }))
+    }
+
+    pub(crate) fn tabs(
+        &mut self,
+        tabs_id: SettingsTabsId,
+        selected: Option<usize>,
+        tabs: Vec<TabSpec>,
+    ) -> Node {
+        let built: Vec<wakui::control::Tab> = tabs
+            .into_iter()
+            .map(
+                |TabSpec {
+                     id,
+                     label,
+                     selected: tab_selected,
+                     context,
+                     children,
+                 }| {
+                    let is_empty = matches!(id, SettingsTabId::EmptyAttachment { .. });
+                    let empty_content = if is_empty {
+                        match &id {
+                            SettingsTabId::EmptyAttachment { system, .. } => {
+                                Some(self.empty_key(&id, system, &label))
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        None
+                    };
+                    let body_key = match &empty_content {
+                        Some(key) => StableKey::EmptyLayout(key.clone()),
+                        None => StableKey::Layout(SettingsLayoutId::Tab(id.clone())),
+                    };
+                    let body = Container {
+                        id: self.ids.id(body_key),
+                        label: String::new(),
+                        metadata: ControlMetadata::new(""),
+                        spacing: 12,
+                        indent: 0,
+                        header: None,
+                        policy: Box::new(ColumnPolicy),
+                        children,
+                    };
+                    let mut select_context = context.clone();
+                    let event = select_context.pop().expect("tab select event");
+                    let token = match &empty_content {
+                        Some(key) => self.ids.id(StableKey::EmptyControl(key.clone())),
+                        None => self
+                            .ids
+                            .id(StableKey::Control(SettingsControlId::Tab(id.clone()))),
+                    };
+                    self.table
+                        .push(token, ControlBinding::Action(event), select_context);
+                    wakui::control::Tab {
+                        id: self.ids.id(match &empty_content {
+                            Some(key) => StableKey::EmptyTab(key.clone()),
+                            None => StableKey::Tab(id.clone()),
+                        }),
+                        label: label.clone(),
+                        selected: tab_selected,
+                        select: Control {
+                            id: token,
+                            label: label.clone(),
+                            metadata: ControlMetadata::new(label),
+                            display: ControlDisplay::Standard,
+                            leaf: Box::new(ActionLeaf),
+                        },
+                        body,
+                    }
+                },
+            )
+            .collect();
+        Node::Tabs(Tabs {
+            id: self.ids.id(StableKey::Tabs(tabs_id)),
+            metadata: ControlMetadata::new(""),
+            selected,
+            tabs: built,
+        })
+    }
+
+    pub(crate) fn draft(
+        &mut self,
+        key: SettingsControlId,
+        label: String,
+        leaf: impl ControlLeaf,
+        binding: ControlBinding,
+    ) -> Draft {
+        let stable = self.control_key(&key, &label);
+        let id = self.ids.id(stable);
+        Draft {
+            view: Control {
+                id,
+                label: label.clone(),
+                metadata: ControlMetadata::new(&label),
+                display: ControlDisplay::Standard,
+                leaf: Box::new(leaf),
+            },
+            binding,
+            context: Vec::new(),
+        }
+    }
+}
+
+pub(crate) struct TabSpec {
+    pub id: SettingsTabId,
+    pub label: String,
+    pub selected: bool,
+    pub context: Vec<SettingsEvent>,
+    pub children: Vec<Node>,
+}
+
+pub(crate) struct Draft {
+    pub view: Control,
+    pub binding: ControlBinding,
+    pub context: Vec<SettingsEvent>,
+}
+
+impl Draft {
+    pub fn finish(self, table: &mut BindingTable) -> Control {
+        table.push(self.view.id, self.binding, self.context);
+        self.view
     }
 }
 
