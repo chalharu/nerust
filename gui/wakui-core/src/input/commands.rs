@@ -163,6 +163,20 @@ impl CommandModel {
     }
 }
 
+/// Owned outcome of executing a command: what native adapters observe.
+/// Produced view-side from an [`EventCommand`](crate::input::event::EventCommand);
+/// produced by the same layer that owns [`Command`], never by the transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandEffect<K: Copy + Eq + std::hash::Hash> {
+    /// Open a file (values like ROM wording arrive via [`crate::chrome::dialog::FileDialogTitles`]).
+    OpenFile,
+    OpenAux(K),
+    About,
+    Quit,
+    ToggleFullscreen,
+    LiveTick,
+}
+
 pub trait CommandVisitor {
     fn command(&mut self, command: &Command);
 }

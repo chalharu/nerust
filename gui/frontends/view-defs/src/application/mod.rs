@@ -70,8 +70,10 @@ pub struct ApplicationHost {
     close: MainState,
     flushed: bool,
     shell: nerust_gui_runtime::shell::NativeShellState,
-    history_key:
-        wakui::support::cache::Versioned<(u64, nerust_settings_core::model::language::AppLanguage)>,
+    history_key: wakui::support::cache::ChangeGate<(
+        u64,
+        nerust_settings_core::model::language::AppLanguage,
+    )>,
     menu_command_ids: wakui::scene::control::IdRegistry<crate::commands::MenuCommandId>,
     menu_commands: crate::commands::CommandTable,
 }
@@ -674,13 +676,6 @@ impl ApplicationHost {
         let title = self.cached_title(tick);
         self.main_window.title.clone_from(&title);
         self.chrome.title_update(title)
-    }
-    /// Title refresh without shell vocabulary: reads the live tick
-    /// internally and publishes a new main-window title when changed.
-    /// Frontends apply the returned title to the native window verbatim.
-    pub fn refresh_window_title(&mut self) -> Option<String> {
-        let tick = self.session.tick_metrics();
-        self.title_update(&tick)
     }
     pub fn title_same(&self, title: &str) -> bool {
         self.chrome.title_same(title)

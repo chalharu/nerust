@@ -181,7 +181,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> EventSink for WindowEventSink<K> 
                 if let Some(effect) = outcome.effect {
                     apply_command_effect(&window, effect);
                 }
-                if matches!(event, EventCommand::Menu(_))
+                if matches!(event, EventCommand::Command(_))
                     || outcome.session.command.is_some()
                     || outcome.effect.is_some()
                 {
@@ -775,7 +775,7 @@ pub(crate) mod tests {
         let win = bound_window().expect("run in an isolated Xvfb process");
         let mut model = win.state().borrow().host.main_window().clone();
         assert!(matches!(
-            model.contents.contents,
+            model.contents,
             wakui_core::chrome::window::WidgetContents::Main(_)
         ));
         model.title = "owned main chrome".into();
@@ -805,7 +805,7 @@ pub(crate) mod tests {
                 let id = win.borrow().aux.route_id(TestAux::Gamma).unwrap();
                 let model = win.borrow().aux.window(id).cloned().unwrap();
                 assert!(matches!(
-                    model.contents.contents,
+                    model.contents,
                     wakui_core::chrome::window::WidgetContents::Controls(_)
                 ));
                 assert_eq!(
@@ -1899,7 +1899,7 @@ pub(crate) mod tests {
             .activate(Some(&42_u64.to_variant()));
         assert!(matches!(
             recording.0.borrow().as_slice(),
-            [EventCommand::Menu(a), EventCommand::Menu(b)]
+            [EventCommand::Command(a), EventCommand::Command(b)]
                 if *a == reset_ref && *b == load_ref(42)
         ));
         let descriptor = model.commands.get(load_item).unwrap();
@@ -1923,7 +1923,7 @@ pub(crate) mod tests {
         assert!(
             matches!(
                 recording.0.borrow().last(),
-                Some(EventCommand::Menu(last)) if *last == load_ref(0)
+                Some(EventCommand::Command(last)) if *last == load_ref(0)
             ),
             "explicit zero is valid, never a missing-argument fallback"
         );
@@ -1963,7 +1963,7 @@ pub(crate) mod tests {
             quit.clone().upcast::<gio::Action>()
         );
         let sink = win.event_sink();
-        let about_event = EventCommand::Menu(wakui_core::input::commands::CommandRef {
+        let about_event = EventCommand::Command(wakui_core::input::commands::CommandRef {
             id: command_id(&win, TestMenu::About),
             argument: None,
         });

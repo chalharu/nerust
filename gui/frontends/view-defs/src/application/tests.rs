@@ -425,7 +425,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
         .expect("OpenDebugger belongs to this main window's actual menu");
     let outcome = fixture
         .core
-        .handle_event(EventCommand::Menu(command))
+        .handle_event(EventCommand::Command(command))
         .unwrap();
     let Some(CommandEffect::OpenAux(kind)) = outcome.effect else {
         panic!("expected auxiliary open");
@@ -437,7 +437,7 @@ fn main_window_menu_event_creates_owned_debug_window_before_native_creation() {
     };
     assert!(windows.get(kind).is_none(), "native creation has not run");
     assert!(matches!(
-        windows.window(id).unwrap().contents.contents,
+        windows.window(id).unwrap().contents,
         WidgetContents::PendingControls
     ));
     struct MenuVisitor(bool);
@@ -476,7 +476,7 @@ fn dyn_events_guard_settings_but_preserve_focus_clear_lifecycle_quit_and_tick() 
         )
         .unwrap();
     let table = fixture.core.menu_commands().clone();
-    let menu = |command: M| C::Menu(table.activation(command).unwrap());
+    let menu = |command: M| C::Command(table.activation(command).unwrap());
     let session_command = |command: S| {
         C::Session(SessionEvent::Command(
             table.activation(M::Session(command)).unwrap(),
@@ -555,7 +555,7 @@ fn event_effects_are_owned_and_native_reentry_needs_no_host_borrow() {
             .unwrap();
         state.core.menu_commands().clone()
     };
-    let menu = |command: M| C::Menu(table.activation(command).unwrap());
+    let menu = |command: M| C::Command(table.activation(command).unwrap());
     for (command, effect) in [
         (M::Open, E::OpenFile),
         (M::Settings, E::OpenAux(AuxKind::Settings)),
@@ -636,7 +636,7 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
         )
         .unwrap();
     let table = fixture.core.menu_commands().clone();
-    let menu = |command: M| C::Menu(table.activation(command).unwrap());
+    let menu = |command: M| C::Command(table.activation(command).unwrap());
     fixture
         .core
         .handle_event(menu(M::Session(S::SelectActiveSlot(73))))

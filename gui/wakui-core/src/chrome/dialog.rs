@@ -74,6 +74,16 @@ pub trait ModalPresenter {
     fn present_modal(&self, presentation: ModalPresentation) -> Option<Receiver<()>>;
 }
 
+/// Pre-localized file-dialog titles. Frontends render and pass these verbatim
+/// instead of calling into the i18n catalog themselves. Values (e.g. ROM
+/// wording) are view-side data; the framework only transports the strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDialogTitles {
+    pub open: String,
+    pub error: String,
+    pub load_failed: String,
+}
+
 /// Owned native effect. Take it under the host borrow, present only after release.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ModalPresentation {
