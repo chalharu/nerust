@@ -1,10 +1,10 @@
 //! `wakui_tao`: wakui platform frontend for iced/tao.
 //!
-//! Framework-only: depends on [`wakui`] plus the iced/tao toolkits.
+//! Framework-only: depends on `wakui` plus the iced/tao toolkits.
 //! Never on view definitions, sessions, or settings. Native frontends
 //! render [`wakui_core::scene::control::ControlScreen`] snapshots through
-//! [`control_renderer`], adapt them to host windows through
-//! [`control_binding`], and map native input through [`input`].
+//! [`scene::render`], adapt them to host windows through
+//! [`scene::binding`], and map native input through [`input`].
 //!
 //! A third-party app builds UI with `wakui` plus this crate only:
 //! see `examples/backend_smoke.rs`. The entry point is [`run`]; the
