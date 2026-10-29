@@ -9,7 +9,6 @@
 
 use crate::scene::control::ControlDisplay;
 use crate::scene::hints::LayoutHints;
-use crate::scene::leaf::ColumnDef;
 
 /// Unresolved string reference. Resolution is always outer-owned:
 /// literals pass through, `Localized` goes to the resolver's text table,
@@ -50,6 +49,14 @@ pub enum NumBinding {
     Bound { source: String, path: String },
 }
 
+/// L1 column header: the id is stable, the header text resolves per frame
+/// so definitions stay language-independent.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ListColumnDef {
+    pub id: String,
+    pub header: Binding,
+    pub width: Option<f64>,
+}
 /// Framework-owned leaf vocabulary for L1. Domain-specific leaves use
 /// [`LeafDef::Custom`]; the closed base set never grows an enum for them.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -76,7 +83,7 @@ pub enum LeafDef {
         max: u32,
     },
     List {
-        columns: Vec<ColumnDef>,
+        columns: Vec<ListColumnDef>,
         rows: RowsDef,
     },
     /// External `impl Leaf` entry point. `kind` is the outer registration

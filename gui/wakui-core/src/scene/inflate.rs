@@ -328,10 +328,20 @@ fn build_leaf<K: Eq + Clone>(
                 formatted: current.to_string(),
             })
         }
-        LeafDef::List { columns, rows } => Box::new(ListLeaf {
-            columns: columns.clone(),
-            rows: project_rows(rows, ids, key, resolver, live),
-        }),
+        LeafDef::List { columns, rows } => {
+            use crate::scene::leaf::ColumnDef;
+            Box::new(ListLeaf {
+                columns: columns
+                    .iter()
+                    .map(|column| ColumnDef {
+                        id: column.id.clone(),
+                        header: text_of(&column.header, resolver, row),
+                        width: column.width,
+                    })
+                    .collect(),
+                rows: project_rows(rows, ids, key, resolver, live),
+            })
+        }
         LeafDef::Custom { kind, fields } => {
             let resolved: Vec<(String, Value)> = fields
                 .iter()
@@ -485,12 +495,12 @@ fn policy_of(def: &PolicyDef) -> Box<dyn LayoutPolicy> {
 mod tests {
     use super::*;
     use crate::scene::control::ControlVisitor;
+    use crate::scene::def::ListColumnDef;
     use crate::scene::def::{
         Binding, BoolBinding, ChoicesDef, ContainerDef, ControlDef, LeafDef, NodeDef, PageDef,
         PolicyDef, RowTemplateDef, RowsDef, ScreenDef, SelectedDef,
     };
     use crate::scene::hints::LayoutHints;
-    use crate::scene::leaf::ColumnDef;
 
     #[derive(Debug, Clone)]
     struct FakeItem {
@@ -585,14 +595,14 @@ mod tests {
             hints: LayoutHints::default(),
             leaf: LeafDef::List {
                 columns: vec![
-                    ColumnDef {
+                    ListColumnDef {
                         id: "name".into(),
-                        header: "Name".into(),
+                        header: Binding::Literal("Name".into()),
                         width: None,
                     },
-                    ColumnDef {
+                    ListColumnDef {
                         id: "state".into(),
-                        header: "State".into(),
+                        header: Binding::Literal("State".into()),
                         width: None,
                     },
                 ],
