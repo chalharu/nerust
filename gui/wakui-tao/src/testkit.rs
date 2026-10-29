@@ -33,7 +33,6 @@ use wakui_core::{
         CommandModel, FileDialogTitles, MenuCapabilities, MenuEntry, MenuId, MenuItem, Menubar,
         Submenu,
     },
-    pause::PauseOwner,
     session::{CommandOutcome, SessionError, SessionEvent, SessionOutcome},
     viewport::{ViewportImage, ViewportPresent, ViewportRegion},
     window::{Window, WindowChromeSync, WindowEffects},
@@ -83,14 +82,20 @@ impl TestAux {
     }
 }
 
-/// Flavor-local suspension owners. The framework holds an opaque bitset;
-/// this table gives each hold its meaning in tests only.
-pub(crate) mod owners {
-    use wakui_core::pause::PauseOwner;
+/// Flavor-local suspension holds (test double only). Production flavors never
+/// compose suspension; the view side owns that policy. The fake keeps a local
+/// hold set so native-flow tests can simulate a suspending app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Hold(pub(crate) u8);
 
-    pub(crate) const FOCUS: PauseOwner = PauseOwner::new(1);
-    pub(crate) const MODAL: PauseOwner = PauseOwner::new(2);
-    pub(crate) const GUARD: PauseOwner = PauseOwner::new(3);
+/// Flavor-local suspension holds; this table gives each hold its meaning in
+/// tests only.
+pub(crate) mod owners {
+    use super::Hold;
+
+    pub(crate) const FOCUS: Hold = Hold(1);
+    pub(crate) const MODAL: Hold = Hold(2);
+    pub(crate) const GUARD: Hold = Hold(3);
 }
 
 /// Flavor-local menu skeleton. The framework tracks opaque ids only;
@@ -683,7 +688,7 @@ pub(crate) struct FakeApp {
     live_consumed: bool,
     last_live: Option<Instant>,
     pub active_item: Option<u64>,
-    owners: std::collections::HashSet<PauseOwner>,
+    owners: std::collections::HashSet<Hold>,
     menu_gate: Option<(bool, bool, bool, Option<u64>, Menubar)>,
     pub(crate) commands: FakeCommands,
 }
@@ -1002,6 +1007,24 @@ impl FakeApp {
     pub(crate) fn log_changed(&self) -> bool {
         true
     }
+
+    /// Test-only suspension-hold simulation. Production flavors never compose
+    /// suspension; the view side owns that policy.
+    pub(crate) fn set_pause_owner(&mut self, owner: Hold, active: bool) {
+        if active {
+            self.owners.insert(owner);
+        } else {
+            self.owners.remove(&owner);
+        }
+    }
+
+    pub(crate) fn owns_pause(&self, owner: Hold) -> bool {
+        self.owners.contains(&owner)
+    }
+
+    pub(crate) fn pause_held(&self) -> bool {
+        !self.owners.is_empty()
+    }
 }
 
 impl FrontendApp<TestAux> for FakeApp {
@@ -1069,24 +1092,6 @@ impl FrontendApp<TestAux> for FakeApp {
         self.window_size = (width as f32, height as f32);
         Ok(())
     }
-
-    fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
-        if active {
-            self.owners.insert(owner);
-        } else {
-            self.owners.remove(&owner);
-        }
-    }
-
-    fn owns_pause(&self, owner: PauseOwner) -> bool {
-        self.owners.contains(&owner)
-    }
-
-    fn pause_held(&self) -> bool {
-        !self.owners.is_empty()
-    }
-
-    fn reconcile_pause(&mut self) {}
 
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         let outcome = SessionOutcome::default();
@@ -1214,7 +1219,7 @@ impl FrontendApp<TestAux> for FakeApp {
         focused
     }
 
-    fn release_focus_pause(&mut self) {
+    fn release_focus_hold(&mut self) {
         self.focus_paused = false;
     }
 
@@ -1767,18 +1772,6 @@ impl FrontendApp<TestAux> for SharedApp {
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
         self.inner.borrow_mut().update_window_size(width, height)
     }
-    fn set_pause_owner(&mut self, owner: PauseOwner, active: bool) {
-        self.inner.borrow_mut().set_pause_owner(owner, active)
-    }
-    fn owns_pause(&self, owner: PauseOwner) -> bool {
-        self.inner.borrow().owns_pause(owner)
-    }
-    fn pause_held(&self) -> bool {
-        self.inner.borrow().pause_held()
-    }
-    fn reconcile_pause(&mut self) {
-        self.inner.borrow_mut().reconcile_pause()
-    }
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError> {
         self.inner.borrow_mut().dispatch(event)
     }
@@ -1852,8 +1845,8 @@ impl FrontendApp<TestAux> for SharedApp {
     fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
         self.inner.borrow_mut().drive_aux_focus(id, focused)
     }
-    fn release_focus_pause(&mut self) {
-        self.inner.borrow_mut().release_focus_pause()
+    fn release_focus_hold(&mut self) {
+        self.inner.borrow_mut().release_focus_hold()
     }
     fn reserve_widget(
         &mut self,

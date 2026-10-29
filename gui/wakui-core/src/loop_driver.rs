@@ -75,7 +75,7 @@ pub struct TurnOutcome {
 /// Narrow native ports; the driver, not each adapter, owns their ordering.
 pub trait LoopHost {
     /// Production adapters use `FrameCtx`; an owned capture avoids borrowing
-    /// the session across pumps that can change pause ownership.
+    /// the session across pumps that can change suspension state.
     type Frame;
 
     /// Commit deferred end-of-burst focus effects before capturing the frame.

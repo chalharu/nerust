@@ -163,9 +163,11 @@ impl<K: Copy + Eq + std::hash::Hash> ApplicationBuilder<K, Vec<String>> {
 /// stays inside the implementation. `K` is the view-side aux kind
 /// (view-defined kinds); the framework never names it.
 ///
-/// File, content, and suspension ports are generic (open/unload content,
-/// suspend holders, file dialogs). Content verbs and aux kinds live
-/// view-side behind separate domain ports; flavors never name them.
+/// File and content ports are generic (open/unload content, file dialogs).
+/// Suspension arbitration lives view-side; the framework only transports
+/// the underlying notifications (focus events, modal effects, commands).
+/// Content verbs and aux kinds live view-side behind separate domain
+/// ports; flavors never name them.
 pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     // -- lifecycle -------------------------------------------------------
     /// Open content from a file. Content-specific wording stays view-side;
@@ -189,11 +191,6 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     /// Reset held-input state (e.g. on window close).
     fn clear_input(&mut self);
     fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), String>;
-    // -- suspension (generic holders; identities are opaque) --------------
-    fn set_pause_owner(&mut self, owner: crate::pause::PauseOwner, active: bool);
-    fn owns_pause(&self, owner: crate::pause::PauseOwner) -> bool;
-    fn pause_held(&self) -> bool;
-    fn reconcile_pause(&mut self);
     fn dispatch(&mut self, event: SessionEvent) -> Result<SessionOutcome, SessionError>;
 
     // -- chrome, menus, titles (generic file dialogs) ---------------------
@@ -220,7 +217,7 @@ pub trait FrontendApp<K: Copy + Eq + std::hash::Hash>: EventHandler<K> {
     fn note_main_departure(&mut self);
     /// View-side resolves `id` to its kind and applies the resume protocol.
     fn drive_aux_focus(&mut self, id: crate::aux::AuxId, focused: bool) -> bool;
-    fn release_focus_pause(&mut self);
+    fn release_focus_hold(&mut self);
 
     // -- aux widget windows (id-keyed; sessions owned view-side) ---------
     fn reserve_widget(
