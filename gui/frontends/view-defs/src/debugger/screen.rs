@@ -159,14 +159,20 @@ impl DebuggerScreenSession {
         self.tid("bm:input", TextTarget::Bookmark);
         self.follow = Some(self.ctx.ids.id("dis:follow".to_string()));
 
-        let mut seen: HashMap<String, usize> = HashMap::new();
-        for reg in &snapshot.rows.regs {
-            let namespace = row_key("regs", reg.name, 0);
+        for (index, reg) in snapshot.rows.regs.iter().enumerate() {
+            // Must mirror `DebuggerResolver`: even positions project into
+            // the left column, odd positions into the right column.
+            let source = if index % 2 == 0 {
+                "regs_left"
+            } else {
+                "regs_right"
+            };
+            let namespace = row_key(source, reg.name, 0);
             let id = self.ctx.ids.id(cell_key(&namespace, "cell"));
             self.actions
                 .insert(id, DebuggerEvent::RegSelected(reg.name));
         }
-        seen.clear();
+        let mut seen: HashMap<String, usize> = HashMap::new();
         for row in &snapshot.rows.disasm {
             let identity = format!("{:08X}", row.addr);
             let occurrence = seen.get(&identity).copied().unwrap_or(0);
@@ -280,6 +286,34 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
             hints: group_hints,
             header: None,
             policy: PolicyDef::Group,
+            children,
+        }))
+    };
+    // Horizontal row inside groups/columns: toolbar buttons, register
+    // columns, and the two debugger panes. Flavors render `Row` as a
+    // horizontal box; static containers never extend key namespaces,
+    // so gesture maps stay stable when controls move between them.
+    let row = |key: &str, children: Vec<NodeDef>| {
+        NodeDef::Container(Box::new(ContainerDef {
+            key: key.into(),
+            label: Binding::Literal(String::new()),
+            hints: LayoutHints::default(),
+            header: None,
+            policy: PolicyDef::Row,
+            children,
+        }))
+    };
+    let column = |key: &str, children: Vec<NodeDef>| {
+        NodeDef::Container(Box::new(ContainerDef {
+            key: key.into(),
+            label: Binding::Literal(String::new()),
+            hints: LayoutHints {
+                spacing: Some(12.0),
+                indent: Some(0.0),
+                ..LayoutHints::default()
+            },
+            header: None,
+            policy: PolicyDef::Column,
             children,
         }))
     };
@@ -456,6 +490,47 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
             Binding::Localized("cancel".into()),
         ))));
     }
+    // Refresh lives in the memory section, next to the rows it refreshes.
+    mem_children.push(NodeDef::Control(Box::new(action(
+        "refresh",
+        Binding::Localized("refresh".into()),
+    ))));
+
+    // Register columns: the single register list is split into even/odd
+    // halves so the state column stays short. Sources are resolved in
+    // `DebuggerResolver` below; gesture namespaces follow the same split.
+    let regs_list = |source: &str| {
+        NodeDef::Control(Box::new(ControlDef {
+            key: source.into(),
+            label: Binding::Literal(String::new()),
+            accessible: None,
+            help: None,
+            display: ControlDisplay::Standard,
+            enabled: BoolBinding::Literal(true),
+            visible: BoolBinding::Literal(true),
+            hints: list_hints,
+            leaf: LeafDef::List {
+                columns: Vec::new(),
+                rows: RowsDef::Bound {
+                    source: source.into(),
+                    template: RowTemplateDef {
+                        id_field: "name".into(),
+                        cells: vec![ControlDef {
+                            key: "cell".into(),
+                            label: Binding::Field("text".into()),
+                            accessible: None,
+                            help: None,
+                            display: ControlDisplay::Standard,
+                            enabled: BoolBinding::Literal(true),
+                            visible: BoolBinding::Literal(true),
+                            hints: LayoutHints::default(),
+                            leaf: LeafDef::Action,
+                        }],
+                    },
+                },
+            },
+        }))
+    };
 
     let body = ContainerDef {
         key: "layout:body".into(),
@@ -470,185 +545,170 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         children: vec![
             group(
                 "group:toolbar",
-                Binding::Localized("debugger".into()),
-                vec![
-                    NodeDef::Control(Box::new(action(
-                        "toolbar:pause",
-                        Binding::Dynamic("pause".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "toolbar:step-frame",
-                        Binding::Localized("step_frame".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "toolbar:step-instr",
-                        Binding::Localized("step_instr".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "toolbar:ppu",
-                        Binding::Localized("ppu".into()),
-                    ))),
-                ],
+                Binding::Literal(String::new()),
+                vec![row(
+                    "toolbar:row",
+                    vec![
+                        NodeDef::Control(Box::new(action(
+                            "toolbar:pause",
+                            Binding::Dynamic("pause".into()),
+                        ))),
+                        NodeDef::Control(Box::new(action(
+                            "toolbar:step-frame",
+                            Binding::Localized("step_frame".into()),
+                        ))),
+                        NodeDef::Control(Box::new(action(
+                            "toolbar:step-instr",
+                            Binding::Localized("step_instr".into()),
+                        ))),
+                        NodeDef::Control(Box::new(action(
+                            "toolbar:ppu",
+                            Binding::Localized("ppu".into()),
+                        ))),
+                    ],
+                )],
             ),
-            group(
-                "group:status",
-                Binding::Localized("debugger".into()),
-                vec![NodeDef::Control(Box::new(note(
-                    "status",
-                    Binding::Literal(String::new()),
-                    Binding::Dynamic("status".into()),
-                )))],
-            ),
-            group(
-                "group:regs",
-                Binding::Localized("registers".into()),
+            row(
+                "layout:panes",
                 vec![
-                    NodeDef::Control(Box::new(ControlDef {
-                        key: "regs".into(),
-                        label: Binding::Literal(String::new()),
-                        accessible: None,
-                        help: None,
-                        display: ControlDisplay::Standard,
-                        enabled: BoolBinding::Literal(true),
-                        visible: BoolBinding::Literal(true),
-                        hints: list_hints,
-                        leaf: LeafDef::List {
-                            columns: Vec::new(),
-                            rows: RowsDef::Bound {
-                                source: "regs".into(),
-                                template: RowTemplateDef {
-                                    id_field: "name".into(),
-                                    cells: vec![ControlDef {
-                                        key: "cell".into(),
-                                        label: Binding::Field("text".into()),
+                    column(
+                        "layout:main",
+                        vec![group(
+                            "group:dis",
+                            Binding::Dynamic("dis_title".into()),
+                            dis_children,
+                        )],
+                    ),
+                    column(
+                        "layout:side",
+                        vec![
+                            group(
+                                "group:status",
+                                Binding::Literal(String::new()),
+                                vec![NodeDef::Control(Box::new(note(
+                                    "status",
+                                    Binding::Literal(String::new()),
+                                    Binding::Dynamic("status".into()),
+                                )))],
+                            ),
+                            group(
+                                "group:regs",
+                                Binding::Localized("registers".into()),
+                                vec![
+                                    row(
+                                        "regs:columns",
+                                        vec![regs_list("regs_left"), regs_list("regs_right")],
+                                    ),
+                                    NodeDef::Control(Box::new(text(
+                                        "reg:input",
+                                        Binding::Localized("hex".into()),
+                                        Binding::Dynamic("reg_input".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(action(
+                                        "reg:set",
+                                        Binding::Dynamic("reg_set".into()),
+                                    ))),
+                                ],
+                            ),
+                            group(
+                                "group:watch",
+                                Binding::Localized("watch".into()),
+                                vec![
+                                    NodeDef::Control(Box::new(note(
+                                        "watch:line",
+                                        Binding::Literal(String::new()),
+                                        Binding::Dynamic("watch_text".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(action(
+                                        "watch:clear",
+                                        Binding::Localized("clear".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(text(
+                                        "freeze:input",
+                                        Binding::Localized("hex".into()),
+                                        Binding::Dynamic("freeze_input".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(action(
+                                        "freeze:set",
+                                        Binding::Localized("freeze".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(note(
+                                        "freeze:line",
+                                        Binding::Literal(String::new()),
+                                        Binding::Dynamic("freeze_text".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(action(
+                                        "freeze:clear",
+                                        Binding::Localized("clear".into()),
+                                    ))),
+                                ],
+                            ),
+                            group(
+                                "group:bookmarks",
+                                Binding::Localized("bookmarks".into()),
+                                vec![
+                                    NodeDef::Control(Box::new(text(
+                                        "bm:input",
+                                        Binding::Localized("bm_label".into()),
+                                        Binding::Dynamic("bm_input".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(action(
+                                        "bm:add",
+                                        Binding::Localized("add".into()),
+                                    ))),
+                                    NodeDef::Control(Box::new(ControlDef {
+                                        key: "bookmarks".into(),
+                                        label: Binding::Literal(String::new()),
                                         accessible: None,
                                         help: None,
                                         display: ControlDisplay::Standard,
                                         enabled: BoolBinding::Literal(true),
                                         visible: BoolBinding::Literal(true),
-                                        hints: LayoutHints::default(),
-                                        leaf: LeafDef::Action,
-                                    }],
-                                },
-                            },
-                        },
-                    })),
-                    NodeDef::Control(Box::new(text(
-                        "reg:input",
-                        Binding::Localized("hex".into()),
-                        Binding::Dynamic("reg_input".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "reg:set",
-                        Binding::Dynamic("reg_set".into()),
-                    ))),
+                                        hints: list_hints,
+                                        leaf: LeafDef::List {
+                                            columns: Vec::new(),
+                                            rows: RowsDef::Bound {
+                                                source: "bookmarks".into(),
+                                                template: RowTemplateDef {
+                                                    id_field: "addr".into(),
+                                                    cells: vec![
+                                                        ControlDef {
+                                                            key: "jump".into(),
+                                                            label: Binding::Field("jump".into()),
+                                                            accessible: None,
+                                                            help: None,
+                                                            display: ControlDisplay::Standard,
+                                                            enabled: BoolBinding::Literal(true),
+                                                            visible: BoolBinding::Literal(true),
+                                                            hints: LayoutHints::default(),
+                                                            leaf: LeafDef::Action,
+                                                        },
+                                                        ControlDef {
+                                                            key: "delete".into(),
+                                                            label: Binding::Field("delete".into()),
+                                                            accessible: None,
+                                                            help: None,
+                                                            display: ControlDisplay::Standard,
+                                                            enabled: BoolBinding::Literal(true),
+                                                            visible: BoolBinding::Literal(true),
+                                                            hints: LayoutHints::default(),
+                                                            leaf: LeafDef::Action,
+                                                        },
+                                                    ],
+                                                },
+                                            },
+                                        },
+                                    })),
+                                ],
+                            ),
+                        ],
+                    ),
                 ],
-            ),
-            group(
-                "group:dis",
-                Binding::Dynamic("dis_title".into()),
-                dis_children,
             ),
             group(
                 "group:mem",
                 Binding::Localized("memory".into()),
                 mem_children,
-            ),
-            group(
-                "group:watch",
-                Binding::Localized("watch".into()),
-                vec![
-                    NodeDef::Control(Box::new(note(
-                        "watch:line",
-                        Binding::Literal(String::new()),
-                        Binding::Dynamic("watch_text".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "watch:clear",
-                        Binding::Localized("clear".into()),
-                    ))),
-                    NodeDef::Control(Box::new(text(
-                        "freeze:input",
-                        Binding::Localized("hex".into()),
-                        Binding::Dynamic("freeze_input".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "freeze:set",
-                        Binding::Localized("freeze".into()),
-                    ))),
-                    NodeDef::Control(Box::new(note(
-                        "freeze:line",
-                        Binding::Literal(String::new()),
-                        Binding::Dynamic("freeze_text".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action(
-                        "freeze:clear",
-                        Binding::Localized("clear".into()),
-                    ))),
-                ],
-            ),
-            group(
-                "group:bookmarks",
-                Binding::Localized("bookmarks".into()),
-                vec![
-                    NodeDef::Control(Box::new(text(
-                        "bm:input",
-                        Binding::Localized("bm_label".into()),
-                        Binding::Dynamic("bm_input".into()),
-                    ))),
-                    NodeDef::Control(Box::new(action("bm:add", Binding::Localized("add".into())))),
-                    NodeDef::Control(Box::new(ControlDef {
-                        key: "bookmarks".into(),
-                        label: Binding::Literal(String::new()),
-                        accessible: None,
-                        help: None,
-                        display: ControlDisplay::Standard,
-                        enabled: BoolBinding::Literal(true),
-                        visible: BoolBinding::Literal(true),
-                        hints: list_hints,
-                        leaf: LeafDef::List {
-                            columns: Vec::new(),
-                            rows: RowsDef::Bound {
-                                source: "bookmarks".into(),
-                                template: RowTemplateDef {
-                                    id_field: "addr".into(),
-                                    cells: vec![
-                                        ControlDef {
-                                            key: "jump".into(),
-                                            label: Binding::Field("jump".into()),
-                                            accessible: None,
-                                            help: None,
-                                            display: ControlDisplay::Standard,
-                                            enabled: BoolBinding::Literal(true),
-                                            visible: BoolBinding::Literal(true),
-                                            hints: LayoutHints::default(),
-                                            leaf: LeafDef::Action,
-                                        },
-                                        ControlDef {
-                                            key: "delete".into(),
-                                            label: Binding::Field("delete".into()),
-                                            accessible: None,
-                                            help: None,
-                                            display: ControlDisplay::Standard,
-                                            enabled: BoolBinding::Literal(true),
-                                            visible: BoolBinding::Literal(true),
-                                            hints: LayoutHints::default(),
-                                            leaf: LeafDef::Action,
-                                        },
-                                    ],
-                                },
-                            },
-                        },
-                    })),
-                ],
-            ),
-            group(
-                "group:refresh",
-                Binding::Localized("refresh".into()),
-                vec![NodeDef::Control(Box::new(action(
-                    "refresh",
-                    Binding::Localized("refresh".into()),
-                )))],
             ),
         ],
     };
@@ -743,7 +803,8 @@ impl Flags for DebuggerResolver<'_> {
 impl Lists for DebuggerResolver<'_> {
     fn list_len(&self, source: &str) -> usize {
         match source {
-            "regs" => self.snapshot.rows.regs.len(),
+            "regs_left" => self.snapshot.rows.regs.len().div_ceil(2),
+            "regs_right" => self.snapshot.rows.regs.len() / 2,
             "disasm" => self.snapshot.rows.disasm.len(),
             "dump" => self.snapshot.rows.dump.len(),
             "bookmarks" => self.snapshot.inputs.bookmarks.len(),
@@ -752,8 +813,18 @@ impl Lists for DebuggerResolver<'_> {
     }
 
     fn value(&self, source: &str, index: usize, path: &str) -> Value {
+        // Register columns interleave the single register list: even
+        // positions left, odd positions right. Order is stable.
+        let reg_at = |index: usize| {
+            let regs = &self.snapshot.rows.regs;
+            match source {
+                "regs_left" => regs.get(index * 2),
+                "regs_right" => regs.get(index * 2 + 1),
+                _ => None,
+            }
+        };
         match source {
-            "regs" => match self.snapshot.rows.regs.get(index) {
+            "regs_left" | "regs_right" => match reg_at(index) {
                 Some(reg) => match path {
                     "name" => Value::Text(reg.name.to_string()),
                     "text" => Value::Text(reg.text.clone()),
@@ -1065,5 +1136,218 @@ mod tests {
         let mut v = V(&mut visit);
         screen.visit(&mut v);
         out
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use crate::debugger::{DebugInputs, DebugSnapshot, DebuggerChrome, DebuggerRows};
+    use wakui::scene::control::{
+        ColumnPolicy, Container, Control, ControlId, ControlVisitor, GroupPolicy, RowPolicy,
+        policy, walk_control,
+    };
+    use wakui::scene::leaf::{ActionLeaf, ListLeaf};
+
+    fn test_snapshot() -> DebugSnapshot {
+        DebugSnapshot {
+            chrome: DebuggerChrome {
+                debugger: "Debugger".into(),
+                pause: "Pause".into(),
+                resume: "Resume".into(),
+                step_frame: "Step".into(),
+                step_instr: "Instr".into(),
+                ppu_viewer: "PPU".into(),
+                refresh: "Refresh".into(),
+                space: "Space".into(),
+                prev: "Prev".into(),
+                next: "Next".into(),
+                page: "Page".into(),
+                addr_hex: "Addr".into(),
+                go: "Go".into(),
+                back: "Back".into(),
+                disassembly: "Disasm".into(),
+                follow_pc: "Follow".into(),
+                follow_pc_tag: "(follow)".into(),
+                fixed_tag: "(fixed)".into(),
+                no_disassembly: "none".into(),
+                disassembly_hint: "hint".into(),
+                registers: "Regs".into(),
+                pick_register: "Pick".into(),
+                hex: "Hex".into(),
+                set: "Set".into(),
+                select_dump_row: "Row".into(),
+                write: "Write".into(),
+                hex_byte: "Byte".into(),
+                watch: "Watch".into(),
+                freeze: "Freeze".into(),
+                confirm: "Confirm".into(),
+                cancel: "Cancel".into(),
+                watch_none: "no watch".into(),
+                freeze_none: "no freeze".into(),
+                clear: "Clear".into(),
+                bookmarks: "Bookmarks".into(),
+                label: "Label".into(),
+                add: "Add".into(),
+                memory: "Memory".into(),
+            },
+            rows: DebuggerRows {
+                disasm: vec![],
+                dump: vec![],
+                changed_addrs: vec![],
+                regs: vec![
+                    crate::debugger::RegRow {
+                        name: "A",
+                        text: "A=01".into(),
+                    },
+                    crate::debugger::RegRow {
+                        name: "X",
+                        text: "X=02".into(),
+                    },
+                    crate::debugger::RegRow {
+                        name: "Y",
+                        text: "Y=03".into(),
+                    },
+                ],
+                status_text: "paused".into(),
+                paused: true,
+                pending_text: None,
+                watch_text: "no watch".into(),
+                freeze_text: "no freeze".into(),
+                selected_line: "row".into(),
+            },
+            inputs: DebugInputs {
+                mem_input: String::new(),
+                dis_input: String::new(),
+                follow_pc: true,
+                back_len: 0,
+                dis_addr: Some(0x8000),
+                mem_addr: None,
+                bm_input: String::new(),
+                bookmarks: vec![],
+                freeze_input: String::new(),
+                edit_input: String::new(),
+                reg_input: String::new(),
+                watch: None,
+                watch_value: None,
+                freeze: None,
+            },
+            selected: None,
+            reg_target: None,
+            space_name: "RAM".into(),
+            has_spaces: false,
+        }
+    }
+
+    struct Tree {
+        groups: Vec<String>,
+        rows: Vec<Vec<String>>,
+        lists: Vec<usize>,
+        actions: Vec<String>,
+        row_stack: Vec<Vec<String>>,
+    }
+
+    impl ControlVisitor for Tree {
+        fn begin_container(&mut self, container: &Container) {
+            if policy::<GroupPolicy>(container).is_some() {
+                self.groups.push(container.label.clone());
+            }
+            if policy::<RowPolicy>(container).is_some() {
+                self.row_stack.push(Vec::new());
+            }
+            let _ = policy::<ColumnPolicy>(container);
+        }
+        fn end_container(&mut self, container: &Container) {
+            if policy::<RowPolicy>(container).is_some()
+                && let Some(row) = self.row_stack.pop()
+            {
+                self.rows.push(row);
+            }
+        }
+        fn control(&mut self, control: &Control) {
+            if control.downcast::<ActionLeaf>().is_some() {
+                self.actions.push(control.label.clone());
+                if let Some(top) = self.row_stack.last_mut() {
+                    top.push(control.label.clone());
+                }
+            }
+            if let Some(list) = control.downcast::<ListLeaf>() {
+                self.lists.push(list.rows.len());
+            }
+            walk_control(control, self);
+        }
+    }
+
+    #[test]
+    fn panes_restore_two_column_layout_without_duplicate_headers() {
+        let mut session = DebuggerScreenSession::new();
+        session.update(Some(test_snapshot()));
+        let screen = session.screen();
+        let mut tree = Tree {
+            groups: vec![],
+            rows: vec![],
+            lists: vec![],
+            actions: vec![],
+            row_stack: vec![],
+        };
+        screen.visit(&mut tree);
+        // No duplicated "Debugger" section headers: toolbar and status are
+        // unlabeled, like the native twin.
+        assert_eq!(
+            tree.groups
+                .iter()
+                .filter(|label| label.as_str() == "Debugger")
+                .count(),
+            0,
+            "group headers: {:?}",
+            tree.groups
+        );
+        for expected in ["Regs", "Disasm", "Memory", "Watch", "Bookmarks"] {
+            assert!(
+                tree.groups.iter().any(|label| label.contains(expected)),
+                "missing group, got: {:?}",
+                tree.groups
+            );
+        }
+        // Toolbar buttons share one horizontal row container. (The panes row
+        // legitimately contains every descendant action; match exactly.)
+        assert!(
+            tree.rows.iter().any(|row| row
+                == &vec![
+                    "Resume".to_string(),
+                    "Step".to_string(),
+                    "Instr".to_string(),
+                    "PPU".to_string()
+                ]),
+            "toolbar rows: {:?}",
+            tree.rows
+        );
+        // Register columns project the same three rows across two lists.
+        let mut reg_row = tree
+            .rows
+            .iter()
+            .find(|row| row.len() == 3 && row.iter().all(|label| label.contains('=')))
+            .cloned()
+            .unwrap_or_default();
+        reg_row.sort();
+        assert_eq!(
+            reg_row,
+            vec!["A=01".to_string(), "X=02".to_string(), "Y=03".to_string()],
+            "register rows: {:?}",
+            tree.rows
+        );
+        // Register columns split three rows into 2 + 1.
+        assert!(
+            tree.lists.contains(&2) && tree.lists.contains(&1),
+            "regs must split 3 rows into 2+1, list sizes: {:?}",
+            tree.lists
+        );
+        // Refresh travels with the actions, not a lone full-width group.
+        assert!(
+            tree.actions.contains(&"Refresh".to_string()),
+            "actions: {:?}",
+            tree.actions
+        );
+        let _ = ControlId::fresh();
     }
 }
