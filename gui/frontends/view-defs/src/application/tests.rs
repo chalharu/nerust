@@ -690,3 +690,161 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
     fixture.core.handle_event(menu(M::Close)).unwrap();
     assert!(!fixture.core.tick().loaded);
 }
+
+#[test]
+fn debugger_production_poll_drains_rows_and_gestures_pause() {
+    use wakui::app::roles::{AuxPorts, PollPorts};
+    use wakui::chrome::aux::{AuxWindows, OpenRequest};
+    use wakui::scene::control::{Control, ControlEvent, ControlId, ControlInput, ControlVisitor};
+    use wakui::scene::leaf::{ActionLeaf, ListLeaf};
+
+    struct Rows(Vec<usize>);
+    impl ControlVisitor for Rows {
+        fn control(&mut self, control: &Control) {
+            if let Some(list) = control.downcast::<ListLeaf>() {
+                self.0.push(list.rows.len());
+            }
+            wakui::scene::control::walk_control(control, self);
+        }
+    }
+    fn find_action(
+        screen: &wakui::scene::control::ControlScreen,
+        label: &str,
+    ) -> Option<ControlId> {
+        struct Find<'a> {
+            label: &'a str,
+            out: Option<ControlId>,
+        }
+        impl ControlVisitor for Find<'_> {
+            fn control(&mut self, control: &Control) {
+                if self.out.is_none()
+                    && control.label == self.label
+                    && control.downcast::<ActionLeaf>().is_some()
+                {
+                    self.out = Some(control.id);
+                }
+                wakui::scene::control::walk_control(control, self);
+            }
+        }
+        let mut find = Find { label, out: None };
+        screen.visit(&mut find);
+        find.out
+    }
+
+    let mut fixture = Fixture::new();
+    fixture.load();
+    let host = &mut fixture.core;
+    let mut windows = AuxWindows::<AuxKind, u64, ()>::new();
+    let Some(OpenRequest::Create(id)) = host.reserve_widget(&mut windows, AuxKind::Debug).unwrap()
+    else {
+        panic!("no debug window")
+    };
+    assert!(host.prepare_widget(&mut windows, id).unwrap());
+    assert!(windows.complete_open(id, Some(1), ()).is_ok());
+    // Production cadence: dispatch only queues work, so rows appear only
+    // once the per-widget poll drains the session driver.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let rows = loop {
+        host.poll_widget(id);
+        let screen = host.widget_screen(id).expect("debug screen");
+        let mut rows = Rows(vec![]);
+        screen.visit(&mut rows);
+        if rows.0.iter().sum::<usize>() > 0 {
+            break rows.0;
+        }
+        if std::time::Instant::now() > deadline {
+            break rows.0;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(
+        rows.iter().sum::<usize>() > 0,
+        "debugger projected no rows with a ROM loaded: {rows:?}"
+    );
+    // The pause gesture travels the same production path.
+    let screen = host.widget_screen(id).expect("debug screen");
+    let pause = find_action(&screen, "Pause").or_else(|| find_action(&screen, "Resume"));
+    host.widget_dispatch(
+        id,
+        ControlEvent::new(pause.expect("pause button"), ControlInput::Activate),
+    );
+    assert!(host.owns_pause(pause_owners::USER));
+    assert!(host.tick().paused);
+}
+
+#[test]
+fn notification_strip_setting_commits_and_reserves_osd_rows() {
+    use crate::settings::SettingsController;
+    use crate::widget_session::{WidgetSession, take_submission};
+    use nerust_settings_core::i18n::{UiText, text};
+    use wakui::app::roles::AuxPorts;
+    use wakui::chrome::aux::{AuxRegistryPort, AuxWindows, OpenRequest};
+    use wakui::scene::control::{Control, ControlEvent, ControlId, ControlInput, ControlVisitor};
+
+    fn find_by_label(session: &WidgetSession, label: &str) -> Option<ControlId> {
+        struct Find {
+            label: String,
+            out: Option<ControlId>,
+        }
+        impl ControlVisitor for Find {
+            fn control(&mut self, control: &Control) {
+                if self.out.is_none() && control.label == self.label {
+                    self.out = Some(control.id);
+                }
+                wakui::scene::control::walk_control(control, self);
+            }
+        }
+        let mut find = Find {
+            label: label.to_string(),
+            out: None,
+        };
+        session.screen().visit(&mut find);
+        find.out
+    }
+
+    let mut fixture = Fixture::new();
+    fixture.load();
+    let host = &mut fixture.core;
+    let language = host.settings_snapshot().shared.general.language;
+    let controller = SettingsController::new(
+        host.settings_snapshot(),
+        host.system_registry(),
+        host.audio_registry(),
+    );
+    let mut session = WidgetSession::from_settings(controller);
+    let area = text(language, UiText::NotificationAreaMode).to_string();
+    let ok = text(language, UiText::Ok).to_string();
+    session.dispatch(ControlEvent::new(
+        find_by_label(&session, &area).expect("area-mode"),
+        ControlInput::Select(1),
+    ));
+    session.dispatch(ControlEvent::new(
+        find_by_label(&session, &ok).expect("submit"),
+        ControlInput::Activate,
+    ));
+    // The native close consumes the submission through the prepared mailbox.
+    let mut windows = AuxWindows::<AuxKind, u64, ()>::new();
+    let Some(OpenRequest::Create(id)) = host
+        .reserve_widget(&mut windows, AuxKind::Settings)
+        .unwrap()
+    else {
+        panic!("no settings window")
+    };
+    windows.set_mailbox(id, session.mailbox());
+    let submission = take_submission(&session.mailbox()).unwrap();
+    let effects = host
+        .apply_window_submission(&windows, id, submission)
+        .unwrap();
+    assert!(effects.redraw && effects.refresh_chrome);
+    let snap = host.settings_snapshot();
+    assert_eq!(
+        snap.local.notifications.area_mode,
+        nerust_settings_core::model::local::NotificationAreaMode::Strip
+    );
+    let frame = crate::frame::FrameSnapshot::new(host.session().settings_arc());
+    let (top, bottom) = frame.chrome().reserved_rows();
+    assert!(
+        top + bottom > 0,
+        "strip must reserve OSD rows, got top={top} bottom={bottom}"
+    );
+}
