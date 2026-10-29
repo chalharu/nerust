@@ -868,7 +868,7 @@ fn systems_page(vm: &SettingsViewModel) -> Vec<NodeDef> {
                     display: ControlDisplay::Standard,
                     enabled: BoolBinding::Literal(true),
                     visible: BoolBinding::Literal(true),
-                    hints: LayoutHints::default(),
+                    hints: list_hints(),
                     leaf: LeafDef::List {
                         columns: Vec::new(),
                         rows: RowsDef::Nested {
@@ -939,7 +939,7 @@ fn sections_tabs() -> NodeDef {
                     display: ControlDisplay::Standard,
                     enabled: BoolBinding::Literal(true),
                     visible: BoolBinding::Literal(true),
-                    hints: LayoutHints::default(),
+                    hints: list_hints(),
                     leaf: LeafDef::List {
                         columns: Vec::new(),
                         rows: RowsDef::Nested {
@@ -955,6 +955,17 @@ fn sections_tabs() -> NodeDef {
         }),
         selected: SelectedDef::Bound("sections_selected".into()),
     })
+}
+
+/// Row gap for list hosts that replaced the old per-row containers.
+/// The GTK list body reads this from the host metadata; Tao rows inherit
+/// the parent column gap. Matches the retired `Row` container spacing.
+fn list_hints() -> LayoutHints {
+    LayoutHints {
+        spacing: Some(12.0),
+        indent: Some(0.0),
+        ..LayoutHints::default()
+    }
 }
 
 fn input_page() -> Vec<NodeDef> {
@@ -977,8 +988,8 @@ fn input_page() -> Vec<NodeDef> {
                             help: None,
                             display: ControlDisplay::Standard,
                             enabled: BoolBinding::Literal(true),
-                            visible: BoolBinding::Literal(true),
-                            hints: LayoutHints::default(),
+                            visible: BoolBinding::Field("is_system".into()),
+                            hints: list_hints(),
                             leaf: LeafDef::List {
                                 columns: Vec::new(),
                                 rows: RowsDef::Nested {
@@ -1012,8 +1023,8 @@ fn input_page() -> Vec<NodeDef> {
                             help: None,
                             display: ControlDisplay::Standard,
                             enabled: BoolBinding::Literal(true),
-                            visible: BoolBinding::Literal(true),
-                            hints: LayoutHints::default(),
+                            visible: BoolBinding::Field("is_system".into()),
+                            hints: list_hints(),
                             leaf: LeafDef::List {
                                 columns: Vec::new(),
                                 rows: RowsDef::Nested {
@@ -1050,8 +1061,8 @@ fn input_page() -> Vec<NodeDef> {
                         help: None,
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
-                        visible: BoolBinding::Literal(true),
-                        hints: LayoutHints::default(),
+                        visible: BoolBinding::Field("is_shortcuts".into()),
+                        hints: list_hints(),
                         leaf: LeafDef::List {
                             columns: Vec::new(),
                             rows: RowsDef::Nested {
@@ -1221,6 +1232,8 @@ impl Lists for SettingsResolver<'_> {
                     match path {
                         "tab_id" => Value::Text(view.system_id.to_string()),
                         "tab_label" => Value::Text(view.label.clone()),
+                        "is_system" => Value::Bool(true),
+                        "is_shortcuts" => Value::Bool(false),
                         _ => Value::Text(String::new()),
                     }
                 } else if index == n {
@@ -1228,6 +1241,8 @@ impl Lists for SettingsResolver<'_> {
                     match path {
                         "tab_id" => Value::Text("shortcuts".into()),
                         "tab_label" => Value::Text(view.label.clone()),
+                        "is_system" => Value::Bool(false),
+                        "is_shortcuts" => Value::Bool(true),
                         _ => Value::Text(String::new()),
                     }
                 } else {
