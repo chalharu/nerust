@@ -13,7 +13,7 @@ use wakui::{
 };
 use wakui::{
     aux::{AuxId, AuxRegistryPort, OpenRequest},
-    focus::{FocusEffect, FocusEvent},
+    focus::FocusEvent,
     mailbox::WindowMailbox,
     menu::{FileDialogTitles, MenuCapabilities, Menubar},
     viewport::{ViewportImage, ViewportPresent},
@@ -512,7 +512,7 @@ impl FrontendApp<AuxKind> for ApplicationHost {
         ApplicationHost::remembered_window_size(self)
     }
 
-    fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
+    fn focus_event(&mut self, event: FocusEvent) {
         ApplicationHost::focus_event(self, event)
     }
 
@@ -530,10 +530,6 @@ impl FrontendApp<AuxKind> for ApplicationHost {
 
     fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
         ApplicationHost::drive_aux_focus(self, id, focused)
-    }
-
-    fn release_focus_hold(&mut self) {
-        ApplicationHost::release_focus_hold(self);
     }
 
     fn reserve_widget(

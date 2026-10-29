@@ -25,7 +25,7 @@ use wakui_core::{
     },
     dialog::{DialogTurn, ModalAdvance, ModalPresentation, ModalToken},
     event::{CommandEffect, EventCommand, EventHandler, EventOutcome},
-    focus::{FocusEffect, FocusEvent},
+    focus::FocusEvent,
     leaf::{ActionLeaf, BindingLeaf, ChoiceLeaf, NoteLeaf, NumberLeaf, TextLeaf, ToggleLeaf},
     loop_driver::WakeNeed,
     mailbox::{MailboxDomain, WindowMailbox},
@@ -895,7 +895,13 @@ impl EventHandler<TestAux> for FakeApp {
                     self.focus_paused = !active;
                 }
                 FocusEvent::Aux { .. } => {}
-                FocusEvent::BurstEnd => {}
+                FocusEvent::BurstEnd => {
+                    // Unloaded departures never suspend, like the loaded
+                    // gate view-side.
+                    if !self.loaded {
+                        self.focus_paused = false;
+                    }
+                }
             },
             EventCommand::LiveTick => {
                 outcome.effect = Some(CommandEffect::LiveTick);
@@ -1197,9 +1203,7 @@ impl FrontendApp<TestAux> for FakeApp {
         self.remembered_size
     }
 
-    fn focus_event(&mut self, _event: FocusEvent) -> Option<FocusEffect> {
-        None
-    }
+    fn focus_event(&mut self, _event: FocusEvent) {}
 
     fn main_active(&self) -> bool {
         self.main_active
@@ -1207,7 +1211,7 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn note_main_arrival(&mut self) -> bool {
         self.main_active = true;
-        false
+        std::mem::replace(&mut self.focus_paused, false)
     }
 
     fn note_main_departure(&mut self) {
@@ -1217,10 +1221,6 @@ impl FrontendApp<TestAux> for FakeApp {
 
     fn drive_aux_focus(&mut self, _id: AuxId, focused: bool) -> bool {
         focused
-    }
-
-    fn release_focus_hold(&mut self) {
-        self.focus_paused = false;
     }
 
     fn reserve_widget(
@@ -1830,7 +1830,7 @@ impl FrontendApp<TestAux> for SharedApp {
     fn remembered_window_size(&self) -> Option<(u32, u32)> {
         self.inner.borrow().remembered_window_size()
     }
-    fn focus_event(&mut self, event: FocusEvent) -> Option<FocusEffect> {
+    fn focus_event(&mut self, event: FocusEvent) {
         self.inner.borrow_mut().focus_event(event)
     }
     fn main_active(&self) -> bool {
@@ -1844,9 +1844,6 @@ impl FrontendApp<TestAux> for SharedApp {
     }
     fn drive_aux_focus(&mut self, id: AuxId, focused: bool) -> bool {
         self.inner.borrow_mut().drive_aux_focus(id, focused)
-    }
-    fn release_focus_hold(&mut self) {
-        self.inner.borrow_mut().release_focus_hold()
     }
     fn reserve_widget(
         &mut self,

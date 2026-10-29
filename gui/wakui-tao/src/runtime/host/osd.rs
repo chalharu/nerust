@@ -85,7 +85,7 @@ mod tests {
         host.tick_osd_pump();
         assert!(host.core.content_suspended(), "focus still holds");
         assert!(!support.app.borrow().owns_pause(owners::MODAL));
-        host.core.release_focus_hold();
+        assert!(host.core.note_main_arrival());
         assert!(!host.core.content_suspended());
     }
 
