@@ -3407,8 +3407,6 @@ dependencies = [
  "nerust_system_traits",
  "simple_logger",
  "wakui",
- "wakui-gtk",
- "wakui-tao",
 ]
 
 [[package]]
@@ -6384,6 +6382,16 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "wakui"
 version = "0.1.0-dev"
 dependencies = [
+ "wakui_core",
+ "wakui_default",
+ "wakui_gtk",
+ "wakui_tao",
+]
+
+[[package]]
+name = "wakui_core"
+version = "0.1.0-dev"
+dependencies = [
  "log",
  "raw-window-handle",
  "serde",
@@ -6391,7 +6399,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "wakui-gtk"
+name = "wakui_default"
+version = "0.1.0-dev"
+dependencies = [
+ "wakui_gtk",
+ "wakui_tao",
+]
+
+[[package]]
+name = "wakui_gtk"
 version = "0.1.0-dev"
 dependencies = [
  "gdk4",
@@ -6406,11 +6422,11 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-quartz-core 0.3.2",
  "raw-window-handle",
- "wakui",
+ "wakui_core",
 ]
 
 [[package]]
-name = "wakui-tao"
+name = "wakui_tao"
 version = "0.1.0-dev"
 dependencies = [
  "gdkx11",
@@ -6424,7 +6440,7 @@ dependencies = [
  "rfd",
  "strum",
  "tao",
- "wakui",
+ "wakui_core",
 ]
 
 [[package]]

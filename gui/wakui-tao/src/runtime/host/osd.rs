@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use wakui::dialog::{ModalPresentation, ModalPresenter};
+use wakui_core::dialog::{ModalPresentation, ModalPresenter};
 
 use super::HostState;
 use super::window::WakeNeed;
@@ -62,11 +62,11 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
 mod tests {
     use super::*;
     use crate::runtime::host::TestHost;
-    use wakui::focus::FocusEvent;
+    use wakui_core::focus::FocusEvent;
 
     #[test]
     fn parked_modal_has_ack_backstop_and_releases_only_its_owner() {
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
         let mut host = TestHost::with_nes().host;
         host.load_test_rom();
         host.core.report_host_error("parked modal".into());
@@ -101,8 +101,8 @@ mod tests {
 
     #[test]
     fn close_retires_owned_modal_receiver_queue() {
-        use wakui::dialog::ModalAdvance;
-        use wakui::pause::PauseOwner;
+        use wakui_core::dialog::ModalAdvance;
+        use wakui_core::pause::PauseOwner;
         let mut host = TestHost::new().host;
         host.core.set_pause_owner(PauseOwner::Settings, true);
         host.core.report_host_error("active on close".into());
@@ -148,7 +148,7 @@ mod tests {
     fn pending_history_open_skips_creation_and_content_cache_updates() {
         use crate::test_opener::FakeOpener;
         use crate::testkit::TestAux;
-        use wakui::aux::OpenRequest;
+        use wakui_core::aux::OpenRequest;
         let mut host = TestHost::new().host;
         let OpenRequest::Create(id) = host
             .aux

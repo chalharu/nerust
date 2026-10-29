@@ -9,8 +9,8 @@ use tao::{
 };
 
 use rfd::FileDialog;
-use wakui::control::ControlScreen;
-use wakui::{
+use wakui_core::control::ControlScreen;
+use wakui_core::{
     aux::AuxId,
     mailbox::WindowMailbox,
     window::{Window, WindowVisitor},
@@ -117,13 +117,13 @@ impl ModalActor {
 
 /// Blocking modal body: runs only on the actor worker thread.
 fn show_blocking(title: &str, detail: &str) {
-    crate::show_message_dialog(&wakui::dialog::MessageDialog::error(title, detail));
+    crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
 }
 
 /// Surface ROM load failures in a modal dialog: the previous
 /// warn-only path left the empty window with no explanation.
 pub(crate) fn show_rom_load_error(title: String, detail: &str) {
-    crate::show_message_dialog(&wakui::dialog::MessageDialog::error(title, detail));
+    crate::show_message_dialog(&wakui_core::dialog::MessageDialog::error(title, detail));
 }
 
 /// Aux-window open parameters. Every aux window is a generic controls

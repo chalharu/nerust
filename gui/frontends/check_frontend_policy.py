@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Flavor dependency gate: wakui-tao/wakui-gtk stay framework-only.
+"""Flavor dependency gate: wakui_tao/wakui_gtk stay framework-only.
 
 Checks:
 1. `[dependencies]` (plus target-specific and `[dev-dependencies]`)
-   of `wakui-tao`/`wakui-gtk` name zero `nerust_*` crates.
+   of `wakui_tao`/`wakui_gtk` name zero `nerust_*` crates.
 2. `cargo tree --edges normal --depth 1` agrees (no direct normal edge
    to any `nerust_*` crate).
 3. All `.rs` files in both flavors (production AND tests) name zero
@@ -19,8 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 FLAVORS = {
-    "wakui-tao": ROOT / "gui/wakui-tao",
-    "wakui-gtk": ROOT / "gui/wakui-gtk",
+    "wakui_tao": ROOT / "gui/wakui-tao",
+    "wakui_gtk": ROOT / "gui/wakui-gtk",
 }
 
 
@@ -114,7 +114,7 @@ def main() -> int:
             shown = ", ".join(sites[:5])
             failures.append(f"{package} code names {name}: {shown}")
 
-    wakui_closure = cargo_closure_has_nerust("wakui")
+    wakui_closure = cargo_closure_has_nerust("wakui_core")
     if wakui_closure:
         failures.append(f"wakui normal closure contains nerust_*: {wakui_closure}")
 
@@ -123,7 +123,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print("flavor policy gate OK: wakui-tao/wakui-gtk are nerust_*-free; wakui is repo-free")
+    print("flavor policy gate OK: wakui_tao/wakui_gtk are nerust_*-free; wakui is repo-free")
     return 0
 
 

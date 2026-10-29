@@ -8,9 +8,9 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use wakui::control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen};
-use wakui::mailbox::WindowMailbox;
-use wakui::window::Window as HostWindow;
+use wakui_core::control::{ControlEffect, ControlEvent, ControlId, ControlInput, ControlScreen};
+use wakui_core::mailbox::WindowMailbox;
+use wakui_core::window::Window as HostWindow;
 
 #[path = "renderer.rs"]
 pub mod renderer;
@@ -28,7 +28,7 @@ pub struct Callbacks {
     /// Dispatch queued events through the app; picker effects run natively.
     pub submit: Box<dyn Fn(Vec<ControlEvent>) -> Vec<ControlEffect>>,
     /// Complete a native picker round-trip through the app.
-    pub submit_picker: Box<dyn Fn(ControlId, wakui::control::Id, Option<PathBuf>)>,
+    pub submit_picker: Box<dyn Fn(ControlId, wakui_core::control::Id, Option<PathBuf>)>,
     pub close: Box<dyn Fn()>,
 }
 

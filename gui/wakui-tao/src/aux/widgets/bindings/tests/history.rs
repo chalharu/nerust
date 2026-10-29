@@ -1,10 +1,10 @@
 //! History exercises the same controls binding, not a second toolbar/program.
 use super::*;
 use crate::aux::widgets::controls::build_screen;
-use wakui::control::{
+use wakui_core::control::{
     Container, Control, ControlInput, ControlVisitor, RowPolicy, TablePolicy, policy,
 };
-use wakui::leaf::{ChoiceLeaf, ListLeaf, NoteLeaf};
+use wakui_core::leaf::{ChoiceLeaf, ListLeaf, NoteLeaf};
 
 fn fixture() -> (HostState<TestAux>, AuxId) {
     let mut host = TestHost::new().host;
@@ -174,7 +174,7 @@ fn sync_consumes_refresh_flag_not_close_flag() {
 
 #[test]
 fn owned_note_text_renders_verbatim_without_recounting() {
-    use wakui::control::Node;
+    use wakui_core::control::Node;
     let (host, id) = fixture();
     let message = "Paused \u{d7}3".to_string();
     // The native interpreter receives only the owned cell text: it must

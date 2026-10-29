@@ -5,11 +5,11 @@ use std::{
 };
 
 use gtk::{glib, prelude::*};
-use wakui::dialog::ModalPresentation;
-use wakui::loop_driver::{
+use wakui_core::dialog::ModalPresentation;
+use wakui_core::loop_driver::{
     LoopHost, TurnLiveness, TurnOutcome, WakeNeed, drive_turn, flight_backstop,
 };
-use wakui::viewport::ViewportRegion;
+use wakui_core::viewport::ViewportRegion;
 
 use super::State;
 
@@ -23,7 +23,7 @@ pub(crate) struct SurfaceCore<K: Copy + Eq + std::hash::Hash + 'static> {
     picture: gtk::Picture,
     pub(crate) state: Rc<RefCell<State<K>>>,
     output_generation: Cell<Option<u64>>,
-    retry: RefCell<wakui::retry::RenderRetry>,
+    retry: RefCell<wakui_core::retry::RenderRetry>,
     wake: RefCell<WakeAt>,
 }
 
@@ -458,7 +458,7 @@ mod wake_tests {
 
     #[test]
     fn native_modal_can_ack_synchronously_during_map_without_retaining_surface() {
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
         let Some(h) = Harness::new() else { return };
         let mapped = Rc::new(Cell::new(0));
         let dialogs = Rc::new(RefCell::new(Vec::<gtk::MessageDialog>::new()));
@@ -630,7 +630,7 @@ mod wake_tests {
 
     #[test]
     fn native_modal_map_can_borrow_state_surface_and_renderer_then_ack() {
-        use wakui::pause::PauseOwner;
+        use wakui_core::pause::PauseOwner;
 
         let Some(h) = Harness::new() else { return };
         h.state

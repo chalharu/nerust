@@ -9,7 +9,7 @@ pub(crate) use crate::handler::WidgetBinding;
 #[cfg(test)]
 use std::rc::Rc;
 #[cfg(test)]
-use wakui::Key;
+use wakui_core::Key;
 
 #[cfg(test)]
 pub(crate) mod tests;

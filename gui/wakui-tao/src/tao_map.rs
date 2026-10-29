@@ -3,7 +3,7 @@
 
 use super::domain::{AuxButton, AuxModifiers, ModifierFlag};
 use tao::keyboard::{KeyCode, ModifiersState as TaoModifiers};
-use wakui::Key;
+use wakui_core::Key;
 
 /// Convert Tao modifiers to domain modifiers.
 pub fn tao_modifiers_to_domain(m: TaoModifiers) -> AuxModifiers {

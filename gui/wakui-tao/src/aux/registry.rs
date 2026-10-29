@@ -6,11 +6,11 @@
 
 use super::focus::{AuxEvents, AuxIdentity, AuxRender, pump_aux};
 use crate::domain::{AuxId, AuxNativeEvent, NativeWindowId};
-use wakui::aux::AuxWindows;
+use wakui_core::aux::AuxWindows;
 #[cfg(test)]
-use wakui::aux::OpenRequest;
-use wakui::control::{ControlEvent, ControlScreen};
-use wakui::mailbox::WindowMailbox;
+use wakui_core::aux::OpenRequest;
+use wakui_core::control::{ControlEvent, ControlScreen};
+use wakui_core::mailbox::WindowMailbox;
 
 /// Effects one aux event produced: computed in the entry, applied by the host.
 #[derive(Debug, Clone, Default)]
@@ -92,12 +92,12 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> AuxRegistry<K> {
         self.windows.request_open(kind, title)
     }
 
-    pub(crate) fn window(&self, id: AuxId) -> Option<&wakui::window::Window> {
+    pub(crate) fn window(&self, id: AuxId) -> Option<&wakui_core::window::Window> {
         self.windows.window(id)
     }
 
     #[allow(dead_code)]
-    pub(crate) fn window_mut(&mut self, id: AuxId) -> Option<&mut wakui::window::Window> {
+    pub(crate) fn window_mut(&mut self, id: AuxId) -> Option<&mut wakui_core::window::Window> {
         self.windows.window_mut(id)
     }
 
@@ -252,8 +252,8 @@ pub(crate) mod test_double {
     use crate::domain::{AuxNativeEvent, NativeWindowId};
 
     use super::{AuxController, WidgetSessionPort};
-    use wakui::control::{ControlEvent, ControlScreen};
-    use wakui::mailbox::WindowMailbox;
+    use wakui_core::control::{ControlEvent, ControlScreen};
+    use wakui_core::mailbox::WindowMailbox;
 
     /// Configurable stub aux: a generic widget window.
     pub(crate) struct StubAux {
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn reserved_window_snapshot_allows_reentry_and_stale_ids_cannot_touch_reopen() {
         use std::cell::RefCell;
-        use wakui::window::{WidgetContents, WindowVisitor};
+        use wakui_core::window::{WidgetContents, WindowVisitor};
 
         let registry = RefCell::new(registry());
         let OpenRequest::Create(old) = registry
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn widget_ports_push_and_drain_through_the_open_entry() {
-        use wakui::control::{ControlEvent, ControlInput};
+        use wakui_core::control::{ControlEvent, ControlInput};
 
         let mut host = crate::runtime::host::TestHost::new().host;
         let id = host

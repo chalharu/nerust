@@ -62,7 +62,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
         self.refresh_polled_snapshot(id);
     }
 
-    fn refresh_polled_snapshot(&mut self, id: wakui::aux::AuxId) {
+    fn refresh_polled_snapshot(&mut self, id: wakui_core::aux::AuxId) {
         if let Some(screen) = self.core.widget_screen(id) {
             self.aux.push_widget_snapshot(id, &screen);
         }
@@ -80,7 +80,7 @@ impl<K: Copy + Eq + std::hash::Hash + 'static> HostState<K> {
     /// departure and non-focus events report false, without touching chrome.
     pub(crate) fn drive_aux_focus(
         &mut self,
-        id: wakui::aux::AuxId,
+        id: wakui_core::aux::AuxId,
         event: &tao::event::WindowEvent,
     ) -> bool {
         match event {

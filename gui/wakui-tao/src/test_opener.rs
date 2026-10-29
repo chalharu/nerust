@@ -44,11 +44,11 @@ impl crate::ports::WindowOpener for FakeOpener {
 
     fn create_aux(
         &self,
-        window: wakui::window::Window,
+        window: wakui_core::window::Window,
         _params: crate::ports::AuxOpenParams,
     ) -> Option<Box<dyn crate::aux::registry::AuxController>> {
         use crate::testkit::TestAux;
-        let wakui::window::WindowId::Auxiliary(_) = window.id else {
+        let wakui_core::window::WindowId::Auxiliary(_) = window.id else {
             return None;
         };
         // Titles are view-side; the headless fake maps them back to calls.
