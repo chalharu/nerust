@@ -40,6 +40,25 @@ native toolkit dependency is required.
 
 ### Third-prototype reads and typed arguments
 
+`Store::watch(source, react) -> Subscription` connects state changes to a
+reaction `Fn(&Store<S>, T)`, without capturing a strong Store owner. Unlike a
+direct `Binding::subscribe`, reactions run as ordinary FIFO events after the
+current publication. Each scope holds at most one latest value and one queued
+reaction; a full queue is retried after dequeues. This does not bypass ingress
+limits or allocate additional executor tasks. Positive ingress is required.
+Intermediate values can coalesce: this is for derived state / latest requests,
+not an event log or a transactional stream. Initial delivery can be synchronous;
+this is not a timer-based debounce.
+
+A reaction starts after its ingress permit is released, so it can submit one
+update or effect even with ingress=1. Further operations still check acceptance.
+An effect may still fail its task limit; the reaction can instead submit one
+error update. Settings uses this for projection and save recovery; the library
+screen uses it for query, Latest scan and projection. Exclude derived output
+fields from sources to avoid feedback loops. Dropping the scope invalidates
+queued reactions, but does not cancel effects that already started. Store
+close/drop discards queued reactions; tokens themselves are not Store owners.
+
 Binding reads and initial subscriptions hold an `Rc<S>` snapshot while projecting
 outside internal borrows; they do not clone S. Mutation clones S once, and the
 public `snapshot()` still returns an owned clone. Publication still scans all

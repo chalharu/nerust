@@ -47,6 +47,13 @@ Integer fields work identically for `Binding<i32>`, etc. Numeric literals remain
 An omitted argument supplies an empty String, so typed commands must supply a
 matching argument. Rust rejects mismatched argument bindings at the call site.
 
+Argument `Self` always refers to the source model, not to `Store<Model>` in the
+generated extension implementation. This also applies recursively to
+`Option<Vec<Self>>`, `<Self as Trait>::Value`, and const expressions such as
+`[u8; Self::SIZE]`. The original method signature is not rewritten. Opaque type
+macro arguments containing explicit `Self` are rejected with a diagnostic;
+spell out the concrete model inside such macros.
+
 ## Complete syntax example
 
 ```yaml

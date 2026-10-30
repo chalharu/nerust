@@ -2,7 +2,7 @@
 
 Evolved standalone workspace. No dependency on prototype_1 or prototype-2. No build.rs.
 Inherited crate names keep the `wakui2-` prefix; this workspace contains the third
-revision, and the practical application is `wakui3-settings`.
+revision, and the practical applications are `wakui3-settings` and `wakui3-library`.
 
 ## Runtime API shared with codegen/backends
 
@@ -11,6 +11,7 @@ revision, and the practical application is `wakui3-settings`.
 - `Command { pub enabled: Binding<bool> }`, `invoke()->bool`.
 - `Store<S:Clone+'static>`: Clone, `new(state, Rc<dyn Executor>)`, `snapshot`, `update(impl FnOnce(&mut S)+'static)->bool`, `close`, `is_closed`.
 - `Store::bind<T:Clone+PartialEq>(read: impl Fn(&S)->T+'static, write:Option<fn(&mut S,T)>)->Binding<T>`.
+- `Store::watch<T:Clone+'static>(source:Binding<T>, react:impl Fn(&Store<S>,T)+'static)->Subscription`: latest-value reaction through bounded FIFO after publication, retries after saturation with positive ingress. Initial reaction may be synchronous. Token drop invalidates queued reactions, not already-started effects. Each reaction begins with one ingress slot free; further submissions must check acceptance. Tokens do not own Store; exclude outputs from sources to avoid feedback.
 - `Store::command<A:Clone+'static>(enabled: impl Fn(&S)->bool+'static, action: impl Fn(&Store<S>,A)+'static, argument:Binding<A>)->Command`. Recheck enabled on dequeue. Argument evaluated at invocation; the native-facing Command erases its argument type.
 - `Store::effect(policy:Policy, slot:&str, future:impl Future<Output=R>+'static, apply:impl FnOnce(&mut S,R)+'static)->bool`. Policy Latest/Serial/Parallel. Futures outside borrow, bounded ingress/tasks, weak ownership, stale lifecycle protection.
 - `validation(&Store<S>,source:Binding<String>,error:Binding<String>,pending:Binding<bool>,validator:impl Fn(String)->LocalBoxFuture<'static,Result<(),String>>+'static)->Subscription`: Latest per subscription, initial validation, no stale result on unmount.
@@ -63,6 +64,12 @@ static commands accept `(Store<Self>, A)`. A must be Clone + 'static. Receiver
 actions queue update; static actions receive Store outside a state borrow.
 Noargument receiver methods keep their legacy Binding<String> signature. Import
 the generated extension trait at the view call site. Generic models remain unsupported.
+
+In generated argument signatures, `Self` is recursively normalized to the source
+model, including nested types, qualified associated types and associated const
+expressions. It never changes meaning to `Store<Model>`. Source signatures stay
+unchanged. Explicit `Self` inside opaque type macros is rejected with a diagnostic;
+use the concrete model type there.
 
 Markup schema v2: root Window {id,title,content,menus:[...]}; layout children + margin/padding + grid/absolute placement. text properties `{literal:...}` / `{bind:{path:name,mode:TwoWay,converter:crate::converter}}`. Converter path has `.forward(value)`/`.backward(value)->Result<_,String>` associated functions or simple runtime built-in. Macro emits field closures, Rust enforces field type/unknown names. Labels OneWay; Entry strips writer for OneWay.
 

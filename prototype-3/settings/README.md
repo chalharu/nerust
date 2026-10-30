@@ -32,6 +32,11 @@ CLI: `--config PATH` (default: current directory / `wakui3-settings.json`).
 - UI projection subscription excludes its own output, compares derived values,
   and publishes only changes. Shared `view!` is used; explicit on-close closes
   the model. The close-ready subscription captures **WeakView**, not View.
+- Projection and save triggers use scoped `Store::watch` reactions rather than
+  submitting work inside publication callbacks. Reactions coalesce/retry through
+  ordinary FIFO ingress and run with one slot available, so ingress=1 saves
+  progress. Task rejection clears pending, preserves Draft and saved Config, and
+  displays the failure in `ui.status`, including with ingress=1/tasks=0.
 - The bounded pool (one worker, four waiting jobs) is owned outside the loop and
   joined only after the native loop returns. Worker submission happens **inside**
   the accepted effect future; a rejected effect cannot issue an orphan write.
@@ -65,7 +70,7 @@ Run each backend separately under Xvfb with `GDK_BACKEND=x11`,
 `GSK_RENDERER=cairo`, `G_DEBUG=fatal-criticals`. This verifies X11 adapter
 automation, not physical shortcut key delivery or Windows/macOS/Wayland behavior.
 
-The 23 display-free tests run for both features. An additional GTK-only test,
+The 25 display-free tests run for both features. An additional GTK-only test,
 `native_tests::native_generated_shared_windows_survive_peer_close`, is ignored
 by default and explicitly executed by the verification script in its own Xvfb
 process. It presents two generated shared Views, closes one native window, edits

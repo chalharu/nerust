@@ -1,5 +1,5 @@
 [workspace]
-members = ["runtime", "markup", "macros", "gtk", "tao", "demo", "settings"]
+members = ["runtime", "markup", "macros", "gtk", "tao", "demo", "settings", "library"]
 resolver = "3"
 
 [workspace.package]
