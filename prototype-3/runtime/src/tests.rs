@@ -54,6 +54,65 @@ struct Model {
 fn number(s: &Store<Model>) -> Binding<i32> {
     s.bind(|s| s.value, Some(|s, v| s.value = v))
 }
+
+#[test]
+fn dispatch_budget_yields_preserves_fifo_and_close_cancels_continuation() {
+    let mut pool = LocalPool::new();
+    let store = Store::with_dispatch_budget(
+        0usize,
+        Rc::new(LocalExecutor(pool.spawner())),
+        Limits {
+            ingress: 2,
+            tasks: 2,
+        },
+        std::num::NonZeroUsize::new(2).unwrap(),
+    );
+    let token = store.watch(store.bind(|value| *value, None), |target, value| {
+        if value < 100 {
+            assert!(target.update(move |state| *state = value + 1));
+        }
+    });
+    assert!(store.snapshot() < 100);
+    pool.run_until_stalled();
+    assert_eq!(store.snapshot(), 100);
+    assert!(store.update(|state| *state = 0));
+    let before_close = store.snapshot();
+    assert!(before_close < 100);
+    store.close();
+    pool.run_until_stalled();
+    assert_eq!(store.snapshot(), before_close);
+    drop(token);
+}
+
+#[test]
+fn dispatch_budget_allows_immediate_continuation_polling_without_stalling() {
+    struct Immediate;
+    impl Executor for Immediate {
+        fn spawn(&self, mut future: LocalBoxFuture<'static, ()>) {
+            let waker = futures::task::noop_waker();
+            let mut context = std::task::Context::from_waker(&waker);
+            for _ in 0..2 {
+                if future.as_mut().poll(&mut context).is_ready() {
+                    return;
+                }
+            }
+            panic!("continuation did not complete after its yield");
+        }
+    }
+    let store = Store::with_dispatch_budget(
+        0usize,
+        Rc::new(Immediate),
+        Limits::default(),
+        std::num::NonZeroUsize::new(2).unwrap(),
+    );
+    let token = store.watch(store.bind(|value| *value, None), |target, value| {
+        if value < 20 {
+            assert!(target.update(move |state| *state = value + 1));
+        }
+    });
+    assert_eq!(store.snapshot(), 20);
+    drop(token);
+}
 fn text(s: &Store<Model>) -> Binding<String> {
     s.bind(|s| s.argument.clone(), Some(|s, v| s.argument = v))
 }

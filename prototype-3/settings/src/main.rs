@@ -11,11 +11,24 @@ mod native_tests;
 use wakui2_gtk as backend;
 #[cfg(all(feature = "backend-tao", not(feature = "backend-gtk")))]
 use wakui2_tao as backend;
-#[cfg(any(
-    all(feature = "backend-gtk", feature = "backend-tao"),
+#[cfg(all(
+    feature = "backend-macos",
     not(any(feature = "backend-gtk", feature = "backend-tao"))
 ))]
-compile_error!("select exactly one backend: backend-gtk or backend-tao");
+use wakui3_macos as backend;
+#[cfg(any(
+    all(feature = "backend-gtk", feature = "backend-tao"),
+    all(
+        feature = "backend-macos",
+        any(feature = "backend-gtk", feature = "backend-tao")
+    ),
+    not(any(
+        feature = "backend-gtk",
+        feature = "backend-tao",
+        feature = "backend-macos"
+    ))
+))]
+compile_error!("select exactly one backend: backend-gtk, backend-tao or backend-macos");
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use wakui2_runtime::{BlockingPool, Store};
@@ -35,7 +48,15 @@ fn main() -> Result<(), String> {
     let passed = Rc::new(std::cell::Cell::new(false));
     let probe = passed.clone();
     let result = backend::run(move |executor| {
+        #[cfg(not(feature = "backend-macos"))]
         let model = Store::new(model::App::new(config), executor.clone());
+        #[cfg(feature = "backend-macos")]
+        let model = Store::with_dispatch_budget(
+            model::App::new(config),
+            executor.clone(),
+            wakui2_runtime::Limits::default(),
+            std::num::NonZeroUsize::new(64).unwrap(),
+        );
         let view = wiring::view(model.clone(), pool, path.clone());
         if smoke {
             executor.spawn(Box::pin(smoke::verify(view.clone(), model, path, probe)));

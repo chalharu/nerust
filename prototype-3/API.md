@@ -1,6 +1,6 @@
 # Prototype 3 implementation contract
 
-Evolved standalone workspace. No dependency on prototype_1 or prototype-2. No build.rs.
+Evolved standalone workspace. No dependency on prototype_1 or prototype-2. No application build.rs.
 Inherited crate names keep the `wakui2-` prefix; this workspace contains the third
 revision, and the practical applications are `wakui3-settings` and `wakui3-library`.
 
@@ -10,6 +10,7 @@ revision, and the practical applications are `wakui3-settings` and `wakui3-libra
 - `Binding<T>`: `get`, `set -> bool`, `is_writable`, `subscribe(Rc<dyn Fn(T)>) -> Subscription`, `constant`, `map` (read-only), `convert(forward,backward)` (fallible backward `Result<T,String>`).
 - `Command { pub enabled: Binding<bool> }`, `invoke()->bool`.
 - `Store<S:Clone+'static>`: Clone, `new(state, Rc<dyn Executor>)`, `snapshot`, `update(impl FnOnce(&mut S)+'static)->bool`, `close`, `is_closed`.
+- `Store::with_dispatch_budget(state, executor, Limits, NonZeroUsize)`: opt-in event budget per drain, with weak yielding continuations. Accepted writes can remain queued on return. FIFO and capacity remain unchanged; host scheduling, not this event count, determines OS fairness. Existing constructors remain synchronous.
 - `Store::bind<T:Clone+PartialEq>(read: impl Fn(&S)->T+'static, write:Option<fn(&mut S,T)>)->Binding<T>`.
 - `Store::watch<T:Clone+'static>(source:Binding<T>, react:impl Fn(&Store<S>,T)+'static)->Subscription`: latest-value reaction through bounded FIFO after publication, retries after saturation with positive ingress. Initial reaction may be synchronous. Token drop invalidates queued reactions, not already-started effects. Each reaction begins with one ingress slot free; further submissions must check acceptance. Tokens do not own Store; exclude outputs from sources to avoid feedback.
 - `Store::command<A:Clone+'static>(enabled: impl Fn(&S)->bool+'static, action: impl Fn(&Store<S>,A)+'static, argument:Binding<A>)->Command`. Recheck enabled on dequeue. Argument evaluated at invocation; the native-facing Command erases its argument type.
@@ -50,6 +51,17 @@ compares their results: this is not field-level invalidation or O(1) updates.
 - `native_*` extension factory is an application function called by generated code, e.g. `crate::meter(view,parent,id,binding)` calling backend `meter`; GTK must expose a genuine custom-widget mounting API for external primitive construction; Tao can mount custom iced Element factory. Neither should misrepresent software widgets as OS native.
 
 ## Codegen input
+
+### macOS practical-screen subset
+
+`wakui3-macos` supplies `View`/`Parent`/`run` for the settings and library screens,
+with AppKit Stack, Label, TextBox, Button, ItemsControl and Menu. It uses the same
+code generation and existing application wiring; no runtime markup parser is added.
+The backend's internal build.rs compiles a Swift C ABI bridge. Grid/Flex/Absolute
+fail explicitly; ContentControl/custom meter, UiHost and multiwindow are not yet
+implemented. Style is limited to frame insets and dimensions, not arbitrary placement.
+See [macos/README.md](macos/README.md) for supported input paths, native probes,
+dispatch budgets, development-only dylib layout and the manual IME/VoiceOver gates.
 
 `wakui2_macros::view!("ui/main.yaml", model, backend)` returns a constructed shared
 View. It retains the model until View close/drop but does not close a model with
