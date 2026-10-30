@@ -103,6 +103,8 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     var callback: Callback?
     var context: UnsafeMutableRawPointer?
     var closed = false
+    weak var editingProbe: NSTextView?
+    var editingProbeText = ""
     let bar = NSMenu()
 
     override init() {
@@ -413,8 +415,8 @@ public func style(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
     value.contentWidths[id]?.constant = -(left + right)
     if let constraints = value.dimensions[id] { NSLayoutConstraint.deactivate(constraints) }
     var constraints: [NSLayoutConstraint] = []
-    if width > 0 { constraints.append(frame.widthAnchor.constraint(equalToConstant: width)) }
-    if height > 0 { constraints.append(frame.heightAnchor.constraint(equalToConstant: height)) }
+    if width >= 0 { constraints.append(frame.widthAnchor.constraint(equalToConstant: width)) }
+    if height >= 0 { constraints.append(frame.heightAnchor.constraint(equalToConstant: height)) }
     NSLayoutConstraint.activate(constraints)
     value.dimensions[id] = constraints
 }
@@ -422,6 +424,25 @@ public func style(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
 @_cdecl("w3_remove") @MainActor
 public func remove(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int) {
     host(pointer).remove(string(idBytes, idCount))
+}
+
+@_cdecl("w3_reorder") @MainActor
+public func reorder(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
+                    _ orderBytes: UnsafePointer<UInt8>?, _ orderCount: Int) -> Int32 {
+    let value = host(pointer)
+    guard let rows = value.nodes[string(idBytes, idCount)] as? Rows,
+          let data = string(orderBytes, orderCount).data(using: .utf8),
+          let ids = try? JSONSerialization.jsonObject(with: data) as? [String],
+          ids.count == rows.body.arrangedSubviews.count else { return 0 }
+    let frames = ids.compactMap { value.frames[$0] }
+    guard frames.count == ids.count, Set(ids).count == ids.count,
+          frames.allSatisfy({ $0.superview === rows.body }) else { return 0 }
+    for (index, frame) in frames.enumerated() {
+        if rows.body.arrangedSubviews[index] !== frame {
+            rows.body.insertArrangedSubview(frame, at: index)
+        }
+    }
+    return 1
 }
 
 @_cdecl("w3_frame_height") @MainActor
@@ -553,6 +574,27 @@ public func inputProbe(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePoin
     guard let delegate = editor.delegate as? NSView, delegate !== field else { return -10 }
     editor.insertBacktab(nil)
     guard editor.delegate === field else { return -11 }
+    return 1
+}
+
+@_cdecl("w3_editing_probe") @MainActor
+public func editingProbe(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int, _ begin: Int32) -> Int32 {
+    let value = host(pointer)
+    guard let field = value.nodes[string(idBytes, idCount)] as? NSTextField else { return 0 }
+    if begin != 0 {
+        value.window.makeFirstResponder(field)
+        guard let editor = field.currentEditor() as? NSTextView else { return 0 }
+        value.editingProbe = editor
+        value.editingProbeText = field.stringValue
+        editor.selectAll(nil)
+        editor.setMarkedText("kana", selectedRange: NSRange(location: 2, length: 1), replacementRange: NSRange(location: NSNotFound, length: 0))
+        return editor.hasMarkedText() ? 1 : 0
+    }
+    guard let editor = field.currentEditor() as? NSTextView, editor === value.editingProbe,
+          editor.hasMarkedText(), editor.string == "kana", editor.selectedRange() == NSRange(location: 2, length: 1) else { return 0 }
+    editor.setMarkedText(value.editingProbeText, selectedRange: NSRange(location: 0, length: 0), replacementRange: editor.markedRange())
+    editor.unmarkText()
+    value.editingProbe = nil
     return 1
 }
 

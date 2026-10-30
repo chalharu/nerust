@@ -161,7 +161,7 @@ fn ingress_one_runs_reactions_effects_and_recovery() {
     });
     f.reply(Ok(report(&["a.nes"])));
     assert_eq!(f.model.snapshot().rows.len(), 1);
-    f.model.update(|s| s.filter = "b".into());
+    let _ = f.model.update(|s| s.filter = "b".into());
     f.reply(Err("retry me".into()));
     assert_eq!(f.model.snapshot().error, "retry me");
     f.rescan();
@@ -221,7 +221,7 @@ fn token_drop_stops_new_work_and_projection() {
     let mut f = Fixture::new(Limits::default());
     f.reply(Ok(report(&["a.nes"])));
     f.tokens.clear();
-    f.model.update(|s| {
+    let _ = f.model.update(|s| {
         s.filter = "changed".into();
         s.entries = std::sync::Arc::new(Vec::new());
     });
@@ -255,7 +255,7 @@ fn watch_token_drop_invalidates_already_queued_reaction() {
             remove.borrow_mut().take();
         }
     }));
-    model.update(|s| *s = 1);
+    let _ = model.update(|s| *s = 1);
     assert_eq!(calls.get(), before);
 }
 
@@ -355,7 +355,7 @@ fn pool_shutdown_and_full_are_reported_without_ui_blocking() {
         running.await.unwrap();
         queued.await.unwrap();
     });
-    model
+    let _ = model
         .command_rescan(Binding::constant(String::new()))
         .invoke();
     pool.run_until(crate::smoke::until(model.bind(|s| s.busy, None), |busy| {
@@ -364,7 +364,7 @@ fn pool_shutdown_and_full_are_reported_without_ui_blocking() {
     assert!(model.snapshot().error.is_empty());
     assert!(model.snapshot().entries.is_empty());
     workers.borrow_mut().shutdown();
-    model
+    let _ = model
         .command_rescan(Binding::constant(String::new()))
         .invoke();
     pool.run_until_stalled();

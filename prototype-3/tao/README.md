@@ -11,9 +11,9 @@ distinct advanced-widget layout paths. Placement width/height, outer margins and
 inner padding use logical pixels. Grid uses the supplied row/column, including
 the default cell (0,0); it does not silently substitute a stack or auto-flow.
 Grid columns and row indices/spans are safety-bounded to 4096. Invalid/nonfinite
-spacing is sanitized to zero. A finite explicitly placed size is constrained by
-the enclosing available size. Root styling uses `__root`; the first style on an
-otherwise empty View also registers the generated Window ID as a root alias.
+spacing is rejected by `try_style` before mutation. A finite explicitly placed size is constrained by
+the enclosing available size. Root styling uses `__root`; missing IDs never
+silently become aliases. `style` records validation failures in diagnostics.
 
 Common subset with GTK: Grid fills the available logical width with equal tracks
 of `(available - (columns-1)*gap)/columns`; children without explicit widths fill
@@ -46,6 +46,8 @@ subscriptions, including custom primitive tokens; source Stores are not closed.
 `keep` called synchronously inside a template also belongs to that template mount.
 Programmatic `viewport` and writable viewport bindings also move the real native
 scroll widget. Read-only viewport bindings still permit local user scrolling.
+Writable viewport bindings receive the effective normalized start, including
+after a source shrink or an external out-of-range update.
 
 `mount(parent,id,Rc<dyn Fn()->Element>,Vec<Subscription>)` is the application
 primitive extension point. It accepts actual iced advanced widgets; factories

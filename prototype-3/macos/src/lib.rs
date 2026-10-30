@@ -75,6 +75,13 @@ unsafe extern "C" {
         height: f64,
     );
     fn w3_remove(host: *mut c_void, id: *const u8, id_len: usize);
+    fn w3_reorder(
+        host: *mut c_void,
+        id: *const u8,
+        id_len: usize,
+        order: *const u8,
+        order_len: usize,
+    ) -> i32;
     fn w3_frame_height(host: *mut c_void, id: *const u8, id_len: usize) -> f64;
     fn w3_rows(
         host: *mut c_void,
@@ -87,6 +94,7 @@ unsafe extern "C" {
     );
     fn w3_menu(host: *mut c_void, id: *const u8, id_len: usize, json: *const u8, json_len: usize);
     fn w3_input_probe(host: *mut c_void, id: *const u8, id_len: usize) -> i32;
+    fn w3_editing_probe(host: *mut c_void, id: *const u8, id_len: usize, begin: i32) -> i32;
     fn w3_post_key(host: *mut c_void, id: *const u8, id_len: usize) -> i32;
     fn w3_shortcut(host: *mut c_void, value: *const u8, value_len: usize) -> i32;
     fn w3_capture(host: *mut c_void, path: *const u8, path_len: usize, width: f64) -> i32;
@@ -394,6 +402,23 @@ impl View {
         Parent(id.into())
     }
     pub fn style(&self, id: &str, style: Style) {
+        if let Err(error) = self.try_style(id, style) {
+            self.0.error.replace(Some(error));
+        }
+    }
+    pub fn try_style(&self, id: &str, style: Style) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
+        if id != "__root" && !self.0.nodes.borrow().contains(id) {
+            return Err(format!("style target not mounted: {id}"));
+        }
+        style
+            .validate(Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            })
+            .map_err(str::to_owned)?;
         let padding = style.padding;
         let margin = style.margin;
         let placement = style.placement;
@@ -406,10 +431,11 @@ impl View {
                 f64::from(padding.right + margin.right),
                 f64::from(padding.bottom + margin.bottom),
                 f64::from(padding.left + margin.left),
-                f64::from(placement.width.unwrap_or(0.0)),
-                f64::from(placement.height.unwrap_or(0.0)),
+                f64::from(placement.width.unwrap_or(-1.0)),
+                f64::from(placement.height.unwrap_or(-1.0)),
             );
         }
+        Ok(())
     }
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
         self.add(parent, id, 2, 0.0);
@@ -445,7 +471,7 @@ impl View {
         self.0.handlers.borrow_mut().insert(
             id.into(),
             Rc::new(move |_| {
-                command.invoke();
+                let _ = command.invoke();
             }),
         );
     }
@@ -471,6 +497,7 @@ impl View {
         let source = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
         let accepted = source.clone();
         let output = list.clone();
+        let viewport_writer = viewport.clone();
         let refresh: Refresh = Rc::new(move |view| {
             let list = &output;
             let snapshot = source.borrow().clone();
@@ -484,6 +511,11 @@ impl View {
                     return;
                 }
             };
+            if viewport.start != start {
+                let effective = Viewport { start, ..viewport };
+                list.current.set(Some(effective));
+                let _ = viewport_writer.set(effective);
+            }
             let visible: Vec<_> = snapshot
                 .iter()
                 .skip(start)
@@ -496,17 +528,9 @@ impl View {
                     view.remove(&format!("{key}/{}", row.key));
                 }
             }
-            let order_changed = old != visible;
-            if order_changed {
-                for row in &visible {
-                    if old.contains(row) {
-                        view.remove(&format!("{key}/{}", row.key));
-                    }
-                }
-            }
             for row in &visible {
                 let scope = format!("{key}/{}", row.key);
-                let row_parent = if order_changed || !old.contains(row) {
+                let row_parent = if !old.contains(row) {
                     Some(view.layout(
                         &Parent(key.clone()),
                         &scope,
@@ -526,6 +550,23 @@ impl View {
                         template(view, &row_parent, &scope, row.model.clone());
                     });
                 }
+            }
+            let order: Vec<_> = visible
+                .iter()
+                .map(|row| format!("{key}/{}", row.key))
+                .collect();
+            let order = serde_json::to_vec(&order).expect("string array serialization");
+            if unsafe {
+                w3_reorder(
+                    view.0.native.get(),
+                    key.as_ptr(),
+                    key.len(),
+                    order.as_ptr(),
+                    order.len(),
+                )
+            } == 0
+            {
+                list.error.replace(Some("native row reorder failed".into()));
             }
             list.mounted
                 .replace(visible.iter().map(|row| row.key.clone()).collect());
@@ -586,7 +627,7 @@ impl View {
                     list.current.set(Some(next));
                     refresh(&view);
                     if viewport.is_writable() {
-                        viewport.set(next);
+                        let _ = viewport.set(next);
                     }
                 }
             }),
@@ -818,6 +859,12 @@ impl View {
     }
     /// AppKit field-editor injection, not a physical keyboard or external IME test.
     pub fn probe_input(&self, id: &str) -> Result<(), String> {
+        if std::env::var("WAKUI_ALLOW_CLIPBOARD_PROBE").as_deref() != Ok("1") {
+            return Err(
+                "clipboard probe requires an isolated desktop and WAKUI_ALLOW_CLIPBOARD_PROBE=1"
+                    .into(),
+            );
+        }
         if self.0.closed.get() {
             return Err("view is closed".into());
         }
@@ -830,6 +877,17 @@ impl View {
                 -code
             ))
         }
+    }
+    /// Begin/verify a synthetic marked-text editing session across row movement.
+    pub fn probe_editing(&self, id: &str, begin: bool) -> Result<(), String> {
+        if self.0.closed.get()
+            || unsafe {
+                w3_editing_probe(self.0.native.get(), id.as_ptr(), id.len(), i32::from(begin))
+            } != 1
+        {
+            return Err(format!("editing state probe failed: {id}"));
+        }
+        Ok(())
     }
     /// Posts a synthetic AppKit key event, without Accessibility permission.
     pub fn post_test_key(&self, id: &str) -> bool {

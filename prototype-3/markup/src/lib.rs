@@ -227,13 +227,7 @@ pub fn parse(source: &str, format: &str, filename: &str) -> Result<Document, Err
         }
         _ => return Err(error("$", "expected json, yaml or yml".into())),
     };
-    let locations = if matches!(format, "yaml" | "yml") {
-        SourceMap::parse(source, filename).map_err(|message| error("$", message))?
-    } else {
-        let mut locations = SourceMap::default();
-        locations.filename = filename.into();
-        locations
-    };
+    let locations = SourceMap::parse(source, filename).map_err(|message| error("$", message))?;
     let diagnostic = |path: &str, message: String| Error {
         span: locations.diagnostic_span(path, &message),
         ..error(path, message)

@@ -11,6 +11,8 @@ use std::{
 };
 
 /// Scheduling is UI-local and nonblocking. Immediate polling is permitted.
+/// Accepted futures must be serviced until completion or host shutdown. Discarding
+/// a dispatch continuation closes its Store rather than stranding accepted work.
 pub trait Executor {
     fn spawn(&self, future: LocalBoxFuture<'static, ()>);
 }
@@ -40,8 +42,27 @@ impl Drop for Subscription {
 
 type Guard = Rc<dyn Fn() -> bool>;
 type Callback<T> = Rc<dyn Fn(T)>;
-type Writer<T> = Rc<dyn Fn(T, Guard) -> bool>;
+type Writer<T> = Rc<dyn Fn(T, Guard) -> Result<(), WriteError>>;
 type Subscriber<T> = Rc<dyn Fn(Callback<T>) -> Subscription>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteError {
+    ReadOnly,
+    Closed,
+    Capacity,
+    Conversion(String),
+}
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReadOnly => formatter.write_str("binding is read-only"),
+            Self::Closed => formatter.write_str("Store is closed"),
+            Self::Capacity => formatter.write_str("Store ingress is full"),
+            Self::Conversion(error) => formatter.write_str(error),
+        }
+    }
+}
+impl std::error::Error for WriteError {}
 
 /// Live projection; `set` returns acceptance, not whether the value changed.
 #[derive(Clone)]
@@ -54,11 +75,18 @@ impl<T: Clone + 'static> Binding<T> {
     pub fn get(&self) -> T {
         (self.read)()
     }
+    #[must_use = "check acceptance or explicitly discard it"]
     pub fn set(&self, value: T) -> bool {
-        self.set_guarded(value, Rc::new(|| true))
+        self.try_set(value).is_ok()
+    }
+    /// Reports acceptance, not eventual application; guards may expire on dequeue.
+    pub fn try_set(&self, value: T) -> Result<(), WriteError> {
+        self.write.as_ref().ok_or(WriteError::ReadOnly)?(value, Rc::new(|| true))
     }
     fn set_guarded(&self, value: T, guard: Guard) -> bool {
-        self.write.as_ref().is_some_and(|write| write(value, guard))
+        self.write
+            .as_ref()
+            .is_some_and(|write| write(value, guard).is_ok())
     }
     /// Indicates a writer exists; a closed or saturated Store still rejects sets.
     pub fn is_writable(&self) -> bool {
@@ -93,6 +121,25 @@ impl<T: Clone + 'static> Binding<T> {
             }),
         }
     }
+    pub fn distinct(&self) -> Self
+    where
+        T: PartialEq,
+    {
+        let source = self.clone();
+        Self {
+            read: self.read.clone(),
+            write: self.write.clone(),
+            listen: Rc::new(move |callback| {
+                let previous = RefCell::new(None);
+                source.subscribe(Rc::new(move |value| {
+                    let old = previous.replace(Some(value.clone()));
+                    if old.as_ref() != Some(&value) {
+                        callback(value);
+                    }
+                }))
+            }),
+        }
+    }
     /// A rejected backward conversion returns false without changing the model.
     pub fn convert<U: Clone + 'static>(
         &self,
@@ -102,7 +149,7 @@ impl<T: Clone + 'static> Binding<T> {
         let mut binding = self.map(forward);
         if let Some(write) = self.write.clone() {
             binding.write = Some(Rc::new(move |value, guard| {
-                backward(value).is_ok_and(|value| write(value, guard))
+                write(backward(value).map_err(WriteError::Conversion)?, guard)
             }));
         }
         binding
@@ -116,6 +163,7 @@ pub struct Command {
 }
 impl Command {
     /// Argument is read now; enabled is checked now and on dequeue.
+    #[must_use = "check acceptance or explicitly discard it"]
     pub fn invoke(&self) -> bool {
         (self.invoke)()
     }
@@ -300,6 +348,7 @@ struct Core<S: Clone + 'static> {
     ingress: Cell<usize>,
     draining: Cell<bool>,
     scheduled: Cell<bool>,
+    dispatch_failed: Cell<bool>,
     dispatch_budget: Option<std::num::NonZeroUsize>,
     closed: Cell<bool>,
     sequence: Cell<u64>,
@@ -315,11 +364,15 @@ impl Drop for DrainGuard<'_> {
     }
 }
 
-struct Continuation<S: Clone + 'static>(Weak<Core<S>>);
+struct Continuation<S: Clone + 'static>(Option<Weak<Core<S>>>);
 impl<S: Clone + 'static> Drop for Continuation<S> {
     fn drop(&mut self) {
-        if let Some(core) = self.0.upgrade() {
+        if let Some(core) = self.0.take().and_then(|owner| owner.upgrade()) {
             core.scheduled.set(false);
+            if !core.closed.get() {
+                core.dispatch_failed.set(true);
+                core.close();
+            }
         }
     }
 }
@@ -340,15 +393,21 @@ impl<S: Clone + 'static> Drop for TaskLease<S> {
 
 impl<S: Clone + 'static> Core<S> {
     fn enqueue(self: &Rc<Self>, action: Action<S>, ingress: bool) -> bool {
-        if self.closed.get() || (ingress && self.ingress.get() >= self.limits.ingress) {
-            return false;
+        self.try_enqueue(action, ingress).is_ok()
+    }
+    fn try_enqueue(self: &Rc<Self>, action: Action<S>, ingress: bool) -> Result<(), WriteError> {
+        if self.closed.get() {
+            return Err(WriteError::Closed);
+        }
+        if ingress && self.ingress.get() >= self.limits.ingress {
+            return Err(WriteError::Capacity);
         }
         if ingress {
             self.ingress.set(self.ingress.get() + 1);
         }
         self.queue.borrow_mut().push_back(Event { action, ingress });
         self.drain();
-        true
+        Ok(())
     }
     fn drain(self: &Rc<Self>) {
         if self.scheduled.get() || self.draining.replace(true) {
@@ -378,7 +437,7 @@ impl<S: Clone + 'static> Core<S> {
                 && !self.closed.get()
             {
                 self.scheduled.set(true);
-                let continuation = Continuation(Rc::downgrade(self));
+                let mut continuation = Continuation(Some(Rc::downgrade(self)));
                 drop(_guard);
                 self.executor.spawn(Box::pin(async move {
                     let mut yielded = false;
@@ -391,9 +450,10 @@ impl<S: Clone + 'static> Core<S> {
                         }
                     })
                     .await;
-                    let core = continuation.0.upgrade();
+                    let core = continuation.0.take().and_then(|owner| owner.upgrade());
                     drop(continuation);
                     if let Some(core) = core {
+                        core.scheduled.set(false);
                         core.drain();
                     }
                 }));
@@ -591,7 +651,34 @@ impl<S: Clone + 'static> Drop for Core<S> {
 pub struct Store<S: Clone + 'static> {
     core: Rc<Core<S>>,
 }
+
+/// Exclusive lifecycle authority, acquired before sharing a Store.
+pub struct StoreOwner<S: Clone + 'static> {
+    store: Store<S>,
+}
+impl<S: Clone + 'static> StoreOwner<S> {
+    pub fn store(&self) -> &Store<S> {
+        &self.store
+    }
+    pub fn close(&self) {
+        self.store.close();
+    }
+}
+impl<S: Clone + 'static> Drop for StoreOwner<S> {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 impl<S: Clone + 'static> Store<S> {
+    /// Fails without closing the Store if another strong handle already exists.
+    pub fn try_into_owner(self) -> Result<StoreOwner<S>, Self> {
+        if Rc::strong_count(&self.core) == 1 && !self.is_closed() {
+            Ok(StoreOwner { store: self })
+        } else {
+            Err(self)
+        }
+    }
     pub fn new(state: S, executor: Rc<dyn Executor>) -> Self {
         Self::with_limits(state, executor, Limits::default())
     }
@@ -628,6 +715,7 @@ impl<S: Clone + 'static> Store<S> {
                 ingress: Cell::new(0),
                 draining: Cell::new(false),
                 scheduled: Cell::new(false),
+                dispatch_failed: Cell::new(false),
                 dispatch_budget,
                 closed: Cell::new(false),
                 sequence: Cell::new(0),
@@ -642,26 +730,44 @@ impl<S: Clone + 'static> Store<S> {
     pub fn snapshot(&self) -> S {
         (*self.core.snapshots.get()).clone()
     }
+    #[must_use = "check acceptance or explicitly discard it"]
     pub fn update(&self, update: impl FnOnce(&mut S) + 'static) -> bool {
         self.core
             .enqueue(Box::new(move |core| core.mutate(update)), true)
     }
-    /// Builds an owned replacement without cloning S. None is a no-op generation
-    /// gate. Every changed top-level field must be listed; unscoped bindings are
-    /// always evaluated. Keep large unchanged data in Rc/Arc for structural sharing.
+    /// Clone-free replacement with conservative notification. None skips publication.
+    /// Field hints never suppress notifications; use update_scoped_explicit only
+    /// when the caller can prove that its complete dependency set is correct.
+    #[must_use = "check acceptance or explicitly discard it"]
     pub fn update_scoped(
+        &self,
+        _fields: &[&'static str],
+        replace: impl FnOnce(&S) -> Option<S> + 'static,
+    ) -> bool {
+        self.replace(None, replace)
+    }
+    /// Advanced dependency contract: omitted changed fields can leave observers stale.
+    #[must_use = "check acceptance or explicitly discard it"]
+    pub fn update_scoped_explicit(
         &self,
         fields: &[&'static str],
         replace: impl FnOnce(&S) -> Option<S> + 'static,
     ) -> bool {
         let fields = fields.to_vec();
+        self.replace(Some(fields), replace)
+    }
+    fn replace(
+        &self,
+        fields: Option<Vec<&'static str>>,
+        replace: impl FnOnce(&S) -> Option<S> + 'static,
+    ) -> bool {
         self.core.enqueue(
             Box::new(move |core| {
                 let previous = core.snapshots.get();
                 let next = replace(&previous);
                 drop(previous);
                 if let Some(state) = next {
-                    core.snapshots.publish_fields(state, Some(&fields));
+                    core.snapshots.publish_fields(state, fields.as_deref());
                 }
             }),
             true,
@@ -732,6 +838,9 @@ impl<S: Clone + 'static> Store<S> {
     pub fn is_closed(&self) -> bool {
         self.core.closed.get()
     }
+    pub fn dispatch_failed(&self) -> bool {
+        self.core.dispatch_failed.get()
+    }
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.core, &other.core)
     }
@@ -745,9 +854,18 @@ impl<S: Clone + 'static> Store<S> {
     ) -> Binding<T> {
         self.bind_inner(None, read, write)
     }
-    /// The projection depends only on this top-level field. Unscoped updates
-    /// invalidate it; scoped updates of other fields do not evaluate it.
+    /// Conservative binding: a handwritten field hint cannot suppress notifications.
     pub fn bind_scoped<T: Clone + PartialEq + 'static>(
+        &self,
+        _field: &'static str,
+        read: impl Fn(&S) -> T + 'static,
+        write: Option<fn(&mut S, T)>,
+    ) -> Binding<T> {
+        self.bind_inner(None, read, write)
+    }
+    /// Advanced dependency contract, also used by generated field-path bindings.
+    /// Both read and write must depend only on the named top-level field.
+    pub fn bind_scoped_explicit<T: Clone + PartialEq + 'static>(
         &self,
         field: &'static str,
         read: impl Fn(&S) -> T + 'static,
@@ -770,10 +888,8 @@ impl<S: Clone + 'static> Store<S> {
             read: Rc::new(move || project(&value.get())),
             write: write.map(|write| {
                 Rc::new(move |value, guard: Guard| {
-                    let Some(core) = owner.upgrade() else {
-                        return false;
-                    };
-                    core.enqueue(
+                    let core = owner.upgrade().ok_or(WriteError::Closed)?;
+                    core.try_enqueue(
                         Box::new(move |core| {
                             if guard() {
                                 core.mutate_field(move |state| write(state, value), field);
@@ -837,6 +953,7 @@ impl<S: Clone + 'static> Store<S> {
             }),
         }
     }
+    #[must_use = "check acceptance or explicitly discard it"]
     pub fn effect<R: 'static>(
         &self,
         policy: Policy,

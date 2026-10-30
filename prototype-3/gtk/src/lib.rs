@@ -509,13 +509,30 @@ impl View {
     }
 
     pub fn style(&self, id: &str, style: Style) {
+        if let Err(error) = self.try_style(id, style) {
+            self.0.error.replace(Some(error));
+        }
+    }
+    pub fn try_style(&self, id: &str, style: Style) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
         let (frame, parent, css) = {
             let nodes = self.0.nodes.borrow();
             let node = nodes
                 .get(id)
-                .unwrap_or_else(|| panic!("missing style target: {id}"));
+                .ok_or_else(|| format!("style target not mounted: {id}"))?;
             (node.frame.clone(), node.parent.clone(), node.css.clone())
         };
+        let layout = match parent.kind {
+            ParentKind::Grid(columns) => Layout::Grid { columns, gap: 0.0 },
+            ParentKind::Absolute => Layout::Absolute,
+            _ => Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            },
+        };
+        style.validate(layout).map_err(str::to_owned)?;
         let margin = style.margin;
         frame.set_margin_top(pixels(margin.top));
         frame.set_margin_end(pixels(margin.right));
@@ -536,40 +553,20 @@ impl View {
         );
         match parent.kind {
             ParentKind::Grid(_) => {
-                assert!(
-                    p.row >= 0 && p.column >= 0 && p.row_span > 0 && p.column_span > 0,
-                    "invalid Grid placement"
-                );
                 let grid = parent.widget.downcast_ref::<gtk::Grid>().unwrap();
                 grid.remove(&frame);
                 grid.attach(&frame, p.column, p.row, p.column_span, p.row_span);
-                assert!(p.x == 0.0 && p.y == 0.0, "x/y placement requires Absolute");
             }
             ParentKind::Absolute => {
-                assert!(
-                    p.x.is_finite() && p.y.is_finite(),
-                    "non-finite Absolute coordinates"
-                );
                 parent
                     .widget
                     .downcast_ref::<gtk::Fixed>()
                     .unwrap()
                     .move_(&frame, p.x as f64, p.y as f64);
-                assert!(
-                    p.row == 0 && p.column == 0 && p.row_span == 1 && p.column_span == 1,
-                    "grid placement requires Grid"
-                );
             }
-            _ => assert!(
-                p.row == 0
-                    && p.column == 0
-                    && p.row_span == 1
-                    && p.column_span == 1
-                    && p.x == 0.0
-                    && p.y == 0.0,
-                "placement coordinates require Grid or Absolute"
-            ),
+            _ => {}
         }
+        Ok(())
     }
 
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
@@ -598,7 +595,7 @@ impl View {
                 if value == input.get() {
                     return;
                 }
-                input.set(value);
+                let _ = input.set(value);
                 // A failed conversion/read-only writer must not leave a false display value.
                 let actual = input.get();
                 if entry.text().as_str() != actual {
@@ -626,7 +623,7 @@ impl View {
             button.set_sensitive(enabled)
         });
         let signal = button.connect_clicked(move |_| {
-            command.invoke();
+            let _ = command.invoke();
         });
         self.signal(id, &button, signal);
     }
@@ -1026,7 +1023,9 @@ impl View {
     }
 
     pub fn on_close(&self, callback: Rc<dyn Fn()>) {
-        if !self.0.closed.get() {
+        if self.0.closed.get() {
+            callback();
+        } else {
             self.0.on_close.borrow_mut().push(callback);
         }
     }
@@ -1210,7 +1209,7 @@ impl<T: Clone + 'static> Rows<T> {
         self.viewport.set(viewport);
         self.refresh(scroll);
         if self.binding.is_writable() {
-            self.binding.set(viewport);
+            let _ = self.binding.set(viewport);
         }
     }
 

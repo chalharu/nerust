@@ -1,4 +1,31 @@
 //! Run each GTK test in its own process to preserve initialization-thread affinity.
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_style_late_close_contract() {
+    gtk::init().unwrap();
+    let view = View::new(Binding::constant("style contract".into()));
+    assert_eq!(
+        view.try_style("missing", Style::default()),
+        Err("style target not mounted: missing".into())
+    );
+    let mut invalid = Style::default();
+    invalid.placement.x = 1.0;
+    assert_eq!(
+        view.try_style("__root", invalid),
+        Err("x/y placement requires Absolute".into())
+    );
+    assert_eq!(view.try_style("__root", Style::default()), Ok(()));
+    view.close();
+    assert_eq!(
+        view.try_style("__root", Style::default()),
+        Err("view is closed".into())
+    );
+    let called = Rc::new(Cell::new(false));
+    let observed = called.clone();
+    view.on_close(Rc::new(move || observed.set(true)));
+    assert!(called.get());
+}
+
 use super::*;
 use futures::{FutureExt, channel::oneshot};
 use std::time::Duration;
@@ -243,12 +270,12 @@ fn native_close_ready_subscription_retains_model_without_view_cycle() {
     let command = model.command(
         |_| true,
         |store, ()| {
-            store.update(|s| s.0 += 1);
+            let _ = store.update(|s| s.0 += 1);
         },
         Binding::constant(()),
     );
     view.on_close_request(Rc::new(move || {
-        command.invoke();
+        let _ = command.invoke();
     }));
     let closes = Rc::new(Cell::new(0));
     let count = closes.clone();
@@ -262,7 +289,7 @@ fn native_close_ready_subscription_retains_model_without_view_cycle() {
     assert_eq!(model.snapshot(), (1, false));
     assert!(!model.is_closed());
     assert!(view.native_window().is_mapped());
-    model.update(|s| s.1 = true);
+    let _ = model.update(|s| s.1 = true);
     assert_eq!(closes.get(), 1);
     assert!(model.is_closed());
     assert!(view.0.resources.borrow().is_empty());
@@ -1014,7 +1041,7 @@ fn native_entry_converted_replacement() {
     editable.set_text("0.250");
     assert_eq!(model.snapshot(), (0.25, 3));
     assert_eq!(editable.text(), "0.25");
-    model.update(|s| s.0 = 0.5);
+    let _ = model.update(|s| s.0 = 0.5);
     assert_eq!(model.snapshot(), (0.5, 3));
     assert_eq!(editable.text(), "0.5");
     assert_eq!(
@@ -1036,7 +1063,7 @@ fn native_entry_converted_replacement() {
     editable.delete_text(0, -1);
     assert_eq!(model.snapshot(), (0.7, 6));
     assert_eq!(editable.text(), "0.7");
-    model.update(|s| s.0 = 0.75);
+    let _ = model.update(|s| s.0 = 0.75);
     assert_eq!(model.snapshot(), (0.75, 6));
     assert_eq!(editable.text(), "0.75");
     model.close();
@@ -1081,7 +1108,7 @@ fn native_entry_incremental_edits_and_readonly() {
     assert_eq!(model.snapshot(), ("typed".into(), 4));
     view.edit("text", "replacement").unwrap();
     assert_eq!(model.snapshot(), ("replacement".into(), 5));
-    model.update(|s| s.0 = "model update".into());
+    let _ = model.update(|s| s.0 = "model update".into());
     assert_eq!(entry.text(), "model update");
     assert_eq!(model.snapshot().1, 5, "model updates must not echo");
 
@@ -1158,7 +1185,7 @@ fn native_invalid_keyed_snapshots() {
             .unwrap()
             .contains("invalid viewport")
     );
-    viewport.update(|state| state.count = 1);
+    let _ = viewport.update(|state| state.count = 1);
     assert_eq!(view.item_keys("rows"), ["first"]);
     assert!(view.items_error("rows").is_none());
     let first_widget = view.widget::<gtk::Label>("rows/first/text").unwrap();
@@ -1182,7 +1209,7 @@ fn native_invalid_keyed_snapshots() {
             ..valid
         },
     ] {
-        viewport.update(move |state| *state = invalid);
+        let _ = viewport.update(move |state| *state = invalid);
         assert!(
             view.items_error("rows")
                 .unwrap()
@@ -1193,7 +1220,7 @@ fn native_invalid_keyed_snapshots() {
             first_widget
         );
     }
-    viewport.update(move |state| {
+    let _ = viewport.update(move |state| {
         *state = Viewport {
             start: usize::MAX,
             ..valid
@@ -1201,7 +1228,7 @@ fn native_invalid_keyed_snapshots() {
     });
     assert_eq!(view.item_keys("rows"), ["second"]);
     assert!(view.items_error("rows").is_none());
-    viewport.update(move |state| *state = valid);
+    let _ = viewport.update(move |state| *state = valid);
     view.content(
         &view.root(),
         "content",
@@ -1222,7 +1249,7 @@ fn native_invalid_keyed_snapshots() {
         };
         let replacement = second.clone();
         let before = builds.get();
-        model.update(move |s| s.0 = vec![replacement, invalid]);
+        let _ = model.update(move |s| s.0 = vec![replacement, invalid]);
         assert!(
             view.items_error("rows")
                 .unwrap()
@@ -1244,7 +1271,7 @@ fn native_invalid_keyed_snapshots() {
     view.viewport("rows", 0);
     assert_eq!(view.item_keys("rows"), ["first"]);
     let replacement = second.clone();
-    model.update(move |s| s.0 = vec![replacement]);
+    let _ = model.update(move |s| s.0 = vec![replacement]);
     assert_eq!(view.item_keys("rows"), ["second"]);
     assert!(view.items_error("rows").is_none());
     assert!(scroll.tooltip_text().is_none());
@@ -1255,7 +1282,7 @@ fn native_invalid_keyed_snapshots() {
             model: second.model.clone(),
         };
         let before = builds.get();
-        model.update(move |s| s.1 = Some(invalid));
+        let _ = model.update(move |s| s.1 = Some(invalid));
         assert!(
             view.0
                 .error
@@ -1277,19 +1304,19 @@ fn native_invalid_keyed_snapshots() {
         assert!(content.parent().is_some());
         assert_eq!(builds.get(), before);
     }
-    first.model.update(|s| s.text = "still bound".into());
+    let _ = first.model.update(|s| s.text = "still bound".into());
     assert_eq!(
         content.text(),
         "still bound",
         "last valid content keeps its subscription"
     );
     let replacement = second.clone();
-    model.update(move |s| s.1 = Some(replacement));
+    let _ = model.update(move |s| s.1 = Some(replacement));
     assert!(view.text("content/first/text").is_none());
     assert!(content.parent().is_none());
     assert_eq!(view.text("content/second/text").as_deref(), Some("second"));
     assert!(container.tooltip_text().is_none());
-    model.update(|s| s.1 = None);
+    let _ = model.update(|s| s.1 = None);
     assert!(view.text("content/second/text").is_none());
     view.close();
     host.close();
@@ -1432,7 +1459,7 @@ fn native_menu_namespaces() {
     );
     assert_eq!(dispatched.borrow().len(), 2);
     let stale = view.0.actions.borrow()["file/open"].action.clone();
-    items.update(|items| items.push(items[0].clone()));
+    let _ = items.update(|items| items.push(items[0].clone()));
     assert!(
         view.0
             .error
@@ -1447,7 +1474,7 @@ fn native_menu_namespaces() {
         "invalid snapshot keeps both menus"
     );
     view.activate_menu("file/open").unwrap();
-    items.update(|items| {
+    let _ = items.update(|items| {
         items.pop();
         items[0].argument = "updated".into();
     });
@@ -1462,14 +1489,14 @@ fn native_menu_namespaces() {
     assert!(!view.0.actions.borrow().contains_key("file/open"));
     assert!(view.0.actions.borrow().contains_key("tools/open"));
     view.activate_menu("open").unwrap();
-    items.update(|items| items[0].enabled = false);
+    let _ = items.update(|items| items[0].enabled = false);
     assert!(view.activate_menu("open").unwrap_err().contains("disabled"));
     assert!(
         view.activate_menu("tools/open")
             .unwrap_err()
             .contains("disabled")
     );
-    items.update(Vec::clear);
+    let _ = items.update(Vec::clear);
     assert!(view.activate_menu("open").unwrap_err().contains("missing"));
     assert!(view.0.actions.borrow().is_empty());
     view.close();
@@ -1683,7 +1710,7 @@ fn native_contract() {
         let command = row.command(
             |s| s.enabled,
             |model, argument| {
-                model.update(move |s| {
+                let _ = model.update(move |s| {
                     s.calls += 1;
                     s.name = argument;
                 });
@@ -1780,7 +1807,7 @@ fn native_contract() {
         view.widget::<gtk::ProgressBar>("meter").unwrap().fraction(),
         0.25
     );
-    model.update(|s| {
+    let _ = model.update(|s| {
         s.progress = 0.75;
         s.title = "Updated title".into();
     });
@@ -1837,25 +1864,25 @@ fn native_contract() {
         old_weak.upgrade().is_none(),
         "all per-prefix native refs must be gone"
     );
-    rows[0].model.update(|s| {
+    let _ = rows[0].model.update(|s| {
         s.name = "offscreen".into();
         s.enabled = false;
     });
     view.viewport("rows", 0);
     assert_eq!(view.text("rows/k0/name").as_deref(), Some("offscreen"));
     assert!(view.click("rows/k0/invoke").is_err());
-    rows[0].model.update(|s| s.enabled = true);
+    let _ = rows[0].model.update(|s| s.enabled = true);
     view.click("rows/k0/invoke").unwrap();
     assert_eq!(rows[0].model.snapshot().calls, 2);
     let retained_entry = view.widget::<gtk::Entry>("rows/k0/name").unwrap();
-    model.update(|s| s.rows.swap(0, 1));
+    let _ = model.update(|s| s.rows.swap(0, 1));
     assert_eq!(view.item_keys("rows"), ["k1", "k0", "k2"]);
     assert_eq!(
         view.widget::<gtk::Entry>("rows/k0/name").unwrap(),
         retained_entry
     );
     let valid_keys = view.item_keys("rows");
-    model.update(|s| s.rows = vec![s.rows[0].clone(), s.rows[0].clone()]);
+    let _ = model.update(|s| s.rows = vec![s.rows[0].clone(), s.rows[0].clone()]);
     assert!(view.items_error("rows").unwrap().contains("duplicate"));
     assert_eq!(
         view.item_keys("rows"),
@@ -1863,7 +1890,7 @@ fn native_contract() {
         "duplicate rejection must be pre-mutation"
     );
     let reset_rows = rows.clone();
-    model.update(move |s| s.rows = reset_rows);
+    let _ = model.update(move |s| s.rows = reset_rows);
     assert!(view.items_error("rows").is_none());
     settle();
     let scroll = view.widget::<gtk::ScrolledWindow>("rows").unwrap();
@@ -1895,13 +1922,13 @@ fn native_contract() {
         },
         executor.clone(),
     );
-    model.update(move |s| s.rows[0] = Keyed::new("k0", replacement));
+    let _ = model.update(move |s| s.rows[0] = Keyed::new("k0", replacement));
     assert_eq!(view.text("rows/k0/name").as_deref(), Some("replacement"));
     let selected = rows[1].clone();
-    model.update(move |s| s.selected = Some(selected));
+    let _ = model.update(move |s| s.selected = Some(selected));
     assert!(view.text("content/k0/name").is_none());
     assert_eq!(view.text("content/k1/name").as_deref(), Some("row 1"));
-    model.update(|s| s.selected = None);
+    let _ = model.update(|s| s.selected = None);
     assert!(view.text("content/k1/name").is_none());
     assert_eq!(live.get(), 3);
 
@@ -1922,7 +1949,7 @@ fn native_contract() {
     ));
     assert_eq!(dispatched.borrow().len(), 2);
     let stale_action = view.0.actions.borrow()["menu/choose"].action.clone();
-    model.update(|s| {
+    let _ = model.update(|s| {
         s.menus[0].argument = "new argument".into();
         s.menus[0].label = "new label".into();
         s.menus[0].shortcut = Some("<Control>t".into());
@@ -1942,9 +1969,9 @@ fn native_contract() {
         None
     ));
     assert_eq!(dispatched.borrow().last().unwrap(), "new argument");
-    model.update(|s| s.menus[0].enabled = false);
+    let _ = model.update(|s| s.menus[0].enabled = false);
     assert!(view.activate_menu("choose").is_err());
-    model.update(|s| s.menus[0].enabled = true);
+    let _ = model.update(|s| s.menus[0].enabled = true);
     let clipboard = view.widget::<gtk::Entry>("clipboard").unwrap();
     clipboard.grab_focus();
     settle();
@@ -2059,7 +2086,7 @@ fn native_contract() {
     let weak = Rc::downgrade(&dropped.0);
     let marker = Rc::new(());
     let task = Rc::downgrade(&marker);
-    model.effect(
+    let _ = model.effect(
         Policy::Parallel,
         "drop",
         async move {

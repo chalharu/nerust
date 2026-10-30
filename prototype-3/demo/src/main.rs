@@ -33,7 +33,11 @@ fn main() -> Result<(), String> {
             Settings::new(executor.clone(), pool, path.clone()),
             executor.clone(),
         );
-        let view = wakui2_macros::owned_view!("ui/gallery.yaml", model, backend);
+        let owner = model
+            .try_into_owner()
+            .unwrap_or_else(|_| panic!("shared model"));
+        let model = owner.store().clone();
+        let view = wakui2_macros::owned_view!("ui/gallery.yaml", owner, backend);
         if args.iter().any(|arg| arg == "--smoke") {
             executor.spawn(Box::pin(smoke::verify(view.clone(), model, path)));
         }
