@@ -257,11 +257,16 @@ impl NativeControl {
         }
         label.set_mnemonic_widget(Some(&input));
         // Framework placement requests: Fill stretches inside horizontal
-        // rows (dialog nav rows, list item rows); monospace renders
+        // rows (dialog nav rows, list item rows); End pins to the row's
+        // trailing edge (right-aligned toolbar counts); monospace renders
         // fixed-pitch values (disassembly, registers, hex dumps).
         if control.metadata.hints.h_align == Some(wakui_core::scene::hints::LayoutAlign::Fill) {
             root.set_hexpand(true);
             input.set_hexpand(true);
+        }
+        if control.metadata.hints.h_align == Some(wakui_core::scene::hints::LayoutAlign::End) {
+            root.set_hexpand(true);
+            input.set_halign(gtk::Align::End);
         }
         if control.metadata.hints.monospace {
             input.add_css_class("monospace");
@@ -733,6 +738,12 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 },
                 0,
             );
+            // Row members share one line (toolbar plus trailing count,
+            // list item cells): the box fills the line so trailing
+            // members can pin to the far edge.
+            if kind == 0 {
+                body.set_hexpand(true);
+            }
             let label = gtk::Label::new(None);
             label.set_xalign(0.0);
             label.add_css_class("heading");
