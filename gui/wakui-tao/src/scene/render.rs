@@ -594,14 +594,18 @@ pub fn control_element(control: &Control, parent_enabled: bool, font: iced::Font
             iced::widget::image::Handle::from_rgba(leaf.width, leaf.height, leaf.rgba.clone());
         let shown = iced_image(handle);
         // Hover positions arrive as image pixels; floor the float point.
-        mouse_area(shown)
-            .on_move(move |point| {
-                input(ControlInput::Hover {
-                    x: point.x.max(0.0) as u32,
-                    y: point.y.max(0.0) as u32,
-                })
+        let area = mouse_area(shown).on_move(move |point| {
+            input(ControlInput::Hover {
+                x: point.x.max(0.0) as u32,
+                y: point.y.max(0.0) as u32,
             })
-            .into()
+        });
+        // Labeled pictures stack caption above the image, like GTK.
+        if label.is_empty() {
+            area.into()
+        } else {
+            column![text(label).font(font), area].spacing(4).into()
+        }
     } else if control.downcast::<ListLeaf>().is_some() {
         // Immediate mode degrades lists flat: rows arrive through the
         // explicit walk in `control()` as sibling notes.

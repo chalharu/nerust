@@ -307,6 +307,17 @@ impl WidgetSession {
         }
     }
 
+    /// Served picture generation for staleness checks. Widget pumps
+    /// refresh picture sessions only when the display moved on, so the
+    /// 2x scaler never reruns on an unchanged generation.
+    pub fn ppu_generation(&self) -> Option<u64> {
+        if let State::Ppu(state) = &self.state {
+            Some(state.session.borrow().generation())
+        } else {
+            None
+        }
+    }
+
     pub fn refresh_history(&mut self, lines: Arc<[HistoryLine]>, language: AppLanguage) {
         if let State::History(session) = &mut self.state
             && (session.lines != lines || session.language != language)

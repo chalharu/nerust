@@ -387,6 +387,48 @@ impl ApplicationHost {
             None => Ok(WindowEffects::default()),
         }
     }
+
+    /// Refresh picture sessions whose served generation lags the display.
+    /// Picture widgets have no poll of their own; the debug pump that
+    /// feeds them images also pushes the refresh, so the viewer tracks
+    /// drains without rerunning the 2x scaler on unchanged generations.
+    fn refresh_stale_ppu_widgets(&mut self) {
+        use crate::focus::AuxKind;
+        let generation = self
+            .debug_sessions
+            .values()
+            .next()
+            .map(|session| session.bridge.images_generation())
+            .unwrap_or(0);
+        if generation == 0 {
+            return;
+        }
+        let stale: Vec<AuxId> = self
+            .widget_sessions
+            .iter()
+            .filter_map(|(id, session)| {
+                (session.kind() == AuxKind::Ppu && session.ppu_generation() != Some(generation))
+                    .then_some(*id)
+            })
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        let language = self.settings_snapshot().shared.general.language;
+        let chrome = crate::ppu::ppu_chrome(language);
+        let (pictures, panels, _) = self.ppu_contents();
+        for id in stale {
+            if let Some(session) = self.widget_session_mut(id) {
+                session.refresh_ppu(
+                    chrome.clone(),
+                    pictures.clone(),
+                    panels.clone(),
+                    generation,
+                    language,
+                );
+            }
+        }
+    }
 }
 
 impl LifecyclePorts for ApplicationHost {
@@ -858,9 +900,11 @@ impl PollPorts for ApplicationHost {
             self.debug_refresh_inner(handle, DebuggerScope::All);
             let second = self.debug_poll_inner(handle);
             self.widget_refresh(id);
+            self.refresh_stale_ppu_widgets();
             return wake.fold(second);
         }
         self.widget_refresh(id);
+        self.refresh_stale_ppu_widgets();
         wake
     }
 
