@@ -22,7 +22,7 @@ printf '%s\n' "$output" | grep -q '^LIBRARY3 macos PASS latest-query-bursts samp
 printf '%s\n' "$output" | grep -q '^LIBRARY3 macos PASS native-close model-closed$'
 output=$(cargo run --locked -p wakui3-macos --example conformance)
 printf '%s\n' "$output"
-for marker in injected-field-editor native-menu viewport-contract keyed-rows reaction-chain weak-view; do
+for marker in injected-field-editor native-menu viewport-contract readonly-viewport menu-transaction nested-cleanup dynamic-row-height keyed-rows reaction-chain weak-view; do
     printf '%s\n' "$output" | grep -q "^MACOS3 PASS $marker "
 done
 printf '%s\n' 'VERIFY3 MACOS PASS: core regressions, AppKit settings/library, injected input, bounded dispatch and native drawing'

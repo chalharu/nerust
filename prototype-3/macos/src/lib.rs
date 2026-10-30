@@ -75,6 +75,7 @@ unsafe extern "C" {
         height: f64,
     );
     fn w3_remove(host: *mut c_void, id: *const u8, id_len: usize);
+    fn w3_frame_height(host: *mut c_void, id: *const u8, id_len: usize) -> f64;
     fn w3_rows(
         host: *mut c_void,
         id: *const u8,
@@ -104,10 +105,10 @@ struct Scope {
 }
 
 struct List {
-    keys: RefCell<Vec<String>>,
     mounted: RefCell<Vec<String>>,
     error: RefCell<Option<String>>,
-    viewport: Binding<Viewport>,
+    viewport_error: RefCell<Option<String>>,
+    current: Cell<Option<Viewport>>,
 }
 
 struct Inner {
@@ -116,6 +117,7 @@ struct Inner {
     handlers: RefCell<HashMap<String, Handler>>,
     nodes: RefCell<HashSet<String>>,
     lists: RefCell<HashMap<String, Rc<List>>>,
+    menu_errors: RefCell<HashMap<String, String>>,
     close_handlers: RefCell<Vec<Rc<dyn Fn()>>>,
     close_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting: Cell<bool>,
@@ -132,6 +134,7 @@ impl Inner {
         drop(self.scopes.take());
         drop(self.handlers.take());
         drop(self.lists.take());
+        drop(self.menu_errors.take());
         unsafe {
             w3_close(self.native.get());
         }
@@ -227,6 +230,7 @@ impl View {
             handlers: RefCell::new(HashMap::new()),
             nodes: RefCell::new(HashSet::from(["__root".into()])),
             lists: RefCell::new(HashMap::new()),
+            menu_errors: RefCell::new(HashMap::new()),
             close_handlers: RefCell::new(Vec::new()),
             close_request: RefCell::new(None),
             requesting: Cell::new(false),
@@ -314,22 +318,35 @@ impl View {
         }
     }
     fn remove(&self, prefix: &str) {
-        let ids: Vec<_> = self
+        self.0.nodes.borrow_mut().retain(|id| !within(id, prefix));
+        let scopes: Vec<_> = self
             .0
-            .nodes
-            .borrow()
-            .iter()
-            .filter(|id| within(id, prefix))
-            .cloned()
+            .scopes
+            .borrow_mut()
+            .extract_if(|id, _| within(id, prefix))
             .collect();
-        let mut removed = Vec::new();
-        for id in ids {
-            self.0.nodes.borrow_mut().remove(&id);
-            removed.push(self.0.scopes.borrow_mut().remove(&id));
-            let handler = self.0.handlers.borrow_mut().remove(&id);
-            drop(handler);
-        }
-        drop(removed);
+        let handlers: Vec<_> = self
+            .0
+            .handlers
+            .borrow_mut()
+            .extract_if(|id, _| {
+                within(id, prefix)
+                    || id
+                        .strip_suffix("@viewport")
+                        .is_some_and(|id| within(id, prefix))
+            })
+            .collect();
+        let lists: Vec<_> = self
+            .0
+            .lists
+            .borrow_mut()
+            .extract_if(|id, _| within(id, prefix))
+            .collect();
+        self.0
+            .menu_errors
+            .borrow_mut()
+            .retain(|id, _| !within(id, prefix));
+        drop((scopes, handlers, lists));
         unsafe {
             w3_remove(self.0.native.get(), prefix.as_ptr(), prefix.len());
         }
@@ -411,17 +428,18 @@ impl View {
     ) {
         self.add(parent, id, 5, 0.0);
         let list = Rc::new(List {
-            keys: RefCell::new(Vec::new()),
             mounted: RefCell::new(Vec::new()),
             error: RefCell::new(None),
-            viewport: viewport.clone(),
+            viewport_error: RefCell::new(None),
+            current: Cell::new(None),
         });
         self.0.lists.borrow_mut().insert(id.into(), list.clone());
         let key = id.to_owned();
         let mounted = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
         let source = items.clone();
-        let range = viewport.clone();
+        let output = list.clone();
         let refresh: Refresh = Rc::new(move |view| {
+            let list = &output;
             let snapshot = source.get();
             let mut seen = HashSet::new();
             if snapshot.iter().any(|row| {
@@ -431,7 +449,9 @@ impl View {
                     .replace(Some("invalid or duplicate item key".into()));
                 return;
             }
-            let viewport = range.get();
+            let Some(viewport) = list.current.get() else {
+                return;
+            };
             let start = match viewport.range(snapshot.len()) {
                 Ok(range) => range.start,
                 Err(error) => {
@@ -460,24 +480,26 @@ impl View {
                 }
             }
             for row in &visible {
-                if order_changed || !old.contains(row) {
-                    let scope = format!("{key}/{}", row.key);
-                    let row_parent = view.layout(
+                let scope = format!("{key}/{}", row.key);
+                let row_parent = if order_changed || !old.contains(row) {
+                    Some(view.layout(
                         &Parent(key.clone()),
                         &scope,
                         Layout::Stack {
                             horizontal: false,
                             gap: 0.0,
                         },
-                    );
-                    let mut style = Style::default();
-                    style.placement.height = Some(viewport.row_height);
-                    view.style(&scope, style);
+                    ))
+                } else {
+                    None
+                };
+                let mut style = Style::default();
+                style.placement.height = Some(viewport.row_height);
+                view.style(&scope, style);
+                if let Some(row_parent) = row_parent {
                     template(view, &row_parent, &scope, row.model.clone());
                 }
             }
-            list.keys
-                .replace(snapshot.iter().map(|row| row.key.clone()).collect());
             list.mounted
                 .replace(visible.iter().map(|row| row.key.clone()).collect());
             list.error.take();
@@ -498,24 +520,47 @@ impl View {
         });
         let update = refresh.clone();
         self.bind(id, items, move |view, _| update(view));
-        self.bind(id, viewport.clone(), move |view, _| refresh(view));
+        let update = refresh.clone();
+        let output = list.clone();
+        self.bind(id, viewport.clone(), move |view, value| {
+            match value.validate() {
+                Ok(viewport) => {
+                    output.current.set(Some(viewport));
+                    output.viewport_error.take();
+                    update(view);
+                }
+                Err(error) => {
+                    output.viewport_error.replace(Some(error.into()));
+                }
+            }
+        });
+        let weak = self.downgrade();
         self.0.handlers.borrow_mut().insert(
             format!("{id}@viewport"),
             Rc::new(move |value| {
-                if let Ok(start) = value.parse() {
-                    let mut next = viewport.get();
+                if let Ok(start) = value.parse()
+                    && let Some(mut next) = list.current.get()
+                    && let Some(view) = weak.upgrade()
+                {
                     next.start = start;
-                    viewport.set(next);
+                    list.current.set(Some(next));
+                    refresh(&view);
+                    if viewport.is_writable() {
+                        viewport.set(next);
+                    }
                 }
             }),
         );
     }
     pub fn viewport(&self, id: &str, start: usize) {
-        let list = self.0.lists.borrow().get(id).cloned();
-        if let Some(list) = list {
-            let mut next = list.viewport.get();
-            next.start = start;
-            list.viewport.set(next);
+        let handler = self
+            .0
+            .handlers
+            .borrow()
+            .get(&format!("{id}@viewport"))
+            .cloned();
+        if let Some(handler) = handler {
+            handler(start.to_string());
         }
     }
     pub fn item_keys(&self, id: &str) -> Vec<String> {
@@ -523,7 +568,7 @@ impl View {
             .lists
             .borrow()
             .get(id)
-            .map(|list| list.keys.borrow().clone())
+            .map(|list| list.mounted.borrow().clone())
             .unwrap_or_default()
     }
     pub fn mounted_count(&self, id: &str) -> usize {
@@ -533,12 +578,20 @@ impl View {
             .get(id)
             .map_or(0, |list| list.mounted.borrow().len())
     }
+    pub fn frame_height(&self, id: &str) -> Option<f64> {
+        if self.0.closed.get() {
+            return None;
+        }
+        let height = unsafe { w3_frame_height(self.0.native.get(), id.as_ptr(), id.len()) };
+        (height >= 0.0).then_some(height)
+    }
     pub fn items_error(&self, id: &str) -> Option<String> {
-        self.0
-            .lists
-            .borrow()
-            .get(id)
-            .and_then(|list| list.error.borrow().clone())
+        self.0.lists.borrow().get(id).and_then(|list| {
+            list.viewport_error
+                .borrow()
+                .clone()
+                .or_else(|| list.error.borrow().clone())
+        })
     }
     pub fn menu(
         &self,
@@ -551,6 +604,52 @@ impl View {
         let source = items.clone();
         let heading = title.clone();
         let refresh: Refresh = Rc::new(move |view| {
+            let mut seen = HashSet::new();
+            let mut native = Vec::new();
+            let mut handlers: Vec<(String, Handler)> = Vec::new();
+            for item in source.get() {
+                if !wakui2_runtime::valid_item_key(&item.id) || !seen.insert(item.id.clone()) {
+                    view.0
+                        .menu_errors
+                        .borrow_mut()
+                        .insert(key.clone(), "invalid or duplicate menu item id".into());
+                    return;
+                }
+                let shortcut = match item.shortcut.as_deref().map(Shortcut::parse).transpose() {
+                    Ok(shortcut) => shortcut
+                        .map(|shortcut| shortcut.to_muda())
+                        .unwrap_or_default(),
+                    Err(error) => {
+                        view.0
+                            .menu_errors
+                            .borrow_mut()
+                            .insert(key.clone(), error.to_string());
+                        return;
+                    }
+                };
+                let argument = item.argument.clone();
+                let invoke = dispatch.clone();
+                let enabled = item.enabled;
+                native.push(serde_json::json!({"id":item.id,"label":item.label,"shortcut":shortcut,"role":format!("{:?}", item.role),"enabled":enabled}));
+                handlers.push((
+                    format!("{key}/{}", item.id),
+                    Rc::new(move |_| {
+                        if enabled {
+                            invoke(argument.clone());
+                        }
+                    }),
+                ));
+            }
+            let json = serde_json::json!({"title":heading.get(),"items":native}).to_string();
+            unsafe {
+                w3_menu(
+                    view.0.native.get(),
+                    key.as_ptr(),
+                    key.len(),
+                    json.as_ptr(),
+                    json.len(),
+                );
+            }
             let prefix = format!("{key}/");
             let keys: Vec<_> = view
                 .0
@@ -564,51 +663,16 @@ impl View {
                 let old = view.0.handlers.borrow_mut().remove(&id);
                 drop(old);
             }
-            let mut seen = HashSet::new();
-            let mut native = Vec::new();
-            for item in source.get() {
-                if !wakui2_runtime::valid_item_key(&item.id) || !seen.insert(item.id.clone()) {
-                    view.0
-                        .error
-                        .replace(Some("invalid or duplicate menu item id".into()));
-                    return;
-                }
-                let shortcut = match item.shortcut.as_deref().map(Shortcut::parse).transpose() {
-                    Ok(shortcut) => shortcut
-                        .map(|shortcut| shortcut.to_muda())
-                        .unwrap_or_default(),
-                    Err(error) => {
-                        view.0.error.replace(Some(error.to_string()));
-                        return;
-                    }
-                };
-                let argument = item.argument.clone();
-                let invoke = dispatch.clone();
-                let enabled = item.enabled;
-                native.push(serde_json::json!({"id":item.id,"label":item.label,"shortcut":shortcut,"role":format!("{:?}", item.role),"enabled":enabled}));
-                view.0.handlers.borrow_mut().insert(
-                    format!("{key}/{}", item.id),
-                    Rc::new(move |_| {
-                        if enabled {
-                            invoke(argument.clone());
-                        }
-                    }),
-                );
-            }
-            let json = serde_json::json!({"title":heading.get(),"items":native}).to_string();
-            unsafe {
-                w3_menu(
-                    view.0.native.get(),
-                    key.as_ptr(),
-                    key.len(),
-                    json.as_ptr(),
-                    json.len(),
-                );
-            }
+            view.0.handlers.borrow_mut().extend(handlers);
+            view.0.menu_errors.borrow_mut().remove(&key);
         });
         let update = refresh.clone();
         self.bind(id, title, move |view, _| update(view));
         self.bind(id, items, move |view, _| refresh(view));
+    }
+
+    pub fn menu_error(&self, id: &str) -> Option<String> {
+        self.0.menu_errors.borrow().get(id).cloned()
     }
 
     pub fn on_close(&self, callback: Rc<dyn Fn()>) {
