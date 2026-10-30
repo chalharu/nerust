@@ -432,16 +432,13 @@ impl View {
                 return;
             }
             let viewport = range.get();
-            if !viewport.row_height.is_finite() || viewport.row_height <= 0.0 || viewport.count == 0
-            {
-                list.error.replace(Some(
-                    "viewport requires positive count and finite row height".into(),
-                ));
-                return;
-            }
-            let start = viewport
-                .start
-                .min(snapshot.len().saturating_sub(viewport.count));
+            let start = match viewport.range(snapshot.len()) {
+                Ok(range) => range.start,
+                Err(error) => {
+                    list.error.replace(Some(error.into()));
+                    return;
+                }
+            };
             let visible: Vec<_> = snapshot
                 .iter()
                 .skip(start)

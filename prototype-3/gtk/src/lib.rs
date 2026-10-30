@@ -673,9 +673,11 @@ impl View {
             source: RefCell::new(Vec::new()),
             mounted: RefCell::new(Vec::new()),
             viewport: Cell::new(Viewport::default()),
+            viewport_ready: Cell::new(false),
             binding: viewport.clone(),
             template,
             error: RefCell::new(None),
+            viewport_error: RefCell::new(None),
             applying: Cell::new(false),
             queued: Cell::new(false),
         });
@@ -694,16 +696,21 @@ impl View {
         });
         self.signal(id, &adjustment, signal);
         let weak = Rc::downgrade(&rows);
-        self.keep_at(id, viewport.subscribe(Rc::new(move |viewport| {
-            if let Some(rows) = weak.upgrade() {
-                if !valid_viewport(viewport) {
-                    rows.error.replace(Some("invalid viewport: count must be positive and row_height finite and >= 1".into()));
-                    return;
+        self.keep_at(
+            id,
+            viewport.subscribe(Rc::new(move |viewport| {
+                if let Some(rows) = weak.upgrade() {
+                    if let Err(error) = viewport.validate() {
+                        rows.viewport_error.replace(Some(error.into()));
+                        return;
+                    }
+                    rows.viewport_error.take();
+                    rows.viewport_ready.set(true);
+                    rows.viewport.set(viewport);
+                    rows.refresh(true);
                 }
-                rows.viewport.set(viewport);
-                rows.refresh(true);
-            }
-        })));
+            })),
+        );
         let weak = Rc::downgrade(&rows);
         self.keep_at(id, items.subscribe(Rc::new(move |items| {
             if let Some(rows) = weak.upgrade() {
@@ -1150,13 +1157,6 @@ fn valid_key(key: &str) -> bool {
     !key.is_empty() && !key.contains('/')
 }
 
-fn valid_viewport(viewport: Viewport) -> bool {
-    viewport.count > 0
-        && viewport.row_height.is_finite()
-        && viewport.row_height >= 1.0
-        && viewport.row_height <= i32::MAX as f32
-}
-
 struct Mounted<T: Clone + 'static> {
     item: Keyed<T>,
     row: gtk::ScrolledWindow,
@@ -1172,17 +1172,22 @@ struct Rows<T: Clone + 'static> {
     source: RefCell<Vec<Keyed<T>>>,
     mounted: RefCell<Vec<Mounted<T>>>,
     viewport: Cell<Viewport>,
+    viewport_ready: Cell<bool>,
     binding: Binding<Viewport>,
     template: Template<T>,
     error: RefCell<Option<String>>,
+    viewport_error: RefCell<Option<String>>,
     applying: Cell<bool>,
     queued: Cell<bool>,
 }
 
 impl<T: Clone + 'static> Rows<T> {
     fn set_start(&self, start: usize, scroll: bool) {
+        if !self.viewport_ready.get() {
+            return;
+        }
         let mut viewport = self.viewport.get();
-        viewport.start = start.min(self.source.borrow().len().saturating_sub(1));
+        viewport.start = start.min(self.source.borrow().len().saturating_sub(viewport.count));
         if viewport == self.viewport.get() && !scroll {
             return;
         }
@@ -1194,6 +1199,9 @@ impl<T: Clone + 'static> Rows<T> {
     }
 
     fn refresh(&self, scroll: bool) {
+        if !self.viewport_ready.get() {
+            return;
+        }
         if self.applying.replace(true) {
             self.queued.set(true);
             return;
@@ -1211,7 +1219,10 @@ impl<T: Clone + 'static> Rows<T> {
             let viewport = self.viewport.get();
             let (total, start, desired) = {
                 let source = self.source.borrow();
-                let start = viewport.start.min(source.len());
+                let start = viewport
+                    .range(source.len())
+                    .expect("validated viewport")
+                    .start;
                 (
                     source.len(),
                     start,
@@ -1333,7 +1344,10 @@ impl<T: Clone + 'static> ListControl for Rows<T> {
             .collect()
     }
     fn error(&self) -> Option<String> {
-        self.error.borrow().clone()
+        self.viewport_error
+            .borrow()
+            .clone()
+            .or_else(|| self.error.borrow().clone())
     }
 }
 

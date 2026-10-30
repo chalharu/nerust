@@ -77,7 +77,7 @@ fn main() -> Result<(), String> {
         );
         let range = Store::new(
             Viewport {
-                count: 6,
+                count: 0,
                 row_height: 32.0,
                 ..Viewport::default()
             },
@@ -105,6 +105,15 @@ fn main() -> Result<(), String> {
                 );
             }),
         );
+        assert_eq!(view.mounted_count("rows"), 0);
+        assert!(
+            view.items_error("rows")
+                .unwrap()
+                .contains("invalid viewport")
+        );
+        range.update(|viewport| viewport.count = 6);
+        assert_eq!(view.mounted_count("rows"), 6);
+        assert!(view.items_error("rows").is_none());
         let enabled = Store::new(true, executor.clone());
         let clicks = Rc::new(Cell::new(0));
         let counter = clicks.clone();
@@ -177,6 +186,24 @@ fn main() -> Result<(), String> {
             assert!(owner.text("rows/0/label").is_none());
             assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
             assert_eq!(owner.mounted_count("rows"), 6);
+            let valid = range.snapshot();
+            for invalid in [
+                Viewport { count: 0, ..valid },
+                Viewport { count: 257, ..valid },
+                Viewport { row_height: f32::NAN, ..valid },
+                Viewport { row_height: 0.5, ..valid },
+                Viewport { row_height: 4097.0, ..valid },
+            ] {
+                range.update(move |viewport| *viewport = invalid);
+                assert!(owner.items_error("rows").unwrap().contains("invalid viewport"));
+                assert_eq!(owner.mounted_count("rows"), 6);
+                assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
+            }
+            range.update(move |viewport| *viewport = Viewport { start: usize::MAX, ..valid });
+            assert!(owner.items_error("rows").is_none());
+            assert_eq!(owner.text("rows/94/label").as_deref(), Some("File 094.nes"));
+            range.update(move |viewport| *viewport = valid);
+            println!("MACOS3 PASS viewport-contract initial-rejection retain-mounts last-page recovery");
             rows.update(|state| state.swap(90, 91));
             assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
             rows.update(|state| state[1].key = state[0].key.clone());
