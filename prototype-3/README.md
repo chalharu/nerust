@@ -10,6 +10,9 @@
 
 Rust 1.95以上、GTK4開発環境（Tao/LinuxはGTK3）が必要。
 このディレクトリで実行する。親のnerust workspaceとは独立している。
+macOSの主backendとしてAppKit版を追加した。GTKをインストールせず、
+`--no-default-features --features backend-macos`で設定・一覧を実行できる。
+起動環境、native入力の検証範囲、未実施の手動ゲートは[macos/README.md](macos/README.md)。
 
 ```sh
 cargo run --locked -p wakui3-settings
@@ -76,6 +79,14 @@ GTKはネイティブ部品。Taoはnative Window/Menuとsoftware iced部品で�
 GTK4/GTK3は同じプロセスへロードせず、backend featureはどちらか一つを選ぶ。
 
 ## 検証
+
+macOSでは対話デスクトップ上で`sh scripts/verify-macos.sh`を使う。
+共通runtime/macro/実用画面の回帰、strict Clippy、AppKit両画面smoke、
+field editorの注入入力、native Menu、bitmap、反応連鎖中の合成入力を検査する。
+`sh scripts/measure-macos.sh`はreleaseの描画CPU・合成入力・検索連打と射影を観測する。
+外部IMEやVoiceOverの実操作、compositor frame時間を測ったものではない。
+両macOSアプリは64イベントの明示的な配送予算を使い、既存Storeの同期契約は維持する。
+Linux版の既存総合手順と過去の成功数は以下のとおりで、macOSで再実行した意味ではない。
 
 `sh scripts/verify.sh`で整形、Clippy、core・macro試験、GTK個別native試験、
 Tao native試験、最小例の両backendビルド、両galleryとclipboard/hotkey/About/Quit、

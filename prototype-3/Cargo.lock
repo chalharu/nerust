@@ -3799,6 +3799,17 @@ dependencies = [
  "wakui2-macros",
  "wakui2-runtime",
  "wakui2-tao",
+ "wakui3-macos",
+]
+
+[[package]]
+name = "wakui3-macos"
+version = "0.2.0"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "serde_json",
+ "wakui2-runtime",
 ]
 
 [[package]]
@@ -3813,6 +3824,7 @@ dependencies = [
  "wakui2-macros",
  "wakui2-runtime",
  "wakui2-tao",
+ "wakui3-macos",
 ]
 
 [[package]]

@@ -9,11 +9,13 @@ rust-version.workspace = true
 default = ["backend-gtk"]
 backend-gtk = ["dep:wakui2-gtk"]
 backend-tao = ["dep:wakui2-tao"]
+backend-macos = ["dep:wakui3-macos"]
 
 [dependencies]
 wakui2-runtime.workspace = true
 wakui2-macros.workspace = true
 wakui2-gtk = { workspace = true, optional = true }
 wakui2-tao = { workspace = true, optional = true }
+wakui3-macos = { workspace = true, optional = true }
 futures.workspace = true
 futures-timer = "3.0"
