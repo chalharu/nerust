@@ -1,0 +1,110 @@
+schema_version: 2
+templates:
+  leaf:
+    root:
+      type: Label
+      id: leaf
+      text: {bind: {path: name}}
+  row:
+    root:
+      type: Grid
+      id: row
+      columns: 2
+      gap: 3
+      children:
+        - type: StackLayout
+          id: stack
+          orientation: Horizontal
+          gap: 2
+          children:
+            - type: TextBox
+              id: edit
+              text: {bind: {path: name, mode: TwoWay}}
+              validation: {validator: crate::validate_name, error: error, pending: pending}
+            - type: Label
+              id: outer
+              text: {bind: {path: root.title}}
+            - type: Button
+              id: rename
+              text: {literal: Rename}
+              command: rename
+              argument: {bind: {path: root.argument}}
+            - type: Button
+              id: outer_add
+              text: {literal: Add}
+              command: root.add
+              argument: {literal: from-row}
+            - type: Native
+              id: meter
+              factory: crate::meter
+              value: {bind: {path: progress, mode: TwoWay}}
+        - type: ItemsControl
+          id: children
+          items: {bind: {path: children}}
+          viewport: {literal: {count: 2}}
+          item_template: leaf
+        - type: ContentControl
+          id: selected_child
+          content: {bind: {path: selected}}
+          content_template: leaf
+root:
+  type: Window
+  id: main
+  title: {bind: {path: title}}
+  menus:
+    - id: actions
+      title: {literal: Actions}
+      items: {bind: {path: menu_items}}
+      command: choose
+  content:
+    type: AbsoluteLayout
+    id: absolute
+    margin: 4
+    padding: {top: 1, right: 2, bottom: 3, left: 4}
+    children:
+      - type: FlexLayout
+        id: flex
+        gap: 4
+        style:
+          placement: {x: 10, y: 20, width: 500, height: 600}
+        children:
+          - type: TextBox
+            id: name
+            text: {bind: {path: name, mode: TwoWay}}
+            validation: {validator: crate::validate_name, error: error, pending: pending}
+          - type: TextBox
+            id: converted
+            text: {bind: {path: progress, mode: TwoWay, converter: crate::NumberText}}
+          - type: TextBox
+            id: readonly
+            text: {bind: {path: name}}
+          - type: Label
+            id: caption
+            text: {bind: {path: name, mode: TwoWay}}
+          - type: Button
+            id: add
+            text: {literal: Add}
+            command: add
+            argument: {bind: {path: argument}}
+          - type: Button
+            id: reset
+            text: {literal: Reset}
+            command: reset
+          - type: Button
+            id: save
+            text: {literal: Save}
+            command: save
+            argument: {literal: saved}
+          - type: BindableLayout
+            id: rows
+            items: {bind: {path: rows}}
+            viewport: {bind: {path: viewport}}
+            item_template: row
+          - type: ContentControl
+            id: selected
+            content: {bind: {path: selected}}
+            content_template: row
+          - type: Native
+            id: progress
+            factory: crate::meter
+            value: {literal: 0.25}

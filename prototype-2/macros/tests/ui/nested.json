@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "root": {
+    "type": "Window",
+    "id": "json_window",
+    "title": {"literal": "Nested JSON"},
+    "content": {
+      "type": "StackLayout",
+      "id": "json_layout",
+      "children": [
+        {
+          "type": "TextBox",
+          "id": "nested",
+          "text": {"bind": {"path": "nested.name", "mode": "TwoWay"}}
+        },
+        {
+          "type": "Native",
+          "id": "integer_literal",
+          "factory": "crate::meter",
+          "value": {"literal": 1}
+        }
+      ]
+    }
+  }
+}
