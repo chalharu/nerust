@@ -92,12 +92,15 @@ fn main() -> Result<(), String> {
             })
             .collect();
         let rows = Store::new(row_models, executor.clone());
+        let row_builds = Rc::new(Cell::new(0));
+        let builds = row_builds.clone();
         view.items(
             &parent,
             "rows",
             rows.bind(Clone::clone, None),
             range.bind(|state| *state, Some(|state, value| *state = value)),
-            Rc::new(|view, parent, scope, model: Store<String>| {
+            Rc::new(move |view, parent, scope, model: Store<String>| {
+                builds.set(builds.get() + 1);
                 view.label(
                     parent,
                     &format!("{scope}/label"),
@@ -114,6 +117,131 @@ fn main() -> Result<(), String> {
         range.update(|viewport| viewport.count = 6);
         assert_eq!(view.mounted_count("rows"), 6);
         assert!(view.items_error("rows").is_none());
+        let readonly_range = Store::new(
+            Viewport {
+                count: 2,
+                row_height: 32.0,
+                start: 0,
+            },
+            executor.clone(),
+        );
+        view.items(
+            &parent,
+            "readonly_rows",
+            rows.bind(Clone::clone, None),
+            readonly_range.bind(|state| *state, None),
+            Rc::new(|view, parent, scope, model: Store<String>| {
+                view.label(
+                    parent,
+                    &format!("{scope}/label"),
+                    model.bind(Clone::clone, None),
+                );
+            }),
+        );
+        view.viewport("readonly_rows", 5);
+        assert_eq!(view.item_keys("readonly_rows"), ["5", "6"]);
+        assert!(view.text("readonly_rows/0/label").is_none());
+        assert_eq!(readonly_range.snapshot().start, 0);
+        readonly_range.update(|viewport| viewport.start = 9);
+        assert_eq!(view.item_keys("readonly_rows"), ["9", "10"]);
+        println!("MACOS3 PASS readonly-viewport local-scroll model-unchanged external-update");
+        let valid_menu = MenuItem {
+            id: "save".into(),
+            label: "Save".into(),
+            argument: "original".into(),
+            shortcut: None,
+            role: MenuRole::Normal,
+            enabled: true,
+        };
+        let transaction = Store::new(vec![valid_menu.clone()], executor.clone());
+        let arguments = Rc::new(RefCell::new(Vec::new()));
+        let output = arguments.clone();
+        view.menu(
+            "transaction",
+            Binding::constant("Transaction".into()),
+            transaction.bind(Clone::clone, None),
+            Rc::new(move |argument| {
+                output.borrow_mut().push(argument);
+                true
+            }),
+        );
+        let mut invalid_id = valid_menu.clone();
+        invalid_id.id.clear();
+        let mut bad_shortcut = valid_menu.clone();
+        bad_shortcut.id = "bad_shortcut".into();
+        bad_shortcut.shortcut = Some("Primary+Unknown".into());
+        let mut uncommitted = valid_menu.clone();
+        uncommitted.argument = "uncommitted".into();
+        for candidate in [
+            vec![invalid_id],
+            vec![uncommitted.clone(), valid_menu.clone()],
+            vec![uncommitted, bad_shortcut],
+        ] {
+            transaction.update(move |items| *items = candidate);
+            assert!(view.menu_error("transaction").is_some());
+            view.activate_menu("transaction/save").unwrap();
+            assert_eq!(
+                arguments.borrow().last().map(String::as_str),
+                Some("original")
+            );
+        }
+        let mut replacement = valid_menu;
+        replacement.argument = "updated".into();
+        transaction.update(move |items| *items = vec![replacement]);
+        assert!(view.menu_error("transaction").is_none());
+        view.activate_menu("transaction/save").unwrap();
+        assert_eq!(
+            &*arguments.borrow(),
+            &["original", "original", "original", "updated"]
+        );
+        println!(
+            "MACOS3 PASS menu-transaction invalid-id duplicate-id invalid-shortcut preserve-handler recovery"
+        );
+        let nested_rows = Store::new(Vec::<Keyed<String>>::new(), executor.clone());
+        let lifetimes = Rc::new(RefCell::new(Vec::new()));
+        let output = lifetimes.clone();
+        view.items(
+            &parent,
+            "nested",
+            nested_rows.bind(Clone::clone, None),
+            Binding::constant(Viewport::default()),
+            Rc::new(move |view, parent, scope, model: Store<String>| {
+                let lifetime = Rc::new(());
+                output.borrow_mut().push(Rc::downgrade(&lifetime));
+                view.items(
+                    parent,
+                    &format!("{scope}/children"),
+                    Binding::constant(vec![Keyed::new("child", model)]),
+                    Binding::constant(Viewport::default()),
+                    Rc::new(move |view, parent, scope, model: Store<String>| {
+                        let _retained = &lifetime;
+                        view.label(
+                            parent,
+                            &format!("{scope}/label"),
+                            model.bind(Clone::clone, None),
+                        );
+                    }),
+                );
+            }),
+        );
+        for _ in 0..3 {
+            let row = Keyed::new("parent", Store::new("Child".to_owned(), executor.clone()));
+            nested_rows.update(move |rows| rows.push(row));
+            assert_eq!(view.item_keys("nested/parent/children"), ["child"]);
+            nested_rows.update(Vec::clear);
+            assert_eq!(view.mounted_count("nested/parent/children"), 0);
+            assert!(view.item_keys("nested/parent/children").is_empty());
+            assert!(view.text("nested/parent/children/child/label").is_none());
+            view.viewport("nested/parent/children", 0);
+            assert!(view.text("nested/parent/children/child/label").is_none());
+            assert!(
+                lifetimes
+                    .borrow()
+                    .iter()
+                    .all(|lifetime| lifetime.upgrade().is_none())
+            );
+        }
+        println!("MACOS3 PASS nested-cleanup registries handlers tokens released key-reuse");
         let enabled = Store::new(true, executor.clone());
         let clicks = Rc::new(Cell::new(0));
         let counter = clicks.clone();
@@ -180,9 +308,10 @@ fn main() -> Result<(), String> {
             assert!(owner.perform_shortcut("Cmd+S").unwrap());
             assert_eq!(clicks.get(), 2);
             println!("MACOS3 PASS native-menu Primary-Cmd shortcut enabled-state rebuild");
-            assert_eq!(owner.item_keys("rows").len(), 100);
+            assert_eq!(owner.item_keys("rows"), ["0", "1", "2", "3", "4", "5"]);
             assert_eq!(owner.mounted_count("rows"), 6);
             owner.viewport("rows", 90);
+            assert_eq!(owner.item_keys("rows"), ["90", "91", "92", "93", "94", "95"]);
             assert!(owner.text("rows/0/label").is_none());
             assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
             assert_eq!(owner.mounted_count("rows"), 6);
@@ -204,6 +333,16 @@ fn main() -> Result<(), String> {
             assert_eq!(owner.text("rows/94/label").as_deref(), Some("File 094.nes"));
             range.update(move |viewport| *viewport = valid);
             println!("MACOS3 PASS viewport-contract initial-rejection retain-mounts last-page recovery");
+            let before = row_builds.get();
+            assert_eq!(owner.frame_height("rows/90"), Some(32.0));
+            range.update(|viewport| viewport.row_height = 64.0);
+            assert_eq!(owner.frame_height("rows/90"), Some(64.0));
+            assert_eq!(row_builds.get(), before);
+            assert_eq!(owner.item_keys("rows"), ["90", "91", "92", "93", "94", "95"]);
+            range.update(|viewport| viewport.row_height = 32.0);
+            assert_eq!(owner.frame_height("rows/90"), Some(32.0));
+            assert_eq!(row_builds.get(), before);
+            println!("MACOS3 PASS dynamic-row-height native-frame 32-64-32 no-remount");
             rows.update(|state| state.swap(90, 91));
             assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
             rows.update(|state| state[1].key = state[0].key.clone());

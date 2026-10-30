@@ -42,6 +42,8 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
   宣言順のkey-view loopを作り、動的node削除時に参照も更新する。
 - Cmd+S等は共通Shortcutからnative key equivalentへ変換する。
   Edit menuはnative responder chainへ接続し、WM close / Cmd+Qは終了要求へ接続する。
+  動的Menuは全ID・shortcutの検証後にnative表示とhandlerを交換する。不正更新は旧Menuを保持し、
+  `menu_error(id)`で報告する。正常更新でそのMenuのエラーを解除し、hostは終了しない。
 - Viewは購読tokenを持ち、callback側はWeakViewを使う。強制closeは冪等。
   アプリの確認・保存待ちは既存の配線を再利用する。
 - 一覧は全keyを検査し、表示範囲の行だけmountする。範囲変更・順序変更では可視行を再mountする。
@@ -49,6 +51,9 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
   32px等の固定行高、viewport count、スクロール用native scrollerを使用する。
   countは1..256、行高は有限な1..4096で、共通runtimeと静的literalが同じ条件を検査する。
   初期不正ならmountせず、不正更新は前の正常表示を保持する。正常値への復帰と末尾ページをnative検査する。
+  readonly/literalでも受理済みviewportをローカルに移動し、モデルへの書込はTwoWayだけで行う。
+  `item_keys`は全sourceでなくmount済みkeyを返す。行高変更は既存mountにも反映する。
+  行の退避では入れ子一覧のregistry、viewport handler、scoped tokenも解放する。
 - padding/marginはnative frame insetへ合算する限定契約。任意のplacement、CSS互換、
   backend間のpixel一致は対象外。幅640px以上を対象とし、縦方向はnative scrollを使う。
 
@@ -79,6 +84,10 @@ ready taskがなければnative側で最大8ms待ち、workerのwakeも次ター
 | Accessibility | role、identifierの読み返し。スクリーンリーダーによる操作ではない |
 | 一覧mount | 100行Model、6行mount、範囲変更、順序変更、不正key拒否と復帰 |
 | Viewport契約 | 初期不正は0 mount、count/行高の範囲外を拒否してmount保持、正常値復帰、usize::MAXの末尾ページ |
+| readonly viewport | ローカル移動でモデルは不変、後続のモデル通知を反映。automationはnative scrollと同じhandlerを利用 |
+| Menu拒否 | 不正ID・重複ID・後続項目の不正shortcutでも旧handler/引数を保持し、正常候補へ復帰 |
+| 入れ子cleanup | 同じkeyで3回mount/退避し、registry消去・古いscrollの無効化・テンプレート資源の弱参照失効 |
+| 動的行高 | `frame_height`で実native frameの32→64→32を読み返し、テンプレート再生成なしを確認 |
 | 過負荷 | 8万更新、20合成キーを各連鎖完了前に配送、WeakView・closeの検査 |
 | 描画 | 640/960pxのnative bitmap、連鎖中のAppKit描画CPU時間 |
 
@@ -107,6 +116,10 @@ GTKのstrict Clippyは成功。Taoのstrict Clippyは既存の`driver.rs:47`の
 `needless_return`で停止し、無変更のコード由来と確認した後にそのlintだけを除外して成功した。
 Linux/X11でのTao拒否/復帰試験とGTKの拡張native試験は未実行で、macOSの145件へ含めない。
 この追補ではrelease計測helperは再実行しておらず、下表は基準commit時の観測を保存する。
+
+レビュー5件への回帰検査は既存conformanceへ追加し、通常の145試験とは別に実行する。
+正式ゲートは`readonly-viewport`、`menu-transaction`、`nested-cleanup`、`dynamic-row-height`も
+必須markerとし、mount済みkeyの内容は既存`keyed-rows`検査で確認する。
 
 | release観測 | p50 | p95 |
 |---|---:|---:|

@@ -392,6 +392,13 @@ public func remove(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<
     host(pointer).remove(string(idBytes, idCount))
 }
 
+@_cdecl("w3_frame_height") @MainActor
+public func frameHeight(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int) -> Double {
+    let value = host(pointer)
+    value.window.contentView?.layoutSubtreeIfNeeded()
+    return value.frames[string(idBytes, idCount)].map { Double($0.frame.height) } ?? -1
+}
+
 @_cdecl("w3_rows") @MainActor
 public func rows(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
           _ total: Int, _ start: Int, _ count: Int, _ height: Double) {
