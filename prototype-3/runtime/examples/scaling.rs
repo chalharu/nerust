@@ -74,4 +74,80 @@ fn main() {
         }
     }
     println!("SCALING3 PASS: read clones=0, update clones=1, notification counts exact");
+    scoped();
+}
+
+struct SharedState {
+    version: usize,
+    payload: Rc<Vec<u8>>,
+    clones: Rc<Cell<usize>>,
+}
+impl Clone for SharedState {
+    fn clone(&self) -> Self {
+        self.clones.set(self.clones.get() + 1);
+        Self {
+            version: self.version,
+            payload: self.payload.clone(),
+            clones: self.clones.clone(),
+        }
+    }
+}
+fn scoped() {
+    const UPDATES: usize = 200;
+    for subscribers in [1, 100, 1000, 10_000] {
+        let clones = Rc::new(Cell::new(0));
+        let projections = Rc::new(Cell::new(0));
+        let model = Store::new(
+            SharedState {
+                version: 0,
+                payload: Rc::new(vec![1; 16 * 1024 * 1024]),
+                clones: clones.clone(),
+            },
+            Rc::new(NoTasks),
+        );
+        let tokens: Vec<_> = (0..subscribers)
+            .map(|_| {
+                let projections = projections.clone();
+                model
+                    .bind_scoped(
+                        "payload",
+                        move |state| {
+                            projections.set(projections.get() + 1);
+                            state.payload.len()
+                        },
+                        None,
+                    )
+                    .subscribe(Rc::new(|_| {}))
+            })
+            .collect();
+        let delivered = Rc::new(Cell::new(0));
+        let output = delivered.clone();
+        let changed = model
+            .bind_scoped("version", |state| state.version, None)
+            .subscribe(Rc::new(move |_| output.set(output.get() + 1)));
+        let mut timings = Vec::new();
+        for version in 1..=UPDATES {
+            let started = Instant::now();
+            assert!(
+                model.update_scoped(&["version"], move |state| Some(SharedState {
+                    version,
+                    payload: state.payload.clone(),
+                    clones: state.clones.clone()
+                }))
+            );
+            timings.push(started.elapsed().as_nanos());
+            assert!(model.update_scoped(&["version"], |_| None));
+        }
+        timings.sort_unstable();
+        assert_eq!(clones.get(), 0);
+        assert_eq!(projections.get(), subscribers);
+        assert_eq!(delivered.get(), UPDATES + 1);
+        println!(
+            "SCOPED3 subscribers={subscribers} updates={UPDATES} p50_ns={} p95_ns={} state_clones=0 unrelated_reevaluations=0",
+            timings[UPDATES / 2 - 1],
+            timings[(UPDATES * 95).div_ceil(100) - 1]
+        );
+        drop((tokens, changed));
+    }
+    println!("SCOPED3 PASS clone-free-replacement indexed-dependencies noop-generation");
 }

@@ -88,10 +88,24 @@ field editorの注入入力、native Menu、bitmap、反応連鎖中の合成入
 両macOSアプリは64イベントの明示的な配送予算を使い、既存Storeの同期契約は維持する。
 Linux版の既存総合手順と過去の成功数は以下のとおりで、macOSで再実行した意味ではない。
 
+Dockerが利用可能なら、このMacから`sh scripts/verify-docker.sh`でDebian/bookworm、
+Rust 1.99、GTK4/GTK3、Xvfb/XTestの検証imageを構築して同じLinux正式ゲートを実行できる。
+続けてrelease性能ゲートも実行する。hostのtargetは共有せず、専用Docker volumeを使う。
+`--init`、native試験の45秒上限、失敗ログ表示を含む。Linux/X11の証拠であり、
+macOS実IME・VoiceOverやWayland実機の証拠とはしない。
+今回このMac上のDockerで`VERIFY3 PASS`と`MEASURE3 PASS`を確認した。
+GTK共有二窓、動的menu、Taoの拒否/復帰、設定/一覧の両backend native smokeを含む。
+GTKのmenu/controllerをshortcutより先に切り離し、終了時のcriticalを修正した。
+AT-SPI bus未導入の警告は残るため、Linux accessibilityの合格証拠とはしない。
+
+YAML診断は`sh scripts/check-yaml.sh check ...`で有効化する（Python 3）。
+typo・型不一致・未知command・参照シグネチャ不一致がYAML行列をprimary spanに持つ。
+stable proc-macro単体では外部ファイルspanを作れないためwrapperが必要で、LSPではない。
+
 `sh scripts/verify.sh`で整形、Clippy、core・macro試験、GTK個別native試験、
 Tao native試験、最小例の両backendビルド、両galleryとclipboard/hotkey/About/Quit、
 両構成の設定／検索試験と実画面スモークを確認する。
-185種類成功。設定25件・検索14件の両feature実行とGridの倍率2再実行を含め225実行。
+過去の基準記録は185種類成功、設定25件・検索14件の両feature実行とGridの倍率2再実行を含め225実行。
 設定アプリの実GTK二窓試験も専用プロセスで実行し、共有Viewの一方を閉じても
 他方の入力と非同期結果反映が続くことを確認する。
 終了コード0と`VERIFY3 PASS`を確認済み。継承galleryの`PROTOTYPE2`/`PERF2`マーカーは
@@ -110,8 +124,12 @@ RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/wakui3-target \
 
 同じ環境設定で`sh scripts/measure.sh`を実行すると、releaseの9条件scalingと、
 実App・配線を使った設定300更新／検索20回×256行のCPU観測を再現できる。
-保存・描画・実入力の遅延測定ではない。時間に合否閾値を置かず、
-Draft・射影・行Store同一性のassertと`MEASURE3 PASS`を確認する。
+保存・描画・実入力の遅延測定ではない。Draft・射影・行Store同一性に加え、
+scoped更新とsettings/libraryのp50/p95 CPU閾値をassertし、超過は非ゼロ終了する。
+既定予算（p50/p95）はscoped 100/500 us、settings 1/5 ms、library 5/20 ms。
+`WAKUI_SCOPED_P50_NS`/`P95_NS`、`WAKUI_SETTINGS_P50_NS`/`P95_NS`、
+`WAKUI_LIBRARY_P50_NS`/`P95_NS`で対象環境の予算へ変更する。
+ゼロ閾値で`MEASURE3 FAIL`となる失敗経路も検査する。
 
 ## 境界を明示する
 
@@ -119,16 +137,20 @@ Draft・射影・行Store同一性のassertと`MEASURE3 PASS`を確認する。
   明示factory pathを生成し、TARGETのRust型検査へ渡す。
 - Templateは対応するControlの任意合成。nested Window、循環Templateは拒否する。
   項目keyは空文字・`/`・重複を拒否。仮想化は固定行高で、可変行高は未対応。
-- Command引数はClone + 'staticな型を利用できるが、動的Menuの引数はStringのまま。
+- Commandと動的Menu引数はClone + 'staticな型を利用できる。Menuは`MenuItem<A=String>`、
+  生成コードは`typed_menu`を使い、既存Stringの`menu`入口も維持する。
   引数内の`Self`は元モデル型へ再帰置換する。不透明な型macro内の`Self`は明示拒否する。
   genericモデル、readonly field属性、完全なsource map/editor LSPは未対応。
 - 設定画面は明示的なDraftで編集bufferを保持する。汎用converterの失敗時は従来どおり
   正規値へ戻るため、自動的に全TextBoxが編集bufferを持つわけではない。
-- 更新時のSのCloneと全購読の射影・比較は残る。`snapshot()`も所有Cloneを返す。
+- 任意closure更新時のSのCloneと全購読の射影・比較は残る。`snapshot()`も所有Cloneを返す。
+  `update_scoped`のowned置換はCloneを呼ばず、field別indexで無関係な購読を評価しない。
+  Noneならno-op generation。変更fieldの完全な宣言と、Rc/Arc等による不変payload共有が必要。
+  生成bindingも`bind_scoped`を使うが、通常のTwoWay setterでは状態Cloneは残る。
   16 MiB状態の射影読み取りでClone 0回を試験したが、O(1)更新やフレーム性能は保証しない。
   `runtime/examples/scaling.rs`は状態0/1/16 MiB×購読1/100/1000の9条件で、
   読み取り50,000回と更新20回を計測し、Clone回数・通知回数をassertする。
-  総合検証でも実行し、時間に環境依存の合否閾値を置かない。
+  総合検証でも実行する。比較用scoped計測は1万購読まで検査し、release性能ゲートで判定する。
 - async validationはModelへの反映後検証。古い結果は捨て、退去時に中断する。
 - GTKの既存loop接続は`GtkHost`＋runtime `run_async`。
   `coordinate_close`を使うとnative close要求を多窓coordinatorへ接続できる。

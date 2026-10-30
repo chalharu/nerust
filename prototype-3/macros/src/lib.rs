@@ -69,8 +69,13 @@ fn expand_view(input: ViewInput, owned: bool) -> syn::Result<proc_macro2::TokenS
         })
         .map_err(|e| fail(format!("{absolute}: {e}")))?;
     let format = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    let document =
-        wakui2_markup::parse(&source, format, absolute).map_err(|e| fail(e.to_string()))?;
+    let document = wakui2_markup::parse(&source, format, absolute).map_err(|e| {
+        let marker = e
+            .span
+            .map(|span| generate::source_marker(absolute, span))
+            .unwrap_or_default();
+        fail(format!("{e}\n{marker}"))
+    })?;
     let body = generate::generate(&document, &input.backend, owned)
         .map_err(|e| fail(format!("{absolute}: {e}")))?;
     let model = input.model;

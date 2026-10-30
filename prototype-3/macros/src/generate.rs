@@ -15,8 +15,8 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
     else {
         unreachable!()
     };
-    let title = binding(title, false)?;
-    let body = control(doc, content, backend, false)?;
+    let title = located(doc, None, doc.root.id(), binding(title, false)?);
+    let body = control(doc, content, backend, None)?;
     let style = style(&doc.root.style());
     let mut menu_code = Vec::new();
     for menu in menus {
@@ -24,12 +24,17 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
         let title = binding(&menu.title, false)?;
         let items = binding(&menu.items, false)?;
         let command = command(&menu.command)?;
-        menu_code.push(quote!({
-            let __dispatch_model = __wakui_model.clone();
-            __wakui_view.menu(#id,#title,#items,::std::rc::Rc::new(move |__arg| {
-                __dispatch_model.#command(::wakui2_runtime::Binding::constant(__arg)).invoke()
-            }));
-        }));
+        menu_code.push(located(
+            doc,
+            None,
+            id,
+            quote!({
+                let __dispatch_model = __wakui_model.clone();
+                __wakui_view.typed_menu(#id,#title,#items,::std::rc::Rc::new(move |__arg| {
+                    __dispatch_model.#command(::wakui2_runtime::Binding::constant(__arg)).invoke()
+                }));
+            }),
+        ));
     }
     let close = if owned {
         quote!(__close_model.close();)
@@ -50,6 +55,24 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
 
 fn error(message: impl std::fmt::Display) -> syn::Error {
     syn::Error::new(proc_macro2::Span::call_site(), message)
+}
+fn located(doc: &Document, scope: Option<&str>, id: &str, body: TokenStream) -> TokenStream {
+    let Some(span) = doc.source.node(scope, id) else {
+        return body;
+    };
+    let name = format_ident!("{}", source_marker(&doc.source.filename, span));
+    quote!({ macro_rules! #name { () => {{ #body }}; } #name!() })
+}
+pub fn source_marker(filename: &str, span: wakui2_markup::SourceSpan) -> String {
+    let encoded: String = filename
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!(
+        "__wakui_yaml_line_{}_column_{}_file_{}",
+        span.line, span.column, encoded
+    )
 }
 fn path(value: &str) -> syn::Result<Path> {
     let p: Path =
@@ -103,7 +126,8 @@ fn binding(prop: &Property, writable: bool) -> syn::Result<TokenStream> {
             } else {
                 quote!(::std::option::Option::None)
             };
-            let base = quote!(#model.bind(|s| s.#(#fields).*.clone(),#writer));
+            let dependency = fields[0].to_string();
+            let base = quote!(#model.bind_scoped(#dependency,|s| s.#(#fields).*.clone(),#writer));
             if let Some(converter) = &b.converter {
                 let converter = path(converter)?;
                 quote!((#base).convert(#converter::forward,#converter::backward))
@@ -220,7 +244,7 @@ fn template(doc: &Document, name: &str, backend: &Path) -> syn::Result<TokenStre
         .templates
         .get(name)
         .ok_or_else(|| error(format!("unknown template `{name}`")))?;
-    let body = control(doc, &t.root, backend, true)?;
+    let body = control(doc, &t.root, backend, Some(name))?;
     Ok(quote!({
         let __template_root = __wakui_root.clone();
         ::std::rc::Rc::new(move |__view: &#backend::View,__parent: &#backend::Parent,__scope: &str,__wakui_model: ::wakui2_runtime::Store<_>| {
@@ -231,17 +255,31 @@ fn template(doc: &Document, name: &str, backend: &Path) -> syn::Result<TokenStre
         })
     }))
 }
-fn control(doc: &Document, c: &Control, backend: &Path, scoped: bool) -> syn::Result<TokenStream> {
-    control_inner(doc, c, backend, scoped).map_err(|e| error(format!("control `{}`: {e}", c.id())))
+fn control(
+    doc: &Document,
+    c: &Control,
+    backend: &Path,
+    scope: Option<&str>,
+) -> syn::Result<TokenStream> {
+    control_inner(doc, c, backend, scope)
+        .map(|body| located(doc, scope, c.id(), body))
+        .map_err(|e| {
+            let location = doc
+                .source
+                .node(scope, c.id())
+                .map(|span| format!("{}:{}:{}: ", doc.source.filename, span.line, span.column))
+                .unwrap_or_default();
+            error(format!("{location}control `{}`: {e}", c.id()))
+        })
 }
 fn control_inner(
     doc: &Document,
     c: &Control,
     backend: &Path,
-    scoped: bool,
+    scoped: Option<&str>,
 ) -> syn::Result<TokenStream> {
     let local_id = c.id();
-    let id = if scoped {
+    let id = if scoped.is_some() {
         quote!(::std::format!("{}/{}",__scope,#local_id))
     } else {
         quote!(::std::string::String::from(#local_id))
@@ -335,7 +373,7 @@ fn control_inner(
         Control::Native { factory, value, .. } => {
             let factory = path(factory)?;
             let value = binding(value, true)?;
-            quote!(#factory(&__wakui_view,&__wakui_parent,&__id,#value);)
+            quote!(let _: () = #factory(&__wakui_view,&__wakui_parent,&__id,#value);)
         }
         Control::ItemsControl {
             items,
@@ -370,7 +408,7 @@ fn layout(
     doc: &Document,
     children: &[Control],
     backend: &Path,
-    scoped: bool,
+    scoped: Option<&str>,
     value: TokenStream,
 ) -> syn::Result<TokenStream> {
     let children: Vec<_> = children

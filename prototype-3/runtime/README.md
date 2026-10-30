@@ -94,22 +94,32 @@ queued reactions, but does not cancel effects that already started. Store
 close/drop discards queued reactions; tokens themselves are not Store owners.
 
 Binding reads and initial subscriptions hold an `Rc<S>` snapshot while projecting
-outside internal borrows; they do not clone S. Mutation clones S once, and the
-public `snapshot()` still returns an owned clone. Publication still scans all
-subscribed projections and compares their values; there is no field-level dirty
-tracking. Tests count Clone calls and measure scalar reads with 0/16 MiB of
+outside internal borrows; they do not clone S. Legacy mutation clones S once, and the
+public `snapshot()` still returns an owned clone. Arbitrary updates invalidate all
+subscribed projections. `bind_scoped(field,read,write)` indexes a top-level field;
+its writer only invalidates that field and unscoped listeners, but still clones S.
+`update_scoped(fields, |previous| Some(next_state))` constructs an owned state
+without invoking S::clone; returning None skips publication entirely. Declare
+all changed top-level fields, and only use scoped projections that depend on the
+named field. Incorrect declarations may leave stale values. Use Rc/Arc to share
+large unchanged payloads. Application interior mutation is not tracked.
+Registration-order callbacks, FIFO/reentry, frozen snapshots and cancellation
+remain unchanged. Tests count Clone calls and measure scalar reads with 0/16 MiB of
 unprojected state. These are not frame-time or machine-independent guarantees.
 `cargo run --locked -p wakui2-runtime --example scaling` also observes 0/1/16 MiB
 states with 1/100/1000 subscribers. Every case asserts zero S clones during
 50,000 scalar reads, one S clone per update, and exact notification counts.
 Twenty update samples produce informational p50/p95 values, without a timing
-threshold. Remaining full-state clone and projection-scan costs are intentional
-measurement targets, not claims of O(1) updates.
+threshold for the legacy baseline. The scoped comparison adds 200 update samples
+with 16 MiB shared payload and 1/100/1000/10000 unrelated subscribers, asserting
+zero state clones, zero unrelated reevaluations and exact changed notifications.
+`scripts/measure.sh` imposes release CPU p50/p95 budgets on the scoped comparison
+and actual settings/library workloads; this is not a native input/frame guarantee.
 
 `Store::command` accepts `Binding<A>` and an action receiving `A: Clone + 'static`.
 The resulting `Command` remains non-generic and argument-erased for native UI.
 Invocation captures A immediately and rechecks enabled when dequeued. Dynamic
-menu dispatch remains String-based; generated typed commands can be called from it.
+menus use `MenuItem<A=String>` and `typed_menu`; the String menu API remains compatible.
 
 Shared generated `view!` retains a Store until View close/drop without closing
 other owners; `owned_view!` explicitly closes that Store. Bindings/tasks retain
@@ -178,4 +188,4 @@ return errors. Unmounted windows stop participating in outstanding waits.
   capture strong Store/native owners; the runtime cannot rewrite those captures.
   Likewise `S: Clone` does not deep-freeze application interior-mutable objects.
 - No OS-specific input/accessibility conformance, clipboard, or native layout
-  implementation is implied. Dynamic menu arguments remain strings.
+  implementation is implied by runtime-only tests.

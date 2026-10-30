@@ -197,6 +197,8 @@ impl Inner {
         // Never run token, signal or application destructors under a registry borrow.
         drop(self.resources.take());
         drop(self.lists.take());
+        self.menus.remove_all();
+        self.window.remove_controller(&self.shortcuts);
         for (_, state) in self.menu_states.take() {
             for shortcut in state.shortcuts.take() {
                 self.shortcuts.remove_shortcut(&shortcut);
@@ -802,6 +804,15 @@ impl View {
         items: Binding<Vec<MenuItem>>,
         dispatch: Rc<dyn Fn(String) -> bool>,
     ) {
+        self.typed_menu(id, title, items, dispatch);
+    }
+    pub fn typed_menu<A: Clone + 'static>(
+        &self,
+        id: &str,
+        title: Binding<String>,
+        items: Binding<Vec<MenuItem<A>>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
+    ) {
         assert!(
             !self.0.menu_states.borrow().contains_key(id),
             "duplicate menu id: {id}"
@@ -861,6 +872,7 @@ impl View {
     fn clear_menu(&self, id: &str) {
         let state = self.0.menu_states.borrow().get(id).cloned();
         let Some(state) = state else { return };
+        state.menu.remove_all();
         // Menu signals live in a sub-scope; title/items subscriptions remain alive.
         let signals = self
             .0
@@ -877,10 +889,14 @@ impl View {
         for shortcut in state.shortcuts.take() {
             self.0.shortcuts.remove_shortcut(&shortcut);
         }
-        state.menu.remove_all();
     }
 
-    fn apply_menu(&self, id: &str, items: Vec<MenuItem>, dispatch: Rc<dyn Fn(String) -> bool>) {
+    fn apply_menu<A: Clone + 'static>(
+        &self,
+        id: &str,
+        items: Vec<MenuItem<A>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
+    ) {
         let items: Vec<_> = items
             .into_iter()
             .map(|mut item| {

@@ -17,11 +17,11 @@ use std::{
     time::{Duration, Instant},
 };
 use wakui2_runtime::{
-    Binding, Command, Executor, Keyed, Layout, MenuItem, Shortcut, Store, Style, Subscription,
-    Viewport,
+    Binding, Command, Executor, Keyed, Layout, MenuItem, Session, Shortcut, Store, Style,
+    Subscription, UiHost, Viewport, WindowHooks,
 };
 
-type Callback = unsafe extern "C" fn(*mut c_void, *const u8, usize, *const u8, usize);
+type Callback = unsafe extern "C" fn(*mut c_void, i32, *const u8, usize, *const u8, usize);
 
 unsafe extern "C" {
     fn w3_create(callback: Callback, context: *mut c_void) -> *mut c_void;
@@ -115,11 +115,13 @@ struct Inner {
     native: Cell<*mut c_void>,
     scopes: RefCell<HashMap<String, Scope>>,
     handlers: RefCell<HashMap<String, Handler>>,
+    viewport_handlers: RefCell<HashMap<String, Handler>>,
     nodes: RefCell<HashSet<String>>,
     lists: RefCell<HashMap<String, Rc<List>>>,
     menu_errors: RefCell<HashMap<String, String>>,
     close_handlers: RefCell<Vec<Rc<dyn Fn()>>>,
     close_request: RefCell<Option<Rc<dyn Fn()>>>,
+    quit_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting: Cell<bool>,
     closed: Cell<bool>,
     error: RefCell<Option<String>>,
@@ -131,8 +133,10 @@ impl Inner {
             return;
         }
         drop(self.close_request.take());
+        drop(self.quit_request.take());
         drop(self.scopes.take());
         drop(self.handlers.take());
+        drop(self.viewport_handlers.take());
         drop(self.lists.take());
         drop(self.menu_errors.take());
         unsafe {
@@ -172,6 +176,7 @@ impl WeakView {
 
 unsafe extern "C" fn dispatch(
     context: *mut c_void,
+    kind: i32,
     id: *const u8,
     id_len: usize,
     text: *const u8,
@@ -189,11 +194,19 @@ unsafe extern "C" fn dispatch(
             String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(text, text_len) })
                 .into_owned()
         };
-        if id == "__close" {
+        if kind == 1 || kind == 3 {
             if inner.requesting.replace(true) {
                 return;
             }
-            let callback = inner.close_request.borrow().clone();
+            let callback = if kind == 3 {
+                inner
+                    .quit_request
+                    .borrow()
+                    .clone()
+                    .or_else(|| inner.close_request.borrow().clone())
+            } else {
+                inner.close_request.borrow().clone()
+            };
             if let Some(callback) = callback {
                 callback();
             } else {
@@ -201,7 +214,11 @@ unsafe extern "C" fn dispatch(
             }
             inner.requesting.set(false);
         } else {
-            let handler = inner.handlers.borrow().get(id.as_ref()).cloned();
+            let handler = if kind == 2 {
+                inner.viewport_handlers.borrow().get(id.as_ref()).cloned()
+            } else {
+                inner.handlers.borrow().get(id.as_ref()).cloned()
+            };
             if let Some(handler) = handler {
                 handler(text);
             }
@@ -228,11 +245,13 @@ impl View {
             native: Cell::new(std::ptr::null_mut()),
             scopes: RefCell::new(HashMap::new()),
             handlers: RefCell::new(HashMap::new()),
+            viewport_handlers: RefCell::new(HashMap::new()),
             nodes: RefCell::new(HashSet::from(["__root".into()])),
             lists: RefCell::new(HashMap::new()),
             menu_errors: RefCell::new(HashMap::new()),
             close_handlers: RefCell::new(Vec::new()),
             close_request: RefCell::new(None),
+            quit_request: RefCell::new(None),
             requesting: Cell::new(false),
             closed: Cell::new(false),
             error: RefCell::new(None),
@@ -241,9 +260,7 @@ impl View {
             .native
             .set(unsafe { w3_create(dispatch, Rc::as_ptr(&inner).cast_mut().cast()) });
         let view = Self(inner);
-        view.bind("__root", title, |view, value| {
-            view.set("__title", &value, 0)
-        });
+        view.bind("__root", title, |view, value| view.set("__root", &value, 2));
         view
     }
 
@@ -329,12 +346,13 @@ impl View {
             .0
             .handlers
             .borrow_mut()
-            .extract_if(|id, _| {
-                within(id, prefix)
-                    || id
-                        .strip_suffix("@viewport")
-                        .is_some_and(|id| within(id, prefix))
-            })
+            .extract_if(|id, _| within(id, prefix))
+            .collect();
+        let viewport_handlers: Vec<_> = self
+            .0
+            .viewport_handlers
+            .borrow_mut()
+            .extract_if(|id, _| within(id, prefix))
             .collect();
         let lists: Vec<_> = self
             .0
@@ -346,7 +364,7 @@ impl View {
             .menu_errors
             .borrow_mut()
             .retain(|id, _| !within(id, prefix));
-        drop((scopes, handlers, lists));
+        drop((scopes, handlers, viewport_handlers, lists));
         unsafe {
             w3_remove(self.0.native.get(), prefix.as_ptr(), prefix.len());
         }
@@ -436,19 +454,12 @@ impl View {
         self.0.lists.borrow_mut().insert(id.into(), list.clone());
         let key = id.to_owned();
         let mounted = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
-        let source = items.clone();
+        let source = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
+        let accepted = source.clone();
         let output = list.clone();
         let refresh: Refresh = Rc::new(move |view| {
             let list = &output;
-            let snapshot = source.get();
-            let mut seen = HashSet::new();
-            if snapshot.iter().any(|row| {
-                !wakui2_runtime::valid_item_key(&row.key) || !seen.insert(row.key.clone())
-            }) {
-                list.error
-                    .replace(Some("invalid or duplicate item key".into()));
-                return;
-            }
+            let snapshot = source.borrow().clone();
             let Some(viewport) = list.current.get() else {
                 return;
             };
@@ -502,7 +513,6 @@ impl View {
             }
             list.mounted
                 .replace(visible.iter().map(|row| row.key.clone()).collect());
-            list.error.take();
             unsafe {
                 w3_rows(
                     view.0.native.get(),
@@ -519,7 +529,21 @@ impl View {
             view.style(&key, style);
         });
         let update = refresh.clone();
-        self.bind(id, items, move |view, _| update(view));
+        let output = list.clone();
+        self.bind(id, items, move |view, snapshot| {
+            let mut seen = HashSet::new();
+            if snapshot.iter().any(|row| {
+                !wakui2_runtime::valid_item_key(&row.key) || !seen.insert(row.key.clone())
+            }) {
+                output
+                    .error
+                    .replace(Some("invalid or duplicate item key".into()));
+                return;
+            }
+            accepted.replace(snapshot);
+            output.error.take();
+            update(view);
+        });
         let update = refresh.clone();
         let output = list.clone();
         self.bind(id, viewport.clone(), move |view, value| {
@@ -535,8 +559,8 @@ impl View {
             }
         });
         let weak = self.downgrade();
-        self.0.handlers.borrow_mut().insert(
-            format!("{id}@viewport"),
+        self.0.viewport_handlers.borrow_mut().insert(
+            id.into(),
             Rc::new(move |value| {
                 if let Ok(start) = value.parse()
                     && let Some(mut next) = list.current.get()
@@ -553,12 +577,7 @@ impl View {
         );
     }
     pub fn viewport(&self, id: &str, start: usize) {
-        let handler = self
-            .0
-            .handlers
-            .borrow()
-            .get(&format!("{id}@viewport"))
-            .cloned();
+        let handler = self.0.viewport_handlers.borrow().get(id).cloned();
         if let Some(handler) = handler {
             handler(start.to_string());
         }
@@ -599,6 +618,15 @@ impl View {
         title: Binding<String>,
         items: Binding<Vec<MenuItem>>,
         dispatch: Rc<dyn Fn(String) -> bool>,
+    ) {
+        self.typed_menu(id, title, items, dispatch);
+    }
+    pub fn typed_menu<A: Clone + 'static>(
+        &self,
+        id: &str,
+        title: Binding<String>,
+        items: Binding<Vec<MenuItem<A>>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
     ) {
         let key = id.to_owned();
         let source = items.clone();
@@ -708,7 +736,7 @@ impl View {
         }
     }
     pub fn title(&self) -> String {
-        self.text("__title").unwrap_or_default()
+        self.text("__root").unwrap_or_default()
     }
     pub fn is_key_window(&self) -> bool {
         !self.0.closed.get() && unsafe { w3_focused(self.0.native.get()) } == 1
@@ -876,15 +904,73 @@ impl MacExecutor {
     }
 }
 
-pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), String> {
-    let executor = Rc::new(MacExecutor::default());
-    let view = make(executor.clone());
-    let initial_error = view.0.error.borrow().clone();
-    if let Some(error) = initial_error {
-        view.close();
-        return Err(error);
+#[derive(Default)]
+pub struct MacHost {
+    executor: Rc<MacExecutor>,
+    views: RefCell<Vec<View>>,
+    sessions: RefCell<Vec<Session>>,
+}
+impl UiHost for MacHost {
+    fn executor(&self) -> Rc<dyn Executor> {
+        self.executor.clone()
     }
-    view.present();
+    fn attach(&self, session: Session) -> Result<(), String> {
+        self.sessions.borrow_mut().push(session);
+        Ok(())
+    }
+}
+impl MacHost {
+    pub fn present(&self, view: &View) {
+        self.views
+            .borrow_mut()
+            .retain(|existing| !existing.0.closed.get() && !Rc::ptr_eq(&existing.0, &view.0));
+        self.views.borrow_mut().push(view.clone());
+        view.present();
+    }
+    pub fn register_view(
+        &self,
+        session: &Session,
+        id: &str,
+        view: &View,
+        hooks: WindowHooks,
+    ) -> Result<(), String> {
+        let token = session.register_window(id, hooks)?;
+        view.keep(token);
+        let shutdown = session.shutdown();
+        let executor = self.executor();
+        view.0.quit_request.replace(Some(Rc::new(move || {
+            let shutdown = shutdown.clone();
+            executor.spawn(Box::pin(async move {
+                shutdown.request_shutdown(Duration::from_secs(5)).await;
+            }));
+        })));
+        self.present(view);
+        Ok(())
+    }
+}
+impl Drop for MacHost {
+    fn drop(&mut self) {
+        for session in self.sessions.get_mut().drain(..) {
+            session.shutdown().close_now();
+        }
+        for view in self.views.get_mut().drain(..) {
+            view.close();
+        }
+        drop(self.executor.queue.take());
+    }
+}
+
+pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), String> {
+    run_host(move |host| {
+        host.present(&make(host.executor()));
+        Ok(())
+    })
+}
+
+pub fn run_host(make: impl FnOnce(Rc<MacHost>) -> Result<(), String>) -> Result<(), String> {
+    let host = Rc::new(MacHost::default());
+    make(host.clone())?;
+    let executor = &host.executor;
     let deadline = std::env::var("WAKUI_MACOS_TIMEOUT_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok());
@@ -892,7 +978,7 @@ pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), 
     let mut previous = started;
     let mut gaps = Vec::new();
     let result = catch_unwind(AssertUnwindSafe(|| {
-        while !view.0.closed.get() {
+        while host.views.borrow().iter().any(|view| !view.0.closed.get()) || executor.has_ready() {
             if deadline.is_some_and(|seconds| started.elapsed() > Duration::from_secs(seconds)) {
                 return Err("macOS host deadline exceeded".to_owned());
             }
@@ -904,17 +990,22 @@ pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), 
             unsafe {
                 w3_pump(if executor.has_ready() { 0 } else { 8 });
             }
-            if !view.0.closed.get() {
-                executor.turn();
-            }
-            if let Some(error) = view.0.error.borrow().clone() {
-                return Err(error);
+            executor.turn();
+            for view in host.views.borrow().iter() {
+                if let Some(error) = view.0.error.borrow().clone() {
+                    return Err(error);
+                }
             }
         }
         Ok(())
     }))
     .unwrap_or_else(|_| Err("macOS host future panicked".into()));
-    view.close();
+    for session in host.sessions.borrow().iter() {
+        session.shutdown().close_now();
+    }
+    for view in host.views.borrow().iter() {
+        view.close();
+    }
     drop(executor.queue.take());
     if std::env::var_os("WAKUI_MACOS_METRICS").is_some() && !gaps.is_empty() {
         gaps.sort_unstable();

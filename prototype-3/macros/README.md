@@ -164,8 +164,8 @@ root:
   Grid placement fields are `row,column,row_span,column_span` (zero-based,
   spans default 1). Margin/padding accept a scalar or partial edge object.
   `style` also accepts margin/padding; top-level margin/padding override them.
-- Menus call `View::menu(id,title,items,dispatch)`. The items binding contains
-  runtime MenuItems including labels, String arguments, shortcut, enabled and
+- Menus call `View::typed_menu(id,title,items,dispatch)`. The items binding contains
+  runtime `MenuItem<A>` values including labels, typed arguments, shortcut, enabled and
   native role. Dispatch creates `command_choose(Binding::constant(argument))`.
 - Native uses an explicit application function path, validated with `syn::Path`:
   `fn meter(&backend::View, &backend::Parent, &str, Binding<f64>)`.
@@ -177,15 +177,15 @@ root:
 
 Store reads project from an internal shared `Rc<S>` snapshot outside RefCell
 borrows, without cloning the full state. `snapshot()` still returns an owned
-`S::clone()`; each mutation clones S once. Publication still evaluates **all
-subscribed projections**, suppressing equal projected values. There is no
-field-dirty tracking optimization. Runtime tests assert clone counts and report
-50,000 scalar-read timings for empty and 16 MiB states; timings are informational
-and do not impose a machine-dependent performance threshold.
+`S::clone()`; legacy mutation still clones S once. Generated bindings use
+`bind_scoped` with the first field segment (including root/item resolution).
+Scoped writes skip unrelated projections; arbitrary updates remain full
+invalidation. `update_scoped` permits clone-free owned replacement and no-op
+generation gates with explicitly declared dirty fields. See runtime/README.md.
 
 Window is the document root only: the frozen single-View API has no nested-window
 mount operation, so nested/template Windows produce an explicit error. No layout
-kind is silently substituted. Dynamic menus still carry String arguments. Collection
+kind is silently substituted. Dynamic menus carry typed arguments. Collection
 and menu literals are not supported: bind typed model fields instead. Generic
 model impls and generic factory/converter paths are explicitly unsupported.
 Backend-native input, accessibility and OS widget conformance are not guaranteed
@@ -219,3 +219,22 @@ test process, never the outer Cargo target (avoiding its lock). Fixture copies
 and Cargo sequences are serialized so the shared `probe` executable cannot be
 replaced between a freshness check and a run. Fixture copies
 are removed on success and retained on panic; compiled targets remain cached.
+
+## YAML Diagnostics
+
+`sh scripts/check-yaml.sh check -p wakui3-settings --no-default-features --features backend-macos`
+enables the Python 3 rustc wrapper. `--message-format=json` also exposes YAML
+primary spans to diagnostic consumers. Each node expansion carries parser-derived
+file/line/column, including template-local IDs. The wrapper preserves original
+Rust diagnostics and nonzero exit status, while adding a YAML primary span.
+Stable proc-macros cannot directly manufacture foreign-file spans; plain cargo
+without the wrapper still typechecks but can point at view!. This is not a full LSP.
+Syntax/resource failures without a resolved node keep parser/invocation diagnostics.
+JSON node locations remain unsupported. Unknown schema fields use an unambiguous
+structural source-map match, otherwise the closest parent location.
+
+Downstream Cargo tests assert exact YAML lines for field typo, bool-to-text,
+unknown command, factory input/return, validator and converter signature errors,
+and Menu argument mismatch. A typed integer Menu executes an integer command.
+Factory calls must return unit. Runtime validation still governs values; this
+compile-time checking does not execute user functions on the macro host.

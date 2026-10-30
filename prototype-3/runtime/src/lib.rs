@@ -145,10 +145,10 @@ pub enum MenuRole {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MenuItem {
+pub struct MenuItem<A = String> {
     pub id: String,
     pub label: String,
-    pub argument: String,
+    pub argument: A,
     pub shortcut: Option<String>,
     pub role: MenuRole,
     pub enabled: bool,

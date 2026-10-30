@@ -144,7 +144,53 @@ fn main() -> Result<(), String> {
         assert_eq!(readonly_range.snapshot().start, 0);
         readonly_range.update(|viewport| viewport.start = 9);
         assert_eq!(view.item_keys("readonly_rows"), ["9", "10"]);
+        for id in ["__close", "rows@viewport", "__title"] {
+            view.entry(
+                &parent,
+                id,
+                model.bind(
+                    |state| state.second.clone(),
+                    Some(|state, value| state.second = value),
+                ),
+            );
+            view.edit(id, "ordinary input").unwrap();
+            assert!(view.downgrade().upgrade().is_some());
+            assert_eq!(model.snapshot().second, "ordinary input");
+            assert_eq!(view.text(id).as_deref(), Some("ordinary input"));
+        }
+        view.viewport("rows", 5);
+        assert_eq!(view.item_keys("rows"), ["5", "6", "7", "8", "9", "10"]);
+        rows.update(|items| items[99].key = items[98].key.clone());
+        assert!(view.items_error("rows").is_some());
+        view.viewport("rows", 10);
+        assert_eq!(view.item_keys("rows"), ["10", "11", "12", "13", "14", "15"]);
+        assert!(view.items_error("rows").is_some());
+        rows.update(|items| items[99].key = "99".into());
+        range.update(|viewport| viewport.start = 0);
+        assert!(view.items_error("rows").is_none());
+        println!("MACOS3 PASS event-namespace rejected-source-scroll");
         println!("MACOS3 PASS readonly-viewport local-scroll model-unchanged external-update");
+        let typed_argument = Rc::new(Cell::new(0_i32));
+        let output = typed_argument.clone();
+        view.typed_menu(
+            "typed",
+            Binding::constant("Typed".into()),
+            Binding::constant(vec![MenuItem {
+                id: "integer".into(),
+                label: "Integer".into(),
+                argument: 42_i32,
+                shortcut: None,
+                role: MenuRole::Normal,
+                enabled: true,
+            }]),
+            Rc::new(move |argument| {
+                output.set(argument);
+                true
+            }),
+        );
+        view.activate_menu("typed/integer").unwrap();
+        assert_eq!(typed_argument.get(), 42);
+        println!("MACOS3 PASS typed-menu integer-argument");
         let valid_menu = MenuItem {
             id: "save".into(),
             label: "Save".into(),

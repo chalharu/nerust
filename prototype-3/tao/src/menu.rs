@@ -22,7 +22,7 @@ pub fn parse_shortcut(value: &str) -> Result<Accelerator, String> {
         .parse::<Accelerator>()
         .map_err(|e| format!("invalid menu shortcut {value:?}: {e}"))
 }
-fn validate(items: &[MenuItem]) -> Result<(), String> {
+fn validate<A>(items: &[MenuItem<A>]) -> Result<(), String> {
     let mut ids = HashSet::new();
     for item in items {
         if !ids.insert(&item.id) {
@@ -47,7 +47,7 @@ fn validate(items: &[MenuItem]) -> Result<(), String> {
     }
     Ok(())
 }
-fn predefined(item: &MenuItem) -> PredefinedMenuItem {
+fn predefined<A>(item: &MenuItem<A>) -> PredefinedMenuItem {
     let text = Some(item.label.as_str());
     match item.role {
         MenuRole::Copy => PredefinedMenuItem::copy(text),
@@ -129,6 +129,15 @@ impl View {
         items: Binding<Vec<MenuItem>>,
         dispatch: Rc<dyn Fn(String) -> bool>,
     ) {
+        self.typed_menu(id, title, items, dispatch);
+    }
+    pub fn typed_menu<A: Clone + 'static>(
+        &self,
+        id: &str,
+        title: Binding<String>,
+        items: Binding<Vec<MenuItem<A>>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
+    ) {
         assert!(!self.0.closed.get(), "closed view");
         // A retained node owns the two dynamic subscriptions, just like widget mounts.
         let node = self.add(&self.root(), id, Kind::Content);
@@ -171,6 +180,18 @@ impl View {
             let mut actions = Vec::new();
             let mut ids = Vec::new();
             for item in values {
+                let argument = item.argument;
+                let invoke = dispatch.clone();
+                let dispatch: Rc<dyn Fn(String) -> bool> =
+                    Rc::new(move |_| invoke(argument.clone()));
+                let item = MenuItem {
+                    id: item.id,
+                    label: item.label,
+                    argument: String::new(),
+                    shortcut: item.shortcut,
+                    role: item.role,
+                    enabled: item.enabled,
+                };
                 let key = format!("{menu_id}/{}", item.id);
                 if item.role == MenuRole::Normal || quit_shim(&item.role) {
                     let accelerator = item
@@ -371,7 +392,7 @@ mod tests {
     fn parse_and_validate_before_snapshot_mutation() {
         assert!(parse_shortcut("Ctrl+KeyS").is_ok());
         assert!(parse_shortcut("NotAModifier+UnknownKey").is_err());
-        let item = MenuItem {
+        let item: MenuItem = MenuItem {
             id: "save".into(),
             label: "Save".into(),
             argument: "now".into(),

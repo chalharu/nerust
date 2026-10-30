@@ -1,6 +1,6 @@
 import AppKit
 
-public typealias Callback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, Int) -> Void
+public typealias Callback = @convention(c) (UnsafeMutableRawPointer?, Int32, UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, Int) -> Void
 
 func string(_ bytes: UnsafePointer<UInt8>?, _ count: Int) -> String {
     guard let bytes = bytes else { return "" }
@@ -66,7 +66,18 @@ final class DocumentStack: NSStackView {
 }
 
 @MainActor
-final class Host: NSObject, NSWindowDelegate, NSApplicationDelegate, NSTextFieldDelegate {
+final class ApplicationDelegate: NSObject, NSApplicationDelegate {
+    static let shared = ApplicationDelegate()
+    weak var active: Host?
+    @objc func quitRequested() { active?.emit("", kind: 3) }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        quitRequested()
+        return .terminateCancel
+    }
+}
+
+@MainActor
+final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     let window: NSWindow
     let root = DocumentStack()
     var nodes: [String: NSView] = [:]
@@ -78,6 +89,7 @@ final class Host: NSObject, NSWindowDelegate, NSApplicationDelegate, NSTextField
     var focusable: [NSView] = []
     var callback: Callback?
     var context: UnsafeMutableRawPointer?
+    let bar = NSMenu()
 
     override init() {
         precondition(Thread.isMainThread)
@@ -106,8 +118,7 @@ final class Host: NSObject, NSWindowDelegate, NSApplicationDelegate, NSTextField
         ])
         nodes["__root"] = root
         frames["__root"] = root
-        NSApp.delegate = self
-        let bar = NSMenu()
+        NSApp.delegate = ApplicationDelegate.shared
         let app = NSMenuItem()
         let appMenu = NSMenu(title: "Wakui")
         app.submenu = appMenu
@@ -115,8 +126,8 @@ final class Host: NSObject, NSWindowDelegate, NSApplicationDelegate, NSTextField
         let about = NSMenuItem(title: "About Wakui", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(about)
         appMenu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Wakui", action: #selector(quitRequested), keyEquivalent: "q")
-        quit.target = self
+        let quit = NSMenuItem(title: "Quit Wakui", action: #selector(ApplicationDelegate.quitRequested), keyEquivalent: "q")
+        quit.target = ApplicationDelegate.shared
         appMenu.addItem(quit)
         let edit = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
@@ -130,25 +141,24 @@ final class Host: NSObject, NSWindowDelegate, NSApplicationDelegate, NSTextField
                                      ("Select All", #selector(NSText.selectAll(_:)), "a")] {
             editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
         }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        ApplicationDelegate.shared.active = self
         NSApp.mainMenu = bar
     }
 
-    func emit(_ id: String, _ value: String = "") {
+    func emit(_ id: String, _ value: String = "", kind: Int32 = 0) {
         guard let callback = callback else { return }
         Array(id.utf8).withUnsafeBufferPointer { key in
             Array(value.utf8).withUnsafeBufferPointer { text in
-                callback(context, key.baseAddress, key.count, text.baseAddress, text.count)
+                callback(context, kind, key.baseAddress, key.count, text.baseAddress, text.count)
             }
         }
     }
 
-    @objc func quitRequested() { emit("__close") }
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        emit("__close")
-        return .terminateCancel
-    }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        emit("__close")
+        emit("", kind: 1)
         return false
     }
     @objc func activated(_ sender: NSControl) {
@@ -234,7 +244,7 @@ public func destroy(_ pointer: UnsafeMutableRawPointer) {
     let value = host(pointer)
     value.callback = nil
     value.window.delegate = nil
-    if NSApp.delegate === value { NSApp.delegate = nil }
+    if ApplicationDelegate.shared.active === value { ApplicationDelegate.shared.active = nil }
     value.window.close()
     Unmanaged<Host>.fromOpaque(pointer).release()
 }
@@ -242,6 +252,7 @@ public func destroy(_ pointer: UnsafeMutableRawPointer) {
 @_cdecl("w3_present") @MainActor
 public func present(_ pointer: UnsafeMutableRawPointer) {
     host(pointer).window.makeKeyAndOrderFront(nil)
+    host(pointer).windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
     NSApp.activate(ignoringOtherApps: true)
 }
 
@@ -307,7 +318,7 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         view = button
     default:
         let rows = Rows()
-        rows.changed = { [weak value] start in value?.emit(id + "@viewport", String(start)) }
+        rows.changed = { [weak value] start in value?.emit(id, String(start), kind: 2) }
         view = rows
     }
     value.attach(view, parent: string(parentBytes, parentCount), id: id)
@@ -321,7 +332,7 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let text = string(textBytes, textCount)
     if property == 1 {
         (value.nodes[id] as? NSControl)?.isEnabled = text == "1"
-    } else if id == "__title" {
+    } else if property == 2 {
         value.window.title = text
     } else if let field = value.nodes[id] as? NSTextField {
         if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
@@ -335,7 +346,7 @@ public func text(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
     let value = host(pointer)
     let id = string(idBytes, idCount)
     let content: String
-    if id == "__title" { content = value.window.title }
+    if id == "__root" { content = value.window.title }
     else if let field = value.nodes[id] as? NSTextField { content = field.stringValue }
     else if let button = value.nodes[id] as? NSButton { content = button.title }
     else { return -1 }
@@ -457,11 +468,11 @@ public func menu(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
         submenu.autoenablesItems = false
         let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         parent.submenu = submenu
-        NSApp.mainMenu?.addItem(parent)
+        value.bar.addItem(parent)
         value.menus[id] = submenu
     }
     submenu.title = title
-    NSApp.mainMenu?.items.first(where: { $0.submenu === submenu })?.title = title
+    value.bar.items.first(where: { $0.submenu === submenu })?.title = title
     let old = value.menuItems.keys.filter { $0.hasPrefix(id + "/") }
     for key in old { value.menuItems.removeValue(forKey: key) }
     submenu.removeAllItems()
@@ -480,7 +491,7 @@ public func menu(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
             "Paste": #selector(NSText.paste(_:)), "SelectAll": #selector(NSText.selectAll(_:)),
             "About": #selector(NSApplication.orderFrontStandardAboutPanel(_:))]
         if let selector = selectors[role] { native.action = selector; native.target = nil }
-        if role == "Quit" { native.action = #selector(Host.quitRequested); native.target = value }
+        if role == "Quit" { native.action = #selector(ApplicationDelegate.quitRequested); native.target = ApplicationDelegate.shared }
         submenu.addItem(native)
         value.menuItems[key] = native
     }

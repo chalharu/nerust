@@ -3,10 +3,15 @@
 set -eu
 cd "$(dirname "$0")/.."
 export GDK_BACKEND=x11 GSK_RENDERER=cairo G_DEBUG=fatal-criticals
+export RUSTC_WRAPPER="$PWD/scripts/yaml-rustc.py"
 
 native_test() {
-    output=$(xvfb-run -a cargo test --locked "$@")
-    printf '%s\n' "$output"
+    if output=$(timeout 45s xvfb-run -a cargo test --locked "$@" 2>&1); then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        return 1
+    fi
     printf '%s\n' "$output" | grep -q '^test result: ok\. 1 passed; 0 failed;'
 }
 
