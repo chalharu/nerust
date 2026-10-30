@@ -155,7 +155,30 @@ model impls and generic factory/converter paths are explicitly unsupported.
 Backend-native input, accessibility and OS widget conformance are not guaranteed
 by code generation or by the fake-backend tests. No complete editor LSP is claimed.
 
+Model-field readonly annotations are not supported. OneWay bindings omit a writer
+at runtime; they are not Rust field annotations and do not provide compile-time
+readonly enforcement for TwoWay bindings.
+
 `tests/ui/main.yaml` is the larger executable fixture. Integration tests exercise
 all layouts, nested item/content templates, item/root commands, live arguments,
 typed converter writes, validation token ownership, menu roles and factory calls
 against the real runtime without linking GTK/Tao.
+
+`tests/cargo_ui.rs` copies standalone miniworkspaces from `tests/compile_fail`
+into temporary directories and invokes offline Cargo. Actual rustc rejects a
+missing binding field, a bool-to-text binding, and an unknown command method;
+assertions check diagnostic fragments, not toolchain-specific `.stderr` snapshots.
+The positive fixture compiles all fake-backend methods used by these cases. Its
+YAML-only edit must invalidate a previously fresh Cargo artifact and change the
+executable's printed literal, without `build.rs`, cleaning, or modifying Rust.
+Macro-boundary probes also reject oversized/deep/wide YAML and aliases/anchors.
+Existing markup tests cover schema and known fingerprint vectors; the rebuild
+probe additionally checks fingerprints of the actual before/after YAML bytes.
+
+Run `cargo test --offline -p wakui2-macros -- --nocapture` from `prototype-2`
+with the platform's normal Rust flags. No new dependencies are needed. Nested
+Cargo uses `/tmp/wakui2-ui-check/<pid>-<nonce>/target`, shared only within that
+test process, never the outer Cargo target (avoiding its lock). Fixture copies
+and Cargo sequences are serialized so the shared `probe` executable cannot be
+replaced between a freshness check and a run. Fixture copies
+are removed on success and retained on panic; compiled targets remain cached.

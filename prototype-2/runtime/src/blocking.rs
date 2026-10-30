@@ -1,10 +1,10 @@
 //! Bounded worker pool, ported from prototype_1/runtime without a crate dependency.
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, Mutex, mpsc},
     thread::{self, JoinHandle},
 };
-use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskError {
@@ -40,28 +40,50 @@ impl BlockingPool {
         assert!(workers > 0, "a blocking pool needs at least one worker");
         let (sender, receiver) = mpsc::sync_channel::<Job>(capacity);
         let receiver = Arc::new(Mutex::new(receiver));
-        let workers = (0..workers).map(|_| {
-            let receiver = receiver.clone();
-            thread::spawn(move || loop {
-                let job = receiver.lock().expect("blocking queue mutex poisoned").recv();
-                let Ok(job) = job else { break; };
-                job();
+        let workers = (0..workers)
+            .map(|_| {
+                let receiver = receiver.clone();
+                thread::spawn(move || {
+                    loop {
+                        let job = receiver
+                            .lock()
+                            .expect("blocking queue mutex poisoned")
+                            .recv();
+                        let Ok(job) = job else {
+                            break;
+                        };
+                        job();
+                    }
+                })
             })
-        }).collect();
-        Self { sender: Some(sender), workers }
+            .collect();
+        Self {
+            sender: Some(sender),
+            workers,
+        }
     }
-    pub fn try_spawn<F, T>(&self, f: F) -> Result<BoxFuture<'static, Result<T, TaskError>>, TaskError>
-    where F: FnOnce() -> T + Send + 'static, T: Send + 'static {
+    pub fn try_spawn<F, T>(
+        &self,
+        f: F,
+    ) -> Result<BoxFuture<'static, Result<T, TaskError>>, TaskError>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
         let sender = self.sender.as_ref().ok_or(TaskError::Shutdown)?;
         let (result, receiver) = oneshot::channel();
         let job: Job = Box::new(move || {
-            if result.is_canceled() { return; }
+            if result.is_canceled() {
+                return;
+            }
             let value = catch_unwind(AssertUnwindSafe(f)).map_err(|panic| {
                 let message = if let Some(message) = panic.downcast_ref::<String>() {
                     message.clone()
                 } else if let Some(message) = panic.downcast_ref::<&str>() {
                     (*message).to_owned()
-                } else { "non-string panic payload".to_owned() };
+                } else {
+                    "non-string panic payload".to_owned()
+                };
                 TaskError::Panic(message)
             });
             let _ = result.send(value);
@@ -75,9 +97,13 @@ impl BlockingPool {
     /// Blocking drain/join, only after the UI loop exits. Idempotent.
     pub fn shutdown(&mut self) {
         drop(self.sender.take());
-        for worker in self.workers.drain(..) { let _ = worker.join(); }
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 }
 impl Drop for BlockingPool {
-    fn drop(&mut self) { drop(self.sender.take()); }
+    fn drop(&mut self) {
+        drop(self.sender.take());
+    }
 }

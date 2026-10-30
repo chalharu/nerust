@@ -3725,6 +3725,7 @@ name = "wakui2-demo"
 version = "0.2.0"
 dependencies = [
  "futures",
+ "futures-timer",
  "wakui2-gtk",
  "wakui2-macros",
  "wakui2-runtime",

@@ -41,7 +41,7 @@ templates:
         - type: ItemsControl
           id: children
           items: {bind: {path: children}}
-          viewport: {literal: {count: 2}}
+          viewport: {bind: {path: root.viewport}}
           item_template: leaf
         - type: ContentControl
           id: selected_child
@@ -51,6 +51,8 @@ root:
   type: Window
   id: main
   title: {bind: {path: title}}
+  margin: 7
+  padding: {top: 1, right: 2, bottom: 3, left: 4}
   menus:
     - id: actions
       title: {literal: Actions}
@@ -98,8 +100,13 @@ root:
           - type: BindableLayout
             id: rows
             items: {bind: {path: rows}}
-            viewport: {bind: {path: viewport}}
+            viewport: {bind: {path: viewport, mode: TwoWay}}
             item_template: row
+          - type: ItemsControl
+            id: viewport_items
+            items: {bind: {path: rows}}
+            viewport: {bind: {path: viewport, mode: TwoWay}}
+            item_template: leaf
           - type: ContentControl
             id: selected
             content: {bind: {path: selected}}
