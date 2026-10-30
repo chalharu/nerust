@@ -64,6 +64,225 @@ fn pending_binding(s: &Store<Model>) -> Binding<bool> {
     s.bind(|s| s.pending, Some(|s, v| s.pending = v))
 }
 
+struct CountedState {
+    value: usize,
+    payload: Vec<u8>,
+    clones: Rc<Cell<usize>>,
+}
+impl Clone for CountedState {
+    fn clone(&self) -> Self {
+        self.clones.set(self.clones.get() + 1);
+        Self {
+            value: self.value,
+            payload: self.payload.clone(),
+            clones: self.clones.clone(),
+        }
+    }
+}
+
+#[test]
+fn projections_clone_no_state_mutation_clones_once_and_snapshot_is_owned() {
+    let clones = Rc::new(Cell::new(0));
+    let (_, store) = local(CountedState {
+        value: 0,
+        payload: vec![7; 1024 * 1024],
+        clones: clones.clone(),
+    });
+    let binding = store.bind(|s| s.value, Some(|s, v| s.value = v));
+    let (values, token) = record(&binding);
+    assert_eq!(binding.get(), 0);
+    assert_eq!(clones.get(), 0);
+    let frozen = store.snapshot();
+    assert_eq!(clones.get(), 1);
+    assert!(binding.set(1));
+    assert_eq!(clones.get(), 2);
+    assert_eq!(frozen.value, 0);
+    assert_eq!(frozen.payload[0], 7);
+    assert_eq!(*values.borrow(), [0, 1]);
+    store.close();
+    drop(store);
+    assert!(!binding.set(2));
+    assert_eq!(binding.get(), 1);
+    let (_, closed_token) = record(&binding);
+    assert_eq!(clones.get(), 2);
+    drop((token, closed_token));
+}
+
+#[test]
+fn projection_read_cost_is_independent_of_large_unprojected_state() {
+    // Informational timings, deterministic clone-count assertions (no flaky ratio).
+    // Publish still evaluates every subscribed projection; no field-dirty index.
+    for bytes in [0, 16 * 1024 * 1024] {
+        let clones = Rc::new(Cell::new(0));
+        let (_, store) = local(CountedState {
+            value: 42,
+            payload: vec![0; bytes],
+            clones: clones.clone(),
+        });
+        let binding = store.bind(|s| s.value, None);
+        let start = std::time::Instant::now();
+        for _ in 0..50_000 {
+            assert_eq!(std::hint::black_box(&binding).get(), 42);
+        }
+        println!(
+            "projection: state_bytes={bytes}, reads=50000, elapsed={:?}, state_clones={}",
+            start.elapsed(),
+            clones.get()
+        );
+        assert_eq!(clones.get(), 0);
+    }
+}
+
+type Reentry = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
+fn reenter(hook: &Reentry) {
+    let action = hook.borrow_mut().take();
+    if let Some(action) = action {
+        action();
+    }
+}
+struct ReentrantState {
+    value: i32,
+    clone_hook: Reentry,
+    drop_hook: Reentry,
+}
+impl Clone for ReentrantState {
+    fn clone(&self) -> Self {
+        reenter(&self.clone_hook);
+        Self {
+            value: self.value,
+            clone_hook: self.clone_hook.clone(),
+            drop_hook: self.drop_hook.clone(),
+        }
+    }
+}
+impl Drop for ReentrantState {
+    fn drop(&mut self) {
+        reenter(&self.drop_hook);
+    }
+}
+
+#[test]
+fn state_clone_drop_and_projection_can_reenter_without_snapshot_borrows() {
+    let clone_hook = Reentry::default();
+    let drop_hook = Reentry::default();
+    let (_, store) = local(ReentrantState {
+        value: 0,
+        clone_hook: clone_hook.clone(),
+        drop_hook: drop_hook.clone(),
+    });
+    let binding = store.bind(|s| s.value, None);
+    let owner = store.clone();
+    clone_hook.replace(Some(Box::new(move || {
+        // Avoid dropping an auxiliary S clone before the publish Drop probe.
+        assert_eq!(owner.bind(|s| s.value, None).get(), 0);
+        assert!(owner.update(|s| s.value = 2));
+    })));
+    let owner = store.clone();
+    drop_hook.replace(Some(Box::new(move || {
+        assert_eq!(owner.snapshot().value, 1);
+        assert!(owner.update(|s| s.value = 3));
+    })));
+    assert!(store.update(|s| s.value = 1));
+    assert_eq!(binding.get(), 3);
+
+    let owner = store.clone();
+    let project_hook = Reentry::default();
+    let hook = project_hook.clone();
+    let projected = store.bind(
+        move |s| {
+            reenter(&hook);
+            s.value
+        },
+        None,
+    );
+    project_hook.replace(Some(Box::new(move || {
+        assert!(owner.update(|s| s.value = 4));
+    })));
+    // The Rc snapshot pins the old state across a reentrant publish.
+    assert_eq!(projected.get(), 3);
+    assert_eq!(projected.get(), 4);
+    let owner = store.clone();
+    project_hook.replace(Some(Box::new(move || {
+        assert!(owner.update(|s| s.value = 5));
+    })));
+    let (_, _token) = record(&projected);
+    assert_eq!(projected.get(), 5);
+}
+
+struct ReentrantValue {
+    value: i32,
+    hook: Reentry,
+}
+impl Clone for ReentrantValue {
+    fn clone(&self) -> Self {
+        reenter(&self.hook);
+        Self {
+            value: self.value,
+            hook: self.hook.clone(),
+        }
+    }
+}
+impl PartialEq for ReentrantValue {
+    fn eq(&self, other: &Self) -> bool {
+        reenter(&self.hook);
+        self.value == other.value
+    }
+}
+impl Drop for ReentrantValue {
+    fn drop(&mut self) {
+        reenter(&self.hook);
+    }
+}
+
+#[test]
+fn projection_clone_equality_and_drop_remain_reentrant() {
+    let (_, store) = local(0);
+    let hook = Reentry::default();
+    let probe = hook.clone();
+    let binding = store.bind(
+        move |s| ReentrantValue {
+            value: *s,
+            hook: probe.clone(),
+        },
+        None,
+    );
+    let (_, _token) = record(&binding);
+    let owner = store.clone();
+    hook.replace(Some(Box::new(move || {
+        assert!(owner.update(|s| *s = 2));
+    })));
+    assert!(store.update(|s| *s = 1));
+    assert_eq!(binding.get().value, 2);
+    let owner = store.clone();
+    hook.replace(Some(Box::new(move || {
+        assert!(owner.update(|s| *s = 3));
+    })));
+    drop(binding.get());
+    assert_eq!(store.snapshot(), 3);
+}
+
+#[test]
+fn typed_command_captures_integer_argument_before_dequeue() {
+    let (_, store) = local(Model {
+        enabled: true,
+        value: 7,
+        ..Model::default()
+    });
+    let command: Command = store.command(
+        |s| s.enabled,
+        |model, arg: i32| {
+            model.update(move |s| s.error = arg.to_string());
+        },
+        number(&store),
+    );
+    let owner = store.clone();
+    store.update(move |_| {
+        assert!(owner.update(|s| s.value = 9));
+        assert!(command.invoke());
+    });
+    assert_eq!(store.snapshot().error, "7");
+}
+
 #[test]
 fn binding_conversions_readonly_initial_and_equal_suppression() {
     let (_, store) = local(Model::default());

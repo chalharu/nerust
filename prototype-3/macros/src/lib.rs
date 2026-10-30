@@ -34,15 +34,23 @@ impl Parse for ViewInput {
     }
 }
 
-/// Construct a backend View from a manifest-relative YAML/JSON file.
+/// Construct a shared-model View; closing it releases ownership without closing the Store.
 #[proc_macro]
 pub fn view(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ViewInput);
-    expand_view(input)
+    expand_view(input, false)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
-fn expand_view(input: ViewInput) -> syn::Result<proc_macro2::TokenStream> {
+/// Construct an owning View that explicitly closes its Store on view closure.
+#[proc_macro]
+pub fn owned_view(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ViewInput);
+    expand_view(input, true)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+fn expand_view(input: ViewInput, owned: bool) -> syn::Result<proc_macro2::TokenStream> {
     let fail = |message: String| syn::Error::new(input.file.span(), message);
     let base = std::env::var_os("CARGO_MANIFEST_DIR")
         .ok_or_else(|| fail("CARGO_MANIFEST_DIR missing".into()))?;
@@ -63,7 +71,7 @@ fn expand_view(input: ViewInput) -> syn::Result<proc_macro2::TokenStream> {
     let format = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     let document =
         wakui2_markup::parse(&source, format, absolute).map_err(|e| fail(e.to_string()))?;
-    let body = generate::generate(&document, &input.backend)
+    let body = generate::generate(&document, &input.backend, owned)
         .map_err(|e| fail(format!("{absolute}: {e}")))?;
     let model = input.model;
     Ok(quote!({
@@ -97,7 +105,7 @@ mod tests {
     #[test]
     fn direct_expansion_tracks_absolute_fixture() {
         let input = syn::parse_quote!("tests/ui/main.yaml", model, fake);
-        let code = expand_view(input).unwrap();
+        let code = expand_view(input, false).unwrap();
         let text = code.to_string();
         assert!(text.contains("include_str !"));
         let absolute = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
