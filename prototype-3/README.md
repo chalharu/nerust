@@ -68,7 +68,9 @@ GTK4/GTK3は同じプロセスへロードせず、backend featureはどちら�
 `sh scripts/verify.sh`で整形、Clippy、core・macro試験、GTK個別native試験、
 Tao native試験、最小例の両backendビルド、両galleryとclipboard/hotkey/About/Quit、
 両構成の設定試験と実画面スモークを確認する。
-154種類成功。設定23件の両feature実行とGridの倍率2再実行を含む実行数は178件。
+155種類成功。設定23件の両feature実行とGridの倍率2再実行を含む実行数は179件。
+設定アプリの実GTK二窓試験も専用プロセスで実行し、共有Viewの一方を閉じても
+他方の入力と非同期結果反映が続くことを確認する。
 終了コード0と`VERIFY3 PASS`を確認済み。継承galleryの`PROTOTYPE2`/`PERF2`マーカーは
 このworkspaceでの回帰を表し、保存済みの第2試作を再実行した意味ではない。
 Xvfbと`timeout`が必要。GTK試験は初期化スレッド制約から一件ずつ別プロセスで実行する。

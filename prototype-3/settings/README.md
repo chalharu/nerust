@@ -64,3 +64,9 @@ Canonical environment: `RUSTC_WRAPPER=`, `CARGO_BUILD_JOBS=2`,
 Run each backend separately under Xvfb with `GDK_BACKEND=x11`,
 `GSK_RENDERER=cairo`, `G_DEBUG=fatal-criticals`. This verifies X11 adapter
 automation, not physical shortcut key delivery or Windows/macOS/Wayland behavior.
+
+The 23 display-free tests run for both features. An additional GTK-only test,
+`native_tests::native_generated_shared_windows_survive_peer_close`, is ignored
+by default and explicitly executed by the verification script in its own Xvfb
+process. It presents two generated shared Views, closes one native window, edits
+the surviving Entry and applies an effect, then checks final-owner release.
