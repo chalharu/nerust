@@ -1,0 +1,8 @@
+[package]
+name = "demo-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wakui-contract.workspace = true
