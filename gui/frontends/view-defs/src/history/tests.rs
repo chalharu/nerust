@@ -189,8 +189,10 @@ fn screen_projects_list_with_source_order_and_chrome() {
         let (screen, action_ids) = model.screen(&mut ctx);
         assert_eq!(screen.title, "Notification history");
         assert_eq!(screen.pages.len(), 1);
-        // Action IDs resolve back to chrome controls.
-        assert_eq!(screen.control(action_ids.filter).unwrap().label, "Level");
+        // Action IDs resolve back to chrome controls. The filter combo
+        // carries no caption (the Level note names it); clear/close keep
+        // their labels on the buttons.
+        assert_eq!(screen.control(action_ids.filter).unwrap().label, "");
         assert_eq!(
             screen.control(action_ids.clear).unwrap().label,
             "Clear History"
