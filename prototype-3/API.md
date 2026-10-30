@@ -81,6 +81,16 @@ implemented. Style is limited to frame insets and dimensions, not arbitrary plac
 See [macos/README.md](macos/README.md) for supported input paths, native probes,
 dispatch budgets, development-only dylib layout and the manual IME/VoiceOver gates.
 
+AppKit retains an accepted local viewport, so read-only/literal viewports still
+allow scrolling without writing to the model. `item_keys` returns mounted keys,
+not the complete source. Accepted row-height changes resize existing mounts.
+Eviction releases nested list registries, viewport handlers and scoped tokens.
+Menu snapshots validate all IDs and shortcuts before replacing native items and
+handlers; rejection retains the old menu. `menu_error(id)->Option<String>` reports
+the per-menu rejection and clears on a valid update, without terminating the host.
+AppKit automation `frame_height(id)->Option<f64>` reads the native layout frame
+after layout, returning None for absent controls or a closed View.
+
 `wakui2_macros::view!("ui/main.yaml", model, backend)` returns a constructed shared
 View. It retains the model until View close/drop but does not close a model with
 other owners. `owned_view!` explicitly closes the model when its View closes.
