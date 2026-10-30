@@ -4,17 +4,19 @@ cd "$(dirname "$0")/.."
 test "$(uname -s)" = Darwin || { printf '%s\n' 'macOS interactive desktop required' >&2; exit 1; }
 unset DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_INSERT_LIBRARIES
 export RUSTC_WRAPPER="$PWD/scripts/yaml-rustc.py" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export WAKUI_ALLOW_CLIPBOARD_PROBE=1
 
 native_run() {
     if output=$(python3 -c '
 import os, signal, subprocess, sys
 process = subprocess.Popen(sys.argv[1:], start_new_session=True)
 try:
-    sys.exit(process.wait(timeout=45))
+    seconds = float(os.environ.get("WAKUI_NATIVE_TIMEOUT_SECONDS", "45"))
+    sys.exit(process.wait(timeout=seconds))
 except subprocess.TimeoutExpired:
     os.killpg(process.pid, signal.SIGKILL)
     process.wait()
-    print("Tao native run exceeded 45 seconds", file=sys.stderr)
+    print(f"Tao native run exceeded {seconds} seconds", file=sys.stderr)
     sys.exit(124)
 ' cargo run --locked "$@" 2>&1); then
         printf '%s\n' "$output"

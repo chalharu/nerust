@@ -60,6 +60,22 @@ pub fn load(path: &Path) -> Result<Config, String> {
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 pub fn save(path: &Path, config: &Config) -> Result<(), String> {
+    config.validate()?;
+    let mut lock_name = path
+        .file_name()
+        .ok_or("config path has no filename")?
+        .to_os_string();
+    lock_name.push(".lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_file_name(lock_name))
+        .map_err(|error| format!("save lock {}: {error}", path.display()))?;
+    lock.try_lock()
+        .map_err(|error| format!("another writer holds {}: {error}", path.display()))?;
+    let _lock = WriterLock(lock);
     // Include the complete target filename, not just its extension. Never open
     // another process's temporary file, and never unlink a failed create_new.
     let mut name = path
@@ -72,6 +88,13 @@ pub fn save(path: &Path, config: &Config) -> Result<(), String> {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     save_via(path, &path.with_file_name(name), config)
+}
+
+struct WriterLock(fs::File);
+impl Drop for WriterLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 struct OwnedTemp(Option<PathBuf>);
@@ -96,6 +119,14 @@ fn save_via(path: &Path, temp: &Path, config: &Config) -> Result<(), String> {
         fs::rename(temp, path)?;
         // Never unlink this path again after publication (it could be reused).
         owned.0.take();
+        #[cfg(unix)]
+        {
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            fs::File::open(parent)?.sync_all()?;
+        }
         Ok(())
     })();
     result.map_err(|error| format!(
@@ -150,7 +181,97 @@ mod tests {
         {
             let _ = changed;
         } // std::fs::rename replacement is platform-dependent.
-        assert_eq!(fs::read_dir(&sandbox.dir).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&sandbox.dir).unwrap().count(), 2);
+        assert!(sandbox.dir.join("settings.json.lock").exists());
+    }
+    #[test]
+    fn concurrent_writer_is_rejected_without_changing_published_config() {
+        let sandbox = Sandbox::new().unwrap();
+        save(&sandbox.path(), &Config::default()).unwrap();
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(sandbox.dir.join("settings.json.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let lock = WriterLock(lock);
+        let changed = Config {
+            name: "other writer".into(),
+            ..Config::default()
+        };
+        assert!(save(&sandbox.path(), &changed).is_err());
+        assert_eq!(load(&sandbox.path()).unwrap(), Config::default());
+        drop(lock);
+        save(&sandbox.path(), &changed).unwrap();
+        assert_eq!(load(&sandbox.path()).unwrap(), changed);
+    }
+    #[test]
+    fn explicit_unlock_releases_inherited_file_descriptions() {
+        let sandbox = Sandbox::new().unwrap();
+        save(&sandbox.path(), &Config::default()).unwrap();
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(sandbox.dir.join("settings.json.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        let inherited = lock.try_clone().unwrap();
+        let lock = WriterLock(lock);
+        drop(lock);
+        save(&sandbox.path(), &Config::default()).unwrap();
+        assert_eq!(load(&sandbox.path()).unwrap(), Config::default());
+        drop(inherited);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn writer_child() {
+        if let Some(path) = std::env::var_os("WAKUI3_CRASH_PROBE") {
+            use std::io::Write;
+            let path = PathBuf::from(path);
+            save(&path, &Config::default()).unwrap();
+            println!("WRITER_READY");
+            std::io::stdout().flush().unwrap();
+            for value in 0..100_000 {
+                save(
+                    &path,
+                    &Config {
+                        name: format!("writer-{value}"),
+                        ..Config::default()
+                    },
+                )
+                .unwrap();
+            }
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn killed_writer_leaves_a_valid_old_or_new_config_and_releases_lock() {
+        use std::{
+            io::BufRead,
+            process::{Command, Stdio},
+        };
+        let sandbox = Sandbox::new().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "persistence::tests::writer_child", "--nocapture"])
+            .env("WAKUI3_CRASH_PROBE", sandbox.path())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = child.stdout.take().unwrap();
+        let mut ready = false;
+        for line in io::BufReader::new(output).lines() {
+            if line.unwrap().contains("WRITER_READY") {
+                ready = true;
+                break;
+            }
+        }
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert!(ready);
+        let config = load(&sandbox.path()).unwrap();
+        assert!(config == Config::default() || config.name.starts_with("writer-"));
+        save(&sandbox.path(), &Config::default()).unwrap();
+        assert_eq!(load(&sandbox.path()).unwrap(), Config::default());
     }
     #[test]
     fn malformed_and_strict_schema_never_overwritten() {

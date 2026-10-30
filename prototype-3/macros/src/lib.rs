@@ -42,7 +42,7 @@ pub fn view(input: TokenStream) -> TokenStream {
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
-/// Construct an owning View that explicitly closes its Store on view closure.
+/// Consume a non-Clone StoreOwner; the View closes it on closure or drop.
 #[proc_macro]
 pub fn owned_view(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ViewInput);
@@ -79,9 +79,17 @@ fn expand_view(input: ViewInput, owned: bool) -> syn::Result<proc_macro2::TokenS
     let body = generate::generate(&document, &input.backend, owned)
         .map_err(|e| fail(format!("{absolute}: {e}")))?;
     let model = input.model;
+    let root = if owned {
+        quote!(
+            let __wakui_owner: ::wakui2_runtime::StoreOwner<_> = #model;
+            let __wakui_root = __wakui_owner.store().clone();
+        )
+    } else {
+        quote!(let __wakui_root = (#model).clone();)
+    };
     Ok(quote!({
         const _: &str = include_str!(#absolute);
-        let __wakui_root = (#model).clone();
+        #root
         let __wakui_model = __wakui_root.clone();
         #body
     }))
