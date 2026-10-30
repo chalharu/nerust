@@ -67,7 +67,13 @@ pub(crate) fn rows_from_display(
             .disasm_lines
             .iter()
             .map(|line| {
-                let marker = nerust_gui_viewmodel::debugger::disasm_marker(line.is_pc, false);
+                // The PC row carries the `> ` lead like the native twin;
+                // anything else keeps the pin/blank marker column.
+                let marker = if line.is_pc {
+                    "> "
+                } else {
+                    nerust_gui_viewmodel::debugger::disasm_marker(line.is_pc, false)
+                };
                 DisasmRow {
                     addr: line.addr,
                     is_pc: line.is_pc,

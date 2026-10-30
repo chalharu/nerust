@@ -344,9 +344,29 @@ impl ControlVisitor for IcedControlVisitor {
         }
     }
     fn control(&mut self, control: &Control) {
-        let frame = self.stack.last().expect("control frame");
-        if frame.visible && control.metadata.visible {
-            self.append(control_element(control, frame.enabled, self.font));
+        let (visible, enabled, font) = match self.stack.last() {
+            Some(frame) => (frame.visible, frame.enabled, self.font),
+            None => panic!("control frame"),
+        };
+        if visible && control.metadata.visible {
+            if let Some(list) = control.downcast::<ListLeaf>() {
+                // One horizontal row per list item (line plus follow
+                // arrow, address plus byte buttons). Only visible cells
+                // join the row; fully hidden rows reserve no space.
+                for item in &list.rows {
+                    let cells: Vec<El<'static>> = item
+                        .cells
+                        .iter()
+                        .filter(|cell| cell.metadata.visible)
+                        .map(|cell| control_element(cell, enabled, font_for(cell, font)))
+                        .collect();
+                    if !cells.is_empty() {
+                        self.append(row(cells).spacing(4).into());
+                    }
+                }
+                return;
+            }
+            self.append(control_element(control, enabled, font_for(control, font)));
             // Container-like leaves degrade flat in immediate mode.
             // Base leaves no-op here.
             wakui_core::scene::control::walk_control(control, self);
@@ -412,6 +432,16 @@ struct Choice {
 impl std::fmt::Display for Choice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.label)
+    }
+}
+
+/// Fixed-pitch rendering for controls carrying the monospace hint
+/// (disassembly lines, register values, hex dumps).
+fn font_for(control: &Control, font: iced::Font) -> iced::Font {
+    if control.metadata.hints.monospace {
+        iced::Font::MONOSPACE
+    } else {
+        font
     }
 }
 
@@ -506,10 +536,16 @@ pub fn control_element(control: &Control, parent_enabled: bool, font: iced::Font
             .on_input_maybe(
                 enabled.then_some(move |v| Message::new(edit_id, ControlInput::Text(v))),
             );
-        let mut items = row![
-            label_text(),
-            crate::scene::render::gate(edit.into(), enabled)
-        ]
+        // Empty labels collapse like notes: dialog nav rows carry no
+        // 220px caption gap before their entries.
+        let mut items = if label.is_empty() {
+            row![crate::scene::render::gate(edit.into(), enabled)]
+        } else {
+            row![
+                label_text(),
+                crate::scene::render::gate(edit.into(), enabled)
+            ]
+        }
         .spacing(12)
         .align_y(Alignment::Center);
         if let Some(browse) = &leaf.browse_label {
@@ -693,6 +729,7 @@ mod tests {
     fn screen(pages: Vec<Page>) -> ControlScreen {
         ControlScreen {
             title: "Test".to_string(),
+            default_size: None,
             pages,
             footer: {
                 let mut metadata = ControlMetadata::new("footer");

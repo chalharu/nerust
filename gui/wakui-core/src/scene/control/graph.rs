@@ -87,6 +87,9 @@ pub struct ControlScreen {
     pub footer: Container,
     pub message: Option<String>,
     pub capture: Capture,
+    /// Native dialog default size in pixels, from the L1 definition.
+    /// Flavors fall back to their default when `None`.
+    pub default_size: Option<(u32, u32)>,
 }
 
 impl ControlScreen {

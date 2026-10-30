@@ -62,6 +62,7 @@ pub fn conformance_screen() -> ControlScreen {
             target: None,
             prompt: String::new(),
         },
+        default_size: None,
     }
 }
 

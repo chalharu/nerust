@@ -521,6 +521,7 @@ fn settings_def(
     ];
     ScreenDef {
         title: t(UiText::Preferences),
+        default_size: None,
         pages: pages
             .into_iter()
             .map(|id| {

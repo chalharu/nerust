@@ -398,12 +398,13 @@ pub fn build(
     mailbox: WindowMailbox,
     callbacks: Callbacks,
 ) -> WidgetDialog {
+    let (default_width, default_height) = screen.default_size.unwrap_or((900, 560));
     let dialog = gtk::Dialog::builder()
         .transient_for(parent)
         .destroy_with_parent(true)
         .title(&screen.title)
-        .default_width(900)
-        .default_height(560)
+        .default_width(default_width as i32)
+        .default_height(default_height as i32)
         .build();
     let binding = WidgetBinding::new(screen, mailbox, &dialog, callbacks);
     // GTK's destroy-with-parent does not reliably notify a retained dialog.
