@@ -1,0 +1,11 @@
+schema_version: 2
+root:
+  type: Window
+  id: main
+  title: {literal: Wrong argument}
+  content:
+    type: Button
+    id: typed
+    text: {literal: Typed}
+    command: typed
+    argument: {bind: {path: name}}

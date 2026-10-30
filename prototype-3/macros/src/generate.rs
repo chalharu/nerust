@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::{Ident, Path};
 use wakui2_markup::{Control, Document, Edges, Mode, Orientation, Property, Style};
 
-pub fn generate(doc: &Document, backend: &Path) -> syn::Result<TokenStream> {
+pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<TokenStream> {
     doc.validate()
         .map_err(|(p, e)| error(format!("{p}: {e}")))?;
     let Control::Window {
@@ -31,6 +31,11 @@ pub fn generate(doc: &Document, backend: &Path) -> syn::Result<TokenStream> {
             }));
         }));
     }
+    let close = if owned {
+        quote!(__close_model.close();)
+    } else {
+        quote!(let _ = &__close_model;)
+    };
     Ok(quote!(
         let __wakui_view = #backend::View::new(#title);
         let __wakui_parent = __wakui_view.root();
@@ -38,7 +43,7 @@ pub fn generate(doc: &Document, backend: &Path) -> syn::Result<TokenStream> {
         #body
         #(#menu_code)*
         let __close_model = __wakui_root.clone();
-        __wakui_view.on_close(::std::rc::Rc::new(move || __close_model.close()));
+        __wakui_view.on_close(::std::rc::Rc::new(move || { #close }));
         __wakui_view
     ))
 }
@@ -370,7 +375,7 @@ mod tests {
                 unreachable!()
             };
             *window_id = id.into();
-            let code = generate(&d, &syn::parse_quote!(backend))
+            let code = generate(&d, &syn::parse_quote!(backend), false)
                 .unwrap()
                 .to_string();
             assert!(code.contains(". style (\"__root\" ,"), "{code}");
@@ -381,7 +386,7 @@ mod tests {
     fn every_feature_emits_runtime_calls() {
         let d = wakui2_markup::parse(include_str!("../tests/ui/main.yaml"), "yaml", "test.yaml")
             .unwrap();
-        let code = generate(&d, &syn::parse_quote!(backend)).unwrap();
+        let code = generate(&d, &syn::parse_quote!(backend), false).unwrap();
         syn::parse2::<syn::Expr>(quote!({#code})).unwrap();
         let code = code.to_string();
         for word in [
@@ -418,7 +423,7 @@ mod tests {
             "{type: TextBox, id: n, text: {bind: {path: name}}, validation: {validator: 'run()', error: error, pending: pending}}",
             "{type: Native, id: n, factory: 'crate::meter::<String>', value: {literal: 1}}",
         ] {
-            let e = generate(&document(content), &syn::parse_quote!(backend)).unwrap_err();
+            let e = generate(&document(content), &syn::parse_quote!(backend), false).unwrap_err();
             assert!(e.to_string().contains("control `n`"), "{e}");
         }
     }

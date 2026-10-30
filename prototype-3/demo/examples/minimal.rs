@@ -24,6 +24,6 @@ fn main() -> Result<(), String> {
             },
             executor,
         );
-        wakui2_macros::view!("ui/minimal.yaml", model, backend)
+        wakui2_macros::owned_view!("ui/minimal.yaml", model, backend)
     })
 }

@@ -146,9 +146,9 @@ struct Snapshots<S: Clone + 'static> {
     closed: Cell<bool>,
 }
 impl<S: Clone + 'static> Snapshots<S> {
-    fn get(&self) -> S {
-        let value = self.value.borrow().clone();
-        (*value).clone()
+    // Clone only the pointer under the borrow. Projection/Clone/Drop are user code.
+    fn get(&self) -> Rc<S> {
+        self.value.borrow().clone()
     }
     fn publish(&self, state: S) {
         if self.closed.get() {
@@ -157,6 +157,8 @@ impl<S: Clone + 'static> Snapshots<S> {
         let state = Rc::new(state);
         let old = self.value.replace(state.clone());
         drop(old);
+        // All subscribed projections are evaluated; equal results are suppressed
+        // by bind(). No per-field dirty tracking is assumed.
         let listeners: Vec<_> = self.listeners.borrow().values().cloned().collect();
         for listener in listeners {
             if self.closed.get() {
@@ -353,7 +355,7 @@ impl<S: Clone + 'static> Core<S> {
         }
     }
     fn mutate(&self, update: impl FnOnce(&mut S)) {
-        let mut state = self.snapshots.get();
+        let mut state = (*self.snapshots.get()).clone();
         update(&mut state);
         if !self.closed.get() {
             self.snapshots.publish(state);
@@ -541,8 +543,9 @@ impl<S: Clone + 'static> Store<S> {
             }),
         }
     }
+    /// An owned Clone of the current state; binding reads only clone their projection.
     pub fn snapshot(&self) -> S {
-        self.core.snapshots.get()
+        (*self.core.snapshots.get()).clone()
     }
     pub fn update(&self, update: impl FnOnce(&mut S) + 'static) -> bool {
         self.core
@@ -604,11 +607,12 @@ impl<S: Clone + 'static> Store<S> {
             }),
         }
     }
-    pub fn command(
+    /// Capture a typed argument at invocation; the returned UI command erases A.
+    pub fn command<A: Clone + 'static>(
         &self,
         enabled: impl Fn(&S) -> bool + 'static,
-        action: impl Fn(&Store<S>, String) + 'static,
-        argument: Binding<String>,
+        action: impl Fn(&Store<S>, A) + 'static,
+        argument: Binding<A>,
     ) -> Command {
         let enabled = self.bind(enabled, None);
         let check = enabled.clone();

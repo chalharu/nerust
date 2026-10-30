@@ -13,6 +13,10 @@ impl Model {
     fn reset(&mut self) {
         self.name.clear();
     }
+    #[command]
+    fn typed(&mut self, value: i32) {
+        self.name = value.to_string();
+    }
 }
 
 struct NoTasks;

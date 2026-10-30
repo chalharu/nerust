@@ -38,6 +38,31 @@ native toolkit dependency is required.
 
 ## Scheduling and lifecycle
 
+### Third-prototype reads and typed arguments
+
+Binding reads and initial subscriptions hold an `Rc<S>` snapshot while projecting
+outside internal borrows; they do not clone S. Mutation clones S once, and the
+public `snapshot()` still returns an owned clone. Publication still scans all
+subscribed projections and compares their values; there is no field-level dirty
+tracking. Tests count Clone calls and measure scalar reads with 0/16 MiB of
+unprojected state. These are not frame-time or machine-independent guarantees.
+`cargo run --locked -p wakui2-runtime --example scaling` also observes 0/1/16 MiB
+states with 1/100/1000 subscribers. Every case asserts zero S clones during
+50,000 scalar reads, one S clone per update, and exact notification counts.
+Twenty update samples produce informational p50/p95 values, without a timing
+threshold. Remaining full-state clone and projection-scan costs are intentional
+measurement targets, not claims of O(1) updates.
+
+`Store::command` accepts `Binding<A>` and an action receiving `A: Clone + 'static`.
+The resulting `Command` remains non-generic and argument-erased for native UI.
+Invocation captures A immediately and rechecks enabled when dequeued. Dynamic
+menu dispatch remains String-based; generated typed commands can be called from it.
+
+Shared generated `view!` retains a Store until View close/drop without closing
+other owners; `owned_view!` explicitly closes that Store. Bindings/tasks retain
+weak owners; application-captured strong ownership remains the application's
+responsibility. Neither mode changes item eviction into model closure.
+
 All ordinary updates, binding writes, command actions and effect starts share a
 bounded FIFO. A true return means accepted, not necessarily applied: command
 enablement is checked again on dequeue, and lifecycle/generation checks reject
@@ -100,4 +125,4 @@ return errors. Unmounted windows stop participating in outstanding waits.
   capture strong Store/native owners; the runtime cannot rewrite those captures.
   Likewise `S: Clone` does not deep-freeze application interior-mutable objects.
 - No OS-specific input/accessibility conformance, clipboard, or native layout
-  implementation is implied. Command arguments remain prototype strings.
+  implementation is implied. Dynamic menu arguments remain strings.
