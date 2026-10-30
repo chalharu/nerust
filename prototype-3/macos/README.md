@@ -38,6 +38,8 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
   Window closeは個別、app QuitはSession全体。共通delegateとactive Window別menuを使う。
   1 hostにつきSessionは一つ。同じSessionのcloneの再attachは冪等、別Sessionのattachと
   窓登録は副作用前に拒否する。`register_view`は最初のSessionを自動attachする。
+  closed Viewはattach前に拒否し、Sessionや窓登録を変更しない。
+  active窓を閉じたら生存窓へmenuとQuitを引き継ぐ。再`present()`は不要。
   全窓の確認には期限を置かず、承認後のdrainだけを5秒に制限する。
   `run`は既存単窓の互換入口。外部reactorとの統合は別途必要。
 - TextBoxはAppKit field editorを利用し、選択、undo、clipboard、IME marked textをOSへ委ねる。
@@ -93,8 +95,8 @@ ready taskがなければnative側で最大8ms待ち、workerのwakeも次ター
 | 入力 | field editorへmarked textと日本語commitを注入、実OS clipboardでcopy/cut/paste、Tab/逆Tab |
 | Menu | native key equivalentでPrimary/Cmd+S、有効/無効、動的再構築 |
 | 型付きMenu | `MenuItem<i32>`をString変換なしで配送 |
-| 三窓 | 共有Store、補助窓の再生成、active menu、Quit拒否、confirm/cancel/drain/close順序 |
-| Session制限 | 同一cloneの再attach、別Sessionのattach/窓登録の拒否と無副作用 |
+| 三窓 | 共有Store、補助窓の再生成、active窓close後のmenu引き継ぎ、再presentなしのQuit確認hook到達・拒否、confirm/cancel/drain/close順序 |
+| Session制限 | 同一cloneの再attach、別Sessionとclosed Viewの窓登録拒否、失敗後に別Sessionをattach可能 |
 | validation scope | 4回の退去/再mount、pending解除、画面外更新の無反応、購読の非蓄積 |
 | Accessibility | role、identifierの読み返し。スクリーンリーダーによる操作ではない |
 | 一覧mount | 100行Model、6行mount、範囲変更、順序変更、不正key拒否と復帰 |
@@ -116,6 +118,11 @@ CPU回帰予算は別途`sh scripts/measure.sh`で判定する。native入力時
 2026-10-31のレビュー修正後は通常151試験成功、失敗0、helper 2件ignored。
 整形、strict Clippy、設定/一覧smoke、conformance、三窓例とrelease CPU予算も成功。
 `validation-scope`と`single-session`を正式ゲートの必須markerへ追加した。
+追加レビューのactive窓closeとclosed View登録も修正し、`active-close`と
+`closed-registration`を必須markerへ追加した。Mac上のTaoもstrict Clippy、実窓描画、
+system clipboard、gallery、設定/一覧smokeをmain-threadの専用processで実行して成功した。
+`verify-macos.sh`は`verify-tao-macos.sh`も実行する。Taoのclose/menu操作はAPI注入で、
+実OSのWM/accelerator配送や外部IMEの適合とは区別する。詳細は[../tao/README.md](../tao/README.md)。
 共通runtimeとGTK nativeの期限試験は、確認待ちが期限を超えても閉じず、
 承認後のdrainだけがtimeoutすることを実時間/native loopで検査する。
 2026-10-30の追加検証は通常150試験成功、失敗0、helper 2件ignoredだった。

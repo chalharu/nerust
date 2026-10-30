@@ -171,3 +171,28 @@ local cache or force all applications onto X11. A complete X11 smoke pass does
 not verify Wayland clipboard access in an unfocused session. Other desktop
 platforms require their own native verification; a Linux pass is not proof of
 Windows/macOS IME or menu conformance.
+
+## macOS verification
+
+From the prototype workspace root, run `sh scripts/verify-tao-macos.sh` on an
+interactive macOS desktop. It removes inherited DYLD search/injection variables
+only for its processes, checks strict Clippy without lint exclusions, and runs
+the main-thread native smoke, gallery, settings and library in separate processes.
+Native runs have a 45-second deadline; a failed run prints its captured output
+and fails the gate. `scripts/verify-macos.sh` includes this Tao gate after AppKit.
+View-creating libtest tests still require Linux/X11: a single libtest worker is
+not the macOS main thread.
+
+On 2026-10-31, Apple Silicon/macOS 15.7.5/Rust 1.99 passed
+`VERIFY3 TAO MACOS PASS`: a real Tao window drew software iced controls, an
+advanced widget roundtripped the system clipboard, a worker woke the UI, and
+gallery/settings/library automation completed including persistence and close.
+The non-Linux Proxy path now passes strict Clippy; Linux retains its one-shot
+GTK wake only after successful event submission. The same source also passed
+the Docker/Linux X11 native input/menu/close suite and release CPU budgets.
+
+The macOS smoke's close/menu requests are API automation, not synthesized OS
+keys or native accelerator/WM-delivery conformance. External IME, preedit,
+VoiceOver, Full Keyboard Access, multiwindow and compositor latency remain
+unverified/unsupported as documented above. A passing native draw/clipboard
+smoke does not remove those boundaries.

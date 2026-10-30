@@ -958,6 +958,9 @@ impl MacHost {
         view: &View,
         hooks: WindowHooks,
     ) -> Result<(), String> {
+        if view.0.closed.get() {
+            return Err("cannot register a closed View".into());
+        }
         self.attach(session.clone())?;
         let token = session.register_window(id, hooks)?;
         view.keep(token);

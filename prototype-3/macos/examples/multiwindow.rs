@@ -106,8 +106,29 @@ mod native {
 
     pub fn run() -> Result<(), String> {
         wakui3_macos::run_host(|host| {
+            let closed_session = Session::new();
+            let closed = View::new(Binding::constant("Closed".into()));
+            closed.close();
+            assert!(
+                host.register_view(
+                    &closed_session,
+                    "closed",
+                    &closed,
+                    WindowHooks {
+                        confirm: Rc::new(|| panic!("closed confirmation ran")),
+                        cancel: Rc::new(|| panic!("closed cancellation ran")),
+                        drain: Rc::new(|| panic!("closed drain ran")),
+                        close: Rc::new(|| panic!("closed close ran")),
+                    },
+                )
+                .unwrap_err()
+                .contains("closed View")
+            );
+            assert_eq!(closed_session.window_count(), 0);
+            assert_eq!(closed_session.shutdown().phase(), ShutdownPhase::Running);
             let session = Session::new();
             host.attach(session.clone())?;
+            println!("MACOS3 PASS closed-registration rejected-before-session-attach");
             host.attach(session.clone())?;
             let foreign = Session::new();
             assert!(
@@ -168,10 +189,22 @@ mod native {
                     assert!(view.perform_shortcut("Primary+U").unwrap());
                     assert_eq!(model.snapshot(), expected);
                 }
+                history.request_close();
+                inspector.request_close();
+                for _ in 0..4 { turn().await; }
+                assert_eq!(session.window_count(), 1);
+                assert!(main.perform_shortcut("Primary+U").unwrap());
+                assert_eq!(model.snapshot(), "main");
+                let before = probe.confirms.get();
                 assert!(main.perform_shortcut("Primary+Q").unwrap());
                 for _ in 0..4 { turn().await; }
+                assert_eq!(probe.confirms.get() - before, 1);
                 assert_eq!(session.shutdown().phase(), ShutdownPhase::Running);
                 assert_eq!(probe.cancels.get(), 0);
+                assert_eq!(session.window_count(), 1);
+                println!("MACOS3 PASS active-close menu-handoff quit-veto-without-present");
+                let inspector = window(&host, &session, "inspector", &model, &probe);
+                let history = window(&host, &session, "history", &model, &probe);
                 assert_eq!(session.window_count(), 3);
                 probe.allow.set(true);
                 probe.events.borrow_mut().clear();

@@ -351,6 +351,11 @@ fn main() -> Result<(), String> {
         view
     })?;
     assert!(closed.get(), "native Quit must close the owning View");
+    #[cfg(target_os = "linux")]
     println!("native-smoke: close callback OK (Linux native WM/menu/Primary+Q requests)");
+    #[cfg(not(target_os = "linux"))]
+    println!(
+        "native-smoke: close callback OK (API close/menu requests; native delivery unverified)"
+    );
     Ok(())
 }
