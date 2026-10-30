@@ -188,7 +188,7 @@ fn virtual_ranges_are_bounded_and_saturating() {
                 row_height: f32::NAN
             }
         ),
-        9744..10000
+        0..0
     );
     assert_eq!(
         virtual_range(
@@ -199,8 +199,85 @@ fn virtual_ranges_are_bounded_and_saturating() {
                 row_height: 1.0
             }
         ),
-        2..3
+        0..0
     );
+}
+
+#[test]
+fn invalid_viewports_keep_mounts_and_initially_mount_nothing() {
+    let harness = Harness::new();
+    let viewport = harness.store(Viewport {
+        count: 0,
+        ..Viewport::default()
+    });
+    let rows = (0..10)
+        .map(|index| Keyed::new(index.to_string(), harness.store(index.to_string())))
+        .collect();
+    let view = View::new(Binding::constant("viewport validation".into()));
+    view.items(
+        &view.root(),
+        "rows",
+        Binding::constant(rows),
+        viewport.bind(|state| *state, Some(|state, value| *state = value)),
+        Rc::new(|view, parent, scope, model: Store<String>| {
+            view.label(
+                parent,
+                &format!("{scope}/text"),
+                model.bind(Clone::clone, None),
+            );
+        }),
+    );
+    assert!(view.item_keys("rows").is_empty());
+    assert!(
+        view.0
+            .error
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("invalid viewport")
+    );
+    viewport.update(|state| {
+        *state = Viewport {
+            count: 3,
+            row_height: 24.0,
+            start: usize::MAX,
+        }
+    });
+    assert_eq!(view.item_keys("rows"), ["7", "8", "9"]);
+    for invalid in [
+        Viewport {
+            count: 0,
+            ..viewport.snapshot()
+        },
+        Viewport {
+            count: 257,
+            ..viewport.snapshot()
+        },
+        Viewport {
+            row_height: f32::NAN,
+            ..viewport.snapshot()
+        },
+        Viewport {
+            row_height: 0.5,
+            ..viewport.snapshot()
+        },
+        Viewport {
+            row_height: 4097.0,
+            ..viewport.snapshot()
+        },
+    ] {
+        viewport.update(move |state| *state = invalid);
+        assert_eq!(view.item_keys("rows"), ["7", "8", "9"]);
+    }
+    viewport.update(|state| {
+        *state = Viewport {
+            start: 1,
+            count: 1,
+            row_height: 1.0,
+        }
+    });
+    assert_eq!(view.item_keys("rows"), ["1"]);
+    view.close();
 }
 
 #[test]

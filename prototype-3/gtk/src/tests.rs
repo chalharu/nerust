@@ -1138,17 +1138,71 @@ fn native_invalid_keyed_snapshots() {
             leaf.bind(|s| s.text.clone(), None),
         );
     });
+    let viewport = Store::new(
+        Viewport {
+            count: 0,
+            row_height: 32.0,
+            start: 0,
+        },
+        host.executor(),
+    );
     view.items(
         &view.root(),
         "rows",
         model.bind(|s| s.0.clone(), None),
-        Binding::constant(Viewport {
-            start: 0,
-            count: 1,
-            row_height: 32.0,
-        }),
+        viewport.bind(|state| *state, Some(|state, value| *state = value)),
         template.clone(),
     );
+    assert!(view.item_keys("rows").is_empty());
+    assert!(
+        view.items_error("rows")
+            .unwrap()
+            .contains("invalid viewport")
+    );
+    viewport.update(|state| state.count = 1);
+    assert_eq!(view.item_keys("rows"), ["first"]);
+    assert!(view.items_error("rows").is_none());
+    let first_widget = view.widget::<gtk::Label>("rows/first/text").unwrap();
+    let valid = viewport.snapshot();
+    for invalid in [
+        Viewport { count: 0, ..valid },
+        Viewport {
+            count: 257,
+            ..valid
+        },
+        Viewport {
+            row_height: f32::NAN,
+            ..valid
+        },
+        Viewport {
+            row_height: 0.5,
+            ..valid
+        },
+        Viewport {
+            row_height: 4097.0,
+            ..valid
+        },
+    ] {
+        viewport.update(move |state| *state = invalid);
+        assert!(
+            view.items_error("rows")
+                .unwrap()
+                .contains("invalid viewport")
+        );
+        assert_eq!(
+            view.widget::<gtk::Label>("rows/first/text").unwrap(),
+            first_widget
+        );
+    }
+    viewport.update(move |state| {
+        *state = Viewport {
+            start: usize::MAX,
+            ..valid
+        }
+    });
+    assert_eq!(view.item_keys("rows"), ["second"]);
+    assert!(view.items_error("rows").is_none());
+    viewport.update(move |state| *state = valid);
     view.content(
         &view.root(),
         "content",
