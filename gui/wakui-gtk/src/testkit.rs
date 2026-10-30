@@ -431,6 +431,7 @@ fn page(label: &str, selected: bool, controls: Vec<Control>) -> Page {
 fn screen(title: &str, pages: Vec<Page>, footer: Vec<Control>) -> ControlScreen {
     ControlScreen {
         title: title.to_string(),
+        default_size: None,
         pages,
         footer: layout(footer.into_iter().map(Node::Control).collect()),
         message: None,
@@ -619,6 +620,7 @@ fn log_screen(notes: &[String], filter: usize) -> ControlScreen {
     let close = control("Close", ControlDisplay::Primary, ActionLeaf);
     ControlScreen {
         title: labels::TITLE_BETA.to_string(),
+        default_size: None,
         pages: vec![Page {
             id: Id::fresh(),
             label: labels::TITLE_BETA.to_string(),

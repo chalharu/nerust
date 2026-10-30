@@ -19,7 +19,7 @@ pub use policy::{
 
 use crate::input::key::Key;
 use crate::scene::hints::LayoutHints;
-use crate::scene::leaf::{ControlLeaf, LeafCtx};
+use crate::scene::leaf::{ControlLeaf, ItemRow, LeafCtx};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ControlMetadata {
@@ -174,5 +174,11 @@ pub trait ControlVisitor {
     fn end_tabs(&mut self, _tabs: &Tabs) {}
     fn begin_tab(&mut self, _tab: &Tab) {}
     fn end_tab(&mut self, _tab: &Tab) {}
+    /// A list item row groups its cells in one horizontal row. Flavors
+    /// that cannot nest (immediate mode) still receive every cell through
+    /// [`ControlVisitor::control`]; the default no-ops preserve the legacy
+    /// flat walk.
+    fn begin_row(&mut self, _row: &ItemRow) {}
+    fn end_row(&mut self, _row: &ItemRow) {}
     fn control(&mut self, _control: &Control) {}
 }

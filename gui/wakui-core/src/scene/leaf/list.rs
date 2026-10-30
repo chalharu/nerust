@@ -38,14 +38,17 @@ pub struct ListLeaf {
 
 impl Leaf for ListLeaf {
     fn walk(&self, ctx: &LeafCtx, visitor: &mut dyn ControlVisitor) {
-        // Degraded fallback until flavors gain virtualized item rendering:
-        // expose cells as flat controls, preserving order and visibility.
-        // Placement may degrade; content and order must not.
+        // Item rows group their cells: flavors that can nest build one
+        // horizontal row per item (disassembly line plus follow arrow,
+        // dump address plus byte buttons). Visitors without row support
+        // keep the legacy flat cell order through the default no-ops.
         let _ = ctx;
         for row in &self.rows {
+            visitor.begin_row(row);
             for cell in &row.cells {
                 visitor.control(cell);
             }
+            visitor.end_row(row);
         }
     }
 

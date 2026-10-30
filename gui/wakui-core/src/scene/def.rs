@@ -253,4 +253,8 @@ pub struct ScreenDef {
     pub title: Binding,
     pub pages: Vec<PageDef>,
     pub footer: ContainerDef,
+    /// Native dialog default size in pixels. `None` keeps the flavor
+    /// default; view definitions set this only when the content needs a
+    /// larger window than the default (debugger panes plus dump).
+    pub default_size: Option<(u32, u32)>,
 }

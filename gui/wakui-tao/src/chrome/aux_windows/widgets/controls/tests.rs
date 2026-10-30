@@ -172,6 +172,7 @@ fn table_screen(body: wakui_core::scene::control::Container) -> ControlScreen {
     let mut ids = wakui_core::scene::control::IdRegistry::default();
     ControlScreen {
         title: "Generic controls".into(),
+        default_size: None,
         pages: vec![Page {
             id: ids.id("page"),
             label: "Page".into(),

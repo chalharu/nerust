@@ -181,6 +181,7 @@ pub fn inflate<K: Eq + Clone>(
                 target: None,
                 prompt: String::new(),
             },
+            default_size: def.default_size,
         },
         live,
     )
@@ -932,6 +933,7 @@ mod tests {
     fn screen_def() -> ScreenDef {
         ScreenDef {
             title: Binding::Localized("title".into()),
+            default_size: None,
             pages: vec![PageDef {
                 key: "page".into(),
                 label: Binding::Localized("title".into()),
@@ -1324,6 +1326,7 @@ mod tests {
     fn nested_lists_resolve_through_parent_path() {
         let def = ScreenDef {
             title: Binding::Literal("Section".into()),
+            default_size: None,
             pages: vec![PageDef {
                 key: "page".into(),
                 label: Binding::Literal("Section".into()),
@@ -1428,6 +1431,7 @@ mod tests {
         use crate::scene::leaf::{BindingLeaf, ChoiceLeaf};
         let def = ScreenDef {
             title: Binding::Literal("Section".into()),
+            default_size: None,
             pages: vec![PageDef {
                 key: "page".into(),
                 label: Binding::Literal("Section".into()),
@@ -1568,6 +1572,7 @@ mod tests {
         use crate::scene::leaf::ActionLeaf;
         let def = ScreenDef {
             title: Binding::Literal("Section".into()),
+            default_size: None,
             pages: vec![PageDef {
                 key: "page".into(),
                 label: Binding::Literal("Section".into()),

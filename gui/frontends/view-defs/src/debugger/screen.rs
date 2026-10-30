@@ -15,12 +15,12 @@ use wakui::scene::def::{
     Binding, BoolBinding, ContainerDef, ControlDef, LeafDef, NodeDef, PageDef, PolicyDef,
     RowTemplateDef, RowsDef, ScreenDef,
 };
-use wakui::scene::hints::LayoutHints;
+use wakui::scene::hints::{LayoutAlign, LayoutHints};
 use wakui::scene::inflate::{
     Choices, CustomLeaves, Flags, InflateCtx, Lists, Texts, Value, cell_key, inflate, row_key,
 };
 #[cfg(test)]
-use wakui::scene::leaf::{TextLeaf, ToggleLeaf};
+use wakui::scene::leaf::TextLeaf;
 
 /// Text input targets: each maps to its `*InputChanged` event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,7 +41,6 @@ pub struct DebuggerScreenSession {
     snapshot: Option<DebugSnapshot>,
     actions: HashMap<ControlId, DebuggerEvent>,
     texts: HashMap<ControlId, TextTarget>,
-    follow: Option<ControlId>,
 }
 
 impl DebuggerScreenSession {
@@ -75,17 +74,7 @@ impl DebuggerScreenSession {
                 Some(TextTarget::Reg) => vec![DebuggerEvent::RegInputChanged(value.clone())],
                 None => Vec::new(),
             },
-            ControlInput::Bool(value) => {
-                // Follow-PC is the only toggle; emit only on change.
-                if Some(id) == self.follow
-                    && let Some(snapshot) = &self.snapshot
-                    && *value != snapshot.inputs.follow_pc
-                {
-                    vec![DebuggerEvent::FollowPcToggle]
-                } else {
-                    Vec::new()
-                }
-            }
+            ControlInput::Bool(_) => Vec::new(),
             _ => Vec::new(),
         }
     }
@@ -95,7 +84,6 @@ impl DebuggerScreenSession {
     pub fn screen(&mut self) -> ControlScreen {
         self.actions.clear();
         self.texts.clear();
-        self.follow = None;
         let Some(snapshot) = self.snapshot.clone() else {
             let resolver = NoData;
             let (screen, live) = inflate(
@@ -151,13 +139,14 @@ impl DebuggerScreenSession {
         self.aid("freeze:clear", DebuggerEvent::FreezeClear);
         self.aid("bm:add", DebuggerEvent::BookmarkAdd);
         self.aid("refresh", DebuggerEvent::RefreshPressed);
+        self.aid("dis:follow", DebuggerEvent::FollowPcToggle);
+        self.aid("watch:set", DebuggerEvent::WatchSet);
         self.tid("reg:input", TextTarget::Reg);
         self.tid("dis:input", TextTarget::Dis);
         self.tid("mem:input", TextTarget::Mem);
         self.tid("mem:edit", TextTarget::Edit);
         self.tid("freeze:input", TextTarget::Freeze);
         self.tid("bm:input", TextTarget::Bookmark);
-        self.follow = Some(self.ctx.ids.id("dis:follow".to_string()));
 
         for (index, reg) in snapshot.rows.regs.iter().enumerate() {
             // Must mirror `DebuggerResolver`: even positions project into
@@ -171,6 +160,9 @@ impl DebuggerScreenSession {
             let id = self.ctx.ids.id(cell_key(&namespace, "cell"));
             self.actions
                 .insert(id, DebuggerEvent::RegSelected(reg.name));
+            let hot = self.ctx.ids.id(cell_key(&namespace, "cell_hot"));
+            self.actions
+                .insert(hot, DebuggerEvent::RegSelected(reg.name));
         }
         let mut seen: HashMap<String, usize> = HashMap::new();
         for row in &snapshot.rows.disasm {
@@ -181,6 +173,9 @@ impl DebuggerScreenSession {
             let line = self.ctx.ids.id(cell_key(&namespace, "line"));
             self.actions
                 .insert(line, DebuggerEvent::DisLineClicked(row.addr));
+            let hot = self.ctx.ids.id(cell_key(&namespace, "line_hot"));
+            self.actions
+                .insert(hot, DebuggerEvent::DisLineClicked(row.addr));
             if let Some(target) = row.target {
                 let arrow = self.ctx.ids.id(cell_key(&namespace, "follow"));
                 self.actions
@@ -193,9 +188,28 @@ impl DebuggerScreenSession {
             let occurrence = seen.get(&identity).copied().unwrap_or(0);
             seen.insert(identity.clone(), occurrence + 1);
             let namespace = row_key("dump", &identity, occurrence);
-            let line = self.ctx.ids.id(cell_key(&namespace, "line"));
+            // Byte-precise selection like the native twin: the head plus
+            // every byte is its own button, so the write target reads exactly.
+            let head = self.ctx.ids.id(cell_key(&namespace, "head"));
             self.actions
-                .insert(line, DebuggerEvent::RowSelected(row.addr));
+                .insert(head, DebuggerEvent::RowSelected(row.addr));
+            let head_hot = self.ctx.ids.id(cell_key(&namespace, "head_hot"));
+            self.actions
+                .insert(head_hot, DebuggerEvent::RowSelected(row.addr));
+            for (offset, _) in row.bytes.iter().enumerate() {
+                let cell = self
+                    .ctx
+                    .ids
+                    .id(cell_key(&namespace, &format!("b{offset:02}")));
+                self.actions
+                    .insert(cell, DebuggerEvent::RowSelected(row.addr + offset as u32));
+                let hot = self
+                    .ctx
+                    .ids
+                    .id(cell_key(&namespace, &format!("B{offset:02}")));
+                self.actions
+                    .insert(hot, DebuggerEvent::RowSelected(row.addr + offset as u32));
+            }
         }
         seen.clear();
         for (addr, _) in &snapshot.inputs.bookmarks {
@@ -240,6 +254,19 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         hints: LayoutHints::default(),
         leaf: LeafDef::Action,
     };
+    // Same action with placement requests (full-width Refresh, the
+    // expanding middle labels share the row through `Fill`).
+    let action_in = |key: &str, label: Binding, hints: LayoutHints| ControlDef {
+        key: key.into(),
+        label,
+        accessible: None,
+        help: None,
+        display: ControlDisplay::Standard,
+        enabled: BoolBinding::Literal(true),
+        visible: BoolBinding::Literal(true),
+        hints,
+        leaf: LeafDef::Action,
+    };
     let note = |key: &str, label: Binding, text: Binding| ControlDef {
         key: key.into(),
         label,
@@ -251,9 +278,22 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         hints: LayoutHints::default(),
         leaf: LeafDef::Note { text },
     };
-    let text = |key: &str, label: Binding, value: Binding| ControlDef {
+    let note_in = |key: &str, text: Binding, hints: LayoutHints| ControlDef {
         key: key.into(),
-        label,
+        label: Binding::Literal(String::new()),
+        accessible: None,
+        help: None,
+        display: ControlDisplay::Standard,
+        enabled: BoolBinding::Literal(true),
+        visible: BoolBinding::Literal(true),
+        hints,
+        leaf: LeafDef::Note { text },
+    };
+    let text = |key: &str, value: Binding, placeholder: Binding| ControlDef {
+        key: key.into(),
+        // Dialog nav rows carry no captions: the placeholder names the
+        // field, like the native twin's entries.
+        label: Binding::Literal(String::new()),
         accessible: None,
         help: None,
         display: ControlDisplay::Standard,
@@ -262,20 +302,80 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         hints: LayoutHints::default(),
         leaf: LeafDef::Text {
             value,
-            placeholder: Binding::Literal(String::new()),
+            placeholder,
             browse_label: None,
         },
     };
-    let group_hints = LayoutHints {
-        spacing: Some(8.0),
+    // Active/inactive cell pair: the active member renders Primary
+    // (the native twin's blue current row/byte) while its twin hides.
+    // State arrives precomputed in bool fields, so flavors never branch.
+    let hot_cell =
+        |key: &str, field: Binding, hints: LayoutHints, visible: BoolBinding| ControlDef {
+            key: key.into(),
+            label: field,
+            accessible: None,
+            help: None,
+            display: ControlDisplay::Primary,
+            enabled: BoolBinding::Literal(true),
+            visible,
+            hints,
+            leaf: LeafDef::Action,
+        };
+    // Full-width row members (Refresh, the expanding middle labels).
+    let fill = || LayoutHints {
+        h_align: Some(LayoutAlign::Fill),
+        ..LayoutHints::default()
+    };
+    // Fixed-pitch row values: disassembly lines, registers, hex bytes.
+    let mono = || LayoutHints {
+        monospace: true,
+        ..LayoutHints::default()
+    };
+    let fill_mono = || LayoutHints {
+        h_align: Some(LayoutAlign::Fill),
+        monospace: true,
+        ..LayoutHints::default()
+    };
+    // One list template cell: pre-localized field text on a button.
+    // Placement rides on hints; flavors group a row's cells horizontally.
+    // `Secondary` cells render borderless inside item rows (register
+    // lines, disassembly lines, dump bytes, bookmark jumps), like the
+    // native twin's flat rows; `Standard` cells keep borders (arrows).
+    let action_cell = |key: &str,
+                       field: Binding,
+                       hints: LayoutHints,
+                       display: ControlDisplay,
+                       visible: BoolBinding| ControlDef {
+        key: key.into(),
+        label: field,
+        accessible: None,
+        help: None,
+        display,
+        enabled: BoolBinding::Literal(true),
+        visible,
+        hints,
+        leaf: LeafDef::Action,
+    };
+    // Packed item rows, like the native twin's list boxes.
+    let list_gap = || LayoutHints {
+        spacing: Some(2.0),
         indent: Some(0.0),
         ..LayoutHints::default()
     };
-    // Row gap for list hosts that replaced the old flat group children.
-    // GTK list bodies read this from the host metadata; Tao rows inherit
-    // the group gap. Matches the retired group spacing.
-    let list_hints = LayoutHints {
-        spacing: Some(8.0),
+    // Viewport lists scroll inside their own window with a fixed height
+    // and dialog stretch, like the native twin's panes.
+    let viewport = |min_height: f64| LayoutHints {
+        spacing: Some(2.0),
+        indent: Some(0.0),
+        height_request: Some(min_height),
+        h_align: Some(LayoutAlign::Fill),
+        v_align: Some(LayoutAlign::Fill),
+        ..LayoutHints::default()
+    };
+    // Tight row gaps: every pixel here pushes Refresh past the
+    // native twin's window bottom.
+    let group_hints = LayoutHints {
+        spacing: Some(6.0),
         indent: Some(0.0),
         ..LayoutHints::default()
     };
@@ -303,41 +403,50 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
             children,
         }))
     };
-    let column = |key: &str, children: Vec<NodeDef>| {
+    let column = |key: &str, hints: LayoutHints, children: Vec<NodeDef>| {
         NodeDef::Container(Box::new(ContainerDef {
             key: key.into(),
             label: Binding::Literal(String::new()),
-            hints: LayoutHints {
-                spacing: Some(12.0),
-                indent: Some(0.0),
-                ..LayoutHints::default()
-            },
+            hints,
             header: None,
             policy: PolicyDef::Column,
             children,
         }))
     };
+    let column_hints = || LayoutHints {
+        spacing: Some(10.0),
+        indent: Some(0.0),
+        ..LayoutHints::default()
+    };
+    // The side pane scrolls inside the panes height like the native
+    // twin's right column; the fixed height tracks the disassembly
+    // viewport plus its nav row.
+    let side_hints = || LayoutHints {
+        spacing: Some(10.0),
+        indent: Some(0.0),
+        height_request: Some(370.0),
+        ..LayoutHints::default()
+    };
 
+    // Disassembly nav rides one row like the native twin: title, Follow
+    // PC button, address entry, Go, Back. The title is a note, not a
+    // group header, so it sits left of the button.
     let mut dis_children = vec![row(
         "dis:nav",
         vec![
-            NodeDef::Control(Box::new(ControlDef {
-                key: "dis:follow".into(),
-                label: Binding::Localized("follow_pc".into()),
-                accessible: None,
-                help: None,
-                display: ControlDisplay::Standard,
-                enabled: BoolBinding::Literal(true),
-                visible: BoolBinding::Literal(true),
-                hints: LayoutHints::default(),
-                leaf: LeafDef::Toggle {
-                    value: BoolBinding::Flag("follow_pc".into()),
-                },
-            })),
+            NodeDef::Control(Box::new(note_in(
+                "dis:title",
+                Binding::Dynamic("dis_title".into()),
+                LayoutHints::default(),
+            ))),
+            NodeDef::Control(Box::new(action(
+                "dis:follow",
+                Binding::Localized("follow_pc".into()),
+            ))),
             NodeDef::Control(Box::new(text(
                 "dis:input",
-                Binding::Localized("addr_hex".into()),
                 Binding::Dynamic("dis_input".into()),
+                Binding::Localized("addr_hex".into()),
             ))),
             NodeDef::Control(Box::new(action("dis:go", Binding::Localized("go".into())))),
             NodeDef::Control(Box::new(action(
@@ -361,7 +470,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         display: ControlDisplay::Standard,
         enabled: BoolBinding::Literal(true),
         visible: BoolBinding::Literal(true),
-        hints: list_hints,
+        hints: viewport(260.0),
         leaf: LeafDef::List {
             columns: Vec::new(),
             rows: RowsDef::Bound {
@@ -369,62 +478,113 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                 template: RowTemplateDef {
                     id_field: "addr".into(),
                     cells: vec![
-                        ControlDef {
-                            key: "line".into(),
-                            label: Binding::Field("text".into()),
-                            accessible: None,
-                            help: None,
-                            display: ControlDisplay::Standard,
-                            enabled: BoolBinding::Literal(true),
-                            visible: BoolBinding::Literal(true),
-                            hints: LayoutHints::default(),
-                            leaf: LeafDef::Action,
-                        },
-                        ControlDef {
-                            key: "follow".into(),
-                            label: Binding::Literal("→".into()),
-                            accessible: None,
-                            help: None,
-                            display: ControlDisplay::Standard,
-                            enabled: BoolBinding::Literal(true),
-                            visible: BoolBinding::Field("has_target".into()),
-                            hints: LayoutHints::default(),
-                            leaf: LeafDef::Action,
-                        },
+                        action_cell(
+                            "line",
+                            Binding::Field("text".into()),
+                            fill_mono(),
+                            ControlDisplay::Secondary,
+                            BoolBinding::Field("line_off".into()),
+                        ),
+                        hot_cell(
+                            "line_hot",
+                            Binding::Field("text".into()),
+                            fill_mono(),
+                            BoolBinding::Field("line_on".into()),
+                        ),
+                        action_cell(
+                            "follow",
+                            Binding::Literal("→".into()),
+                            LayoutHints::default(),
+                            ControlDisplay::Standard,
+                            BoolBinding::Field("has_target".into()),
+                        ),
                     ],
                 },
             },
         },
     })));
 
+    // Sixteen byte buttons per dump row, like the native twin: every
+    // byte is its own button, so the write target reads exactly. Each
+    // head and byte carries an active twin for the current selection.
+    let mut dump_cells = vec![
+        action_cell(
+            "head",
+            Binding::Field("head".into()),
+            mono(),
+            ControlDisplay::Secondary,
+            BoolBinding::Field("head_off".into()),
+        ),
+        hot_cell(
+            "head_hot",
+            Binding::Field("head".into()),
+            mono(),
+            BoolBinding::Field("head_on".into()),
+        ),
+    ];
+    for offset in 0..16 {
+        dump_cells.push(action_cell(
+            &format!("b{offset:02}"),
+            Binding::Field(format!("b{offset:02}")),
+            fill_mono(),
+            ControlDisplay::Secondary,
+            BoolBinding::Field(format!("b{offset:02}off")),
+        ));
+        dump_cells.push(hot_cell(
+            &format!("B{offset:02}"),
+            Binding::Field(format!("b{offset:02}")),
+            fill_mono(),
+            BoolBinding::Field(format!("b{offset:02}on")),
+        ));
+    }
     let mut mem_children = vec![
-        NodeDef::Control(Box::new(note(
-            "mem:space",
-            Binding::Localized("space".into()),
-            Binding::Dynamic("space_name".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:space-prev",
-            Binding::Localized("prev".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:space-next",
-            Binding::Localized("next".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:page-prev",
-            Binding::Localized("prev".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:page-next",
-            Binding::Localized("next".into()),
-        ))),
-        NodeDef::Control(Box::new(text(
-            "mem:input",
-            Binding::Localized("addr_hex".into()),
-            Binding::Dynamic("mem_input".into()),
-        ))),
-        NodeDef::Control(Box::new(action("mem:go", Binding::Localized("go".into())))),
+        row(
+            "mem:space-row",
+            vec![
+                NodeDef::Control(Box::new(note(
+                    "mem:space-label",
+                    Binding::Literal(String::new()),
+                    Binding::Localized("space".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:space-prev",
+                    Binding::Localized("prev".into()),
+                ))),
+                NodeDef::Control(Box::new(note_in(
+                    "mem:space",
+                    Binding::Dynamic("space_name".into()),
+                    fill(),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:space-next",
+                    Binding::Localized("next".into()),
+                ))),
+            ],
+        ),
+        row(
+            "mem:page-row",
+            vec![
+                NodeDef::Control(Box::new(note(
+                    "mem:page-label",
+                    Binding::Literal(String::new()),
+                    Binding::Localized("page".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:page-prev",
+                    Binding::Localized("prev".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:page-next",
+                    Binding::Localized("next".into()),
+                ))),
+                NodeDef::Control(Box::new(text(
+                    "mem:input",
+                    Binding::Dynamic("mem_input".into()),
+                    Binding::Localized("addr_hex".into()),
+                ))),
+                NodeDef::Control(Box::new(action("mem:go", Binding::Localized("go".into())))),
+            ],
+        ),
         NodeDef::Control(Box::new(ControlDef {
             key: "dump".into(),
             label: Binding::Literal(String::new()),
@@ -433,70 +593,72 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
-            hints: list_hints,
+            hints: viewport(292.0),
             leaf: LeafDef::List {
                 columns: Vec::new(),
                 rows: RowsDef::Bound {
                     source: "dump".into(),
                     template: RowTemplateDef {
                         id_field: "addr".into(),
-                        cells: vec![ControlDef {
-                            key: "line".into(),
-                            label: Binding::Field("line".into()),
-                            accessible: None,
-                            help: None,
-                            display: ControlDisplay::Standard,
-                            enabled: BoolBinding::Literal(true),
-                            visible: BoolBinding::Literal(true),
-                            hints: LayoutHints::default(),
-                            leaf: LeafDef::Action,
-                        }],
+                        cells: dump_cells,
                     },
                 },
             },
         })),
-        NodeDef::Control(Box::new(note(
-            "mem:selected",
-            Binding::Localized("dump_row".into()),
-            Binding::Dynamic("selected_line".into()),
-        ))),
-        NodeDef::Control(Box::new(text(
-            "mem:edit",
-            Binding::Localized("hex_byte".into()),
-            Binding::Dynamic("edit_input".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:write",
-            Binding::Dynamic("write".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:watch-row",
-            Binding::Localized("watch".into()),
-        ))),
-        NodeDef::Control(Box::new(action(
-            "mem:freeze-row",
-            Binding::Localized("freeze".into()),
-        ))),
+        row(
+            "mem:edit-row",
+            vec![
+                NodeDef::Control(Box::new(note(
+                    "mem:selected",
+                    Binding::Literal(String::new()),
+                    Binding::Dynamic("selected_line".into()),
+                ))),
+                NodeDef::Control(Box::new(text(
+                    "mem:edit",
+                    Binding::Dynamic("edit_input".into()),
+                    Binding::Localized("hex_byte".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:write",
+                    Binding::Dynamic("write".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:watch-row",
+                    Binding::Localized("watch".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:freeze-row",
+                    Binding::Localized("freeze".into()),
+                ))),
+            ],
+        ),
     ];
     if pending {
-        mem_children.push(NodeDef::Control(Box::new(note(
-            "mem:pending",
-            Binding::Literal(String::new()),
-            Binding::Dynamic("pending".into()),
-        ))));
-        mem_children.push(NodeDef::Control(Box::new(action(
-            "mem:confirm",
-            Binding::Localized("confirm".into()),
-        ))));
-        mem_children.push(NodeDef::Control(Box::new(action(
-            "mem:cancel",
-            Binding::Localized("cancel".into()),
-        ))));
+        mem_children.push(row(
+            "mem:confirm-row",
+            vec![
+                NodeDef::Control(Box::new(note_in(
+                    "mem:pending",
+                    Binding::Dynamic("pending".into()),
+                    fill(),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:confirm",
+                    Binding::Localized("confirm".into()),
+                ))),
+                NodeDef::Control(Box::new(action(
+                    "mem:cancel",
+                    Binding::Localized("cancel".into()),
+                ))),
+            ],
+        ));
     }
     // Refresh lives in the memory section, next to the rows it refreshes.
-    mem_children.push(NodeDef::Control(Box::new(action(
+    // Full width, like the native twin's bottom button.
+    mem_children.push(NodeDef::Control(Box::new(action_in(
         "refresh",
         Binding::Localized("refresh".into()),
+        fill(),
     ))));
 
     // Register columns: the single register list is split into even/odd
@@ -511,24 +673,28 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
             display: ControlDisplay::Standard,
             enabled: BoolBinding::Literal(true),
             visible: BoolBinding::Literal(true),
-            hints: list_hints,
+            hints: list_gap(),
             leaf: LeafDef::List {
                 columns: Vec::new(),
                 rows: RowsDef::Bound {
                     source: source.into(),
                     template: RowTemplateDef {
                         id_field: "name".into(),
-                        cells: vec![ControlDef {
-                            key: "cell".into(),
-                            label: Binding::Field("text".into()),
-                            accessible: None,
-                            help: None,
-                            display: ControlDisplay::Standard,
-                            enabled: BoolBinding::Literal(true),
-                            visible: BoolBinding::Literal(true),
-                            hints: LayoutHints::default(),
-                            leaf: LeafDef::Action,
-                        }],
+                        cells: vec![
+                            action_cell(
+                                "cell",
+                                Binding::Field("text".into()),
+                                fill_mono(),
+                                ControlDisplay::Secondary,
+                                BoolBinding::Field("reg_off".into()),
+                            ),
+                            hot_cell(
+                                "cell_hot",
+                                Binding::Field("text".into()),
+                                fill_mono(),
+                                BoolBinding::Field("reg_on".into()),
+                            ),
+                        ],
                     },
                 },
             },
@@ -539,7 +705,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         key: "layout:body".into(),
         label: Binding::Literal(String::new()),
         hints: LayoutHints {
-            spacing: Some(12.0),
+            spacing: Some(10.0),
             indent: Some(0.0),
             ..LayoutHints::default()
         },
@@ -576,14 +742,16 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                 vec![
                     column(
                         "layout:main",
+                        column_hints(),
                         vec![group(
                             "group:dis",
-                            Binding::Dynamic("dis_title".into()),
+                            Binding::Literal(String::new()),
                             dis_children,
                         )],
                     ),
                     column(
                         "layout:side",
+                        side_hints(),
                         vec![
                             group(
                                 "group:status",
@@ -605,14 +773,19 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                     row(
                                         "regs:edit",
                                         vec![
+                                            NodeDef::Control(Box::new(note_in(
+                                                "reg:target",
+                                                Binding::Dynamic("reg_target".into()),
+                                                LayoutHints::default(),
+                                            ))),
                                             NodeDef::Control(Box::new(text(
                                                 "reg:input",
-                                                Binding::Localized("hex".into()),
                                                 Binding::Dynamic("reg_input".into()),
+                                                Binding::Localized("hex".into()),
                                             ))),
                                             NodeDef::Control(Box::new(action(
                                                 "reg:set",
-                                                Binding::Dynamic("reg_set".into()),
+                                                Binding::Localized("set".into()),
                                             ))),
                                         ],
                                     ),
@@ -621,49 +794,70 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                             group(
                                 "group:watch",
                                 Binding::Localized("watch".into()),
-                                vec![
-                                    NodeDef::Control(Box::new(note(
-                                        "watch:line",
-                                        Binding::Literal(String::new()),
-                                        Binding::Dynamic("watch_text".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(action(
-                                        "watch:clear",
-                                        Binding::Localized("clear".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(text(
-                                        "freeze:input",
-                                        Binding::Localized("hex".into()),
-                                        Binding::Dynamic("freeze_input".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(action(
-                                        "freeze:set",
-                                        Binding::Localized("freeze".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(note(
-                                        "freeze:line",
-                                        Binding::Literal(String::new()),
-                                        Binding::Dynamic("freeze_text".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(action(
-                                        "freeze:clear",
-                                        Binding::Localized("clear".into()),
-                                    ))),
-                                ],
+                                vec![row(
+                                    "watch:row",
+                                    vec![
+                                        NodeDef::Control(Box::new(action(
+                                            "watch:set",
+                                            Binding::Localized("watch".into()),
+                                        ))),
+                                        NodeDef::Control(Box::new(note_in(
+                                            "watch:line",
+                                            Binding::Dynamic("watch_text".into()),
+                                            fill(),
+                                        ))),
+                                        NodeDef::Control(Box::new(action(
+                                            "watch:clear",
+                                            Binding::Localized("clear".into()),
+                                        ))),
+                                    ],
+                                )],
+                            ),
+                            group(
+                                "group:freeze",
+                                Binding::Localized("freeze".into()),
+                                vec![row(
+                                    "freeze:row",
+                                    vec![
+                                        NodeDef::Control(Box::new(text(
+                                            "freeze:input",
+                                            Binding::Dynamic("freeze_input".into()),
+                                            Binding::Localized("hex_byte".into()),
+                                        ))),
+                                        NodeDef::Control(Box::new(action(
+                                            "freeze:set",
+                                            Binding::Localized("freeze".into()),
+                                        ))),
+                                        NodeDef::Control(Box::new(note_in(
+                                            "freeze:line",
+                                            Binding::Dynamic("freeze_text".into()),
+                                            fill(),
+                                        ))),
+                                        NodeDef::Control(Box::new(action(
+                                            "freeze:clear",
+                                            Binding::Localized("clear".into()),
+                                        ))),
+                                    ],
+                                )],
                             ),
                             group(
                                 "group:bookmarks",
                                 Binding::Localized("bookmarks".into()),
                                 vec![
-                                    NodeDef::Control(Box::new(text(
-                                        "bm:input",
-                                        Binding::Localized("bm_label".into()),
-                                        Binding::Dynamic("bm_input".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(action(
-                                        "bm:add",
-                                        Binding::Localized("add".into()),
-                                    ))),
+                                    row(
+                                        "bm:row",
+                                        vec![
+                                            NodeDef::Control(Box::new(text(
+                                                "bm:input",
+                                                Binding::Dynamic("bm_input".into()),
+                                                Binding::Localized("label".into()),
+                                            ))),
+                                            NodeDef::Control(Box::new(action(
+                                                "bm:add",
+                                                Binding::Localized("add".into()),
+                                            ))),
+                                        ],
+                                    ),
                                     NodeDef::Control(Box::new(ControlDef {
                                         key: "bookmarks".into(),
                                         label: Binding::Literal(String::new()),
@@ -672,7 +866,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                         display: ControlDisplay::Standard,
                                         enabled: BoolBinding::Literal(true),
                                         visible: BoolBinding::Literal(true),
-                                        hints: list_hints,
+                                        hints: list_gap(),
                                         leaf: LeafDef::List {
                                             columns: Vec::new(),
                                             rows: RowsDef::Bound {
@@ -680,28 +874,20 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                                 template: RowTemplateDef {
                                                     id_field: "addr".into(),
                                                     cells: vec![
-                                                        ControlDef {
-                                                            key: "jump".into(),
-                                                            label: Binding::Field("jump".into()),
-                                                            accessible: None,
-                                                            help: None,
-                                                            display: ControlDisplay::Standard,
-                                                            enabled: BoolBinding::Literal(true),
-                                                            visible: BoolBinding::Literal(true),
-                                                            hints: LayoutHints::default(),
-                                                            leaf: LeafDef::Action,
-                                                        },
-                                                        ControlDef {
-                                                            key: "delete".into(),
-                                                            label: Binding::Field("delete".into()),
-                                                            accessible: None,
-                                                            help: None,
-                                                            display: ControlDisplay::Standard,
-                                                            enabled: BoolBinding::Literal(true),
-                                                            visible: BoolBinding::Literal(true),
-                                                            hints: LayoutHints::default(),
-                                                            leaf: LeafDef::Action,
-                                                        },
+                                                        action_cell(
+                                                            "jump",
+                                                            Binding::Field("jump".into()),
+                                                            fill_mono(),
+                                                            ControlDisplay::Secondary,
+                                                            BoolBinding::Literal(true),
+                                                        ),
+                                                        action_cell(
+                                                            "delete",
+                                                            Binding::Literal("×".into()),
+                                                            LayoutHints::default(),
+                                                            ControlDisplay::Standard,
+                                                            BoolBinding::Literal(true),
+                                                        ),
                                                     ],
                                                 },
                                             },
@@ -722,6 +908,7 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
     };
     ScreenDef {
         title: Binding::Localized("debugger".into()),
+        default_size: Some((1100, 952)),
         pages: vec![PageDef {
             key: "page".into(),
             label: Binding::Localized("debugger".into()),
@@ -749,6 +936,58 @@ struct DebuggerResolver<'m> {
     snapshot: &'m DebugSnapshot,
 }
 
+impl DebuggerResolver<'_> {
+    /// Anchor row pinned when follow-PC is off, like the native twin.
+    fn pinned(&self, addr: u32) -> bool {
+        !self.snapshot.inputs.follow_pc && self.snapshot.inputs.dis_addr == Some(addr)
+    }
+
+    /// Containing-row match: a mid-row pick lights its head row.
+    fn row_hit(&self, row: &crate::debugger::DumpRow) -> bool {
+        self.snapshot
+            .selected
+            .map(|(addr, _)| addr >= row.addr && addr < row.addr + row.bytes.len() as u32)
+            .unwrap_or(false)
+    }
+
+    fn row_changed(&self, row: &crate::debugger::DumpRow) -> bool {
+        self.snapshot.rows.changed_addrs.contains(&row.addr)
+    }
+
+    /// Byte cell text plus per-byte selection flags (`b{XX}on/off`).
+    /// The selected byte reads blue like the native twin.
+    fn dump_byte(&self, row: &crate::debugger::DumpRow, path: &str) -> Value {
+        let rest = match path.strip_prefix('b') {
+            Some(rest) => rest,
+            None => return Value::Text(String::new()),
+        };
+        if let Some(stem) = rest.strip_suffix("off") {
+            return match stem.parse::<usize>() {
+                Ok(offset) => Value::Bool(!self.byte_selected(row, offset)),
+                Err(_) => Value::Text(String::new()),
+            };
+        }
+        if let Some(stem) = rest.strip_suffix("on") {
+            return match stem.parse::<usize>() {
+                Ok(offset) => Value::Bool(self.byte_selected(row, offset)),
+                Err(_) => Value::Text(String::new()),
+            };
+        }
+        match rest.parse::<usize>() {
+            Ok(offset) => match row.bytes.get(offset) {
+                Some(byte) => Value::Text(format!("{byte:02X}")),
+                None => Value::Text(String::new()),
+            },
+            Err(_) => Value::Text(String::new()),
+        }
+    }
+
+    fn byte_selected(&self, row: &crate::debugger::DumpRow, offset: usize) -> bool {
+        row.bytes.get(offset).is_some()
+            && self.snapshot.selected.map(|(addr, _)| addr) == Some(row.addr + offset as u32)
+    }
+}
+
 impl Texts for DebuggerResolver<'_> {
     fn text(&self, key: &str) -> String {
         let chrome = &self.snapshot.chrome;
@@ -767,10 +1006,13 @@ impl Texts for DebuggerResolver<'_> {
             "bookmarks" => chrome.bookmarks.clone(),
             "refresh" => chrome.refresh.clone(),
             "space" => chrome.space.clone(),
+            "page" => chrome.page.clone(),
             "addr_hex" => chrome.addr_hex.clone(),
             "go" => chrome.go.clone(),
             "prev" => chrome.prev.clone(),
             "next" => chrome.next.clone(),
+            "set" => chrome.set.clone(),
+            "reg_target" => chrome.set_target_label(self.snapshot.reg_target),
             "confirm" => chrome.confirm.clone(),
             "cancel" => chrome.cancel.clone(),
             "clear" => chrome.clear.clone(),
@@ -836,6 +1078,9 @@ impl Lists for DebuggerResolver<'_> {
                 Some(reg) => match path {
                     "name" => Value::Text(reg.name.to_string()),
                     "text" => Value::Text(reg.text.clone()),
+                    // The write target reads blue like the native twin.
+                    "reg_on" => Value::Bool(self.snapshot.reg_target == Some(reg.name)),
+                    "reg_off" => Value::Bool(self.snapshot.reg_target != Some(reg.name)),
                     _ => Value::Text(String::new()),
                 },
                 None => Value::Text(String::new()),
@@ -845,6 +1090,10 @@ impl Lists for DebuggerResolver<'_> {
                     "addr" => Value::Text(format!("{:08X}", row.addr)),
                     "text" => Value::Text(row.text.clone()),
                     "has_target" => Value::Bool(row.target.is_some()),
+                    // PC and pinned anchor rows read blue. The anchor
+                    // pins only with follow-PC off, like the native twin.
+                    "line_on" => Value::Bool(row.is_pc || self.pinned(row.addr)),
+                    "line_off" => Value::Bool(!row.is_pc && !self.pinned(row.addr)),
                     _ => Value::Text(String::new()),
                 },
                 None => Value::Text(String::new()),
@@ -852,24 +1101,27 @@ impl Lists for DebuggerResolver<'_> {
             "dump" => match self.snapshot.rows.dump.get(index) {
                 Some(row) => match path {
                     "addr" => Value::Text(format!("{:08X}", row.addr)),
-                    "line" => Value::Text(format!(
-                        "{:08X}: {}",
-                        row.addr,
-                        row.bytes
-                            .iter()
-                            .map(|b| format!("{b:02X}"))
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    )),
-                    _ => Value::Text(String::new()),
+                    "head" => {
+                        // Containing-row match: a mid-row pick still lights
+                        // its row, like the native twin's head button.
+                        let marker = match (self.row_hit(row), self.row_changed(row)) {
+                            (true, true) => ">*",
+                            (true, false) => "> ",
+                            (false, true) => " *",
+                            (false, false) => "  ",
+                        };
+                        Value::Text(format!("{marker}0x{:08X}:", row.addr))
+                    }
+                    "head_on" => Value::Bool(self.row_hit(row)),
+                    "head_off" => Value::Bool(!self.row_hit(row)),
+                    _ => self.dump_byte(row, path),
                 },
                 None => Value::Text(String::new()),
             },
             "bookmarks" => match self.snapshot.inputs.bookmarks.get(index) {
                 Some((addr, label)) => match path {
                     "addr" => Value::Text(format!("{addr:08X}")),
-                    "jump" => Value::Text(format!("{label} @ {addr:08X}")),
-                    "delete" => Value::Text(format!("× {label}")),
+                    "jump" => Value::Text(format!("{label} 0x{addr:08X}")),
                     _ => Value::Text(String::new()),
                 },
                 None => Value::Text(String::new()),
@@ -897,6 +1149,7 @@ impl CustomLeaves for NoData {}
 fn placeholder_def() -> ScreenDef {
     ScreenDef {
         title: Binding::Literal("Debugger".into()),
+        default_size: None,
         pages: vec![PageDef {
             key: "page".into(),
             label: Binding::Literal("Debugger".into()),
@@ -1070,9 +1323,10 @@ mod tests {
         let arrow = find_label(&screen, "→");
         let events = session.events(&ControlEvent::new(arrow, ControlInput::Activate));
         assert_eq!(events, vec![DebuggerEvent::FollowTarget(0x8001)]);
-        // Mem + dis inputs share the addr label; both must map distinctly.
+        // Mem + dis inputs share the addr placeholder; both must map distinctly.
         let addr_targets = find_all_controls(&screen, |c| {
-            c.downcast::<TextLeaf>().is_some() && c.label == "Addr"
+            c.downcast::<TextLeaf>()
+                .is_some_and(|t| t.placeholder == "Addr")
         });
         assert_eq!(addr_targets.len(), 2);
         let mut mapped: Vec<_> = addr_targets
@@ -1095,17 +1349,12 @@ mod tests {
         );
         let _ = addr_targets;
         // Bookmark jump + delete.
-        let jump = find_label(&screen, "start @ 00008000");
+        let jump = find_label(&screen, "start 0x00008000");
         let events = session.events(&ControlEvent::new(jump, ControlInput::Activate));
         assert_eq!(events, vec![DebuggerEvent::BookmarkJump(0x8000)]);
-        // Follow toggle: same value is a no-op.
-        let follow = find_control(&screen, |c| c.downcast::<ToggleLeaf>().is_some());
-        assert!(
-            session
-                .events(&ControlEvent::new(follow, ControlInput::Bool(true)))
-                .is_empty()
-        );
-        let events = session.events(&ControlEvent::new(follow, ControlInput::Bool(false)));
+        // Follow PC is a plain action button now, not a toggle.
+        let follow = find_label(&screen, "Follow");
+        let events = session.events(&ControlEvent::new(follow, ControlInput::Activate));
         assert_eq!(events, vec![DebuggerEvent::FollowPcToggle]);
         let _ = DebuggerScope::All;
     }
@@ -1272,7 +1521,20 @@ mod layout_tests {
                 self.rows.push(row);
             }
         }
+        fn begin_row(&mut self, _row: &wakui::scene::leaf::ItemRow) {
+            self.row_stack.push(Vec::new());
+        }
+        fn end_row(&mut self, _row: &wakui::scene::leaf::ItemRow) {
+            if let Some(row) = self.row_stack.pop() {
+                self.rows.push(row);
+            }
+        }
         fn control(&mut self, control: &Control) {
+            // Hidden twins (inactive highlight members, arrows without
+            // targets) never reach native rows; skip them like flavors.
+            if !control.metadata.visible {
+                return;
+            }
             if control.downcast::<ActionLeaf>().is_some() {
                 self.actions.push(control.label.clone());
                 if let Some(top) = self.row_stack.last_mut() {
@@ -1299,18 +1561,19 @@ mod layout_tests {
             row_stack: vec![],
         };
         screen.visit(&mut tree);
-        // No duplicated "Debugger" section headers: toolbar and status are
-        // unlabeled, like the native twin.
+        // No duplicated "Debugger" section headers: toolbar, disassembly,
+        // and status are unlabeled, like the native twin. The disassembly
+        // title rides inside the nav row, not as a group header.
         assert_eq!(
             tree.groups
                 .iter()
-                .filter(|label| label.as_str() == "Debugger")
+                .filter(|label| label.as_str() == "Debugger" || label.contains("Disasm"))
                 .count(),
             0,
             "group headers: {:?}",
             tree.groups
         );
-        for expected in ["Regs", "Disasm", "Memory", "Watch", "Bookmarks"] {
+        for expected in ["Regs", "Memory", "Watch", "Freeze", "Bookmarks"] {
             assert!(
                 tree.groups.iter().any(|label| label.contains(expected)),
                 "missing group, got: {:?}",
@@ -1330,20 +1593,49 @@ mod layout_tests {
             "toolbar rows: {:?}",
             tree.rows
         );
-        // Disassembly nav and register edit travel as horizontal rows.
+        // Disassembly nav travels as one horizontal row: Follow button,
+        // Go, Back. (The page row also carries Go, but no Back.)
         assert!(
             tree.rows.iter().any(|row| row.contains(&"Go".to_string())
+                && row.contains(&"Follow".to_string())
                 && row.iter().any(|label| label.starts_with("Back"))),
             "dis nav row missing: {:?}",
             tree.rows
         );
-        // Register columns project the same three rows across two lists.
-        let mut reg_row = tree
+        // Watch and freeze travel as their own rows, like the native twin.
+        assert!(
+            tree.rows
+                .iter()
+                .any(|row| row == &vec!["Watch".to_string(), "Clear".to_string()]),
+            "watch row missing: {:?}",
+            tree.rows
+        );
+        assert!(
+            tree.rows
+                .iter()
+                .any(|row| row == &vec!["Freeze".to_string(), "Clear".to_string()]),
+            "freeze row missing: {:?}",
+            tree.rows
+        );
+        // Memory space and page nav rows carry the Prev/Next pairs.
+        assert!(
+            tree.rows
+                .iter()
+                .filter(|row| row.contains(&"Prev".to_string())
+                    && row.contains(&"Next".to_string()))
+                .count()
+                >= 2,
+            "space/page rows missing: {:?}",
+            tree.rows
+        );
+        // Register columns project the same three rows across two lists:
+        // each item row carries one register line.
+        let mut reg_row: Vec<String> = tree
             .rows
             .iter()
-            .find(|row| row.len() == 3 && row.iter().all(|label| label.contains('=')))
-            .cloned()
-            .unwrap_or_default();
+            .filter(|row| row.len() == 1 && row.iter().all(|label| label.contains('=')))
+            .flat_map(|row| row.clone())
+            .collect();
         reg_row.sort();
         assert_eq!(
             reg_row,
@@ -1363,6 +1655,8 @@ mod layout_tests {
             "actions: {:?}",
             tree.actions
         );
+        // The debugger window opens at the native twin's size.
+        assert_eq!(screen.default_size, Some((1100, 952)));
         let _ = ControlId::fresh();
     }
 }
