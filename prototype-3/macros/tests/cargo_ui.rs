@@ -48,9 +48,22 @@ impl Fixture {
             } else {
                 name
             };
-            fs::copy(source.join(fixture).join(file), root.join(file)).unwrap();
+            let destination = root.join(file);
+            fs::copy(source.join(fixture).join(file), &destination).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(destination)
+                .unwrap()
+                .set_modified(SystemTime::now())
+                .unwrap();
         }
         fs::copy(source.join("support.rs"), root.join("support.rs")).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(root.join("support.rs"))
+            .unwrap()
+            .set_modified(SystemTime::now())
+            .unwrap();
         // New argument probes reuse the immutable pass manifest.
         let manifest_fixture = if matches!(name, "wrong_argument" | "self_arguments") {
             "pass"

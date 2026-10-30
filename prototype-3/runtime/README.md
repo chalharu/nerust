@@ -38,6 +38,40 @@ native toolkit dependency is required.
 
 ## Scheduling and lifecycle
 
+### Cooperative dispatch (opt-in)
+
+`Store::with_dispatch_budget(state, executor, limits, NonZeroUsize)` limits events
+per drain. `new` and `with_limits` keep their synchronous behavior. When a budget
+is exhausted, a weak continuation yields once before draining again. Queued writes
+retain FIFO order and normal capacity checks; close discards them. Accepted writes
+may not yet be applied when the call returns. Executors can poll immediately, but
+fairness requires the host to return to its OS loop between continuation polls.
+The AppKit host bounds polling per native turn. This is not a wall-clock budget:
+one clone, projection, callback or future poll cannot be interrupted.
+
+Use direct `Binding::subscribe` for synchronous native property assignment, and
+`watch` for derived-state/effect requests after publication. Retain the token,
+exclude derived outputs from the source, and use the callback's `target` rather
+than capturing a strong Store. For example, on a Store with a `query: String`:
+
+```rust,ignore
+let token = store.watch(store.bind(|state| state.query.clone(), None), |target, query| {
+  let accepted = target.effect(Policy::Latest, "search", search(query), |state, rows| {
+    state.rows = rows;
+  });
+  if !accepted {
+    target.update(|state| state.status = "Search was not accepted".into());
+  }
+});
+view.keep(token);
+```
+
+This is a latest-value mailbox, not an event log or debounce. Initial reaction may
+run before `watch` returns. Dropping `token` prevents queued reactions, not effects
+already started. Check effect acceptance; a positive ingress capacity is necessary
+for eventual retry. The settings and library wiring contain executable examples
+of rejection recovery and generation checks.
+
 ### Third-prototype reads and typed arguments
 
 `Store::watch(source, react) -> Subscription` connects state changes to a
