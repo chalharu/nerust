@@ -33,7 +33,10 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
 - 主な対象は設定と一覧の二画面。Stack、Label、TextBox、Button、固定高ItemsControl、Menu。
   Grid/Flex/Absoluteは実行時エラー。ContentControl/custom meterはAPI未実装でコンパイル不可。
   GTK/Tao全galleryとの完全な機能互換は主張しない。
-- main threadで一つのWindowとloopを所有する。外部loop、複数Window、UiHost/Sessionは未対応。
+- main threadの`MacHost`が共通loopを駆動する。UiHost/Sessionへ接続し、複数Windowを保持する。
+  `run_host`と`register_view(session,id,view,hooks)`を使い、終了所有権は明示hookへ置く。
+  Window closeは個別、app QuitはSession全体。共通delegateとactive Window別menuを使う。
+  `run`は既存単窓の互換入口。外部reactorとの統合は別途必要。
 - TextBoxはAppKit field editorを利用し、選択、undo、clipboard、IME marked textをOSへ委ねる。
   marked text中はモデル通知によるstringValue置換を抑止する。これは汎用編集transactionや
   外部モデル更新との競合解決を保証するものではない。
@@ -54,6 +57,9 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
   readonly/literalでも受理済みviewportをローカルに移動し、モデルへの書込はTwoWayだけで行う。
   `item_keys`は全sourceでなくmount済みkeyを返す。行高変更は既存mountにも反映する。
   行の退避では入れ子一覧のregistry、viewport handler、scoped tokenも解放する。
+  不正なsource更新後も、保持した正常sourceでスクロールできる。
+- control IDと内部eventはABIの種別で分離する。`__close`、`rows@viewport`、`__title`も
+  通常controlとして扱い、終了・scroll・title操作へ誤配送しない。
 - padding/marginはnative frame insetへ合算する限定契約。任意のplacement、CSS互換、
   backend間のpixel一致は対象外。幅640px以上を対象とし、縦方向はnative scrollを使う。
 
@@ -81,6 +87,8 @@ ready taskがなければnative側で最大8ms待ち、workerのwakeも次ター
 | 一覧 | 共通smoke + sandboxで60編集/20 burst、Latest結果、失敗復帰、選択、終了 |
 | 入力 | field editorへmarked textと日本語commitを注入、実OS clipboardでcopy/cut/paste、Tab/逆Tab |
 | Menu | native key equivalentでPrimary/Cmd+S、有効/無効、動的再構築 |
+| 型付きMenu | `MenuItem<i32>`をString変換なしで配送 |
+| 三窓 | 共有Store、補助窓の再生成、active menu、Quit拒否、confirm/cancel/drain/close順序 |
 | Accessibility | role、identifierの読み返し。スクリーンリーダーによる操作ではない |
 | 一覧mount | 100行Model、6行mount、範囲変更、順序変更、不正key拒否と復帰 |
 | Viewport契約 | 初期不正は0 mount、count/行高の範囲外を拒否してmount保持、正常値復帰、usize::MAXの末尾ページ |
@@ -96,6 +104,14 @@ clipboardは試験前のデータへ復元する。画像は表示された専�
 CPU描画はcompositor presentation/fenceではなく、合成キーは物理入力ではない。
 時間に合否閾値を置かず、入力が連鎖完了前に届くこと・状態・mount数をassertする。
 release観測は`measure-macos.sh`で再現し、数値を安定APIや性能保証と扱わない。
+CPU回帰予算は別途`sh scripts/measure.sh`で判定する。native入力時間の閾値ではない。
+
+最新の追加検証では通常150試験成功、失敗0、helper 2件ignored。
+三窓例`cargo run -p wakui3-macos --example multiwindow`と新規conformance markerも成功。
+YAML primary診断、参照シグネチャ、scoped更新、型付きMenuを正式ゲートに含む。
+このMac上のDockerでもLinux/Xvfbの`VERIFY3 PASS`とreleaseの`MEASURE3 PASS`を確認した。
+GTK/Taoのnative試験はLinux側の結果であり、macOSの150件へ合算しない。
+以下のcommit別数値は過去の基準記録で、最新件数と混同しない。
 
 ### 2026-10-30の実行結果
 
@@ -114,7 +130,7 @@ GTK/Taoの全targetをmacOSでcompileできるが、native Viewを作るlibtest�
 制約によりこの環境では実行しない。Taoの純粋なrange試験とAppKit専用runnerを分けて検証する。
 GTKのstrict Clippyは成功。Taoのstrict Clippyは既存の`driver.rs:47`の
 `needless_return`で停止し、無変更のコード由来と確認した後にそのlintだけを除外して成功した。
-Linux/X11でのTao拒否/復帰試験とGTKの拡張native試験は未実行で、macOSの145件へ含めない。
+この時点ではLinux/X11でのTao拒否/復帰試験とGTKの拡張native試験は未実行で、macOSの145件へ含めなかった。
 この追補ではrelease計測helperは再実行しておらず、下表は基準commit時の観測を保存する。
 
 レビュー5件への回帰検査は既存conformanceへ追加し、通常の145試験とは別に実行する。

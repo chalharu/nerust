@@ -12,6 +12,8 @@ revision, and the practical applications are `wakui3-settings` and `wakui3-libra
 - `Store<S:Clone+'static>`: Clone, `new(state, Rc<dyn Executor>)`, `snapshot`, `update(impl FnOnce(&mut S)+'static)->bool`, `close`, `is_closed`.
 - `Store::with_dispatch_budget(state, executor, Limits, NonZeroUsize)`: opt-in event budget per drain, with weak yielding continuations. Accepted writes can remain queued on return. FIFO and capacity remain unchanged; host scheduling, not this event count, determines OS fairness. Existing constructors remain synchronous.
 - `Store::bind<T:Clone+PartialEq>(read: impl Fn(&S)->T+'static, write:Option<fn(&mut S,T)>)->Binding<T>`.
+- `Store::bind_scoped(field:&'static str,read,write)`: indexes a projection by its top-level dependency. Generated field bindings use this API.
+- `Store::update_scoped(fields:&[&'static str],replace:impl FnOnce(&S)->Option<S>+'static)->bool`: constructs an owned replacement without cloning S. None skips publication. List every changed top-level field; unscoped projections always run.
 - `Store::watch<T:Clone+'static>(source:Binding<T>, react:impl Fn(&Store<S>,T)+'static)->Subscription`: latest-value reaction through bounded FIFO after publication, retries after saturation with positive ingress. Initial reaction may be synchronous. Token drop invalidates queued reactions, not already-started effects. Each reaction begins with one ingress slot free; further submissions must check acceptance. Tokens do not own Store; exclude outputs from sources to avoid feedback.
 - `Store::command<A:Clone+'static>(enabled: impl Fn(&S)->bool+'static, action: impl Fn(&Store<S>,A)+'static, argument:Binding<A>)->Command`. Recheck enabled on dequeue. Argument evaluated at invocation; the native-facing Command erases its argument type.
 - `Store::effect(policy:Policy, slot:&str, future:impl Future<Output=R>+'static, apply:impl FnOnce(&mut S,R)+'static)->bool`. Policy Latest/Serial/Parallel. Futures outside borrow, bounded ingress/tasks, weak ownership, stale lifecycle protection.
@@ -23,13 +25,17 @@ revision, and the practical applications are `wakui3-settings` and `wakui3-libra
 - `Style {margin:Edges,padding:Edges,placement:Placement}` Default/Clone/Copy/PartialEq.
 - `Layout { Stack {horizontal:bool,gap:f32}, Grid {columns:u32,gap:f32}, Flex {gap:f32}, Absolute }` Clone/Copy/PartialEq.
 - `MenuRole {Normal,Copy,Cut,Paste,SelectAll,About,Quit,Separator}` Clone/PartialEq.
-- `MenuItem { id:String,label:String,argument:String,shortcut:Option<String>,role:MenuRole,enabled:bool }` Clone/PartialEq.
+- `MenuItem<A=String> { id:String,label:String,argument:A,shortcut:Option<String>,role:MenuRole,enabled:bool }` Clone/PartialEq when A supports them.
 - `Shortcut::parse` accepts shared shortcut syntax, including `Primary+S` and `Primary+Q`; `to_gtk`/`to_muda` lower it for the native adapter. Primary is Cmd on macOS and Ctrl elsewhere. Existing native syntax remains a legacy adapter fallback.
 
 Reads and initial subscriptions project from a retained `Rc<S>` outside internal
 borrows, without cloning all of S. `snapshot()` still returns an owned clone;
-mutation clones S once. Publication still scans all registered projections and
-compares their results: this is not field-level invalidation or O(1) updates.
+legacy mutation clones S once and invalidates all projections. Scoped binding
+writes only evaluate that field's subscriptions plus unscoped subscribers, but
+still clone S. `update_scoped` avoids the state clone and indexes dirty fields;
+use Rc/Arc for structural sharing of unchanged large data. A wrong dirty-field
+declaration can suppress required notifications. No automatic arbitrary-closure
+dependency inference or general O(1) update guarantee is claimed.
 
 ### Common viewport contract
 
@@ -62,6 +68,7 @@ backend-specific. This does not unify other layout/style/menu error policies.
 - `items<T:Clone+'static>(&Parent,id:&str,items:Binding<Vec<Keyed<T>>>,viewport:Binding<Viewport>,template:Rc<dyn Fn(&View,&Parent,&str,Store<T>)>)`. Compile arbitrary recursive template body, not string rendering. Stable row scope IDs `{listid}/{key}/{localid}`. Duplicate keys rejected before changes. Native scrolling adjusts mounted range. `viewport(id,start)` automation. Drop mounted widget subscriptions on eviction; item Store persists in source.
 - `content<T:Clone+'static>(&Parent,id:&str,item:Binding<Option<Keyed<T>>>,template:Rc<dyn Fn(&View,&Parent,&str,Store<T>)>)`.
 - `menu(id:&str,title:Binding<String>,items:Binding<Vec<MenuItem>>,dispatch:Rc<dyn Fn(String)->bool>)` dynamic snapshots, shortcuts and native roles.
+- `typed_menu<A:Clone+'static>(id,title,items:Binding<Vec<MenuItem<A>>>,dispatch:Rc<dyn Fn(A)->bool>)`: typed arguments retained in Rust closures. Codegen uses this API; `menu` remains the String-compatible entry point.
 - `keep(Subscription)`, `on_close(Rc<dyn Fn()>)`, `close`, `present`.
 - `downgrade()->WeakView`, `WeakView::upgrade()->Option<View>`; closed views cannot be upgraded.
 - `on_close_request(Rc<dyn Fn()>)` replaces the application's request handler; `request_close()` requests permission to close. Synchronous recursive requests are ignored. WM close and Quit route through this entry. `close()` is explicitly forceful and idempotent; `on_close` runs final cleanup, not confirmation.
@@ -76,8 +83,13 @@ backend-specific. This does not unify other layout/style/menu error policies.
 with AppKit Stack, Label, TextBox, Button, ItemsControl and Menu. It uses the same
 code generation and existing application wiring; no runtime markup parser is added.
 The backend's internal build.rs compiles a Swift C ABI bridge. Grid/Flex/Absolute
-fail explicitly; ContentControl/custom meter, UiHost and multiwindow are not yet
-implemented. Style is limited to frame insets and dimensions, not arbitrary placement.
+fail explicitly; ContentControl/custom meter are not implemented. `MacHost`
+implements UiHost; `run_host(FnOnce(Rc<MacHost>)->Result<(),String>)` drives one
+app-wide loop. `register_view(&Session,id,&View,WindowHooks)` retains the window,
+keeps its registration in the View scope, and routes app Quit to the Session.
+Window close remains per-View. App-wide delegate is shared; native menus switch
+with the active Window. Hooks explicitly own confirmation/cancel/drain/close;
+closing shared Views does not implicitly close their Store. Style remains limited.
 See [macos/README.md](macos/README.md) for supported input paths, native probes,
 dispatch budgets, development-only dylib layout and the manual IME/VoiceOver gates.
 
@@ -90,6 +102,9 @@ handlers; rejection retains the old menu. `menu_error(id)->Option<String>` repor
 the per-menu rejection and clears on a valid update, without terminating the host.
 AppKit automation `frame_height(id)->Option<f64>` reads the native layout frame
 after layout, returning None for absent controls or a closed View.
+Rejected item snapshots retain the accepted source for subsequent scrolling.
+Native close, viewport and ordinary actions have separate ABI event kinds, not
+reserved strings in the control-ID namespace.
 
 `wakui2_macros::view!("ui/main.yaml", model, backend)` returns a constructed shared
 View. It retains the model until View close/drop but does not close a model with
@@ -117,6 +132,16 @@ Markup schema v2: root Window {id,title,content,menus:[...]}; layout children + 
 
 Menu {id,title,items:{bind:{path:menu_items}},command:choose}. Native {id,factory:crate::meter,value:{bind:{path:progress}}}. Validation on TextBox `validation: {validator:crate::validate_name,error:name_error,pending:validating}`.
 
+YAML nodes retain parser-derived line/column and template scope. Stable Rust
+cannot create proc-macro spans in an arbitrary external YAML file. Use
+`sh scripts/check-yaml.sh check ...` (Python 3) to translate node expansion
+diagnostics into YAML primary spans in rustc JSON and rendered output; original
+Rust spans, errors and exit status remain. Formal gates enable this wrapper.
+Without it rustc still checks types, but the primary location can remain view!.
+Downstream probes assert YAML lines for typo, type mismatch, unknown command,
+factory input/return, validator input, converter and typed Menu mismatch.
+This is not an editor LSP, and JSON input does not have node source spans yet.
+
 ## Common layout and settings contract
 
 Grid has equal-width columns, a gap, and explicit zero-based row/column and spans;
@@ -133,7 +158,7 @@ discard or continued editing; in-flight save is awaited, and newer edits prompt
 again. The app closes its Store explicitly in final View cleanup. Its settings
 validation is synchronous; inherited Latest async validation remains separately tested.
 
-Prototype boundaries remain explicit: menu dispatch arguments are still strings,
-even though Commands accept typed arguments. Runtime updates still clone S.
+Prototype boundaries remain explicit: legacy updates and scoped binding writes
+still clone S; clone-free replacement and dependency indexing require the scoped API.
 No OS-specific input/accessibility conformance without evidence; unsupported
 facilities return explicit errors, with no silent layout-kind fallback.

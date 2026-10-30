@@ -1,10 +1,12 @@
 //! Strict, bounded schema-v2 input. No application code is executed by this crate.
+mod source;
 use schemars::JsonSchema;
 use serde::{
     Deserialize,
     de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::Value;
+pub use source::{SourceMap, SourceSpan};
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet},
@@ -19,6 +21,8 @@ pub const MAX_NODES: usize = 16_384;
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Document {
+    #[serde(skip)]
+    pub source: SourceMap,
     pub schema_version: u32,
     #[serde(default)]
     pub templates: BTreeMap<String, Template>,
@@ -175,10 +179,19 @@ pub struct Error {
     pub filename: String,
     pub path: String,
     pub message: String,
+    pub span: Option<SourceSpan>,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}: {}", self.filename, self.path, self.message)
+        if let Some(span) = self.span {
+            write!(
+                f,
+                "{}:{}:{}: {}: {}",
+                self.filename, span.line, span.column, self.path, self.message
+            )
+        } else {
+            write!(f, "{}:{}: {}", self.filename, self.path, self.message)
+        }
     }
 }
 impl std::error::Error for Error {}
@@ -190,6 +203,7 @@ pub fn parse(source: &str, format: &str, filename: &str) -> Result<Document, Err
         filename: filename.into(),
         path: path.into(),
         message,
+        span: None,
     };
     if source.len() > MAX_BYTES {
         return Err(error("$", "input exceeds 1 MiB".into()));
@@ -213,9 +227,21 @@ pub fn parse(source: &str, format: &str, filename: &str) -> Result<Document, Err
         }
         _ => return Err(error("$", "expected json, yaml or yml".into())),
     };
-    let document: Document = serde_path_to_error::deserialize(value)
-        .map_err(|e| error(&e.path().to_string(), e.inner().to_string()))?;
-    document.validate().map_err(|e| error(&e.0, e.1))?;
+    let locations = if matches!(format, "yaml" | "yml") {
+        SourceMap::parse(source, filename).map_err(|message| error("$", message))?
+    } else {
+        let mut locations = SourceMap::default();
+        locations.filename = filename.into();
+        locations
+    };
+    let diagnostic = |path: &str, message: String| Error {
+        span: locations.diagnostic_span(path, &message),
+        ..error(path, message)
+    };
+    let mut document: Document = serde_path_to_error::deserialize(value)
+        .map_err(|e| diagnostic(&e.path().to_string(), e.inner().to_string()))?;
+    document.validate().map_err(|e| diagnostic(&e.0, e.1))?;
+    document.source = locations;
     Ok(document)
 }
 

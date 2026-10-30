@@ -165,7 +165,7 @@ mod fake {
                 template(self, p, &format!("{id}/{}", item.key), item.model);
             }
         }
-        pub fn menu(
+        pub fn typed_menu(
             &self,
             id: &str,
             _title: Binding<String>,
