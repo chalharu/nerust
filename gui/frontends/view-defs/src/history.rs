@@ -14,7 +14,7 @@ use wakui::scene::def::{
     Binding, BoolBinding, ChoicesDef, ContainerDef, ControlDef, LeafDef, ListColumnDef, NodeDef,
     PageDef, PolicyDef, RowTemplateDef, RowsDef, ScreenDef, SelectedDef,
 };
-use wakui::scene::hints::LayoutHints;
+use wakui::scene::hints::{LayoutAlign, LayoutHints};
 use wakui::scene::inflate::{
     Choices, CustomLeaves, Flags, InflateCtx, Lists, Texts, Value, inflate,
 };
@@ -122,39 +122,98 @@ fn history_def(empty: bool) -> ScreenDef {
         hints: LayoutHints::default(),
         leaf: LeafDef::Action,
     };
+    // Value notes carry no captions: the text names the value, like the
+    // native twin's toolbar count and empty-state line. A visible label
+    // would render the same string twice (caption plus value).
+    let note_in =
+        |key: &str, text: Binding, display: ControlDisplay, hints: LayoutHints| ControlDef {
+            key: key.into(),
+            label: Binding::Literal(String::new()),
+            accessible: None,
+            help: None,
+            display,
+            enabled: BoolBinding::Literal(true),
+            visible: BoolBinding::Literal(true),
+            hints,
+            leaf: LeafDef::Note { text },
+        };
+    // Horizontal row inside the body column: the toolbar packs its members
+    // like the native twin's top box, and the headers read as one line.
+    let row = |key: &str, spacing: f64, children: Vec<NodeDef>| {
+        NodeDef::Container(Box::new(ContainerDef {
+            key: key.into(),
+            label: Binding::Literal(String::new()),
+            hints: LayoutHints {
+                spacing: Some(spacing),
+                indent: Some(0.0),
+                ..LayoutHints::default()
+            },
+            header: None,
+            policy: PolicyDef::Row,
+            children,
+        }))
+    };
+    // Trailing count stretches across the toolbar's free space and reads
+    // right-aligned, like the native twin's expanding count label.
+    let end = || LayoutHints {
+        h_align: Some(LayoutAlign::End),
+        ..LayoutHints::default()
+    };
     let mut body_children = vec![
-        NodeDef::Control(Box::new(ControlDef {
-            key: "filter".into(),
-            label: Binding::Localized("level".into()),
-            accessible: None,
-            help: None,
-            display: ControlDisplay::Standard,
-            enabled: BoolBinding::Literal(true),
-            visible: BoolBinding::Literal(true),
-            hints: LayoutHints::default(),
-            leaf: LeafDef::Choice {
-                choices: ChoicesDef::Bound("filter".into()),
-                selected: SelectedDef::Bound("filter".into()),
-            },
-        })),
-        NodeDef::Control(Box::new(ControlDef {
-            key: "clear".into(),
-            label: Binding::Localized("clear".into()),
-            ..chrome()
-        })),
-        NodeDef::Control(Box::new(ControlDef {
-            key: "count".into(),
-            label: Binding::Localized("count".into()),
-            accessible: None,
-            help: None,
-            display: ControlDisplay::Standard,
-            enabled: BoolBinding::Literal(true),
-            visible: BoolBinding::Literal(true),
-            hints: LayoutHints::default(),
-            leaf: LeafDef::Note {
-                text: Binding::Localized("count".into()),
-            },
-        })),
+        row(
+            "toolbar",
+            8.0,
+            vec![
+                NodeDef::Control(Box::new(note_in(
+                    "level",
+                    Binding::Localized("level".into()),
+                    ControlDisplay::Standard,
+                    LayoutHints::default(),
+                ))),
+                NodeDef::Control(Box::new(ControlDef {
+                    key: "filter".into(),
+                    // No caption: the Level note names the combo, like the
+                    // native twin's caption plus ComboBoxText.
+                    label: Binding::Literal(String::new()),
+                    accessible: None,
+                    help: None,
+                    display: ControlDisplay::Standard,
+                    enabled: BoolBinding::Literal(true),
+                    visible: BoolBinding::Literal(true),
+                    hints: LayoutHints::default(),
+                    leaf: LeafDef::Choice {
+                        choices: ChoicesDef::Bound("filter".into()),
+                        selected: SelectedDef::Bound("filter".into()),
+                    },
+                })),
+                NodeDef::Control(Box::new(ControlDef {
+                    key: "clear".into(),
+                    label: Binding::Localized("clear".into()),
+                    ..chrome()
+                })),
+                NodeDef::Control(Box::new(note_in(
+                    "count",
+                    Binding::Localized("count".into()),
+                    ControlDisplay::Standard,
+                    end(),
+                ))),
+            ],
+        ),
+        row(
+            "headers",
+            12.0,
+            ["h0", "h1", "h2", "h3"]
+                .into_iter()
+                .map(|key| {
+                    NodeDef::Control(Box::new(note_in(
+                        key,
+                        Binding::Localized(key.into()),
+                        ControlDisplay::Heading,
+                        LayoutHints::default(),
+                    )))
+                })
+                .collect(),
+        ),
         NodeDef::Control(Box::new(ControlDef {
             key: "table".into(),
             label: Binding::Localized("title".into()),
@@ -183,7 +242,9 @@ fn history_def(empty: bool) -> ScreenDef {
                             .enumerate()
                             .map(|(column, path)| ControlDef {
                                 key: format!("cell{column}"),
-                                label: Binding::Field(path.into()),
+                                // No per-cell captions: row values read as
+                                // bare columns, like the native twin's grid.
+                                label: Binding::Literal(String::new()),
                                 accessible: None,
                                 help: None,
                                 display: ControlDisplay::Standard,
@@ -201,19 +262,12 @@ fn history_def(empty: bool) -> ScreenDef {
         })),
     ];
     if empty {
-        body_children.push(NodeDef::Control(Box::new(ControlDef {
-            key: "empty".into(),
-            label: Binding::Localized("empty".into()),
-            accessible: None,
-            help: None,
-            display: ControlDisplay::Standard,
-            enabled: BoolBinding::Literal(true),
-            visible: BoolBinding::Literal(true),
-            hints: LayoutHints::default(),
-            leaf: LeafDef::Note {
-                text: Binding::Localized("empty".into()),
-            },
-        })));
+        body_children.push(NodeDef::Control(Box::new(note_in(
+            "empty",
+            Binding::Localized("empty".into()),
+            ControlDisplay::Standard,
+            LayoutHints::default(),
+        ))));
     }
     let chrome_hints = LayoutHints {
         spacing: Some(12.0),
@@ -222,7 +276,8 @@ fn history_def(empty: bool) -> ScreenDef {
     };
     ScreenDef {
         title: Binding::Localized("title".into()),
-        default_size: None,
+        // Same window as the native twin's history dialog.
+        default_size: Some((592, 428)),
         pages: vec![PageDef {
             key: "page".into(),
             label: Binding::Localized("title".into()),
@@ -247,7 +302,9 @@ fn history_def(empty: bool) -> ScreenDef {
                 label: Binding::Localized("close".into()),
                 accessible: None,
                 help: None,
-                display: ControlDisplay::Primary,
+                // Footer buttons read plain, like the native twin's dialog
+                // Close; Primary would paint the suggested-action blue.
+                display: ControlDisplay::Standard,
                 enabled: BoolBinding::Literal(true),
                 visible: BoolBinding::Literal(true),
                 hints: LayoutHints::default(),
