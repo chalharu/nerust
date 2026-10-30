@@ -50,6 +50,10 @@ pub struct LayoutHints {
     pub spacing: Option<f64>,
     /// Leading inset (MAUI Padding-start analog). `None` means no inset.
     pub indent: Option<f64>,
+    /// Fixed-pitch rendering for the control (register dumps, disassembly,
+    /// hex bytes). Flavors map this to their monospace style; `false` means
+    /// the proportional UI font.
+    pub monospace: bool,
 }
 
 /// Flavor fallback when a screen omits spacing. Matches the prevailing
@@ -75,6 +79,7 @@ mod tests {
                 v_align: None,
                 spacing: None,
                 indent: None,
+                monospace: false,
             }
         );
     }

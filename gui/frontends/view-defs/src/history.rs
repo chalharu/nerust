@@ -222,6 +222,7 @@ fn history_def(empty: bool) -> ScreenDef {
     };
     ScreenDef {
         title: Binding::Localized("title".into()),
+        default_size: None,
         pages: vec![PageDef {
             key: "page".into(),
             label: Binding::Localized("title".into()),

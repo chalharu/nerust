@@ -243,6 +243,16 @@ impl NativeControl {
             _ => (),
         }
         label.set_mnemonic_widget(Some(&input));
+        // Framework placement requests: Fill stretches inside horizontal
+        // rows (dialog nav rows, list item rows); monospace renders
+        // fixed-pitch values (disassembly, registers, hex dumps).
+        if control.metadata.hints.h_align == Some(wakui_core::scene::hints::LayoutAlign::Fill) {
+            row.set_hexpand(true);
+            input.set_hexpand(true);
+        }
+        if control.metadata.hints.monospace {
+            input.add_css_class("monospace");
+        }
         Self {
             root: row.upcast(),
             input,
@@ -295,6 +305,16 @@ impl NativeControl {
                         self.root.add_css_class(class);
                     } else {
                         self.root.remove_css_class(class);
+                    }
+                }
+                // Suggested actions read on the button itself (blue
+                // current rows, default dialog buttons), never on the
+                // caption wrapper.
+                if matches!(self.kind, NativeKind::Action(_)) {
+                    if display == ControlDisplay::Primary {
+                        self.input.add_css_class("suggested-action");
+                    } else {
+                        self.input.remove_css_class("suggested-action");
                     }
                 }
             }
@@ -510,6 +530,7 @@ pub struct ControlGtkVisitor<'a> {
     selected_page: Option<gtk::Widget>,
     footer: Option<LayoutId>,
     in_footer: bool,
+    row_depth: usize,
 }
 
 impl<'a> ControlGtkVisitor<'a> {
@@ -523,6 +544,7 @@ impl<'a> ControlGtkVisitor<'a> {
             selected_page: None,
             footer: None,
             in_footer: false,
+            row_depth: 0,
         }
     }
 
@@ -631,6 +653,26 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
         self.end_container();
     }
 
+    fn begin_row(&mut self, _row: &wakui_core::scene::leaf::ItemRow) {
+        // One horizontal row per list item: line plus follow arrow,
+        // address plus byte buttons, jump plus delete. In-row spacing is
+        // tighter than the host row gap between items.
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        self.row_depth += 1;
+        self.frames.push(Frame::Box(row, Vec::new()));
+    }
+
+    fn end_row(&mut self, _row: &wakui_core::scene::leaf::ItemRow) {
+        self.row_depth = self.row_depth.saturating_sub(1);
+        match self.frames.pop().expect("item row frame") {
+            Frame::Box(parent, children) => {
+                reconcile_box(&parent, &children);
+                self.append(&parent.upcast());
+            }
+            Frame::Table(..) | Frame::Tabs(..) => panic!("item row frame"),
+        }
+    }
+
     fn begin_container(&mut self, container: &Container) {
         // Footer actions (Cancel/OK) belong to the dialog action area,
         // not the content: master parity for placement and margins.
@@ -681,8 +723,21 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             let label = gtk::Label::new(None);
             label.set_xalign(0.0);
             label.add_css_class("heading");
+            // Viewport columns (the debugger side pane) scroll inside a
+            // fixed window like the native twin's right pane. Other
+            // containers size to their content as before.
+            let widget: gtk::Widget = match (kind, container.metadata.hints.height_request) {
+                (1, Some(height)) => {
+                    let scroll = gtk::ScrolledWindow::new();
+                    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                    scroll.set_size_request(-1, height as i32);
+                    scroll.set_child(Some(&body));
+                    scroll.upcast()
+                }
+                _ => body.clone().upcast(),
+            };
             NativeNode {
-                widget: body.clone().upcast(),
+                widget,
                 body: Some(body),
                 label: Some(label),
                 select: None,
@@ -843,9 +898,33 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 old
             } else {
                 let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                // Viewport lists (disassembly, hex dump) scroll inside
+                // their own window like the native twin's panes: a minimum
+                // height keeps rows visible, `Fill` stretches with the
+                // dialog. Other lists keep the packed legacy body.
+                let scroll = control.metadata.hints.height_request.map(|min_h| {
+                    let viewport = gtk::ScrolledWindow::new();
+                    viewport.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+                    // Fixed viewport like the native twin's panes: an
+                    // explicit size request (not min/max content height,
+                    // which an expanding ancestor can override) keeps the
+                    // list scrolling inside instead of stretching the page.
+                    viewport.set_size_request(-1, min_h as i32);
+                    if control.metadata.hints.h_align
+                        == Some(wakui_core::scene::hints::LayoutAlign::Fill)
+                    {
+                        viewport.set_hexpand(true);
+                    }
+                    viewport.set_child(Some(&body));
+                    viewport
+                });
+                let root: gtk::Widget = scroll
+                    .clone()
+                    .map(|viewport| viewport.upcast())
+                    .unwrap_or_else(|| body.clone().upcast());
                 let native = Rc::new(NativeControl {
-                    root: body.clone().upcast(),
-                    input: body.clone().upcast(),
+                    root: root.clone(),
+                    input: root,
                     label: gtk::Label::new(None),
                     kind: NativeKind::List(body),
                     last: RefCell::new(None),
@@ -866,11 +945,11 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
                 return;
             };
             // Row gap comes from the host metadata: view definitions set it
-            // to the retired per-row container spacing (settings 12,
-            // debugger 8). Unset keeps the legacy packed history/PPU lists.
+            // to the retired per-row container spacing (settings 12).
+            // Viewport lists pack tighter, like the native twin's list boxes.
             body.set_spacing(control.metadata.hints.spacing.unwrap_or(0.0) as i32);
-            body.set_visible(control.metadata.visible);
-            body.set_sensitive(control.metadata.enabled);
+            native.root.set_visible(control.metadata.visible);
+            native.input.set_sensitive(control.metadata.enabled);
             *native.last.borrow_mut() = Some(control.clone());
             let mut child = body.first_child();
             while let Some(current) = child {
@@ -910,6 +989,20 @@ impl ControlVisitor for ControlGtkVisitor<'_> {
             native
         };
         native.update(control);
+        // List item members read like the native twin's rows: Secondary
+        // actions render borderless (register lines, disassembly lines,
+        // dump bytes), expanding members left-align their captions.
+        // Standalone buttons keep their borders and centering.
+        if self.row_depth > 0 && matches!(native.kind, NativeKind::Action(_)) {
+            if control.display == ControlDisplay::Secondary {
+                native.input.add_css_class("flat");
+            }
+            if control.metadata.hints.h_align == Some(wakui_core::scene::hints::LayoutAlign::Fill)
+                && let Some(label) = native.input.first_child().and_downcast::<gtk::Label>()
+            {
+                label.set_xalign(0.0);
+            }
+        }
         // Unknown container-like leaves degrade to siblings: surface their
         // children explicitly. Base leaves no-op here.
         wakui_core::scene::control::walk_control(control, self);
