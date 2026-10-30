@@ -270,6 +270,8 @@ struct Core<S: Clone + 'static> {
     queue: RefCell<VecDeque<Event<S>>>,
     ingress: Cell<usize>,
     draining: Cell<bool>,
+    scheduled: Cell<bool>,
+    dispatch_budget: Option<std::num::NonZeroUsize>,
     closed: Cell<bool>,
     sequence: Cell<u64>,
     tasks: RefCell<BTreeMap<u64, Task>>,
@@ -281,6 +283,15 @@ struct DrainGuard<'a>(&'a Cell<bool>);
 impl Drop for DrainGuard<'_> {
     fn drop(&mut self) {
         self.0.set(false);
+    }
+}
+
+struct Continuation<S: Clone + 'static>(Weak<Core<S>>);
+impl<S: Clone + 'static> Drop for Continuation<S> {
+    fn drop(&mut self) {
+        if let Some(core) = self.0.upgrade() {
+            core.scheduled.set(false);
+        }
     }
 }
 
@@ -311,10 +322,11 @@ impl<S: Clone + 'static> Core<S> {
         true
     }
     fn drain(self: &Rc<Self>) {
-        if self.draining.replace(true) {
+        if self.scheduled.get() || self.draining.replace(true) {
             return;
         }
         let _guard = DrainGuard(&self.draining);
+        let mut dispatched = 0;
         loop {
             let event = self.queue.borrow_mut().pop_front();
             let Some(event) = event else {
@@ -328,6 +340,35 @@ impl<S: Clone + 'static> Core<S> {
             }
             if !self.closed.get() {
                 self.flush();
+            }
+            dispatched += 1;
+            if self
+                .dispatch_budget
+                .is_some_and(|budget| dispatched >= budget.get())
+                && !self.queue.borrow().is_empty()
+                && !self.closed.get()
+            {
+                self.scheduled.set(true);
+                let continuation = Continuation(Rc::downgrade(self));
+                drop(_guard);
+                self.executor.spawn(Box::pin(async move {
+                    let mut yielded = false;
+                    futures::future::poll_fn(move |context| {
+                        if std::mem::replace(&mut yielded, true) {
+                            std::task::Poll::Ready(())
+                        } else {
+                            context.waker().wake_by_ref();
+                            std::task::Poll::Pending
+                        }
+                    })
+                    .await;
+                    let core = continuation.0.upgrade();
+                    drop(continuation);
+                    if let Some(core) = core {
+                        core.drain();
+                    }
+                }));
+                break;
             }
         }
     }
@@ -522,6 +563,25 @@ impl<S: Clone + 'static> Store<S> {
         Self::with_limits(state, executor, Limits::default())
     }
     pub fn with_limits(state: S, executor: Rc<dyn Executor>, limits: Limits) -> Self {
+        Self::configured(state, executor, limits, None)
+    }
+    /// Bounds events per drain, not callback duration. Continuations yield once
+    /// to the executor; the host must also bound future polling per native turn.
+    /// Unlike `new`, accepted writes may remain queued after the call returns.
+    pub fn with_dispatch_budget(
+        state: S,
+        executor: Rc<dyn Executor>,
+        limits: Limits,
+        budget: std::num::NonZeroUsize,
+    ) -> Self {
+        Self::configured(state, executor, limits, Some(budget))
+    }
+    fn configured(
+        state: S,
+        executor: Rc<dyn Executor>,
+        limits: Limits,
+        dispatch_budget: Option<std::num::NonZeroUsize>,
+    ) -> Self {
         Self {
             core: Rc::new(Core {
                 snapshots: Rc::new(Snapshots {
@@ -534,6 +594,8 @@ impl<S: Clone + 'static> Store<S> {
                 queue: RefCell::new(VecDeque::new()),
                 ingress: Cell::new(0),
                 draining: Cell::new(false),
+                scheduled: Cell::new(false),
+                dispatch_budget,
                 closed: Cell::new(false),
                 sequence: Cell::new(0),
                 tasks: RefCell::new(BTreeMap::new()),
