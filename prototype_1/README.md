@@ -1,5 +1,8 @@
 # Wakui standalone prototype
 
+第1試作の記録。旧`wakui/`から`prototype_1/`へ改名した。
+直接マクロ生成と高度なLayout/Templateを検証する[第2試作](../prototype-2/README.md)は別workspaceにある。
+
 **新規構築の垂直スライス。既存nerustとは未接続。**
 このディレクトリは独立したCargoワークスペースであり、親のCargo.toml・旧`gui/wakui*`は変更しない。
 旧クレートやnerustのViewModel、Shell、エミュレータへ依存しない。
@@ -33,7 +36,7 @@ TaoはOS Window基盤であり、個別部品はiced描画であってOSネイ�
 GTK4とTao/GTK3を同じプロセスへロードしない。
 
 ```sh
-cd wakui
+cd prototype_1
 cargo run --locked -p wakui-demo
 cargo run --locked -p wakui-demo --no-default-features --features backend-tao
 ```
