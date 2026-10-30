@@ -1,0 +1,10 @@
+[package]
+name = "wakui-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wakui-contract.workspace = true
+futures.workspace = true
+thiserror.workspace = true
