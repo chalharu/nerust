@@ -221,6 +221,50 @@ fn projections_clone_no_state_mutation_clones_once_and_snapshot_is_owned() {
 }
 
 #[test]
+fn scoped_replacement_skips_clones_unrelated_projections_and_noop_generations() {
+    let clones = Rc::new(Cell::new(0));
+    let (_, model) = local(CountedState {
+        value: 0,
+        payload: vec![1; 1024],
+        clones: clones.clone(),
+    });
+    let calls = Rc::new(Cell::new(0));
+    let observed = calls.clone();
+    let unrelated = model.bind_scoped(
+        "payload",
+        move |state| {
+            observed.set(observed.get() + 1);
+            state.payload.len()
+        },
+        None,
+    );
+    let (_, token) = record(&unrelated);
+    let (versions, version_token) = record(&model.bind_scoped("value", |state| state.value, None));
+    let (wildcard, wildcard_token) = record(&model.bind(|state| state.value, None));
+    assert_eq!(calls.get(), 1);
+    for version in 1..=4 {
+        assert!(
+            model.update_scoped(&["value", "value"], move |state| Some(CountedState {
+                value: version,
+                payload: vec![1; 1024],
+                clones: state.clones.clone()
+            }))
+        );
+    }
+    assert!(model.update_scoped(&["value"], |_| None));
+    assert_eq!(clones.get(), 0);
+    assert_eq!(calls.get(), 1);
+    assert_eq!(&*versions.borrow(), &[0, 1, 2, 3, 4]);
+    assert_eq!(&*wildcard.borrow(), &[0, 1, 2, 3, 4]);
+    model.update(|state| state.value = 5);
+    assert_eq!(calls.get(), 2);
+    assert_eq!(clones.get(), 1);
+    drop((token, version_token, wildcard_token));
+    model.close();
+    assert!(!model.update_scoped(&["value"], |_| panic!("closed")));
+}
+
+#[test]
 fn projection_read_cost_is_independent_of_large_unprojected_state() {
     // Informational timings, deterministic clone-count assertions (no flaky ratio).
     // Publish still evaluates every subscribed projection; no field-dirty index.

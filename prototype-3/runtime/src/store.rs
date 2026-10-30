@@ -5,7 +5,7 @@ use futures::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     future::Future,
     rc::{Rc, Weak},
 };
@@ -139,9 +139,10 @@ impl<S> Listener<S> {
 }
 
 // Bindings keep this snapshot hub alive, but it never owns a Store or callback.
+type ListenerMap<S> = BTreeMap<u64, Weak<Listener<S>>>;
 struct Snapshots<S: Clone + 'static> {
     value: RefCell<Rc<S>>,
-    listeners: RefCell<BTreeMap<u64, Weak<Listener<S>>>>,
+    listeners: RefCell<BTreeMap<Option<&'static str>, ListenerMap<S>>>,
     next: Cell<u64>,
     closed: Cell<bool>,
 }
@@ -150,17 +151,33 @@ impl<S: Clone + 'static> Snapshots<S> {
     fn get(&self) -> Rc<S> {
         self.value.borrow().clone()
     }
-    fn publish(&self, state: S) {
+    fn publish_fields(&self, state: S, dirty: Option<&[&'static str]>) {
         if self.closed.get() {
             return;
         }
         let state = Rc::new(state);
         let old = self.value.replace(state.clone());
         drop(old);
-        // All subscribed projections are evaluated; equal results are suppressed
-        // by bind(). No per-field dirty tracking is assumed.
-        let listeners: Vec<_> = self.listeners.borrow().values().cloned().collect();
-        for listener in listeners {
+        let listeners: Vec<_> = {
+            let registry = self.listeners.borrow();
+            if let Some(fields) = dirty {
+                let keys: BTreeSet<_> = std::iter::once(None)
+                    .chain(fields.iter().copied().map(Some))
+                    .collect();
+                keys.iter()
+                    .filter_map(|key| registry.get(key))
+                    .flat_map(|group| group.iter().map(|(id, listener)| (*id, listener.clone())))
+                    .collect()
+            } else {
+                registry
+                    .values()
+                    .flat_map(|group| group.iter().map(|(id, listener)| (*id, listener.clone())))
+                    .collect()
+            }
+        };
+        let mut listeners = listeners;
+        listeners.sort_unstable_by_key(|(id, _)| *id);
+        for (_, listener) in listeners {
             if self.closed.get() {
                 break;
             }
@@ -169,7 +186,11 @@ impl<S: Clone + 'static> Snapshots<S> {
             }
         }
     }
-    fn subscribe(self: &Rc<Self>, callback: StateCallback<S>) -> Subscription {
+    fn subscribe(
+        self: &Rc<Self>,
+        field: Option<&'static str>,
+        callback: StateCallback<S>,
+    ) -> Subscription {
         if self.closed.get() {
             callback(&self.get());
             return Subscription::empty();
@@ -180,12 +201,20 @@ impl<S: Clone + 'static> Snapshots<S> {
         });
         self.listeners
             .borrow_mut()
+            .entry(field)
+            .or_default()
             .insert(id, Rc::downgrade(&listener));
         let hub = Rc::downgrade(self);
         let owned = listener.clone();
         let token = Subscription::new(move || {
             if let Some(hub) = hub.upgrade() {
-                hub.listeners.borrow_mut().remove(&id);
+                let mut registry = hub.listeners.borrow_mut();
+                if let Some(group) = registry.get_mut(&field) {
+                    group.remove(&id);
+                    if group.is_empty() {
+                        registry.remove(&field);
+                    }
+                }
             }
             owned.cancel();
         });
@@ -195,7 +224,7 @@ impl<S: Clone + 'static> Snapshots<S> {
     fn close(&self) {
         self.closed.set(true);
         let listeners = std::mem::take(&mut *self.listeners.borrow_mut());
-        for listener in listeners.into_values() {
+        for listener in listeners.into_values().flat_map(BTreeMap::into_values) {
             if let Some(listener) = listener.upgrade() {
                 listener.cancel();
             }
@@ -396,10 +425,14 @@ impl<S: Clone + 'static> Core<S> {
         }
     }
     fn mutate(&self, update: impl FnOnce(&mut S)) {
+        self.mutate_field(update, None);
+    }
+    fn mutate_field(&self, update: impl FnOnce(&mut S), field: Option<&'static str>) {
         let mut state = (*self.snapshots.get()).clone();
         update(&mut state);
         if !self.closed.get() {
-            self.snapshots.publish(state);
+            self.snapshots
+                .publish_fields(state, field.as_ref().map(std::slice::from_ref));
         }
     }
     fn valid(&self, id: u64) -> bool {
@@ -613,6 +646,27 @@ impl<S: Clone + 'static> Store<S> {
         self.core
             .enqueue(Box::new(move |core| core.mutate(update)), true)
     }
+    /// Builds an owned replacement without cloning S. None is a no-op generation
+    /// gate. Every changed top-level field must be listed; unscoped bindings are
+    /// always evaluated. Keep large unchanged data in Rc/Arc for structural sharing.
+    pub fn update_scoped(
+        &self,
+        fields: &[&'static str],
+        replace: impl FnOnce(&S) -> Option<S> + 'static,
+    ) -> bool {
+        let fields = fields.to_vec();
+        self.core.enqueue(
+            Box::new(move |core| {
+                let previous = core.snapshots.get();
+                let next = replace(&previous);
+                drop(previous);
+                if let Some(state) = next {
+                    core.snapshots.publish_fields(state, Some(&fields));
+                }
+            }),
+            true,
+        )
+    }
     /// React through ordinary FIFO ingress after publication, not inside a
     /// listener. Each token keeps only the latest source value and retries when
     /// a dequeue frees capacity. Unlike subscribe(), intermediate values may be
@@ -689,6 +743,24 @@ impl<S: Clone + 'static> Store<S> {
         read: impl Fn(&S) -> T + 'static,
         write: Option<fn(&mut S, T)>,
     ) -> Binding<T> {
+        self.bind_inner(None, read, write)
+    }
+    /// The projection depends only on this top-level field. Unscoped updates
+    /// invalidate it; scoped updates of other fields do not evaluate it.
+    pub fn bind_scoped<T: Clone + PartialEq + 'static>(
+        &self,
+        field: &'static str,
+        read: impl Fn(&S) -> T + 'static,
+        write: Option<fn(&mut S, T)>,
+    ) -> Binding<T> {
+        self.bind_inner(Some(field), read, write)
+    }
+    fn bind_inner<T: Clone + PartialEq + 'static>(
+        &self,
+        field: Option<&'static str>,
+        read: impl Fn(&S) -> T + 'static,
+        write: Option<fn(&mut S, T)>,
+    ) -> Binding<T> {
         let read = Rc::new(read);
         let hub = self.core.snapshots.clone();
         let value = hub.clone();
@@ -704,7 +776,7 @@ impl<S: Clone + 'static> Store<S> {
                     core.enqueue(
                         Box::new(move |core| {
                             if guard() {
-                                core.mutate(move |state| write(state, value));
+                                core.mutate_field(move |state| write(state, value), field);
                             }
                         }),
                         true,
@@ -714,17 +786,20 @@ impl<S: Clone + 'static> Store<S> {
             listen: Rc::new(move |callback| {
                 let read = read.clone();
                 let previous = RefCell::new(None);
-                hub.subscribe(Rc::new(move |state| {
-                    let value = read(state);
-                    // Clone/PartialEq/Drop implementations are application code too.
-                    let old = previous.take();
-                    let changed = old.as_ref() != Some(&value);
-                    previous.replace(Some(value.clone()));
-                    drop(old);
-                    if changed {
-                        callback(value);
-                    }
-                }))
+                hub.subscribe(
+                    field,
+                    Rc::new(move |state| {
+                        let value = read(state);
+                        // Clone/PartialEq/Drop implementations are application code too.
+                        let old = previous.take();
+                        let changed = old.as_ref() != Some(&value);
+                        previous.replace(Some(value.clone()));
+                        drop(old);
+                        if changed {
+                            callback(value);
+                        }
+                    }),
+                )
             }),
         }
     }
