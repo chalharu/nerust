@@ -87,9 +87,15 @@ fail explicitly; ContentControl/custom meter are not implemented. `MacHost`
 implements UiHost; `run_host(FnOnce(Rc<MacHost>)->Result<(),String>)` drives one
 app-wide loop. `register_view(&Session,id,&View,WindowHooks)` retains the window,
 keeps its registration in the View scope, and routes app Quit to the Session.
+MacHost accepts one Session identity for its lifetime. Reattaching a clone is
+idempotent; attaching or registering a window with another Session returns an
+error before registering or presenting it. `register_view` attaches the first
+Session automatically. `Session::ptr_eq(&other)` compares coordinator identity.
 Window close remains per-View. App-wide delegate is shared; native menus switch
 with the active Window. Hooks explicitly own confirmation/cancel/drain/close;
 closing shared Views does not implicitly close their Store. Style remains limited.
+Confirmation has no deadline; only draining after all approvals is subject to
+the MacHost five-second timeout. Explicit cancellation/force-close remain separate.
 See [macos/README.md](macos/README.md) for supported input paths, native probes,
 dispatch budgets, development-only dylib layout and the manual IME/VoiceOver gates.
 
@@ -97,6 +103,9 @@ AppKit retains an accepted local viewport, so read-only/literal viewports still
 allow scrolling without writing to the model. `item_keys` returns mounted keys,
 not the complete source. Accepted row-height changes resize existing mounts.
 Eviction releases nested list registries, viewport handlers and scoped tokens.
+During Template construction `keep` belongs to the current row scope, restored
+after nested construction or unwinding. Eviction drops validation tokens, aborts
+their pending work and resets pending; remounting does not accumulate subscriptions.
 Menu snapshots validate all IDs and shortcuts before replacing native items and
 handlers; rejection retains the old menu. `menu_error(id)->Option<String>` reports
 the per-menu rejection and clears on a valid update, without terminating the host.

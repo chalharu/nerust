@@ -211,8 +211,8 @@ impl ShutdownCoordinator {
             }
         }
     }
-    /// Deadline includes confirmation and drain. On timeout, remaining work is
-    /// cancelled and windows forcibly closed. Drain futures run concurrently.
+    /// Confirmation has no deadline. Once all windows approve, the timeout
+    /// bounds concurrent drains; expiry forcibly closes the remaining windows.
     /// Dropping the request future restores Running (unless already Closed).
     pub async fn request_shutdown(&self, timeout: Duration) -> ShutdownOutcome {
         match self.phase() {
@@ -245,18 +245,18 @@ impl ShutdownCoordinator {
         }
         let work = async {
             if self.core.generation.get() != generation || self.phase() == ShutdownPhase::Closed {
-                return false;
+                return Some(false);
             }
             for window in &windows {
                 let future = window.upgrade().map(|w| w.wait((w.hooks.confirm)()));
                 if let Some(future) = future
                     && future.await == Ok(false)
                 {
-                    return false;
+                    return Some(false);
                 }
                 if self.core.generation.get() != generation || self.phase() == ShutdownPhase::Closed
                 {
-                    return false;
+                    return Some(false);
                 }
             }
             self.core.phase.set(ShutdownPhase::Draining);
@@ -267,17 +267,18 @@ impl ShutdownCoordinator {
                     if self.core.generation.get() != generation
                         || self.phase() == ShutdownPhase::Closed
                     {
-                        return false;
+                        return Some(false);
                     }
                     drains.push(window.wait((window.hooks.drain)()));
                 }
             }
-            join_all(drains).await;
-            true
+            match select(join_all(drains), futures_timer::Delay::new(timeout)).await {
+                Either::Left(_) => Some(true),
+                Either::Right(_) => None,
+            }
         }
         .boxed_local();
-        let deadline = futures_timer::Delay::new(timeout).boxed_local();
-        let result = select(select(work, deadline), canceled).await;
+        let result = select(work, canceled).await;
         // A callback may cancel/close synchronously even if work is already Ready.
         let outcome = if self.phase() == ShutdownPhase::Closed {
             ShutdownOutcome::Closed
@@ -285,7 +286,7 @@ impl ShutdownCoordinator {
             ShutdownOutcome::Cancelled
         } else {
             match result {
-                Either::Left((Either::Left((true, _)), _)) => {
+                Either::Left((Some(true), _)) => {
                     // Cancellation was already issued before draining.
                     self.core.phase.set(ShutdownPhase::Closed);
                     let windows = std::mem::take(&mut *self.core.windows.borrow_mut());
@@ -297,11 +298,11 @@ impl ShutdownCoordinator {
                     }
                     ShutdownOutcome::Closed
                 }
-                Either::Left((Either::Left((false, _)), _)) => {
+                Either::Left((Some(false), _)) => {
                     self.core.phase.set(ShutdownPhase::Running);
                     ShutdownOutcome::Cancelled
                 }
-                Either::Left((Either::Right(_), _)) => {
+                Either::Left((None, _)) => {
                     self.close_now();
                     ShutdownOutcome::TimedOut
                 }
@@ -347,6 +348,9 @@ pub struct Session {
 impl Session {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.shutdown.core, &other.shutdown.core)
     }
     pub fn shutdown(&self) -> ShutdownCoordinator {
         self.shutdown.clone()

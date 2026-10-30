@@ -1369,30 +1369,34 @@ fn shutdown_denial_cancel_and_dropped_request_leave_session_running() {
 }
 
 #[test]
-fn shutdown_real_timer_timeout_in_confirmation_and_drain() {
-    for confirming in [true, false] {
-        let session = Session::new();
-        let coordinator = session.shutdown();
-        let log = Rc::new(RefCell::new(Vec::new()));
-        let confirm = if confirming {
-            pending().boxed_local()
-        } else {
-            async { true }.boxed_local()
-        };
-        let _token = session
-            .register_window(
-                "stuck",
-                hooks(log.clone(), confirm, pending().boxed_local()),
-            )
-            .unwrap();
-        assert_eq!(
-            block_on(coordinator.request_shutdown(Duration::from_millis(2))),
-            ShutdownOutcome::TimedOut
-        );
+fn shutdown_confirmation_has_no_deadline_but_drain_times_out() {
+    let session = Session::new();
+    let coordinator = session.shutdown();
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let (answer, response) = oneshot::channel();
+    let _token = session
+        .register_window(
+            "stuck",
+            hooks(
+                log.clone(),
+                async { response.await.unwrap() }.boxed_local(),
+                pending().boxed_local(),
+            ),
+        )
+        .unwrap();
+    block_on(async {
+        let mut request = Box::pin(coordinator.request_shutdown(Duration::from_millis(2)));
+        assert!(request.as_mut().now_or_never().is_none());
+        futures_timer::Delay::new(Duration::from_millis(10)).await;
+        assert!(request.as_mut().now_or_never().is_none());
+        assert_eq!(coordinator.phase(), ShutdownPhase::Confirming);
+        assert!(log.borrow().is_empty());
+        answer.send(true).unwrap();
+        assert_eq!(request.await, ShutdownOutcome::TimedOut);
         assert_eq!(coordinator.phase(), ShutdownPhase::Closed);
         assert_eq!(log.borrow().last(), Some(&"close"));
         assert_eq!(session.window_count(), 0);
-    }
+    });
 }
 
 #[test]

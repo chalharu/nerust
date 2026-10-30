@@ -7,7 +7,9 @@ use std::{
     time::Instant,
 };
 #[cfg(target_os = "macos")]
-use wakui2_runtime::{Binding, Keyed, Layout, Limits, MenuItem, MenuRole, Store, Style, Viewport};
+use wakui2_runtime::{
+    Binding, Keyed, Layout, Limits, MenuItem, MenuRole, Store, Style, Viewport, validation,
+};
 #[cfg(target_os = "macos")]
 use wakui3_macos::View;
 
@@ -16,6 +18,14 @@ use wakui3_macos::View;
 struct Model {
     text: String,
     second: String,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Default)]
+struct ValidationRow {
+    text: String,
+    error: String,
+    pending: bool,
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -170,6 +180,66 @@ fn main() -> Result<(), String> {
         assert!(view.items_error("rows").is_none());
         println!("MACOS3 PASS event-namespace rejected-source-scroll");
         println!("MACOS3 PASS readonly-viewport local-scroll model-unchanged external-update");
+        let validation_rows: Vec<_> = (0..2)
+            .map(|index| {
+                Keyed::new(
+                    index.to_string(),
+                    Store::new(ValidationRow::default(), executor.clone()),
+                )
+            })
+            .collect();
+        let first_row = validation_rows[0].model.clone();
+        let validations = Rc::new(Cell::new(0));
+        let starts = validations.clone();
+        view.items(
+            &parent,
+            "validation_rows",
+            Binding::constant(validation_rows),
+            Binding::constant(Viewport {
+                count: 1,
+                ..Viewport::default()
+            }),
+            Rc::new(move |view, parent, scope, model: Store<ValidationRow>| {
+                let source = model.bind(
+                    |state| state.text.clone(),
+                    Some(|state, value| state.text = value),
+                );
+                let starts = starts.clone();
+                let token = validation(
+                    &model,
+                    source.clone(),
+                    model.bind(
+                        |state| state.error.clone(),
+                        Some(|state, value| state.error = value),
+                    ),
+                    model.bind(
+                        |state| state.pending,
+                        Some(|state, value| state.pending = value),
+                    ),
+                    move |_| {
+                        starts.set(starts.get() + 1);
+                        Box::pin(std::future::pending())
+                    },
+                );
+                view.keep(token);
+                view.entry(parent, &format!("{scope}/entry"), source);
+            }),
+        );
+        assert_eq!(validations.get(), 1);
+        for cycle in 0..4 {
+            assert!(first_row.snapshot().pending);
+            view.viewport("validation_rows", 1);
+            assert!(!first_row.snapshot().pending);
+            let before = validations.get();
+            first_row.update(move |state| state.text = format!("offscreen-{cycle}"));
+            assert_eq!(validations.get(), before);
+            view.viewport("validation_rows", 0);
+            assert_eq!(validations.get(), before + 1);
+        }
+        assert_eq!(validations.get(), 9);
+        println!(
+            "MACOS3 PASS validation-scope eviction-abort offscreen-inactive remount-single-subscription"
+        );
         let typed_argument = Rc::new(Cell::new(0_i32));
         let output = typed_argument.clone();
         view.typed_menu(
