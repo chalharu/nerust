@@ -89,6 +89,10 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
         let generated = format_ident!("command_{}", name.to_string().trim_start_matches("r#"));
         let args: Vec<_> = sig.inputs.iter().collect();
         let receiver = matches!(args.first(), Some(FnArg::Receiver(_)));
+        let argument_type = match args.get(1) {
+            Some(FnArg::Typed(argument)) => (*argument.ty).clone(),
+            _ => syn::parse_quote!(::std::string::String),
+        };
         let action = if receiver {
             let FnArg::Receiver(r) = args[0] else {
                 unreachable!()
@@ -100,11 +104,10 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
             {
                 return Err(syn::Error::new(
                     sig.span(),
-                    "expected &mut self with zero arguments or one String argument",
+                    "expected &mut self with zero arguments or one typed argument",
                 ));
             }
             let call = if args.len() == 2 {
-                require_string(args[1])?;
                 quote!(__state.#name(__argument))
             } else {
                 quote!(__state.#name())
@@ -114,7 +117,7 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
             if args.len() != 2 {
                 return Err(syn::Error::new(
                     sig.span(),
-                    "static command requires (model: Store<Self>, argument: String)",
+                    "static command requires (model: Store<Self>, argument: A)",
                 ));
             }
             let FnArg::Typed(first) = args[0] else {
@@ -131,7 +134,6 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
             if !valid {
                 return Err(syn::Error::new(first.span(), "expected Store<Self>"));
             }
-            require_string(args[1])?;
             quote!(<#model>::#name(__store.clone(),__argument))
         };
         let enabled = helper.map_or_else(
@@ -144,8 +146,8 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
             .iter()
             .filter(|a| a.path().is_ident("cfg"))
             .collect();
-        declarations.push(quote!(#(#cfg)* fn #generated(&self, argument: ::wakui2_runtime::Binding<::std::string::String>) -> ::wakui2_runtime::Command;));
-        methods.push(quote!(#(#cfg)* fn #generated(&self, argument: ::wakui2_runtime::Binding<::std::string::String>) -> ::wakui2_runtime::Command {
+        declarations.push(quote!(#(#cfg)* fn #generated(&self, argument: ::wakui2_runtime::Binding<#argument_type>) -> ::wakui2_runtime::Command;));
+        methods.push(quote!(#(#cfg)* fn #generated(&self, argument: ::wakui2_runtime::Binding<#argument_type>) -> ::wakui2_runtime::Command {
             self.command(#enabled, |__store,__argument| { #action; }, argument)
         }));
     }
@@ -155,15 +157,6 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
         impl #trait_name for ::wakui2_runtime::Store<#model> { #(#methods)* }
     ))
 }
-fn require_string(arg: &FnArg) -> syn::Result<()> {
-    if matches!(arg,FnArg::Typed(a) if matches!(a.ty.as_ref(),Type::Path(p) if p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "String" && matches!(s.arguments,syn::PathArguments::None))))
-    {
-        Ok(())
-    } else {
-        Err(syn::Error::new(arg.span(), "expected String argument"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,7 +182,7 @@ mod tests {
     fn invalid_commands_are_rejected() {
         for source in [
             "impl S { #[command] fn x(&self) {} }",
-            "impl S { #[command] fn x(&mut self, v:u32) {} }",
+            "impl S { #[command] fn x(&mut self, v:u32, extra:u32) {} }",
             "impl S { #[command] async fn x(&mut self) {} }",
             "impl S { #[command] fn x(&mut self)->bool {true} }",
             "impl S { #[command] fn x(s: Self, v:String) {} }",

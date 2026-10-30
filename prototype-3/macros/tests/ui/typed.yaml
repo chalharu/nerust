@@ -1,0 +1,24 @@
+schema_version: 2
+root:
+  type: Window
+  id: main
+  title: {literal: Typed commands}
+  content:
+    type: StackLayout
+    id: commands
+    children:
+      - type: Button
+        id: integer
+        text: {literal: Integer}
+        command: integer
+        argument: {bind: {path: integer}}
+      - type: Button
+        id: choice
+        text: {literal: Enum}
+        command: choice
+        argument: {bind: {path: choice}}
+      - type: Button
+        id: numeric
+        text: {literal: Float}
+        command: numeric
+        argument: {literal: 2.5}
