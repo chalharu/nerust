@@ -1,0 +1,1539 @@
+//! Run each GTK test in its own process to preserve initialization-thread affinity.
+use super::*;
+use futures::{FutureExt, channel::oneshot};
+use std::time::Duration;
+use wakui2_runtime::{Edges, Placement, Policy, ShutdownOutcome, run_async};
+
+// Drive real native sources, not a blocking futures executor. The watchdog is
+// only a failure bound; test sequencing uses phases, oneshots and task reaping.
+fn drive_until(done: impl Fn() -> bool) {
+    let expired = Rc::new(Cell::new(false));
+    let flag = expired.clone();
+    let watchdog = glib::timeout_add_local_once(Duration::from_secs(5), move || flag.set(true));
+    let context = glib::MainContext::default();
+    while !done() && !expired.get() {
+        context.iteration(true);
+    }
+    if !expired.get() {
+        watchdog.remove();
+    }
+    assert!(!expired.get(), "native shutdown did not make progress");
+}
+
+#[derive(Default)]
+struct CloseProbe {
+    allow: Cell<bool>,
+    confirms: Cell<usize>,
+    cancels: Cell<usize>,
+    drains: Cell<usize>,
+    closes: Cell<usize>,
+    confirm: RefCell<Option<LocalBoxFuture<'static, bool>>>,
+    drain: RefCell<Option<LocalBoxFuture<'static, ()>>>,
+}
+
+impl CloseProbe {
+    fn hooks(self: &Rc<Self>) -> WindowHooks {
+        let confirm = self.clone();
+        let cancel = self.clone();
+        let drain = self.clone();
+        let close = self.clone();
+        WindowHooks {
+            confirm: Rc::new(move || {
+                confirm.confirms.set(confirm.confirms.get() + 1);
+                confirm.confirm.take().unwrap_or_else(|| {
+                    let allow = confirm.allow.get();
+                    Box::pin(async move { allow })
+                })
+            }),
+            cancel: Rc::new(move || cancel.cancels.set(cancel.cancels.get() + 1)),
+            drain: Rc::new(move || {
+                drain.drains.set(drain.drains.get() + 1);
+                drain.drain.take().unwrap_or_else(|| Box::pin(async {}))
+            }),
+            close: Rc::new(move || close.closes.set(close.closes.get() + 1)),
+        }
+    }
+}
+
+fn coordinated_pair(host: &GtkHost, session: &Session, timeout: Duration) -> [View; 2] {
+    let views = ["one", "two"].map(|id| {
+        let view = View::new(Binding::constant(id.into()));
+        host.register_view(session, id, &view).unwrap();
+        host.coordinate_close(&view, session, timeout).unwrap();
+        view
+    });
+    UiHost::attach(host, session.clone()).unwrap();
+    assert!(views.iter().all(|v| v.native_window().is_mapped()));
+    views
+}
+
+#[test]
+fn native_coordinated_multiwindow_close() {
+    gtk::init().expect("native_coordinated_multiwindow_close requires Xvfb");
+    let host = GtkHost::attach();
+    let session = Session::new();
+    let probe = Rc::new(CloseProbe::default());
+    let _work = session.register_window("0-work", probe.hooks()).unwrap();
+    let views = coordinated_pair(&host, &session, Duration::from_secs(30));
+    assert_eq!(session.window_count(), 3, "custom hooks were not replaced");
+    let closed = Rc::new(Cell::new(0));
+    for view in &views {
+        let count = closed.clone();
+        view.on_close(Rc::new(move || count.set(count.get() + 1)));
+    }
+
+    views[0].native_window().close();
+    views[0].native_window().close();
+    assert_eq!(host.executor.tasks.borrow().len(), 1, "one queued request");
+    assert_eq!(probe.confirms.get(), 0, "confirmation is asynchronous");
+    reap_all(&host.executor);
+    assert_eq!(probe.confirms.get(), 1);
+    assert_eq!(probe.cancels.get(), 0);
+    assert_eq!(closed.get(), 0);
+    assert_eq!(session.shutdown().phase(), ShutdownPhase::Running);
+    assert!(
+        views
+            .iter()
+            .all(|v| !v.0.closed.get() && v.native_window().is_mapped())
+    );
+
+    probe.allow.set(true);
+    let (release, drain) = oneshot::channel();
+    probe
+        .drain
+        .replace(Some(Box::pin(async move { drain.await.unwrap() })));
+    views[1].native_window().close();
+    drive_until(|| session.shutdown().phase() == ShutdownPhase::Draining);
+    assert_eq!(probe.confirms.get(), 2);
+    assert_eq!(probe.cancels.get(), 1);
+    assert_eq!(probe.drains.get(), 1);
+    assert_eq!(probe.closes.get(), 0);
+    for view in &views {
+        view.native_window().close();
+    }
+    assert_eq!(
+        host.executor.tasks.borrow().len(),
+        1,
+        "busy native requests ignored"
+    );
+
+    // A native idle callback executes while drain is pending and both windows
+    // remain mapped. Only that UI turn releases the application's oneshot.
+    let live = views.each_ref().map(|v| Rc::downgrade(&v.0));
+    let ui_turn = Rc::new(Cell::new(false));
+    let flag = ui_turn.clone();
+    glib::idle_add_local_once(move || {
+        for view in live {
+            let view = view.upgrade().unwrap();
+            assert!(!view.closed.get());
+            assert!(view.window.is_mapped());
+        }
+        flag.set(true);
+        release.send(()).unwrap();
+    });
+    drive_until(|| session.shutdown().phase() == ShutdownPhase::Closed);
+    reap_all(&host.executor);
+    assert!(ui_turn.get());
+    assert_eq!(probe.confirms.get(), 2);
+    assert_eq!(
+        (probe.cancels.get(), probe.drains.get(), probe.closes.get()),
+        (1, 1, 1)
+    );
+    assert_eq!(closed.get(), 2);
+    assert_eq!(session.window_count(), 0);
+    assert!(host.windows.borrow().is_empty());
+    assert!(host.sessions.borrow().is_empty());
+    for view in &views {
+        assert!(view.0.closed.get());
+        assert!(!view.native_window().is_mapped());
+        view.close();
+    }
+    session.shutdown().close_now();
+    assert_eq!(
+        closed.get(),
+        2,
+        "force close never recurses or repeats callbacks"
+    );
+}
+
+#[test]
+fn native_coordinated_close_timeout() {
+    gtk::init().expect("native_coordinated_close_timeout requires Xvfb");
+    for confirming in [true, false] {
+        let host = GtkHost::attach();
+        let session = Session::new();
+        let probe = Rc::new(CloseProbe::default());
+        probe.allow.set(true);
+        let (send, receive) = oneshot::channel::<()>();
+        if confirming {
+            probe.confirm.replace(Some(Box::pin(async move {
+                receive.await.unwrap();
+                true
+            })));
+        } else {
+            probe
+                .drain
+                .replace(Some(Box::pin(async move { receive.await.unwrap() })));
+        }
+        let _work = session.register_window("0-work", probe.hooks()).unwrap();
+        // Zero duration and a pending oneshot deterministically select the
+        // runtime's futures_timer deadline, in confirmation and in drain.
+        let views = coordinated_pair(&host, &session, Duration::ZERO);
+        let closed = Rc::new(Cell::new(0));
+        for view in &views {
+            let count = closed.clone();
+            view.on_close(Rc::new(move || count.set(count.get() + 1)));
+        }
+        views[0].native_window().close();
+        assert_eq!(closed.get(), 0, "no synchronous teardown");
+        drive_until(|| session.shutdown().phase() == ShutdownPhase::Closed);
+        reap_all(&host.executor);
+        assert!(
+            send.is_canceled(),
+            "deadline dropped pending application work"
+        );
+        assert_eq!(probe.confirms.get(), 1);
+        assert_eq!(probe.drains.get(), usize::from(!confirming));
+        assert_eq!((probe.cancels.get(), probe.closes.get()), (1, 1));
+        assert_eq!(closed.get(), 2);
+        assert!(
+            views
+                .iter()
+                .all(|v| v.0.closed.get() && !v.native_window().is_mapped())
+        );
+        assert_eq!(session.window_count(), 0);
+        session.shutdown().close_now();
+        assert_eq!(closed.get(), 2);
+    }
+}
+
+#[test]
+fn native_coordinated_close_cancel() {
+    gtk::init().expect("native_coordinated_close_cancel requires Xvfb");
+    let host = GtkHost::attach();
+    let session = Session::new();
+    let probe = Rc::new(CloseProbe::default());
+    probe.allow.set(true);
+    let _work = session.register_window("0-work", probe.hooks()).unwrap();
+    let views = coordinated_pair(&host, &session, Duration::from_secs(30));
+    let (confirm, confirmed) = oneshot::channel();
+    probe
+        .confirm
+        .replace(Some(Box::pin(async move { confirmed.await.unwrap() })));
+
+    // An external request can win after native close queues its task. Runtime
+    // Busy must release that task's gate, not force-close or cancel the winner.
+    views[0].native_window().close();
+    let shutdown = session.shutdown();
+    let mut external = Box::pin(shutdown.request_shutdown(Duration::from_secs(30)));
+    assert!(external.as_mut().now_or_never().is_none());
+    reap_all(&host.executor);
+    assert_eq!(probe.confirms.get(), 1);
+    assert_eq!(shutdown.phase(), ShutdownPhase::Confirming);
+    assert!(shutdown.cancel_shutdown());
+    assert_eq!(external.now_or_never(), Some(ShutdownOutcome::Cancelled));
+    assert!(confirm.is_canceled());
+    assert_eq!(probe.cancels.get(), 0);
+    assert!(
+        views
+            .iter()
+            .all(|v| !v.0.closed.get() && v.native_window().is_mapped())
+    );
+
+    let (release, drained) = oneshot::channel::<()>();
+    probe
+        .drain
+        .replace(Some(Box::pin(async move { drained.await.unwrap() })));
+    views[0].native_window().close();
+    drive_until(|| shutdown.phase() == ShutdownPhase::Draining);
+    assert!(shutdown.cancel_shutdown());
+    reap_all(&host.executor);
+    assert!(release.is_canceled());
+    assert_eq!(shutdown.phase(), ShutdownPhase::Running);
+    assert_eq!(probe.closes.get(), 0);
+    assert!(
+        views
+            .iter()
+            .all(|v| !v.0.closed.get() && v.native_window().is_mapped())
+    );
+    views[0].native_window().close();
+    drive_until(|| shutdown.phase() == ShutdownPhase::Closed);
+    reap_all(&host.executor);
+    assert_eq!(probe.confirms.get(), 3);
+    assert_eq!((probe.cancels.get(), probe.closes.get()), (2, 1));
+    assert!(views.iter().all(|v| v.0.closed.get()));
+}
+
+#[test]
+fn native_coordinated_close_weak_teardown() {
+    gtk::init().expect("native_coordinated_close_weak_teardown requires Xvfb");
+    for drop_host in [false, true] {
+        let host = GtkHost::attach();
+        let session = Session::new();
+        let probe = Rc::new(CloseProbe::default());
+        let (send, receive) = oneshot::channel::<bool>();
+        probe
+            .confirm
+            .replace(Some(Box::pin(async move { receive.await.unwrap() })));
+        let _work = session.register_window("work", probe.hooks()).unwrap();
+        // Deliberately not register_view: only the caller owns this View.
+        let view = View::new(Binding::constant("weak close".into()));
+        host.coordinate_close(&view, &session, Duration::from_secs(30))
+            .unwrap();
+        assert!(
+            host.coordinate_close(&view, &session, Duration::ZERO)
+                .is_err()
+        );
+        view.present();
+        let native = view.native_window();
+        let weak_view = Rc::downgrade(&view.0);
+        let weak_executor = Rc::downgrade(&host.executor);
+        native.close();
+        drive_until(|| session.shutdown().phase() == ShutdownPhase::Confirming);
+        if drop_host {
+            drop(host);
+            assert!(weak_executor.upgrade().is_none());
+            assert_eq!(session.shutdown().phase(), ShutdownPhase::Running);
+            assert!(send.is_canceled());
+            native.close(); // A closed executor rejects gracefully, not synchronously.
+            assert!(!view.0.closed.get());
+            assert!(native.is_mapped());
+            view.close();
+            drop(view);
+        } else {
+            drop(view);
+            assert!(
+                weak_view.upgrade().is_none(),
+                "request must not retain View"
+            );
+            reap_all(&host.executor);
+            assert_eq!(session.shutdown().phase(), ShutdownPhase::Running);
+            assert!(send.is_canceled());
+        }
+        assert!(weak_view.upgrade().is_none());
+        assert_eq!((probe.cancels.get(), probe.closes.get()), (0, 0));
+    }
+}
+
+fn reap_all(executor: &GtkExecutor) {
+    for _ in 0..256 {
+        if executor.tasks.borrow().is_empty() && executor.reap.borrow().is_none() {
+            return;
+        }
+        executor.context.iteration(false);
+    }
+    panic!("completion cleanup did not finish without another spawn or a timer");
+}
+
+#[test]
+fn native_executor_completion() {
+    gtk::init().expect("native_executor_completion requires a display: run under Xvfb");
+    let host = GtkHost::attach();
+    assert!(
+        host.executor.reap.borrow().is_none(),
+        "idle host has no cleanup source"
+    );
+    let drops = Rc::new(Cell::new(0));
+    for _ in 0..128 {
+        let count = drops.clone();
+        let owner = Rc::downgrade(&host.executor);
+        let token = Subscription::new(move || {
+            let executor = owner.upgrade().unwrap();
+            assert!(
+                executor.tasks.try_borrow_mut().is_ok(),
+                "Source destructor outside task borrow"
+            );
+            assert!(
+                executor.reap.try_borrow_mut().is_ok(),
+                "Source destructor outside callback borrow"
+            );
+            count.set(count.get() + 1);
+        });
+        // Keep the capture in the completed future until GLib finalizes its Source.
+        host.executor.spawn(Box::pin(std::future::poll_fn(move |_| {
+            let _ = &token;
+            std::task::Poll::Ready(())
+        })));
+    }
+    reap_all(&host.executor);
+    assert_eq!(drops.get(), 128);
+    assert!(host.executor.completed.borrow().is_empty());
+
+    // An externally woken task must be reaped without any subsequent spawn.
+    let (send, receive) = futures::channel::oneshot::channel::<()>();
+    host.executor.spawn(Box::pin(async move {
+        receive.await.unwrap();
+    }));
+    host.executor.context.iteration(false);
+    assert_eq!(host.executor.tasks.borrow().len(), 1);
+    assert!(
+        host.executor.reap.borrow().is_none(),
+        "pending work must not schedule polling"
+    );
+    send.send(()).unwrap();
+    reap_all(&host.executor);
+
+    // GLib can drop application captures during its Ready poll, before the idle
+    // callback. Destructors may spawn more work without borrowing bookkeeping.
+    let owner = Rc::downgrade(&host.executor);
+    let count = drops.clone();
+    let token = Subscription::new(move || {
+        let executor = owner.upgrade().unwrap();
+        assert!(executor.tasks.try_borrow_mut().is_ok());
+        assert!(executor.reap.try_borrow_mut().is_ok());
+        executor.spawn(Box::pin(async move {
+            count.set(count.get() + 1);
+        }));
+    });
+    host.executor.spawn(Box::pin(std::future::poll_fn(move |_| {
+        let _ = &token;
+        std::task::Poll::Ready(())
+    })));
+    reap_all(&host.executor);
+    assert_eq!(drops.get(), 129);
+
+    // Closing inside a completed future's destructor cancels pending work safely.
+    let marker = Rc::new(());
+    let weak_marker = Rc::downgrade(&marker);
+    host.executor.spawn(Box::pin(async move {
+        let _marker = marker;
+        std::future::pending::<()>().await;
+    }));
+    let owner = Rc::downgrade(&host.executor);
+    let token = Subscription::new(move || owner.upgrade().unwrap().close());
+    host.executor.spawn(Box::pin(std::future::poll_fn(move |_| {
+        let _ = &token;
+        std::task::Poll::Ready(())
+    })));
+    reap_all(&host.executor);
+    assert!(host.executor.closed.get());
+    assert!(weak_marker.upgrade().is_none());
+
+    // Drop while a one-shot cleanup is queued: no stale SourceId or strong cycle.
+    let host = GtkHost::attach();
+    host.executor.spawn(Box::pin(async {}));
+    for _ in 0..256 {
+        if host.executor.reap.borrow().is_some() {
+            break;
+        }
+        host.executor.context.iteration(false);
+    }
+    assert!(host.executor.reap.borrow().is_some());
+    let weak = Rc::downgrade(&host.executor);
+    drop(host);
+    assert!(
+        weak.upgrade().is_none(),
+        "tasks and callback must not retain executor"
+    );
+}
+
+fn settle() {
+    let main = glib::MainLoop::new(None, false);
+    let done = main.clone();
+    glib::timeout_add_local_once(Duration::from_millis(40), move || done.quit());
+    main.run();
+}
+
+#[derive(Clone)]
+struct Leaf {
+    text: String,
+}
+
+#[test]
+fn native_entry_converted_replacement() {
+    gtk::init().expect("native_entry_converted_replacement requires Xvfb");
+    // GTK replaces text by deleting and inserting, but coalesces text notify.
+    let probe = gtk::Entry::new();
+    probe.set_text("0.5");
+    let changed = Rc::new(RefCell::new(Vec::new()));
+    let seen = changed.clone();
+    probe.connect_changed(move |entry| seen.borrow_mut().push(entry.text().to_string()));
+    let notified = Rc::new(RefCell::new(Vec::new()));
+    let seen = notified.clone();
+    probe.connect_text_notify(move |entry| seen.borrow_mut().push(entry.text().to_string()));
+    probe.set_text("0.75");
+    assert_eq!(&*changed.borrow(), &["", "0.75"]);
+    assert_eq!(&*notified.borrow(), &["0.75"]);
+
+    let host = GtkHost::attach();
+    let model = Store::new((0.5_f64, 0_usize), host.executor());
+    let conversions = Rc::new(RefCell::new(Vec::new()));
+    let seen = conversions.clone();
+    let text = model
+        .bind(
+            |s| s.0,
+            Some(|s, value| {
+                s.0 = value;
+                s.1 += 1;
+            }),
+        )
+        .convert(
+            |value| value.to_string(),
+            move |text: String| {
+                seen.borrow_mut().push(text.clone());
+                text.parse::<f64>().map_err(|error| error.to_string())
+            },
+        );
+    let view = View::new(Binding::constant("Converted entry".into()));
+    view.entry(&view.root(), "number", text);
+    let entry = view.widget::<gtk::Entry>("number").unwrap();
+    let editable = entry.upcast_ref::<gtk::Editable>();
+    assert_eq!(editable.text(), "0.5");
+    assert_eq!(model.snapshot(), (0.5, 0));
+    assert!(
+        conversions.borrow().is_empty(),
+        "initial value must not echo"
+    );
+
+    // No main-loop iteration: replacement and rollback must finish synchronously.
+    editable.set_text("0.75");
+    assert_eq!(model.snapshot(), (0.75, 1));
+    assert_eq!(editable.text(), "0.75");
+    assert_eq!(&*conversions.borrow(), &["0.75"]);
+    editable.set_text("not a number");
+    assert_eq!(model.snapshot(), (0.75, 1));
+    assert_eq!(editable.text(), "0.75");
+    editable.set_text("");
+    assert_eq!(model.snapshot(), (0.75, 1));
+    assert_eq!(editable.text(), "0.75");
+    // Accepted, but not already canonical; normalization must not write twice.
+    editable.set_text("0.2500");
+    assert_eq!(model.snapshot(), (0.25, 2));
+    assert_eq!(editable.text(), "0.25");
+    // Same typed value produces no source notification, but still normalizes.
+    editable.set_text("0.250");
+    assert_eq!(model.snapshot(), (0.25, 3));
+    assert_eq!(editable.text(), "0.25");
+    model.update(|s| s.0 = 0.5);
+    assert_eq!(model.snapshot(), (0.5, 3));
+    assert_eq!(editable.text(), "0.5");
+    assert_eq!(
+        &*conversions.borrow(),
+        &["0.75", "not a number", "", "0.2500", "0.250"]
+    );
+    view.edit("number", "0.75").unwrap();
+    assert_eq!(model.snapshot(), (0.75, 4));
+    assert_eq!(editable.text(), "0.75");
+    editable.insert_text("0", &mut 4);
+    assert_eq!(model.snapshot(), (0.75, 5));
+    assert_eq!(editable.text(), "0.75");
+    editable.delete_text(3, 4);
+    assert_eq!(model.snapshot(), (0.7, 6));
+    assert_eq!(editable.text(), "0.7");
+    editable.insert_text("x", &mut 3);
+    assert_eq!(model.snapshot(), (0.7, 6));
+    assert_eq!(editable.text(), "0.7");
+    editable.delete_text(0, -1);
+    assert_eq!(model.snapshot(), (0.7, 6));
+    assert_eq!(editable.text(), "0.7");
+    model.update(|s| s.0 = 0.75);
+    assert_eq!(model.snapshot(), (0.75, 6));
+    assert_eq!(editable.text(), "0.75");
+    model.close();
+    editable.set_text("0.9");
+    assert_eq!(model.snapshot(), (0.75, 6));
+    assert_eq!(editable.text(), "0.75", "closed writer also rolls back");
+    view.close();
+    editable.set_text("detached");
+    assert_eq!(editable.text(), "detached", "shutdown disconnects input");
+    assert_eq!(model.snapshot(), (0.75, 6));
+    host.close();
+}
+
+#[test]
+fn native_entry_incremental_edits_and_readonly() {
+    gtk::init().expect("native_entry_incremental_edits_and_readonly requires Xvfb");
+    let host = GtkHost::attach();
+    let model = Store::new(("ab".to_owned(), 0_usize), host.executor());
+    let view = View::new(Binding::constant("Entry edits".into()));
+    view.entry(
+        &view.root(),
+        "text",
+        model.bind(
+            |s| s.0.clone(),
+            Some(|s, value| {
+                s.0 = value;
+                s.1 += 1;
+            }),
+        ),
+    );
+    let entry = view.widget::<gtk::Entry>("text").unwrap();
+    assert_eq!(model.snapshot().1, 0);
+    let mut position = 2;
+    entry.insert_text("c", &mut position);
+    assert_eq!(position, 3);
+    assert_eq!(model.snapshot(), ("abc".into(), 1));
+    entry.delete_text(1, 2);
+    assert_eq!(model.snapshot(), ("ac".into(), 2));
+    entry.delete_text(0, -1);
+    assert_eq!(model.snapshot(), ("".into(), 3), "empty String is valid");
+    entry.insert_text("typed", &mut 0);
+    assert_eq!(model.snapshot(), ("typed".into(), 4));
+    view.edit("text", "replacement").unwrap();
+    assert_eq!(model.snapshot(), ("replacement".into(), 5));
+    model.update(|s| s.0 = "model update".into());
+    assert_eq!(entry.text(), "model update");
+    assert_eq!(model.snapshot().1, 5, "model updates must not echo");
+
+    view.entry(&view.root(), "readonly", Binding::constant("fixed".into()));
+    let readonly = view.widget::<gtk::Entry>("readonly").unwrap();
+    assert!(!readonly.is_editable());
+    assert!(view.edit("readonly", "invalid").is_err());
+    readonly.set_text("native replacement");
+    assert_eq!(readonly.text(), "fixed");
+    readonly.delete_text(0, -1);
+    assert_eq!(readonly.text(), "fixed");
+    view.cleanup("text");
+    entry.set_text("evicted");
+    assert_eq!(model.snapshot(), ("model update".into(), 5));
+    view.close();
+    host.close();
+}
+
+#[test]
+fn native_invalid_keyed_snapshots() {
+    gtk::init().expect("native_invalid_keyed_snapshots requires a display: run under Xvfb");
+    let host = GtkHost::attach();
+    let first = Keyed::new(
+        "first",
+        Store::new(
+            Leaf {
+                text: "first".into(),
+            },
+            host.executor(),
+        ),
+    );
+    let second = Keyed::new(
+        "second",
+        Store::new(
+            Leaf {
+                text: "second".into(),
+            },
+            host.executor(),
+        ),
+    );
+    let model = Store::new(
+        (vec![first.clone(), second.clone()], Some(first.clone())),
+        host.executor(),
+    );
+    let view = View::new(Binding::constant("key validation".into()));
+    let builds = Rc::new(Cell::new(0));
+    let count = builds.clone();
+    let template: Template<Leaf> = Rc::new(move |view, parent, prefix, leaf| {
+        count.set(count.get() + 1);
+        view.label(
+            parent,
+            &format!("{prefix}/text"),
+            leaf.bind(|s| s.text.clone(), None),
+        );
+    });
+    view.items(
+        &view.root(),
+        "rows",
+        model.bind(|s| s.0.clone(), None),
+        Binding::constant(Viewport {
+            start: 0,
+            count: 1,
+            row_height: 32.0,
+        }),
+        template.clone(),
+    );
+    view.content(
+        &view.root(),
+        "content",
+        model.bind(|s| s.1.clone(), None),
+        template,
+    );
+    let row = view.widget::<gtk::Label>("rows/first/text").unwrap();
+    let content = view.widget::<gtk::Label>("content/first/text").unwrap();
+    let scroll = view.widget::<gtk::ScrolledWindow>("rows").unwrap();
+    let container = view.widget::<gtk::Box>("content").unwrap();
+
+    for key in ["", "bad/key"] {
+        // Public fields bypass Keyed::new. Even an offscreen invalid key rejects
+        // the whole snapshot before the valid first entry can replace a mount.
+        let invalid = Keyed {
+            key: key.into(),
+            model: second.model.clone(),
+        };
+        let replacement = second.clone();
+        let before = builds.get();
+        model.update(move |s| s.0 = vec![replacement, invalid]);
+        assert!(
+            view.items_error("rows")
+                .unwrap()
+                .contains("invalid item key")
+        );
+        assert_eq!(
+            scroll.tooltip_text().as_deref(),
+            view.items_error("rows").as_deref()
+        );
+        assert_eq!(view.item_keys("rows"), ["first"]);
+        assert_eq!(view.widget::<gtk::Label>("rows/first/text").unwrap(), row);
+        assert!(row.parent().is_some());
+        assert_eq!(builds.get(), before);
+    }
+    // Scrolling still uses the previous valid source, not the rejected snapshot.
+    view.viewport("rows", 1);
+    assert_eq!(view.item_keys("rows"), ["second"]);
+    assert!(view.items_error("rows").is_some());
+    view.viewport("rows", 0);
+    assert_eq!(view.item_keys("rows"), ["first"]);
+    let replacement = second.clone();
+    model.update(move |s| s.0 = vec![replacement]);
+    assert_eq!(view.item_keys("rows"), ["second"]);
+    assert!(view.items_error("rows").is_none());
+    assert!(scroll.tooltip_text().is_none());
+
+    for key in ["", "bad/key"] {
+        let invalid = Keyed {
+            key: key.into(),
+            model: second.model.clone(),
+        };
+        let before = builds.get();
+        model.update(move |s| s.1 = Some(invalid));
+        assert!(
+            view.0
+                .error
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .contains("invalid content key")
+        );
+        assert!(
+            container
+                .tooltip_text()
+                .unwrap()
+                .contains("invalid content key")
+        );
+        assert_eq!(
+            view.widget::<gtk::Label>("content/first/text").unwrap(),
+            content
+        );
+        assert!(content.parent().is_some());
+        assert_eq!(builds.get(), before);
+    }
+    first.model.update(|s| s.text = "still bound".into());
+    assert_eq!(
+        content.text(),
+        "still bound",
+        "last valid content keeps its subscription"
+    );
+    let replacement = second.clone();
+    model.update(move |s| s.1 = Some(replacement));
+    assert!(view.text("content/first/text").is_none());
+    assert!(content.parent().is_none());
+    assert_eq!(view.text("content/second/text").as_deref(), Some("second"));
+    assert!(container.tooltip_text().is_none());
+    model.update(|s| s.1 = None);
+    assert!(view.text("content/second/text").is_none());
+    view.close();
+    host.close();
+}
+
+#[derive(Clone)]
+struct Row {
+    name: String,
+    enabled: bool,
+    calls: usize,
+    writes: usize,
+    children: Vec<Keyed<Leaf>>,
+}
+
+#[derive(Clone)]
+struct State {
+    rows: Vec<Keyed<Row>>,
+    viewport: Viewport,
+    selected: Option<Keyed<Row>>,
+    menus: Vec<MenuItem>,
+    title: String,
+    progress: f64,
+    clipboard: String,
+}
+
+fn menu_item(id: &str, role: MenuRole, shortcut: Option<&str>) -> MenuItem {
+    MenuItem {
+        id: id.into(),
+        label: format!("Label {id}"),
+        argument: format!("arg {id}"),
+        shortcut: shortcut.map(Into::into),
+        role,
+        enabled: true,
+    }
+}
+
+#[test]
+fn native_root_style() {
+    gtk::init().expect("native_root_style requires a display: run under Xvfb");
+    let view = View::new(Binding::constant("Root style".into()));
+    let root = view.root().widget;
+    let outer = view.native_window().child().unwrap();
+    assert_eq!(root.parent().as_ref(), Some(&outer));
+    assert_eq!(
+        view.widget::<gtk::Box>("__root")
+            .unwrap()
+            .upcast::<gtk::Widget>(),
+        root
+    );
+    {
+        let nodes = view.0.nodes.borrow();
+        assert_eq!(nodes["__root"].frame.upcast_ref::<gtk::Widget>(), &root);
+        assert_eq!(nodes["__root"].parent.widget, outer);
+    }
+    view.label(&view.root(), "child", Binding::constant("content".into()));
+    view.style(
+        "__root",
+        Style {
+            margin: Edges {
+                top: 2.0,
+                right: 3.0,
+                bottom: 4.0,
+                left: 5.0,
+            },
+            padding: Edges {
+                top: 6.0,
+                right: 7.0,
+                bottom: 8.0,
+                left: 9.0,
+            },
+            ..Style::default()
+        },
+    );
+    view.present();
+    settle();
+    assert!(root.is_mapped());
+    assert_eq!((root.margin_top(), root.margin_end()), (2, 3));
+    assert_eq!((root.margin_bottom(), root.margin_start()), (4, 5));
+    let padding = root.style_context().padding();
+    assert_eq!((padding.top(), padding.right()), (6, 7));
+    assert_eq!((padding.bottom(), padding.left()), (8, 9));
+    assert_eq!(root.parent().as_ref(), Some(&outer));
+    assert!(outer.first_child().unwrap().is::<gtk::PopoverMenuBar>());
+    assert_eq!(outer.last_child().as_ref(), Some(&root));
+    assert_eq!(root.first_child(), root.last_child());
+    assert_eq!(
+        view.0.nodes.borrow()["child"].frame.parent().as_ref(),
+        Some(&root)
+    );
+    view.style("__root", Style::default());
+    settle();
+    assert_eq!(root.margin_start(), 0);
+    assert_eq!(root.style_context().padding().left(), 0);
+    view.close();
+}
+
+#[test]
+fn native_menu_namespaces() {
+    gtk::init().expect("native_menu_namespaces requires a display: run under Xvfb");
+    let host = GtkHost::attach();
+    let view = View::new(Binding::constant("Menu namespaces".into()));
+    let items = Store::new(
+        vec![menu_item("open", MenuRole::Normal, None)],
+        host.executor(),
+    );
+    let dispatched = Rc::new(RefCell::new(Vec::new()));
+    for id in ["file", "tools"] {
+        let seen = dispatched.clone();
+        view.menu(
+            id,
+            Binding::constant(id.into()),
+            items.bind(Clone::clone, None),
+            Rc::new(move |argument| {
+                seen.borrow_mut().push((id, argument));
+                true
+            }),
+        );
+    }
+    assert!(view.0.error.borrow().is_none());
+    assert_eq!(view.0.actions.borrow().len(), 2);
+    for id in ["file", "tools"] {
+        assert_eq!(
+            &*view.0.menu_states.borrow()[id].actions.borrow(),
+            &[format!("{id}/open")]
+        );
+        view.activate_menu(&format!("{id}/open")).unwrap();
+    }
+    assert_eq!(
+        &*dispatched.borrow(),
+        &[("file", "arg open".into()), ("tools", "arg open".into())]
+    );
+    assert_eq!(
+        view.activate_menu("open").unwrap_err(),
+        "ambiguous menu item: open; use menu/item"
+    );
+    assert!(
+        view.activate_menu("missing/open")
+            .unwrap_err()
+            .contains("missing")
+    );
+    assert_eq!(dispatched.borrow().len(), 2);
+    let stale = view.0.actions.borrow()["file/open"].action.clone();
+    items.update(|items| items.push(items[0].clone()));
+    assert!(
+        view.0
+            .error
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("duplicate menu item id")
+    );
+    assert_eq!(
+        view.0.actions.borrow().len(),
+        2,
+        "invalid snapshot keeps both menus"
+    );
+    view.activate_menu("file/open").unwrap();
+    items.update(|items| {
+        items.pop();
+        items[0].argument = "updated".into();
+    });
+    stale.activate(None);
+    assert_eq!(dispatched.borrow().len(), 3, "old signal disconnected");
+    view.activate_menu("tools/open").unwrap();
+    assert_eq!(
+        dispatched.borrow().last().unwrap(),
+        &("tools", "updated".into())
+    );
+    view.cleanup("file");
+    assert!(!view.0.actions.borrow().contains_key("file/open"));
+    assert!(view.0.actions.borrow().contains_key("tools/open"));
+    view.activate_menu("open").unwrap();
+    items.update(|items| items[0].enabled = false);
+    assert!(view.activate_menu("open").unwrap_err().contains("disabled"));
+    assert!(
+        view.activate_menu("tools/open")
+            .unwrap_err()
+            .contains("disabled")
+    );
+    items.update(Vec::clear);
+    assert!(view.activate_menu("open").unwrap_err().contains("missing"));
+    assert!(view.0.actions.borrow().is_empty());
+    view.close();
+    assert!(
+        view.activate_menu("tools/open")
+            .unwrap_err()
+            .contains("closed")
+    );
+    host.close();
+}
+
+#[test]
+fn native_contract() {
+    gtk::init().expect("native_contract requires a display: run under Xvfb");
+    let host = GtkHost::attach();
+    let executor = host.executor();
+    let rows: Vec<_> = (0..100)
+        .map(|i| {
+            let leaf = Store::new(
+                Leaf {
+                    text: format!("child {i}"),
+                },
+                executor.clone(),
+            );
+            Keyed::new(
+                format!("k{i}"),
+                Store::new(
+                    Row {
+                        name: format!("row {i}"),
+                        enabled: true,
+                        calls: 0,
+                        writes: 0,
+                        children: vec![Keyed::new("child", leaf)],
+                    },
+                    executor.clone(),
+                ),
+            )
+        })
+        .collect();
+    let model = Store::new(
+        State {
+            rows: rows.clone(),
+            viewport: Viewport {
+                start: 0,
+                count: 3,
+                row_height: 64.0,
+            },
+            selected: Some(rows[0].clone()),
+            title: "Native contract".into(),
+            progress: 0.25,
+            clipboard: "clipboard text".into(),
+            menus: vec![
+                menu_item("choose", MenuRole::Normal, Some("<Control>r")),
+                menu_item("sep", MenuRole::Separator, None),
+                menu_item("select", MenuRole::SelectAll, None),
+                menu_item("copy", MenuRole::Copy, None),
+                menu_item("cut", MenuRole::Cut, None),
+                menu_item("paste", MenuRole::Paste, None),
+                menu_item("about", MenuRole::About, None),
+            ],
+        },
+        executor.clone(),
+    );
+    let view = View::new(model.bind(|s| s.title.clone(), None));
+    let root = view.layout(
+        &view.root(),
+        "stack",
+        Layout::Stack {
+            horizontal: false,
+            gap: 5.0,
+        },
+    );
+    view.style(
+        "stack",
+        Style {
+            margin: Edges {
+                top: 2.0,
+                right: 3.0,
+                bottom: 4.0,
+                left: 5.0,
+            },
+            padding: Edges {
+                top: 6.0,
+                right: 7.0,
+                bottom: 8.0,
+                left: 9.0,
+            },
+            ..Style::default()
+        },
+    );
+    assert_eq!(root.widget.downcast_ref::<gtk::Box>().unwrap().spacing(), 5);
+    let grid = view.layout(
+        &root,
+        "grid",
+        Layout::Grid {
+            columns: 2,
+            gap: 7.0,
+        },
+    );
+    for i in 0..3 {
+        view.label(
+            &grid,
+            &format!("g{i}"),
+            Binding::constant(format!("grid {i}")),
+        );
+    }
+    view.style(
+        "g2",
+        Style {
+            placement: Placement {
+                row: 1,
+                column: 0,
+                column_span: 2,
+                ..Placement::default()
+            },
+            ..Style::default()
+        },
+    );
+    let flex = view.layout(&root, "flex", Layout::Flex { gap: 4.0 });
+    for i in 0..6 {
+        view.label(
+            &flex,
+            &format!("f{i}"),
+            Binding::constant(format!("flex {i}")),
+        );
+        view.style(
+            &format!("f{i}"),
+            Style {
+                placement: Placement {
+                    width: Some(200.0),
+                    ..Placement::default()
+                },
+                ..Style::default()
+            },
+        );
+    }
+    let absolute = view.layout(&root, "absolute", Layout::Absolute);
+    view.label(
+        &absolute,
+        "positioned",
+        Binding::constant("absolute".into()),
+    );
+    view.style(
+        "positioned",
+        Style {
+            placement: Placement {
+                x: 31.0,
+                y: 17.0,
+                width: Some(90.0),
+                height: Some(25.0),
+                ..Placement::default()
+            },
+            ..Style::default()
+        },
+    );
+    view.style(
+        "absolute",
+        Style {
+            placement: Placement {
+                height: Some(64.0),
+                ..Placement::default()
+            },
+            ..Style::default()
+        },
+    );
+    view.meter(&root, "meter", model.bind(|s| s.progress, None));
+    // An application factory can mount an actual primitive, not a string descriptor.
+    let custom = gtk::Switch::new();
+    view.mount_native(&root, "native-switch", &custom);
+    view.bind_native(
+        "native-switch",
+        model.bind(|s| s.progress >= 0.5, None),
+        &custom,
+        |widget, value| widget.set_active(value),
+    );
+    view.entry(
+        &root,
+        "clipboard",
+        model.bind(
+            |s| s.clipboard.clone(),
+            Some(|s, value| s.clipboard = value),
+        ),
+    );
+    view.entry(&root, "readonly", Binding::constant("fixed".into()));
+    assert!(view.edit("readonly", "invalid").is_err());
+    let live = Rc::new(Cell::new(0usize));
+    let live_rows = live.clone();
+    let template: Template<Row> = Rc::new(move |view, parent, prefix, row| {
+        live_rows.set(live_rows.get() + 1);
+        let live = live_rows.clone();
+        view.keep(Subscription::new(move || live.set(live.get() - 1)));
+        let body = view.layout(
+            parent,
+            &format!("{prefix}/body"),
+            Layout::Stack {
+                horizontal: true,
+                gap: 2.0,
+            },
+        );
+        view.entry(
+            &body,
+            &format!("{prefix}/name"),
+            row.bind(
+                |s| s.name.clone(),
+                Some(|s, value| {
+                    s.name = value;
+                    s.writes += 1;
+                }),
+            ),
+        );
+        let command = row.command(
+            |s| s.enabled,
+            |model, argument| {
+                model.update(move |s| {
+                    s.calls += 1;
+                    s.name = argument;
+                });
+            },
+            row.bind(|s| format!("{}!", s.name), None),
+        );
+        view.button(
+            &body,
+            &format!("{prefix}/invoke"),
+            Binding::constant("Invoke".into()),
+            command,
+        );
+        view.items(
+            &body,
+            &format!("{prefix}/children"),
+            row.bind(|s| s.children.clone(), None),
+            Binding::constant(Viewport {
+                start: 0,
+                count: 1,
+                row_height: 32.0,
+            }),
+            Rc::new(|view, parent, prefix, leaf: Store<Leaf>| {
+                view.label(
+                    parent,
+                    &format!("{prefix}/text"),
+                    leaf.bind(|s| s.text.clone(), None),
+                );
+            }),
+        );
+    });
+    view.items(
+        &root,
+        "rows",
+        model.bind(|s| s.rows.clone(), Some(|s, rows| s.rows = rows)),
+        model.bind(|s| s.viewport, Some(|s, value| s.viewport = value)),
+        template.clone(),
+    );
+    view.content(
+        &root,
+        "content",
+        model.bind(|s| s.selected.clone(), None),
+        template.clone(),
+    );
+    let dispatched = Rc::new(RefCell::new(Vec::new()));
+    let seen = dispatched.clone();
+    view.menu(
+        "menu",
+        model.bind(|s| s.title.clone(), None),
+        model.bind(|s| s.menus.clone(), None),
+        Rc::new(move |argument| {
+            seen.borrow_mut().push(argument);
+            true
+        }),
+    );
+    view.present();
+    settle();
+    assert!(view.native_window().is_mapped());
+    assert_eq!(view.item_keys("rows"), ["k0", "k1", "k2"]);
+    assert_eq!(
+        view.text("rows/k0/children/child/text").as_deref(),
+        Some("child 0")
+    );
+    assert_eq!(live.get(), 4);
+    assert_eq!(
+        rows[0].model.snapshot().writes,
+        0,
+        "initial binding must not echo"
+    );
+    {
+        let nodes = view.0.nodes.borrow();
+        let stack = &nodes["stack"].frame;
+        assert_eq!(stack.margin_top(), 2);
+        assert_eq!(stack.margin_start(), 5);
+        assert_eq!(stack.style_context().padding().left(), 9);
+        assert_eq!(stack.style_context().padding().top(), 6);
+        let grid = grid.widget.downcast_ref::<gtk::Grid>().unwrap();
+        assert_eq!(grid.column_spacing(), 7);
+        assert_eq!(grid.query_child(&nodes["g2"].frame), (0, 1, 2, 1));
+        assert!(nodes["g1"].frame.allocation().x() > nodes["g0"].frame.allocation().x());
+        assert!(nodes["g2"].frame.allocation().y() > nodes["g0"].frame.allocation().y());
+        assert!(flex.widget.is::<gtk::FlowBox>());
+        let first = nodes["f0"].frame.compute_bounds(&flex.widget).unwrap();
+        let last = nodes["f5"].frame.compute_bounds(&flex.widget).unwrap();
+        assert!(last.y() > first.y(), "FlowBox must actually wrap");
+        let position = absolute
+            .widget
+            .downcast_ref::<gtk::Fixed>()
+            .unwrap()
+            .child_position(&nodes["positioned"].frame);
+        assert_eq!(position, (31.0, 17.0));
+        assert_eq!(nodes["positioned"].frame.width_request(), 90);
+    }
+    assert_eq!(
+        view.widget::<gtk::ProgressBar>("meter").unwrap().fraction(),
+        0.25
+    );
+    model.update(|s| {
+        s.progress = 0.75;
+        s.title = "Updated title".into();
+    });
+    assert!(custom.is_active());
+    assert_eq!(view.title(), "Updated title");
+    assert_eq!(
+        view.widget::<gtk::ProgressBar>("meter").unwrap().fraction(),
+        0.75
+    );
+
+    let old_entry = view.widget::<gtk::Entry>("rows/k0/name").unwrap();
+    let old_button = view.widget::<gtk::Button>("rows/k0/invoke").unwrap();
+    let old_weak = old_entry.downgrade();
+    view.edit("rows/k0/name", "edited").unwrap();
+    assert_eq!(rows[0].model.snapshot().name, "edited");
+    assert_eq!(view.text("content/k0/name").as_deref(), Some("edited"));
+    let writes = rows[0].model.snapshot().writes;
+    assert!(writes > 0, "native changed signal must write back");
+    view.click("rows/k0/invoke").unwrap();
+    assert_eq!(rows[0].model.snapshot().name, "edited!");
+    assert_eq!(rows[0].model.snapshot().calls, 1);
+    assert_eq!(
+        rows[0].model.snapshot().writes,
+        writes,
+        "model updates must not echo via changed"
+    );
+    view.viewport("rows", 50);
+    assert_eq!(view.item_keys("rows"), ["k50", "k51", "k52"]);
+    assert_eq!(live.get(), 4, "evicted keep tokens must be released");
+    assert!(view.text("rows/k0/name").is_none());
+    assert!(
+        !view
+            .0
+            .nodes
+            .borrow()
+            .keys()
+            .any(|id| id.starts_with("rows/k0/"))
+    );
+    assert!(
+        !view
+            .0
+            .resources
+            .borrow()
+            .keys()
+            .any(|id| scoped(id, "rows/k0"))
+    );
+    old_entry.set_text("detached input");
+    old_button.emit_clicked();
+    assert_eq!(rows[0].model.snapshot().name, "edited!");
+    assert_eq!(rows[0].model.snapshot().calls, 1);
+    drop(old_entry);
+    drop(old_button);
+    assert!(
+        old_weak.upgrade().is_none(),
+        "all per-prefix native refs must be gone"
+    );
+    rows[0].model.update(|s| {
+        s.name = "offscreen".into();
+        s.enabled = false;
+    });
+    view.viewport("rows", 0);
+    assert_eq!(view.text("rows/k0/name").as_deref(), Some("offscreen"));
+    assert!(view.click("rows/k0/invoke").is_err());
+    rows[0].model.update(|s| s.enabled = true);
+    view.click("rows/k0/invoke").unwrap();
+    assert_eq!(rows[0].model.snapshot().calls, 2);
+    let retained_entry = view.widget::<gtk::Entry>("rows/k0/name").unwrap();
+    model.update(|s| s.rows.swap(0, 1));
+    assert_eq!(view.item_keys("rows"), ["k1", "k0", "k2"]);
+    assert_eq!(
+        view.widget::<gtk::Entry>("rows/k0/name").unwrap(),
+        retained_entry
+    );
+    let valid_keys = view.item_keys("rows");
+    model.update(|s| s.rows = vec![s.rows[0].clone(), s.rows[0].clone()]);
+    assert!(view.items_error("rows").unwrap().contains("duplicate"));
+    assert_eq!(
+        view.item_keys("rows"),
+        valid_keys,
+        "duplicate rejection must be pre-mutation"
+    );
+    let reset_rows = rows.clone();
+    model.update(move |s| s.rows = reset_rows);
+    assert!(view.items_error("rows").is_none());
+    settle();
+    let scroll = view.widget::<gtk::ScrolledWindow>("rows").unwrap();
+    assert_eq!(
+        scroll.vadjustment().upper(),
+        6400.0,
+        "spacers preserve total extent"
+    );
+    assert_eq!(scroll.vadjustment().page_size(), 192.0);
+    scroll.vadjustment().set_value(64.0 * 20.0);
+    assert_eq!(view.item_keys("rows"), ["k20", "k21", "k22"]);
+    assert_eq!(
+        model.snapshot().viewport.start,
+        20,
+        "actual native adjustment updates model range"
+    );
+    for start in [99, 60, 2, 0] {
+        view.viewport("rows", start);
+        assert!(view.mounted_count("rows") <= model.snapshot().viewport.count);
+    }
+    // Same key with a different Store must clean up before mounting that ID again.
+    let replacement = Store::new(
+        Row {
+            name: "replacement".into(),
+            calls: 0,
+            writes: 0,
+            enabled: true,
+            children: vec![],
+        },
+        executor.clone(),
+    );
+    model.update(move |s| s.rows[0] = Keyed::new("k0", replacement));
+    assert_eq!(view.text("rows/k0/name").as_deref(), Some("replacement"));
+    let selected = rows[1].clone();
+    model.update(move |s| s.selected = Some(selected));
+    assert!(view.text("content/k0/name").is_none());
+    assert_eq!(view.text("content/k1/name").as_deref(), Some("row 1"));
+    model.update(|s| s.selected = None);
+    assert!(view.text("content/k1/name").is_none());
+    assert_eq!(live.get(), 3);
+
+    view.activate_menu("choose").unwrap();
+    assert_eq!(&*dispatched.borrow(), &["arg choose"]);
+    let state = view.0.menu_states.borrow()["menu"].clone();
+    assert_eq!(
+        state.menu.n_items(),
+        2,
+        "separator creates native menu sections"
+    );
+    let shortcut = state.shortcuts.borrow()[0].clone();
+    assert!(shortcut.action().unwrap().is::<gtk::NamedAction>());
+    assert!(shortcut.action().unwrap().activate(
+        gtk::ShortcutActionFlags::empty(),
+        &view.0.window,
+        None
+    ));
+    assert_eq!(dispatched.borrow().len(), 2);
+    let stale_action = view.0.actions.borrow()["menu/choose"].action.clone();
+    model.update(|s| {
+        s.menus[0].argument = "new argument".into();
+        s.menus[0].label = "new label".into();
+        s.menus[0].shortcut = Some("<Control>t".into());
+    });
+    assert!(!shortcut.action().unwrap().activate(
+        gtk::ShortcutActionFlags::empty(),
+        &view.0.window,
+        None
+    ));
+    stale_action.activate(None);
+    assert_eq!(dispatched.borrow().len(), 2, "old menu signal disconnected");
+    let shortcut = state.shortcuts.borrow()[0].clone();
+    assert_eq!(shortcut.trigger().unwrap().to_string(), "<Control>t");
+    assert!(shortcut.action().unwrap().activate(
+        gtk::ShortcutActionFlags::empty(),
+        &view.0.window,
+        None
+    ));
+    assert_eq!(dispatched.borrow().last().unwrap(), "new argument");
+    model.update(|s| s.menus[0].enabled = false);
+    assert!(view.activate_menu("choose").is_err());
+    model.update(|s| s.menus[0].enabled = true);
+    let clipboard = view.widget::<gtk::Entry>("clipboard").unwrap();
+    clipboard.grab_focus();
+    settle();
+    view.activate_menu("select").unwrap();
+    assert_eq!(clipboard.selection_bounds(), Some((0, 14)));
+    view.activate_menu("copy").unwrap();
+    let clip_text = Rc::new(RefCell::new(None));
+    let result = clip_text.clone();
+    clipboard
+        .clipboard()
+        .read_text_async(None::<&gio::Cancellable>, move |value| {
+            result.replace(Some(value.unwrap().map(|text| text.to_string())));
+        });
+    settle();
+    assert_eq!(
+        clip_text.borrow().as_ref().unwrap().as_deref(),
+        Some("clipboard text")
+    );
+    view.activate_menu("cut").unwrap();
+    assert_eq!(model.snapshot().clipboard, "");
+    view.activate_menu("paste").unwrap();
+    settle();
+    assert_eq!(model.snapshot().clipboard, "clipboard text");
+    view.activate_menu("about").unwrap();
+    settle();
+    let about: Vec<_> = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::AboutDialog>().ok())
+        .collect();
+    assert_eq!(about.len(), 1);
+    assert_eq!(about[0].program_name().as_deref(), Some("Updated title"));
+    about[0].destroy();
+    drop(about);
+
+    // Completion handles are pruned while the loop is running, even if no new task arrives.
+    for _ in 0..128 {
+        executor.spawn(Box::pin(async {}));
+    }
+    settle();
+    assert!(host.executor.tasks.borrow().is_empty());
+    let witness = Rc::new(());
+    let weak_task = Rc::downgrade(&witness);
+    executor.spawn(Box::pin(async move {
+        let _witness = witness;
+        std::future::pending::<()>().await;
+    }));
+    settle();
+    assert!(weak_task.upgrade().is_some());
+    let closed = Rc::new(Cell::new(0));
+    let count = closed.clone();
+    view.on_close(Rc::new(move || count.set(count.get() + 1)));
+    let weak = Rc::downgrade(&view.0);
+    view.0.window.close();
+    assert_eq!(closed.get(), 1, "native close-request path");
+    assert_eq!(live.get(), 0);
+    assert!(view.0.resources.borrow().is_empty());
+    view.close();
+    assert_eq!(closed.get(), 1);
+    let frozen = rows[0].model.snapshot().calls;
+    retained_entry.set_text("after close");
+    assert_eq!(rows[0].model.snapshot().calls, frozen);
+    drop(view);
+    assert!(
+        weak.upgrade().is_none(),
+        "rows, menus and native signals must not own View"
+    );
+    host.close();
+    assert!(
+        weak_task.upgrade().is_none(),
+        "abort drops pending futures synchronously"
+    );
+
+    // Formal runtime UiHost attachment is nonblocking and owns actual native windows.
+    let attached = GtkHost::attach();
+    let session = Session::new();
+    let window = View::new(Binding::constant("attached".into()));
+    attached
+        .register_view(&session, "attached", &window)
+        .unwrap();
+    let returned = Rc::new(Cell::new(false));
+    let flag = returned.clone();
+    let result = Rc::new(RefCell::new(None));
+    let done = result.clone();
+    let attached = Rc::new(attached);
+    let owner = attached.clone();
+    attached.executor().spawn(Box::pin(async move {
+        done.replace(Some(run_async(&*owner, |_| session).await.unwrap()));
+        flag.set(true);
+    }));
+    settle();
+    assert!(returned.get());
+    assert!(window.native_window().is_mapped());
+    let session = result.take().unwrap();
+    assert_eq!(session.window_count(), 1);
+    session.shutdown().close_now();
+    assert!(window.0.closed.get());
+    assert!(attached.windows.borrow().is_empty());
+    settle();
+    assert!(attached.sessions.borrow().is_empty());
+    attached.close();
+
+    // Destruction without explicit close also releases signals and application work.
+    let host = GtkHost::attach();
+    let model = Store::new("drop".to_owned(), host.executor());
+    let dropped = View::new(Binding::constant("drop".into()));
+    dropped.entry(
+        &dropped.root(),
+        "entry",
+        model.bind(Clone::clone, Some(|s, v| *s = v)),
+    );
+    let native = dropped.widget::<gtk::Entry>("entry").unwrap();
+    let weak = Rc::downgrade(&dropped.0);
+    let marker = Rc::new(());
+    let task = Rc::downgrade(&marker);
+    model.effect(
+        Policy::Parallel,
+        "drop",
+        async move {
+            let _marker = marker;
+            std::future::pending::<()>().await
+        },
+        |_, _| {},
+    );
+    let owner = model.clone();
+    dropped.on_close(Rc::new(move || owner.close()));
+    drop(dropped);
+    assert!(weak.upgrade().is_none());
+    native.set_text("detached");
+    assert_eq!(model.snapshot(), "drop");
+    settle();
+    assert!(task.upgrade().is_none());
+    host.close();
+
+    // Standalone run drives a real Application loop, aborting its executor on close.
+    let ran = Rc::new(Cell::new(false));
+    let flag = ran.clone();
+    run(move |executor| {
+        let view = View::new(Binding::constant("standalone".into()));
+        let weak = Rc::downgrade(&view.0);
+        executor.spawn(Box::pin(async move {
+            glib::timeout_future(Duration::from_millis(20)).await;
+            let view = View(weak.upgrade().unwrap());
+            view.menu(
+                "quit-menu",
+                Binding::constant("Quit".into()),
+                Binding::constant(vec![menu_item("quit", MenuRole::Quit, None)]),
+                Rc::new(|_| false),
+            );
+            flag.set(view.native_window().is_mapped());
+            view.activate_menu("quit").unwrap();
+        }));
+        view
+    })
+    .unwrap();
+    assert!(ran.get());
+}
