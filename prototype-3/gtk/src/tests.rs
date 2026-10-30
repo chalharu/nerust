@@ -4,6 +4,372 @@ use futures::{FutureExt, channel::oneshot};
 use std::time::Duration;
 use wakui2_runtime::{Edges, Placement, Policy, ShutdownOutcome, run_async};
 
+#[test]
+fn native_close_requests_weak_and_reentrant() {
+    gtk::init().expect("native_close_requests_weak_and_reentrant requires Xvfb");
+    let view = View::new(Binding::constant("close requests".into()));
+    view.menu(
+        "file",
+        Binding::constant("File".into()),
+        Binding::constant(vec![menu_item("quit", MenuRole::Quit, None)]),
+        Rc::new(|_| panic!("Quit must not dispatch an app argument")),
+    );
+    let weak = view.downgrade();
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let owner = weak.clone();
+    view.on_close_request(Rc::new(move || {
+        count.set(count.get() + 1);
+        let view = owner.upgrade().unwrap();
+        view.request_close();
+        view.activate_menu("quit").unwrap();
+        view.native_window().close();
+    }));
+    let closed = Rc::new(Cell::new(0));
+    let count = closed.clone();
+    let owner = weak.clone();
+    view.on_close(Rc::new(move || {
+        assert!(owner.upgrade().is_none());
+        count.set(count.get() + 1);
+    }));
+    view.present();
+    settle();
+    view.native_window().close();
+    view.activate_menu("quit").unwrap();
+    assert_eq!(
+        calls.get(),
+        2,
+        "nested requests are ignored, later ones retry"
+    );
+    assert_eq!(closed.get(), 0);
+    assert!(view.native_window().is_mapped());
+    let count = calls.clone();
+    view.on_close_request(Rc::new(move || {
+        count.set(count.get() + 10);
+        panic!("test handler");
+    }));
+    view.request_close();
+    view.request_close();
+    assert_eq!(calls.get(), 22, "panic must release request gate");
+    assert!(
+        view.0
+            .error
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("test handler")
+    );
+    view.close();
+    view.close();
+    view.request_close();
+    assert_eq!(closed.get(), 1);
+    assert_eq!(calls.get(), 22);
+    assert!(weak.upgrade().is_none());
+    assert!(!view.native_window().is_mapped());
+    drop(view);
+    let dropped = View::new(Binding::constant("drop".into()));
+    let weak = dropped.downgrade();
+    let owner = weak.clone();
+    dropped.on_close_request(Rc::new(move || {
+        let _ = owner.upgrade();
+    }));
+    drop(dropped);
+    assert!(weak.upgrade().is_none());
+    let default = View::new(Binding::constant("default".into()));
+    default.present();
+    default.request_close();
+    assert!(default.0.closed.get());
+    assert!(!default.native_window().is_mapped());
+}
+
+#[test]
+fn native_close_ready_subscription_retains_model_without_view_cycle() {
+    gtk::init()
+        .expect("native_close_ready_subscription_retains_model_without_view_cycle requires Xvfb");
+    let host = GtkHost::attach();
+    let model = Store::new((0usize, false), host.executor());
+    let view = View::new(Binding::constant("settings".into()));
+    let owner = view.downgrade();
+    view.keep(model.bind(|s| s.1, None).subscribe(Rc::new(move |ready| {
+        if ready && let Some(view) = owner.upgrade() {
+            view.close();
+        }
+    })));
+    let command = model.command(
+        |_| true,
+        |store, ()| {
+            store.update(|s| s.0 += 1);
+        },
+        Binding::constant(()),
+    );
+    view.on_close_request(Rc::new(move || {
+        command.invoke();
+    }));
+    let closes = Rc::new(Cell::new(0));
+    let count = closes.clone();
+    let store = model.clone();
+    view.on_close(Rc::new(move || {
+        count.set(count.get() + 1);
+        store.close();
+    }));
+    view.present();
+    view.native_window().close();
+    assert_eq!(model.snapshot(), (1, false));
+    assert!(!model.is_closed());
+    assert!(view.native_window().is_mapped());
+    model.update(|s| s.1 = true);
+    assert_eq!(closes.get(), 1);
+    assert!(model.is_closed());
+    assert!(view.0.resources.borrow().is_empty());
+    assert!(!view.native_window().is_mapped());
+    let weak = Rc::downgrade(&view.0);
+    drop(view);
+    assert!(weak.upgrade().is_none());
+    host.close();
+}
+
+#[test]
+fn native_close_request_handler_precedes_coordinator_and_menu_falls_back() {
+    gtk::init().expect(
+        "native_close_request_handler_precedes_coordinator_and_menu_falls_back requires Xvfb",
+    );
+    let host = GtkHost::attach();
+    let session = Session::new();
+    let view = View::new(Binding::constant("app handler".into()));
+    host.coordinate_close(&view, &session, Duration::from_secs(30))
+        .unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    view.on_close_request(Rc::new(move || count.set(count.get() + 1)));
+    view.present();
+    view.native_window().close();
+    assert_eq!(calls.get(), 1);
+    assert!(host.executor.tasks.borrow().is_empty());
+    assert_eq!(session.shutdown().phase(), ShutdownPhase::Running);
+    view.close();
+
+    let probe = Rc::new(CloseProbe::default());
+    let _work = session.register_window("work", probe.hooks()).unwrap();
+    let view = View::new(Binding::constant("coordinator fallback".into()));
+    host.coordinate_close(&view, &session, Duration::from_secs(30))
+        .unwrap();
+    view.menu(
+        "file",
+        Binding::constant("File".into()),
+        Binding::constant(vec![menu_item("quit", MenuRole::Quit, None)]),
+        Rc::new(|_| false),
+    );
+    view.present();
+    view.activate_menu("quit").unwrap();
+    assert_eq!(host.executor.tasks.borrow().len(), 1);
+    reap_all(&host.executor);
+    assert_eq!(probe.confirms.get(), 1);
+    assert!(
+        !view.0.closed.get(),
+        "denial leaves menu-requested View open"
+    );
+    view.close();
+    host.close();
+}
+
+#[test]
+fn native_canonical_shortcut_semantics() {
+    gtk::init().expect("native_canonical_shortcut_semantics requires Xvfb");
+    use wakui2_runtime::ShortcutTarget;
+    for (input, key, extra) in [
+        (
+            "Primary+S",
+            gtk::gdk::Key::s,
+            gtk::gdk::ModifierType::empty(),
+        ),
+        (
+            "Primary+Q",
+            gtk::gdk::Key::q,
+            gtk::gdk::ModifierType::empty(),
+        ),
+        (
+            "Primary+Shift+S",
+            gtk::gdk::Key::s,
+            gtk::gdk::ModifierType::SHIFT_MASK,
+        ),
+    ] {
+        for target in [ShortcutTarget::MacOS, ShortcutTarget::Other] {
+            let shortcut = Shortcut::parse(input).unwrap();
+            let trigger = gtk::ShortcutTrigger::parse_string(&shortcut.to_gtk_for(target))
+                .unwrap()
+                .downcast::<gtk::KeyvalTrigger>()
+                .unwrap();
+            let primary = if target == ShortcutTarget::MacOS {
+                gtk::gdk::ModifierType::META_MASK
+            } else {
+                gtk::gdk::ModifierType::CONTROL_MASK
+            };
+            assert_eq!(trigger.keyval(), key);
+            assert_eq!(trigger.modifiers(), primary | extra);
+        }
+        assert_eq!(
+            parse_shortcut(input).unwrap().to_string(),
+            gtk::ShortcutTrigger::parse_string(&Shortcut::parse(input).unwrap().to_gtk())
+                .unwrap()
+                .to_string()
+        );
+    }
+    for key in [
+        "Enter",
+        "Tab",
+        "Space",
+        "Escape",
+        "Backspace",
+        "Delete",
+        "Insert",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "Left",
+        "Right",
+        "Up",
+        "Down",
+        "F1",
+        "F12",
+        "0",
+        "9",
+    ] {
+        assert!(
+            parse_shortcut(&format!("Ctrl+Shift+{key}")).is_some(),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        parse_shortcut("Ctrl+Shift+S").unwrap().to_string(),
+        parse_shortcut("<Control><Shift>s").unwrap().to_string()
+    );
+    // Install and activate real canonical menu shortcuts, not just string output.
+    let view = View::new(Binding::constant("shortcuts".into()));
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    view.menu(
+        "file",
+        Binding::constant("File".into()),
+        Binding::constant(vec![
+            menu_item("save", MenuRole::Normal, Some("Primary+S")),
+            menu_item("quit", MenuRole::Quit, Some("Primary+Q")),
+        ]),
+        Rc::new(move |_| {
+            count.set(count.get() + 1);
+            true
+        }),
+    );
+    let requests = Rc::new(Cell::new(0));
+    let count = requests.clone();
+    view.on_close_request(Rc::new(move || count.set(count.get() + 1)));
+    let state = view.0.menu_states.borrow()["file"].clone();
+    let shortcuts = state.shortcuts.borrow().clone();
+    assert_eq!(shortcuts.len(), 2);
+    for shortcut in shortcuts {
+        assert!(shortcut.action().unwrap().activate(
+            gtk::ShortcutActionFlags::empty(),
+            &view.0.window,
+            None
+        ));
+    }
+    assert_eq!(calls.get(), 1);
+    assert_eq!(requests.get(), 1);
+    assert!(!view.0.closed.get());
+    view.close();
+}
+
+#[test]
+fn native_grid_equal_columns_geometry_and_spans() {
+    gtk::init().expect("native_grid_equal_columns_geometry_and_spans requires Xvfb");
+    for width in [420, 660] {
+        let view = View::new(Binding::constant("equal columns".into()));
+        view.native_window().set_default_size(width, 300);
+        let parent = view.layout(
+            &view.root(),
+            "grid",
+            Layout::Grid {
+                columns: 3,
+                gap: 7.0,
+            },
+        );
+        for (i, text) in ["a", "longer label", "c", "spanning"]
+            .into_iter()
+            .enumerate()
+        {
+            let id = format!("g{i}");
+            view.label(&parent, &id, Binding::constant(text.into()));
+            view.style(
+                &id,
+                Style {
+                    placement: Placement {
+                        row: if i == 3 { 2 } else { 0 },
+                        column: if i == 3 { 0 } else { i as i32 },
+                        column_span: if i == 3 { 2 } else { 1 },
+                        row_span: if i == 3 { 2 } else { 1 },
+                        ..Placement::default()
+                    },
+                    ..Style::default()
+                },
+            );
+        }
+        view.present();
+        settle();
+        let grid = parent.widget.downcast_ref::<gtk::Grid>().unwrap();
+        assert!(grid.is_mapped());
+        assert!(grid.is_column_homogeneous());
+        assert!(grid.hexpands());
+        if let Ok(scale) = std::env::var("GDK_SCALE") {
+            assert_eq!(grid.scale_factor(), scale.parse::<i32>().unwrap());
+        }
+        let nodes = view.0.nodes.borrow();
+        let frames: Vec<_> = (0..4)
+            .map(|i| nodes[&format!("g{i}")].frame.clone())
+            .collect();
+        let bounds: Vec<_> = frames
+            .iter()
+            .map(|frame| frame.compute_bounds(grid).unwrap())
+            .collect();
+        let cell = (grid.width() as f32 - 14.0) / 3.0;
+        for i in 0..3 {
+            assert!(
+                (bounds[i].width() - cell).abs() <= 1.0,
+                "{width}: {bounds:?}"
+            );
+            if i > 0 {
+                assert!(
+                    (bounds[i].x() - bounds[i - 1].x() - bounds[i - 1].width() - 7.0).abs() <= 1.0
+                );
+            }
+        }
+        assert_eq!(grid.query_child(&frames[3]), (0, 2, 2, 2));
+        assert!((bounds[3].width() - (2.0 * cell + 7.0)).abs() <= 1.0);
+        assert!(bounds[3].y() > bounds[0].y());
+        assert!(
+            (grid.width() - view.root().widget.width()).abs() <= 1,
+            "fills root width"
+        );
+        drop(nodes);
+        view.close();
+    }
+    // Unused declared tracks must still take their equal share of available width.
+    let view = View::new(Binding::constant("empty tracks".into()));
+    let grid = view.layout(
+        &view.root(),
+        "grid",
+        Layout::Grid {
+            columns: 3,
+            gap: 7.0,
+        },
+    );
+    view.label(&grid, "only", Binding::constant("one".into()));
+    view.present();
+    settle();
+    let frame = view.0.nodes.borrow()["only"].frame.clone();
+    assert!((frame.width() as f32 - (grid.widget.width() as f32 - 14.0) / 3.0).abs() <= 1.0);
+    view.close();
+}
+
 // Drive real native sources, not a blocking futures executor. The watchdog is
 // only a failure bound; test sequencing uses phases, oneshots and task reaping.
 fn drive_until(done: impl Fn() -> bool) {
