@@ -318,31 +318,34 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
         }))
     };
 
-    let mut dis_children = vec![
-        NodeDef::Control(Box::new(ControlDef {
-            key: "dis:follow".into(),
-            label: Binding::Localized("follow_pc".into()),
-            accessible: None,
-            help: None,
-            display: ControlDisplay::Standard,
-            enabled: BoolBinding::Literal(true),
-            visible: BoolBinding::Literal(true),
-            hints: LayoutHints::default(),
-            leaf: LeafDef::Toggle {
-                value: BoolBinding::Flag("follow_pc".into()),
-            },
-        })),
-        NodeDef::Control(Box::new(text(
-            "dis:input",
-            Binding::Localized("addr_hex".into()),
-            Binding::Dynamic("dis_input".into()),
-        ))),
-        NodeDef::Control(Box::new(action("dis:go", Binding::Localized("go".into())))),
-        NodeDef::Control(Box::new(action(
-            "dis:back",
-            Binding::Dynamic("back".into()),
-        ))),
-    ];
+    let mut dis_children = vec![row(
+        "dis:nav",
+        vec![
+            NodeDef::Control(Box::new(ControlDef {
+                key: "dis:follow".into(),
+                label: Binding::Localized("follow_pc".into()),
+                accessible: None,
+                help: None,
+                display: ControlDisplay::Standard,
+                enabled: BoolBinding::Literal(true),
+                visible: BoolBinding::Literal(true),
+                hints: LayoutHints::default(),
+                leaf: LeafDef::Toggle {
+                    value: BoolBinding::Flag("follow_pc".into()),
+                },
+            })),
+            NodeDef::Control(Box::new(text(
+                "dis:input",
+                Binding::Localized("addr_hex".into()),
+                Binding::Dynamic("dis_input".into()),
+            ))),
+            NodeDef::Control(Box::new(action("dis:go", Binding::Localized("go".into())))),
+            NodeDef::Control(Box::new(action(
+                "dis:back",
+                Binding::Dynamic("back".into()),
+            ))),
+        ],
+    )];
     if empty_disasm {
         dis_children.push(NodeDef::Control(Box::new(note(
             "dis:empty",
@@ -599,15 +602,20 @@ fn debugger_def(empty_disasm: bool, pending: bool) -> ScreenDef {
                                         "regs:columns",
                                         vec![regs_list("regs_left"), regs_list("regs_right")],
                                     ),
-                                    NodeDef::Control(Box::new(text(
-                                        "reg:input",
-                                        Binding::Localized("hex".into()),
-                                        Binding::Dynamic("reg_input".into()),
-                                    ))),
-                                    NodeDef::Control(Box::new(action(
-                                        "reg:set",
-                                        Binding::Dynamic("reg_set".into()),
-                                    ))),
+                                    row(
+                                        "regs:edit",
+                                        vec![
+                                            NodeDef::Control(Box::new(text(
+                                                "reg:input",
+                                                Binding::Localized("hex".into()),
+                                                Binding::Dynamic("reg_input".into()),
+                                            ))),
+                                            NodeDef::Control(Box::new(action(
+                                                "reg:set",
+                                                Binding::Dynamic("reg_set".into()),
+                                            ))),
+                                        ],
+                                    ),
                                 ],
                             ),
                             group(
@@ -1320,6 +1328,13 @@ mod layout_tests {
                     "PPU".to_string()
                 ]),
             "toolbar rows: {:?}",
+            tree.rows
+        );
+        // Disassembly nav and register edit travel as horizontal rows.
+        assert!(
+            tree.rows.iter().any(|row| row.contains(&"Go".to_string())
+                && row.iter().any(|label| label.starts_with("Back"))),
+            "dis nav row missing: {:?}",
             tree.rows
         );
         // Register columns project the same three rows across two lists.
