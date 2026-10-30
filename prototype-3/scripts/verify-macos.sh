@@ -28,5 +28,8 @@ done
 output=$(cargo run --locked -p wakui3-macos --example multiwindow)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^MACOS3 PASS single-session repeated-attach foreign-attach-and-registration-rejected$'
+printf '%s\n' "$output" | grep -q '^MACOS3 PASS closed-registration rejected-before-session-attach$'
+printf '%s\n' "$output" | grep -q '^MACOS3 PASS active-close menu-handoff quit-veto-without-present$'
 printf '%s\n' "$output" | grep -q '^MACOS3 PASS multiwindow shared-store reopen active-menu quit-veto confirm-cancel-drain-close$'
+sh scripts/verify-tao-macos.sh
 printf '%s\n' 'VERIFY3 MACOS PASS: core regressions, AppKit settings/library, injected input, bounded dispatch and native drawing'
