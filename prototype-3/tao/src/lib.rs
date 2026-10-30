@@ -634,24 +634,18 @@ struct List<T: Clone + 'static> {
     source: RefCell<Vec<Keyed<T>>>,
     viewport: Binding<Viewport>,
     current: Cell<Viewport>,
+    viewport_ready: Cell<bool>,
     template: Template<T>,
     mounted: RefCell<Vec<(Keyed<T>, Rc<Node>)>>,
     busy: Cell<bool>,
     dirty: Cell<bool>,
     overscan: Cell<bool>,
 }
-/// Bound the number of live widget trees, even for hostile viewport values.
 pub fn virtual_range(len: usize, viewport: Viewport) -> std::ops::Range<usize> {
-    let count = viewport.count.clamp(1, 256);
-    let start = viewport.start.min(len.saturating_sub(count));
-    start..start.saturating_add(count).min(len)
+    viewport.range(len).unwrap_or(0..0)
 }
 fn row_height(viewport: Viewport) -> f32 {
-    if viewport.row_height.is_finite() {
-        viewport.row_height.clamp(1.0, 4096.0)
-    } else {
-        48.0
-    }
+    viewport.row_height
 }
 // Keyed's public fields can bypass its constructor. Keep this boundary check local.
 fn valid_item_key(key: &str) -> bool {
@@ -659,6 +653,9 @@ fn valid_item_key(key: &str) -> bool {
 }
 impl<T: Clone + 'static> List<T> {
     fn range(&self, len: usize) -> std::ops::Range<usize> {
+        if !self.viewport_ready.get() {
+            return 0..0;
+        }
         let mut range = virtual_range(len, self.current.get());
         if self.overscan.get() {
             range.end = range.end.saturating_add(1).min(len);
@@ -741,6 +738,9 @@ impl<T: Clone + 'static> List<T> {
 }
 impl<T: Clone + 'static> ItemHost for List<T> {
     fn element(&self, node: &Node) -> Element {
+        if !self.viewport_ready.get() {
+            return widget::Space::new().height(0.0).into();
+        }
         let viewport = self.current.get();
         let height = row_height(viewport);
         let range = self.range(self.source.borrow().len());
@@ -784,7 +784,7 @@ impl<T: Clone + 'static> ItemHost for List<T> {
         ))
         .id(iced::advanced::widget::Id::from(id.clone()))
         .on_scroll(move |vp| Message::Scroll(id.clone(), vp.absolute_offset().y))
-        .height(viewport.count.clamp(1, 256) as f32 * height)
+        .height(viewport.count as f32 * height)
         .width(Length::Fill)
         .into()
     }
@@ -796,6 +796,9 @@ impl<T: Clone + 'static> ItemHost for List<T> {
             .collect()
     }
     fn viewport(&self, start: usize) {
+        if !self.viewport_ready.get() {
+            return;
+        }
         let mut vp = self.current.get();
         vp.start = start;
         let had_overscan = self.overscan.replace(false);
@@ -816,6 +819,9 @@ impl<T: Clone + 'static> ItemHost for List<T> {
         }
     }
     fn scroll(&self, offset: f32) {
+        if !self.viewport_ready.get() {
+            return;
+        }
         let mut vp = self.current.get();
         let start = (layout::finite(offset) / row_height(vp)).floor() as usize;
         let fractional = layout::finite(offset) % row_height(vp) > 0.01;
@@ -843,7 +849,8 @@ impl View {
             owner: Rc::downgrade(&self.0),
             node: Rc::downgrade(&node),
             source: RefCell::new(Vec::new()),
-            current: Cell::new(viewport.get()),
+            current: Cell::new(Viewport::default()),
+            viewport_ready: Cell::new(false),
             viewport: viewport.clone(),
             template,
             mounted: RefCell::default(),
@@ -880,7 +887,14 @@ impl View {
         });
         let out = host.clone();
         self.bind(&node, viewport, move |vp| {
-            if out.current.replace(vp) != vp {
+            if let Err(error) = vp.validate() {
+                if let Some(inner) = out.owner.upgrade() {
+                    inner.report(error.into());
+                }
+                return;
+            }
+            let initialized = out.viewport_ready.replace(true);
+            if out.current.replace(vp) != vp || !initialized {
                 out.overscan.set(false);
                 out.reconcile();
                 if let (Some(inner), Some(node)) = (out.owner.upgrade(), out.node.upgrade()) {

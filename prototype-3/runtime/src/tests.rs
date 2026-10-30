@@ -56,6 +56,59 @@ fn number(s: &Store<Model>) -> Binding<i32> {
 }
 
 #[test]
+fn viewport_rejects_invalid_values_without_clamping() {
+    for count in [0, 257, usize::MAX] {
+        let viewport = Viewport {
+            count,
+            ..Viewport::default()
+        };
+        assert!(viewport.validate().is_err());
+        assert!(viewport.range(100).is_err());
+    }
+    for row_height in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, 0.5, 4097.0] {
+        assert!(
+            Viewport {
+                row_height,
+                ..Viewport::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+    for count in [1, 256] {
+        for row_height in [1.0, 4096.0] {
+            let viewport = Viewport {
+                start: usize::MAX,
+                count,
+                row_height,
+            };
+            assert_eq!(viewport.validate(), Ok(viewport));
+        }
+    }
+}
+
+#[test]
+fn viewport_range_uses_a_bounded_last_page_without_overflow() {
+    let viewport = Viewport {
+        start: usize::MAX,
+        count: 3,
+        row_height: 10.0,
+    };
+    assert_eq!(viewport.range(0), Ok(0..0));
+    assert_eq!(viewport.range(2), Ok(0..2));
+    assert_eq!(viewport.range(100), Ok(97..100));
+    assert_eq!(viewport.range(usize::MAX), Ok(usize::MAX - 3..usize::MAX));
+    assert_eq!(
+        Viewport {
+            start: 2,
+            ..viewport
+        }
+        .range(100),
+        Ok(2..5)
+    );
+}
+
+#[test]
 fn dispatch_budget_yields_preserves_fifo_and_close_cancels_continuation() {
     let mut pool = LocalPool::new();
     let store = Store::with_dispatch_budget(
