@@ -36,6 +36,9 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
 - main threadの`MacHost`が共通loopを駆動する。UiHost/Sessionへ接続し、複数Windowを保持する。
   `run_host`と`register_view(session,id,view,hooks)`を使い、終了所有権は明示hookへ置く。
   Window closeは個別、app QuitはSession全体。共通delegateとactive Window別menuを使う。
+  1 hostにつきSessionは一つ。同じSessionのcloneの再attachは冪等、別Sessionのattachと
+  窓登録は副作用前に拒否する。`register_view`は最初のSessionを自動attachする。
+  全窓の確認には期限を置かず、承認後のdrainだけを5秒に制限する。
   `run`は既存単窓の互換入口。外部reactorとの統合は別途必要。
 - TextBoxはAppKit field editorを利用し、選択、undo、clipboard、IME marked textをOSへ委ねる。
   marked text中はモデル通知によるstringValue置換を抑止する。これは汎用編集transactionや
@@ -57,6 +60,8 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
   readonly/literalでも受理済みviewportをローカルに移動し、モデルへの書込はTwoWayだけで行う。
   `item_keys`は全sourceでなくmount済みkeyを返す。行高変更は既存mountにも反映する。
   行の退避では入れ子一覧のregistry、viewport handler、scoped tokenも解放する。
+  Template中の`keep`も行scopeへ保持し、退去でvalidationを中断してpendingを解除する。
+  画面外の行変更はvalidationを開始せず、再mountによる購読の蓄積を防ぐ。
   不正なsource更新後も、保持した正常sourceでスクロールできる。
 - control IDと内部eventはABIの種別で分離する。`__close`、`rows@viewport`、`__title`も
   通常controlとして扱い、終了・scroll・title操作へ誤配送しない。
@@ -89,6 +94,8 @@ ready taskがなければnative側で最大8ms待ち、workerのwakeも次ター
 | Menu | native key equivalentでPrimary/Cmd+S、有効/無効、動的再構築 |
 | 型付きMenu | `MenuItem<i32>`をString変換なしで配送 |
 | 三窓 | 共有Store、補助窓の再生成、active menu、Quit拒否、confirm/cancel/drain/close順序 |
+| Session制限 | 同一cloneの再attach、別Sessionのattach/窓登録の拒否と無副作用 |
+| validation scope | 4回の退去/再mount、pending解除、画面外更新の無反応、購読の非蓄積 |
 | Accessibility | role、identifierの読み返し。スクリーンリーダーによる操作ではない |
 | 一覧mount | 100行Model、6行mount、範囲変更、順序変更、不正key拒否と復帰 |
 | Viewport契約 | 初期不正は0 mount、count/行高の範囲外を拒否してmount保持、正常値復帰、usize::MAXの末尾ページ |
@@ -106,11 +113,16 @@ CPU描画はcompositor presentation/fenceではなく、合成キーは物理入
 release観測は`measure-macos.sh`で再現し、数値を安定APIや性能保証と扱わない。
 CPU回帰予算は別途`sh scripts/measure.sh`で判定する。native入力時間の閾値ではない。
 
-最新の追加検証では通常150試験成功、失敗0、helper 2件ignored。
+2026-10-31のレビュー修正後は通常151試験成功、失敗0、helper 2件ignored。
+整形、strict Clippy、設定/一覧smoke、conformance、三窓例とrelease CPU予算も成功。
+`validation-scope`と`single-session`を正式ゲートの必須markerへ追加した。
+共通runtimeとGTK nativeの期限試験は、確認待ちが期限を超えても閉じず、
+承認後のdrainだけがtimeoutすることを実時間/native loopで検査する。
+2026-10-30の追加検証は通常150試験成功、失敗0、helper 2件ignoredだった。
 三窓例`cargo run -p wakui3-macos --example multiwindow`と新規conformance markerも成功。
 YAML primary診断、参照シグネチャ、scoped更新、型付きMenuを正式ゲートに含む。
 このMac上のDockerでもLinux/Xvfbの`VERIFY3 PASS`とreleaseの`MEASURE3 PASS`を確認した。
-GTK/Taoのnative試験はLinux側の結果であり、macOSの150件へ合算しない。
+GTK/Taoのnative試験はLinux側の結果であり、macOSの151件へ合算しない。
 以下のcommit別数値は過去の基準記録で、最新件数と混同しない。
 
 ### 2026-10-30の実行結果
@@ -166,3 +178,8 @@ mtimeを現在へ設定する。YAML編集時にRustをtouchして再ビルド�
 対象OSと主backendはmacOS/AppKit、Linux/X11/GTKとするが、このmacOS実装は限定アルファ。
 Windows、Wayland、外部IME、VoiceOver、配布packageまで含む安定版ではない。
 上記の実利用結果を得る前にAPI固定・本体移行は行わない。
+
+2026-10-31のレビュー指摘3件は、確認とdrain期限の分離、行validationのscope化、
+1 host/1 Sessionの明示制限で修正した。これらの自動回帰は実IME/VoiceOverの代用ではない。
+次は上記の実機ゲートと、映像surfaceのattach/detach・resize・終了の最小統合試験を行い、
+その結果を基に設定など一画面から段階移行する。方式比較用の別prototype追加は不要。

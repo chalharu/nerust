@@ -108,6 +108,37 @@ mod native {
         wakui3_macos::run_host(|host| {
             let session = Session::new();
             host.attach(session.clone())?;
+            host.attach(session.clone())?;
+            let foreign = Session::new();
+            assert!(
+                host.attach(foreign.clone())
+                    .unwrap_err()
+                    .contains("one Session")
+            );
+            let rejected = View::new(Binding::constant("Rejected Session".into()));
+            assert!(
+                host.register_view(
+                    &foreign,
+                    "foreign",
+                    &rejected,
+                    WindowHooks {
+                        confirm: Rc::new(|| panic!("rejected confirmation ran")),
+                        cancel: Rc::new(|| panic!("rejected cancellation ran")),
+                        drain: Rc::new(|| panic!("rejected drain ran")),
+                        close: Rc::new(|| panic!("rejected close ran")),
+                    }
+                )
+                .unwrap_err()
+                .contains("one Session")
+            );
+            assert_eq!(session.window_count(), 0);
+            assert_eq!(foreign.window_count(), 0);
+            assert_eq!(foreign.shutdown().phase(), ShutdownPhase::Running);
+            assert!(rejected.downgrade().upgrade().is_some());
+            rejected.close();
+            println!(
+                "MACOS3 PASS single-session repeated-attach foreign-attach-and-registration-rejected"
+            );
             let model = Store::new("initial".to_owned(), host.executor());
             let probe = Rc::new(Probe {
                 allow: Cell::new(false),

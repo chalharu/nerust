@@ -152,6 +152,9 @@ scoped更新とsettings/libraryのp50/p95 CPU閾値をassertし、超過は非�
   読み取り50,000回と更新20回を計測し、Clone回数・通知回数をassertする。
   総合検証でも実行する。比較用scoped計測は1万購読まで検査し、release性能ゲートで判定する。
 - async validationはModelへの反映後検証。古い結果は捨て、退去時に中断する。
+  AppKitでもTemplate中のtokenは行scopeへ保持し、再mountで購読を蓄積しない。
+- 多窓終了の確認待ちは無期限で、承認後のdrainだけに期限を置く。
+  MacHostは1 Sessionを複数Windowで共有し、別Sessionのattach/窓登録を明示拒否する。
 - GTKの既存loop接続は`GtkHost`＋runtime `run_async`。
   `coordinate_close`を使うとnative close要求を多窓coordinatorへ接続できる。
   アプリ固有の確認・保存drain hookは明示登録する。
@@ -171,3 +174,12 @@ scoped更新とsettings/libraryのp50/p95 CPU閾値をassertし、超過は非�
   1000件の動作は性能保証でもない。未検証事項と今後の条件は設計書へ記録する。
 
 設計・実証記録の正本は隣接`nerust-docs/explanation/wakui-prototype-3.md`。
+
+## 本実装への出口条件
+
+2026-10-31のレビュー指摘3件は修正し、native回帰へ追加した。
+macOS通常151試験とnative回帰、Docker/Linux正式ゲート、両環境のrelease性能予算が成功した。
+方式比較を広げるための新prototypeは追加せず、AppKitの実IME・Full Keyboard Access・
+VoiceOver・実入力/描画の未実施ゲートを完了する。詳細は[macos/README.md](macos/README.md)。
+本体の映像surfaceと同居する場合はattach/detach・resize・終了の最小統合試験も必要。
+その後、設定など一画面から段階的に本実装へ進む。API固定・全面置換の承認ではない。
