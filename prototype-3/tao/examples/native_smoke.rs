@@ -148,6 +148,31 @@ fn main() -> Result<(), String> {
     run(move |executor| {
         let model = Store::new("native smoke".to_owned(), executor.clone());
         let view = View::new(model.bind(Clone::clone, None));
+        // A settings-like model controls readiness. Neither callback owns View.
+        let close_state = Store::new((0usize, false), executor.clone());
+        let weak = view.downgrade();
+        view.keep(
+            close_state
+                .bind(|s| s.1, None)
+                .subscribe(Rc::new(move |ready| {
+                    if ready && let Some(view) = weak.upgrade() {
+                        view.close();
+                    }
+                })),
+        );
+        let command = close_state.command(
+            |_| true,
+            |store, ()| {
+                store.update(|s| {
+                    s.0 += 1;
+                    s.1 = s.0 == 3;
+                });
+            },
+            Binding::constant(()),
+        );
+        view.on_close_request(Rc::new(move || {
+            command.invoke();
+        }));
         let panel = view.layout(
             &view.root(),
             "panel",
@@ -203,7 +228,7 @@ fn main() -> Result<(), String> {
                     id: "save".into(),
                     label: "Save".into(),
                     argument: "native argument".into(),
-                    shortcut: Some("Ctrl+KeyS".into()),
+                    shortcut: Some("Primary+S".into()),
                     role: MenuRole::Normal,
                     enabled: true,
                 },
@@ -219,7 +244,7 @@ fn main() -> Result<(), String> {
                     id: "quit".into(),
                     label: "Quit".into(),
                     argument: "must not dispatch".into(),
-                    shortcut: None,
+                    shortcut: Some("Primary+Q".into()),
                     role: MenuRole::Quit,
                     enabled: true,
                 },
@@ -231,7 +256,14 @@ fn main() -> Result<(), String> {
             }),
         );
         let owner = model.clone();
+        let state = close_state.clone();
         view.on_close(Rc::new(move || {
+            assert_eq!(
+                state.snapshot(),
+                (3, true),
+                "WM/menu/shortcut requested close"
+            );
+            state.close();
             owner.close();
             observed.set(true);
         }));
@@ -250,7 +282,25 @@ fn main() -> Result<(), String> {
                 "custom advanced primitive could not roundtrip the system clipboard"
             );
             #[cfg(target_os = "linux")]
-            native_menu_probe(&invoked).await;
+            {
+                use gtk::prelude::*;
+                let window = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .filter_map(|w| w.downcast::<gtk::Window>().ok())
+                    .find(|w| w.title().as_deref() == Some("native smoke"))
+                    .unwrap();
+                window.close(); // Real GTK WM delete-event through Tao CloseRequested.
+                let (send, receive) = futures::channel::oneshot::channel();
+                gtk::glib::idle_add_local_once(move || {
+                    let _ = send.send(());
+                });
+                receive.await.unwrap();
+                assert_eq!(close_state.snapshot(), (1, false));
+                assert!(window.is_visible(), "first request was vetoed");
+                native_menu_probe(&invoked).await;
+            }
+            #[cfg(not(target_os = "linux"))]
+            out.request_close(); // Native WM delivery on these platforms is unverified.
             out.edit("entry", "worker woke UI").unwrap();
             out.viewport("rows", 80);
             out.activate_menu("file/save").unwrap();
@@ -271,16 +321,36 @@ fn main() -> Result<(), String> {
                     .expect("actual native Linux Quit shim");
                 assert!(quit.is_sensitive());
                 quit.emit_by_name::<()>("activate", &[]);
+                let (send, receive) = futures::channel::oneshot::channel();
+                gtk::glib::idle_add_local_once(move || {
+                    let _ = send.send(());
+                });
+                receive.await.unwrap();
+                assert_eq!(close_state.snapshot(), (2, false));
+                let title = out.title();
+                let window = gtk::Window::list_toplevels()
+                    .into_iter()
+                    .filter_map(|w| w.downcast::<gtk::Window>().ok())
+                    .find(|w| w.title().as_deref() == Some(title.as_str()))
+                    .unwrap();
+                assert!(gtk::accel_groups_activate(
+                    &window,
+                    *gtk::gdk::keys::constants::q,
+                    gtk::gdk::ModifierType::CONTROL_MASK
+                ));
                 // Native event delivery is asynchronous. Close cancels UI tasks, so
                 // assert from on_close rather than awaiting another scheduler turn.
                 assert!(!model.is_closed());
             }
             #[cfg(not(target_os = "linux"))]
-            out.close();
+            {
+                out.activate_menu("file/quit").unwrap();
+                out.activate_menu("file/quit").unwrap();
+            }
         }));
         view
     })?;
     assert!(closed.get(), "native Quit must close the owning View");
-    println!("native-smoke: close callback OK (Linux native Quit shim)");
+    println!("native-smoke: close callback OK (Linux native WM/menu/Primary+Q requests)");
     Ok(())
 }

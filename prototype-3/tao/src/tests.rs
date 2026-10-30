@@ -44,6 +44,128 @@ struct Model {
 }
 
 #[test]
+fn close_requests_are_weak_replaceable_reentrant_and_force_is_final() {
+    let view = View::new(Binding::constant("close".into()));
+    let weak = view.downgrade();
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let owner = weak.clone();
+    view.on_close_request(Rc::new(move || {
+        count.set(count.get() + 1);
+        owner.upgrade().unwrap().request_close();
+    }));
+    view.request_close();
+    view.request_close();
+    assert_eq!(calls.get(), 2);
+    assert!(weak.upgrade().is_some());
+    let count = calls.clone();
+    view.on_close_request(Rc::new(move || {
+        count.set(count.get() + 10);
+        panic!("test handler");
+    }));
+    view.request_close();
+    view.request_close();
+    assert_eq!(calls.get(), 22, "panic releases the request gate");
+    assert!(view.error().unwrap().contains("test handler"));
+    let closed = Rc::new(Cell::new(0));
+    let count = closed.clone();
+    let owner = weak.clone();
+    view.on_close(Rc::new(move || {
+        assert!(owner.upgrade().is_none());
+        count.set(count.get() + 1);
+    }));
+    view.close();
+    view.close();
+    view.request_close();
+    assert_eq!(closed.get(), 1);
+    assert_eq!(calls.get(), 22);
+    assert!(weak.upgrade().is_none());
+    let dropped = View::new(Binding::constant("drop".into()));
+    let weak = dropped.downgrade();
+    let owner = weak.clone();
+    dropped.on_close_request(Rc::new(move || {
+        let _ = owner.upgrade();
+    }));
+    drop(dropped);
+    assert!(weak.upgrade().is_none());
+    let default = View::new(Binding::constant("default".into()));
+    default.request_close();
+    assert!(default.downgrade().upgrade().is_none());
+}
+
+#[test]
+fn close_ready_subscription_is_kept_without_a_view_model_cycle() {
+    let h = Harness::new();
+    let model = h.store((0usize, false));
+    let view = View::new(Binding::constant("settings".into()));
+    let owner = view.downgrade();
+    view.keep(model.bind(|s| s.1, None).subscribe(Rc::new(move |ready| {
+        if ready && let Some(view) = owner.upgrade() {
+            view.close();
+        }
+    })));
+    let command = model.command(
+        |_| true,
+        |store, ()| {
+            store.update(|s| s.0 += 1);
+        },
+        Binding::constant(()),
+    );
+    view.on_close_request(Rc::new(move || {
+        command.invoke();
+    }));
+    let closes = Rc::new(Cell::new(0));
+    let count = closes.clone();
+    let store = model.clone();
+    view.on_close(Rc::new(move || {
+        count.set(count.get() + 1);
+        store.close();
+    }));
+    view.request_close();
+    h.pump();
+    assert_eq!(model.snapshot(), (1, false));
+    assert!(!model.is_closed());
+    model.update(|s| s.1 = true);
+    h.pump();
+    assert_eq!(closes.get(), 1);
+    assert!(model.is_closed());
+    assert_eq!(view.subscription_count(), 0);
+    let weak = Rc::downgrade(&view.0);
+    drop(view);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn quit_role_requests_close_without_dispatching_or_recursing() {
+    use wakui2_runtime::{MenuItem, MenuRole};
+    let view = View::new(Binding::constant("quit".into()));
+    view.menu(
+        "file",
+        Binding::constant("File".into()),
+        Binding::constant(vec![MenuItem {
+            id: "quit".into(),
+            label: "Quit".into(),
+            argument: String::new(),
+            shortcut: None,
+            role: MenuRole::Quit,
+            enabled: true,
+        }]),
+        Rc::new(|_| panic!("Quit must not dispatch")),
+    );
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let weak = view.downgrade();
+    view.on_close_request(Rc::new(move || {
+        count.set(count.get() + 1);
+        weak.upgrade().unwrap().activate_menu("quit").unwrap();
+    }));
+    view.activate_menu("quit").unwrap();
+    assert_eq!(calls.get(), 1);
+    assert!(!view.0.closed.get());
+    view.close();
+}
+
+#[test]
 fn virtual_ranges_are_bounded_and_saturating() {
     assert_eq!(virtual_range(0, Viewport::default()), 0..0);
     assert_eq!(

@@ -207,7 +207,15 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                 (limits.max().height - finite(style.margin.top) - finite(style.margin.bottom))
                     .max(0.0),
             );
-            let mut child_limits = layout::Limits::new(Size::ZERO, max);
+            // Grid cells consume equal tracks, not merely a maximum width for
+            // otherwise shrink-sized children. Explicit width remains bounded.
+            let min =
+                if matches!(self.policy, Policy::Grid { .. }) && style.placement.width.is_none() {
+                    Size::new(width, 0.0)
+                } else {
+                    Size::ZERO
+                };
+            let mut child_limits = layout::Limits::new(min, max);
             if let Some(w) = style.placement.width {
                 child_limits = child_limits.width(Length::Fixed(finite(w)));
             }
@@ -338,6 +346,54 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
 mod tests {
     use super::*;
     use wakui2_runtime::Edges;
+    #[test]
+    fn actual_grid_nodes_fill_equal_columns_with_gap_and_explicit_spans() {
+        for available in [310.0, 610.0] {
+            let mut styles = [Style::default(); 4];
+            styles[1].placement.column = 1;
+            styles[2].placement.column = 2;
+            styles[3].placement.row = 2;
+            styles[3].placement.column_span = 2;
+            styles[3].placement.row_span = 2;
+            let mut element = Panel::element(
+                Policy::Grid {
+                    columns: 3,
+                    gap: 5.0,
+                },
+                styles
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, style)| {
+                        (
+                            i.to_string(),
+                            style,
+                            iced::widget::container(
+                                iced::widget::Space::new().width(10).height(20),
+                            )
+                            .into(),
+                        )
+                    })
+                    .collect(),
+            );
+            let renderer = Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+            let mut tree = Tree::new(element.as_widget());
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(available, 500.0)),
+            );
+            let cell = (available - 10.0) / 3.0;
+            assert_eq!(node.size().width, available);
+            for i in 0..3 {
+                let bounds = node.children()[i].bounds();
+                assert!((bounds.width - cell).abs() < 0.001);
+                assert!((bounds.x - i as f32 * (cell + 5.0)).abs() < 0.001);
+            }
+            let span = node.children()[3].bounds();
+            assert!((span.width - (2.0 * cell + 5.0)).abs() < 0.001);
+            assert_eq!(span.y, 30.0, "explicit empty row retains its gaps");
+        }
+    }
     #[test]
     fn stack_and_flex_have_real_distinct_geometry() {
         let s = Style::default();

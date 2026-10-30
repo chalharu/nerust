@@ -6,12 +6,14 @@
 //! RefCell borrows. Executors may poll immediately inside `spawn`.
 mod blocking;
 mod session;
+mod shortcut;
 mod store;
 
 pub use blocking::{BlockingPool, TaskError};
 pub use session::{
     Session, ShutdownCoordinator, ShutdownOutcome, ShutdownPhase, UiHost, WindowHooks, run_async,
 };
+pub use shortcut::{Shortcut, ShortcutError, ShortcutTarget};
 pub use store::{Binding, Command, Executor, Limits, Policy, Store, Subscription, validation};
 
 /// Whether an item key is nonempty and contains no hierarchical scope separator (`/`).

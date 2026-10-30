@@ -15,8 +15,8 @@ use std::{
 use futures::future::{AbortHandle, Abortable, LocalBoxFuture};
 use gtk::{gio, glib, prelude::*};
 use wakui2_runtime::{
-    Binding, Command, Executor, Keyed, Layout, MenuItem, MenuRole, Session, ShutdownPhase, Store,
-    Style, Subscription, UiHost, Viewport, WindowHooks,
+    Binding, Command, Executor, Keyed, Layout, MenuItem, MenuRole, Session, Shortcut,
+    ShutdownPhase, Store, Style, Subscription, UiHost, Viewport, WindowHooks,
 };
 
 /// A native container, not a second runtime parent descriptor.
@@ -156,6 +156,8 @@ struct Inner {
     lists: RefCell<HashMap<String, Rc<dyn ListControl>>>,
     actions: RefCell<HashMap<String, Action>>,
     on_close: RefCell<Vec<Rc<dyn Fn()>>>,
+    on_close_request: RefCell<Option<Rc<dyn Fn()>>>,
+    requesting_close: Cell<bool>,
     coordinated_close: RefCell<Option<Rc<CoordinatedClose>>>,
     closed: Cell<bool>,
     error: RefCell<Option<String>>,
@@ -163,6 +165,18 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct View(Rc<Inner>);
+
+/// A non-owning UI-thread handle. Closed or dropped Views cannot be upgraded.
+#[derive(Clone)]
+pub struct WeakView(Weak<Inner>);
+impl WeakView {
+    pub fn upgrade(&self) -> Option<View> {
+        self.0
+            .upgrade()
+            .filter(|inner| !inner.closed.get())
+            .map(View)
+    }
+}
 
 type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 
@@ -179,6 +193,7 @@ impl Inner {
             return;
         }
         drop(self.coordinated_close.take());
+        drop(self.on_close_request.take());
         // Never run token, signal or application destructors under a registry borrow.
         drop(self.resources.take());
         drop(self.lists.take());
@@ -249,6 +264,8 @@ impl View {
             actions: RefCell::default(),
             menu_states: RefCell::default(),
             on_close: RefCell::default(),
+            on_close_request: RefCell::default(),
+            requesting_close: Cell::new(false),
             coordinated_close: RefCell::default(),
             closed: Cell::new(false),
             error: RefCell::default(),
@@ -256,14 +273,9 @@ impl View {
         let weak = Rc::downgrade(&view.0);
         let signal = view.0.window.connect_close_request(move |_| {
             if let Some(inner) = weak.upgrade() {
-                let request = inner.coordinated_close.borrow().clone();
-                if let Some(request) = request {
-                    request.request();
-                    return glib::Propagation::Stop;
-                }
-                inner.shutdown();
+                View(inner).request_close();
             }
-            glib::Propagation::Proceed
+            glib::Propagation::Stop
         });
         view.signal("", &view.0.window, signal);
         view.bind_native("", title, &view.0.window, |window, title| {
@@ -466,6 +478,15 @@ impl View {
             Layout::Grid { columns, gap } => {
                 assert!(columns > 0, "Grid columns must be positive");
                 let widget = gtk::Grid::new();
+                widget.set_column_homogeneous(true);
+                widget.set_hexpand(true);
+                // GTK only counts attached tracks; retain even empty declared
+                // columns, otherwise a partially populated grid changes ratios.
+                for column in 0..columns {
+                    let track = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                    track.set_hexpand(true);
+                    widget.attach(&track, column as i32, 0, 1, 1);
+                }
                 widget.set_row_spacing(pixels(gap) as u32);
                 widget.set_column_spacing(pixels(gap) as u32);
                 Parent::new(&widget, ParentKind::Grid(columns))
@@ -886,7 +907,7 @@ impl View {
             let trigger = item
                 .shortcut
                 .as_ref()
-                .map(|shortcut| gtk::ShortcutTrigger::parse_string(shortcut));
+                .map(|shortcut| parse_shortcut(shortcut));
             if trigger.as_ref().is_some_and(Option::is_none) {
                 self.0
                     .error
@@ -948,7 +969,7 @@ impl View {
 
     fn native_role(&self, role: &MenuRole) {
         match role {
-            MenuRole::Quit => self.close(),
+            MenuRole::Quit => self.request_close(),
             MenuRole::About => {
                 let dialog = gtk::AboutDialog::builder()
                     .transient_for(&self.0.window)
@@ -984,6 +1005,40 @@ impl View {
     pub fn on_close(&self, callback: Rc<dyn Fn()>) {
         if !self.0.closed.get() {
             self.0.on_close.borrow_mut().push(callback);
+        }
+    }
+    pub fn downgrade(&self) -> WeakView {
+        WeakView(Rc::downgrade(&self.0))
+    }
+    /// Replace the single application handler. Capture Store or WeakView, not
+    /// this View strongly. A handler decides when to call forceful `close`.
+    /// When installed it takes precedence over GtkHost coordinated shutdown.
+    pub fn on_close_request(&self, callback: Rc<dyn Fn()>) {
+        if !self.0.closed.get() {
+            drop(self.0.on_close_request.replace(Some(callback)));
+        }
+    }
+    /// Ordinary user close: app handler, else coordinator, else force teardown.
+    /// Synchronous reentrant requests (including native/menu requests) are
+    /// ignored, not queued. A later request retries after the callback returns.
+    pub fn request_close(&self) {
+        if self.0.closed.get() || self.0.requesting_close.replace(true) {
+            return;
+        }
+        let callback = self.0.on_close_request.borrow().clone();
+        let coordinator = self.0.coordinated_close.borrow().clone();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(callback) = callback {
+                callback();
+            } else if let Some(coordinator) = coordinator {
+                coordinator.request();
+            } else {
+                self.close();
+            }
+        }));
+        self.0.requesting_close.set(false);
+        if let Err(panic) = result {
+            self.0.error.replace(Some(panic_error(panic)));
         }
     }
     /// Force teardown, bypassing coordinated confirmation/drain. Idempotent and
@@ -1072,6 +1127,14 @@ impl View {
         widget
             .downcast_ref::<gtk::Button>()
             .and_then(|button| button.label().map(Into::into))
+    }
+}
+
+// Canonical common grammar first; raw GTK trigger strings are legacy-only.
+fn parse_shortcut(value: &str) -> Option<gtk::ShortcutTrigger> {
+    match Shortcut::parse(value) {
+        Ok(shortcut) => gtk::ShortcutTrigger::parse_string(&shortcut.to_gtk()),
+        Err(_) => gtk::ShortcutTrigger::parse_string(value),
     }
 }
 

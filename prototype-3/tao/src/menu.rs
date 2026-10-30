@@ -1,6 +1,6 @@
 use super::*;
 use muda::{IsMenuItem, PredefinedMenuItem, accelerator::Accelerator};
-use wakui2_runtime::{MenuItem, MenuRole};
+use wakui2_runtime::{MenuItem, MenuRole, Shortcut};
 
 #[derive(Clone)]
 pub(super) struct Action {
@@ -9,10 +9,16 @@ pub(super) struct Action {
     pub(super) close: Option<Rc<dyn Fn()>>,
 }
 fn quit_shim(role: &MenuRole) -> bool {
-    cfg!(target_os = "linux") && *role == MenuRole::Quit
+    *role == MenuRole::Quit
 }
 pub fn parse_shortcut(value: &str) -> Result<Accelerator, String> {
-    value
+    // Canonical first; historical muda Code syntax remains a legacy fallback.
+    let canonical = Shortcut::parse(value)
+        .ok()
+        .map(|shortcut| shortcut.to_muda());
+    canonical
+        .as_deref()
+        .unwrap_or(value)
         .parse::<Accelerator>()
         .map_err(|e| format!("invalid menu shortcut {value:?}: {e}"))
 }
@@ -24,7 +30,7 @@ fn validate(items: &[MenuItem]) -> Result<(), String> {
         }
         if let Some(shortcut) = &item.shortcut {
             parse_shortcut(shortcut)?;
-            if item.role != MenuRole::Normal {
+            if item.role != MenuRole::Normal && !quit_shim(&item.role) {
                 return Err(format!(
                     "custom shortcut on predefined native role is unsupported: {}",
                     item.id
@@ -55,7 +61,7 @@ fn predefined(item: &MenuItem) -> PredefinedMenuItem {
                 ..Default::default()
             }),
         ),
-        MenuRole::Quit => PredefinedMenuItem::quit(text),
+        MenuRole::Quit => unreachable!("Quit must use the vetoable ordinary-item shim"),
         MenuRole::Separator => PredefinedMenuItem::separator(),
         MenuRole::Normal => unreachable!(),
     }
@@ -175,13 +181,13 @@ impl View {
                         .expect("validated shortcut");
                     let entry = muda::MenuItem::new(&item.label, item.enabled, accelerator);
                     ids.push((entry.id().clone(), key.clone()));
-                    // GTK3 muda renders predefined Quit disabled. This explicit platform
-                    // shim is a native normal item, not an application command alias.
+                    // Predefined Quit directly terminates the native loop/app on
+                    // Windows/macOS (not vetoable). Always use an ordinary item.
                     let close = if quit_shim(&item.role) {
                         let owner = weak.clone();
                         Some(Rc::new(move || {
                             if let Some(inner) = owner.upgrade() {
-                                View(inner).close();
+                                View(inner).request_close();
                             }
                         }) as Rc<dyn Fn()>)
                     } else {
@@ -302,6 +308,66 @@ impl View {
 mod tests {
     use super::*;
     #[test]
+    fn canonical_shortcuts_match_native_modifier_and_key_semantics() {
+        use muda::accelerator::{Code, Modifiers};
+        use wakui2_runtime::ShortcutTarget;
+        for (input, key, extra) in [
+            ("Primary+S", Code::KeyS, Modifiers::empty()),
+            ("Primary+Q", Code::KeyQ, Modifiers::empty()),
+            ("Primary+Shift+S", Code::KeyS, Modifiers::SHIFT),
+        ] {
+            let actual = parse_shortcut(input).unwrap();
+            let primary = if cfg!(target_os = "macos") {
+                Modifiers::META
+            } else {
+                Modifiers::CONTROL
+            };
+            assert_eq!(actual.modifiers(), primary | extra);
+            assert_eq!(actual.key(), key);
+            for target in [ShortcutTarget::MacOS, ShortcutTarget::Other] {
+                let shortcut = Shortcut::parse(input).unwrap();
+                let native: Accelerator = shortcut.to_muda_for(target).parse().unwrap();
+                let primary = if target == ShortcutTarget::MacOS {
+                    Modifiers::META
+                } else {
+                    Modifiers::CONTROL
+                };
+                assert_eq!(native.modifiers(), primary | extra);
+                assert_eq!(native.key(), key);
+            }
+        }
+        for key in [
+            "Enter",
+            "Tab",
+            "Space",
+            "Escape",
+            "Backspace",
+            "Delete",
+            "Insert",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown",
+            "Left",
+            "Right",
+            "Up",
+            "Down",
+            "F1",
+            "F12",
+            "0",
+            "9",
+        ] {
+            assert!(
+                parse_shortcut(&format!("Ctrl+Shift+{key}")).is_ok(),
+                "{key}"
+            );
+        }
+        assert_eq!(
+            parse_shortcut("Ctrl+Shift+S"),
+            parse_shortcut("Ctrl+Shift+KeyS")
+        );
+    }
+    #[test]
     fn parse_and_validate_before_snapshot_mutation() {
         assert!(parse_shortcut("Ctrl+KeyS").is_ok());
         assert!(parse_shortcut("NotAModifier+UnknownKey").is_err());
@@ -418,7 +484,7 @@ mod tests {
             );
             item.enabled = true;
             item.shortcut = Some("Ctrl+KeyS".into());
-            assert!(validate(&[item]).is_err());
+            assert_eq!(validate(&[item]).is_ok(), quit_shim(&role));
         }
     }
 }
