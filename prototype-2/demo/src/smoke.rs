@@ -1,6 +1,6 @@
 //! Automated verification is not application boilerplate.
 use crate::{backend, model::Settings};
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Instant};
 use wakui2_runtime::{Binding, Store};
 
 async fn until<T: Clone + 'static>(binding: Binding<T>, predicate: impl Fn(&T) -> bool + 'static) {
@@ -64,6 +64,42 @@ pub async fn verify(view: backend::View, model: Store<Settings>, path: PathBuf) 
         Some("999")
     );
     assert_eq!(view.text("selected/999/name").as_deref(), Some("Item 999"));
+
+    // Lightweight debug-build observations, not a universal benchmark: measure
+    // synchronous binding convergence (including the 1000-row snapshot/assertions)
+    // and viewport mounting only, not redraw, native frames/input, or async validation.
+    const SAMPLES: usize = 20;
+    let mut durations = Vec::with_capacity(SAMPLES);
+    for i in 0..SAMPLES {
+        let name = format!("probe{i}");
+        let started = Instant::now();
+        view.edit("name", &name).unwrap();
+        assert_eq!(model.snapshot().name, name);
+        assert_eq!(view.text("echo").as_deref(), Some(name.as_str()));
+        durations.push(started.elapsed());
+    }
+    durations.sort_unstable();
+    // Nearest-rank percentiles: ranks 10 and 19 for 20 samples.
+    let p50 = durations[SAMPLES / 2 - 1].as_micros();
+    let p95 = durations[(SAMPLES * 95).div_ceil(100) - 1].as_micros();
+    let mut mounted_max = view.mounted_count("rows");
+    assert!(mounted_max <= 5);
+    let started = Instant::now();
+    for _ in 0..SAMPLES {
+        for offset in [500, 0] {
+            view.viewport("rows", offset);
+            let mounted = view.mounted_count("rows");
+            assert!(mounted <= 5);
+            mounted_max = mounted_max.max(mounted);
+        }
+    }
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    // Restore the original final name outside the measurements; don't await each probe.
+    view.edit("name", "Grace").unwrap();
+    until(model.bind(|s| s.validating, None), |pending| !pending).await;
+    println!(
+        "PERF2 samples={SAMPLES} sync_binding_p50_us={p50} sync_binding_p95_us={p95} viewport_roundtrips={SAMPLES} elapsed_ms={elapsed_ms:.3} mounted_max={mounted_max}"
+    );
     view.close();
     view.close();
     assert!(model.is_closed());
