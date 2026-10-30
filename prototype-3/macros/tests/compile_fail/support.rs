@@ -5,6 +5,7 @@ use wakui2_runtime::{Binding, Command, Executor, Layout, Store, Style};
 pub struct Model {
     pub name: String,
     pub flag: bool,
+    pub items: Vec<wakui2_runtime::MenuItem<i32>>,
 }
 
 #[wakui2_macros::commands]
@@ -31,6 +32,7 @@ pub fn model() -> Store<Model> {
         Model {
             name: "model text".into(),
             flag: true,
+            items: vec![wakui2_runtime::MenuItem { id: "integer".into(), label: "Integer".into(), argument: 42, shortcut: None, role: wakui2_runtime::MenuRole::Normal, enabled: true }],
         },
         Rc::new(NoTasks),
     )
@@ -61,6 +63,9 @@ pub mod fake {
         pub fn entry(&self, _: &Parent, _: &str, _: Binding<String>) {}
         pub fn button(&self, _: &Parent, _: &str, _: Binding<String>, _: Command) {}
         pub fn on_close(&self, _: Rc<dyn Fn()>) {}
+        pub fn typed_menu<A: Clone + 'static>(&self, _: &str, _: Binding<String>, items: Binding<Vec<wakui2_runtime::MenuItem<A>>>, dispatch: Rc<dyn Fn(A) -> bool>) {
+            for item in items.get() { dispatch(item.argument); }
+        }
         pub fn output(&self) -> String {
             self.0.borrow().clone()
         }

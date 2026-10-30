@@ -95,6 +95,13 @@ impl Fixture {
             .current_dir(&self.root)
             .env("CARGO_TARGET_DIR", session().join("target"))
             .env("CARGO_TERM_COLOR", "never")
+            .env(
+                "RUSTC_WRAPPER",
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .join("scripts/yaml-rustc.py"),
+            )
             .args(args)
             .arg("--offline")
             .output()
@@ -110,11 +117,46 @@ impl Fixture {
     }
 
     fn rejects(&self, expected: &[&str]) {
-        let output = self.cargo(&["check"]);
+        self.rejects_at(expected, Some(8));
+    }
+    fn rejects_at(&self, expected: &[&str], expected_line: Option<u64>) {
+        let output = self.cargo(&["check", "--message-format=json"]);
         assert!(!output.status.success(), "fixture unexpectedly compiled");
-        let stderr = String::from_utf8(output.stderr).unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = format!("{}\n{stdout}", String::from_utf8(output.stderr).unwrap());
         for text in expected {
             assert!(stderr.contains(text), "missing {text:?}:\n{stderr}");
+        }
+        let yaml_spans: Vec<_> = stdout
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|message| message["reason"] == "compiler-message")
+            .flat_map(|message| {
+                message["message"]["spans"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter(|span| {
+                span["is_primary"] == true
+                    && span["file_name"]
+                        .as_str()
+                        .is_some_and(|path| path.ends_with("/ui.yaml"))
+            })
+            .collect();
+        assert!(
+            expected_line.is_none() || !yaml_spans.is_empty(),
+            "missing YAML primary span: {stderr}"
+        );
+        for span in yaml_spans {
+            assert!(span["line_start"].as_u64().unwrap() > 0);
+            if let Some(line) = expected_line {
+                assert_eq!(span["line_start"], line, "incorrect YAML node: {stderr}");
+            }
+            println!(
+                "YAML PRIMARY {}:{}:{}",
+                span["file_name"], span["line_start"], span["column_start"]
+            );
         }
     }
 
@@ -182,6 +224,72 @@ fn rustc_rejects_wrong_typed_command_argument() {
         "expected `i32`",
         "found `String`",
     ]);
+}
+
+fn document(content: &str) -> String {
+    format!(
+        "schema_version: 2\nroot:\n  type: Window\n  id: window\n  title: {{literal: Probe}}\n  content:\n{}\n",
+        content
+            .lines()
+            .map(|line| format!("    {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+#[test]
+fn yaml_schema_typo_has_a_primary_source_span() {
+    let fixture = Fixture::copy("pass");
+    fs::write(
+        fixture.root.join("ui.yaml"),
+        document("type: Label\nid: label\ntexte: {literal: typo}"),
+    )
+    .unwrap();
+    fixture.rejects_at(&["unknown field", "texte"], Some(9));
+}
+
+#[test]
+fn rust_reference_signatures_are_checked_at_the_yaml_node() {
+    let fixture = Fixture::copy("pass");
+    let support = fixture.root.join("support.rs");
+    let original = fs::read_to_string(&support).unwrap();
+    fs::write(support, format!("{original}\npub fn wrong_factory(_: &fake::View, _: &fake::Parent, _: &str, _: Binding<bool>) {{}}\npub fn wrong_factory_result(_: &fake::View, _: &fake::Parent, _: &str, _: Binding<String>) -> bool {{ true }}\npub async fn wrong_validator(_: bool) -> Result<(), String> {{ Ok(()) }}\npub mod wrong_converter {{ pub fn forward(_: bool) -> String {{ String::new() }} pub fn backward(_: String) -> Result<bool, String> {{ Ok(true) }} }}\n")).unwrap();
+    for (content, expected) in [
+        (
+            "type: Native\nid: native\nfactory: support::wrong_factory\nvalue: {bind: {path: name}}",
+            "expected `bool`, found `String`",
+        ),
+        (
+            "type: Native\nid: native\nfactory: support::wrong_factory_result\nvalue: {bind: {path: name}}",
+            "expected `()`, found `bool`",
+        ),
+        (
+            "type: TextBox\nid: entry\ntext: {bind: {path: name}}\nvalidation: {validator: support::wrong_validator, error: name, pending: flag}",
+            "expected `bool`, found `String`",
+        ),
+        (
+            "type: TextBox\nid: entry\ntext: {bind: {path: name, converter: support::wrong_converter}}",
+            "expected",
+        ),
+    ] {
+        fs::write(fixture.root.join("ui.yaml"), document(content)).unwrap();
+        fixture.rejects(&[expected]);
+    }
+}
+
+#[test]
+fn typed_menu_arguments_compile_execute_and_reject_wrong_commands() {
+    let fixture = Fixture::copy("pass");
+    let yaml = "schema_version: 2\nroot:\n  type: Window\n  id: window\n  title: {literal: Menu}\n  content: {type: Label, id: label, text: {literal: menu}}\n  menus:\n    - id: file\n      title: {literal: File}\n      items: {bind: {path: items}}\n      command: typed\n";
+    fs::write(fixture.root.join("ui.yaml"), yaml).unwrap();
+    fs::write(fixture.root.join("main.rs"), "mod support;\nuse support::{fake, ModelCommands};\nfn main() { let model = support::model(); let _ = wakui2_macros::view!(\"ui.yaml\", model, fake); assert_eq!(model.snapshot().name, \"42\"); println!(\"typed-menu-ok\"); }\n").unwrap();
+    assert_eq!(fixture.run(), "typed-menu-ok\n");
+    fs::write(
+        fixture.root.join("ui.yaml"),
+        yaml.replace("command: typed", "command: reset"),
+    )
+    .unwrap();
+    fixture.rejects(&["E0308", "mismatched types"]);
 }
 
 #[test]
@@ -262,6 +370,6 @@ fn macro_rejects_resource_exhaustion_and_yaml_aliases() {
         ),
     ] {
         fs::write(&yaml, source).unwrap();
-        fixture.rejects(&["ui.yaml", diagnostic]);
+        fixture.rejects_at(&["ui.yaml", diagnostic], None);
     }
 }
