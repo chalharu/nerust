@@ -21,6 +21,8 @@ printf '%s\n' "$output" | grep -q '^SCALING3 PASS: read clones=0, update clones=
 cargo test --locked -p wakui2-tao --lib
 cargo test --locked -p wakui3-settings
 cargo test --locked -p wakui3-settings --no-default-features --features backend-tao
+native_test -p wakui3-settings \
+    native_tests::native_generated_shared_windows_survive_peer_close -- --exact --ignored --test-threads=1
 for name in native_contract native_executor_completion native_invalid_keyed_snapshots \
     native_root_style native_menu_namespaces native_coordinated_multiwindow_close \
     native_coordinated_close_timeout native_coordinated_close_cancel \
