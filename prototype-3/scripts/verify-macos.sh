@@ -22,10 +22,11 @@ printf '%s\n' "$output" | grep -q '^LIBRARY3 macos PASS latest-query-bursts samp
 printf '%s\n' "$output" | grep -q '^LIBRARY3 macos PASS native-close model-closed$'
 output=$(cargo run --locked -p wakui3-macos --example conformance)
 printf '%s\n' "$output"
-for marker in event-namespace typed-menu injected-field-editor native-menu viewport-contract readonly-viewport menu-transaction nested-cleanup dynamic-row-height keyed-rows reaction-chain weak-view; do
+for marker in event-namespace validation-scope typed-menu injected-field-editor native-menu viewport-contract readonly-viewport menu-transaction nested-cleanup dynamic-row-height keyed-rows reaction-chain weak-view; do
     printf '%s\n' "$output" | grep -q "^MACOS3 PASS $marker "
 done
 output=$(cargo run --locked -p wakui3-macos --example multiwindow)
 printf '%s\n' "$output"
+printf '%s\n' "$output" | grep -q '^MACOS3 PASS single-session repeated-attach foreign-attach-and-registration-rejected$'
 printf '%s\n' "$output" | grep -q '^MACOS3 PASS multiwindow shared-store reopen active-menu quit-veto confirm-cancel-drain-close$'
 printf '%s\n' 'VERIFY3 MACOS PASS: core regressions, AppKit settings/library, injected input, bounded dispatch and native drawing'
