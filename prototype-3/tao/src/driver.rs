@@ -27,6 +27,9 @@ use wakui2_runtime::Executor;
 #[cfg(target_os = "linux")]
 use {gtk::prelude::*, tao::platform::unix::WindowExtUnix};
 
+#[cfg(all(test, target_os = "linux"))]
+mod input_tests;
+
 #[derive(Debug)]
 enum Native {
     Wake(usize),
@@ -186,8 +189,21 @@ impl Painter {
             ui.operate(&self.renderer, &mut operation);
         }
         let mut messages = Vec::new();
+        // iced text inputs retain their own modifier state. Clearing only the
+        // Tao converter on focus loss leaves Ctrl/Shift stuck if key-up goes to
+        // another window. Reset widgets before delivering the unfocus event.
+        let events = if matches!(event, iced::Event::Window(iced::window::Event::Unfocused)) {
+            vec![
+                iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(
+                    iced::keyboard::Modifiers::empty(),
+                )),
+                event,
+            ]
+        } else {
+            vec![event]
+        };
         let (state, _) = ui.update(
-            &[event],
+            &events,
             self.cursor,
             &mut self.renderer,
             &mut self.clipboard,

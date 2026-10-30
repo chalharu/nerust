@@ -43,11 +43,16 @@ impl Fixture {
         let root = session().join(format!("{name}-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::create_dir(&root).unwrap();
         for file in ["main.rs", "ui.yaml"] {
-            fs::copy(source.join(name).join(file), root.join(file)).unwrap();
+            let fixture = if name == "self_arguments" && file == "ui.yaml" {
+                "pass"
+            } else {
+                name
+            };
+            fs::copy(source.join(fixture).join(file), root.join(file)).unwrap();
         }
         fs::copy(source.join("support.rs"), root.join("support.rs")).unwrap();
         // New argument probes reuse the immutable pass manifest.
-        let manifest_fixture = if name == "wrong_argument" {
+        let manifest_fixture = if matches!(name, "wrong_argument" | "self_arguments") {
             "pass"
         } else {
             name
@@ -164,6 +169,11 @@ fn rustc_rejects_wrong_typed_command_argument() {
         "expected `i32`",
         "found `String`",
     ]);
+}
+
+#[test]
+fn self_arguments_compile_and_execute_downstream() {
+    assert_eq!(Fixture::copy("self_arguments").run(), "self-arguments-ok\n");
 }
 
 #[test]
