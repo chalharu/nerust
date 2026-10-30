@@ -4,6 +4,9 @@ mod persistence;
 mod smoke;
 mod wiring;
 
+#[cfg(all(test, feature = "backend-gtk"))]
+mod native_tests;
+
 #[cfg(feature = "backend-gtk")]
 use wakui2_gtk as backend;
 #[cfg(all(feature = "backend-tao", not(feature = "backend-gtk")))]
