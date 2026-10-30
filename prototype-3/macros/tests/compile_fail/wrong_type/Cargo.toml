@@ -1,0 +1,15 @@
+[package]
+name = "wakui2-ui-wrong-type"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+wakui2-runtime = { path = "../../../../runtime" }
+wakui2-macros = { path = "../../../../macros" }
+
+[[bin]]
+name = "probe"
+path = "main.rs"
