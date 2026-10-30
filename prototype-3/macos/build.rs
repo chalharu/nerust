@@ -32,7 +32,7 @@ fn main() {
         ])
         .arg(format!("{arch}-apple-macosx{minimum}"))
         .args(["-Xlinker", "-install_name", "-Xlinker"])
-        .arg(&library)
+        .arg("@rpath/libWakui3AppKit.dylib")
         .args(["native/AppKit.swift", "-o"])
         .arg(&library)
         .status()
@@ -41,4 +41,5 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", output.display());
     println!("cargo:rustc-link-lib=dylib=Wakui3AppKit");
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", output.display());
+    println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
 }

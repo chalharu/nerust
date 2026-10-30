@@ -1,10 +1,16 @@
 //! Run in its own process (GTK3 only), optionally under Xvfb.
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 use wakui2_runtime::{Binding, Keyed, Layout, MenuItem, MenuRole, Store, Viewport};
 use wakui2_tao::{View, run};
 
 /// Application-defined advanced primitive, not a backend feature flag or string renderer.
-struct ClipboardProbe(Rc<Cell<bool>>);
+struct ClipboardProbe(
+    Rc<Cell<bool>>,
+    Rc<RefCell<Option<futures::channel::oneshot::Sender<()>>>>,
+);
 impl iced::advanced::Widget<wakui2_tao::Message, iced::Theme, iced_tiny_skia::Renderer>
     for ClipboardProbe
 {
@@ -41,6 +47,11 @@ impl iced::advanced::Widget<wakui2_tao::Message, iced::Theme, iced_tiny_skia::Re
             },
             iced::Color::from_rgb(0.1, 0.6, 0.3),
         );
+        if self.0.get()
+            && let Some(ready) = self.1.borrow_mut().take()
+        {
+            let _ = ready.send(());
+        }
     }
     fn update(
         &mut self,
@@ -143,6 +154,11 @@ async fn native_menu_probe(invoked: &Cell<bool>) {
 }
 
 fn main() -> Result<(), String> {
+    if std::env::var("WAKUI_ALLOW_CLIPBOARD_PROBE").as_deref() != Ok("1") {
+        return Err(
+            "native smoke requires an isolated desktop and WAKUI_ALLOW_CLIPBOARD_PROBE=1".into(),
+        );
+    }
     let closed = Rc::new(Cell::new(false));
     let observed = closed.clone();
     run(move |executor| {
@@ -163,7 +179,7 @@ fn main() -> Result<(), String> {
         let command = close_state.command(
             |_| true,
             |store, ()| {
-                store.update(|s| {
+                let _ = store.update(|s| {
                     s.0 += 1;
                     s.1 = s.0 == 3;
                 });
@@ -171,7 +187,7 @@ fn main() -> Result<(), String> {
             Binding::constant(()),
         );
         view.on_close_request(Rc::new(move || {
-            command.invoke();
+            let _ = command.invoke();
         }));
         let panel = view.layout(
             &view.root(),
@@ -189,10 +205,12 @@ fn main() -> Result<(), String> {
         view.meter(&panel, "meter", Binding::constant(0.7));
         let clipboard_ok = Rc::new(Cell::new(false));
         let probe = clipboard_ok.clone();
+        let (send, receive) = futures::channel::oneshot::channel();
+        let ready = Rc::new(RefCell::new(Some(send)));
         view.mount(
             &panel,
             "application-primitive",
-            Rc::new(move || wakui2_tao::Element::new(ClipboardProbe(probe.clone()))),
+            Rc::new(move || wakui2_tao::Element::new(ClipboardProbe(probe.clone(), ready.clone()))),
             Vec::new(),
         );
         view.items(
@@ -267,12 +285,6 @@ fn main() -> Result<(), String> {
             owner.close();
             observed.set(true);
         }));
-        let (send, receive) = futures::channel::oneshot::channel();
-        // A single worker completion, not a UI polling timer. Leave time for actual drawing.
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(800));
-            let _ = send.send(());
-        });
         let out = view.clone();
         executor.spawn(Box::pin(async move {
             receive.await.unwrap();

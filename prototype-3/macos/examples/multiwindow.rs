@@ -56,7 +56,7 @@ mod native {
                 enabled: true,
             }]),
             Rc::new(move |value| {
-                writer.update(move |state| *state = value);
+                let _ = writer.update(move |state| *state = value);
                 true
             }),
         );

@@ -44,15 +44,22 @@ CLI: `--config PATH` (default: current directory / `wakui3-settings.json`).
 ## Persistence boundaries
 
 Same-directory, unique `create_new` temporary file, write, file `sync_all`, then
-rename. Failed creation never deletes someone else's temporary file. Failure
-after creation removes the owned temporary file and preserves the target.
+rename and Unix parent-directory `sync_all`. A persistent sibling `.lock` file
+uses the OS exclusive lock; overlapping cooperative writers fail without writing.
+Never delete that lock file: replacing its inode would split the lock domain.
+Failed temporary creation never deletes someone else's file. Failure before
+rename removes only the owned temporary file and preserves the target. A directory
+sync failure after rename reports an error, but publication may already have occurred.
 On Unix rename replaces the target atomically. **Windows replacement of an
 existing file is not guaranteed by this portable approach**: errors are reported,
-not hidden behind delete-then-rename. No directory fsync, full power-loss
-durability guarantee, interprocess lock/conflict resolution, migration, symlink
+not hidden behind delete-then-rename. No hardware power-loss guarantee,
+logical conflict resolution for drafts loaded before another writer saved, migration, symlink
 hardening against hostile directory mutation, or automatic overwrite of damaged
 files. External force-close/process termination is not graceful shutdown; already
 running filesystem work cannot be canceled. Normal app close waits for its save.
+SIGKILL can leave an uncommitted temporary file, never adopted by another save.
+Unix subprocess tests verify valid old/new JSON after kill and OS lock release;
+this is not a hardware power-cut or network-filesystem durability test.
 
 ## Verification
 
@@ -70,7 +77,8 @@ Run each backend separately under Xvfb with `GDK_BACKEND=x11`,
 `GSK_RENDERER=cairo`, `G_DEBUG=fatal-criticals`. This verifies X11 adapter
 automation, not physical shortcut key delivery or Windows/macOS/Wayland behavior.
 
-The 25 display-free tests run for both features. An additional GTK-only test,
+Display-free tests run for both features; use the per-suite summary rather than
+a fixed aggregate count. An additional GTK-only test,
 `native_tests::native_generated_shared_windows_survive_peer_close`, is ignored
 by default and explicitly executed by the verification script in its own Xvfb
 process. It presents two generated shared Views, closes one native window, edits

@@ -28,7 +28,7 @@ pub fn scanner(workers: Rc<RefCell<BlockingPool>>) -> Scanner {
 
 pub fn connect(model: &Store<App>, executor: Rc<dyn Executor>, scan: Scanner) -> Vec<Subscription> {
     let requests = model.watch(model.bind(App::query, None), |model, query| {
-        model.update(move |state| state.begin(query));
+        let _ = model.update(move |state| state.begin(query));
     });
     let tasks = model.watch(
         model.bind(|s| s.pending.clone(), None),
@@ -47,7 +47,7 @@ pub fn connect(model: &Store<App>, executor: Rc<dyn Executor>, scan: Scanner) ->
                     state.complete(completion, result);
                 },
             ) {
-                model.update(move |state| {
+                let _ = model.update(move |state| {
                     state.complete(
                         request,
                         Err("Scan task was not accepted: task capacity exceeded".into()),
@@ -110,7 +110,7 @@ pub fn connect(model: &Store<App>, executor: Rc<dyn Executor>, scan: Scanner) ->
                     }
                 )
             };
-            model.update(move |state| {
+            let _ = model.update(move |state| {
                 state.rows = rows;
                 state.details = details;
                 state.status = status;
@@ -132,7 +132,7 @@ pub fn view(
     }
     let owner = model.clone();
     view.on_close_request(Rc::new(move || {
-        owner.update(|state| state.closing = true);
+        let _ = owner.update(|state| state.closing = true);
     }));
     let weak = view.downgrade();
     view.keep(

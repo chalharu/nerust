@@ -128,10 +128,10 @@ impl Settings {
         match argument.as_str() {
             "save" => Self::save(model, String::new()),
             "reverse" => {
-                model.update(|s| s.reverse());
+                let _ = model.update(|s| s.reverse());
             }
             _ => {
-                model.update(move |s| s.status = format!("Menu argument: {argument}"));
+                let _ = model.update(move |s| s.status = format!("Menu argument: {argument}"));
             }
         }
     }
@@ -147,7 +147,7 @@ impl Settings {
             .try_spawn(move || atomic_save(&state.path, state.name.as_bytes()));
         match result {
             Ok(task) => {
-                model.update(|s| {
+                let _ = model.update(|s| {
                     s.busy = true;
                     s.status = "Saving…".into();
                     s.menu_items[0].enabled = false;
@@ -163,7 +163,7 @@ impl Settings {
                         Err(error) => format!("Error: {error}"),
                     };
                 }) {
-                    model.update(|s| {
+                    let _ = model.update(|s| {
                         s.busy = false;
                         s.menu_items[0].enabled = true;
                         s.status = "Task capacity exceeded".into();
@@ -171,7 +171,7 @@ impl Settings {
                 }
             }
             Err(error) => {
-                model.update(move |s| s.status = error.to_string());
+                let _ = model.update(move |s| s.status = error.to_string());
             }
         }
     }

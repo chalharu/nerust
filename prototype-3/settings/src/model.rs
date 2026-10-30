@@ -158,7 +158,7 @@ impl App {
         }
     }
     pub fn request_exit(model: Store<Self>) {
-        model.update(|s| {
+        let _ = model.update(|s| {
             s.exit = if s.busy() {
                 Exit::Waiting
             } else if s.dirty() {
@@ -237,7 +237,7 @@ impl App {
     fn choose(model: Store<Self>, argument: String) {
         match argument.as_str() {
             "save" => {
-                model
+                let _ = model
                     .command_save(wakui2_runtime::Binding::constant(SaveIntent::Stay))
                     .invoke();
             }

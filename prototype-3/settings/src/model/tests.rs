@@ -130,7 +130,7 @@ fn draft_invalid_intermediates_are_exact_strings() {
 #[test]
 fn cancel_restores_saved_clears_errors_without_io() {
     let f = Fixture::new();
-    f.model.update(|s| {
+    let _ = f.model.update(|s| {
         s.draft.volume = "-".into();
         s.io_error = "old error".into();
     });
@@ -176,7 +176,18 @@ fn failed_save_directory_preserves_state_and_recovers() {
     assert_eq!(state.draft, draft);
     assert_eq!(state.exit, Exit::Confirm);
     assert!(state.io_error.contains("save"));
-    assert_eq!(std::fs::read_dir(&f.sandbox.dir).unwrap().count(), 1);
+    let mut entries: Vec<_> = std::fs::read_dir(&f.sandbox.dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        [
+            std::ffi::OsString::from("settings.json"),
+            std::ffi::OsString::from("settings.json.lock")
+        ]
+    );
     std::fs::remove_dir(f.sandbox.path()).unwrap();
     assert!(f.save(SaveIntent::Stay));
     f.done();
@@ -212,7 +223,7 @@ fn close_waits_for_save_and_reprompts_for_new_invalid_edit() {
     f.edit("Captured");
     f.save(SaveIntent::Exit);
     f.pool.run_until_stalled();
-    f.model.update(|s| s.draft.volume = "-".into());
+    let _ = f.model.update(|s| s.draft.volume = "-".into());
     App::request_exit(f.model.clone());
     assert_eq!(f.model.snapshot().exit, Exit::Waiting);
     assert!(
@@ -246,7 +257,7 @@ fn close_clean_cancel_discard_and_successful_save() {
     App::request_exit(f.model.clone());
     assert!(f.model.snapshot().close_ready());
     // New independent state for each terminal path.
-    f.model.update(|s| *s = App::new(Config::default()));
+    let _ = f.model.update(|s| *s = App::new(Config::default()));
     f.edit("Ada");
     App::request_exit(f.model.clone());
     assert_eq!(f.model.snapshot().exit, Exit::Confirm);
@@ -265,7 +276,7 @@ fn close_clean_cancel_discard_and_successful_save() {
     assert!(f.model.snapshot().close_ready());
     assert_eq!(f.model.snapshot().saved, Config::default());
     assert!(!f.sandbox.path().exists());
-    f.model.update(|s| *s = App::new(Config::default()));
+    let _ = f.model.update(|s| *s = App::new(Config::default()));
     f.edit("Grace");
     assert!(
         !f.model
@@ -412,10 +423,10 @@ fn projection_has_no_feedback_and_menu_tracks_validation() {
     let after_edit = notifications.get();
     assert!(f.model.snapshot().ui.menu_items[0].enabled);
     for _ in 0..10 {
-        f.model.update(|_| {});
+        let _ = f.model.update(|_| {});
     }
     assert_eq!(notifications.get(), after_edit);
-    f.model.update(|s| s.draft.volume = "-".into());
+    let _ = f.model.update(|s| s.draft.volume = "-".into());
     assert!(!f.model.snapshot().ui.menu_items[0].enabled);
     assert_eq!(
         f.model.snapshot().ui.menu_items[0].shortcut.as_deref(),
@@ -471,9 +482,9 @@ fn full_pool_is_an_error_and_never_changes_saved() {
 #[test]
 fn numeric_formatting_is_only_normalized_for_unchanged_draft() {
     let mut f = Fixture::new();
-    f.model.update(|s| s.draft.volume = "070".into());
+    let _ = f.model.update(|s| s.draft.volume = "070".into());
     assert!(f.save(SaveIntent::Stay));
-    f.model.update(|s| s.draft.volume = "0070".into());
+    let _ = f.model.update(|s| s.draft.volume = "0070".into());
     f.done();
     assert_eq!(f.model.snapshot().saved.volume, 70);
     assert_eq!(f.model.snapshot().draft.volume, "0070");

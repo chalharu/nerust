@@ -1,4 +1,49 @@
 use super::*;
+
+#[test]
+#[cfg(target_os = "linux")]
+fn style_late_close_and_viewport_writeback_contract() {
+    let harness = Harness::new();
+    let view = View::new(Binding::constant("contracts".into()));
+    assert_eq!(
+        view.try_style("missing", Style::default()),
+        Err("style target not mounted: missing".into())
+    );
+    let mut invalid = Style::default();
+    invalid.placement.x = 1.0;
+    assert_eq!(
+        view.try_style("__root", invalid),
+        Err("x/y placement requires Absolute".into())
+    );
+    let viewport = harness.store(Viewport {
+        count: 3,
+        ..Viewport::default()
+    });
+    view.items(
+        &view.root(),
+        "rows",
+        Binding::constant(
+            (0..10)
+                .map(|index| Keyed::new(index.to_string(), harness.store(index)))
+                .collect(),
+        ),
+        viewport.bind(|state| *state, Some(|state, value| *state = value)),
+        Rc::new(|_, _, _, _| {}),
+    );
+    view.viewport("rows", usize::MAX);
+    assert_eq!(viewport.snapshot().start, 7);
+    assert!(viewport.update(|state| state.start = usize::MAX));
+    assert_eq!(viewport.snapshot().start, 7);
+    view.close();
+    assert_eq!(
+        view.try_style("__root", Style::default()),
+        Err("view is closed".into())
+    );
+    let called = Rc::new(Cell::new(false));
+    let observed = called.clone();
+    view.on_close(Rc::new(move || observed.set(true)));
+    assert!(called.get());
+}
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -107,12 +152,12 @@ fn close_ready_subscription_is_kept_without_a_view_model_cycle() {
     let command = model.command(
         |_| true,
         |store, ()| {
-            store.update(|s| s.0 += 1);
+            let _ = store.update(|s| s.0 += 1);
         },
         Binding::constant(()),
     );
     view.on_close_request(Rc::new(move || {
-        command.invoke();
+        let _ = command.invoke();
     }));
     let closes = Rc::new(Cell::new(0));
     let count = closes.clone();
@@ -125,7 +170,7 @@ fn close_ready_subscription_is_kept_without_a_view_model_cycle() {
     h.pump();
     assert_eq!(model.snapshot(), (1, false));
     assert!(!model.is_closed());
-    model.update(|s| s.1 = true);
+    let _ = model.update(|s| s.1 = true);
     h.pump();
     assert_eq!(closes.get(), 1);
     assert!(model.is_closed());
@@ -236,7 +281,7 @@ fn invalid_viewports_keep_mounts_and_initially_mount_nothing() {
             .unwrap()
             .contains("invalid viewport")
     );
-    viewport.update(|state| {
+    let _ = viewport.update(|state| {
         *state = Viewport {
             count: 3,
             row_height: 24.0,
@@ -266,10 +311,10 @@ fn invalid_viewports_keep_mounts_and_initially_mount_nothing() {
             ..viewport.snapshot()
         },
     ] {
-        viewport.update(move |state| *state = invalid);
+        let _ = viewport.update(move |state| *state = invalid);
         assert_eq!(view.item_keys("rows"), ["7", "8", "9"]);
     }
-    viewport.update(|state| {
+    let _ = viewport.update(|state| {
         *state = Viewport {
             start: 1,
             count: 1,
@@ -316,7 +361,7 @@ fn recursive_typed_templates_keep_identity_evict_subscriptions_and_reject_duplic
                 row.command(
                     |_| true,
                     |store, argument| {
-                        store.update(move |s| *s = argument);
+                        let _ = store.update(move |s| *s = argument);
                     },
                     Binding::constant("clicked".into()),
                 ),
@@ -353,11 +398,11 @@ fn recursive_typed_templates_keep_identity_evict_subscriptions_and_reject_duplic
     assert_eq!(released.get(), 1);
     assert_eq!(view.subscription_count(), baseline);
     assert!(view.text("rows/0/entry").is_none());
-    model.update(|s| s.rows.swap(1, 2));
+    let _ = model.update(|s| s.rows.swap(1, 2));
     h.pump();
     assert_eq!(view.item_keys("rows"), ["2", "1", "3"]);
     assert_eq!(view.mount_identity("rows/1/entry"), identity);
-    model.update(|s| s.rows.swap(1, 2));
+    let _ = model.update(|s| s.rows.swap(1, 2));
     h.pump();
     view.edit("rows/1/entry", "edited").unwrap();
     h.pump();
@@ -370,14 +415,14 @@ fn recursive_typed_templates_keep_identity_evict_subscriptions_and_reject_duplic
     h.pump();
     assert_eq!(rows[1].model.snapshot(), "clicked");
     let before = view.item_keys("rows");
-    model.update(|s| s.rows.push(s.rows[1].clone()));
+    let _ = model.update(|s| s.rows.push(s.rows[1].clone()));
     h.pump();
     assert_eq!(view.item_keys("rows"), before);
     assert!(view.error().unwrap().contains("duplicate key"));
     // Same key, new Store: the old handlers must be dropped, not rebound by text.
     let replacement = h.store("replacement".to_owned());
     let out = replacement.clone();
-    model.update(move |s| {
+    let _ = model.update(move |s| {
         s.rows.pop();
         s.rows[1] = Keyed::new("1", out);
     });
@@ -427,17 +472,17 @@ fn content_replacement_and_nested_items_drop_mounts_but_not_item_models() {
     let id = "selected/a/inner/child/text";
     assert_eq!(view.text(id).as_deref(), Some("A"));
     let identity = view.mount_identity(id);
-    model.update(|_| {});
+    let _ = model.update(|_| {});
     h.pump();
     assert_eq!(view.mount_identity(id), identity);
-    model.update(move |s| s.selected = Some(Keyed::new("b", b)));
+    let _ = model.update(move |s| s.selected = Some(Keyed::new("b", b)));
     h.pump();
     assert!(view.text(id).is_none());
     assert_eq!(
         view.text("selected/b/inner/child/text").as_deref(),
         Some("B")
     );
-    model.update(|s| s.selected = None);
+    let _ = model.update(|s| s.selected = None);
     h.pump();
     assert!(view.text("selected/b/inner/child/text").is_none());
     assert!(!a.is_closed());
@@ -453,7 +498,9 @@ fn readonly_edit_never_echoes_and_close_is_idempotent() {
         },
         ..Default::default()
     };
-    view.style("generated-window", style);
+    assert!(view.try_style("generated-window", style).is_err());
+    assert_eq!(view.root().0.style.get(), Style::default());
+    view.style("__root", style);
     assert_eq!(view.root().0.style.get(), style);
     assert!(view.error().is_none());
     view.entry(&view.root(), "entry", Binding::constant("canonical".into()));
@@ -511,7 +558,7 @@ fn invalid_public_keyed_fields_reject_items_and_content_before_mutation() {
             key: key.into(),
             model: h.store("invalid".to_owned()),
         };
-        state.update(move |s| {
+        let _ = state.update(move |s| {
             s.rows = vec![s.rows[0].clone(), invalid.clone()];
             s.selected = Some(invalid);
         });
@@ -523,7 +570,7 @@ fn invalid_public_keyed_fields_reject_items_and_content_before_mutation() {
         assert!(view.error().unwrap().contains("invalid key"));
     }
     // Re-publishing the old content must still be a no-op (previous was not overwritten).
-    state.update(move |s| {
+    let _ = state.update(move |s| {
         s.rows = vec![good.clone()];
         s.selected = Some(good);
     });
@@ -532,7 +579,7 @@ fn invalid_public_keyed_fields_reject_items_and_content_before_mutation() {
     view.edit(ids[0], "still bound").unwrap();
     h.pump();
     assert_eq!(view.text(ids[1]).as_deref(), Some("still bound"));
-    state.update(|s| {
+    let _ = state.update(|s| {
         s.rows.clear();
         s.selected = None;
     });
@@ -673,7 +720,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     assert_eq!(*received.borrow(), ["first"]);
     let submenu = view.0.menus.items()[0].as_submenu().unwrap().clone();
     let old_native = submenu.items()[0].id().clone();
-    state.update(|s| {
+    let _ = state.update(|s| {
         s.0 = "Changed".into();
         s.1[0].argument = "second".into();
         s.1[0].enabled = false;
@@ -682,7 +729,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     assert_eq!(submenu.text(), "Changed");
     assert!(view.activate_menu("file/save").is_err());
     assert!(!view.0.menu_ids.borrow().contains_key(&old_native));
-    state.update(|s| {
+    let _ = state.update(|s| {
         s.1[0].enabled = true;
         s.1[0].shortcut = Some("Ctrl+Shift+KeyS".into());
     });
@@ -691,7 +738,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     assert_eq!(*received.borrow(), ["first", "second"]);
     let before = submenu.items()[0].id().clone();
     let old_ids = view.0.menu_ids.borrow().clone();
-    state.update(|s| {
+    let _ = state.update(|s| {
         s.1[0].argument = "rejected argument".into();
         s.1[0].shortcut = Some("BadModifier+NoKey".into());
     });
@@ -700,7 +747,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     assert_eq!(*view.0.menu_ids.borrow(), old_ids);
     view.activate_menu("file/save").unwrap();
     assert_eq!(*received.borrow(), ["first", "second", "second"]);
-    state.update(|s| {
+    let _ = state.update(|s| {
         s.1 = vec![MenuItem {
             id: "about".into(),
             label: "About".into(),
@@ -828,7 +875,7 @@ fn native_menu_append_failure_restores_accelerators_registry_and_quit() {
         view.dispatch(Message::Menu(id)).unwrap();
     };
     for shortcut in ["BadModifier+NoKey", "Ctrl+Fn"] {
-        state.update(move |s| {
+        let _ = state.update(move |s| {
             s.0 = "Changed title".into();
             let mut first = s.1[0].clone();
             first.id = "new".into();
@@ -872,14 +919,14 @@ fn native_menu_append_failure_restores_accelerators_registry_and_quit() {
     }
     assert!(view.error().unwrap().contains("previous snapshot restored"));
     // A valid update after rollback must still work, including native Quit enablement.
-    state.update(move |s| {
+    let _ = state.update(move |s| {
         s.1 = original;
         s.1[1].enabled = false;
     });
     h.pump();
     assert!(!menu.children()[1].is_sensitive());
     assert!(view.activate_menu("file/quit").is_err());
-    state.update(|s| s.1[1].enabled = true);
+    let _ = state.update(|s| s.1[1].enabled = true);
     h.pump();
     let closed = Rc::new(Cell::new(false));
     let out = closed.clone();

@@ -52,7 +52,7 @@ impl Settings {
     fn save(model: Store<Self>, argument: String) {
         // A static action can freely snapshot/update: it is outside a state borrow.
         assert!(model.snapshot().allow_save);
-        model.update(move |s| s.calls.push(argument));
+        let _ = model.update(move |s| s.calls.push(argument));
     }
     fn can_save(&self) -> bool {
         self.allow_save
@@ -336,23 +336,27 @@ fn items_and_bindable_layout_viewports_write_back_only_for_two_way() {
 #[test]
 fn command_arguments_gates_static_actions_and_menu_are_live() {
     let (_pool, model, row) = setup();
-    let view = owned_view!("tests/ui/main.yaml", model, fake);
+    let owner = model
+        .try_into_owner()
+        .unwrap_or_else(|_| panic!("shared model"));
+    let model = owner.store().clone();
+    let view = owned_view!("tests/ui/main.yaml", owner, fake);
     let add = view.0.borrow().commands["add"].clone();
-    model.update(|s| s.argument = "at-invocation".into());
+    let _ = model.update(|s| s.argument = "at-invocation".into());
     assert!(add.invoke());
     assert_eq!(model.snapshot().calls, ["at-invocation"]);
     assert!(view.0.borrow().commands["reset"].invoke());
     let save = view.0.borrow().commands["save"].clone();
     assert!(!save.enabled.get());
     assert!(!save.invoke());
-    model.update(|s| s.allow_save = true);
+    let _ = model.update(|s| s.allow_save = true);
     assert!(save.enabled.get());
     assert!(save.invoke());
     assert!(view.0.borrow().commands["rows/key/rename"].invoke());
     assert_eq!(row.snapshot().name, "at-invocation");
     assert!(view.0.borrow().commands["rows/key/outer_add"].invoke());
     let dispatch = view.0.borrow().dispatch["actions"].clone();
-    model.update(|s| {
+    let _ = model.update(|s| {
         s.menu_items.push(MenuItem {
             id: "copy".into(),
             label: "Copy".into(),
@@ -387,11 +391,11 @@ fn validation_tokens_are_kept_and_dropped() {
     pool.run_until_stalled();
     assert!(!model.snapshot().pending);
     let entry = view.0.borrow().texts["name"].clone();
-    entry.set(String::new());
+    let _ = entry.set(String::new());
     assert!(model.snapshot().pending);
     pool.run_until_stalled();
     assert_eq!(model.snapshot().error, "required");
-    entry.set("ok".into());
+    let _ = entry.set("ok".into());
     // Drop while a validation future is queued. No stale error can be applied.
     view.0.borrow_mut().tokens.clear();
     pool.run_until_stalled();
@@ -509,7 +513,7 @@ fn shared_views_retain_model_until_both_close_without_closing_store() {
 }
 
 #[test]
-fn dropping_shared_views_releases_owners_and_owned_close_ends_shared_store() {
+fn shared_views_prevent_acquiring_an_owner_and_owned_close_is_explicit() {
     let pool = LocalPool::new();
     let model = Store::new(
         SharedModel {
@@ -518,12 +522,22 @@ fn dropping_shared_views_releases_owners_and_owned_close_ends_shared_store() {
         Rc::new(Exec(pool.spawner())),
     );
     let shared = view!("tests/ui/lifecycle.yaml", model, fake);
-    let owned = owned_view!("tests/ui/lifecycle.yaml", model, fake);
+    let model = model
+        .try_into_owner()
+        .err()
+        .expect("shared view must prevent ownership");
     let binding = shared.0.borrow().texts["name"].clone();
+    assert!(binding.set("still shared".into()));
+    shared.close();
+    let owner = model
+        .try_into_owner()
+        .unwrap_or_else(|_| panic!("released shared view"));
+    let model = owner.store().clone();
+    let owned = owned_view!("tests/ui/lifecycle.yaml", owner, fake);
     owned.close();
     assert!(model.is_closed());
     assert!(!binding.set("closed".into()));
-    assert_eq!(binding.get(), "initial");
+    assert_eq!(binding.get(), "still shared");
 
     let model = Store::new(
         SharedModel {
@@ -560,7 +574,7 @@ impl TypedModel {
     }
     #[command]
     fn choice(model: Store<Self>, value: Choice) {
-        model.update(move |s| s.calls.push(format!("enum:{value:?}")));
+        let _ = model.update(move |s| s.calls.push(format!("enum:{value:?}")));
     }
     #[command]
     fn numeric(&mut self, value: f64) {
@@ -580,7 +594,7 @@ fn typed_enum_integer_fields_and_f64_literal_commands_are_argument_erased() {
         Rc::new(Exec(pool.spawner())),
     );
     let view = view!("tests/ui/typed.yaml", model, fake);
-    model.update(|s| {
+    let _ = model.update(|s| {
         s.integer = 42;
         s.choice = Choice::Second;
     });
