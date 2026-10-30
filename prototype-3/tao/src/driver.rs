@@ -43,13 +43,13 @@ struct Proxy(EventLoopProxy<Native>);
 static NUDGE_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 impl Proxy {
     fn send(&self, event: Native) {
-        if self.0.send_event(event).is_err() {
-            return;
-        }
+        let sent = self.0.send_event(event).is_ok();
+        #[cfg(not(target_os = "linux"))]
+        let _ = sent;
         // Tao Linux's crossbeam proxy does not wake blocking gtk_main_iteration_do.
         // This is a one-shot wake, not a periodic poll or a cross-thread UI call.
         #[cfg(target_os = "linux")]
-        if !NUDGE_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        if sent && !NUDGE_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
             gtk::glib::idle_add_once(|| {
                 NUDGE_PENDING.store(false, std::sync::atomic::Ordering::Release);
             });
