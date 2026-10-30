@@ -1,0 +1,63 @@
+schema_version: 2
+templates:
+  file:
+    root:
+      type: Label
+      id: file_label
+      text: {bind: {path: label}}
+root:
+  type: Window
+  id: main
+  title: {literal: "Wakui 3 — File library"}
+  content:
+    type: StackLayout
+    id: screen
+    padding: 20
+    gap: 8
+    children:
+      - type: Label
+        id: heading
+        text: {literal: "NES / GB / GBC / GBA — folder metadata browser (non-recursive)"}
+      - type: Label
+        id: folder_caption
+        text: {literal: Folder}
+      - type: TextBox
+        id: folder
+        text: {bind: {path: folder, mode: TwoWay}}
+      - type: Label
+        id: filter_caption
+        text: {literal: "Filename filter (case-insensitive)"}
+      - type: TextBox
+        id: filter
+        text: {bind: {path: filter, mode: TwoWay}}
+      - type: StackLayout
+        id: actions
+        orientation: Horizontal
+        gap: 8
+        children:
+          - type: Button
+            id: rescan
+            text: {literal: Scan / rescan}
+            command: rescan
+          - type: Button
+            id: next
+            text: {literal: Select next file}
+            command: next
+          - type: Button
+            id: quit
+            text: {literal: Close}
+            command: quit
+      - type: Label
+        id: status
+        text: {bind: {path: status}}
+      - type: Label
+        id: error
+        text: {bind: {path: error}}
+      - type: ItemsControl
+        id: rows
+        items: {bind: {path: rows}}
+        viewport: {bind: {path: viewport, mode: TwoWay}}
+        item_template: file
+      - type: Label
+        id: details
+        text: {bind: {path: details}}

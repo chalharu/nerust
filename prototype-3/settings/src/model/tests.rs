@@ -15,6 +15,8 @@ use std::{
 };
 use wakui2_runtime::{Binding, BlockingPool, Executor, Limits, Subscription};
 
+mod perf;
+
 struct Local(LocalSpawner);
 impl Executor for Local {
     fn spawn(&self, future: futures::future::LocalBoxFuture<'static, ()>) {
@@ -325,6 +327,51 @@ fn rejected_effect_never_submits_orphan_write() {
     assert!(!f.model.snapshot().busy());
     assert!(f.model.snapshot().io_error.contains("not accepted"));
     assert_eq!(f.model.snapshot().saved, Config::default());
+    f.workers.borrow_mut().shutdown();
+    assert!(!f.sandbox.path().exists());
+}
+
+#[test]
+fn single_ingress_slot_saves_and_updates_projection() {
+    let mut f = Fixture::with_limits(
+        Limits {
+            ingress: 1,
+            tasks: 4,
+        },
+        false,
+    );
+    f.edit("容量一の保存");
+    assert!(f.model.snapshot().ui.menu_items[0].enabled);
+    assert!(f.save(SaveIntent::Stay));
+    f.done();
+    let state = f.model.snapshot();
+    assert!(!state.busy());
+    assert!(state.io_error.is_empty());
+    assert!(!state.dirty());
+    assert_eq!(state.saved.name, "容量一の保存");
+    assert_eq!(persistence::load(&f.sandbox.path()).unwrap(), state.saved);
+    assert!(!state.ui.menu_items[0].enabled);
+}
+
+#[test]
+fn single_ingress_slot_task_rejection_recovers_and_preserves_draft() {
+    let mut f = Fixture::with_limits(
+        Limits {
+            ingress: 1,
+            tasks: 0,
+        },
+        false,
+    );
+    f.edit("未保存の下書き");
+    assert!(f.save(SaveIntent::Exit));
+    f.pool.run_until_stalled();
+    let state = f.model.snapshot();
+    assert!(!state.busy());
+    assert_eq!(state.exit, Exit::Confirm);
+    assert_eq!(state.draft.name, "未保存の下書き");
+    assert_eq!(state.saved, Config::default());
+    assert!(state.io_error.contains("not accepted"));
+    assert!(state.ui.status.contains("not accepted"));
     f.workers.borrow_mut().shutdown();
     assert!(!f.sandbox.path().exists());
 }

@@ -4,6 +4,151 @@ use futures::{FutureExt, channel::oneshot};
 use std::time::Duration;
 use wakui2_runtime::{Edges, Placement, Policy, ShutdownOutcome, run_async};
 
+#[cfg(target_os = "linux")]
+#[path = "x11_test.rs"]
+mod x11;
+
+/// Actual X server key delivery through GTK's own IMContextSimple. No emitted
+/// commit signal, direct Editable mutation, ibus/fcitx or Japanese preedit IME.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "isolated Xvfb, GTK_IM_MODULE=simple; optional libXtst (WAKUI_REQUIRE_XTEST=1 makes absence fail)"]
+fn native_x11_japanese_compose_focus_clipboard_and_rejection() {
+    let Some(mut keys) = x11::X11::optional() else {
+        return;
+    };
+    gtk::init().expect("requires Xvfb and GDK_BACKEND=x11");
+    assert_eq!(std::env::var("GTK_IM_MODULE").as_deref(), Ok("simple"));
+    let host = GtkHost::attach();
+    let model = Store::new((String::new(), String::new(), 0usize), host.executor());
+    let view = View::new(Binding::constant("native X11 input".into()));
+    view.entry(
+        &view.root(),
+        "first",
+        model.bind(
+            |s| s.0.clone(),
+            Some(|s, v| {
+                s.0 = v;
+                s.2 += 1;
+            }),
+        ),
+    );
+    view.entry(
+        &view.root(),
+        "second",
+        model.bind(
+            |s| s.1.clone(),
+            Some(|s, v| {
+                s.1 = v;
+                s.2 += 1;
+            }),
+        ),
+    );
+    view.entry(
+        &view.root(),
+        "readonly",
+        Binding::constant("読取専用".into()),
+    );
+    let number = Store::new(12u32, host.executor());
+    view.entry(
+        &view.root(),
+        "number",
+        number.bind(|s| *s, Some(|s, v| *s = v)).convert(
+            |v| v.to_string(),
+            |v: String| v.parse::<u32>().map_err(|e| e.to_string()),
+        ),
+    );
+    let first = view.widget::<gtk::Entry>("first").unwrap();
+    let second = view.widget::<gtk::Entry>("second").unwrap();
+    let readonly = view.widget::<gtk::Entry>("readonly").unwrap();
+    let numeric = view.widget::<gtk::Entry>("number").unwrap();
+    view.present();
+    settle();
+    let surface = view.native_window().surface().unwrap();
+    assert_eq!(surface.display().type_().name(), "GdkX11Display");
+    unsafe extern "C" {
+        fn gdk_x11_surface_get_xid(surface: *mut gtk::gdk::ffi::GdkSurface) -> std::ffi::c_ulong;
+    }
+    // SAFETY: checked X11 backend and live mapped GTK surface.
+    keys.focus(unsafe { gdk_x11_surface_get_xid(surface.as_ptr()) });
+    assert!(first.grab_focus());
+    settle();
+    let focused = |entry: &gtk::Entry| {
+        let focus = GtkWindowExt::focus(&view.native_window()).unwrap();
+        assert!(focus == *entry.upcast_ref::<gtk::Widget>() || focus.is_ancestor(entry));
+    };
+    focused(&first);
+    keys.compose("日本語");
+    drive_until(|| model.snapshot().0 == "日本語");
+    assert_eq!(first.text(), "日本語");
+    assert_eq!(model.snapshot().2, 3, "one model write per Unicode commit");
+    keys.chord(&[0xffe3], b'a'.into());
+    settle();
+    assert_eq!(
+        first.selection_bounds(),
+        Some((0, 3)),
+        "character, not UTF-8 byte offsets"
+    );
+    keys.chord(&[0xffe3], b'c'.into());
+    settle();
+    let clipboard = Rc::new(RefCell::new(None));
+    let result = clipboard.clone();
+    first
+        .clipboard()
+        .read_text_async(None::<&gio::Cancellable>, move |value| {
+            result.replace(Some(value.unwrap().map(|s| s.to_string())));
+        });
+    drive_until(|| clipboard.borrow().is_some());
+    assert_eq!(
+        clipboard.borrow().as_ref().unwrap().as_deref(),
+        Some("日本語")
+    );
+    keys.tap(0xff09); // real Tab traversal, not grab_focus(second)
+    settle();
+    focused(&second);
+    keys.chord(&[0xffe3], b'v'.into());
+    drive_until(|| model.snapshot().1 == "日本語");
+    keys.tap(0xff08); // Backspace removes one Japanese character.
+    drive_until(|| model.snapshot().1 == "日本");
+    keys.chord(&[0xffe1], 0xff51); // Shift+Left selects 本.
+    settle();
+    assert_eq!(second.selection_bounds(), Some((1, 2)));
+    keys.tap(0xffff); // Delete selected character.
+    drive_until(|| model.snapshot().1 == "日");
+    assert_eq!(
+        model.snapshot().0,
+        "日本語",
+        "focus routes edits to second only"
+    );
+    keys.tap(0xff09);
+    settle();
+    focused(&readonly);
+    keys.chord(&[0xffe3], b'a'.into());
+    keys.chord(&[0xffe3], b'v'.into());
+    keys.tap(0xff08);
+    keys.compose("無効");
+    settle();
+    assert_eq!(readonly.text(), "読取専用");
+    assert_eq!(
+        (model.snapshot().0, model.snapshot().1),
+        ("日本語".into(), "日".into())
+    );
+    keys.tap(0xff09);
+    settle();
+    focused(&numeric);
+    keys.chord(&[0xffe3], b'a'.into());
+    keys.chord(&[0xffe3], b'v'.into());
+    settle();
+    assert_eq!(
+        numeric.text(),
+        "12",
+        "Japanese clipboard fails numeric conversion and rolls back"
+    );
+    assert_eq!(number.snapshot(), 12);
+    view.close();
+    host.close();
+}
+
 #[test]
 fn native_close_requests_weak_and_reentrant() {
     gtk::init().expect("native_close_requests_weak_and_reentrant requires Xvfb");

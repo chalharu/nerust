@@ -14,6 +14,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo clippy --locked -p wakui2-demo --all-targets --no-default-features --features backend-tao -- -D warnings
 cargo clippy --locked -p wakui3-settings --all-targets --no-default-features --features backend-tao -- -D warnings
+cargo clippy --locked -p wakui3-library --all-targets --no-default-features --features backend-tao -- -D warnings
 cargo test --locked -p wakui2-runtime -p wakui2-markup -p wakui2-macros
 output=$(cargo run --locked -p wakui2-runtime --example scaling)
 printf '%s\n' "$output"
@@ -21,6 +22,8 @@ printf '%s\n' "$output" | grep -q '^SCALING3 PASS: read clones=0, update clones=
 cargo test --locked -p wakui2-tao --lib
 cargo test --locked -p wakui3-settings
 cargo test --locked -p wakui3-settings --no-default-features --features backend-tao
+cargo test --locked -p wakui3-library
+cargo test --locked -p wakui3-library --no-default-features --features backend-tao
 native_test -p wakui3-settings \
     native_tests::native_generated_shared_windows_survive_peer_close -- --exact --ignored --test-threads=1
 for name in native_contract native_executor_completion native_invalid_keyed_snapshots \
@@ -37,6 +40,13 @@ GDK_SCALE=2 native_test -p wakui2-gtk --lib \
     tests::native_grid_equal_columns_geometry_and_spans -- --exact --test-threads=1
 native_test -p wakui2-tao --lib \
     tests::native_menu_append_failure_restores_accelerators_registry_and_quit -- --exact --ignored --test-threads=1
+# Isolated X11 physical input tests must not silently skip missing XTest support.
+GTK_IM_MODULE=simple WAKUI_REQUIRE_XTEST=1 native_test -p wakui2-gtk --lib \
+    tests::native_x11_japanese_compose_focus_clipboard_and_rejection -- --exact --ignored --test-threads=1
+GTK_IM_MODULE=simple WAKUI_REQUIRE_XTEST=1 native_test -p wakui2-tao --lib \
+    driver::input_tests::native_x11_keyboard_ime_signal_iced_fields_and_clipboard -- --exact --ignored --test-threads=1
+native_test -p wakui2-tao --lib \
+    driver::input_tests::native_backend_focus_loss_clears_iced_modifiers -- --exact --ignored --test-threads=1
 cargo build --locked -p wakui2-demo --example minimal
 cargo build --locked -p wakui2-demo
 output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui2-demo -- --smoke)
@@ -61,4 +71,14 @@ settings_smoke() {
 }
 settings_smoke
 settings_smoke --no-default-features --features backend-tao
-printf '%s\n' 'VERIFY3 PASS: inherited regressions, shared ownership, typed commands, common UI contracts and settings GTK/Tao'
+library_smoke() {
+    backend=$1
+    shift
+    output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui3-library "$@" -- --smoke)
+    printf '%s\n' "$output"
+    printf '%s\n' "$output" | grep -q "^LIBRARY3 $backend PASS native-events scan filter selection invalid-folder recovery rescan$"
+    printf '%s\n' "$output" | grep -q "^LIBRARY3 $backend PASS native-close model-closed$"
+}
+library_smoke gtk
+library_smoke tao --no-default-features --features backend-tao
+printf '%s\n' 'VERIFY3 PASS: inherited regressions, scoped reactions, Self arguments, Linux input and settings/library GTK/Tao'

@@ -3790,6 +3790,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wakui3-library"
+version = "0.2.0"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "wakui2-gtk",
+ "wakui2-macros",
+ "wakui2-runtime",
+ "wakui2-tao",
+]
+
+[[package]]
 name = "wakui3-settings"
 version = "0.2.0"
 dependencies = [

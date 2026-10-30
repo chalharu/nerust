@@ -8,10 +8,9 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use wakui2_runtime::{BlockingPool, Policy, Store, Subscription};
 
 pub fn project(model: &Store<App>) -> Subscription {
-    let target = model.clone();
     // Excludes ui itself: a projection update cannot feed back into its source.
-    model
-        .bind(
+    model.watch(
+        model.bind(
             |s| {
                 (
                     s.saved.clone(),
@@ -22,8 +21,8 @@ pub fn project(model: &Store<App>) -> Subscription {
                 )
             },
             None,
-        )
-        .subscribe(Rc::new(move |_| {
+        ),
+        |target, _| {
             let state = target.snapshot();
             let next = state.project();
             if next != state.ui {
@@ -33,7 +32,8 @@ pub fn project(model: &Store<App>) -> Subscription {
                     }
                 });
             }
-        }))
+        },
+    )
 }
 
 pub fn saves(
@@ -41,10 +41,9 @@ pub fn saves(
     workers: Rc<RefCell<BlockingPool>>,
     path: PathBuf,
 ) -> Subscription {
-    let target = model.clone();
-    model
-        .bind(|s| s.pending.clone(), None)
-        .subscribe(Rc::new(move |request| {
+    model.watch(
+        model.bind(|s| s.pending.clone(), None),
+        move |target, request| {
             let Some(request) = request else { return };
             let workers = workers.clone();
             let path = path.clone();
@@ -72,7 +71,8 @@ pub fn saves(
                     }
                 });
             }
-        }))
+        },
+    )
 }
 
 pub fn view(model: Store<App>, workers: Rc<RefCell<BlockingPool>>, path: PathBuf) -> backend::View {
