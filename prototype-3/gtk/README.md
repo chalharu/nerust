@@ -56,8 +56,12 @@ list; no overscan. Source Stores survive eviction, and visible matching Stores
 survive reorder. Eviction removes all descendant widgets, lists, menu actions,
 subscriptions and signals before ID reuse. Duplicate keys reject the complete
 snapshot before mutation. `items_error(id)` exposes invalid snapshots.
-Variable-height rows are intentionally unsupported. Use a positive count and a
-finite row height of at least one logical pixel. IDs and keys form hierarchical
+Variable-height rows are intentionally unsupported. The shared runtime validator
+requires count 1..256 and finite row height 1..4096 logical pixels, as for
+Tao/AppKit and proc-macro literals. Invalid viewport updates preserve mounts;
+an invalid initial viewport mounts nothing. Valid updates clear the viewport
+error without clearing independent item-key errors. Out-of-range starts show
+the last full page (or all rows for a shorter source). IDs and keys form hierarchical
 paths; applications must avoid ambiguous overlapping scope paths.
 
 ## Menus

@@ -54,6 +54,25 @@ pub struct Viewport {
     pub count: usize,
     pub row_height: f32,
 }
+impl Viewport {
+    pub fn validate(self) -> Result<Self, &'static str> {
+        if !(1..=256).contains(&self.count)
+            || !self.row_height.is_finite()
+            || !(1.0..=4096.0).contains(&self.row_height)
+        {
+            return Err(
+                "invalid viewport: count must be 1..=256 and row_height finite and 1..=4096",
+            );
+        }
+        Ok(self)
+    }
+
+    pub fn range(self, length: usize) -> Result<std::ops::Range<usize>, &'static str> {
+        self.validate()?;
+        let start = self.start.min(length.saturating_sub(self.count));
+        Ok(start..start.saturating_add(self.count).min(length))
+    }
+}
 impl Default for Viewport {
     fn default() -> Self {
         Self {

@@ -155,9 +155,13 @@ fn literal(value: &serde_json::Value) -> syn::Result<TokenStream> {
                 .get("row_height")
                 .map_or(Some(48.0), |n| n.as_f64())
                 .ok_or_else(|| error("invalid row_height"))? as f32;
-            if !height.is_finite() || height <= 0.0 {
-                return Err(error("row_height must be positive and finite"));
+            wakui2_runtime::Viewport {
+                start,
+                count,
+                row_height: height,
             }
+            .validate()
+            .map_err(error)?;
             quote!(::wakui2_runtime::Viewport { start:#start,count:#count,row_height:#height })
         }
         _ => {
@@ -167,6 +171,24 @@ fn literal(value: &serde_json::Value) -> syn::Result<TokenStream> {
         }
     })
 }
+#[test]
+fn viewport_literals_follow_runtime_validation() {
+    for (count, row_height) in [(0, 32.0), (257, 32.0), (1, 0.5), (1, 4097.0)] {
+        let value = serde_json::json!({"count": count, "row_height": row_height});
+        assert!(
+            literal(&value)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid viewport")
+        );
+    }
+    for (count, row_height) in [(1, 1.0), (256, 4096.0)] {
+        assert!(literal(&serde_json::json!({"count": count, "row_height": row_height})).is_ok());
+    }
+    assert!(literal(&serde_json::json!({})).is_ok());
+    assert!(literal(&serde_json::json!({"row_height": 1e100})).is_err());
+}
+
 fn edges(e: &Edges) -> TokenStream {
     let (top, right, bottom, left) = match e {
         Edges::Scalar(v) => (*v, *v, *v, *v),

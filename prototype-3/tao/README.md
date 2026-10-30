@@ -35,7 +35,11 @@ Replacing the Store remounts it. Duplicate source keys, empty keys and keys cont
 `error()` and `diagnostics()`. Items and Content both validate public `Keyed` fields.
 
 Lists use actual iced scroll events, fixed-height rows and before/after spacers.
-`Viewport.count` is clamped to 1..256, row height to 1..4096 logical pixels.
+`Viewport.count` must be 1..256, row height finite and 1..4096 logical pixels,
+using the shared runtime validator (also used for static literals and GTK/AppKit).
+Invalid updates report a diagnostic and preserve mounts; an invalid initial
+viewport mounts nothing. A valid update recovers. Starts beyond the last full
+page select that last page, using the common overflow-safe range calculation.
 Fractional scrolling mounts at most one extra trailing row (maximum 257 mounts).
 Only the mounted range owns widget bindings/commands. Eviction explicitly drops
 subscriptions, including custom primitive tokens; source Stores are not closed.
@@ -135,6 +139,9 @@ it is not a claim that OS pointer/key events were synthesized.
 Unit tests cover geometry, bounded ranges, typed recursive templates, mount
 identity, source replacement, eviction cleanup, canonical readonly text,
 shortcut validation, scheduler worker wake/turn bounds, and explicit limits.
+Native-View tests construct muda menus and cannot run on macOS libtest worker
+threads; compile checks and pure range tests are not a substitute for their
+Linux/X11 execution. AppKit has its own main-thread conformance runner.
 The pure transaction test injects failures before/after every remove/append.
 The Linux display test also provokes an actual GTK append error (`Ctrl+Fn`),
 checks old native IDs/order/hotkeys/actions and title preservation, then activates

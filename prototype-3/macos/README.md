@@ -47,6 +47,8 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
 - 一覧は全keyを検査し、表示範囲の行だけmountする。範囲変更・順序変更では可視行を再mountする。
   行Storeは保持するが、native field editorの選択や一時編集状態の維持は保証しない。
   32px等の固定行高、viewport count、スクロール用native scrollerを使用する。
+  countは1..256、行高は有限な1..4096で、共通runtimeと静的literalが同じ条件を検査する。
+  初期不正ならmountせず、不正更新は前の正常表示を保持する。正常値への復帰と末尾ページをnative検査する。
 - padding/marginはnative frame insetへ合算する限定契約。任意のplacement、CSS互換、
   backend間のpixel一致は対象外。幅640px以上を対象とし、縦方向はnative scrollを使う。
 
@@ -76,6 +78,7 @@ ready taskがなければnative側で最大8ms待ち、workerのwakeも次ター
 | Menu | native key equivalentでPrimary/Cmd+S、有効/無効、動的再構築 |
 | Accessibility | role、identifierの読み返し。スクリーンリーダーによる操作ではない |
 | 一覧mount | 100行Model、6行mount、範囲変更、順序変更、不正key拒否と復帰 |
+| Viewport契約 | 初期不正は0 mount、count/行高の範囲外を拒否してmount保持、正常値復帰、usize::MAXの末尾ページ |
 | 過負荷 | 8万更新、20合成キーを各連鎖完了前に配送、WeakView・closeの検査 |
 | 描画 | 640/960pxのnative bitmap、連鎖中のAppKit描画CPU時間 |
 
@@ -87,12 +90,23 @@ release観測は`measure-macos.sh`で再現し、数値を安定APIや性能保�
 
 ### 2026-10-30の実行結果
 
-`verify-macos.sh`は142試験成功、失敗0、計測helper 2件は通常試験ではignored。
+AppKit追加時の基準commit `bea5cc2c5`では`verify-macos.sh`が142試験成功、失敗0、計測helper 2件は通常試験ではignored。
 内訳はruntime 59、markup 11、macros 31、AppKit executor 2、settings 25、library 14。
 整形、strict Clippy、両native画面smoke、conformanceも成功し、最終マーカーは
 `VERIFY3 MACOS PASS`。Linux GTK/Taoのnative試験をこのMacで再実行した意味ではない。
 
 `measure-macos.sh`は2件のhelperも実行し、`MEASURE3 MACOS PASS`を確認した。
+
+viewport共通化の検証では、これにruntimeの境界値2件、macro literalの1件を加える。
+AppKit conformanceの`viewport-contract` markerは正式ゲートで必須とする。
+再実行は145試験成功、失敗0、helper 2件ignored、設定/一覧smokeと全必須marker成功。
+内訳はruntime 61、markup 11、macros 32、AppKit executor 2、settings 25、library 14。
+GTK/Taoの全targetをmacOSでcompileできるが、native Viewを作るlibtest試験はmain-thread
+制約によりこの環境では実行しない。Taoの純粋なrange試験とAppKit専用runnerを分けて検証する。
+GTKのstrict Clippyは成功。Taoのstrict Clippyは既存の`driver.rs:47`の
+`needless_return`で停止し、無変更のコード由来と確認した後にそのlintだけを除外して成功した。
+Linux/X11でのTao拒否/復帰試験とGTKの拡張native試験は未実行で、macOSの145件へ含めない。
+この追補ではrelease計測helperは再実行しておらず、下表は基準commit時の観測を保存する。
 
 | release観測 | p50 | p95 |
 |---|---:|---:|

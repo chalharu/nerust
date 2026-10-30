@@ -17,7 +17,7 @@ revision, and the practical applications are `wakui3-settings` and `wakui3-libra
 - `Store::effect(policy:Policy, slot:&str, future:impl Future<Output=R>+'static, apply:impl FnOnce(&mut S,R)+'static)->bool`. Policy Latest/Serial/Parallel. Futures outside borrow, bounded ingress/tasks, weak ownership, stale lifecycle protection.
 - `validation(&Store<S>,source:Binding<String>,error:Binding<String>,pending:Binding<bool>,validator:impl Fn(String)->LocalBoxFuture<'static,Result<(),String>>+'static)->Subscription`: Latest per subscription, initial validation, no stale result on unmount.
 - `Keyed<S> { pub key:String, pub model:Store<S> }`: Clone/PartialEq by key and store identity. `Keyed::new(key:impl Into<String>, model:Store<S>)`.
-- `Viewport { pub start:usize, pub count:usize, pub row_height:f32 }`: Clone/Copy/PartialEq; default start0/count20/row_height48.0.
+- `Viewport { pub start:usize, pub count:usize, pub row_height:f32 }`: Clone/Copy/PartialEq; default start0/count20/row_height48.0. `validate()->Result<Self,&'static str>`, `range(length)->Result<Range<usize>,&'static str>`.
 - `Edges {top:f32,right:f32,bottom:f32,left:f32}`: Default/Clone/Copy/PartialEq.
 - `Placement {row:i32,column:i32,row_span:i32,column_span:i32,x:f32,y:f32,width:Option<f32>,height:Option<f32>}` Default spans1.
 - `Style {margin:Edges,padding:Edges,placement:Placement}` Default/Clone/Copy/PartialEq.
@@ -30,6 +30,24 @@ Reads and initial subscriptions project from a retained `Rc<S>` outside internal
 borrows, without cloning all of S. `snapshot()` still returns an owned clone;
 mutation clones S once. Publication still scans all registered projections and
 compares their results: this is not field-level invalidation or O(1) updates.
+
+### Common viewport contract
+
+GTK, Tao and AppKit use the runtime validator: count must be 1..=256 and
+row_height must be finite and 1..=4096 logical pixels. No count/height clamping
+or NaN fallback. The proc macro validates literals with the same function;
+dynamic bindings are checked before changing the accepted viewport or mounts.
+An invalid initial viewport mounts nothing; an invalid update retains existing
+mounts and reports an error. A subsequent valid update resumes normal display.
+Backend error APIs retain their existing conventions (Tao diagnostics are a log).
+
+`range(length)` returns at most count rows, normalizing an out-of-range start to
+`length.saturating_sub(count)`, so the last page is full unless the source is
+shorter than count. Empty sources give 0..0; usize overflow is avoided. This does
+not promise to write the normalized start back into a read-only binding.
+Tao may mount one extra trailing row during fractional native scrolling (257
+maximum); GTK/AppKit do not overscan. Native sizes and scroll rounding remain
+backend-specific. This does not unify other layout/style/menu error policies.
 
 ## Identical GTK/Tao View API
 
