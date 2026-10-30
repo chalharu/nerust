@@ -70,6 +70,19 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     static let shared = ApplicationDelegate()
     weak var active: Host?
     @objc func quitRequested() { active?.emit("", kind: 3) }
+    func retire(_ value: Host) {
+        guard active === value else { return }
+        active = nil
+        let next = NSApp.orderedWindows.compactMap { $0.delegate as? Host }.first {
+            !$0.closed && ($0.window.isVisible || $0.window.isMiniaturized)
+        }
+        if let next = next {
+            next.window.makeKeyAndOrderFront(nil)
+            next.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification))
+        } else {
+            NSApp.mainMenu = nil
+        }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         quitRequested()
         return .terminateCancel
@@ -89,6 +102,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     var focusable: [NSView] = []
     var callback: Callback?
     var context: UnsafeMutableRawPointer?
+    var closed = false
     let bar = NSMenu()
 
     override init() {
@@ -144,6 +158,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        guard !closed else { return }
         ApplicationDelegate.shared.active = self
         NSApp.mainMenu = bar
     }
@@ -244,7 +259,8 @@ public func destroy(_ pointer: UnsafeMutableRawPointer) {
     let value = host(pointer)
     value.callback = nil
     value.window.delegate = nil
-    if ApplicationDelegate.shared.active === value { ApplicationDelegate.shared.active = nil }
+    value.closed = true
+    ApplicationDelegate.shared.retire(value)
     value.window.close()
     Unmanaged<Host>.fromOpaque(pointer).release()
 }
@@ -257,7 +273,12 @@ public func present(_ pointer: UnsafeMutableRawPointer) {
 }
 
 @_cdecl("w3_close") @MainActor
-public func close(_ pointer: UnsafeMutableRawPointer) { host(pointer).window.orderOut(nil) }
+public func close(_ pointer: UnsafeMutableRawPointer) {
+    let value = host(pointer)
+    value.closed = true
+    value.window.orderOut(nil)
+    ApplicationDelegate.shared.retire(value)
+}
 
 @_cdecl("w3_focused") @MainActor
 public func focused(_ pointer: UnsafeMutableRawPointer) -> Int32 {

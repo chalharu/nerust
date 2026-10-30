@@ -83,6 +83,9 @@ GTK4/GTK3は同じプロセスへロードせず、backend featureはどちら�
 macOSでは対話デスクトップ上で`sh scripts/verify-macos.sh`を使う。
 共通runtime/macro/実用画面の回帰、strict Clippy、AppKit両画面smoke、
 field editorの注入入力、native Menu、bitmap、反応連鎖中の合成入力を検査する。
+Taoも別processのmain-thread runnerでstrict Clippy、実窓描画、system clipboard、
+gallery、設定/一覧smokeを検査する。Taoだけなら`sh scripts/verify-tao-macos.sh`。
+Mac/Taoのclose/menuはAPI操作であり、実OSのWM/accelerator配送とは区別する。
 `sh scripts/measure-macos.sh`はreleaseの描画CPU・合成入力・検索連打と射影を観測する。
 外部IMEやVoiceOverの実操作、compositor frame時間を測ったものではない。
 両macOSアプリは64イベントの明示的な配送予算を使い、既存Storeの同期契約は維持する。
@@ -179,6 +182,9 @@ scoped更新とsettings/libraryのp50/p95 CPU閾値をassertし、超過は非�
 
 2026-10-31のレビュー指摘3件は修正し、native回帰へ追加した。
 macOS通常151試験とnative回帰、Docker/Linux正式ゲート、両環境のrelease性能予算が成功した。
+追加レビュー2件も修正し、closed View登録の無副作用拒否と、active窓close後の
+menu/Quit引き継ぎを再presentなしのnative回帰で確認した。TaoのMac専用ゲートも追加し、
+AppKit/TaoのMac総合ゲート、GTK/TaoのDocker総合ゲートと両CPU予算を再実行して成功した。
 方式比較を広げるための新prototypeは追加せず、AppKitの実IME・Full Keyboard Access・
 VoiceOver・実入力/描画の未実施ゲートを完了する。詳細は[macos/README.md](macos/README.md)。
 本体の映像surfaceと同居する場合はattach/detach・resize・終了の最小統合試験も必要。
