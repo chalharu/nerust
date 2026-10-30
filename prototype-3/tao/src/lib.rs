@@ -35,6 +35,17 @@ pub enum Message {
 }
 #[derive(Clone)]
 pub struct View(Rc<Inner>);
+/// Non-owning UI-thread handle; upgrade rejects closed and dropped Views.
+#[derive(Clone)]
+pub struct WeakView(Weak<Inner>);
+impl WeakView {
+    pub fn upgrade(&self) -> Option<View> {
+        self.0
+            .upgrade()
+            .filter(|inner| !inner.closed.get())
+            .map(View)
+    }
+}
 #[derive(Clone)]
 pub struct Parent(Rc<Node>);
 #[derive(Clone)]
@@ -131,6 +142,8 @@ struct Inner {
     menu_actions: RefCell<HashMap<String, menu::Action>>,
     subscriptions: RefCell<Vec<Subscription>>,
     on_close: RefCell<Vec<Rc<dyn Fn()>>>,
+    on_close_request: RefCell<Option<Rc<dyn Fn()>>>,
+    requesting_close: Cell<bool>,
     invalidate: RefCell<Option<Rc<dyn Fn()>>>,
     visible: Cell<bool>,
     closed: Cell<bool>,
@@ -152,6 +165,7 @@ impl Inner {
         if self.closed.replace(true) {
             return;
         }
+        drop(self.on_close_request.take());
         drop(self.subscriptions.take());
         // Drop widget subscriptions even if application retains Parent handles.
         let nodes: Vec<_> = self
@@ -211,6 +225,8 @@ impl View {
             menu_actions: RefCell::default(),
             subscriptions: RefCell::default(),
             on_close: RefCell::default(),
+            on_close_request: RefCell::default(),
+            requesting_close: Cell::new(false),
             invalidate: RefCell::default(),
             visible: Cell::new(false),
             closed: Cell::new(false),
@@ -451,6 +467,36 @@ impl View {
             self.0.on_close.borrow_mut().push(callback);
         }
     }
+    pub fn downgrade(&self) -> WeakView {
+        WeakView(Rc::downgrade(&self.0))
+    }
+    /// Replace the single app handler. Capture Store or WeakView, not a strong
+    /// View. The handler decides when to force-close after confirmation/drain.
+    pub fn on_close_request(&self, callback: Rc<dyn Fn()>) {
+        if !self.0.closed.get() {
+            drop(self.0.on_close_request.replace(Some(callback)));
+        }
+    }
+    /// Call the app handler, or close by default. Synchronous reentrant requests
+    /// are ignored, not queued; later requests may retry. Closed Views do nothing.
+    pub fn request_close(&self) {
+        if self.0.closed.get() || self.0.requesting_close.replace(true) {
+            return;
+        }
+        let callback = self.0.on_close_request.borrow().clone();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(callback) = callback {
+                callback();
+            } else {
+                self.close();
+            }
+        }));
+        self.0.requesting_close.set(false);
+        if let Err(panic) = result {
+            self.0.report(panic_error(panic));
+        }
+    }
+    /// Explicit, idempotent force teardown. Never dispatches a close request.
     pub fn close(&self) {
         self.0.shutdown();
     }

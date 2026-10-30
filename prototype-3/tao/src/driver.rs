@@ -611,13 +611,11 @@ pub(super) fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Resu
                 }
                 Event::WindowEvent {
                     window_id, event, ..
-                } if window_id == desktop.window.id() => {
-                    if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
-                        view.close();
-                    } else {
-                        desktop.event(&event);
-                    }
-                }
+                } if window_id == desktop.window.id() => match event {
+                    WindowEvent::CloseRequested => view.request_close(),
+                    WindowEvent::Destroyed => view.close(),
+                    _ => desktop.event(&event),
+                },
                 #[cfg(not(target_os = "linux"))]
                 Event::RedrawRequested(id) if id == desktop.window.id() => {
                     if let Err(e) = desktop.draw() {

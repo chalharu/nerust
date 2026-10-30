@@ -15,6 +15,18 @@ spacing is sanitized to zero. A finite explicitly placed size is constrained by
 the enclosing available size. Root styling uses `__root`; the first style on an
 otherwise empty View also registers the generated Window ID as a root alias.
 
+Common subset with GTK: Grid fills the available logical width with equal tracks
+of `(available - (columns-1)*gap)/columns`; children without explicit widths fill
+their track/span (minus margins), and spans include internal gaps. Explicit rows,
+columns and row/column spans are honored; unused rows still contribute gaps.
+Portable code supplies explicit placement, because GTK's unstyled children keep
+auto-flow while Tao's default is cell 0,0. GTK native minimum sizes and integer
+rounding can enlarge tracks or constrain window sizes; Tao bounds explicit sizes
+to available space. Neither backend promises pixel identity. Flex's common subset
+is only gap and horizontal wrapping, not MAUI-complete grow/shrink/alignment or
+identical line breaking. `layout::tests::actual_grid_nodes_fill_equal_columns_with_gap_and_explicit_spans`
+checks real iced child nodes at two available widths, not just a geometry helper.
+
 Items and Content invoke arbitrary typed recursive templates with persistent
 item Stores. Local IDs scope as `list/key/local`; explicitly prefixed IDs also
 work. The same key AND Store retain a mount across reorder/overlapping scroll.
@@ -39,8 +51,17 @@ register `on_custom` for callbacks, or use ordinary Edit/Click messages.
 
 ## Menus and input boundaries
 
-Menu snapshots and titles are reactive. Normal items parse muda accelerators
-(e.g. `Ctrl+KeyS`) before replacing the native snapshot and dispatch their frozen
+Menu snapshots and titles are reactive. Shortcuts first parse shared runtime
+`Shortcut` grammar: `Primary+S`, `Primary+Q`, `Ctrl+Shift+S`. Modifiers are
+Primary/Ctrl/Cmd/Alt/Shift before one ASCII letter/digit, F1..F12, or
+Enter/Tab/Space/Escape/Backspace/Delete/Insert/Home/End/PageUp/PageDown/Left/Right/Up/Down.
+Tokens are case-insensitive and trimmed; Shift is explicit. Primary is Cmd on
+macOS, Ctrl elsewhere. `to_gtk`/`to_muda` and the explicit-target `*_for` variants
+produce backend syntax. If common parsing fails, existing muda accelerator input
+(e.g. `Ctrl+KeyS`) is accepted as **legacy backend-specific syntax**; its broader
+accepted vocabulary is not common grammar. GTK keyvals and muda Code accelerators
+do not establish physical-key equivalence for all keyboard layouts.
+Normal items dispatch their frozen
 string argument. Automation accepts `menu/item` or an unambiguous item ID.
 Native remove/append failures restore the old items, order and accelerators before
 returning an error; action and native-ID registries commit only after native success.
@@ -54,13 +75,15 @@ Copy/Cut/Paste/SelectAll/About/Separator use actual muda predefined roles,
 not aliases to the application dispatcher. Native roles cannot be activated by
 `activate_menu`; that returns an explicit error. muda has no public enabled setter
 for predefined items: disabled predefined actions and custom accelerators on
-them are rejected. Quit uses muda's predefined role on Windows/macOS. GTK3 muda
-does not implement Quit, so Linux has an explicit platform shim: a native normal
-menu item with the Quit role and a stored weak-owner closure calling `View::close`,
-never the application dispatcher. This shim also supports enabled state and
-`activate_menu` (including native event delivery); custom Quit shortcuts remain
-rejected consistently with predefined roles. It closes the owning View, not other
-Views or unrelated GTK windows.
+them are rejected. **Quit is the deliberate exception:** all platforms use an
+ordinary native muda item with a weak-owner closure calling `View::request_close`,
+never the application dispatcher. It supports enabled state, `activate_menu` and
+custom shortcuts such as `Primary+Q`. The unsafe-to-veto predefined Quit is never
+installed: muda 0.21.2 directly calls PostQuitMessage on Windows and uses AppKit
+`terminate:` on macOS, bypassing a reliably cancellable application MenuEvent.
+Windows/macOS normal-item event/accelerator delivery is **unverified natively**;
+Linux tests must not be interpreted as guarantees for those systems. OS global
+termination/application-menu quit and forced process exit are outside this API.
 GTK3 predefined editing actions send GTK key sequences toward the focused native
 window; their propagation into software iced inputs is not a verified conformance
 claim. Native About receives metadata so it opens muda's real OS dialog.
@@ -84,6 +107,22 @@ the event proxy as coalesced numeric IDs, with a one-shot GTK idle nudge on Linu
 Idle waits are event-driven; the only deadlines come from actual iced redraw
 requests (such as caret blinking), not a runtime polling timer. Close/drop owns
 task cancellation, subscriptions, close callbacks and native menu detachment.
+`View::downgrade() -> WeakView` is non-owning; `upgrade() -> Option<View>` returns
+None after close/drop. `on_close_request(Rc<dyn Fn()>)` replaces one app handler.
+`request_close()` invokes it or force-closes by default. Native CloseRequested and
+ordinary Quit items use that same entry point; Destroyed/error/owner teardown use
+forceful `close()`. Nested synchronous requests inside a handler are ignored, not
+queued; later requests retry. Panics are diagnosed and release the request gate.
+`close()` stays idempotent, bypasses the request handler, and runs existing final
+`on_close` cleanup once. Register cleanup before closure (Tao retains its existing
+immediate invocation for a late on_close registration).
+
+Settings pattern: on_close_request captures only a Store/Command which starts
+confirmation/save and eventually publishes close_ready. Subscribe using WeakView,
+upgrade and call close only when ready; retain that token with `View::keep`.
+An on_close callback closes the Store when the View actually ends. Never capture
+View strongly in a callback/token stored on that same View. keep ownership and
+template-scoped token eviction are unchanged.
 `run_async` returns an unsupported-external-host error without constructing a View.
 Call `run` on the main thread, at most once per process. Do not initialize GTK4
 in the same process, or install a competing process-global muda event handler.
@@ -100,15 +139,18 @@ The pure transaction test injects failures before/after every remove/append.
 The Linux display test also provokes an actual GTK append error (`Ctrl+Fn`),
 checks old native IDs/order/hotkeys/actions and title preservation, then activates
 the native Quit shim. It is ignored by default to isolate GTK thread ownership;
-from `prototype-2`, run it separately with
+from `prototype-3`, run it separately with
 `xvfb-run -a cargo test -p wakui2-tao --lib tests::native_menu_append_failure_restores_accelerators_registry_and_quit -- --exact --ignored --test-threads=1`.
 `G_DEBUG=fatal-criticals` can additionally enforce clean GTK diagnostics.
 `examples/native_smoke.rs` has a real `main` calling `run`; it opens/draws a native
 window and menu, mounts an application-defined advanced widget that roundtrips
 the system clipboard, awaits a worker completion, exercises automation and closes.
 On Linux it also activates the real native accelerator group and observes/closes
-the actual predefined About dialog, then activates native Quit and checks the close
-callback. This is not synthesized physical keyboard input.
+the actual predefined About dialog. It sends a real native window close request
+(vetoed), activates the native Quit item (vetoed), then activates the native
+Primary+Q accelerator to publish close_ready and close exactly once. Save uses
+Primary+S. This is not synthesized physical keyboard input; Windows/macOS paths
+use API automation and are not native verification of close/accelerator delivery.
 Run it in a separate process. For headless Linux, explicitly select X11:
 `timeout 45 xvfb-run -a env GDK_BACKEND=x11 G_DEBUG=fatal-criticals /tmp/wakui2-target/debug/examples/native_smoke`
 (after building the example with that target directory). `xvfb-run` sets `DISPLAY`
