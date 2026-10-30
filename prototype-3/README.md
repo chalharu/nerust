@@ -2,8 +2,9 @@
 
 第2試作を土台に、所有権・入力・終了契約を整理し、実用設定画面を通して検証する第3試作。
 既存nerustとは未接続。`prototype_1/`と`prototype-2/`は比較基準として変更していない。
-継承クレート名は`wakui2-*`のまま、設定アプリは`wakui3-settings`。独立workspaceで相互依存しない。
-**アプリにbuild.rs・契約crate・入力enum・手書きBinding接続は不要。**
+継承クレート名は`wakui2-*`のまま、実用アプリは`wakui3-settings`と`wakui3-library`。
+独立workspaceで相互依存しない。
+**UI接続用のbuild.rs・契約crate・入力enum・手書きBinding接続は不要。**
 
 ## まず動かす
 
@@ -14,6 +15,8 @@ Rust 1.95以上、GTK4開発環境（Tao/LinuxはGTK3）が必要。
 cargo run --locked -p wakui3-settings
 cargo run --locked -p wakui3-settings -- --config /path/to/settings.json
 cargo run --locked -p wakui3-settings --no-default-features --features backend-tao
+cargo run --locked -p wakui3-library -- --folder /path/to/roms
+cargo run --locked -p wakui3-library --no-default-features --features backend-tao -- --folder /path/to/roms
 cargo run --locked -p wakui2-demo --example minimal
 cargo run --locked -p wakui2-demo
 cargo run --locked -p wakui2-demo --no-default-features --features backend-tao
@@ -39,6 +42,8 @@ YAMLだけの変更で再コンパイルされることも実際の子Cargo試�
 | native所有権 | `WeakView`を公開。close-ready購読から強参照循環なしで終了 |
 | 共通UI | `Primary+S/Q`等の共通shortcut、Grid等幅列・明示placement、Flexの限定的契約 |
 | 実用画面 | 名前・音量・倍率、保存・取消、破損設定の拒否、未保存終了確認、保存中の再編集 |
+| 過負荷回復 | scoped `Store::watch`で派生状態・effect開始を通常FIFOへ配送。容量1でも保存成功／task拒否から復帰 |
+| 第2実用画面 | フォルダー・filterの非同期走査、安定keyの仮想化一覧、古い結果の除外、エラー復帰 |
 
 構文と生成規則は`macros/README.md`、解析制限とschemaは`markup/`、
 所有権・上限・終了契約は`runtime/README.md`、native差は`gtk/README.md`・`tao/README.md`を参照。
@@ -60,6 +65,13 @@ APIキーや`.env`は不要。
 保存先は一時ディレクトリの`wakui2-demo-<pid>.txt`。APIキーや`.env`は不要。
 保存workerのjoinはUI loopの復帰後に行う。
 
+第2画面は[library/README.md](library/README.md)。指定フォルダーの対応拡張子を
+非再帰で走査し、ファイル名・サイズ・systemを表示する。ROM内容を読まず、
+ユーザーフォルダーへ書かない。8192項目訪問・256結果の上限があり、検索中も編集可能。
+設定と検索で共通の`Store::watch`を使い、アプリ固有の状態機械・表示内容は残す。
+watchは最新値へ統合し、容量が空いた後に公開完了後のFIFOで反応する。
+正のingress容量が必要で、解除は未実行反応を無効化するが開始済みeffectまでは止めない。
+
 GTKはネイティブ部品。Taoはnative Window/Menuとsoftware iced部品で、同じ部品ではない。
 GTK4/GTK3は同じプロセスへロードせず、backend featureはどちらか一つを選ぶ。
 
@@ -67,13 +79,15 @@ GTK4/GTK3は同じプロセスへロードせず、backend featureはどちら�
 
 `sh scripts/verify.sh`で整形、Clippy、core・macro試験、GTK個別native試験、
 Tao native試験、最小例の両backendビルド、両galleryとclipboard/hotkey/About/Quit、
-両構成の設定試験と実画面スモークを確認する。
-155種類成功。設定23件の両feature実行とGridの倍率2再実行を含む実行数は179件。
+両構成の設定／検索試験と実画面スモークを確認する。
+185種類成功。設定25件・検索14件の両feature実行とGridの倍率2再実行を含め225実行。
 設定アプリの実GTK二窓試験も専用プロセスで実行し、共有Viewの一方を閉じても
 他方の入力と非同期結果反映が続くことを確認する。
 終了コード0と`VERIFY3 PASS`を確認済み。継承galleryの`PROTOTYPE2`/`PERF2`マーカーは
 このworkspaceでの回帰を表し、保存済みの第2試作を再実行した意味ではない。
-Xvfbと`timeout`が必要。GTK試験は初期化スレッド制約から一件ずつ別プロセスで実行する。
+Xvfbと`timeout`が必要。新しいX11入力回帰にはlibX11/libXtstとXTEST拡張も必要。
+総合手順は`WAKUI_REQUIRE_XTEST=1`で欠落を成功扱いにしない。
+GTK試験は初期化スレッド制約から一件ずつ別プロセスで実行する。
 `GDK_BACKEND=x11`を明示し、継承Wayland displayがXvfbを迂回しないようにする。
 
 Alpine/muslでの検証設定：
@@ -83,6 +97,11 @@ RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/wakui3-target \
   RUSTFLAGS='-C target-feature=-crt-static -C prefer-dynamic=no' sh scripts/verify.sh
 ```
 
+同じ環境設定で`sh scripts/measure.sh`を実行すると、releaseの9条件scalingと、
+実App・配線を使った設定300更新／検索20回×256行のCPU観測を再現できる。
+保存・描画・実入力の遅延測定ではない。時間に合否閾値を置かず、
+Draft・射影・行Store同一性のassertと`MEASURE3 PASS`を確認する。
+
 ## 境界を明示する
 
 - `view!`はアプリ型をHOST側で実行しない。任意typetag拡張crateを自動ロードする方式ではなく、
@@ -90,6 +109,7 @@ RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/wakui3-target \
 - Templateは対応するControlの任意合成。nested Window、循環Templateは拒否する。
   項目keyは空文字・`/`・重複を拒否。仮想化は固定行高で、可変行高は未対応。
 - Command引数はClone + 'staticな型を利用できるが、動的Menuの引数はStringのまま。
+  引数内の`Self`は元モデル型へ再帰置換する。不透明な型macro内の`Self`は明示拒否する。
   genericモデル、readonly field属性、完全なsource map/editor LSPは未対応。
 - 設定画面は明示的なDraftで編集bufferを保持する。汎用converterの失敗時は従来どおり
   正規値へ戻るため、自動的に全TextBoxが編集bufferを持つわけではない。
@@ -104,6 +124,9 @@ RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/tmp/wakui3-target \
   アプリ固有の確認・保存drain hookは明示登録する。
 - Taoの外部reactor接続は明示的unsupported。Tao 0.37にpreedit eventがなく、
   in-place preedit、physical-key identity、OS accessibilityは対応済みとしない。
+  GTKはXTestによる日本語Unicode compose・Tab・clipboardを確認したが外部IME変換ではない。
+  Taoは実ASCIIキー／日本語clipboardとsignal注入commitを区別して検証し、
+  focus喪失時のiced修飾キー残留を修正した。TaoのCtrl+Shift+U composeは成立していない。
 - system clipboardは実displayへ接続する。Waylandはseat/focus条件が別途必要。
   GTK3のQuitは明示native shim。一部predefined roleの無効化等はmuda制限で拒否する。
 - 開始済みblocking I/Oをabort/timeoutで停止・rollbackすることはできない。

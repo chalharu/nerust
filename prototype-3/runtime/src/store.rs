@@ -551,6 +551,65 @@ impl<S: Clone + 'static> Store<S> {
         self.core
             .enqueue(Box::new(move |core| core.mutate(update)), true)
     }
+    /// React through ordinary FIFO ingress after publication, not inside a
+    /// listener. Each token keeps only the latest source value and retries when
+    /// a dequeue frees capacity. Unlike subscribe(), intermediate values may be
+    /// coalesced. Positive ingress capacity is required for delivery.
+    ///
+    /// A reaction starts with one ingress slot free; it can submit one update or
+    /// effect without competing with other listeners from that publication.
+    /// Further submissions still require checking acceptance. Reactions are
+    /// synchronous, not debounced, and initial delivery can occur before return.
+    /// Dropping the token invalidates even queued reactions, but not effects
+    /// already started. Capture the supplied Store only for the current call,
+    /// rather than capturing a strong owner in the reaction itself.
+    pub fn watch<T: Clone + 'static>(
+        &self,
+        source: Binding<T>,
+        react: impl Fn(&Store<S>, T) + 'static,
+    ) -> Subscription {
+        let state = Rc::new(Watch {
+            owner: Rc::downgrade(&self.core),
+            alive: Cell::new(true),
+            queued: Cell::new(false),
+            latest: RefCell::new(None),
+            react: Rc::new(react),
+        });
+        let id = next(&self.core.sequence);
+        let weak = Rc::downgrade(&state);
+        let flusher: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(state) = weak.upgrade() {
+                state.flush();
+            }
+        });
+        self.core
+            .flushers
+            .borrow_mut()
+            .insert(id, Rc::downgrade(&flusher));
+        let owner = Rc::downgrade(&self.core);
+        // Install before subscribe's initial callback, including its panic path.
+        let cleanup = Subscription::new(move || {
+            if let Some(core) = owner.upgrade() {
+                core.flushers.borrow_mut().remove(&id);
+            }
+        });
+        let weak = Rc::downgrade(&state);
+        let source = source.subscribe(Rc::new(move |value| {
+            if let Some(state) = weak.upgrade().filter(|state| state.alive.get()) {
+                let old = state.latest.replace(Some(value));
+                drop(old);
+                state.flush();
+            }
+        }));
+        Subscription::new(move || {
+            state.alive.set(false);
+            let old = state.latest.take();
+            drop(old);
+            drop(source);
+            drop(cleanup);
+            drop(flusher);
+        })
+    }
     pub fn close(&self) {
         self.core.close();
     }
@@ -651,6 +710,41 @@ impl<S: Clone + 'static> Store<S> {
         self.core
             .effect(policy, Slot::User(slot.to_owned()), future, apply)
             .is_some()
+    }
+}
+
+type Reaction<S, T> = Rc<dyn Fn(&Store<S>, T)>;
+struct Watch<S: Clone + 'static, T> {
+    owner: Weak<Core<S>>,
+    alive: Cell<bool>,
+    queued: Cell<bool>,
+    latest: RefCell<Option<T>>,
+    react: Reaction<S, T>,
+}
+impl<S: Clone + 'static, T: 'static> Watch<S, T> {
+    fn flush(self: &Rc<Self>) {
+        if !self.alive.get() || self.latest.borrow().is_none() || self.queued.get() {
+            return;
+        }
+        let Some(core) = self.owner.upgrade().filter(|core| !core.closed.get()) else {
+            return;
+        };
+        self.queued.set(true);
+        let weak = Rc::downgrade(self);
+        if !core.enqueue(
+            Box::new(move |core| {
+                if let Some(state) = weak.upgrade().filter(|state| state.alive.get()) {
+                    state.queued.set(false);
+                    let value = state.latest.take();
+                    if let Some(value) = value {
+                        (state.react)(&Store { core: core.clone() }, value);
+                    }
+                }
+            }),
+            true,
+        ) {
+            self.queued.set(false);
+        }
     }
 }
 

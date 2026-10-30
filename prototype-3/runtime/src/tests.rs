@@ -386,6 +386,179 @@ fn ingress_saturation_is_false_and_fifo_is_preserved() {
 }
 
 #[test]
+fn watch_coalesces_under_saturation_after_complete_publication() {
+    let pool = LocalPool::new();
+    let store = Store::with_limits(
+        0,
+        Rc::new(LocalExecutor(pool.spawner())),
+        Limits {
+            ingress: 1,
+            tasks: 1,
+        },
+    );
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let out = log.clone();
+    let owner = store.clone();
+    let _first = store.bind(|s| *s, None).subscribe(Rc::new(move |v| {
+        out.borrow_mut().push(('a', v));
+        if v == 1 {
+            assert!(owner.update(|s| *s = 2));
+        }
+    }));
+    let out = log.clone();
+    let _watch = store.watch(store.bind(|s| *s, None), move |_, v| {
+        out.borrow_mut().push(('w', v));
+    });
+    let out = log.clone();
+    let _last = store.bind(|s| *s, None).subscribe(Rc::new(move |v| {
+        out.borrow_mut().push(('b', v));
+    }));
+    log.borrow_mut().clear();
+    assert!(store.update(|s| *s = 1));
+    assert_eq!(
+        *log.borrow(),
+        [('a', 1), ('b', 1), ('a', 2), ('b', 2), ('w', 2)]
+    );
+}
+
+#[test]
+fn watch_reaction_frees_one_slot_for_update_or_effect() {
+    let mut pool = LocalPool::new();
+    let store = Store::with_limits(
+        Model::default(),
+        Rc::new(LocalExecutor(pool.spawner())),
+        Limits {
+            ingress: 1,
+            tasks: 1,
+        },
+    );
+    let _derived = store.watch(number(&store), |store, value| {
+        assert!(store.update(move |s| s.argument = value.to_string()));
+    });
+    let _effect = store.watch(number(&store), |store, value| {
+        assert!(
+            store.effect(Policy::Serial, "watch", async move { value }, |s, value| {
+                s.error = value.to_string();
+            })
+        );
+    });
+    pool.run_until_stalled();
+    assert!(number(&store).set(42));
+    pool.run_until_stalled();
+    assert_eq!(store.snapshot().argument, "42");
+    assert_eq!(store.snapshot().error, "42");
+}
+
+#[test]
+fn watch_drop_invalidates_both_mailbox_and_queued_reaction() {
+    for saturate in [false, true] {
+        let pool = LocalPool::new();
+        let store = Store::with_limits(
+            0,
+            Rc::new(LocalExecutor(pool.spawner())),
+            Limits {
+                ingress: 1,
+                tasks: 1,
+            },
+        );
+        let owner = store.clone();
+        let _fill = store.bind(|s| *s, None).subscribe(Rc::new(move |v| {
+            if v == 1 && saturate {
+                assert!(owner.update(|_| {}));
+            }
+        }));
+        let calls = Rc::new(Cell::new(0));
+        let count = calls.clone();
+        let capture = Rc::new(());
+        let weak = Rc::downgrade(&capture);
+        let token = store.watch(store.bind(|s| *s, None), move |_, _| {
+            let _ = &capture;
+            count.set(count.get() + 1);
+        });
+        let slot = Rc::new(RefCell::new(Some(token)));
+        let cancel = slot.clone();
+        let _cancel = store.bind(|s| *s, None).subscribe(Rc::new(move |v| {
+            if v == 1 {
+                let token = cancel.borrow_mut().take();
+                drop(token);
+            }
+        }));
+        assert!(store.update(|s| *s = 1));
+        assert_eq!(calls.get(), 1, "only the initial reaction runs");
+        assert!(weak.upgrade().is_none());
+    }
+}
+
+#[test]
+fn watch_does_not_own_store_and_close_discards_queued_reaction() {
+    let (_, store) = local(0);
+    let binding = store.bind(|s| *s, Some(|s, v| *s = v));
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    let _token = store.watch(binding.clone(), move |_, _| count.set(count.get() + 1));
+    let owner = store.clone();
+    let _closer = binding.subscribe(Rc::new(move |v| {
+        if v == 1 {
+            owner.close();
+        }
+    }));
+    assert!(binding.set(1));
+    assert_eq!(calls.get(), 1);
+    drop((_closer, store));
+    assert!(!binding.set(2));
+
+    let (_, store) = local(0);
+    let binding = store.bind(|s| *s, Some(|s, v| *s = v));
+    let _token = store.watch(binding.clone(), |_, _| {});
+    drop(store);
+    assert!(!binding.set(1), "watch tokens are not model owners");
+}
+
+#[test]
+fn watch_initial_panic_unsubscribes_and_reentry_is_borrow_safe() {
+    let (_, store) = local(Model::default());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _token = store.watch(number(&store), |_, _| panic!("initial reaction"));
+        }))
+        .is_err()
+    );
+    let _token = store.watch(number(&store), |store, value| {
+        if value < 3 {
+            assert!(store.update(move |s| s.value = value + 1));
+        }
+    });
+    assert_eq!(number(&store).get(), 3);
+    assert!(number(&store).set(4));
+}
+
+#[test]
+fn watch_foreign_source_coalesces_without_partial_eq() {
+    let pool = LocalPool::new();
+    let store = Store::with_limits(
+        Vec::new(),
+        Rc::new(LocalExecutor(pool.spawner())),
+        Limits {
+            ingress: 1,
+            tasks: 1,
+        },
+    );
+    let (_, source) = local(Model::default());
+    #[derive(Clone)]
+    struct NoEq(i32);
+    let _token = store.watch(number(&source).map(NoEq), |store, NoEq(value)| {
+        assert!(store.update(move |s| s.push(value)));
+    });
+    let owner = store.clone();
+    store.update(move |_| {
+        assert!(owner.update(|_| {}));
+        number(&source).set(1);
+        number(&source).set(2);
+    });
+    assert_eq!(store.snapshot(), [0, 2]);
+}
+
+#[test]
 fn command_captures_argument_now_but_rechecks_enabled_on_dequeue() {
     let (_, store) = local(Model {
         enabled: true,
