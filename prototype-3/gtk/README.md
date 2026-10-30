@@ -26,6 +26,21 @@ rather than silently falling back. Sizes and spacing are nonnegative finite
 logical pixels, rounded to integers; GTK size requests are minimum sizes, not
 hard constraints on a widget's natural minimum. Padding works on leaves too.
 
+### Common layout subset (also implemented by Tao)
+
+Grid uses homogeneous columns and expands across the available logical width.
+For `n` columns and gap `g`, a track is `(available - (n-1)*g)/n`; a column span
+occupies its tracks plus internal gaps. Empty declared columns retain a track.
+Explicit zero-based row/column and positive row/column spans are supported.
+GTK's unstyled children retain its existing auto-flow; portable code supplies
+explicit placement for every Grid child (Tao defaults to cell 0,0).
+GTK native minimum sizes can enlarge tracks/window; integer allocation rounds
+tracks, so one logical pixel of difference is expected. Explicit width/height
+are minimum requests on GTK, not hard clipping constraints. Use feasible sizes.
+Flex's common contract is horizontal flow with gap and wrapping only: GTK FlowBox
+and iced may distribute space and choose line breaks differently. No full MAUI
+layout, flex grow/shrink/alignment, or cross-backend pixel identity is claimed.
+
 ## Templates and virtualization
 
 `items<T>` and `content<T>` accept the exact typed recursive callback from
@@ -48,10 +63,20 @@ paths; applications must avoid ambiguous overlapping scope paths.
 ## Menus
 
 Snapshots rebuild real Gio actions, GMenu sections (separators), and GTK
-ShortcutController/NamedAction shortcuts. Shortcuts use GTK trigger syntax, e.g.
-`<Control>s`; invalid shortcuts and duplicate IDs reject the snapshot. Normal
+ShortcutController/NamedAction shortcuts. Shortcuts first use the shared runtime
+`Shortcut` grammar, e.g. `Primary+S`, `Primary+Q`, `Ctrl+Shift+S`. Modifiers
+`Primary`, `Ctrl`, `Cmd`, `Alt`, `Shift` precede one ASCII letter/digit, F1..F12,
+or Enter/Tab/Space/Escape/Backspace/Delete/Insert/Home/End/PageUp/PageDown/
+Left/Right/Up/Down. Case and token-edge whitespace are normalized. Primary maps
+to Cmd (GTK Meta) on macOS, Ctrl elsewhere; Shift is always explicit.
+`Shortcut::parse`, `to_gtk`, `to_muda` share conversion; `*_for(ShortcutTarget)`
+allows explicit target conversion independently of the build host.
+If common parsing fails, existing GTK trigger syntax (`<Control>s`) is accepted
+as **legacy backend-specific input**, not portable grammar. The legacy parser
+may accept more keys/modifiers than the strict common parser. Invalid shortcuts
+and duplicate IDs reject the snapshot. Normal
 items dispatch their String argument; built-in roles operate on native GTK
-focus/clipboard, open a native AboutDialog, or close the View. Clipboard roles
+focus/clipboard, open a native AboutDialog, or request View closure. Clipboard roles
 require a focused widget that implements the respective GTK action. No claim is
 made about OS-wide shortcut registration, all IME paths, or accessibility
 conformance merely because GTK widgets are used.
@@ -89,7 +114,8 @@ The host must outlive the windows and the caller must keep driving the GTK loop.
 For multiwindow Applications, set each `native_window().set_application(...)`;
 do not use the single-window executor-closing `attach_view` convenience.
 
-Coordination only wires native `close-request`; it never registers or replaces
+Coordination is the fallback for `request_close` (including native/menu close);
+it never registers or replaces
 Session hooks. Application pattern: separately register a `WindowHooks` token
 under an ID such as `"0-application-work"` and retain it in the application scope
 (or `view.keep(token)` for View-scoped work). Its `confirm` asks the user, `cancel`
@@ -113,11 +139,31 @@ no strong View/executor references; View teardown aborts its pending request and
 host teardown drops pending tasks. A dead executor rejects native requests and
 leaves the View open for explicit owner teardown.
 
-`View::close()` remains forceful and idempotent: use it in runtime close hooks,
-not to request confirmation. Built-in `MenuRole::Quit` still uses this forceful
-API. `GtkWindow::destroy`, Application quit/process termination and forced owner
-teardown are not intercepted. Applications requiring confirmation on menu quit
-should dispatch a normal menu command to `native_window().close()` instead.
+### Ordinary close and weak application handles
+
+`View::downgrade() -> WeakView` and `WeakView::upgrade() -> Option<View>` expose
+non-owning handles. Upgrade returns None once the View is closed or dropped.
+`on_close_request(Rc<dyn Fn()>)` replaces one application handler, not a list.
+`request_close()` calls that handler; without one it uses `coordinate_close`,
+or immediately closes by default. The application handler takes precedence over
+the coordinator; registering both does not automatically run both mechanisms.
+Native WM close and `MenuRole::Quit` (including a shortcut) use request_close.
+Requests synchronously nested in that callback, including nested native/menu
+requests, are ignored rather than queued. Later requests can retry. A panicking
+handler is recorded in the View error and leaves the window open; retry is allowed.
+
+For a settings application, let the request handler capture only a Store/Command
+that starts confirmation/save and publishes `close_ready`. Subscribe to that flag
+using a captured WeakView and call `upgrade().map(|view| view.close())` when ready.
+Retain the subscription with `view.keep(token)`; it is owned until View shutdown
+(or template eviction if registered inside a template). Register `on_close` once
+to close the Store when the app actually ends, not when a request is vetoed.
+Do not capture a strong View in any callback/token retained by that same View.
+
+`View::close()` remains forceful and idempotent: use it in runtime final close
+hooks or on close_ready, not to ask for confirmation. It never reemits a request,
+and existing `on_close` callbacks run once. `GtkWindow::destroy`, Application
+quit/process termination and forced owner teardown are not vetoable requests.
 
 ## Native verification
 
@@ -149,3 +195,18 @@ closed-writer rejection. `tests::native_entry_incremental_edits_and_readonly`
 checks String insert/delete/empty edits, one write per replacement, model-update
 echo suppression, read-only rollback, and scoped signal disconnection. Run each
 in its own process with the same native test environment above.
+
+New ordinary-close regressions (5 tests total including layout/shortcut):
+`tests::native_close_requests_weak_and_reentrant`,
+`tests::native_close_ready_subscription_retains_model_without_view_cycle`,
+`tests::native_close_request_handler_precedes_coordinator_and_menu_falls_back`,
+`tests::native_canonical_shortcut_semantics`, and
+`tests::native_grid_equal_columns_geometry_and_spans`.
+The shortcut test checks actual GTK keyval/modifier parsing for both target
+conversions and activates installed NamedActions (not synthesized key input).
+The Grid test maps real widgets at two logical widths, checks equal allocations,
+gaps, explicit spans and empty declared columns. Run the exact Grid test separately
+with `GDK_SCALE=1` and `GDK_SCALE=2` under Xvfb (large enough physical screen),
+`GDK_BACKEND=x11 GSK_RENDERER=cairo G_DEBUG=fatal-criticals`. These are logical
+geometry regressions at integer scale factors, not screenshot/pixel identity or
+fractional-DPI/Windows/macOS validation.
