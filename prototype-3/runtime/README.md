@@ -23,7 +23,7 @@ native toolkit dependency is required.
   `Result<Session, String>`. It constructs/attaches on its first poll, without
   running a native loop. Failed attachment forcibly closes the constructed session.
 - `Session` is Clone/Default and has `new`, `shutdown() -> ShutdownCoordinator`,
-  `window_count() -> usize`, and
+  `ptr_eq(&other) -> bool` for shared coordinator identity, `window_count() -> usize`, and
   `register_window(id: impl Into<String>, WindowHooks) -> Result<Subscription, String>`.
   Retain registration tokens on window/view scopes. Session registries hold weak
   hook slots; dropping a token unregisters and aborts its pending shutdown waits.
@@ -168,12 +168,16 @@ guaranteed status retry. Outputs on unrelated Stores are allowed but cannot rely
 on this Store's dequeue notifications to retry a full unrelated queue.
 
 Shutdown confirms windows in ID order, then cancels work and concurrently drains
-all windows. The real timer deadline covers both confirmation and drain. Denial,
+all windows. Confirmation has no deadline: waiting for a user's answer never
+forces closure. The real timer starts after all confirmations and bounds only
+draining. Denial,
 explicit cancellation or dropping the request restores Running; work already
 cancelled during drain is not resurrected. Timeout cancels remaining work and
 forcibly closes windows. Cancellation is at most once per window per request.
 Repeated close is idempotent. Registrations during shutdown and duplicate IDs
 return errors. Unmounted windows stop participating in outstanding waits.
+The real-timer regression waits longer than the drain budget during confirmation,
+asserts no cancellation/close, then approves and verifies the stuck drain times out.
 
 ## Deliberate boundaries
 

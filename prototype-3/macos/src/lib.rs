@@ -113,6 +113,7 @@ struct List {
 
 struct Inner {
     native: Cell<*mut c_void>,
+    scope: RefCell<String>,
     scopes: RefCell<HashMap<String, Scope>>,
     handlers: RefCell<HashMap<String, Handler>>,
     viewport_handlers: RefCell<HashMap<String, Handler>>,
@@ -243,6 +244,7 @@ impl View {
     pub fn new(title: Binding<String>) -> Self {
         let inner = Rc::new(Inner {
             native: Cell::new(std::ptr::null_mut()),
+            scope: RefCell::new("__root".into()),
             scopes: RefCell::new(HashMap::new()),
             handlers: RefCell::new(HashMap::new()),
             viewport_handlers: RefCell::new(HashMap::new()),
@@ -271,7 +273,19 @@ impl View {
         WeakView(Rc::downgrade(&self.0))
     }
     pub fn keep(&self, token: Subscription) {
-        self.keep_at("__root", token);
+        let scope = self.0.scope.borrow().clone();
+        self.keep_at(&scope, token);
+    }
+    fn in_scope(&self, prefix: &str, build: impl FnOnce()) {
+        struct Restore<'a>(&'a RefCell<String>, Option<String>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.replace(self.1.take().unwrap());
+            }
+        }
+        let previous = self.0.scope.replace(prefix.into());
+        let _restore = Restore(&self.0.scope, Some(previous));
+        build();
     }
     fn keep_at(&self, id: &str, token: Subscription) {
         if !self.0.closed.get() {
@@ -508,7 +522,9 @@ impl View {
                 style.placement.height = Some(viewport.row_height);
                 view.style(&scope, style);
                 if let Some(row_parent) = row_parent {
-                    template(view, &row_parent, &scope, row.model.clone());
+                    view.in_scope(&scope, || {
+                        template(view, &row_parent, &scope, row.model.clone());
+                    });
                 }
             }
             list.mounted
@@ -908,14 +924,22 @@ impl MacExecutor {
 pub struct MacHost {
     executor: Rc<MacExecutor>,
     views: RefCell<Vec<View>>,
-    sessions: RefCell<Vec<Session>>,
+    session: RefCell<Option<Session>>,
 }
 impl UiHost for MacHost {
     fn executor(&self) -> Rc<dyn Executor> {
         self.executor.clone()
     }
     fn attach(&self, session: Session) -> Result<(), String> {
-        self.sessions.borrow_mut().push(session);
+        let attached = self.session.borrow().clone();
+        if let Some(attached) = attached {
+            return if attached.ptr_eq(&session) {
+                Ok(())
+            } else {
+                Err("MacHost supports one Session; share it across all windows".into())
+            };
+        }
+        self.session.replace(Some(session));
         Ok(())
     }
 }
@@ -934,6 +958,7 @@ impl MacHost {
         view: &View,
         hooks: WindowHooks,
     ) -> Result<(), String> {
+        self.attach(session.clone())?;
         let token = session.register_window(id, hooks)?;
         view.keep(token);
         let shutdown = session.shutdown();
@@ -950,7 +975,7 @@ impl MacHost {
 }
 impl Drop for MacHost {
     fn drop(&mut self) {
-        for session in self.sessions.get_mut().drain(..) {
+        if let Some(session) = self.session.get_mut().take() {
             session.shutdown().close_now();
         }
         for view in self.views.get_mut().drain(..) {
@@ -1000,7 +1025,8 @@ pub fn run_host(make: impl FnOnce(Rc<MacHost>) -> Result<(), String>) -> Result<
         Ok(())
     }))
     .unwrap_or_else(|_| Err("macOS host future panicked".into()));
-    for session in host.sessions.borrow().iter() {
+    let session = host.session.borrow().clone();
+    if let Some(session) = session {
         session.shutdown().close_now();
     }
     for view in host.views.borrow().iter() {
@@ -1023,6 +1049,40 @@ pub fn run_host(make: impl FnOnce(Rc<MacHost>) -> Result<(), String>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_rejects_foreign_sessions_without_changing_lifecycle() {
+        let host = MacHost::default();
+        let session = Session::new();
+        let foreign = Session::new();
+        assert!(session.ptr_eq(&session.clone()));
+        assert!(!session.ptr_eq(&foreign));
+        host.attach(session.clone()).unwrap();
+        host.attach(session.clone()).unwrap();
+        assert!(
+            host.attach(foreign.clone())
+                .unwrap_err()
+                .contains("one Session")
+        );
+        assert_eq!(
+            session.shutdown().phase(),
+            wakui2_runtime::ShutdownPhase::Running
+        );
+        assert_eq!(
+            foreign.shutdown().phase(),
+            wakui2_runtime::ShutdownPhase::Running
+        );
+        assert!(host.session.borrow().as_ref().unwrap().ptr_eq(&session));
+        drop(host);
+        assert_eq!(
+            session.shutdown().phase(),
+            wakui2_runtime::ShutdownPhase::Closed
+        );
+        assert_eq!(
+            foreign.shutdown().phase(),
+            wakui2_runtime::ShutdownPhase::Running
+        );
+    }
 
     #[test]
     fn executor_limits_polls_and_does_not_poll_spawned_work_in_same_turn() {

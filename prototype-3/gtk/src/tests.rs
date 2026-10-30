@@ -670,52 +670,51 @@ fn native_coordinated_multiwindow_close() {
 #[test]
 fn native_coordinated_close_timeout() {
     gtk::init().expect("native_coordinated_close_timeout requires Xvfb");
-    for confirming in [true, false] {
-        let host = GtkHost::attach();
-        let session = Session::new();
-        let probe = Rc::new(CloseProbe::default());
-        probe.allow.set(true);
-        let (send, receive) = oneshot::channel::<()>();
-        if confirming {
-            probe.confirm.replace(Some(Box::pin(async move {
-                receive.await.unwrap();
-                true
-            })));
-        } else {
-            probe
-                .drain
-                .replace(Some(Box::pin(async move { receive.await.unwrap() })));
-        }
-        let _work = session.register_window("0-work", probe.hooks()).unwrap();
-        // Zero duration and a pending oneshot deterministically select the
-        // runtime's futures_timer deadline, in confirmation and in drain.
-        let views = coordinated_pair(&host, &session, Duration::ZERO);
-        let closed = Rc::new(Cell::new(0));
-        for view in &views {
-            let count = closed.clone();
-            view.on_close(Rc::new(move || count.set(count.get() + 1)));
-        }
-        views[0].native_window().close();
-        assert_eq!(closed.get(), 0, "no synchronous teardown");
-        drive_until(|| session.shutdown().phase() == ShutdownPhase::Closed);
-        reap_all(&host.executor);
-        assert!(
-            send.is_canceled(),
-            "deadline dropped pending application work"
-        );
-        assert_eq!(probe.confirms.get(), 1);
-        assert_eq!(probe.drains.get(), usize::from(!confirming));
-        assert_eq!((probe.cancels.get(), probe.closes.get()), (1, 1));
-        assert_eq!(closed.get(), 2);
-        assert!(
-            views
-                .iter()
-                .all(|v| v.0.closed.get() && !v.native_window().is_mapped())
-        );
-        assert_eq!(session.window_count(), 0);
-        session.shutdown().close_now();
-        assert_eq!(closed.get(), 2);
+    let host = GtkHost::attach();
+    let session = Session::new();
+    let probe = Rc::new(CloseProbe::default());
+    let (answer, response) = oneshot::channel::<()>();
+    probe.confirm.replace(Some(Box::pin(async move {
+        response.await.unwrap();
+        true
+    })));
+    let (send, receive) = oneshot::channel::<()>();
+    probe.drain.replace(Some(Box::pin(async move {
+        receive.await.unwrap();
+    })));
+    let _work = session.register_window("0-work", probe.hooks()).unwrap();
+    let views = coordinated_pair(&host, &session, Duration::ZERO);
+    let closed = Rc::new(Cell::new(0));
+    for view in &views {
+        let count = closed.clone();
+        view.on_close(Rc::new(move || count.set(count.get() + 1)));
     }
+    views[0].native_window().close();
+    assert_eq!(closed.get(), 0, "no synchronous teardown");
+    drive_until(|| session.shutdown().phase() == ShutdownPhase::Confirming);
+    let waited = Rc::new(Cell::new(false));
+    let elapsed = waited.clone();
+    glib::timeout_add_local_once(Duration::from_millis(10), move || elapsed.set(true));
+    drive_until(|| waited.get());
+    assert_eq!(session.shutdown().phase(), ShutdownPhase::Confirming);
+    assert_eq!((probe.cancels.get(), probe.closes.get()), (0, 0));
+    assert_eq!(closed.get(), 0);
+    assert!(views.iter().all(|view| view.native_window().is_mapped()));
+    answer.send(()).unwrap();
+    drive_until(|| session.shutdown().phase() == ShutdownPhase::Closed);
+    reap_all(&host.executor);
+    assert!(send.is_canceled(), "deadline dropped pending drain work");
+    assert_eq!((probe.confirms.get(), probe.drains.get()), (1, 1));
+    assert_eq!((probe.cancels.get(), probe.closes.get()), (1, 1));
+    assert_eq!(closed.get(), 2);
+    assert!(
+        views
+            .iter()
+            .all(|view| view.0.closed.get() && !view.native_window().is_mapped())
+    );
+    assert_eq!(session.window_count(), 0);
+    session.shutdown().close_now();
+    assert_eq!(closed.get(), 2);
 }
 
 #[test]
