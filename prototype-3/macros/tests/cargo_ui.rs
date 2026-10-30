@@ -22,7 +22,7 @@ fn session() -> &'static Path {
             .as_nanos();
         // Never use the outer cargo target: it is locked while libtest runs.
         let root =
-            PathBuf::from("/tmp/wakui2-ui-check").join(format!("{}-{nonce}", std::process::id()));
+            PathBuf::from("/tmp/wakui3-ui-check").join(format!("{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         root
     })
@@ -46,7 +46,14 @@ impl Fixture {
             fs::copy(source.join(name).join(file), root.join(file)).unwrap();
         }
         fs::copy(source.join("support.rs"), root.join("support.rs")).unwrap();
-        let mut manifest = fs::read_to_string(source.join(name).join("Cargo.toml")).unwrap();
+        // New argument probes reuse the immutable pass manifest.
+        let manifest_fixture = if name == "wrong_argument" {
+            "pass"
+        } else {
+            name
+        };
+        let mut manifest =
+            fs::read_to_string(source.join(manifest_fixture).join("Cargo.toml")).unwrap();
         for dependency in ["runtime", "macros"] {
             let path = package
                 .parent()
@@ -146,6 +153,16 @@ fn rustc_rejects_unknown_command() {
         "E0599",
         "no method",
         "command_nonexistent_command",
+    ]);
+}
+
+#[test]
+fn rustc_rejects_wrong_typed_command_argument() {
+    Fixture::copy("wrong_argument").rejects(&[
+        "E0308",
+        "mismatched types",
+        "expected `i32`",
+        "found `String`",
     ]);
 }
 

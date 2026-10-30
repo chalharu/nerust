@@ -1,6 +1,6 @@
 use futures::{executor::LocalPool, task::LocalSpawnExt};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
-use wakui2_macros::{commands, view};
+use wakui2_macros::{commands, owned_view, view};
 use wakui2_runtime::*;
 
 #[derive(Clone)]
@@ -181,6 +181,15 @@ mod fake {
         pub fn on_close(&self, close: Rc<dyn Fn()>) {
             self.0.borrow_mut().close = Some(close);
         }
+        pub fn close(&self) {
+            let close = self.0.borrow_mut().close.take();
+            let tokens = std::mem::take(&mut self.0.borrow_mut().tokens);
+            self.0.borrow_mut().dispatch.clear();
+            drop(tokens);
+            if let Some(close) = close {
+                close();
+            }
+        }
     }
 }
 struct Exec(futures::executor::LocalSpawner);
@@ -260,6 +269,7 @@ fn constructs_all_controls_templates_and_typed_bindings() {
     assert_eq!(model.snapshot().progress, 2.5);
     assert!(view.0.borrow().values["rows/key/meter"].set(0.75));
     assert_eq!(row.snapshot().progress, 0.75);
+    assert_eq!(texts["rows/key/outer"].get(), "Title");
     assert!(matches!(
         view.0.borrow().layouts["rows/key/stack"],
         Layout::Stack {
@@ -326,7 +336,7 @@ fn items_and_bindable_layout_viewports_write_back_only_for_two_way() {
 #[test]
 fn command_arguments_gates_static_actions_and_menu_are_live() {
     let (_pool, model, row) = setup();
-    let view = view!("tests/ui/main.yaml", model, fake);
+    let view = owned_view!("tests/ui/main.yaml", model, fake);
     let add = view.0.borrow().commands["add"].clone();
     model.update(|s| s.argument = "at-invocation".into());
     assert!(add.invoke());
@@ -365,8 +375,7 @@ fn command_arguments_gates_static_actions_and_menu_are_live() {
             "menu:payload"
         ]
     );
-    let close = view.0.borrow().close.clone().unwrap();
-    close();
+    view.close();
     assert!(model.is_closed());
     assert!(!add.invoke());
 }
@@ -462,4 +471,143 @@ fn json_nested_field_writes_and_single_model_expression_evaluation() {
     assert_eq!(model.snapshot().nested.name, "after");
     assert_eq!(view.0.borrow().values["integer_literal"].get(), 1.0);
     assert_eq!(view.0.borrow().title.as_ref().unwrap().get(), "Nested JSON");
+}
+
+#[derive(Clone)]
+struct SharedModel {
+    name: String,
+}
+
+#[test]
+fn shared_views_retain_model_until_both_close_without_closing_store() {
+    let pool = LocalPool::new();
+    let executor = Rc::new(Exec(pool.spawner()));
+    let weak_executor = Rc::downgrade(&executor);
+    let model = Store::new(
+        SharedModel {
+            name: "initial".into(),
+        },
+        executor,
+    );
+    let first = view!("tests/ui/lifecycle.yaml", model, fake);
+    let second = view!("tests/ui/lifecycle.yaml", model, fake);
+    let binding = second.0.borrow().texts["name"].clone();
+    first.close();
+    assert!(!model.is_closed());
+    assert!(binding.set("after first close".into()));
+    assert_eq!(model.snapshot().name, "after first close");
+    drop(model);
+    assert!(weak_executor.upgrade().is_some());
+    assert!(binding.set("retained by second".into()));
+    second.close();
+    assert!(weak_executor.upgrade().is_none());
+    assert!(!binding.set("no owners".into()));
+    assert_eq!(binding.get(), "retained by second");
+    // Closed View handles and their frozen bindings are deliberately still alive.
+    first.close();
+    second.close();
+}
+
+#[test]
+fn dropping_shared_views_releases_owners_and_owned_close_ends_shared_store() {
+    let pool = LocalPool::new();
+    let model = Store::new(
+        SharedModel {
+            name: "initial".into(),
+        },
+        Rc::new(Exec(pool.spawner())),
+    );
+    let shared = view!("tests/ui/lifecycle.yaml", model, fake);
+    let owned = owned_view!("tests/ui/lifecycle.yaml", model, fake);
+    let binding = shared.0.borrow().texts["name"].clone();
+    owned.close();
+    assert!(model.is_closed());
+    assert!(!binding.set("closed".into()));
+    assert_eq!(binding.get(), "initial");
+
+    let model = Store::new(
+        SharedModel {
+            name: "drop".into(),
+        },
+        Rc::new(Exec(pool.spawner())),
+    );
+    let first = view!("tests/ui/lifecycle.yaml", model, fake);
+    let second = view!("tests/ui/lifecycle.yaml", model, fake);
+    let binding = second.0.borrow().texts["name"].clone();
+    drop(model);
+    drop(first);
+    assert!(binding.set("one owner".into()));
+    drop(second);
+    assert!(!binding.set("no owner".into()));
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum Choice {
+    First,
+    Second,
+}
+#[derive(Clone)]
+struct TypedModel {
+    integer: i32,
+    choice: Choice,
+    calls: Vec<String>,
+}
+#[commands]
+impl TypedModel {
+    #[command]
+    fn integer(&mut self, value: i32) {
+        self.calls.push(format!("int:{value}"));
+    }
+    #[command]
+    fn choice(model: Store<Self>, value: Choice) {
+        model.update(move |s| s.calls.push(format!("enum:{value:?}")));
+    }
+    #[command]
+    fn numeric(&mut self, value: f64) {
+        self.calls.push(format!("float:{value}"));
+    }
+}
+
+#[test]
+fn typed_enum_integer_fields_and_f64_literal_commands_are_argument_erased() {
+    let pool = LocalPool::new();
+    let model = Store::new(
+        TypedModel {
+            integer: 1,
+            choice: Choice::First,
+            calls: vec![],
+        },
+        Rc::new(Exec(pool.spawner())),
+    );
+    let view = view!("tests/ui/typed.yaml", model, fake);
+    model.update(|s| {
+        s.integer = 42;
+        s.choice = Choice::Second;
+    });
+    for id in ["integer", "choice", "numeric"] {
+        let command: Command = view.0.borrow().commands[id].clone();
+        assert!(command.invoke());
+    }
+    assert_eq!(
+        model.snapshot().calls,
+        ["int:42", "enum:Second", "float:2.5"]
+    );
+    view.close();
+    assert!(!model.is_closed());
+}
+
+#[test]
+fn closing_shared_view_does_not_cancel_accepted_effect() {
+    let (mut pool, model, _) = setup();
+    let view = view!("tests/ui/lifecycle.yaml", model, fake);
+    assert!(model.effect(
+        Policy::Parallel,
+        "shared-work",
+        async { String::from("finished") },
+        |state, value| state.name = value,
+    ));
+    view.close();
+    pool.run_until_stalled();
+    assert_eq!(model.snapshot().name, "finished");
+    assert!(!model.is_closed());
 }

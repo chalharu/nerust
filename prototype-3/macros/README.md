@@ -3,8 +3,18 @@
 Call `wakui2_macros::view!("ui/main.yaml", model, backend)` where `model` is a
 `wakui2_runtime::Store<Settings>` and `backend` is a module/crate exposing the
 frozen `View` / `Parent` API. Paths are relative to the caller's Cargo manifest.
-The expression evaluates/clones the model once, constructs the View, installs
-`on_close` ownership to close that Store, and returns it without presenting it.
+The model expression is evaluated once. The View retains a strong root Store
+through its `on_close` callback; bindings and commands retain only weak Store
+ownership (and frozen snapshot data). Closing a shared `view!` releases that
+View's ownership, **without closing the Store**. Two Views may share the same
+Store: closing one leaves the other writable. Dropping the last model owner
+closes the Store; bindings can still read its final frozen snapshot.
+
+Use `wakui2_macros::owned_view!("ui/main.yaml", model, backend)` when the View
+owns the model's shutdown: its close callback explicitly calls `Store::close`,
+even if other Store handles or shared Views still exist. Both macros directly
+generate the View calls; neither delegates to the other. They return without
+presenting the View. Backend closure must release callbacks and mounting tokens.
 All View calls are emitted directly. An absolute `include_str!` tracks Cargo
 rebuilds; neither `build.rs` nor `OUT_DIR` nor a handwritten contract is required.
 The application depends directly on `wakui2-runtime` under its standard name.
@@ -14,17 +24,28 @@ The application depends directly on `wakui2-runtime` under its standard name.
 Apply `#[wakui2_macros::commands]` to an inherent, non-generic `impl Settings`.
 Mark methods with `#[command]` or `#[command(can_execute="can_save")]`.
 Supported signatures are `fn reset(&mut self)`,
-`fn add(&mut self, argument: String)`, and
-`fn save(model: Store<Self>, argument: String)`, returning unit.
+`fn add(&mut self, argument: A)`, and
+`fn save(model: Store<Self>, argument: A)`, returning unit, where the explicitly
+declared argument type `A` implements `Clone + 'static` (e.g. String, i32, enum).
 The gate helper has signature `fn can_save(&self) -> bool`.
 Ordinary helpers remain unchanged. Receiver actions queue `Store::update`;
 static actions receive a cloned Store outside the state borrow.
 
 This adds public trait `SettingsCommands`, implemented for `Store<Settings>`,
-with `command_reset`, `command_add`, `command_save`, etc. Each takes
-`Binding<String>` and returns runtime `Command`. **Import that extension trait
-at the `view!` call site**, along with any item-model command traits such as
+with `command_reset`, `command_add`, `command_save`, etc. An explicit argument
+produces `Binding<A>`; no-argument methods retain `Binding<String>` compatibility
+(the String is ignored). All return the same argument-erased runtime `Command`
+with non-generic `invoke()`. `Store::command` likewise accepts `Binding<A>` and
+an action receiving `A`; the backend never needs to know its type.
+**Import that extension trait at the `view!` / `owned_view!` call site**, along with any item-model command traits such as
 `RowCommands`. Enabled checks and invocation-time argument reads use the runtime.
+
+For `fn select(&mut self, value: Choice)`, use `command: select` with
+`argument: {bind: {path: selected_choice}}`, where `selected_choice: Choice`.
+Integer fields work identically for `Binding<i32>`, etc. Numeric literals remain
+`f64` (not inferred integers); `{literal: 2}` requires an `f64` command argument.
+An omitted argument supplies an empty String, so typed commands must supply a
+matching argument. Rust rejects mismatched argument bindings at the call site.
 
 ## Complete syntax example
 
@@ -147,9 +168,17 @@ root:
 
 ## Deliberate boundaries
 
+Store reads project from an internal shared `Rc<S>` snapshot outside RefCell
+borrows, without cloning the full state. `snapshot()` still returns an owned
+`S::clone()`; each mutation clones S once. Publication still evaluates **all
+subscribed projections**, suppressing equal projected values. There is no
+field-dirty tracking optimization. Runtime tests assert clone counts and report
+50,000 scalar-read timings for empty and 16 MiB states; timings are informational
+and do not impose a machine-dependent performance threshold.
+
 Window is the document root only: the frozen single-View API has no nested-window
 mount operation, so nested/template Windows produce an explicit error. No layout
-kind is silently substituted. Commands support String arguments only. Collection
+kind is silently substituted. Dynamic menus still carry String arguments. Collection
 and menu literals are not supported: bind typed model fields instead. Generic
 model impls and generic factory/converter paths are explicitly unsupported.
 Backend-native input, accessibility and OS widget conformance are not guaranteed
@@ -166,7 +195,8 @@ against the real runtime without linking GTK/Tao.
 
 `tests/cargo_ui.rs` copies standalone miniworkspaces from `tests/compile_fail`
 into temporary directories and invokes offline Cargo. Actual rustc rejects a
-missing binding field, a bool-to-text binding, and an unknown command method;
+missing binding field, a bool-to-text binding, an unknown command method, and
+a String binding supplied to an integer command;
 assertions check diagnostic fragments, not toolchain-specific `.stderr` snapshots.
 The positive fixture compiles all fake-backend methods used by these cases. Its
 YAML-only edit must invalidate a previously fresh Cargo artifact and change the
@@ -175,9 +205,9 @@ Macro-boundary probes also reject oversized/deep/wide YAML and aliases/anchors.
 Existing markup tests cover schema and known fingerprint vectors; the rebuild
 probe additionally checks fingerprints of the actual before/after YAML bytes.
 
-Run `cargo test --offline -p wakui2-macros -- --nocapture` from `prototype-2`
+Run `cargo test --offline -p wakui2-runtime -p wakui2-macros -- --nocapture` from `prototype-3`
 with the platform's normal Rust flags. No new dependencies are needed. Nested
-Cargo uses `/tmp/wakui2-ui-check/<pid>-<nonce>/target`, shared only within that
+Cargo uses `/tmp/wakui3-ui-check/<pid>-<nonce>/target`, shared only within that
 test process, never the outer Cargo target (avoiding its lock). Fixture copies
 and Cargo sequences are serialized so the shared `probe` executable cannot be
 replaced between a freshness check and a run. Fixture copies
