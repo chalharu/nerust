@@ -4,9 +4,12 @@ set -eu
 cd "$(dirname "$0")/.."
 export GDK_BACKEND=x11 GSK_RENDERER=cairo G_DEBUG=fatal-criticals
 export RUSTC_WRAPPER="$PWD/scripts/yaml-rustc.py"
+export WAKUI_ALLOW_CLIPBOARD_PROBE=1
+native_timeout="${WAKUI_NATIVE_TIMEOUT_SECONDS:-45}s"
+python3 scripts/test-yaml-rustc.py
 
 native_test() {
-    if output=$(timeout 45s xvfb-run -a cargo test --locked "$@" 2>&1); then
+    if output=$(timeout "$native_timeout" xvfb-run -a cargo test --locked "$@" 2>&1); then
         printf '%s\n' "$output"
     else
         printf '%s\n' "$output" >&2
@@ -25,6 +28,7 @@ output=$(cargo run --locked -p wakui2-runtime --example scaling)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^SCALING3 PASS: read clones=0, update clones=1, notification counts exact$'
 cargo test --locked -p wakui2-tao --lib
+native_test -p wakui2-gtk --lib tests::native_style_late_close_contract -- --exact --ignored --test-threads=1
 cargo test --locked -p wakui3-settings
 cargo test --locked -p wakui3-settings --no-default-features --features backend-tao
 cargo test --locked -p wakui3-library
@@ -54,20 +58,20 @@ native_test -p wakui2-tao --lib \
     driver::input_tests::native_backend_focus_loss_clears_iced_modifiers -- --exact --ignored --test-threads=1
 cargo build --locked -p wakui2-demo --example minimal
 cargo build --locked -p wakui2-demo
-output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui2-demo -- --smoke)
+output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui2-demo -- --smoke)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^PROTOTYPE2 PASS '
 cargo build --locked -p wakui2-demo --example minimal --no-default-features --features backend-tao
 cargo build --locked -p wakui2-demo --no-default-features --features backend-tao
-output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui2-demo --no-default-features --features backend-tao -- --smoke)
+output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui2-demo --no-default-features --features backend-tao -- --smoke)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^PROTOTYPE2 PASS '
 cargo build --locked -p wakui2-tao --example native_smoke
-output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui2-tao --example native_smoke)
+output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui2-tao --example native_smoke)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^native-smoke: close callback OK'
 settings_smoke() {
-    output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui3-settings "$@" -- --smoke)
+    output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui3-settings "$@" -- --smoke)
     printf '%s\n' "$output"
     printf '%s\n' "$output" | grep -q '^SETTINGS3 PASS entries readonly invalid-retention save-gating cancel-no-write$'
     printf '%s\n' "$output" | grep -q '^SETTINGS3 PASS async-save wm-close-veto menu-quit-veto keep-editing cancel-close$'
@@ -79,7 +83,7 @@ settings_smoke --no-default-features --features backend-tao
 library_smoke() {
     backend=$1
     shift
-    output=$(timeout 45s xvfb-run -a cargo run --locked -p wakui3-library "$@" -- --smoke)
+    output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui3-library "$@" -- --smoke)
     printf '%s\n' "$output"
     printf '%s\n' "$output" | grep -q "^LIBRARY3 $backend PASS native-events scan filter selection invalid-folder recovery rescan$"
     printf '%s\n' "$output" | grep -q "^LIBRARY3 $backend PASS native-close model-closed$"

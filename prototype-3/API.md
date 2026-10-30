@@ -7,13 +7,16 @@ revision, and the practical applications are `wakui3-settings` and `wakui3-libra
 ## Runtime API shared with codegen/backends
 
 - `Executor::spawn(LocalBoxFuture<'static, ()>)` (UI local).
-- `Binding<T>`: `get`, `set -> bool`, `is_writable`, `subscribe(Rc<dyn Fn(T)>) -> Subscription`, `constant`, `map` (read-only), `convert(forward,backward)` (fallible backward `Result<T,String>`).
+- `Binding<T>`: `get`, `set -> bool`, `try_set -> Result<(),WriteError>`, `is_writable`, `subscribe(Rc<dyn Fn(T)>) -> Subscription`, `constant`, `map` (read-only), `distinct` (requires PartialEq), `convert(forward,backward)` (fallible backward `Result<T,String>`).
+- `WriteError { ReadOnly, Closed, Capacity, Conversion(String) }`: typed rejection, not an application receipt. Acceptance bools are must_use.
 - `Command { pub enabled: Binding<bool> }`, `invoke()->bool`.
 - `Store<S:Clone+'static>`: Clone, `new(state, Rc<dyn Executor>)`, `snapshot`, `update(impl FnOnce(&mut S)+'static)->bool`, `close`, `is_closed`.
 - `Store::with_dispatch_budget(state, executor, Limits, NonZeroUsize)`: opt-in event budget per drain, with weak yielding continuations. Accepted writes can remain queued on return. FIFO and capacity remain unchanged; host scheduling, not this event count, determines OS fairness. Existing constructors remain synchronous.
 - `Store::bind<T:Clone+PartialEq>(read: impl Fn(&S)->T+'static, write:Option<fn(&mut S,T)>)->Binding<T>`.
-- `Store::bind_scoped(field:&'static str,read,write)`: indexes a projection by its top-level dependency. Generated field bindings use this API.
-- `Store::update_scoped(fields:&[&'static str],replace:impl FnOnce(&S)->Option<S>+'static)->bool`: constructs an owned replacement without cloning S. None skips publication. List every changed top-level field; unscoped projections always run.
+- `Store::try_into_owner(self)->Result<StoreOwner<S>,Self>`: acquires a non-Clone lifecycle authority only before sharing. Failure returns the original Store without closing it. Owner close/drop closes its Store; `store()` exposes the shared handle. `Store::close` remains an explicit force-close operation.
+- `Store::bind_scoped(field:&'static str,read,write)`: conservative handwritten hint; all publications invalidate this projection.
+- `Store::update_scoped(fields:&[&'static str],replace:impl FnOnce(&S)->Option<S>+'static)->bool`: clone-free conservative replacement. Hints cannot suppress notifications. None skips publication.
+- `bind_scoped_explicit` / `update_scoped_explicit`: advanced dependency contracts. Every changed top-level field must be correct and complete. Codegen uses the former with read/write/dependency generated from the same parsed field path.
 - `Store::watch<T:Clone+'static>(source:Binding<T>, react:impl Fn(&Store<S>,T)+'static)->Subscription`: latest-value reaction through bounded FIFO after publication, retries after saturation with positive ingress. Initial reaction may be synchronous. Token drop invalidates queued reactions, not already-started effects. Each reaction begins with one ingress slot free; further submissions must check acceptance. Tokens do not own Store; exclude outputs from sources to avoid feedback.
 - `Store::command<A:Clone+'static>(enabled: impl Fn(&S)->bool+'static, action: impl Fn(&Store<S>,A)+'static, argument:Binding<A>)->Command`. Recheck enabled on dequeue. Argument evaluated at invocation; the native-facing Command erases its argument type.
 - `Store::effect(policy:Policy, slot:&str, future:impl Future<Output=R>+'static, apply:impl FnOnce(&mut S,R)+'static)->bool`. Policy Latest/Serial/Parallel. Futures outside borrow, bounded ingress/tasks, weak ownership, stale lifecycle protection.
@@ -30,12 +33,15 @@ revision, and the practical applications are `wakui3-settings` and `wakui3-libra
 
 Reads and initial subscriptions project from a retained `Rc<S>` outside internal
 borrows, without cloning all of S. `snapshot()` still returns an owned clone;
-legacy mutation clones S once and invalidates all projections. Scoped binding
+legacy mutation clones S once and invalidates all projections. Explicit scoped binding
 writes only evaluate that field's subscriptions plus unscoped subscribers, but
-still clone S. `update_scoped` avoids the state clone and indexes dirty fields;
+still clone S. `update_scoped_explicit` avoids the state clone and indexes dirty fields;
 use Rc/Arc for structural sharing of unchanged large data. A wrong dirty-field
 declaration can suppress required notifications. No automatic arbitrary-closure
 dependency inference or general O(1) update guarantee is claimed.
+If an executor discards a dispatch continuation, the Store fails closed and
+`dispatch_failed()` is true. Executors must service accepted futures while live.
+This detects cancellation/drop, not a future that is retained forever without polling.
 
 ### Common viewport contract
 
@@ -51,6 +57,8 @@ Backend error APIs retain their existing conventions (Tao diagnostics are a log)
 `length.saturating_sub(count)`, so the last page is full unless the source is
 shorter than count. Empty sources give 0..0; usize overflow is avoided. This does
 not promise to write the normalized start back into a read-only binding.
+Writable viewport bindings receive the effective normalized start on all backends;
+read-only bindings retain the requested model value and scroll locally.
 Tao may mount one extra trailing row during fractional native scrolling (257
 maximum); GTK/AppKit do not overscan. Native sizes and scroll rounding remain
 backend-specific. This does not unify other layout/style/menu error policies.
@@ -62,6 +70,7 @@ backend-specific. This does not unify other layout/style/menu error policies.
 - `View::new(title:Binding<String>)->Self`, `root()->Parent`.
 - `layout(&Parent,id:&str,layout:Layout)->Parent`.
 - `style(id:&str,Style)` applies leaf or container spacing/placement (root layout included).
+- `try_style(id:&str,Style)->Result<(),String>` validates before applying. Closed/unknown targets and invalid spacing/placement reject without mutation. Root is `__root`, never an arbitrary missing-ID alias. `style` records the same error through the backend error channel.
 - `label/entry(&Parent,id:&str,text:Binding<String>)`.
 - `button(&Parent,id:&str,text:Binding<String>,command:Command)`.
 - `meter(&Parent,id:&str,value:Binding<f64>)` native/custom primitive demo.
@@ -117,9 +126,11 @@ reserved strings in the control-ID namespace.
 
 `wakui2_macros::view!("ui/main.yaml", model, backend)` returns a constructed shared
 View. It retains the model until View close/drop but does not close a model with
-other owners. `owned_view!` explicitly closes the model when its View closes.
-Mixing an owned View with shared Views deliberately makes that owner authoritative:
-closing it closes their common Store too. Neither macro infers ownership.
+other owners. `owned_view!` consumes a StoreOwner, not a Store or its clone.
+Acquire it before creating shared handles; an existing shared View prevents acquisition.
+Sharing a handle obtained from an already acquired owner explicitly delegates final
+lifecycle authority to that owner. Owner drop/close closes those later handles too.
+Late `on_close` registration runs immediately on an already closed View.
 include_str! tracks Cargo inputs; all Rust is emitted in expansion, not OUT_DIR.
 
 `#[wakui2_macros::commands]` creates an extension trait implemented by Store<Model>.

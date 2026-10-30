@@ -10,9 +10,12 @@ View's ownership, **without closing the Store**. Two Views may share the same
 Store: closing one leaves the other writable. Dropping the last model owner
 closes the Store; bindings can still read its final frozen snapshot.
 
-Use `wakui2_macros::owned_view!("ui/main.yaml", model, backend)` when the View
-owns the model's shutdown: its close callback explicitly calls `Store::close`,
-even if other Store handles or shared Views still exist. Both macros directly
+Use `wakui2_macros::owned_view!("ui/main.yaml", owner, backend)` when the View
+owns shutdown. Acquire the non-Clone StoreOwner before sharing:
+`let owner = model.try_into_owner().unwrap_or_else(|_| panic!("shared model"));`.
+Passing a Store directly is a compile error; an existing shared View prevents
+acquisition. Owner close/drop closes later handles explicitly obtained from
+`owner.store()`. Both macros directly
 generate the View calls; neither delegates to the other. They return without
 presenting the View. Backend closure must release callbacks and mounting tokens.
 All View calls are emitted directly. An absolute `include_str!` tracks Cargo

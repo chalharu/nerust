@@ -96,13 +96,17 @@ close/drop discards queued reactions; tokens themselves are not Store owners.
 Binding reads and initial subscriptions hold an `Rc<S>` snapshot while projecting
 outside internal borrows; they do not clone S. Legacy mutation clones S once, and the
 public `snapshot()` still returns an owned clone. Arbitrary updates invalidate all
-subscribed projections. `bind_scoped(field,read,write)` indexes a top-level field;
+subscribed projections. `bind_scoped_explicit(field,read,write)` indexes a top-level field;
 its writer only invalidates that field and unscoped listeners, but still clones S.
-`update_scoped(fields, |previous| Some(next_state))` constructs an owned state
+`update_scoped_explicit(fields, |previous| Some(next_state))` constructs an owned state
 without invoking S::clone; returning None skips publication entirely. Declare
 all changed top-level fields, and only use scoped projections that depend on the
 named field. Incorrect declarations may leave stale values. Use Rc/Arc to share
 large unchanged payloads. Application interior mutation is not tracked.
+Handwritten `bind_scoped` and `update_scoped` are conservative: incorrect hints
+cannot suppress notifications. Use the explicitly named optimization only when
+the dependency contract can be proved. Codegen generates its field dependency,
+read and write from one parsed field path. Arbitrary closures remain conservative.
 Registration-order callbacks, FIFO/reentry, frozen snapshots and cancellation
 remain unchanged. Tests count Clone calls and measure scalar reads with 0/16 MiB of
 unprojected state. These are not frame-time or machine-independent guarantees.
@@ -122,7 +126,10 @@ Invocation captures A immediately and rechecks enabled when dequeued. Dynamic
 menus use `MenuItem<A=String>` and `typed_menu`; the String menu API remains compatible.
 
 Shared generated `view!` retains a Store until View close/drop without closing
-other owners; `owned_view!` explicitly closes that Store. Bindings/tasks retain
+other owners; `owned_view!` consumes a non-Clone StoreOwner. Acquire it with
+`try_into_owner` before sharing the Store; shared handles make acquisition fail
+without closing anything. Owner close/drop explicitly closes later shared handles.
+Bindings/tasks retain
 weak owners; application-captured strong ownership remains the application's
 responsibility. Neither mode changes item eviction into model closure.
 
@@ -131,6 +138,12 @@ bounded FIFO. A true return means accepted, not necessarily applied: command
 enablement is checked again on dequeue, and lifecycle/generation checks reject
 stale effects. Command string arguments are captured at invocation. Reentrant
 updates run after all listeners for the current snapshot.
+Acceptance bools are must_use. `Binding::try_set` distinguishes ReadOnly, Closed,
+Capacity and Conversion(String); it still does not promise eventual application.
+`map` permits equal projected values; opt into `distinct()` when T: PartialEq.
+Discarding an executor dispatch continuation fails the Store closed and sets
+`dispatch_failed()`. Retained-but-unpolled futures cannot be detected this way;
+the host must keep servicing accepted work and avoid blocking callbacks.
 
 Each accepted effect reserves one completion slot in addition to ordinary
 ingress. Consequently queued events are bounded by `ingress + tasks`; accepted

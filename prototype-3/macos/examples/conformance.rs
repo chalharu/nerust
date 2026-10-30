@@ -116,6 +116,11 @@ fn main() -> Result<(), String> {
                     &format!("{scope}/label"),
                     model.bind(Clone::clone, None),
                 );
+                view.entry(
+                    parent,
+                    &format!("{scope}/editor"),
+                    model.bind(Clone::clone, Some(|state, value| *state = value)),
+                );
             }),
         );
         assert_eq!(view.mounted_count("rows"), 0);
@@ -124,7 +129,7 @@ fn main() -> Result<(), String> {
                 .unwrap()
                 .contains("invalid viewport")
         );
-        range.update(|viewport| viewport.count = 6);
+        let _ = range.update(|viewport| viewport.count = 6);
         assert_eq!(view.mounted_count("rows"), 6);
         assert!(view.items_error("rows").is_none());
         let readonly_range = Store::new(
@@ -152,7 +157,7 @@ fn main() -> Result<(), String> {
         assert_eq!(view.item_keys("readonly_rows"), ["5", "6"]);
         assert!(view.text("readonly_rows/0/label").is_none());
         assert_eq!(readonly_range.snapshot().start, 0);
-        readonly_range.update(|viewport| viewport.start = 9);
+        let _ = readonly_range.update(|viewport| viewport.start = 9);
         assert_eq!(view.item_keys("readonly_rows"), ["9", "10"]);
         for id in ["__close", "rows@viewport", "__title"] {
             view.entry(
@@ -170,13 +175,13 @@ fn main() -> Result<(), String> {
         }
         view.viewport("rows", 5);
         assert_eq!(view.item_keys("rows"), ["5", "6", "7", "8", "9", "10"]);
-        rows.update(|items| items[99].key = items[98].key.clone());
+        let _ = rows.update(|items| items[99].key = items[98].key.clone());
         assert!(view.items_error("rows").is_some());
         view.viewport("rows", 10);
         assert_eq!(view.item_keys("rows"), ["10", "11", "12", "13", "14", "15"]);
         assert!(view.items_error("rows").is_some());
-        rows.update(|items| items[99].key = "99".into());
-        range.update(|viewport| viewport.start = 0);
+        let _ = rows.update(|items| items[99].key = "99".into());
+        let _ = range.update(|viewport| viewport.start = 0);
         assert!(view.items_error("rows").is_none());
         println!("MACOS3 PASS event-namespace rejected-source-scroll");
         println!("MACOS3 PASS readonly-viewport local-scroll model-unchanged external-update");
@@ -231,7 +236,7 @@ fn main() -> Result<(), String> {
             view.viewport("validation_rows", 1);
             assert!(!first_row.snapshot().pending);
             let before = validations.get();
-            first_row.update(move |state| state.text = format!("offscreen-{cycle}"));
+            let _ = first_row.update(move |state| state.text = format!("offscreen-{cycle}"));
             assert_eq!(validations.get(), before);
             view.viewport("validation_rows", 0);
             assert_eq!(validations.get(), before + 1);
@@ -293,7 +298,7 @@ fn main() -> Result<(), String> {
             vec![uncommitted.clone(), valid_menu.clone()],
             vec![uncommitted, bad_shortcut],
         ] {
-            transaction.update(move |items| *items = candidate);
+            let _ = transaction.update(move |items| *items = candidate);
             assert!(view.menu_error("transaction").is_some());
             view.activate_menu("transaction/save").unwrap();
             assert_eq!(
@@ -303,7 +308,7 @@ fn main() -> Result<(), String> {
         }
         let mut replacement = valid_menu;
         replacement.argument = "updated".into();
-        transaction.update(move |items| *items = vec![replacement]);
+        let _ = transaction.update(move |items| *items = vec![replacement]);
         assert!(view.menu_error("transaction").is_none());
         view.activate_menu("transaction/save").unwrap();
         assert_eq!(
@@ -342,9 +347,9 @@ fn main() -> Result<(), String> {
         );
         for _ in 0..3 {
             let row = Keyed::new("parent", Store::new("Child".to_owned(), executor.clone()));
-            nested_rows.update(move |rows| rows.push(row));
+            let _ = nested_rows.update(move |rows| rows.push(row));
             assert_eq!(view.item_keys("nested/parent/children"), ["child"]);
-            nested_rows.update(Vec::clear);
+            let _ = nested_rows.update(Vec::clear);
             assert_eq!(view.mounted_count("nested/parent/children"), 0);
             assert!(view.item_keys("nested/parent/children").is_empty());
             assert!(view.text("nested/parent/children/child/label").is_none());
@@ -416,11 +421,11 @@ fn main() -> Result<(), String> {
             println!("MACOS3 PASS injected-field-editor marked-text commit Japanese clipboard cut paste Tab accessibility-role readonly");
             assert!(owner.perform_shortcut("Primary+S").unwrap());
             assert_eq!(clicks.get(), 1);
-            enabled.update(|value| *value = false);
+            let _ = enabled.update(|value| *value = false);
             owner.perform_shortcut("Primary+S").unwrap();
             assert_eq!(clicks.get(), 1);
             assert!(owner.activate_menu("actions/save").is_err());
-            enabled.update(|value| *value = true);
+            let _ = enabled.update(|value| *value = true);
             assert!(owner.perform_shortcut("Cmd+S").unwrap());
             assert_eq!(clicks.get(), 2);
             println!("MACOS3 PASS native-menu Primary-Cmd shortcut enabled-state rebuild");
@@ -439,32 +444,36 @@ fn main() -> Result<(), String> {
                 Viewport { row_height: 0.5, ..valid },
                 Viewport { row_height: 4097.0, ..valid },
             ] {
-                range.update(move |viewport| *viewport = invalid);
+                let _ = range.update(move |viewport| *viewport = invalid);
                 assert!(owner.items_error("rows").unwrap().contains("invalid viewport"));
                 assert_eq!(owner.mounted_count("rows"), 6);
                 assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
             }
-            range.update(move |viewport| *viewport = Viewport { start: usize::MAX, ..valid });
+            let _ = range.update(move |viewport| *viewport = Viewport { start: usize::MAX, ..valid });
             assert!(owner.items_error("rows").is_none());
             assert_eq!(owner.text("rows/94/label").as_deref(), Some("File 094.nes"));
-            range.update(move |viewport| *viewport = valid);
+            let _ = range.update(move |viewport| *viewport = valid);
             println!("MACOS3 PASS viewport-contract initial-rejection retain-mounts last-page recovery");
             let before = row_builds.get();
             assert_eq!(owner.frame_height("rows/90"), Some(32.0));
-            range.update(|viewport| viewport.row_height = 64.0);
+            let _ = range.update(|viewport| viewport.row_height = 64.0);
             assert_eq!(owner.frame_height("rows/90"), Some(64.0));
             assert_eq!(row_builds.get(), before);
             assert_eq!(owner.item_keys("rows"), ["90", "91", "92", "93", "94", "95"]);
-            range.update(|viewport| viewport.row_height = 32.0);
+            let _ = range.update(|viewport| viewport.row_height = 32.0);
             assert_eq!(owner.frame_height("rows/90"), Some(32.0));
             assert_eq!(row_builds.get(), before);
             println!("MACOS3 PASS dynamic-row-height native-frame 32-64-32 no-remount");
-            rows.update(|state| state.swap(90, 91));
+            owner.probe_editing("rows/90/editor", true).unwrap();
+            let _ = rows.update(|state| state.swap(90, 91));
+            assert_eq!(row_builds.get(), before);
+            owner.probe_editing("rows/90/editor", false).unwrap();
+            println!("MACOS3 PASS keyed-edit-state retained-mount field-editor marked-text selection");
             assert_eq!(owner.text("rows/90/label").as_deref(), Some("File 090.nes"));
-            rows.update(|state| state[1].key = state[0].key.clone());
+            let _ = rows.update(|state| state[1].key = state[0].key.clone());
             assert!(owner.items_error("rows").is_some());
             assert_eq!(owner.mounted_count("rows"), 6);
-            rows.update(|state| state[1].key = "1".into());
+            let _ = rows.update(|state| state[1].key = "1".into());
             assert!(owner.items_error("rows").is_none());
             println!("MACOS3 PASS keyed-rows viewport mount-bound reorder invalid-key recovery");
             let directory = std::env::temp_dir().join(format!("wakui3-macos-conformance-{}", std::process::id()));
@@ -486,7 +495,7 @@ fn main() -> Result<(), String> {
             }));
             for _ in 0..20 {
                 owner.edit("name", "").unwrap();
-                load.update(|state| *state = 0);
+                let _ = load.update(|state| *state = 0);
                 start.set(Some(Instant::now()));
                 assert!(owner.post_test_key("name"));
                 renders.push(owner.render());

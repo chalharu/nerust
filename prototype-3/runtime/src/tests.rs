@@ -88,6 +88,43 @@ fn viewport_rejects_invalid_values_without_clamping() {
 }
 
 #[test]
+fn style_rejects_invalid_values_before_backend_mutation() {
+    let stack = Layout::Stack {
+        horizontal: false,
+        gap: 0.0,
+    };
+    let mut style = Style::default();
+    assert_eq!(style.validate(stack), Ok(()));
+    style.placement.x = 1.0;
+    assert_eq!(
+        style.validate(stack),
+        Err("x/y placement requires Absolute")
+    );
+    assert_eq!(style.validate(Layout::Absolute), Ok(()));
+    style.placement.x = 0.0;
+    style.placement.row = i32::MAX;
+    assert_eq!(
+        style.validate(Layout::Grid {
+            columns: 2,
+            gap: 0.0
+        }),
+        Err("invalid Grid placement")
+    );
+    style = Style::default();
+    style.padding.top = f32::NAN;
+    assert_eq!(
+        style.validate(stack),
+        Err("spacing must be finite and nonnegative")
+    );
+    style.padding.top = 0.0;
+    style.placement.width = Some(f32::INFINITY);
+    assert_eq!(
+        style.validate(stack),
+        Err("size must be finite and nonnegative")
+    );
+}
+
+#[test]
 fn viewport_range_uses_a_bounded_last_page_without_overflow() {
     let viewport = Viewport {
         start: usize::MAX,
@@ -230,7 +267,7 @@ fn scoped_replacement_skips_clones_unrelated_projections_and_noop_generations() 
     });
     let calls = Rc::new(Cell::new(0));
     let observed = calls.clone();
-    let unrelated = model.bind_scoped(
+    let unrelated = model.bind_scoped_explicit(
         "payload",
         move |state| {
             observed.set(observed.get() + 1);
@@ -239,29 +276,107 @@ fn scoped_replacement_skips_clones_unrelated_projections_and_noop_generations() 
         None,
     );
     let (_, token) = record(&unrelated);
-    let (versions, version_token) = record(&model.bind_scoped("value", |state| state.value, None));
+    let (versions, version_token) =
+        record(&model.bind_scoped_explicit("value", |state| state.value, None));
     let (wildcard, wildcard_token) = record(&model.bind(|state| state.value, None));
     assert_eq!(calls.get(), 1);
     for version in 1..=4 {
         assert!(
-            model.update_scoped(&["value", "value"], move |state| Some(CountedState {
+            model.update_scoped_explicit(&["value", "value"], move |state| Some(CountedState {
                 value: version,
                 payload: vec![1; 1024],
                 clones: state.clones.clone()
             }))
         );
     }
-    assert!(model.update_scoped(&["value"], |_| None));
+    assert!(model.update_scoped_explicit(&["value"], |_| None));
     assert_eq!(clones.get(), 0);
     assert_eq!(calls.get(), 1);
     assert_eq!(&*versions.borrow(), &[0, 1, 2, 3, 4]);
     assert_eq!(&*wildcard.borrow(), &[0, 1, 2, 3, 4]);
-    model.update(|state| state.value = 5);
+    let _ = model.update(|state| state.value = 5);
     assert_eq!(calls.get(), 2);
     assert_eq!(clones.get(), 1);
     drop((token, version_token, wildcard_token));
     model.close();
-    assert!(!model.update_scoped(&["value"], |_| panic!("closed")));
+    assert!(!model.update_scoped_explicit(&["value"], |_| panic!("closed")));
+}
+
+#[test]
+fn handwritten_dirty_hints_cannot_leave_other_fields_stale() {
+    let (_, store) = local((0, 0));
+    let right = store.bind_scoped(
+        "left",
+        |state| state.1,
+        Some(|state, value| state.1 = value),
+    );
+    let (values, token) = record(&right);
+    assert!(store.update_scoped(&["left"], |_| Some((0, 1))));
+    assert_eq!(&*values.borrow(), &[0, 1]);
+    assert!(right.set(2));
+    assert_eq!(&*values.borrow(), &[0, 1, 2]);
+    drop(token);
+}
+
+#[test]
+fn write_errors_and_distinct_preserve_the_binding_contract() {
+    let (_, store) = local(0i32);
+    let value = store.bind(|state| *state, Some(|state, value| *state = value));
+    let text = value.convert(
+        |value| value.to_string(),
+        |value: String| value.parse().map_err(|_| "integer required".into()),
+    );
+    assert_eq!(Binding::constant(0).try_set(1), Err(WriteError::ReadOnly));
+    assert_eq!(
+        text.try_set("invalid".into()),
+        Err(WriteError::Conversion("integer required".into()))
+    );
+    let parity = value.map(|value| value % 2).distinct();
+    let (values, token) = record(&parity);
+    assert_eq!(text.try_set("2".into()), Ok(()));
+    assert_eq!(text.try_set("3".into()), Ok(()));
+    assert_eq!(&*values.borrow(), &[0, 1]);
+    store.close();
+    assert_eq!(text.try_set("4".into()), Err(WriteError::Closed));
+    drop(token);
+}
+
+#[test]
+fn discarded_continuation_fails_closed_instead_of_stranding_fifo() {
+    struct Discard;
+    impl Executor for Discard {
+        fn spawn(&self, _future: LocalBoxFuture<'static, ()>) {}
+    }
+    let store = Store::with_dispatch_budget(
+        0,
+        Rc::new(Discard),
+        Limits::default(),
+        std::num::NonZeroUsize::new(1).unwrap(),
+    );
+    let token = store.watch(store.bind(|state| *state, None), |target, value| {
+        if value < 10 {
+            assert!(target.update(move |state| *state = value + 1));
+        }
+    });
+    assert!(store.dispatch_failed());
+    assert!(store.is_closed());
+    assert!(!store.update(|state| *state = 100));
+    drop(token);
+}
+
+#[test]
+fn lifecycle_owner_is_exclusive_non_destructive_on_failure_and_closes_on_drop() {
+    let (_, store) = local(0);
+    let shared = store.clone();
+    let store = store.try_into_owner().err().expect("shared Store");
+    assert!(!store.is_closed());
+    drop(shared);
+    let owner = store
+        .try_into_owner()
+        .unwrap_or_else(|_| panic!("unique Store"));
+    let handle = owner.store().clone();
+    drop(owner);
+    assert!(handle.is_closed());
 }
 
 #[test]
@@ -427,12 +542,12 @@ fn typed_command_captures_integer_argument_before_dequeue() {
     let command: Command = store.command(
         |s| s.enabled,
         |model, arg: i32| {
-            model.update(move |s| s.error = arg.to_string());
+            let _ = model.update(move |s| s.error = arg.to_string());
         },
         number(&store),
     );
     let owner = store.clone();
-    store.update(move |_| {
+    let _ = store.update(move |_| {
         assert!(owner.update(|s| s.value = 9));
         assert!(command.invoke());
     });
@@ -706,10 +821,10 @@ fn watch_foreign_source_coalesces_without_partial_eq() {
         assert!(store.update(move |s| s.push(value)));
     });
     let owner = store.clone();
-    store.update(move |_| {
+    let _ = store.update(move |_| {
         assert!(owner.update(|_| {}));
-        number(&source).set(1);
-        number(&source).set(2);
+        let _ = number(&source).set(1);
+        let _ = number(&source).set(2);
     });
     assert_eq!(store.snapshot(), [0, 2]);
 }
@@ -724,7 +839,7 @@ fn command_captures_argument_now_but_rechecks_enabled_on_dequeue() {
     let command = store.command(
         |s| s.enabled,
         |model, arg| {
-            model.update(move |s| {
+            let _ = model.update(move |s| {
                 s.value += 1;
                 s.error = arg;
             });
@@ -733,7 +848,7 @@ fn command_captures_argument_now_but_rechecks_enabled_on_dequeue() {
     );
     let owner = store.clone();
     let invoke = command.clone();
-    store.update(move |_| {
+    let _ = store.update(move |_| {
         assert!(owner.update(|s| s.argument = "b".into()));
         assert!(invoke.invoke());
     });
@@ -741,8 +856,8 @@ fn command_captures_argument_now_but_rechecks_enabled_on_dequeue() {
     assert_eq!(store.snapshot().value, 1);
     let owner = store.clone();
     let invoke = command.clone();
-    store.update(move |_| {
-        owner.update(|s| s.enabled = false);
+    let _ = store.update(move |_| {
+        let _ = owner.update(|s| s.enabled = false);
         assert!(invoke.invoke());
     });
     assert_eq!(store.snapshot().value, 1);
@@ -769,7 +884,7 @@ fn dropping_tokens_skips_later_listener_and_releases_captures() {
         count.set(count.get() + 1);
     }));
     later.replace(Some(token));
-    number(&store).set(1);
+    let _ = number(&store).set(1);
     assert_eq!(calls.get(), 1);
     assert!(weak.upgrade().is_none());
 }
@@ -941,7 +1056,7 @@ fn accepted_completion_has_reserved_capacity_during_ingress_saturation() {
         assert!(owner.update(|s| s.push(2)));
         assert!(!owner.update(|s| s.push(3)));
     })));
-    store.effect(Policy::Parallel, "result", async { 1 }, |s, r| s.push(r));
+    let _ = store.effect(Policy::Parallel, "result", async { 1 }, |s, r| s.push(r));
     assert_eq!(store.snapshot(), [1, 2]);
 }
 
@@ -965,7 +1080,7 @@ fn close_freezes_snapshot_clears_fifo_releases_callbacks_and_never_polls_future(
     }));
     let ran = Rc::new(Cell::new(false));
     let flag = ran.clone();
-    store.effect(
+    let _ = store.effect(
         Policy::Parallel,
         "pending",
         async move {
@@ -975,9 +1090,9 @@ fn close_freezes_snapshot_clears_fifo_releases_callbacks_and_never_polls_future(
         |s, r| s.value = r,
     );
     let owner = store.clone();
-    store.update(move |s| {
+    let _ = store.update(move |s| {
         s.value = 2;
-        owner.update(|s| s.value = 3);
+        let _ = owner.update(|s| s.value = 3);
         owner.close();
     });
     pool.run_until_stalled();
@@ -1001,7 +1116,7 @@ fn user_future_poll_and_drop_and_callback_drop_can_reenter() {
     let probe = DropCall(Some(Box::new(move || {
         assert!(owner.update(|s| *s += 1));
     })));
-    store.effect(
+    let _ = store.effect(
         Policy::Latest,
         "slot",
         async move {
@@ -1012,7 +1127,7 @@ fn user_future_poll_and_drop_and_callback_drop_can_reenter() {
     );
     pool.run_until_stalled();
     let owner = store.clone();
-    store.effect(
+    let _ = store.effect(
         Policy::Latest,
         "slot",
         async move {
@@ -1040,7 +1155,7 @@ fn weak_tasks_do_not_keep_store_alive_and_binding_retains_final_snapshot() {
     let weak = Rc::downgrade(&store.snapshot());
     let binding = store.bind(Rc::strong_count, None);
     let (tx, rx) = oneshot::channel::<()>();
-    store.effect(
+    let _ = store.effect(
         Policy::Parallel,
         "wait",
         async move { rx.await.unwrap() },
@@ -1079,19 +1194,19 @@ fn validation_initial_pending_error_reverse_and_unmount() {
     assert!(store.snapshot().pending);
     pool.run_until_stalled();
     let old = requests.borrow_mut().remove(0).1;
-    text(&store).set("new".into());
+    let _ = text(&store).set("new".into());
     let newest = requests.borrow_mut().remove(0).1;
     newest.send(Err("invalid".into())).unwrap();
     pool.run_until_stalled();
     assert!(old.send(Ok(())).is_err());
     assert!(!store.snapshot().pending);
     assert_eq!(store.snapshot().error, "invalid");
-    text(&store).set("valid".into());
+    let _ = text(&store).set("valid".into());
     assert_eq!(store.snapshot().error, "");
     requests.borrow_mut().remove(0).1.send(Ok(())).unwrap();
     pool.run_until_stalled();
     assert!(!store.snapshot().pending);
-    text(&store).set("unmounted".into());
+    let _ = text(&store).set("unmounted".into());
     pool.run_until_stalled();
     let canceled = requests.borrow_mut().remove(0).1;
     drop(token);
@@ -1148,7 +1263,7 @@ fn validation_drop_suppresses_already_queued_result() {
         let token = cancel.borrow_mut().take();
         drop(token);
     })));
-    text(&store).set("next".into());
+    let _ = text(&store).set("next".into());
     assert_eq!(store.snapshot().error, "");
     assert!(!store.snapshot().pending);
 }
@@ -1216,7 +1331,7 @@ fn keyed_item_identity_and_state_survive_mount_token_eviction() {
     let source = Binding::constant(vec![keyed]);
     let mounted = source.get().remove(0);
     let token = number(&mounted.model).subscribe(Rc::new(|_| {}));
-    number(&mounted.model).set(12);
+    let _ = number(&mounted.model).set(12);
     drop(token);
     drop(mounted);
     let remount = source.get().remove(0);
@@ -1583,7 +1698,7 @@ fn executor_discard_and_user_panics_release_task_permits() {
     for in_poll in [true, false] {
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                store.effect(
+                let _ = store.effect(
                     Policy::Serial,
                     "queue",
                     async move {
@@ -1605,19 +1720,19 @@ fn serial_slots_are_independent_and_close_drops_waiting_successors() {
     let (mut pool, store) = local(Vec::new());
     let (tx, rx) = oneshot::channel::<i32>();
     let (unused_tx, unused_rx) = oneshot::channel::<i32>();
-    store.effect(
+    let _ = store.effect(
         Policy::Serial,
         "one",
         async move { rx.await.unwrap() },
         |s, r| s.push(r),
     );
-    store.effect(
+    let _ = store.effect(
         Policy::Serial,
         "one",
         async move { unused_rx.await.unwrap() },
         |s, r| s.push(r),
     );
-    store.effect(Policy::Serial, "two", async { 2 }, |s, r| s.push(r));
+    let _ = store.effect(Policy::Serial, "two", async { 2 }, |s, r| s.push(r));
     pool.run_until_stalled();
     assert_eq!(store.snapshot(), [2]);
     store.close();
@@ -1633,7 +1748,7 @@ fn validation_pending_callback_reentry_cannot_supersede_newer_source() {
     let owner = store.clone();
     let _pending = pending_binding(&store).subscribe(Rc::new(move |pending| {
         if pending && owner.snapshot().argument.is_empty() {
-            text(&owner).set("newer".into());
+            let _ = text(&owner).set("newer".into());
         }
     }));
     let requests = ValidationRequests::default();
@@ -1680,7 +1795,7 @@ fn validation_unmount_inside_validator_never_polls_returned_future() {
     );
     slot.replace(Some(token));
     pool.run_until_stalled();
-    text(&store).set("unmount".into());
+    let _ = text(&store).set("unmount".into());
     pool.run_until_stalled();
     assert!(!polled.get());
     assert!(!store.snapshot().pending);
@@ -1701,12 +1816,12 @@ fn validation_unmount_suppresses_writes_queued_after_result_dequeues() {
     let slot = Rc::new(RefCell::new(Some(token)));
     let owner = store.clone();
     executor.after.replace(Some(Box::new(move || {
-        owner.update(move |_| {
+        let _ = owner.update(move |_| {
             let token = slot.borrow_mut().take();
             drop(token);
         });
     })));
-    text(&store).set("changed".into());
+    let _ = text(&store).set("changed".into());
     assert_eq!(store.snapshot().error, "");
     assert!(!store.snapshot().pending);
 }
@@ -1816,7 +1931,7 @@ fn validation_status_and_unmount_reset_retry_through_one_slot_ingress() {
     requests.borrow_mut().remove(0).1.send(Ok(())).unwrap();
     pool.run_until_stalled();
     assert!(!store.snapshot().pending);
-    text(&store).set("new".into());
+    let _ = text(&store).set("new".into());
     assert!(store.snapshot().pending);
     requests
         .borrow_mut()
@@ -1827,9 +1942,9 @@ fn validation_status_and_unmount_reset_retry_through_one_slot_ingress() {
     pool.run_until_stalled();
     assert_eq!(store.snapshot().error, "new error");
     assert!(!store.snapshot().pending);
-    text(&store).set("unmount".into());
+    let _ = text(&store).set("unmount".into());
     let owner = store.clone();
-    store.update(move |_| {
+    let _ = store.update(move |_| {
         assert!(owner.update(|_| {})); // fill the only ingress slot
         drop(token);
     });
@@ -1859,18 +1974,18 @@ fn validation_ingress_saturation_reports_error_without_stuck_pending() {
     let owner = store.clone();
     let _fill = text(&store).subscribe(Rc::new(move |value| {
         if value == "full" {
-            owner.update(|_| {});
+            let _ = owner.update(|_| {});
         }
     }));
     // Register the filler first on a second source binding so its FIFO event is
     // already queued when the validation source notification is delivered.
-    store.update(|s| s.argument = "full".into());
+    let _ = store.update(|s| s.argument = "full".into());
     // Either an accepted request or explicit overload is valid; both must later
     // settle. Force task overload deterministically with the other task slots.
     for _ in 0..4 {
-        store.effect(Policy::Parallel, "fill", pending::<()>(), |_, _| {});
+        let _ = store.effect(Policy::Parallel, "fill", pending::<()>(), |_, _| {});
     }
-    text(&store).set("overloaded".into());
+    let _ = text(&store).set("overloaded".into());
     assert_eq!(store.snapshot().error, "validation task limit reached");
     assert!(!store.snapshot().pending);
 }

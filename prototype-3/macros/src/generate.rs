@@ -37,7 +37,7 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
         ));
     }
     let close = if owned {
-        quote!(__close_model.close();)
+        quote!(__wakui_owner.close();)
     } else {
         quote!(let _ = &__close_model;)
     };
@@ -127,7 +127,8 @@ fn binding(prop: &Property, writable: bool) -> syn::Result<TokenStream> {
                 quote!(::std::option::Option::None)
             };
             let dependency = fields[0].to_string();
-            let base = quote!(#model.bind_scoped(#dependency,|s| s.#(#fields).*.clone(),#writer));
+            let base =
+                quote!(#model.bind_scoped_explicit(#dependency,|s| s.#(#fields).*.clone(),#writer));
             if let Some(converter) = &b.converter {
                 let converter = path(converter)?;
                 quote!((#base).convert(#converter::forward,#converter::backward))

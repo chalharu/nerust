@@ -10,14 +10,32 @@ MARKER = re.compile(r"__wakui_yaml_line_(\d+)_column_(\d+)_file_([0-9a-f]+)")
 
 
 def decorate(diagnostic):
-    match = MARKER.search(json.dumps(diagnostic, ensure_ascii=False))
+    matches = []
+    for span in diagnostic.get("spans", []):
+        if not span.get("is_primary"):
+            continue
+        expansion = span.get("expansion")
+        while expansion:
+            match = MARKER.fullmatch(expansion.get("macro_decl_name", "").removesuffix("!"))
+            if match:
+                matches.append(match)
+                break
+            expansion = expansion.get("span", {}).get("expansion")
+    if not matches:
+        matches = list(MARKER.finditer(diagnostic.get("message", "")))
+    identities = {match.group(0) for match in matches}
+    match = matches[0] if len(identities) == 1 else None
     if not match or diagnostic.get("level") != "error":
         return diagnostic
     row, column = int(match[1]), int(match[2])
     try:
         filename = bytes.fromhex(match[3]).decode("utf-8")
-        lines = pathlib.Path(filename).read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = pathlib.Path(filename).read_bytes().decode("utf-8").splitlines(keepends=True)
+        if row < 1 or column < 1:
+            return diagnostic
         text = lines[row - 1].rstrip("\r\n")
+        if column > len(text):
+            return diagnostic
         before = "".join(lines[:row - 1]) + text[:column - 1]
         start = len(before.encode("utf-8"))
         end = start + len(text[column - 1:column].encode("utf-8"))

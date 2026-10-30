@@ -1,0 +1,31 @@
+name: Prototype 3
+
+on:
+  push:
+    paths:
+      - "prototype-3/**"
+      - ".github/workflows/prototype-3.yml"
+  pull_request:
+    paths:
+      - "prototype-3/**"
+      - ".github/workflows/prototype-3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prototype-3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux GTK and Tao Formal Gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Native regressions and release CPU budgets
+        run: sh prototype-3/scripts/verify-docker.sh

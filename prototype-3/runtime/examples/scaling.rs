@@ -109,7 +109,7 @@ fn scoped() {
             .map(|_| {
                 let projections = projections.clone();
                 model
-                    .bind_scoped(
+                    .bind_scoped_explicit(
                         "payload",
                         move |state| {
                             projections.set(projections.get() + 1);
@@ -123,20 +123,20 @@ fn scoped() {
         let delivered = Rc::new(Cell::new(0));
         let output = delivered.clone();
         let changed = model
-            .bind_scoped("version", |state| state.version, None)
+            .bind_scoped_explicit("version", |state| state.version, None)
             .subscribe(Rc::new(move |_| output.set(output.get() + 1)));
         let mut timings = Vec::new();
         for version in 1..=UPDATES {
             let started = Instant::now();
             assert!(
-                model.update_scoped(&["version"], move |state| Some(SharedState {
+                model.update_scoped_explicit(&["version"], move |state| Some(SharedState {
                     version,
                     payload: state.payload.clone(),
                     clones: state.clones.clone()
                 }))
             );
             timings.push(started.elapsed().as_nanos());
-            assert!(model.update_scoped(&["version"], |_| None));
+            assert!(model.update_scoped_explicit(&["version"], |_| None));
         }
         timings.sort_unstable();
         assert_eq!(clones.get(), 0);

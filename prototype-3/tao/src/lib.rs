@@ -64,6 +64,7 @@ struct Node {
     scope: String,
     mounted: Cell<bool>,
     owner: Weak<Inner>,
+    parent: Weak<Node>,
     style: Cell<Style>,
     kind: RefCell<Kind>,
     children: RefCell<Vec<Rc<Node>>>,
@@ -202,6 +203,7 @@ impl View {
                 scope: String::new(),
                 mounted: Cell::new(true),
                 owner: owner.clone(),
+                parent: Weak::new(),
                 style: Cell::new(Style::default()),
                 kind: RefCell::new(Kind::Panel(Layout::Stack {
                     horizontal: false,
@@ -282,6 +284,7 @@ impl View {
             scope: if new_scope { id.clone() } else { scope.clone() },
             mounted: Cell::new(true),
             owner: Rc::downgrade(&self.0),
+            parent: Rc::downgrade(&parent.0),
             style: Cell::new(Style::default()),
             kind: RefCell::new(kind),
             children: RefCell::default(),
@@ -338,20 +341,32 @@ impl View {
         Parent(self.add(parent, id, Kind::Panel(layout)))
     }
     pub fn style(&self, id: &str, style: Style) {
-        if let Some(node) = self.find(id) {
-            node.style.set(style);
-            self.0.refresh();
-        } else if !self.0.closed.get() && self.0.nodes.borrow().len() == 1 {
-            // View::new has no Window id parameter; codegen supplies it before children.
-            self.0
-                .nodes
-                .borrow_mut()
-                .insert(id.into(), Rc::downgrade(&self.0.root.0));
-            self.0.root.0.style.set(style);
-            self.0.refresh();
-        } else {
-            self.0.report(format!("style target not mounted: {id}"));
+        if let Err(error) = self.try_style(id, style) {
+            self.0.report(error);
         }
+    }
+    pub fn try_style(&self, id: &str, style: Style) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
+        let node = self
+            .find(id)
+            .ok_or_else(|| format!("style target not mounted: {id}"))?;
+        let parent = node.parent.upgrade();
+        let layout = parent
+            .as_ref()
+            .and_then(|parent| match *parent.kind.borrow() {
+                Kind::Panel(layout) => Some(layout),
+                _ => None,
+            })
+            .unwrap_or(Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            });
+        style.validate(layout).map_err(str::to_owned)?;
+        node.style.set(style);
+        self.0.refresh();
+        Ok(())
     }
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
         let node = self.add(parent, id, Kind::Content);
@@ -692,6 +707,15 @@ impl<T: Clone + 'static> List<T> {
         if inner.closed.get() || !node.mounted.get() {
             return;
         }
+        if self.viewport_ready.get() {
+            let mut viewport = self.current.get();
+            let start = virtual_range(self.source.borrow().len(), viewport).start;
+            if viewport.start != start {
+                viewport.start = start;
+                self.current.set(viewport);
+                let _ = self.viewport.set(viewport);
+            }
+        }
         let view = View(inner);
         let wanted = {
             let values = self.source.borrow();
@@ -800,11 +824,11 @@ impl<T: Clone + 'static> ItemHost for List<T> {
             return;
         }
         let mut vp = self.current.get();
-        vp.start = start;
+        vp.start = start.min(self.source.borrow().len().saturating_sub(vp.count));
         let had_overscan = self.overscan.replace(false);
         if vp != self.current.get() {
             self.current.set(vp);
-            self.viewport.set(vp);
+            let _ = self.viewport.set(vp);
             self.reconcile();
         } else if had_overscan {
             self.reconcile();
@@ -823,7 +847,8 @@ impl<T: Clone + 'static> ItemHost for List<T> {
             return;
         }
         let mut vp = self.current.get();
-        let start = (layout::finite(offset) / row_height(vp)).floor() as usize;
+        let start = ((layout::finite(offset) / row_height(vp)).floor() as usize)
+            .min(self.source.borrow().len().saturating_sub(vp.count));
         let fractional = layout::finite(offset) % row_height(vp) > 0.01;
         let was_fractional = self.overscan.replace(fractional);
         if vp.start == start && was_fractional == fractional {
@@ -831,7 +856,7 @@ impl<T: Clone + 'static> ItemHost for List<T> {
         }
         vp.start = start;
         self.current.set(vp);
-        self.viewport.set(vp);
+        let _ = self.viewport.set(vp);
         self.reconcile();
     }
 }

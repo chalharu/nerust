@@ -26,7 +26,7 @@ pub fn project(model: &Store<App>) -> Subscription {
             let state = target.snapshot();
             let next = state.project();
             if next != state.ui {
-                target.update(move |s| {
+                let _ = target.update(move |s| {
                     if s.ui != next {
                         s.ui = next;
                     }
@@ -62,7 +62,7 @@ pub fn saves(
                 },
                 move |state, result| state.complete(request, result),
             ) {
-                target.update(|s| {
+                let _ = target.update(|s| {
                     if let Some(request) = s.pending.clone() {
                         s.complete(
                             request,

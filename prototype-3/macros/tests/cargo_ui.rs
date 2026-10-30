@@ -193,6 +193,18 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn owned_view_requires_a_non_clone_lifecycle_owner() {
+    let fixture = Fixture::copy("pass");
+    let main = fs::read_to_string(fixture.root.join("main.rs")).unwrap();
+    fs::write(
+        fixture.root.join("main.rs"),
+        main.replace("::view!", "::owned_view!"),
+    )
+    .unwrap();
+    fixture.rejects_at(&["StoreOwner", "mismatched types"], None);
+}
+
+#[test]
 fn rustc_rejects_nonexistent_binding_field() {
     Fixture::copy("missing_field").rejects(&["E0609", "no field", "nonexistent_field"]);
 }

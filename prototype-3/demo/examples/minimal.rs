@@ -24,6 +24,9 @@ fn main() -> Result<(), String> {
             },
             executor,
         );
-        wakui2_macros::owned_view!("ui/minimal.yaml", model, backend)
+        let owner = model
+            .try_into_owner()
+            .unwrap_or_else(|_| panic!("shared model"));
+        wakui2_macros::owned_view!("ui/minimal.yaml", owner, backend)
     })
 }

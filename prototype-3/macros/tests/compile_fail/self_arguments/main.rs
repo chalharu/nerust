@@ -38,11 +38,11 @@ impl Model {
     }
     #[command]
     fn static_replace(model: Store<Self>, other: Self) {
-        model.update(move |state| *state = other);
+        let _ = model.update(move |state| *state = other);
     }
     #[command]
     fn static_nested(model: Store<Self>, mut other: Option<Vec<Self>>) {
-        model.update(move |state| *state = other.as_mut().unwrap().pop().unwrap());
+        let _ = model.update(move |state| *state = other.as_mut().unwrap().pop().unwrap());
     }
     #[command]
     fn concrete(&mut self, other: Model) {
@@ -54,7 +54,7 @@ impl Model {
     }
     #[command]
     fn static_associated(model: Store<Self>, mut other: <Self as Payload>::Value) {
-        model.update(move |state| *state = other.as_mut().unwrap().pop().unwrap());
+        let _ = model.update(move |state| *state = other.as_mut().unwrap().pop().unwrap());
     }
 }
 

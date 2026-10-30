@@ -14,10 +14,11 @@ pub struct SourceSpan {
 pub struct SourceMap {
     pub filename: String,
     paths: BTreeMap<String, SourceSpan>,
+    keys: BTreeMap<String, SourceSpan>,
     nodes: BTreeMap<String, SourceSpan>,
 }
 enum Node {
-    Map(BTreeMap<String, Spanned<Node>>),
+    Map(Vec<(Spanned<String>, Spanned<Node>)>),
     Seq(Vec<Spanned<Node>>),
     Text(String),
     Scalar,
@@ -31,9 +32,9 @@ impl<'de> Deserialize<'de> for Node {
                 formatter.write_str("a YAML value")
             }
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
-                let mut values = BTreeMap::new();
+                let mut values = Vec::new();
                 while let Some((key, value)) = map.next_entry()? {
-                    values.insert(key, value);
+                    values.push((key, value));
                 }
                 Ok(Node::Map(values))
             }
@@ -94,7 +95,7 @@ impl SourceMap {
         );
         match &node.value {
             Node::Map(values) => {
-                if let Some(id) = values.get("id")
+                if let Some((_, id)) = values.iter().find(|(key, _)| key.value == "id")
                     && let Node::Text(id_text) = &id.value
                 {
                     self.nodes.insert(
@@ -107,11 +108,26 @@ impl SourceMap {
                 }
                 for (key, value) in values {
                     let next = if path.is_empty() {
-                        key.clone()
+                        key.value.clone()
                     } else {
-                        format!("{path}.{key}")
+                        format!("{path}.{}", key.value)
                     };
-                    self.walk(value, &next, if path == "templates" { key } else { scope });
+                    self.keys.insert(
+                        next.clone(),
+                        SourceSpan {
+                            line: key.referenced.line(),
+                            column: key.referenced.column(),
+                        },
+                    );
+                    self.walk(
+                        value,
+                        &next,
+                        if path == "templates" {
+                            &key.value
+                        } else {
+                            scope
+                        },
+                    );
                 }
             }
             Node::Seq(values) => {
@@ -141,9 +157,12 @@ impl SourceMap {
         if let Some(tail) = message.strip_prefix("unknown field `")
             && let Some((field, _)) = tail.split_once('`')
         {
+            if let Some(span) = self.keys.get(&format!("{path}.{field}")) {
+                return Some(*span);
+            }
             let prefix = format!("{path}.");
             let suffix = format!(".{field}");
-            let mut candidates = self.paths.iter().filter(|(candidate, _)| {
+            let mut candidates = self.keys.iter().filter(|(candidate, _)| {
                 candidate.starts_with(&prefix) && candidate.ends_with(&suffix)
             });
             if let Some((_, span)) = candidates.next()
@@ -165,4 +184,34 @@ fn maps_nodes_templates_unicode_and_structural_paths() {
     );
     assert_eq!(map.node(Some("row"), "name").unwrap().line, 8);
     assert_eq!(map.closest("root.children[0].typo").unwrap().line, 4);
+}
+
+#[test]
+fn json_and_crlf_have_node_locations() {
+    let map = SourceMap::parse(
+        "{\r\n\t\"root\": {\"title\": \"日本語\", \"id\": \"name\"}\r\n}",
+        "ui.json",
+    )
+    .unwrap();
+    let span = map.node(None, "name").unwrap();
+    assert_eq!(span.line, 2);
+    assert!(span.column > 1);
+    assert_eq!(map.closest("root.title").unwrap().line, 2);
+}
+
+#[test]
+fn repeated_unknown_fields_resolve_to_their_own_key_not_the_parent() {
+    let map = SourceMap::parse("root:\n  children:\n    - id: first\n      typo: true\n    - id: second\n      typo: false\n", "ui.yaml").unwrap();
+    assert_eq!(
+        map.diagnostic_span("root.children[0]", "unknown field `typo`"),
+        Some(SourceSpan { line: 4, column: 7 })
+    );
+    assert_eq!(
+        map.diagnostic_span("root.children[1]", "unknown field `typo`"),
+        Some(SourceSpan { line: 6, column: 7 })
+    );
+    assert_eq!(
+        map.diagnostic_span("root", "unknown field `typo`"),
+        map.closest("root")
+    );
 }

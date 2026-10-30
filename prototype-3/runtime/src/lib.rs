@@ -14,7 +14,10 @@ pub use session::{
     Session, ShutdownCoordinator, ShutdownOutcome, ShutdownPhase, UiHost, WindowHooks, run_async,
 };
 pub use shortcut::{Shortcut, ShortcutError, ShortcutTarget};
-pub use store::{Binding, Command, Executor, Limits, Policy, Store, Subscription, validation};
+pub use store::{
+    Binding, Command, Executor, Limits, Policy, Store, StoreOwner, Subscription, WriteError,
+    validation,
+};
 
 /// Whether an item key is nonempty and contains no hierarchical scope separator (`/`).
 /// Backends must also validate snapshot keys because public fields bypass `Keyed::new`.
@@ -122,6 +125,57 @@ pub struct Style {
     pub margin: Edges,
     pub padding: Edges,
     pub placement: Placement,
+}
+
+impl Style {
+    pub fn validate(self, parent: Layout) -> Result<(), &'static str> {
+        for edges in [self.margin, self.padding] {
+            if [edges.top, edges.right, edges.bottom, edges.left]
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0)
+            {
+                return Err("spacing must be finite and nonnegative");
+            }
+        }
+        let placement = self.placement;
+        if [placement.width, placement.height]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err("size must be finite and nonnegative");
+        }
+        if !placement.x.is_finite() || !placement.y.is_finite() {
+            return Err("coordinates must be finite");
+        }
+        if matches!(parent, Layout::Grid { .. }) {
+            if placement.row < 0
+                || placement.column < 0
+                || placement.row_span < 1
+                || placement.column_span < 1
+                || placement
+                    .row
+                    .checked_add(placement.row_span)
+                    .is_none_or(|end| end > 4096)
+                || placement
+                    .column
+                    .checked_add(placement.column_span)
+                    .is_none_or(|end| end > 4096)
+            {
+                return Err("invalid Grid placement");
+            }
+        } else if placement.row != 0
+            || placement.column != 0
+            || placement.row_span != 1
+            || placement.column_span != 1
+        {
+            return Err("grid placement requires Grid");
+        }
+        if !matches!(parent, Layout::Absolute) && (placement.x != 0.0 || placement.y != 0.0) {
+            return Err("x/y placement requires Absolute");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

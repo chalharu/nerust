@@ -26,9 +26,11 @@ cargo run --locked -p wakui2-demo --no-default-features --features backend-tao
 ```
 
 最小例は`demo/examples/minimal.rs`と`demo/ui/minimal.yaml`。
-Cloneな状態型と`#[commands]`メソッドを書き、Storeを作り、`owned_view!`でYAMLを読み込む。
+Cloneな状態型と`#[commands]`メソッドを書き、Storeを作り、共有前に`try_into_owner`で
+StoreOwnerを取得して`owned_view!`へ渡す。Storeを直接渡すコードはコンパイルエラーになる。
 共有するモデルには`view!`を使う。共有Viewの終了は他の所有者のStoreを閉じない。
 `owned_view!`はそのViewをモデルの終了責任者とする明示的な選択である。
+追加指摘への対応・互換性変更・用途の制限は[HARDENING.md](HARDENING.md)を参照。
 画面接続とCommandの定型コードはマクロが生成し、field・型・署名はRustが検査する。
 YAML変更を`include_str!`で追跡し、実行時に定義を再解析しない。
 YAMLだけの変更で再コンパイルされることも実際の子Cargo試験で確認する。
@@ -81,6 +83,8 @@ GTK4/GTK3は同じプロセスへロードせず、backend featureはどちら�
 ## 検証
 
 macOSでは対話デスクトップ上で`sh scripts/verify-macos.sh`を使う。
+clipboard probeを含むため、他のcopy/paste操作と競合しない専用のデスクトップで実行する。
+単独のprobe実行には`WAKUI_ALLOW_CLIPBOARD_PROBE=1`が必要。
 共通runtime/macro/実用画面の回帰、strict Clippy、AppKit両画面smoke、
 field editorの注入入力、native Menu、bitmap、反応連鎖中の合成入力を検査する。
 Taoも別processのmain-thread runnerでstrict Clippy、実窓描画、system clipboard、
