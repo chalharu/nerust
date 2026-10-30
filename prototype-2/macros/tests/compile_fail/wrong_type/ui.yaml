@@ -1,0 +1,9 @@
+schema_version: 2
+root:
+  type: Window
+  id: window
+  title: {literal: Title}
+  content:
+    type: TextBox
+    id: entry
+    text: {bind: {path: flag, mode: TwoWay}}
