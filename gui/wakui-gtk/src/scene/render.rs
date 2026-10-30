@@ -237,6 +237,19 @@ impl NativeControl {
             }
             _ => row.append(&input),
         }
+        // Labeled pictures stack caption above the image (figure
+        // pattern, like the native twin's pattern titles), never
+        // beside it: wide images would squeeze beside a caption.
+        let root: gtk::Widget = if matches!(kind, NativeKind::Image(_)) {
+            let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            row.remove(&label);
+            row.remove(&input);
+            column.append(&label);
+            column.append(&input);
+            column.upcast()
+        } else {
+            row.clone().upcast()
+        };
         match &kind {
             NativeKind::Number(_, unit) => row.append(unit),
             NativeKind::Text(_, browse) => row.append(browse),
@@ -247,14 +260,14 @@ impl NativeControl {
         // rows (dialog nav rows, list item rows); monospace renders
         // fixed-pitch values (disassembly, registers, hex dumps).
         if control.metadata.hints.h_align == Some(wakui_core::scene::hints::LayoutAlign::Fill) {
-            row.set_hexpand(true);
+            root.set_hexpand(true);
             input.set_hexpand(true);
         }
         if control.metadata.hints.monospace {
             input.add_css_class("monospace");
         }
         Self {
-            root: row.upcast(),
+            root,
             input,
             label,
             kind,

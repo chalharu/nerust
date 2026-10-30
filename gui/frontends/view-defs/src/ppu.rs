@@ -126,7 +126,13 @@ fn ppu_def(empty: bool, has_panels: bool) -> ScreenDef {
                         display: ControlDisplay::Standard,
                         enabled: BoolBinding::Literal(true),
                         visible: BoolBinding::Literal(true),
-                        hints: LayoutHints::default(),
+                        // Full row width like the native twin's pictures:
+                        // the viewport stretches the widget and the
+                        // texture centers exactly as upstream.
+                        hints: LayoutHints {
+                            h_align: Some(wakui::scene::hints::LayoutAlign::Fill),
+                            ..LayoutHints::default()
+                        },
                         leaf: LeafDef::Image {
                             path: "picture".into(),
                         },
@@ -161,7 +167,8 @@ fn ppu_def(empty: bool, has_panels: bool) -> ScreenDef {
     };
     ScreenDef {
         title: Binding::Localized("title".into()),
-        default_size: None,
+        // Same window as the native twin's viewer.
+        default_size: Some((560, 620)),
         pages: vec![PageDef {
             key: "page".into(),
             label: Binding::Localized("title".into()),
@@ -282,33 +289,20 @@ impl PpuSession {
             || self.chrome.hover_empty != chrome.hover_empty
             || self.chrome.no_images != chrome.no_images
             || self.chrome.panels_title != chrome.panels_title;
-        // Hover resets to the (possibly re-localized) empty line on refresh,
-        // mirroring the previous native viewers which kept hover separate
-        // from the pushed pictures.
+        // Hover survives refreshes like the native twin's hover label:
+        // only a relocalization resets it to the new empty line.
+        // Pictures and panels stream in without clearing the readout.
+        let relocalize =
+            self.chrome.hover_empty != chrome.hover_empty || self.chrome.title != chrome.title;
         self.chrome = chrome;
-        self.hover.clone_from(&self.chrome.hover_empty);
+        if relocalize {
+            self.hover.clone_from(&self.chrome.hover_empty);
+        }
         self.pictures = pictures;
         self.panels = panels.unwrap_or_default();
         self.has_panels = !self.panels.is_empty() || self.has_panels && self.panels.is_empty();
         self.generation = generation;
         changed
-    }
-
-    /// Format a hover position for an image control. Returns the new line.
-    pub fn hover_line(
-        &mut self,
-        language: AppLanguage,
-        label: &str,
-        width: u32,
-        height: u32,
-        x: u32,
-        y: u32,
-    ) -> String {
-        // Geometry arrives halved back: controls carry display (2x) size,
-        // tile math expects source size.
-        let line = tile_hover_text(language, label, width, height, f64::from(x), f64::from(y));
-        self.hover = line.clone();
-        line
     }
 
     /// Project the current viewer state as a generic control screen
@@ -349,15 +343,15 @@ impl PpuSession {
             return false;
         };
         let (width, height) = (image.width, image.height);
-        // Source geometry is half the displayed size (2x scale).
-        let (src_w, src_h) = (width / 2, height / 2);
+        // Source geometry is half the widget size (2x scale); tile math
+        // halves widget pixels once, like the native twin.
         let line = tile_hover_text(
             language,
             &control.label,
-            src_w.max(1),
-            src_h.max(1),
-            f64::from(x) / 2.0,
-            f64::from(y) / 2.0,
+            (width / 2).max(1),
+            (height / 2).max(1),
+            f64::from(x),
+            f64::from(y),
         );
         if line == self.hover {
             return false;
