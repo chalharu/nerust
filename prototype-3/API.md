@@ -1,6 +1,8 @@
-# Prototype 2 implementation contract
+# Prototype 3 implementation contract
 
-New standalone workspace. No dependency on prototype_1. No build.rs.
+Evolved standalone workspace. No dependency on prototype_1 or prototype-2. No build.rs.
+Inherited crate names keep the `wakui2-` prefix; this workspace contains the third
+revision, and the practical application is `wakui3-settings`.
 
 ## Runtime API shared with codegen/backends
 
@@ -9,7 +11,7 @@ New standalone workspace. No dependency on prototype_1. No build.rs.
 - `Command { pub enabled: Binding<bool> }`, `invoke()->bool`.
 - `Store<S:Clone+'static>`: Clone, `new(state, Rc<dyn Executor>)`, `snapshot`, `update(impl FnOnce(&mut S)+'static)->bool`, `close`, `is_closed`.
 - `Store::bind<T:Clone+PartialEq>(read: impl Fn(&S)->T+'static, write:Option<fn(&mut S,T)>)->Binding<T>`.
-- `Store::command(enabled: impl Fn(&S)->bool+'static, action: impl Fn(&Store<S>,String)+'static, argument:Binding<String>)->Command`. Recheck enabled on dequeue. Argument evaluated at invocation.
+- `Store::command<A:Clone+'static>(enabled: impl Fn(&S)->bool+'static, action: impl Fn(&Store<S>,A)+'static, argument:Binding<A>)->Command`. Recheck enabled on dequeue. Argument evaluated at invocation; the native-facing Command erases its argument type.
 - `Store::effect(policy:Policy, slot:&str, future:impl Future<Output=R>+'static, apply:impl FnOnce(&mut S,R)+'static)->bool`. Policy Latest/Serial/Parallel. Futures outside borrow, bounded ingress/tasks, weak ownership, stale lifecycle protection.
 - `validation(&Store<S>,source:Binding<String>,error:Binding<String>,pending:Binding<bool>,validator:impl Fn(String)->LocalBoxFuture<'static,Result<(),String>>+'static)->Subscription`: Latest per subscription, initial validation, no stale result on unmount.
 - `Keyed<S> { pub key:String, pub model:Store<S> }`: Clone/PartialEq by key and store identity. `Keyed::new(key:impl Into<String>, model:Store<S>)`.
@@ -20,6 +22,12 @@ New standalone workspace. No dependency on prototype_1. No build.rs.
 - `Layout { Stack {horizontal:bool,gap:f32}, Grid {columns:u32,gap:f32}, Flex {gap:f32}, Absolute }` Clone/Copy/PartialEq.
 - `MenuRole {Normal,Copy,Cut,Paste,SelectAll,About,Quit,Separator}` Clone/PartialEq.
 - `MenuItem { id:String,label:String,argument:String,shortcut:Option<String>,role:MenuRole,enabled:bool }` Clone/PartialEq.
+- `Shortcut::parse` accepts shared shortcut syntax, including `Primary+S` and `Primary+Q`; `to_gtk`/`to_muda` lower it for the native adapter. Primary is Cmd on macOS and Ctrl elsewhere. Existing native syntax remains a legacy adapter fallback.
+
+Reads and initial subscriptions project from a retained `Rc<S>` outside internal
+borrows, without cloning all of S. `snapshot()` still returns an owned clone;
+mutation clones S once. Publication still scans all registered projections and
+compares their results: this is not field-level invalidation or O(1) updates.
 
 ## Identical GTK/Tao View API
 
@@ -35,14 +43,26 @@ New standalone workspace. No dependency on prototype_1. No build.rs.
 - `content<T:Clone+'static>(&Parent,id:&str,item:Binding<Option<Keyed<T>>>,template:Rc<dyn Fn(&View,&Parent,&str,Store<T>)>)`.
 - `menu(id:&str,title:Binding<String>,items:Binding<Vec<MenuItem>>,dispatch:Rc<dyn Fn(String)->bool>)` dynamic snapshots, shortcuts and native roles.
 - `keep(Subscription)`, `on_close(Rc<dyn Fn()>)`, `close`, `present`.
+- `downgrade()->WeakView`, `WeakView::upgrade()->Option<View>`; closed views cannot be upgraded.
+- `on_close_request(Rc<dyn Fn()>)` replaces the application's request handler; `request_close()` requests permission to close. Synchronous recursive requests are ignored. WM close and Quit route through this entry. `close()` is explicitly forceful and idempotent; `on_close` runs final cleanup, not confirmation.
 - automation `edit`, `click`, `activate_menu` -> Result<(),String>; `text(id)->Option<String>`, `item_keys(id)->Vec<String>` (mounted keys), `title()->String`, `mounted_count(id)->usize`, `viewport(id,start)`.
 - `native_*` extension factory is an application function called by generated code, e.g. `crate::meter(view,parent,id,binding)` calling backend `meter`; GTK must expose a genuine custom-widget mounting API for external primitive construction; Tao can mount custom iced Element factory. Neither should misrepresent software widgets as OS native.
 
 ## Codegen input
 
-`wakui2_macros::view!("ui/main.yaml", model, backend)` returns constructed View and installs model close ownership. include_str! emitted for Cargo file dependency tracking; all Rust emitted in expansion, not OUT_DIR.
+`wakui2_macros::view!("ui/main.yaml", model, backend)` returns a constructed shared
+View. It retains the model until View close/drop but does not close a model with
+other owners. `owned_view!` explicitly closes the model when its View closes.
+Mixing an owned View with shared Views deliberately makes that owner authoritative:
+closing it closes their common Store too. Neither macro infers ownership.
+include_str! tracks Cargo inputs; all Rust is emitted in expansion, not OUT_DIR.
 
-`#[wakui2_macros::commands] impl Settings { #[command] fn add(&mut self, argument:String) {...} #[command(can_execute="can_save")] fn save(model: Store<Self>, argument:String) {...} }` creates extension trait `SettingsCommands` implemented by Store<Settings>, providing `command_add(Binding<String>)->Command`. For receiver methods action queues `update`, static methods receive Store clone outside borrow. Receiver methods may have no argument. Keep ordinary unannotated helpers.
+`#[wakui2_macros::commands]` creates an extension trait implemented by Store<Model>.
+`#[command] fn add(&mut self, argument: A)` generates `command_add(Binding<A>)`;
+static commands accept `(Store<Self>, A)`. A must be Clone + 'static. Receiver
+actions queue update; static actions receive Store outside a state borrow.
+Noargument receiver methods keep their legacy Binding<String> signature. Import
+the generated extension trait at the view call site. Generic models remain unsupported.
 
 Markup schema v2: root Window {id,title,content,menus:[...]}; layout children + margin/padding + grid/absolute placement. text properties `{literal:...}` / `{bind:{path:name,mode:TwoWay,converter:crate::converter}}`. Converter path has `.forward(value)`/`.backward(value)->Result<_,String>` associated functions or simple runtime built-in. Macro emits field closures, Rust enforces field type/unknown names. Labels OneWay; Entry strips writer for OneWay.
 
@@ -50,4 +70,23 @@ Markup schema v2: root Window {id,title,content,menus:[...]}; layout children + 
 
 Menu {id,title,items:{bind:{path:menu_items}},command:choose}. Native {id,factory:crate::meter,value:{bind:{path:progress}}}. Validation on TextBox `validation: {validator:crate::validate_name,error:name_error,pending:validating}`.
 
-Prototype demonstrable boundaries must be documented: string Command argument prototype, no claim of OS-specific input/accessibility conformance without evidence; explicit errors for unsupported facilities, no silent fallback of layout kinds.
+## Common layout and settings contract
+
+Grid has equal-width columns, a gap, and explicit zero-based row/column and spans;
+there is no implicit auto-flow. GTK uses homogeneous, expanding native columns;
+Tao divides the available width. Flex means horizontal wrapping with gap, not the
+full MAUI/CSS Flex feature set. Native font/minimum-size constraints, integer
+rounding and pixel identity across backends are not abstracted away. GTK fixed
+size requests remain minimums, not guaranteed maximums.
+
+The settings slice binds editable string Draft fields directly. Parse/validation
+errors do not overwrite that buffer. Saved typed config changes only after a
+successful write; Cancel restores it without I/O. Dirty close asks for save,
+discard or continued editing; in-flight save is awaited, and newer edits prompt
+again. The app closes its Store explicitly in final View cleanup. Its settings
+validation is synchronous; inherited Latest async validation remains separately tested.
+
+Prototype boundaries remain explicit: menu dispatch arguments are still strings,
+even though Commands accept typed arguments. Runtime updates still clone S.
+No OS-specific input/accessibility conformance without evidence; unsupported
+facilities return explicit errors, with no silent layout-kind fallback.

@@ -1,0 +1,21 @@
+[package]
+name = "wakui3-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["backend-gtk"]
+backend-gtk = ["dep:wakui2-gtk"]
+backend-tao = ["dep:wakui2-tao"]
+
+[dependencies]
+wakui2-runtime.workspace = true
+wakui2-macros.workspace = true
+wakui2-gtk = { workspace = true, optional = true }
+wakui2-tao = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+futures-timer = "3.0"
