@@ -26,13 +26,14 @@ def wait(predicate):
     raise RuntimeError("native View condition timed out")
 
 
-def capture(binary, original, destination, settings_review=False):
-    if settings_review:
+def capture(binary, original, destination, settings_review=False, history_review=False):
+    if settings_review or history_review:
         import atspi_layout as layout
     output = Path(destination)
     output.mkdir(parents=True, exist_ok=True)
     (output / "evidence.json").unlink(missing_ok=True)
     records = []
+    shutdown_exit_codes = {}
     with tempfile.TemporaryDirectory(prefix="nerust-view-rpa-") as temporary:
         root = Path(temporary)
         rom = root / Path(original).name
@@ -41,7 +42,7 @@ def capture(binary, original, destination, settings_review=False):
         for directory in [root / "config" / "nerust", root / "settings" / "config"]:
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "settings.yaml").write_text(yaml.safe_dump(settings))
-        environment = dict(os.environ, NO_AT_BRIDGE="0" if settings_review else "1", GTK_A11Y="atspi" if settings_review else os.environ.get("GTK_A11Y", "none"), GDK_BACKEND="x11",
+        environment = dict(os.environ, NO_AT_BRIDGE="0" if settings_review or history_review else "1", GTK_A11Y="atspi" if settings_review or history_review else os.environ.get("GTK_A11Y", "none"), GDK_BACKEND="x11",
                            XDG_CONFIG_HOME=str(root / "config"), XDG_DATA_HOME=str(root / "data"),
                            NERUST_SETTINGS_ROOT=str(root / "settings"))
         for mode, arguments in [("empty", []), ("rom", [str(rom)])]:
@@ -96,6 +97,101 @@ def capture(binary, original, destination, settings_review=False):
                         execute("xdotool", "mousemove", "--window", window, "330", "260", "click", "1")
                         execute("xdotool", "key", "space")
                         snapshot("paused", expected="Paus")
+                        if history_review:
+                            def click_text(text):
+                                def locate():
+                                    app = layout.application(process.pid)
+                                    if app is None:
+                                        return None
+                                    for node in layout.descendants(app):
+                                        if layout.normalized(node.name) != layout.normalized(text):
+                                            continue
+                                        rectangle = layout.bounds(node)
+                                        if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0 or rectangle["x"] < 0:
+                                            continue
+                                        target = node
+                                        for _ in range(3):
+                                            try:
+                                                action = target.queryAction()
+                                                for index in range(action.nActions):
+                                                    if action.getName(index) in {"click", "press", "activate", "button.activate", "row.activate"}:
+                                                        return lambda action=action, index=index: action.doAction(index)
+                                            except (NotImplementedError, RuntimeError):
+                                                pass
+                                            target = target.parent
+                                            if target is None or target == app:
+                                                break
+                                        return lambda rectangle=rectangle: execute("xdotool", "mousemove", str(rectangle["x"] + rectangle["width"] // 2), str(rectangle["y"] + rectangle["height"] // 2), "click", "1")
+                                    return None
+                                perform = wait(locate)
+                                if perform() is False:
+                                    raise RuntimeError(f"History Action rejected: {text}")
+                                print(f"VIEW HISTORY ACTION {text}", flush=True)
+
+                            def find_history():
+                                result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Notification History$"], capture_output=True, text=True)
+                                return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
+
+                            def open_history():
+                                execute("xdotool", "windowfocus", "--sync", window)
+                                click_text("View")
+                                click_text("Notification History...")
+                                native = wait(find_history)
+                                execute("xdotool", "windowfocus", "--sync", native)
+                                execute("xdotool", "windowsize", "--sync", native, "592", "428")
+                                return native
+
+                            def history_snapshot(native, name, expected, absent=()):
+                                image = output / f"{name}.png"
+                                def inspect():
+                                    if process.poll() is not None:
+                                        raise RuntimeError("application exited during History review")
+                                    frame = layout.window(process.pid, execute("xdotool", "getwindowname", native))
+                                    if frame is None:
+                                        return None
+                                    nodes = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
+                                    labels = [layout.normalized(node.name) for node in nodes]
+                                    if not all(layout.normalized(text) in labels for text in expected) or any(layout.normalized(text) in labels for text in absent):
+                                        return None
+                                    execute("import", "-window", native, str(image))
+                                    tree_file = output / f"{name}.atspi.json"
+                                    tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
+                                    close = next((node for node in nodes if node.getRoleName() == "push button" and node.name == "Close"), None)
+                                    if close is None:
+                                        raise RuntimeError("History Close button is missing")
+                                    outer, footer = layout.bounds(frame), layout.bounds(close)
+                                    if footer["y"] + footer["height"] > outer["y"] + outer["height"] - 12:
+                                        raise RuntimeError(f"History Close button has insufficient bottom margin: frame={outer}, footer={footer}")
+                                    width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
+                                    if (width, height) != (592, 428):
+                                        raise RuntimeError(f"History size drifted: {width}x{height}")
+                                    return {"state": name, "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "width": width, "height": height, "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest()}
+                                try:
+                                    records.append(wait(inspect))
+                                except Exception:
+                                    frame = layout.window(process.pid, execute("xdotool", "getwindowname", native))
+                                    if frame is not None:
+                                        execute("import", "-window", native, str(image))
+                                        (output / f"{name}.atspi.json").write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
+                                        print(f"VIEW HISTORY TIMEOUT {name}: " + repr([node.name for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]), flush=True)
+                                    raise
+                                print(f"VIEW CAPTURE {name}", flush=True)
+
+                            native = open_history()
+                            history_snapshot(native, "history-all", ["Clear history", "Close", "Date/Time", "Level", "Module", "Message"])
+                            click_text("All")
+                            execute("xdotool", "key", "Home", "Down", "Down", "Return")
+                            history_snapshot(native, "history-warning", ["Warning", "No notifications", "Close"])
+                            click_text("Warning")
+                            execute("xdotool", "key", "Home", "Return")
+                            history_snapshot(native, "history-restored", ["All", "Clear history", "Close"], ["No notifications"])
+                            click_text("Clear history")
+                            history_snapshot(native, "history-empty", ["No notifications", "Close"])
+                            click_text("Close")
+                            wait(lambda: find_history() is None)
+                            native = open_history()
+                            history_snapshot(native, "history-reopened", ["All", "No notifications", "Close"])
+                            execute("xdotool", "windowfocus", "--sync", window)
                         if settings_review:
                             execute("xdotool", "key", "ctrl+comma")
 
@@ -179,7 +275,12 @@ def capture(binary, original, destination, settings_review=False):
                             click_page("System")
                             settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "Apply"])
                             execute("xdotool", "windowfocus", "--sync", window)
-                    execute("xdotool", "key", "alt+F4")
+                    execute("xdotool", "key", "ctrl+q" if history_review else "alt+F4")
+                    if history_review:
+                        exit_code = process.wait(timeout=15)
+                        if exit_code != 0:
+                            raise RuntimeError(f"History review shutdown failed: {exit_code}")
+                        shutdown_exit_codes[mode] = exit_code
                 finally:
                     if process.poll() is None:
                         process.terminate()
@@ -187,6 +288,7 @@ def capture(binary, original, destination, settings_review=False):
     (output / "evidence.json").write_text(json.dumps({"os": execute("uname", "-a"),
         "source_revision": os.environ.get("NERUST_SOURCE_REVISION"),
         "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
+        "shutdown_exit_codes": shutdown_exit_codes,
         "display_geometry": execute("xdotool", "getdisplaygeometry"),
         "rom_sha256": hashlib.sha256(Path(original).read_bytes()).hexdigest(), "requested_settings_fixture": settings,
         "measurement_units": "screen pixels", "insets_semantics": "Parent/child allocation distances, not inferred CSS margins.",
@@ -196,9 +298,9 @@ def capture(binary, original, destination, settings_review=False):
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] != "--settings"):
-            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings]")
-        capture(*sys.argv[1:4], settings_review=len(sys.argv) == 5)
+        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--history"}):
+            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--history]")
+        capture(*sys.argv[1:4], settings_review="--settings" in sys.argv[4:], history_review="--history" in sys.argv[4:])
     except Exception as error:
         print(f"VIEW FAIL: {error}", file=sys.stderr)
         sys.exit(1)

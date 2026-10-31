@@ -6,6 +6,7 @@ use std::{cell::RefCell, rc::Rc};
 pub(crate) enum Intent {
     Open,
     Settings,
+    History,
     TogglePause,
     Session(SessionAction),
     Fullscreen,
@@ -50,6 +51,7 @@ impl Presentation {
                 let intent = match action.as_str() {
                     "open" => Intent::Open,
                     "settings" => Intent::Settings,
+                    "history" => Intent::History,
                     "pause" => Intent::TogglePause,
                     "fullscreen" => Intent::Fullscreen,
                     "quit" => Intent::Quit,

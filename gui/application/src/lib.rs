@@ -25,6 +25,10 @@ pub trait SessionActionPort {
     fn execute(&mut self, action: SessionAction) -> Result<bool, String>;
 }
 
+pub trait HistoryPort {
+    fn clear_history(&mut self);
+}
+
 pub trait SettingsPort {
     type Settings: Clone;
     fn settings(&self) -> &Self::Settings;
@@ -206,6 +210,16 @@ impl<P: EmulationPort + SessionActionPort> Application<P> {
         let result = self.port.execute(action);
         self.reconcile();
         result
+    }
+}
+
+impl<P: EmulationPort + HistoryPort> Application<P> {
+    pub fn clear_history(&mut self) -> bool {
+        if self.closed {
+            return false;
+        }
+        self.port.clear_history();
+        true
     }
 }
 
@@ -463,6 +477,26 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    impl HistoryPort for TransactionProbe {
+        fn clear_history(&mut self) {
+            self.settings = 0;
+        }
+    }
+
+    #[test]
+    fn history_clear_is_available_unloaded_but_rejected_after_close() {
+        let mut probe = transaction();
+        probe.settings = 7;
+        let mut app = Application::new(probe);
+        assert!(!app.state().loaded);
+        assert!(app.clear_history());
+        assert_eq!(app.session().settings, 0);
+        app.port.settings = 9;
+        app.close();
+        assert!(!app.clear_history());
+        assert_eq!(app.session().settings, 9);
     }
 
     impl SessionActionPort for TransactionProbe {
