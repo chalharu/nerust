@@ -1,3 +1,4 @@
+mod history;
 mod render;
 mod session;
 mod settings;
@@ -58,6 +59,9 @@ pub fn run(
         let weak_view = view.downgrade();
         let picker_active = Rc::new(Cell::new(false));
         let settings_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let history_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let history_updates = Rc::new(RefCell::new(None::<Rc<history::Pane>>));
+        let history_refresh = history_updates.clone();
         let settings_host = host.clone();
         let settings_session = session.clone();
         actions.replace(Some(Rc::new(move |intent| {
@@ -65,6 +69,69 @@ pub fn run(
                 return false;
             }
             match intent {
+                view::Intent::History => {
+                    if let Some(view) = history_window
+                        .borrow()
+                        .as_ref()
+                        .and_then(panechord::WeakView::upgrade)
+                    {
+                        view.present();
+                        return true;
+                    }
+                    let pane = history::Pane::new(
+                        app.borrow().settings().shared.general.language,
+                        executor.clone(),
+                    );
+                    let snapshot = pane.snapshot(&app.borrow());
+                    if let Some((revision, language, lines)) = snapshot {
+                        pane.refresh(revision, language, &lines);
+                    }
+                    let cleared = app.clone();
+                    let view = match pane.build(Rc::new(move || {
+                        cleared.borrow_mut().clear_history();
+                    })) {
+                        Ok(view) => view,
+                        Err(error) => {
+                            let _ = output.update(move |model| model.notice = Some(error));
+                            return false;
+                        }
+                    };
+                    let weak = view.downgrade();
+                    let close = weak.clone();
+                    if let Err(error) = settings_host.register_view(
+                        &settings_session,
+                        "history",
+                        &view,
+                        panechord::WindowHooks {
+                            confirm: Rc::new(|| Box::pin(async { true })),
+                            cancel: Rc::new(|| {}),
+                            drain: Rc::new(|| Box::pin(async {})),
+                            close: Rc::new(move || {
+                                if let Some(view) = close.upgrade() {
+                                    view.close();
+                                }
+                            }),
+                        },
+                    ) {
+                        view.close();
+                        let _ = output.update(move |model| model.notice = Some(error));
+                        return false;
+                    }
+                    view.on_close_request(Rc::new(move || {
+                        if let Some(view) = weak.upgrade() {
+                            view.close();
+                        }
+                    }));
+                    let closed_window = history_window.clone();
+                    let closed_pane = history_updates.clone();
+                    view.on_close(Rc::new(move || {
+                        closed_window.replace(None);
+                        closed_pane.replace(None);
+                    }));
+                    history_window.replace(Some(view.downgrade()));
+                    history_updates.replace(Some(pane));
+                    true
+                }
                 view::Intent::Settings => {
                     if let Some(view) = settings_window
                         .borrow()
@@ -315,6 +382,13 @@ pub fn run(
                         };
                     (app.state(), image)
                 };
+                let pane = history_refresh.borrow().clone();
+                if let Some(pane) = pane {
+                    let snapshot = pane.snapshot(&application.borrow());
+                    if let Some((revision, language, lines)) = snapshot {
+                        pane.refresh(revision, language, &lines);
+                    }
+                }
                 let _ = model.update(move |model| {
                     model.state = state;
                     match image {
