@@ -125,6 +125,60 @@ fn style_rejects_invalid_values_before_backend_mutation() {
 }
 
 #[test]
+fn control_values_validate_selection_ranges_and_shared_rgba_frames() {
+    let choices = vec![Choice {
+        id: "a".into(),
+        label: "A".into(),
+    }];
+    assert!(validate_choices(&choices, "a").is_ok());
+    assert!(validate_choices(&choices, "missing").is_err());
+    assert!(validate_choices(&[choices[0].clone(), choices[0].clone()], "a").is_err());
+    let range = SliderRange {
+        min: 0.0,
+        max: 100.0,
+        step: 1.0,
+    };
+    assert_eq!(range.normalize(42.4), Ok(42.0));
+    assert!(range.normalize(f64::NAN).is_err());
+    assert!(SliderRange { step: 0.0, ..range }.validate().is_err());
+    let frame = ImageFrame::new(2, 2, std::sync::Arc::from([255; 16])).unwrap();
+    assert_eq!(frame, frame.clone());
+    assert!(ImageFrame::new(2, 2, std::sync::Arc::from([0; 15])).is_err());
+    assert!(ImageFrame::new(u32::MAX, u32::MAX, std::sync::Arc::from([])).is_err());
+}
+
+#[test]
+fn native_layout_bounds_reject_overflow_and_unbounded_tracks() {
+    let stack = Layout::Stack {
+        horizontal: false,
+        gap: 0.0,
+    };
+    for value in [f32::MAX, i32::MAX as f32, MAX_LAYOUT_SIZE + 1.0] {
+        let mut style = Style::default();
+        style.margin.right = value;
+        assert!(style.validate(stack).is_err());
+        style.margin.right = 0.0;
+        style.placement.width = Some(value);
+        assert!(style.validate(stack).is_err());
+    }
+    let mut style = Style::default();
+    style.margin.left = MAX_LAYOUT_SIZE;
+    style.padding.left = 1.0;
+    assert!(style.validate(stack).is_err());
+    for columns in [0, MAX_GRID_COLUMNS + 1, u32::MAX] {
+        assert!(Layout::Grid { columns, gap: 0.0 }.validate().is_err());
+    }
+    assert!(
+        Layout::Grid {
+            columns: MAX_GRID_COLUMNS,
+            gap: 0.0
+        }
+        .validate()
+        .is_ok()
+    );
+}
+
+#[test]
 fn viewport_range_uses_a_bounded_last_page_without_overflow() {
     let viewport = Viewport {
         start: usize::MAX,
@@ -1849,6 +1903,43 @@ fn shutdown_window_unmount_aborts_confirmation_and_drain_waits() {
         assert_eq!(session.window_count(), 0);
         assert_eq!(block_on(request), ShutdownOutcome::Closed);
         assert!(!log.borrow().contains(&"close"));
+    }
+}
+
+#[test]
+fn shutdown_cancel_aborts_pending_work_before_another_poll_without_replacement() {
+    for confirming in [true, false] {
+        let coordinator = ShutdownCoordinator::new();
+        let polls = Rc::new(Cell::new(0));
+        let observed = polls.clone();
+        let wait = futures::future::poll_fn(move |_| {
+            observed.set(observed.get() + 1);
+            std::task::Poll::<()>::Pending
+        })
+        .boxed_local();
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let (confirm, drain) = if confirming {
+            (
+                async move {
+                    wait.await;
+                    true
+                }
+                .boxed_local(),
+                pending().boxed_local(),
+            )
+        } else {
+            (async { true }.boxed_local(), wait)
+        };
+        let _token = coordinator
+            .register_window("pending", hooks(log, confirm, drain))
+            .unwrap();
+        let mut request = Box::pin(coordinator.request_shutdown(Duration::from_secs(30)));
+        assert!(request.as_mut().now_or_never().is_none());
+        assert_eq!(polls.get(), 1);
+        assert!(coordinator.cancel_shutdown());
+        assert_eq!(block_on(request), ShutdownOutcome::Cancelled);
+        assert_eq!(polls.get(), 1);
+        assert_eq!(coordinator.phase(), ShutdownPhase::Running);
     }
 }
 

@@ -24,9 +24,12 @@ printf '%s\n' "$output" | grep -q '^LIBRARY3 macos PASS latest-query-bursts samp
 printf '%s\n' "$output" | grep -q '^LIBRARY3 macos PASS native-close model-closed$'
 output=$(cargo run --locked -p wakui3-macos --example conformance)
 printf '%s\n' "$output"
-for marker in event-namespace validation-scope typed-menu injected-field-editor native-menu viewport-contract readonly-viewport menu-transaction nested-cleanup dynamic-row-height keyed-edit-state keyed-rows reaction-chain weak-view; do
+for marker in close-recovery event-namespace validation-scope typed-menu injected-field-editor native-menu viewport-contract readonly-viewport menu-transaction nested-cleanup dynamic-row-height keyed-edit-state keyed-rows reaction-chain weak-view; do
     printf '%s\n' "$output" | grep -q "^MACOS3 PASS $marker "
 done
+output=$(cargo run --locked -p wakui3-settings --no-default-features --features backend-macos --example controls)
+printf '%s\n' "$output"
+printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
 output=$(cargo run --locked -p wakui3-macos --example multiwindow)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^MACOS3 PASS single-session repeated-attach foreign-attach-and-registration-rejected$'

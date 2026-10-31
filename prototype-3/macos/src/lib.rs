@@ -1,6 +1,7 @@
 //! Main-thread AppKit host for the third prototype's practical screens.
 //! Native controls own editing/marked text; Rust owns bindings and scoped tokens.
 #![cfg(target_os = "macos")]
+mod controls;
 
 use futures::future::LocalBoxFuture;
 use std::{
@@ -98,10 +99,19 @@ unsafe extern "C" {
     fn w3_post_key(host: *mut c_void, id: *const u8, id_len: usize) -> i32;
     fn w3_shortcut(host: *mut c_void, value: *const u8, value_len: usize) -> i32;
     fn w3_capture(host: *mut c_void, path: *const u8, path_len: usize, width: f64) -> i32;
+    fn w3_image(
+        host: *mut c_void,
+        id: *const u8,
+        id_len: usize,
+        pixels: *const u8,
+        length: usize,
+        width: u32,
+        height: u32,
+    ) -> i32;
 }
 
 #[derive(Clone)]
-pub struct Parent(String);
+pub struct Parent(String, Weak<Inner>);
 
 type Handler = Rc<dyn Fn(String)>;
 type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
@@ -128,6 +138,7 @@ struct Inner {
     nodes: RefCell<HashSet<String>>,
     lists: RefCell<HashMap<String, Rc<List>>>,
     menu_errors: RefCell<HashMap<String, String>>,
+    tabs: RefCell<HashMap<String, controls::TabState>>,
     close_handlers: RefCell<Vec<Rc<dyn Fn()>>>,
     close_request: RefCell<Option<Rc<dyn Fn()>>>,
     quit_request: RefCell<Option<Rc<dyn Fn()>>>,
@@ -148,12 +159,13 @@ impl Inner {
         drop(self.viewport_handlers.take());
         drop(self.lists.take());
         drop(self.menu_errors.take());
+        drop(self.tabs.take());
         unsafe {
             w3_close(self.native.get());
         }
         for callback in self.close_handlers.take() {
-            if catch_unwind(AssertUnwindSafe(|| callback())).is_err() {
-                self.error.replace(Some("close callback panicked".into()));
+            if let Err(panic) = catch_unwind(AssertUnwindSafe(|| callback())) {
+                self.error.replace(Some(panic_error(panic)));
             }
         }
     }
@@ -207,6 +219,7 @@ unsafe extern "C" fn dispatch(
             if inner.requesting.replace(true) {
                 return;
             }
+            let _request = RequestFlag(&inner.requesting);
             let callback = if kind == 3 {
                 inner
                     .quit_request
@@ -233,12 +246,25 @@ unsafe extern "C" fn dispatch(
             }
         }
     }));
-    if result.is_err() {
-        inner
-            .error
-            .replace(Some("native event callback panicked".into()));
+    if let Err(panic) = result {
+        inner.error.replace(Some(panic_error(panic)));
         inner.shutdown();
     }
+}
+
+struct RequestFlag<'a>(&'a Cell<bool>);
+impl Drop for RequestFlag<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+fn panic_error(panic: Box<dyn std::any::Any + Send>) -> String {
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("non-string panic payload");
+    format!("AppKit callback panicked: {message}")
 }
 
 fn within(id: &str, scope: &str) -> bool {
@@ -259,6 +285,7 @@ impl View {
             nodes: RefCell::new(HashSet::from(["__root".into()])),
             lists: RefCell::new(HashMap::new()),
             menu_errors: RefCell::new(HashMap::new()),
+            tabs: RefCell::new(HashMap::new()),
             close_handlers: RefCell::new(Vec::new()),
             close_request: RefCell::new(None),
             quit_request: RefCell::new(None),
@@ -275,7 +302,7 @@ impl View {
     }
 
     pub fn root(&self) -> Parent {
-        Parent("__root".into())
+        Parent("__root".into(), Rc::downgrade(&self.0))
     }
     pub fn downgrade(&self) -> WeakView {
         WeakView(Rc::downgrade(&self.0))
@@ -382,24 +409,41 @@ impl View {
             .borrow_mut()
             .extract_if(|id, _| within(id, prefix))
             .collect();
+        let tabs: Vec<_> = self
+            .0
+            .tabs
+            .borrow_mut()
+            .extract_if(|id, _| within(id, prefix))
+            .collect();
         self.0
             .menu_errors
             .borrow_mut()
             .retain(|id, _| !within(id, prefix));
-        drop((scopes, handlers, viewport_handlers, lists));
+        drop((scopes, handlers, viewport_handlers, lists, tabs));
         unsafe {
             w3_remove(self.0.native.get(), prefix.as_ptr(), prefix.len());
         }
     }
     pub fn layout(&self, parent: &Parent, id: &str, layout: Layout) -> Parent {
-        if let Layout::Stack { horizontal, gap } = layout {
-            self.add(parent, id, i32::from(horizontal), f64::from(gap));
-        } else {
-            self.0
-                .error
-                .replace(Some("AppKit currently supports Stack layouts only".into()));
+        self.try_layout(parent, id, layout)
+            .expect("invalid or unsupported layout")
+    }
+    pub fn try_layout(&self, parent: &Parent, id: &str, layout: Layout) -> Result<Parent, String> {
+        layout.validate().map_err(str::to_owned)?;
+        let Layout::Stack { horizontal, gap } = layout else {
+            return Err("AppKit currently supports Stack layouts only".into());
+        };
+        if self.0.closed.get()
+            || !parent.1.ptr_eq(&Rc::downgrade(&self.0))
+            || !self.0.nodes.borrow().contains(&parent.0)
+        {
+            return Err("closed view or unavailable parent".into());
         }
-        Parent(id.into())
+        if id.is_empty() || self.0.nodes.borrow().contains(id) {
+            return Err("empty or duplicate layout id".into());
+        }
+        self.add(parent, id, i32::from(horizontal), f64::from(gap));
+        Ok(Parent(id.into(), Rc::downgrade(&self.0)))
     }
     pub fn style(&self, id: &str, style: Style) {
         if let Err(error) = self.try_style(id, style) {
@@ -450,9 +494,8 @@ impl View {
         self.0.handlers.borrow_mut().insert(
             id.into(),
             Rc::new(move |value| {
-                if !writer.set(value)
-                    && let Some(view) = weak.upgrade()
-                {
+                let _ = writer.set(value);
+                if let Some(view) = weak.upgrade() {
                     view.set(&key, &writer.get(), 0);
                 }
             }),
@@ -532,7 +575,7 @@ impl View {
                 let scope = format!("{key}/{}", row.key);
                 let row_parent = if !old.contains(row) {
                     Some(view.layout(
-                        &Parent(key.clone()),
+                        &Parent(key.clone(), Rc::downgrade(&view.0)),
                         &scope,
                         Layout::Stack {
                             horizontal: false,
@@ -774,13 +817,17 @@ impl View {
         if self.0.closed.get() || self.0.requesting.replace(true) {
             return;
         }
+        let _request = RequestFlag(&self.0.requesting);
         let callback = self.0.close_request.borrow().clone();
-        if let Some(callback) = callback {
-            callback();
-        } else {
-            self.close();
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(callback) = callback {
+                callback();
+            } else {
+                self.close();
+            }
+        })) {
+            self.0.error.replace(Some(panic_error(panic)));
         }
-        self.0.requesting.set(false);
     }
     pub fn close(&self) {
         self.0.shutdown();

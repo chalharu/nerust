@@ -138,6 +138,14 @@ pub struct Menu {
     pub command: String,
 }
 
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TabPage {
+    pub id: String,
+    pub title: Property,
+    pub content: Box<Control>,
+}
+
 macro_rules! controls {
 	($($kind:ident { $($fields:tt)* }),* $(,)?) => {
 		#[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -172,6 +180,13 @@ controls! {
     TextBox { text: Property, validation: Option<Validation>, },
     Button { text: Property, command: String, argument: Option<Property>, },
     Native { factory: String, value: Property, },
+    CheckBox { text: Property, checked: Property, },
+    Radio { text: Property, selected: Property, value: String, },
+    Slider { value: Property, min: f64, max: f64, step: f64, },
+    Combo { items: Property, selected: Property, },
+    Image { source: Property, },
+    Tab { selected: Property, pages: Vec<TabPage>, },
+    Dialog { title: Property, open: Property, content: Box<Control>, },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -442,26 +457,65 @@ impl Document {
         }
         let s = c.style();
         let sides = |e: &Edges| match e {
-            Edges::Scalar(v) => vec![*v],
+            Edges::Scalar(v) => vec![*v; 4],
             Edges::Sides(v) => vec![v.top, v.right, v.bottom, v.left],
         };
         let p = s.placement;
         if sides(&s.margin)
             .iter()
             .chain(sides(&s.padding).iter())
-            .any(|x| !x.is_finite() || *x < 0.0)
+            .any(|x| !x.is_finite() || !(0.0..=wakui2_runtime::MAX_LAYOUT_SIZE).contains(x))
             || p.row < 0
             || p.column < 0
             || p.row_span < 1
             || p.column_span < 1
             || !p.x.is_finite()
             || !p.y.is_finite()
+            || p.x.abs() > wakui2_runtime::MAX_LAYOUT_SIZE
+            || p.y.abs() > wakui2_runtime::MAX_LAYOUT_SIZE
             || [p.width, p.height]
                 .into_iter()
                 .flatten()
-                .any(|v| !v.is_finite() || v < 0.0)
+                .any(|v| !v.is_finite() || v < 0.0 || v > 1_000_000.0)
         {
             return Err(err("invalid spacing or placement".into()));
+        }
+        if sides(&s.margin)
+            .iter()
+            .zip(sides(&s.padding))
+            .any(|(margin, padding)| margin + padding > wakui2_runtime::MAX_LAYOUT_SIZE)
+        {
+            return Err(err("combined margin and padding exceed layout limit".into()));
+        }
+        let read_only = |property: &Property, name: &str| {
+            if matches!(property, Property::Bind(bound) if bound.bind.mode == Mode::TwoWay) {
+                Err((
+                    format!("{path}.{name}.bind.mode"),
+                    "TwoWay is not supported for a read-only property".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        };
+        match c {
+            Control::Label { text, .. }
+            | Control::CheckBox { text, .. }
+            | Control::Radio { text, .. } => read_only(text, "text")?,
+            Control::Button { text, argument, .. } => {
+                read_only(text, "text")?;
+                if let Some(argument) = argument {
+                    read_only(argument, "argument")?;
+                }
+            }
+            Control::Image { source, .. } => read_only(source, "source")?,
+            Control::Combo { items, .. }
+            | Control::ItemsControl { items, .. }
+            | Control::BindableLayout { items, .. } => read_only(items, "items")?,
+            Control::ContentControl { content, .. } => read_only(content, "content")?,
+            Control::Window { title, .. } | Control::Dialog { title, .. } => {
+                read_only(title, "title")?
+            }
+            _ => {}
         }
         let mut children = Vec::new();
         let template = match c {
@@ -471,7 +525,9 @@ impl Document {
                         "nested Window is unsupported by the single-View API".into()
                     ));
                 }
-                for m in menus {
+                for (index, m) in menus.iter().enumerate() {
+                    read_only(&m.title, &format!("menus[{index}].title"))?;
+                    read_only(&m.items, &format!("menus[{index}].items"))?;
                     if m.id == "__root" {
                         return Err(err(
                             "menu id `__root` is reserved for the backend root".into()
@@ -497,7 +553,10 @@ impl Document {
                 children: cs,
                 ..
             } => {
-                if *columns == 0 || !gap.is_finite() || *gap < 0.0 {
+                if !(1..=4096).contains(columns)
+                    || !gap.is_finite()
+                    || !(0.0..=1_000_000.0).contains(gap)
+                {
                     return Err(err("invalid grid columns/gap".into()));
                 }
                 children.extend(cs);
@@ -509,7 +568,7 @@ impl Document {
             | Control::FlexLayout {
                 gap, children: cs, ..
             } => {
-                if !gap.is_finite() || *gap < 0.0 {
+                if !gap.is_finite() || !(0.0..=1_000_000.0).contains(gap) {
                     return Err(err("invalid gap".into()));
                 }
                 children.extend(cs);
@@ -517,6 +576,56 @@ impl Document {
             }
             Control::AbsoluteLayout { children: cs, .. } => {
                 children.extend(cs);
+                None
+            }
+            Control::Dialog { content, .. } => {
+                self.walk(
+                    content,
+                    &format!("{path}.content"),
+                    ids,
+                    stack,
+                    work,
+                    depth + 1,
+                )?;
+                None
+            }
+            Control::Tab { pages, .. } => {
+                if pages.is_empty() || pages.len() > 256 {
+                    return Err(err("Tab requires 1..=256 pages".into()));
+                }
+                for (index, page) in pages.iter().enumerate() {
+                    if !wakui2_runtime::valid_item_key(&page.id)
+                        || page.id == "__root"
+                        || !ids.insert(page.id.clone())
+                    {
+                        return Err(err("invalid or duplicate tab page id".into()));
+                    }
+                    read_only(&page.title, &format!("pages[{index}].title"))?;
+                    self.walk(
+                        &page.content,
+                        &format!("{path}.pages[{index}].content"),
+                        ids,
+                        stack,
+                        work,
+                        depth + 1,
+                    )?;
+                }
+                None
+            }
+            Control::Slider { min, max, step, .. } => {
+                wakui2_runtime::SliderRange {
+                    min: *min,
+                    max: *max,
+                    step: *step,
+                }
+                .validate()
+                .map_err(|message| err(message.into()))?;
+                None
+            }
+            Control::Radio { value, .. } => {
+                if !wakui2_runtime::valid_item_key(value) {
+                    return Err(err("invalid radio value".into()));
+                }
                 None
             }
             Control::ItemsControl { item_template, .. }

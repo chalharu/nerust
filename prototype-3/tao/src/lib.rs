@@ -1,5 +1,6 @@
 //! Retained, software-rendered iced controls in a native Tao window and muda menu.
 //! See README.md for input and external-reactor boundaries.
+mod controls;
 mod driver;
 mod input;
 mod layout;
@@ -32,6 +33,11 @@ pub enum Message {
     Scroll(String, f32),
     /// Application primitive callback; dispatched outside widget-tree borrows.
     Custom(String),
+    Toggle(String, bool),
+    Slide(String, f64),
+    Select(String, String),
+    Open(String, bool),
+    Ignored,
 }
 #[derive(Clone)]
 pub struct View(Rc<Inner>);
@@ -52,12 +58,21 @@ pub struct Parent(Rc<Node>);
 enum Handler {
     Entry(Binding<String>),
     Button(Command),
+    Toggle(Binding<bool>),
+    Radio(Binding<String>, String),
+    Slider(Binding<f64>, wakui2_runtime::SliderRange),
+    Choice(Binding<String>, Binding<Vec<wakui2_runtime::Choice>>),
+    Tab(Binding<String>),
+    Dialog(Binding<bool>),
 }
 enum Kind {
     Panel(Layout),
     Leaf(ElementFactory),
     Items(Rc<dyn ItemHost>),
     Content,
+    Tab(Rc<controls::Tab>),
+    Page,
+    Dialog(Rc<controls::Dialog>),
 }
 struct Node {
     id: String,
@@ -106,7 +121,7 @@ impl Node {
                 )
             }
             Kind::Leaf(factory) => factory(),
-            Kind::Content => layout::Panel::element(
+            Kind::Content | Kind::Page => layout::Panel::element(
                 Layout::Stack {
                     horizontal: false,
                     gap: 0.0,
@@ -118,6 +133,8 @@ impl Node {
                     .collect(),
             ),
             Kind::Items(host) => host.element(self),
+            Kind::Tab(tab) => tab.element(self),
+            Kind::Dialog(_) => widget::Space::new().width(0).height(0).into(),
         };
         let p = self.style.get().padding;
         layout::Panel::frame(
@@ -339,7 +356,17 @@ impl View {
         self.0.root.clone()
     }
     pub fn layout(&self, parent: &Parent, id: &str, layout: Layout) -> Parent {
-        Parent(self.add(parent, id, Kind::Panel(layout)))
+        self.try_layout(parent, id, layout).expect("invalid layout")
+    }
+    pub fn try_layout(&self, parent: &Parent, id: &str, layout: Layout) -> Result<Parent, String> {
+        layout.validate().map_err(str::to_owned)?;
+        if self.0.closed.get() || !parent.0.mounted.get() || id.is_empty() {
+            return Err("closed view, unavailable parent or empty layout id".into());
+        }
+        if !parent.0.owner.ptr_eq(&Rc::downgrade(&self.0)) || self.find(id).is_some() {
+            return Err("foreign parent or duplicate layout id".into());
+        }
+        Ok(Parent(self.add(parent, id, Kind::Panel(layout))))
     }
     pub fn style(&self, id: &str, style: Style) {
         if let Err(error) = self.try_style(id, style) {
@@ -532,7 +559,29 @@ impl View {
         if self.0.closed.get() {
             return Err("view is closed".into());
         }
+        let target = match &message {
+            Message::Edit(id, _)
+            | Message::Click(id)
+            | Message::Scroll(id, _)
+            | Message::Custom(id)
+            | Message::Toggle(id, _)
+            | Message::Slide(id, _)
+            | Message::Select(id, _)
+            | Message::Open(id, _) => Some(id.as_str()),
+            _ => None,
+        };
+        if let Some(dialog) = self.active_dialog()
+            && (matches!(message, Message::Menu(_))
+                || target.is_some_and(|target| !self.in_dialog(target, &dialog)))
+        {
+            return Ok(());
+        }
         match message {
+            Message::Ignored => Ok(()),
+            Message::Toggle(id, value) => self.control_update(&id, controls::Input::Toggle(value)),
+            Message::Slide(id, value) => self.control_update(&id, controls::Input::Slide(value)),
+            Message::Select(id, value) => self.control_update(&id, controls::Input::Select(value)),
+            Message::Open(id, value) => self.control_update(&id, controls::Input::Open(value)),
             Message::Edit(id, value) => {
                 let node = self
                     .find(&id)
@@ -553,6 +602,16 @@ impl View {
             }
             Message::Click(id) => {
                 let handler = self.find(&id).and_then(|n| n.handler.borrow().clone());
+                if let Some(Handler::Toggle(binding)) = &handler {
+                    return self.control_update(&id, controls::Input::Toggle(!binding.get()));
+                }
+                if let Some(Handler::Radio(binding, value)) = &handler {
+                    binding
+                        .try_set(value.clone())
+                        .map_err(|error| error.to_string())?;
+                    self.0.refresh();
+                    return Ok(());
+                }
                 if let Some(Handler::Button(command)) = handler {
                     if command.invoke() {
                         Ok(())

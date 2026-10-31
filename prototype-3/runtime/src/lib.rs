@@ -5,11 +5,13 @@
 //! Store owner. User callbacks, destructors and future polls run outside runtime
 //! RefCell borrows. Executors may poll immediately inside `spawn`.
 mod blocking;
+mod controls;
 mod session;
 mod shortcut;
 mod store;
 
 pub use blocking::{BlockingPool, TaskError};
+pub use controls::{Choice, ImageFrame, SliderRange, validate_choices};
 pub use session::{
     Session, ShutdownCoordinator, ShutdownOutcome, ShutdownPhase, UiHost, WindowHooks, run_async,
 };
@@ -129,12 +131,19 @@ pub struct Style {
 
 impl Style {
     pub fn validate(self, parent: Layout) -> Result<(), &'static str> {
+        parent.validate()?;
         for edges in [self.margin, self.padding] {
             if [edges.top, edges.right, edges.bottom, edges.left]
                 .iter()
                 .any(|value| !value.is_finite() || *value < 0.0)
             {
                 return Err("spacing must be finite and nonnegative");
+            }
+            if [edges.top, edges.right, edges.bottom, edges.left]
+                .into_iter()
+                .any(|value| value > MAX_LAYOUT_SIZE)
+            {
+                return Err("spacing exceeds native layout limit");
             }
         }
         let placement = self.placement;
@@ -145,8 +154,26 @@ impl Style {
         {
             return Err("size must be finite and nonnegative");
         }
+        if [placement.width, placement.height]
+            .into_iter()
+            .flatten()
+            .any(|value| value > MAX_LAYOUT_SIZE)
+            || [
+                (self.margin.top, self.padding.top),
+                (self.margin.right, self.padding.right),
+                (self.margin.bottom, self.padding.bottom),
+                (self.margin.left, self.padding.left),
+            ]
+            .into_iter()
+            .any(|(margin, padding)| margin + padding > MAX_LAYOUT_SIZE)
+        {
+            return Err("size or combined inset exceeds native layout limit");
+        }
         if !placement.x.is_finite() || !placement.y.is_finite() {
             return Err("coordinates must be finite");
+        }
+        if placement.x.abs() > MAX_LAYOUT_SIZE || placement.y.abs() > MAX_LAYOUT_SIZE {
+            return Err("coordinates exceed native layout limit");
         }
         if matches!(parent, Layout::Grid { .. }) {
             if placement.row < 0
@@ -184,6 +211,28 @@ pub enum Layout {
     Grid { columns: u32, gap: f32 },
     Flex { gap: f32 },
     Absolute,
+}
+
+pub const MAX_LAYOUT_SIZE: f32 = 1_000_000.0;
+pub const MAX_GRID_COLUMNS: u32 = 4096;
+
+impl Layout {
+    pub fn validate(self) -> Result<Self, &'static str> {
+        let gap = match self {
+            Self::Grid { columns, gap } => {
+                if !(1..=MAX_GRID_COLUMNS).contains(&columns) {
+                    return Err("Grid columns must be 1..=4096");
+                }
+                gap
+            }
+            Self::Stack { gap, .. } | Self::Flex { gap } => gap,
+            Self::Absolute => 0.0,
+        };
+        if !gap.is_finite() || !(0.0..=MAX_LAYOUT_SIZE).contains(&gap) {
+            return Err("layout gap must be finite and within native layout limit");
+        }
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

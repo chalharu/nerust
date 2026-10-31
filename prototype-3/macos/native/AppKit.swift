@@ -90,7 +90,27 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
+final class Tabs: NSStackView {
+    let header = NSSegmentedControl()
+    let body = NSTabView()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        orientation = .vertical
+        alignment = .leading
+        spacing = 8
+        header.trackingMode = .selectOne
+        header.segmentStyle = .rounded
+        body.tabViewType = .noTabsNoBorder
+        addArrangedSubview(header)
+        addArrangedSubview(body)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        body.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+    }
+    required init?(coder: NSCoder) { fatalError("coder construction unsupported") }
+}
+
+@MainActor
+final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDelegate {
     let window: NSWindow
     let root = DocumentStack()
     var nodes: [String: NSView] = [:]
@@ -99,6 +119,12 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     var contentWidths: [String: NSLayoutConstraint] = [:]
     var menus: [String: NSMenu] = [:]
     var menuItems: [String: NSMenuItem] = [:]
+    var tabItems: [String: NSTabViewItem] = [:]
+    var dialogs: [String: NSPanel] = [:]
+    var readonlyTabs: Set<String> = []
+    var readonlyDialogs: Set<String> = []
+    var booleanButtons: Set<String> = []
+    var applying = false
     var focusable: [NSView] = []
     var callback: Callback?
     var context: UnsafeMutableRawPointer?
@@ -175,11 +201,34 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if let dialog = dialogs.first(where: { $0.value === sender }) {
+            if readonlyDialogs.contains(dialog.key) { return false }
+            emit(dialog.key, "0")
+            return false
+        }
         emit("", kind: 1)
         return false
     }
     @objc func activated(_ sender: NSControl) {
-        if let id = sender.identifier?.rawValue { emit(id) }
+        guard !applying, let id = sender.identifier?.rawValue else { return }
+        if let slider = sender as? NSSlider { emit(id, String(slider.doubleValue)) }
+        else if let header = sender as? NSSegmentedControl, let tabs = nodes[id] as? Tabs,
+            header.selectedSegment >= 0, header.selectedSegment < tabs.body.numberOfTabViewItems {
+            tabs.body.selectTabViewItem(at: header.selectedSegment)
+        }
+        else if let combo = sender as? NSPopUpButton { emit(id, combo.selectedItem?.representedObject as? String ?? "") }
+        else if let button = sender as? NSButton, booleanButtons.contains(id) {
+            emit(id, button.state == .on ? "1" : "0")
+        } else { emit(id) }
+    }
+    func tabView(_ tabView: NSTabView, shouldSelect tabViewItem: NSTabViewItem?) -> Bool {
+        applying || !readonlyTabs.contains(tabView.identifier?.rawValue ?? "")
+    }
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        if let id = tabView.identifier?.rawValue, let tabs = nodes[id] as? Tabs, let item = tabViewItem {
+            tabs.header.selectedSegment = tabView.indexOfTabViewItem(item)
+        }
+        if !applying, let id = tabView.identifier?.rawValue, let key = tabViewItem?.identifier as? String { emit(id, key) }
     }
     @objc func menuActivated(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? String { emit(id) }
@@ -191,21 +240,47 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         emit(id, field.stringValue)
     }
 
-    func attach(_ view: NSView, parent: String, id: String) {
-        guard let container = (nodes[parent] as? Rows)?.body ?? nodes[parent] as? NSStackView else { return }
+    func attach(_ view: NSView, parent: String, id: String, floating: Bool = false) {
+        let container = (nodes[parent] as? Rows)?.body ?? nodes[parent] as? NSStackView
+        let tab = (nodes[parent] as? Tabs)?.body
+        guard floating || container != nil || tab != nil else { return }
         let frame = NSStackView()
         frame.orientation = .vertical
         frame.alignment = .leading
         frame.spacing = 0
         frame.identifier = NSUserInterfaceItemIdentifier("frame/" + id)
         frame.addArrangedSubview(view)
-        container.addArrangedSubview(frame)
+        if floating {
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            panel.isReleasedWhenClosed = false
+            panel.delegate = self
+            panel.contentView = frame
+            dialogs[id] = panel
+        } else if let tab = tab {
+            let item = NSTabViewItem(identifier: id)
+            item.view = frame
+            item.label = id
+            applying = true
+            tab.addTabViewItem(item)
+            applying = false
+            tabItems[id] = item
+            if let tabs = nodes[parent] as? Tabs {
+                tabs.header.segmentCount = tab.numberOfTabViewItems
+                tabs.header.setLabel(id, forSegment: tab.numberOfTabViewItems - 1)
+            }
+        } else { container?.addArrangedSubview(frame) }
         frame.translatesAutoresizingMaskIntoConstraints = false
+        if floating || tab != nil {
+            frame.translatesAutoresizingMaskIntoConstraints = true
+            frame.autoresizingMask = [.width, .height]
+        }
         view.translatesAutoresizingMaskIntoConstraints = false
         let contentWidth = view.widthAnchor.constraint(equalTo: frame.widthAnchor, constant: 0)
         contentWidth.isActive = true
+        if view is Tabs { view.heightAnchor.constraint(equalTo: frame.heightAnchor).isActive = true }
         contentWidths[id] = contentWidth
-        if container.orientation == .vertical {
+        if let container = container, container.orientation == .vertical, !floating, tab == nil {
             frame.widthAnchor.constraint(equalTo: container.widthAnchor,
                 constant: -(container.edgeInsets.left + container.edgeInsets.right)).isActive = true
         }
@@ -229,6 +304,14 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate {
     func remove(_ prefix: String) {
         let ids = nodes.keys.filter { $0 == prefix || $0.hasPrefix(prefix + "/") }
         for id in ids.sorted(by: { $0.count > $1.count }) {
+            if let panel = dialogs.removeValue(forKey: id) {
+                if panel.sheetParent != nil { window.endSheet(panel) }
+                panel.orderOut(nil)
+            }
+            if let item = tabItems.removeValue(forKey: id) { item.tabView?.removeTabViewItem(item) }
+            readonlyTabs.remove(id)
+            readonlyDialogs.remove(id)
+            booleanButtons.remove(id)
             if let frame = frames.removeValue(forKey: id) {
                 if let parent = frame.superview as? NSStackView { parent.removeArrangedSubview(frame) }
                 frame.removeFromSuperview()
@@ -278,6 +361,10 @@ public func present(_ pointer: UnsafeMutableRawPointer) {
 public func close(_ pointer: UnsafeMutableRawPointer) {
     let value = host(pointer)
     value.closed = true
+    for panel in value.dialogs.values {
+        if panel.sheetParent != nil { value.window.endSheet(panel) }
+        panel.orderOut(nil)
+    }
     value.window.orderOut(nil)
     ApplicationDelegate.shared.retire(value)
 }
@@ -339,12 +426,46 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         let button = NSButton(title: "", target: value, action: #selector(Host.activated(_:)))
         button.bezelStyle = .rounded
         view = button
+    case 6, 7:
+        value.booleanButtons.insert(id)
+        let button = NSButton(title: "", target: value, action: #selector(Host.activated(_:)))
+        button.setButtonType(kind == 6 ? .switch : .radio)
+        view = button
+    case 8:
+        let slider = NSSlider(value: 0, minValue: 0, maxValue: 100, target: value, action: #selector(Host.activated(_:)))
+        slider.isContinuous = true
+        view = slider
+    case 9:
+        let combo = NSPopUpButton(frame: .zero, pullsDown: false)
+        combo.target = value
+        combo.action = #selector(Host.activated(_:))
+        combo.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view = combo
+    case 10:
+        let tabs = Tabs(frame: NSRect(x: 0, y: 0, width: 420, height: 180))
+        tabs.body.delegate = value
+        tabs.body.identifier = NSUserInterfaceItemIdentifier(id)
+        tabs.header.identifier = NSUserInterfaceItemIdentifier(id)
+        tabs.header.target = value
+        tabs.header.action = #selector(Host.activated(_:))
+        view = tabs
+    case 11, 12:
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        view = stack
+    case 13:
+        let image = NSImageView()
+        image.imageScaling = .scaleProportionallyUpOrDown
+        image.imageAlignment = .alignCenter
+        view = image
     default:
         let rows = Rows()
         rows.changed = { [weak value] start in value?.emit(id, String(start), kind: 2) }
         view = rows
     }
-    value.attach(view, parent: string(parentBytes, parentCount), id: id)
+    value.attach(view, parent: string(parentBytes, parentCount), id: id, floating: kind == 12)
 }
 
 @_cdecl("w3_set") @MainActor
@@ -355,8 +476,54 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let text = string(textBytes, textCount)
     if property == 1 {
         (value.nodes[id] as? NSControl)?.isEnabled = text == "1"
+        if value.dialogs[id] != nil {
+            if text == "1" { value.readonlyDialogs.remove(id) } else { value.readonlyDialogs.insert(id) }
+        }
+        if let tabs = value.nodes[id] as? Tabs {
+            tabs.header.isEnabled = text == "1"
+            if text == "1" { value.readonlyTabs.remove(id) } else { value.readonlyTabs.insert(id) }
+        }
     } else if property == 2 {
         value.window.title = text
+    } else if property == 3 {
+        (value.nodes[id] as? NSButton)?.state = text == "1" ? .on : .off
+    } else if property == 4, let slider = value.nodes[id] as? NSSlider,
+        let data = text.data(using: .utf8), let config = try? JSONSerialization.jsonObject(with: data) as? [String: Double],
+        let min = config["min"], let max = config["max"], min.isFinite, max.isFinite, min < max {
+        slider.minValue = min
+        slider.maxValue = max
+    } else if property == 5, let combo = value.nodes[id] as? NSPopUpButton,
+        let data = text.data(using: .utf8), let choices = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
+        combo.removeAllItems()
+        for choice in choices {
+            combo.addItem(withTitle: choice["label"] ?? "")
+            combo.lastItem?.representedObject = choice["id"] ?? ""
+        }
+    } else if property == 6 {
+        value.applying = true
+        defer { value.applying = false }
+        if let slider = value.nodes[id] as? NSSlider, let number = Double(text) { slider.doubleValue = number }
+        if let combo = value.nodes[id] as? NSPopUpButton {
+            combo.select(combo.itemArray.first { ($0.representedObject as? String) == text })
+        }
+        if let tab = (value.nodes[id] as? Tabs)?.body {
+            if let item = tab.tabViewItems.first(where: { ($0.identifier as? String) == text }) { tab.selectTabViewItem(item) }
+            else if text.isEmpty, tab.numberOfTabViewItems > 0 { tab.selectTabViewItem(at: 0) }
+        }
+    } else if property == 7, let panel = value.dialogs[id] {
+        if text == "1", !panel.isVisible {
+            if value.window.isVisible { value.window.beginSheet(panel) } else { panel.makeKeyAndOrderFront(nil) }
+        } else if text != "1" {
+            if panel.sheetParent != nil { value.window.endSheet(panel) }
+            panel.orderOut(nil)
+        }
+    } else if property == 8 { value.tabItems[id]?.identifier = text
+    } else if property == 9 { value.dialogs[id]?.title = text
+    } else if let item = value.tabItems[id] {
+        item.label = text
+        if let tab = item.tabView, let id = tab.identifier?.rawValue, let tabs = value.nodes[id] as? Tabs {
+            tabs.header.setLabel(text, forSegment: tab.indexOfTabViewItem(item))
+        }
     } else if let field = value.nodes[id] as? NSTextField {
         if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
         if field.stringValue != text { field.stringValue = text }
@@ -401,7 +568,53 @@ public func action(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<
         menu.performActionForItem(at: menu.index(of: item))
         return 1
     }
+    let text = string(textBytes, textCount)
+    if kind == 3, let button = value.nodes[id] as? NSButton, button.isEnabled, text == "0" || text == "1" {
+        button.state = text == "1" ? .on : .off
+        value.activated(button)
+        return 1
+    }
+    if kind == 4, let slider = value.nodes[id] as? NSSlider, slider.isEnabled,
+       let number = Double(text), number.isFinite, (slider.minValue...slider.maxValue).contains(number) {
+        slider.doubleValue = number
+        value.activated(slider)
+        return 1
+    }
+    if kind == 5, let combo = value.nodes[id] as? NSPopUpButton, combo.isEnabled,
+       let item = combo.itemArray.first(where: { ($0.representedObject as? String) == text }) {
+        combo.select(item)
+        value.activated(combo)
+        return 1
+    }
+    if kind == 5, let tab = (value.nodes[id] as? Tabs)?.body, !value.readonlyTabs.contains(id),
+       let item = tab.tabViewItems.first(where: { ($0.identifier as? String) == text }) {
+        tab.selectTabViewItem(item)
+        return 1
+    }
+    if kind == 6, value.dialogs[id] != nil, !value.readonlyDialogs.contains(id), text == "0" || text == "1" {
+        value.emit(id, text)
+        return 1
+    }
     return 0
+}
+
+@_cdecl("w3_image") @MainActor
+public func image(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
+                  _ pixels: UnsafePointer<UInt8>?, _ length: Int, _ width: UInt32, _ height: UInt32) -> Int32 {
+    guard let imageView = host(pointer).nodes[string(idBytes, idCount)] as? NSImageView else { return 0 }
+    if width == 0, height == 0, length == 0 { imageView.image = nil; return 1 }
+    guard width > 0, height > 0, width <= 8192, height <= 8192,
+          length >= 0, UInt64(width) * UInt64(height) * 4 == UInt64(length), length <= 64 * 1024 * 1024,
+          let pixels = pixels,
+          let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width), pixelsHigh: Int(height),
+              bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+              bitmapFormat: .alphaNonpremultiplied, bytesPerRow: Int(width) * 4, bitsPerPixel: 32),
+          let destination = bitmap.bitmapData else { return 0 }
+    destination.update(from: pixels, count: length)
+    let image = NSImage(size: NSSize(width: Int(width), height: Int(height)))
+    image.addRepresentation(bitmap)
+    imageView.image = image
+    return 1
 }
 
 @_cdecl("w3_style") @MainActor

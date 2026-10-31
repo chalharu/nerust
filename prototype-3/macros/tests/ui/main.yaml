@@ -82,7 +82,7 @@ root:
             text: {bind: {path: name}}
           - type: Label
             id: caption
-            text: {bind: {path: name, mode: TwoWay}}
+            text: {bind: {path: name}}
           - type: Button
             id: add
             text: {literal: Add}

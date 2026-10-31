@@ -26,6 +26,10 @@ cargo run --locked -p wakui2-demo --no-default-features --features backend-tao
 ```
 
 最小例は`demo/examples/minimal.rs`と`demo/ui/minimal.yaml`。
+nerustで必要なCheckBox/Radio/Slider/Combo/Image/Tab/Dialogも3 backendに追加した。
+操作probeは`cargo run --locked -p wakui3-settings --example controls`。
+対話画面は`WAKUI_CONTROLS_REVIEW=1`を付け、backend-tao/backend-macosも同じfeature指定で選ぶ。
+Linuxの実画面撮影は`python3 scripts/review-settings-layout.py --controls`で再実行できる。
 Cloneな状態型と`#[commands]`メソッドを書き、Storeを作り、共有前に`try_into_owner`で
 StoreOwnerを取得して`owned_view!`へ渡す。Storeを直接渡すコードはコンパイルエラーになる。
 共有するモデルには`view!`を使う。共有Viewの終了は他の所有者のStoreを閉じない。
@@ -151,9 +155,10 @@ scoped更新とsettings/libraryのp50/p95 CPU閾値をassertし、超過は非�
 - 設定画面は明示的なDraftで編集bufferを保持する。汎用converterの失敗時は従来どおり
   正規値へ戻るため、自動的に全TextBoxが編集bufferを持つわけではない。
 - 任意closure更新時のSのCloneと全購読の射影・比較は残る。`snapshot()`も所有Cloneを返す。
-  `update_scoped`のowned置換はCloneを呼ばず、field別indexで無関係な購読を評価しない。
+  `update_scoped`のowned置換はCloneを呼ばず、通知は保守的に行う。
+  `update_scoped_explicit`だけがfield別indexで無関係な購読を省く上級APIである。
   Noneならno-op generation。変更fieldの完全な宣言と、Rc/Arc等による不変payload共有が必要。
-  生成bindingも`bind_scoped`を使うが、通常のTwoWay setterでは状態Cloneは残る。
+  生成bindingは同じfield pathからread/write/依存名を作る`bind_scoped_explicit`を使うが、通常のTwoWay setterでは状態Cloneは残る。
   16 MiB状態の射影読み取りでClone 0回を試験したが、O(1)更新やフレーム性能は保証しない。
   `runtime/examples/scaling.rs`は状態0/1/16 MiB×購読1/100/1000の9条件で、
   読み取り50,000回と更新20回を計測し、Clone回数・通知回数をassertする。
@@ -174,7 +179,8 @@ scoped更新とsettings/libraryのp50/p95 CPU閾値をassertし、超過は非�
   GTK3のQuitは明示native shim。一部predefined roleの無効化等はmuda制限で拒否する。
 - 開始済みblocking I/Oをabort/timeoutで停止・rollbackすることはできない。
   設定保存は同一directoryの一時ファイルからrenameする。Windowsの既存ファイル置換、
-  directory fsync・電源断耐性・複数process競合の保証はない。詳細は設定アプリREADMEを参照。
+  Unix directory syncと協調writer lockは実装済み。hardware電源断耐性や非協調writerとの論理競合は保証しない。
+  詳細は設定アプリREADMEを参照。
 - 通常終了はrequest経路、`close()`は明示的な強制終了。外部destroy/process終了は
   graceful shutdownではない。Tao多窓loop/外部host、IME preeditは未対応のまま。
 - Linux/X11での実証をWindows/macOS・Wayland実機対応の証拠にはしない。

@@ -54,9 +54,9 @@ deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を�
   `menu_error(id)`で報告する。正常更新でそのMenuのエラーを解除し、hostは終了しない。
 - Viewは購読tokenを持ち、callback側はWeakViewを使う。強制closeは冪等。
   アプリの確認・保存待ちは既存の配線を再利用する。
-- 一覧は全keyを検査し、表示範囲の行だけmountする。範囲変更・順序変更では可視行を再mountする。
-  行Storeは保持するが、native field editorの選択や一時編集状態の維持は保証しない。
-  32px等の固定行高、viewport count、スクロール用native scrollerを使用する。
+- 一覧は全keyを検査し、表示範囲の行だけmountする。同じkey/Storeの可視行は移動して保持する。
+  conformanceではfield editor identity、marked text、selectionをreorder時に保持することを検査する。
+  固定行高、viewport count、native scrollerを使用する。編集行probeは56pxで、template全体が収まる必要がある。
   countは1..256、行高は有限な1..4096で、共通runtimeと静的literalが同じ条件を検査する。
   初期不正ならmountせず、不正更新は前の正常表示を保持する。正常値への復帰と末尾ページをnative検査する。
   readonly/literalでも受理済みviewportをローカルに移動し、モデルへの書込はTwoWayだけで行う。

@@ -7,7 +7,7 @@ rust-version.workspace = true
 [dependencies]
 wakui2-runtime.workspace = true
 futures.workspace = true
-iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "x11", "wayland", "advanced", "thread-pool"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "x11", "wayland", "advanced", "thread-pool", "image-without-codecs"] }
 iced_tiny_skia = "=0.14.1"
 iced_winit = "=0.14.1"
 tao = "=0.37.2"

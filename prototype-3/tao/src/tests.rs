@@ -1,6 +1,32 @@
 use super::*;
 
 #[cfg(target_os = "linux")]
+#[test]
+fn combo_rejects_unknown_source_selection_and_accepts_recovery() {
+    let harness = Harness::new();
+    let model = harness.store(String::from("linear"));
+    let view = View::new(Binding::constant("Controls".into()));
+    let choices = Binding::constant(vec![wakui2_runtime::Choice {
+        id: "linear".into(),
+        label: "Linear".into(),
+    }]);
+    view.combo(
+        &view.root(),
+        "combo",
+        choices,
+        model.bind(Clone::clone, Some(|state, value| *state = value)),
+    );
+    assert!(view.error().is_none());
+    assert!(model.update(|state| *state = "missing".into()));
+    assert!(view.error().unwrap().contains("selected"));
+    assert!(model.update(|state| *state = "linear".into()));
+    view.select("combo", "linear").unwrap();
+    assert_eq!(model.snapshot(), "linear");
+    view.close();
+    assert!(view.select("combo", "linear").is_err());
+}
+
+#[cfg(target_os = "linux")]
 #[derive(Clone, Default)]
 struct LayoutDraft {
     name: String,
