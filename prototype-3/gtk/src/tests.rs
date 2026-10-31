@@ -1359,7 +1359,9 @@ fn native_root_style() {
     let view = View::new(Binding::constant("Root style".into()));
     let root = view.root().widget;
     let outer = view.native_window().child().unwrap();
-    assert_eq!(root.parent().as_ref(), Some(&outer));
+    let canvas = root.parent().unwrap();
+    assert!(canvas.is::<gtk::Box>());
+    assert!(canvas.parent().unwrap().is::<gtk::Viewport>());
     assert_eq!(
         view.widget::<gtk::Box>("__root")
             .unwrap()
@@ -1369,7 +1371,7 @@ fn native_root_style() {
     {
         let nodes = view.0.nodes.borrow();
         assert_eq!(nodes["__root"].frame.upcast_ref::<gtk::Widget>(), &root);
-        assert_eq!(nodes["__root"].parent.widget, outer);
+        assert_eq!(nodes["__root"].parent.widget, canvas);
     }
     view.label(&view.root(), "child", Binding::constant("content".into()));
     view.style(
@@ -1398,9 +1400,9 @@ fn native_root_style() {
     let padding = root.style_context().padding();
     assert_eq!((padding.top(), padding.right()), (6, 7));
     assert_eq!((padding.bottom(), padding.left()), (8, 9));
-    assert_eq!(root.parent().as_ref(), Some(&outer));
+    assert_eq!(root.parent().as_ref(), Some(&canvas));
     assert!(outer.first_child().unwrap().is::<gtk::PopoverMenuBar>());
-    assert_eq!(outer.last_child().as_ref(), Some(&root));
+    assert!(outer.last_child().unwrap().is::<gtk::ScrolledWindow>());
     assert_eq!(root.first_child(), root.last_child());
     assert_eq!(
         view.0.nodes.borrow()["child"].frame.parent().as_ref(),
