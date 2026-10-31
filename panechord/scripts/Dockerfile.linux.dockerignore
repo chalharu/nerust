@@ -1,0 +1,7 @@
+.git
+**/target
+**/__pycache__
+**/.DS_Store
+roms
+test-archive-rom
+packaging/android/.gradle
