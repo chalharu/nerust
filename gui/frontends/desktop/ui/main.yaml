@@ -1,0 +1,10 @@
+schema_version: 2
+root:
+  type: Window
+  id: main
+  title: {literal: "Nerust"}
+  content:
+    type: Native
+    id: screen
+    factory: crate::view::screen
+    value: {bind: {path: screen}}
