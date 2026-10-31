@@ -9,8 +9,5 @@ export WAKUI_ALLOW_CLIPBOARD_PROBE=1
 
 cargo run --locked --release -p wakui3-macos --example conformance
 cargo run --locked --release -p wakui3-library --no-default-features --features backend-macos -- --smoke
-cargo test --locked --release -p wakui3-settings --no-default-features --features backend-macos \
-    settings_draft_projection -- --ignored --nocapture
-cargo test --locked --release -p wakui3-library --no-default-features --features backend-macos \
-    library_rescan_projection -- --ignored --nocapture
-printf '%s\n' 'MEASURE3 MACOS PASS: informational CPU drawing, synthetic input, sandbox scan bursts and projection workloads (no timing thresholds)'
+sh scripts/measure.sh
+printf '%s\n' 'MEASURE3 MACOS PASS: release CPU budgets, 4-window image/edit/selection generation contracts and informational synthetic input'

@@ -47,6 +47,10 @@ pub mod fake {
     pub struct View(RefCell<String>);
 
     impl View {
+        pub fn try_layout(&self, parent: &Parent, id: &str, layout: Layout) -> Result<Parent, String> {
+            Ok(self.layout(parent, id, layout))
+        }
+        pub fn report_error(&self, error: String) { panic!("{error}"); }
         pub fn new(_: Binding<String>) -> Self {
             Self(RefCell::new(String::new()))
         }

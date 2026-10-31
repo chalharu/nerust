@@ -122,6 +122,113 @@ fn replace_snapshot<T>(
     Ok(())
 }
 impl View {
+    pub fn hierarchical_menu<A: Clone + PartialEq + 'static>(
+        &self,
+        id: &str,
+        title: Binding<String>,
+        items: Binding<Vec<wakui2_runtime::MenuNode<A>>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
+    ) {
+        let weak = self.downgrade();
+        let checked = wakui2_runtime::checked_menu(items, validate, move |error| {
+            if let Some(view) = weak.upgrade() {
+                view.report_error(error);
+            }
+        });
+        self.typed_menu(
+            id,
+            title,
+            checked.map(|tree| wakui2_runtime::flatten_menu(&tree).unwrap()),
+            dispatch,
+        );
+        let submenu = self
+            .0
+            .menus
+            .items()
+            .last()
+            .and_then(|item| item.as_submenu().cloned())
+            .expect("constructed menu");
+        let weak = self.downgrade();
+        let token = checked.subscribe(Rc::new(move |tree| {
+            fn leaves(items: &[muda::MenuItemKind], result: &mut Vec<muda::MenuItemKind>) {
+                for item in items {
+                    if let Some(submenu) = item.as_submenu() {
+                        leaves(&submenu.items(), result);
+                    } else {
+                        result.push(item.clone());
+                    }
+                }
+            }
+            fn build<A>(
+                tree: &[wakui2_runtime::MenuNode<A>],
+                leaves: &mut impl Iterator<Item = muda::MenuItemKind>,
+            ) -> Result<Vec<muda::MenuItemKind>, String> {
+                let mut result = Vec::new();
+                for node in tree {
+                    match node {
+                        wakui2_runtime::MenuNode::Item(_) => {
+                            result.push(leaves.next().ok_or("missing native menu leaf")?)
+                        }
+                        wakui2_runtime::MenuNode::Submenu {
+                            label,
+                            enabled,
+                            children,
+                            ..
+                        } => {
+                            let menu = muda::Submenu::new(label, *enabled);
+                            for item in build(children, leaves)? {
+                                menu.append(native_ref(&item))
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            result.push(menu.kind());
+                        }
+                    }
+                }
+                Ok(result)
+            }
+            let Some(view) = weak.upgrade() else {
+                return;
+            };
+            let previous = submenu.items();
+            let mut flat = Vec::new();
+            leaves(&previous, &mut flat);
+            let result = build(&tree, &mut flat.into_iter()).and_then(|next| {
+                clear_accelerators(&previous)?;
+                for item in &previous {
+                    submenu
+                        .remove(native_ref(item))
+                        .map_err(|error| error.to_string())?;
+                }
+                for item in &next {
+                    submenu
+                        .append(native_ref(item))
+                        .map_err(|error| error.to_string())?;
+                }
+                let mut native_leaves = Vec::new();
+                leaves(&submenu.items(), &mut native_leaves);
+                for (item, native) in wakui2_runtime::flatten_menu(&tree)?
+                    .iter()
+                    .zip(native_leaves)
+                {
+                    if let Some(native) = native.as_menuitem() {
+                        let shortcut = item.shortcut.as_deref().map(parse_shortcut).transpose()?;
+                        native
+                            .set_accelerator(shortcut)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                while submenu.remove_at(0).is_some() {}
+                for item in &previous {
+                    let _ = submenu.append(native_ref(item));
+                }
+                view.report_error(error);
+            }
+        }));
+        self.keep(token);
+    }
     pub fn menu(
         &self,
         id: &str,
@@ -208,7 +315,7 @@ impl View {
                         let owner = weak.clone();
                         Some(Rc::new(move || {
                             if let Some(inner) = owner.upgrade() {
-                                View(inner).request_close();
+                                View(inner).request_quit();
                             }
                         }) as Rc<dyn Fn()>)
                     } else {

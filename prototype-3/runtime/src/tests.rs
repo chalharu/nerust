@@ -1,3 +1,38 @@
+#[test]
+fn nested_menu_validates_complete_tree_and_inherits_enablement() {
+    let item = MenuItem {
+        id: "save".into(),
+        label: "Save".into(),
+        argument: 7_u64,
+        shortcut: Some("Ctrl+S".into()),
+        role: MenuRole::Normal,
+        enabled: true,
+    };
+    let tree = vec![MenuNode::Submenu {
+        id: "states".into(),
+        label: "States".into(),
+        enabled: false,
+        children: vec![MenuNode::Submenu {
+            id: "slots".into(),
+            label: "Slots".into(),
+            enabled: true,
+            children: vec![MenuNode::Item(item.clone())],
+        }],
+    }];
+    let flat = flatten_menu(&tree).unwrap();
+    assert_eq!(flat[0].argument, 7);
+    assert!(!flat[0].enabled);
+    let mut duplicated = tree.clone();
+    duplicated.push(MenuNode::Item(item));
+    assert!(flatten_menu(&duplicated).is_err());
+    let invalid = vec![MenuNode::Submenu::<u64> {
+        id: "invalid/key".into(),
+        label: "invalid".into(),
+        enabled: true,
+        children: vec![],
+    }];
+    assert!(flatten_menu(&invalid).is_err());
+}
 use crate::*;
 use futures::{
     FutureExt,
@@ -1490,6 +1525,82 @@ fn shutdown_confirms_all_then_cancels_drains_and_closes_multiple_windows() {
         block_on(coordinator.request_shutdown(Duration::ZERO)),
         ShutdownOutcome::Closed
     );
+}
+
+#[test]
+fn shutdown_hook_panics_finish_all_windows_and_report_failure() {
+    for operation in ["cancel", "close", "confirm", "drain"] {
+        for force in [false, true] {
+            let session = Session::new();
+            let coordinator = session.shutdown();
+            let closed = Rc::new(Cell::new(0));
+            let first_closed = closed.clone();
+            let first = WindowHooks {
+                confirm: Rc::new(move || {
+                    async move {
+                        if operation == "confirm" {
+                            panic!("confirm failed");
+                        }
+                        true
+                    }
+                    .boxed_local()
+                }),
+                cancel: Rc::new(move || {
+                    if operation == "cancel" {
+                        panic!("cancel failed");
+                    }
+                }),
+                drain: Rc::new(move || {
+                    async move {
+                        if operation == "drain" {
+                            panic!("drain failed");
+                        }
+                    }
+                    .boxed_local()
+                }),
+                close: Rc::new(move || {
+                    first_closed.set(first_closed.get() + 1);
+                    if operation == "close" {
+                        panic!("close failed");
+                    }
+                }),
+            };
+            let _first = session.register_window("a", first).unwrap();
+            let second_closed = closed.clone();
+            let _second = session
+                .register_window(
+                    "b",
+                    WindowHooks {
+                        confirm: Rc::new(|| async { true }.boxed_local()),
+                        cancel: Rc::new(|| {}),
+                        drain: Rc::new(|| async {}.boxed_local()),
+                        close: Rc::new(move || second_closed.set(second_closed.get() + 1)),
+                    },
+                )
+                .unwrap();
+            if force {
+                coordinator.close_now();
+            } else {
+                assert_eq!(
+                    block_on(coordinator.request_shutdown(Duration::from_secs(1))),
+                    ShutdownOutcome::Failed
+                );
+            }
+            assert_eq!(closed.get(), 2);
+            assert_eq!(coordinator.phase(), ShutdownPhase::Closed);
+            assert_eq!(session.window_count(), 0);
+            let failures = coordinator.failures();
+            let expected = usize::from(!force || matches!(operation, "cancel" | "close"));
+            assert_eq!(failures.len(), expected);
+            if let Some(failure) = failures.first() {
+                assert_eq!(failure.operation, operation);
+                assert_eq!(failure.message, format!("{operation} failed"));
+            }
+            coordinator.close_now();
+            assert_eq!(closed.get(), 2);
+            assert_eq!(coordinator.failures(), failures);
+        }
+    }
 }
 
 #[test]

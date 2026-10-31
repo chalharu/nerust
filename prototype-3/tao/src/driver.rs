@@ -1,5 +1,5 @@
 //! Native loop adapted from prototype_1; rendering and futures remain UI-local.
-use super::{Message, View, input, panic_error, scheduler::Scheduler};
+use super::{Message, TaoHost, View, input, panic_error, scheduler::Scheduler};
 use iced::{Size, mouse};
 #[cfg(not(target_os = "linux"))]
 use iced_tiny_skia::{
@@ -23,7 +23,6 @@ use tao::{
     platform::run_return::EventLoopExtRunReturn,
     window::{Window, WindowBuilder},
 };
-use wakui2_runtime::Executor;
 #[cfg(target_os = "linux")]
 use {gtk::prelude::*, tao::platform::unix::WindowExtUnix};
 
@@ -33,7 +32,7 @@ mod input_tests;
 #[derive(Debug)]
 enum Native {
     Wake(usize),
-    Refresh,
+    Refresh(usize),
     Turn,
     Menu(muda::MenuId),
 }
@@ -63,16 +62,6 @@ struct MenuBridge;
 impl Drop for MenuBridge {
     fn drop(&mut self) {
         MENU_PROXY.lock().unwrap().take();
-    }
-}
-struct Session {
-    view: View,
-    executor: Rc<Scheduler>,
-}
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.view.close();
-        self.executor.close();
     }
 }
 struct ExecutorGuard(Rc<Scheduler>);
@@ -261,6 +250,7 @@ struct Desktop {
     window: Arc<Window>,
     view: View,
     painter: Rc<RefCell<Painter>>,
+    active: std::cell::Cell<bool>,
     #[cfg(target_os = "linux")]
     area: gtk::DrawingArea,
     #[cfg(target_os = "linux")]
@@ -421,6 +411,7 @@ impl Desktop {
                 window,
                 view: view.clone(),
                 painter,
+                active: std::cell::Cell::new(false),
                 area,
                 signals,
             })
@@ -434,8 +425,6 @@ impl Desktop {
                 unsafe { view.0.menus.init_for_hwnd(window.hwnd() as isize) }
                     .map_err(|e| e.to_string())?;
             }
-            #[cfg(target_os = "macos")]
-            view.0.menus.init_for_nsapp();
             let mut compositor =
                 compositor::new(iced_tiny_skia::Settings::default(), window.clone());
             let size = window.inner_size();
@@ -444,6 +433,7 @@ impl Desktop {
                 window,
                 view: view.clone(),
                 painter,
+                active: std::cell::Cell::new(false),
                 compositor,
                 surface,
                 size: (size.width, size.height),
@@ -466,6 +456,11 @@ impl Desktop {
                 .to_logical::<f64>(self.window.scale_factor());
             Size::new(s.width as f32, s.height as f32)
         }
+    }
+    fn activate(&self) {
+        self.active.set(true);
+        #[cfg(target_os = "macos")]
+        self.view.0.menus.init_for_nsapp();
     }
     fn offset(&self) -> iced::Point {
         #[cfg(target_os = "linux")]
@@ -593,13 +588,17 @@ impl Drop for Desktop {
             }
         }
         #[cfg(target_os = "macos")]
-        self.view.0.menus.remove_for_nsapp();
+        if self.active.get() {
+            self.view.0.menus.remove_for_nsapp();
+        }
     }
 }
 fn redraw() -> iced::Event {
     iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now()))
 }
-pub(super) fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), String> {
+pub(super) fn run(
+    make: impl FnOnce(Rc<TaoHost>) -> Result<(), String> + 'static,
+) -> Result<(), String> {
     catch_unwind(AssertUnwindSafe(|| -> Result<(), String> {
         let mut builder = EventLoopBuilder::<Native>::with_user_event();
         #[cfg(target_os = "windows")]
@@ -634,19 +633,18 @@ pub(super) fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Resu
             wake.send(Native::Wake(id))
         })));
         let _executor_guard = ExecutorGuard(executor.clone());
-        let session = Session {
-            view: make(executor.clone()),
-            executor,
-        };
-        let view = &session.view;
-        #[cfg(target_os = "windows")]
-        menu_owner.replace(Rc::downgrade(&view.0));
-        if view.0.closed.get() {
-            return view.error().map_or(Ok(()), Err);
-        }
-        let desktop = Desktop::open(&event_loop, view, proxy.clone())?;
-        #[cfg(not(target_os = "linux"))]
-        let mut desktop = desktop;
+        let invalidate = proxy.clone();
+        let host = Rc::new(TaoHost {
+            executor: executor.clone(),
+            views: RefCell::default(),
+            session: RefCell::default(),
+            next: std::cell::Cell::new(0),
+            notify: Rc::new(move |id| invalidate.send(Native::Refresh(id))),
+        });
+        make(host.clone())?;
+        let mut desktops = std::collections::BTreeMap::<usize, Desktop>::new();
+        let mut active = None;
+        let mut error = None;
         MENU_PROXY.lock().unwrap().replace(proxy.clone());
         let _bridge = MenuBridge;
         MENU_INIT.call_once(|| {
@@ -657,68 +655,126 @@ pub(super) fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Resu
                 }
             }))
         });
-        let invalidate = proxy.clone();
-        let owner = Rc::downgrade(&view.0);
-        let pending = Rc::downgrade(&session.executor);
-        view.0.invalidate.replace(Some(Rc::new(move || {
-            if owner.upgrade().is_some_and(|inner| inner.closed.get())
-                && let Some(executor) = pending.upgrade()
-            {
-                executor.close();
+        let status = event_loop.run_return(|event, target, flow| {
+            let pending = host.views.borrow().clone();
+            for (id, view) in pending {
+                if view.0.closed.get() || desktops.contains_key(&id) {
+                    continue;
+                }
+                match Desktop::open(target, &view, proxy.clone()) {
+                    Ok(desktop) => {
+                        desktop.refresh();
+                        desktops.insert(id, desktop);
+                    }
+                    Err(message) => {
+                        error = Some(message.clone());
+                        fail(&view, message);
+                    }
+                }
             }
-            invalidate.send(Native::Refresh);
-        })));
-        view.present();
-        desktop.refresh();
-        let status = event_loop.run_return(|event, _, flow| {
             let result = catch_unwind(AssertUnwindSafe(|| match event {
-                Event::UserEvent(Native::Wake(id)) => session.executor.ready(id),
-                Event::UserEvent(Native::Refresh) => desktop.refresh(),
+                Event::UserEvent(Native::Wake(id)) => executor.ready(id),
+                Event::UserEvent(Native::Refresh(id)) => {
+                    if let Some(desktop) = desktops.get(&id) {
+                        desktop.refresh();
+                    }
+                }
                 Event::UserEvent(Native::Menu(id)) => {
-                    let id = view.0.menu_ids.borrow().get(&id).cloned();
-                    if let Some(id) = id {
-                        let _ = view.dispatch(Message::Menu(id));
+                    for desktop in desktops.values() {
+                        let key = desktop.view.0.menu_ids.borrow().get(&id).cloned();
+                        if let Some(key) = key {
+                            let _ = desktop.view.dispatch(Message::Menu(key));
+                            break;
+                        }
                     }
                 }
                 Event::WindowEvent {
                     window_id, event, ..
-                } if window_id == desktop.window.id() => match event {
-                    WindowEvent::CloseRequested => view.request_close(),
-                    WindowEvent::Destroyed => view.close(),
-                    _ => desktop.event(&event),
-                },
-                #[cfg(not(target_os = "linux"))]
-                Event::RedrawRequested(id) if id == desktop.window.id() => {
-                    if let Err(e) = desktop.draw() {
-                        fail(view, e);
+                } => {
+                    if let Some((&id, desktop)) = desktops
+                        .iter()
+                        .find(|(_, desktop)| desktop.window.id() == window_id)
+                    {
+                        match event {
+                            WindowEvent::CloseRequested => desktop.view.request_close(),
+                            WindowEvent::Destroyed => desktop.view.close(),
+                            WindowEvent::Focused(true) => {
+                                for other in desktops.values() {
+                                    other.active.set(false);
+                                }
+                                desktop.activate();
+                                active = Some(id);
+                                #[cfg(target_os = "windows")]
+                                menu_owner.replace(Rc::downgrade(&desktop.view.0));
+                                desktop.event(&event);
+                            }
+                            _ => desktop.event(&event),
+                        }
                     }
                 }
-                Event::MainEventsCleared if session.executor.turn() => proxy.send(Native::Turn),
+                #[cfg(not(target_os = "linux"))]
+                Event::RedrawRequested(id) => {
+                    if let Some(desktop) = desktops
+                        .values_mut()
+                        .find(|desktop| desktop.window.id() == id)
+                        && let Err(e) = desktop.draw()
+                    {
+                        fail(&desktop.view, e);
+                    }
+                }
+                Event::MainEventsCleared if executor.turn() => proxy.send(Native::Turn),
                 _ => {}
             }));
             if let Err(panic) = result {
-                fail(view, panic_error(panic));
+                error = Some(panic_error(panic));
+                for desktop in desktops.values() {
+                    desktop.view.close();
+                }
             }
-            if view.0.closed.get() {
-                session.executor.close();
+            desktops.retain(|_, desktop| {
+                if desktop.view.0.closed.get() {
+                    if error.is_none() {
+                        error = desktop.view.error();
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+            host.views
+                .borrow_mut()
+                .retain(|(_, view)| !view.0.closed.get());
+            if active.is_none_or(|id| !desktops.contains_key(&id)) {
+                active = desktops.keys().next().copied();
+                if let Some(desktop) = active.and_then(|id| desktops.get(&id)) {
+                    desktop.activate();
+                    #[cfg(target_os = "windows")]
+                    menu_owner.replace(Rc::downgrade(&desktop.view.0));
+                }
+            }
+            if host.views.borrow().is_empty() || error.is_some() {
+                executor.close();
                 *flow = ControlFlow::Exit;
             } else {
-                let (due, deadline) = {
+                let mut deadline = None;
+                for desktop in desktops.values() {
                     let mut painter = desktop.painter.borrow_mut();
                     let due = painter.deadline.is_some_and(|at| at <= Instant::now());
                     if due {
                         painter.deadline = None;
                     }
-                    (due, painter.deadline)
-                };
-                if due {
-                    desktop.refresh();
+                    if let Some(at) = painter.deadline {
+                        deadline = Some(deadline.map_or(at, |old: Instant| old.min(at)));
+                    }
+                    drop(painter);
+                    if due {
+                        desktop.refresh();
+                    }
                 }
                 *flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
             }
         });
-        view.close();
-        if let Some(error) = view.error() {
+        if let Some(error) = error {
             return Err(error);
         }
         if status != 0 {
