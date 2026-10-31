@@ -25,6 +25,17 @@ pub struct SessionAdapter {
 
 impl SessionAdapter {
     pub(crate) fn debugger_layout_begin(&self) -> (String, nerust_gui_shell::debug::DrainFlight) {
+        self.debug_layout_begin(false)
+    }
+
+    pub(crate) fn ppu_layout_begin(&self) -> nerust_gui_shell::debug::DrainFlight {
+        self.debug_layout_begin(true).1
+    }
+
+    fn debug_layout_begin(
+        &self,
+        need_images: bool,
+    ) -> (String, nerust_gui_shell::debug::DrainFlight) {
         let spaces = self.session.debug_spaces();
         let space = spaces.first();
         let input = nerust_gui_shell::debug::DebugDrainInput {
@@ -35,7 +46,7 @@ impl SessionAdapter {
             reg_target: None,
             freeze: None,
             prev_dump_rows: &[],
-            need_images: false,
+            need_images,
         };
         (
             space
