@@ -19,6 +19,17 @@ pub fn format_register(name: &'static str, value: u64) -> String {
     format!("{name}: 0x{value:04X}")
 }
 
+/// Format a dump row address with selection and change markers.
+pub fn format_dump_address(addr: u32, selected: bool, changed: bool) -> String {
+    let marker = match (selected, changed) {
+        (true, true) => ">*",
+        (true, false) => "> ",
+        (false, true) => " *",
+        (false, false) => "  ",
+    };
+    format!("{marker}0x{addr:08X}:")
+}
+
 /// Format one cell by its column kind.
 pub fn format_cell(cell: &CellValue, kind: ColumnKind) -> String {
     match (cell, kind) {

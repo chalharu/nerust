@@ -245,6 +245,35 @@ def capture(binary, original, destination, settings_review=False, history_review
 
                                 native = open_debugger()
                                 debugger_snapshot(native, "debugger-initial")
+                                import pyatspi
+
+                                def memory_cells():
+                                    frame = layout.window(process.pid, "Debugger")
+                                    if frame is None:
+                                        return None
+                                    heads = [node for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name.strip() == "0x00000000:" and layout.visible_in_frame(node, frame)]
+                                    if not heads:
+                                        return None
+                                    cells = [node for node in heads[0].parent if node.getRoleName() == "push button"]
+                                    return cells if len(cells) == 17 else None
+
+                                cells = wait(memory_cells)
+                                rectangles = [layout.bounds(cell) for cell in cells]
+                                gaps = [right["x"] - left["x"] - left["width"] for left, right in zip(rectangles, rectangles[1:])]
+                                if gaps != [36] * 16:
+                                    raise RuntimeError(f"Memory accessible content gaps drifted: {gaps}")
+                                for column in [1, 2]:
+                                    cells = wait(memory_cells)
+                                    action = cells[column].queryAction()
+                                    index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
+                                    if not action.doAction(index):
+                                        raise RuntimeError("Memory cell selection was rejected")
+                                    wait(lambda: memory_cells()[column].getState().contains(pyatspi.STATE_PRESSED))
+                                    if any(cell.getState().contains(pyatspi.STATE_PRESSED) for index, cell in enumerate(memory_cells()) if index != column):
+                                        raise RuntimeError("Previous memory cell selection remained active")
+                                    debugger_snapshot(native, f"debugger-byte-{column}")
+                                    records[-1]["measured"] = {"memory_accessible_content": rectangles, "content_gaps": gaps, "declared_column_gap": 2, "selected_column": column, "bounds_semantics": "AT-SPI content bounds exclude button CSS padding/border; content gap is not layout gap."}
+                                    records[-1]["scope"] = "presentation cell selection and layout; domain mutation bindings not tested"
                                 click_text("Close")
                                 wait(lambda: find_debugger() is None)
                                 native = open_debugger()
