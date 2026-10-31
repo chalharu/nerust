@@ -15,6 +15,16 @@ fn native_style_late_close_contract() {
         Err("x/y placement requires Absolute".into())
     );
     assert_eq!(view.try_style("__root", Style::default()), Ok(()));
+    view.label(&view.root(), "fixed", Binding::constant("Label".into()));
+    let mut fixed = Style::default();
+    fixed.placement.width = Some(120.0);
+    view.try_style("fixed", fixed).unwrap();
+    let frame = view.0.nodes.borrow().get("fixed").unwrap().frame.clone();
+    assert!(!frame.hexpands());
+    assert_eq!(frame.width_request(), 120);
+    view.try_style("fixed", Style::default()).unwrap();
+    assert!(frame.hexpands());
+    assert_eq!(frame.width_request(), -1);
     view.close();
     assert_eq!(
         view.try_style("__root", Style::default()),
