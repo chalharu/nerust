@@ -443,6 +443,104 @@ fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
 
 #[test]
 #[ignore = "isolated Xvfb native contract"]
+fn native_table_selection_writes_back_and_stops_after_close() {
+    use panechord_runtime::{
+        Table, TableCell, TableColumn, TableRow, TableSelection, TextOverflow,
+    };
+    use std::sync::Arc;
+    gtk::init().unwrap();
+    let selection = Store::new(None::<TableSelection>, GtkHost::attach().executor());
+    let data = Table {
+        columns: vec![TableColumn {
+            title: String::new(),
+            width: None,
+            text: Default::default(),
+            overflow: TextOverflow::Clip,
+            stretch: true,
+        }]
+        .into(),
+        rows: vec![Arc::new(TableRow {
+            key: "row".into(),
+            cells: vec![TableCell {
+                text: "Value".into(),
+                foreground: None,
+            }],
+        })]
+        .into(),
+        ..Default::default()
+    };
+    let mut data = data;
+    data.columns = vec![data.columns[0].clone(); 2].into();
+    Arc::make_mut(&mut Arc::make_mut(&mut data.rows)[0])
+        .cells
+        .push(TableCell {
+            text: "Other".into(),
+            foreground: None,
+        });
+    data.column_gap = 2.0;
+    let data = Store::new(data, GtkHost::attach().executor());
+    let source = data.bind(Clone::clone, None::<fn(&mut Table, Table)>);
+    let writer = selection.bind(
+        Clone::clone,
+        Some(|target: &mut Option<TableSelection>, value| *target = value),
+    );
+    let updated = data.clone();
+    let _reentrant = writer.subscribe(Rc::new(move |_| {
+        let _ = updated.update(|table| table.empty_text.push(' '));
+    }));
+    let view = View::new(Binding::constant("selection".into()));
+    view.table_with_selection(&view.root(), "table", source, writer);
+    view.native_window().set_default_size(420, 200);
+    view.present();
+    let root = view.widget::<gtk::Box>("table").unwrap();
+    let overlay = root
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Overlay>()
+        .unwrap();
+    let scroll = overlay
+        .child()
+        .unwrap()
+        .downcast::<gtk::ScrolledWindow>()
+        .unwrap();
+    let list = scroll.child().unwrap().downcast::<gtk::ListView>().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while list.first_child().is_none() && std::time::Instant::now() < deadline {
+        glib::MainContext::default().iteration(true);
+    }
+    let button = list
+        .first_child()
+        .unwrap()
+        .first_child()
+        .unwrap()
+        .first_child()
+        .unwrap()
+        .downcast::<gtk::ToggleButton>()
+        .unwrap();
+    let body = button.parent().unwrap().downcast::<gtk::Box>().unwrap();
+    assert_eq!(body.spacing(), 2);
+    assert!(button.next_sibling().is_some());
+    button.emit_clicked();
+    assert_eq!(
+        selection.snapshot(),
+        Some(TableSelection {
+            row_key: "row".into(),
+            column: 0
+        })
+    );
+    assert!(button.is_active());
+    assert!(selection.update(|selection| *selection = None));
+    assert!(!button.is_active());
+    assert!(data.update(|table| table.rows = Arc::from([])));
+    button.emit_clicked();
+    assert_eq!(selection.snapshot(), None);
+    view.close();
+    button.emit_clicked();
+    assert_eq!(selection.snapshot(), None);
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
 fn native_item_rows_keep_configured_height_with_grid_entries() {
     gtk::init().unwrap();
     let host = GtkHost::attach();

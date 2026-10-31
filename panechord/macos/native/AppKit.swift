@@ -32,10 +32,46 @@ struct TableDefinition: Decodable {
 }
 
 @MainActor
+final class SelectableTableCell: NSTableCellView {
+    weak var owner: TableControl?
+    var rowKey = ""
+    var column = 0
+    override func mouseDown(with event: NSEvent) {
+        if owner?.selectionPresent == true { owner?.pick(self) }
+        else { super.mouseDown(with: event) }
+    }
+}
+
+struct TableCursor: Decodable { let row_key: String; let column: Int }
+
+@MainActor
 final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelegate {
     let table = NSTableView()
     let empty = NSTextField(labelWithString: "")
     var definition: TableDefinition?
+    weak var owner: Host?
+    var key = ""
+    var cursor: TableCursor?
+    var selectionPresent = false
+    var selectionEnabled = false
+
+    func setCursor(_ text: String) {
+        guard let data = text.data(using: .utf8), let value = try? JSONDecoder().decode(TableCursor?.self, from: data) else {
+            if text == "null" { cursor = nil; table.reloadData() }
+            return
+        }
+        cursor = value
+        table.reloadData()
+    }
+
+    func pick(_ cell: SelectableTableCell) {
+        guard selectionEnabled, let owner, !owner.closed, owner.interactive(key), owner.nodes[key] === self,
+              table.row(for: cell) >= 0, let definition,
+              definition.columns.indices.contains(cell.column), definition.rows.contains(where: { $0.key == cell.rowKey }),
+              let data = try? JSONSerialization.data(withJSONObject: [cell.rowKey, cell.column]),
+              let value = String(data: data, encoding: .utf8) else { return }
+        owner.emit(key, value)
+    }
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 264))
@@ -91,7 +127,7 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard let definition = definition else { return 16 }
-        return definition.columns.enumerated().reduce(CGFloat(16)) { height, entry in
+        return definition.columns.enumerated().reduce(CGFloat(selectionPresent ? 34 : 16)) { height, entry in
             let (index, column) = entry
             guard column.overflow == 1 else { return max(height, column.font.ascender - column.font.descender) }
             let width = max(1, tableView.tableColumns[index].width - 4)
@@ -105,7 +141,10 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             let index = Int(tableColumn.identifier.rawValue) else { return nil }
         let column = definition.columns[index]
         let value = definition.rows[row].cells[index]
-        let cell = (tableView.makeView(withIdentifier: tableColumn.identifier, owner: self) as? NSTableCellView) ?? NSTableCellView()
+        let cell = (tableView.makeView(withIdentifier: tableColumn.identifier, owner: self) as? SelectableTableCell) ?? SelectableTableCell()
+        cell.owner = self
+        cell.rowKey = definition.rows[row].key
+        cell.column = index
         cell.identifier = tableColumn.identifier
         cell.setAccessibilityIdentifier(definition.rows[row].key + "/" + String(index))
         let field = cell.textField ?? NSTextField(wrappingLabelWithString: "")
@@ -117,12 +156,15 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
                 field.trailingAnchor.constraint(equalTo: cell.trailingAnchor), field.topAnchor.constraint(equalTo: cell.topAnchor)])
         }
         field.stringValue = value.text
-        field.isSelectable = true
+        field.isSelectable = !selectionPresent
         field.font = column.font
         field.maximumNumberOfLines = column.overflow == 1 ? 0 : 1
         field.lineBreakMode = column.overflow == 2 ? .byTruncatingMiddle : column.overflow == 1 ? .byWordWrapping : .byClipping
         let rgb = value.foreground ?? column.foreground
-        field.textColor = rgb.map { NSColor(srgbRed: Double($0[0]) / 255, green: Double($0[1]) / 255, blue: Double($0[2]) / 255, alpha: 1) } ?? .labelColor
+        let active = cursor?.row_key == cell.rowKey && cursor?.column == index
+        cell.wantsLayer = true
+        cell.layer?.backgroundColor = active ? NSColor.selectedContentBackgroundColor.cgColor : NSColor.clear.cgColor
+        field.textColor = active ? .selectedTextColor : rgb.map { NSColor(srgbRed: Double($0[0]) / 255, green: Double($0[1]) / 255, blue: Double($0[2]) / 255, alpha: 1) } ?? .labelColor
         return cell
     }
 }
@@ -799,7 +841,10 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         }
         view = separator
     case 17:
-        view = TableControl()
+        let table = TableControl()
+        table.owner = value
+        table.key = id
+        view = table
     default:
         let rows = Rows()
         rows.changed = { [weak value] start in value?.emit(id, String(start), kind: 2) }
@@ -814,7 +859,13 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let value = host(pointer)
     let id = string(idBytes, idCount)
     let text = string(textBytes, textCount)
-    if property == 16, let stack = value.nodes[id] as? NSStackView,
+    if property == 18, let table = value.nodes[id] as? TableControl {
+        table.selectionPresent = true
+        table.selectionEnabled = text == "1"
+        table.table.reloadData()
+    } else if property == 17, let table = value.nodes[id] as? TableControl {
+        table.setCursor(text)
+    } else if property == 16, let stack = value.nodes[id] as? NSStackView,
        let data = text.data(using: .utf8), let keys = try? JSONDecoder().decode([String].self, from: data) {
         for key in keys {
             guard let frame = value.frames[key], stack.arrangedSubviews.contains(frame) else { continue }
