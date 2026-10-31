@@ -651,6 +651,11 @@ impl View {
             } else {
                 -1
             });
+            entry.set_max_width_chars(if style.placement.width.is_some() {
+                1
+            } else {
+                -1
+            });
         }
         if let Ok(label) = self.widget::<gtk::Label>(id) {
             table::apply_text_style(&label, style.text);

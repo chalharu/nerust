@@ -153,9 +153,12 @@ fn native_style_late_close_contract() {
     .unwrap();
     let entry = view.widget::<gtk::Entry>("placeholder").unwrap();
     assert!(entry.measure(gtk::Orientation::Horizontal, -1).0 <= 120);
+    assert!(entry.measure(gtk::Orientation::Horizontal, -1).1 <= 120);
     assert_eq!(entry.width_chars(), 1);
+    assert_eq!(entry.max_width_chars(), 1);
     view.try_style("placeholder", Style::default()).unwrap();
     assert_eq!(entry.width_chars(), -1);
+    assert_eq!(entry.max_width_chars(), -1);
     assert!(placeholder.update(|caption| *caption = "Page (hex)".into()));
     assert_eq!(entry.placeholder_text().as_deref(), Some("Page (hex)"));
     view.close();
