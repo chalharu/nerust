@@ -202,8 +202,10 @@ fn update_drives_bookmarks_watch_and_freeze() {
     assert!(bridge.bookmarks().is_empty());
     // A full list refuses loudly.
     for i in 0..8 {
-        bridge.push_bookmark(0x100 + i, format!("BM{i}"), usize::MAX);
+        drive(&bridge, DebugMessage::DisLineClicked(0x100 + i));
+        drive(&bridge, DebugMessage::BookmarkAdd);
     }
+    drive(&bridge, DebugMessage::DisLineClicked(0x999));
     drive(&bridge, DebugMessage::BookmarkAdd);
     assert_eq!(
         bridge.display_snapshot().status,
@@ -359,14 +361,14 @@ fn disasm_marker_never_double_marks_pc() {
     // it, the view prefix contributes blanks.
     let composed = format!(
         "{}{}",
-        disasm_marker(pc_line.is_pc, true),
+        vm::disasm_marker(pc_line.is_pc, true),
         vm::format_disasm_line(&pc_line)
     );
     assert!(composed.starts_with("  >0x"), "got {composed:?}");
     // Pinned non-PC rows keep the `@` in the same column.
-    assert_eq!(disasm_marker(false, true), "@ ");
-    assert_eq!(disasm_marker(false, false), "  ");
-    assert_eq!(disasm_marker(true, false), "  ");
+    assert_eq!(vm::disasm_marker(false, true), "@ ");
+    assert_eq!(vm::disasm_marker(false, false), "  ");
+    assert_eq!(vm::disasm_marker(true, false), "  ");
 }
 
 #[test]
@@ -500,4 +502,31 @@ fn program_boot_and_chrome_are_headless() {
     assert!(matches!(theme, Some(iced::Theme::Light)));
     let _ = program.view(&state, iced::window::Id::unique());
     drop(state);
+}
+
+#[test]
+fn outer_debug_window_uses_common_title_and_existing_grouped_pipeline() {
+    use crate::aux::window::WindowProgram;
+    use nerust_frontend_host::{focus::AuxKind, window::Window};
+
+    let bridge = full_bridge();
+    let mut window = Window::auxiliary(AuxKind::Debug);
+    window.title = "owned debugger title".into();
+    let program = WindowProgram {
+        window,
+        program: DebugProgram {
+            bridge: bridge.clone(),
+        },
+    };
+    let (mut state, _) = program.boot();
+    let id = iced::window::Id::unique();
+    assert_eq!(program.title(&state, id), "owned debugger title");
+    drop(program.update(&mut state, DebugMessage::MemInputChanged("1234".into())));
+    assert_eq!(views::capture_view(&bridge).mem_input, "1234");
+    let element = program.view(&state, id);
+    assert!(
+        !iced::advanced::widget::Tree::new(element.as_widget())
+            .children
+            .is_empty()
+    );
 }

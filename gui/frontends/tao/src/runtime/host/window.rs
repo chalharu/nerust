@@ -5,7 +5,6 @@ use super::{
     create_window_builder, default_fit_window_size, logical_size_from_remembered,
     logical_window_size, window_surface_size,
 };
-use nerust_gui_runtime::shell::NativeShellState;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -18,12 +17,39 @@ use raw_window_handle::RawWindowHandle;
 
 use crate::ports::WindowOpener;
 
-/// Main window cluster: handle, liveness, surface target, fullscreen sync.
-/// All primary-window state lives here; `HostState` dispatches to it.
+use nerust_frontend_host::window::{MainContents, Window, WindowVisitor};
+
+struct CreateMain<'a> {
+    opener: &'a dyn WindowOpener,
+    size: TaoLogicalSize<f64>,
+    fullscreen: bool,
+    title: String,
+    output: Option<Result<Arc<tao::window::Window>, String>>,
+}
+
+impl WindowVisitor for CreateMain<'_> {
+    fn begin_window(&mut self, window: &Window) {
+        self.title.clone_from(&window.title);
+    }
+
+    fn visit_main(&mut self, _: &MainContents) {
+        self.output = Some(self.opener.create_main(create_window_builder(
+            self.size,
+            self.title.clone(),
+            self.fullscreen,
+        )));
+    }
+}
+
+pub(crate) use nerust_frontend_host::loop_driver::WakeNeed;
+use nerust_frontend_host::loop_driver::{LoopHost, TurnLiveness, drive_turn};
+#[cfg(test)]
+pub(crate) use nerust_frontend_host::loop_driver::{earliest_wake, flight_backstop, update_flow};
+
+/// Native main-window handle and surface target.
+/// ApplicationHost owns liveness, close, and fullscreen synchronization.
 pub(crate) struct WindowCluster {
     window: Option<Arc<tao::window::Window>>,
-    close: super::close::MainState,
-    pending_fullscreen_sync: Option<bool>,
     /// Linux render target below the muda menubar (`None` elsewhere).
     #[cfg(any(
         target_os = "linux",
@@ -36,11 +62,19 @@ pub(crate) struct WindowCluster {
 }
 
 impl WindowCluster {
+    pub(super) fn menu_height(&self) -> f64 {
+        let Some(window) = self.live() else {
+            return 0.0;
+        };
+        let Some((_, content, _)) = self.content_target() else {
+            return 0.0;
+        };
+        f64::from(window.inner_size().height.saturating_sub(content.height)) / window.scale_factor()
+    }
+
     pub(super) fn new() -> Self {
         Self {
             window: None,
-            close: super::close::MainState::new(),
-            pending_fullscreen_sync: None,
             #[cfg(any(
                 target_os = "linux",
                 target_os = "dragonfly",
@@ -64,36 +98,6 @@ impl WindowCluster {
         self.window
             .as_ref()
             .is_some_and(|window| window.id() == window_id)
-    }
-
-    /// Record a window-creation failure and retire liveness.
-    pub(super) fn fail(&mut self, detail: String) {
-        self.close.fail(detail);
-    }
-
-    /// Creation failure, if any.
-    pub(super) fn fatal_message(&self) -> Option<&str> {
-        self.close.fatal_message()
-    }
-
-    /// Idempotent close entry: true exactly once.
-    pub(super) fn begin_close(&mut self) -> bool {
-        self.close.begin_close()
-    }
-
-    /// Close teardown already ran (test read of the guard).
-    #[cfg(test)]
-    pub(super) fn close_exited(&self) -> bool {
-        self.close.exited()
-    }
-
-    /// Pending native fullscreen transition, if one is in flight.
-    pub(super) fn pending_fullscreen_sync(&self) -> Option<bool> {
-        self.pending_fullscreen_sync
-    }
-
-    pub(super) fn set_pending_fullscreen_sync(&mut self, pending: Option<bool>) {
-        self.pending_fullscreen_sync = pending;
     }
 
     /// Seat a newly created window, wiring the menubar content area.
@@ -137,9 +141,6 @@ impl WindowCluster {
 
     /// Run `f` on the usable native window, if any.
     pub(super) fn with_usable<R>(&self, f: impl FnOnce(&tao::window::Window) -> R) -> Option<R> {
-        if !self.close.is_usable() {
-            return None;
-        }
         self.window.as_ref().map(|w| f(w))
     }
 
@@ -151,9 +152,6 @@ impl WindowCluster {
 
     /// Shared attach-target resolution: content area below the menubar, else toplevel.
     fn attach_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
-        if !self.close.is_usable() {
-            return None;
-        }
         let window = self.window.as_ref()?;
         if let Some((handle, size, xid)) = self.content_target() {
             return Some((handle, size, Some(xid)));
@@ -188,107 +186,100 @@ impl WindowCluster {
         None
     }
 
-    pub(super) fn request_redraw(&mut self, shell: &mut NativeShellState) {
-        // Liveness gates all dead-handle use: check first, so closed
-        // or failed hosts never flag a redraw that cannot land.
-        if !self.close.is_usable() {
-            log::trace!("tao redraw dropped: no usable window");
-            return;
-        }
-        shell.needs_redraw = true;
+    pub(super) fn request_redraw(&self) {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
     }
 }
 
-/// Per-pump wake contribution. Each `tick_*` pump returns one;
-/// `update_control_flow` folds them into a single [`WakeNeed`].
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct WakeNeed {
-    pub live_tick: Option<Instant>,
-    pub flight_pending: bool,
-    pub osd_deadline: Option<Instant>,
-}
+/// Native Tao ports for the shared end-of-burst driver.
+impl LoopHost for HostState {
+    type Frame = nerust_frontend_host::frame::FrameCtx;
 
-impl WakeNeed {
-    pub(crate) fn fold(self, other: Self) -> Self {
-        Self {
-            live_tick: match (self.live_tick, other.live_tick) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) => Some(a),
-                (None, b) => b,
-            },
-            flight_pending: self.flight_pending || other.flight_pending,
-            osd_deadline: match (self.osd_deadline, other.osd_deadline) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (Some(a), None) => Some(a),
-                (None, b) => b,
-            },
+    fn before_turn(&mut self) {
+        self.on_focus_event(nerust_frontend_host::focus::FocusEvent::BurstEnd);
+    }
+
+    fn frame_ctx(&mut self) -> Self::Frame {
+        self.core.frame_ctx()
+    }
+
+    fn chrome(&mut self, ctx: &Self::Frame) {
+        self.tick_chrome_sync(ctx);
+        self.sync_debug_chrome(ctx);
+    }
+
+    fn pump_debug(&mut self) -> WakeNeed {
+        self.tick_debug_pump()
+    }
+
+    fn pump_osd(&mut self, ctx: &Self::Frame) -> WakeNeed {
+        self.tick_osd_pump(ctx)
+    }
+
+    fn pump_aux(&mut self) -> WakeNeed {
+        if self.core.take_render_retry(Instant::now()) {
+            self.request_redraw();
+        }
+        WakeNeed {
+            osd_deadline: self
+                .aux
+                .pump_deadlines(Instant::now())
+                .into_iter()
+                .chain(self.core.render_retry_deadline())
+                .min(),
+            ..WakeNeed::default()
         }
     }
-}
 
-/// Poll latency for an in-flight drain/live fetch: the backstop that
-/// bounds reply latency when the loop would otherwise sleep.
-pub(crate) fn flight_backstop(now: Instant) -> Instant {
-    now + std::time::Duration::from_millis(30)
-}
+    fn late_liveness(&mut self) -> TurnLiveness {
+        let tick = self.core.tick();
+        TurnLiveness {
+            loaded: tick.loaded,
+            paused: tick.paused,
+            main_active: self.main_active(),
+            live_follow: self.live_follow_active(),
+        }
+    }
 
-/// Earliest deadline wins; no deadline sleeps. Pure (no tao import);
-/// the runtime maps the result to `ControlFlow`.
-pub(crate) fn earliest_wake(input: WakeNeed, now: Instant) -> Option<Instant> {
-    [
-        input.live_tick,
-        input.flight_pending.then(|| flight_backstop(now)),
-        input.osd_deadline,
-    ]
-    .into_iter()
-    .flatten()
-    .min()
-}
-
-/// Pure control-flow decision with injected clock: wake deadline plus repaint flag.
-/// Repaint while focused, while the PPU follows a running core, or while the session runs.
-pub(crate) fn update_flow(
-    now: Instant,
-    tick_loaded: bool,
-    tick_paused: bool,
-    main_active: bool,
-    live_follow: bool,
-    input: WakeNeed,
-) -> (Option<Instant>, bool) {
-    let running = tick_loaded && !tick_paused;
-    (
-        earliest_wake(input, now),
-        main_active || live_follow || running,
-    )
+    fn request_redraw(&mut self) {
+        HostState::request_redraw(self);
+    }
 }
 
 impl HostState {
     pub(crate) fn ensure_window(&mut self, opener: &dyn WindowOpener) {
-        if self.windows.is_some() {
+        if self.windows.is_some() || !self.core.window_usable() {
             return;
         }
 
         let fullscreen = self
-            .session
+            .core
             .settings_snapshot()
             .local
             .video
             .window
             .fullscreen_default;
-        let tick = self.session.tick_metrics();
-        let title = self.session.window_title_cached(&tick).to_owned();
-        let window = match opener.create_main(create_window_builder(
-            self.startup_window_size(),
-            title,
+        let tick = self.core.tick();
+        self.core.title_update(&tick);
+        let model = self.core.main_window().clone();
+        let mut visitor = CreateMain {
+            opener,
+            size: self.startup_window_size(),
             fullscreen,
-        )) {
+            title: String::new(),
+            output: None,
+        };
+        model.visit(&mut visitor);
+        let window = match visitor
+            .output
+            .expect("main contents select main native window")
+        {
             Ok(window) => window,
             Err(detail) => {
                 log::error!("failed to create window: {detail}");
-                self.windows.fail(detail);
+                self.core.fail_window(detail);
                 return;
             }
         };
@@ -304,25 +295,30 @@ impl HostState {
     }
 
     pub(crate) fn window_surface_size(&self) -> Option<SurfaceSize> {
-        self.windows.surface_target().map(|(_, size, _)| size)
+        self.surface_target().map(|(_, size, _)| size)
     }
 
     /// Native attach target for the game renderer: content area below the menubar, else toplevel.
     /// The xid tags the target so a target change recreates the surface.
     pub(crate) fn surface_target(&self) -> Option<(RawWindowHandle, SurfaceSize, Option<u64>)> {
-        self.windows.surface_target()
+        self.core
+            .window_usable()
+            .then(|| self.windows.surface_target())
+            .flatten()
     }
 
     /// Xid the surface is currently attached to (`None` = toplevel fallback).
     pub(crate) fn surface_xid(&self) -> Option<u64> {
-        self.windows.surface_xid()
+        self.core
+            .window_usable()
+            .then(|| self.windows.surface_xid())
+            .flatten()
     }
 
     /// Load a ROM, syncing menu/title/redraw on success. Returns the failure detail on error.
     pub(crate) fn load_path(&mut self, path: &Path) -> Result<(), String> {
-        match self.ctx.rom_loader.load_rom(path, &mut self.session) {
+        match self.core.load_path(self.ctx.rom_loader.as_mut(), path) {
             Ok(()) => {
-                self.reconcile_pause();
                 self.after_rom_load();
                 Ok(())
             }
@@ -335,60 +331,22 @@ impl HostState {
 
     pub(crate) fn update_control_flow(&mut self, control_flow: &mut ControlFlow) {
         // Window creation failed: exit instead of running headless.
-        if let Some(detail) = self.windows.fatal_message() {
+        if let Some(detail) = self.core.fatal_message() {
             log::error!("exiting after window creation failure: {detail}");
             *control_flow = ControlFlow::Exit;
             return;
         }
-        // End-of-burst auto-pause first: pause state settles before
-        // the title/live/drain logic below reads it.
-        self.tick_focus_sync();
-        // One capture for the whole pass: chrome, debug, and OSD pumps share it.
-        let ctx = self.frame_ctx();
-        self.tick_chrome_sync(&ctx);
-        // Deferred focus effects land here: one gated sync covers menu,
-        // title, and drain-due instead of per-event round-trips.
-        self.sync_debug_chrome(&ctx);
-        if self.render_retry.take_due(Instant::now()) {
-            self.request_redraw();
-        }
-        let wake = self
-            .tick_debug_pump()
-            .fold(self.tick_osd_pump(&ctx))
-            .fold(WakeNeed {
-                osd_deadline: self
-                    .aux
-                    .pump_deadlines(Instant::now())
-                    .into_iter()
-                    .chain(self.render_retry.deadline())
-                    .min(),
-                ..WakeNeed::default()
-            });
-        // Drain completion or modal ACK may have changed pause state after the
-        // frame capture. Never park using the pre-ACK paused snapshot.
-        let tick = self.session.tick_metrics();
-        let now = Instant::now();
-        let (deadline, wants_redraw) = update_flow(
-            now,
-            tick.loaded,
-            tick.paused,
-            self.main_active(),
-            self.live_follow_active(),
-            wake,
-        );
-        *control_flow = deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
-
-        // Inactive loop sleeps; a running session repaints even unfocused.
-        if wants_redraw {
-            self.request_redraw();
-        }
+        let outcome = drive_turn(self);
+        *control_flow = outcome
+            .deadline
+            .map_or(ControlFlow::Wait, ControlFlow::WaitUntil);
     }
 
     pub(crate) fn on_render_result(&mut self, result: RenderResult, frame_counter: u64) {
         match result {
             RenderResult::Presented => {
-                self.render_retry.succeeded();
-                self.shell.on_frame_presented(frame_counter);
+                self.core.render_succeeded();
+                self.core.frame_presented(frame_counter);
                 let ctx = self.frame_ctx();
                 self.maybe_refresh_window_title(&ctx, Instant::now());
             }
@@ -399,48 +357,35 @@ impl HostState {
         }
     }
 
-    pub(crate) fn render_ready(&self) -> bool {
-        self.render_retry.ready(Instant::now())
-    }
-
-    pub(crate) fn render_failed(&mut self, detail: String) {
-        if self.render_retry.failed(Instant::now()) {
-            self.session.report_external_error(
-                nerust_gui_shell::session::notification::FailureOrigin::Host,
-                detail,
-            );
-        }
-    }
-
     pub(crate) fn clear_event_handler(&self) {
         self.app_menu.clear_event_handler();
     }
 
     pub(crate) fn request_redraw(&mut self) {
-        if !self.render_ready() {
+        if !self.core.render_ready() || !self.core.window_usable() {
             return;
         }
-        self.windows.request_redraw(&mut self.shell);
+        self.core.note_redraw();
+        self.windows.request_redraw();
     }
     /// Idempotent close teardown: the guard makes flush run exactly once.
     /// Handles drop here: post-loop code re-resolves through liveness.
     pub(crate) fn prepare_close(&mut self) {
-        if !self.windows.begin_close() {
+        if !self.core.begin_close() {
             return;
         }
         self.remember_fit_window_size();
-        // Every cluster drops its windows, sync memos, flights, and
-        // resume flags: no history/modal/resume leaks past close.
-        self.pause_policy = Default::default();
-        self.osd.close_all();
+        // Renderer teardown precedes this at the runtime boundary. Retire
+        // application OSD is retired by begin_close; drop aux before debug
+        // flights, main window, and session flush.
         self.aux.close_all();
-        self.debug.close_flights();
+        self.core.close_debug_flights();
         self.windows.close_main();
-        self.session.flush_before_exit();
+        self.core.finish_close();
     }
     pub(super) fn startup_window_size(&self) -> TaoLogicalSize<f64> {
-        match scaling_factor(self.session.settings_snapshot().local.video.window.scaling) {
-            Some(scale) => logical_window_size(self.session.window_size(), Some(scale)),
+        match scaling_factor(self.core.settings_snapshot().local.video.window.scaling) {
+            Some(scale) => logical_window_size(self.core.session().window_size(), Some(scale)),
             None => self
                 .remembered_fit_window_size()
                 .map(logical_size_from_remembered)
@@ -448,23 +393,23 @@ impl HostState {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn update_window_size_for_scaling(&self) {
         let Some(window) = self.windows.live() else {
             return;
         };
-        let Some(scale) =
-            scaling_factor(self.session.settings_snapshot().local.video.window.scaling)
+        let Some(scale) = scaling_factor(self.core.settings_snapshot().local.video.window.scaling)
         else {
             return;
         };
-        window.set_inner_size(logical_window_size(self.session.window_size(), Some(scale)));
+        window.set_inner_size(logical_window_size(
+            self.core.session().window_size(),
+            Some(scale),
+        ));
     }
 
     fn remembered_fit_window_size(&self) -> Option<RememberedWindowSize> {
-        self.session
-            .settings_snapshot()
-            .app_state
-            .window_size("main")
+        self.core.settings_snapshot().app_state.window_size("main")
     }
 
     pub(super) fn remember_fit_window_size(&mut self) {
@@ -472,7 +417,7 @@ impl HostState {
             return;
         };
         if window.fullscreen().is_some()
-            || scaling_factor(self.session.settings_snapshot().local.video.window.scaling).is_some()
+            || scaling_factor(self.core.settings_snapshot().local.video.window.scaling).is_some()
         {
             return;
         }
@@ -481,7 +426,7 @@ impl HostState {
         let width = logical_size.width.round().max(1.0) as u32;
         let height = logical_size.height.round().max(1.0) as u32;
 
-        if let Err(error) = self.session.update_window_size(width, height) {
+        if let Err(error) = self.core.update_window_size(width, height) {
             log::warn!("failed to remember tao window size: {error}");
         }
     }
@@ -499,12 +444,9 @@ mod tests {
     #[test]
     fn with_usable_stays_total_without_window() {
         use super::WindowCluster;
-        let mut cluster = WindowCluster::new();
+        let cluster = WindowCluster::new();
         assert!(cluster.with_usable(|_| ()).is_none());
         assert_eq!(cluster.client_height(), 0);
-        cluster.fail("no display".to_string());
-        assert!(cluster.with_usable(|_| ()).is_none());
-        assert!(cluster.fatal_message().is_some());
     }
 
     #[test]
@@ -642,37 +584,15 @@ mod tests {
     }
 
     #[test]
-    fn fullscreen_sync_target_round_trips() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        assert!(host.windows.pending_fullscreen_sync().is_none());
-        host.windows.set_pending_fullscreen_sync(Some(true));
-        assert_eq!(host.windows.pending_fullscreen_sync(), Some(true));
-        host.windows.set_pending_fullscreen_sync(None);
-        assert!(host.windows.pending_fullscreen_sync().is_none());
-        host.windows.close_main();
-        assert!(!host.windows.is_some());
-    }
-
-    #[test]
-    fn cluster_close_arms_exactly_once() {
-        let support = TestHost::new();
-        let mut host = support.host;
-        assert!(host.windows.begin_close());
-        assert!(!host.windows.begin_close());
-        assert!(host.windows.close_exited());
-    }
-
-    #[test]
     fn redraw_flag_sets_without_native_window() {
         use nerust_render_traits::renderer::RenderResult;
         let support = TestHost::new();
         let mut host = support.host;
         // Presented clears the flag; the headless redraw re-arms it.
         host.on_render_result(RenderResult::Presented, 0);
-        assert!(!host.shell.needs_redraw);
+        assert!(!host.redraw_needed());
         host.request_redraw();
-        assert!(host.shell.needs_redraw);
+        assert!(host.redraw_needed());
     }
 
     #[test]

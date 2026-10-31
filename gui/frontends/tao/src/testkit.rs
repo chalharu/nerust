@@ -7,7 +7,7 @@ use nerust_gui_shell::debug::DebugAction;
 
 use crate::aux::domain::AuxNativeEvent;
 use crate::aux::focus::AuxKind;
-use crate::aux::registry::{AuxController, DebugDrainPort, LiveImagesPort, SettingsClosePort};
+use crate::aux::registry::{AuxController, DebugDrainPort, LiveImagesPort};
 
 pub(crate) use crate::aux::registry::test_double::StubAux;
 #[cfg(test)]
@@ -21,8 +21,8 @@ mod tests {
         debug.debug_batch = vec![DebugAction::Refresh];
         assert!(debug.as_debug().is_some());
         assert!(debug.as_live().is_some());
-        assert!(debug.as_settings().is_none());
-        assert!(debug.as_history().is_none());
+        assert!(debug.as_widget().is_none());
+        assert!(debug.widget_mailbox().is_none());
         assert!(debug.debug_snapshot_of(true).expect("debug snaps").ppu_open);
         let applied = Rc::clone(&debug.applied_drain);
         debug
@@ -33,11 +33,11 @@ mod tests {
 
         let mut history = StubAux::new(AuxKind::History);
         assert!(history.as_debug().is_none());
-        assert!(history.as_history().is_some());
+        assert!(history.as_widget().is_none());
         let mut settings = StubAux::new(AuxKind::Settings);
-        assert!(settings.as_settings().is_some());
+        assert!(settings.as_widget().is_none());
         assert!(settings.as_debug().is_none());
-        assert!(settings.take_pending_settings().is_none());
+        assert!(settings.widget_mailbox().is_none());
     }
 
     #[test]
@@ -47,19 +47,14 @@ mod tests {
         assert!(DebugDrainPort::take_debug_requests(&mut stub).is_none());
         assert!(stub.debug_snapshot_of(false).is_none());
         assert!(!LiveImagesPort::apply_live(&mut stub, 1, Vec::new(), false));
-        assert!(SettingsClosePort::take_pending_settings(&mut stub).is_none());
-        assert!(
-            !stub
-                .as_history()
-                .expect("history port")
-                .take_history_clear()
-        );
+        assert!(stub.widget_mailbox().is_none());
+        assert!(!stub.on_redraw().submitted);
         assert!(stub.shared_bridge().is_none());
         assert!(stub.debug_lock_audit().is_empty());
         // Kind-gated queries: a history stub never answers debug ports.
         assert!(stub.as_debug().is_none());
-        assert!(stub.as_settings().is_none());
-        assert!(stub.as_history().is_some());
+        assert!(stub.as_widget().is_none());
+        assert!(stub.widget_mailbox().is_none());
         let _ = DisplayCache::default();
     }
 
@@ -67,9 +62,13 @@ mod tests {
     fn stub_pump_reports_close_and_clear_flags() {
         let mut history = StubAux::new(AuxKind::History);
         history.close = true;
-        history.clear_history = true;
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, mut session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
+        crate::aux::widgets::bindings::tests::activate(&mut session, "Clear History");
+        history.mailbox = Some(session.mailbox());
         let outcome = history.on_event(AuxNativeEvent::Focused(true));
         assert!(outcome.close);
-        assert!(outcome.cleared);
+        assert!(outcome.submitted);
     }
 }

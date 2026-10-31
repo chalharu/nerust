@@ -33,44 +33,7 @@ pub(crate) const DEBUG_WINDOW_MIN_SIZE: (f64, f64) = (900.0, 650.0);
 /// Right state column width.
 const STATE_COLUMN_WIDTH: f32 = 340.0;
 
-/// In-window debugger message. Pure: update touches the bridge only.
-#[derive(Debug, Clone)]
-pub(crate) enum DebugMessage {
-    RefreshPressed,
-    SpacePrev,
-    SpaceNext,
-    TogglePausePressed,
-    StepFramePressed,
-    StepInstrPressed,
-    PpuOpenPressed,
-    MemInputChanged(String),
-    MemGo,
-    MemPage(i32),
-    DisInputChanged(String),
-    DisGo,
-    FollowPcToggle,
-    DisLineClicked(u32),
-    FollowTarget(u32),
-    DisBack,
-    BookmarkInputChanged(String),
-    BookmarkAdd,
-    BookmarkJump(u32),
-    BookmarkDelete(u32),
-    WatchSet,
-    WatchClear,
-    FreezeInputChanged(String),
-    FreezeSet,
-    EditFreezeSet,
-    FreezeClear,
-    RowSelected(u32),
-    EditInputChanged(String),
-    EditWrite,
-    ConfirmWrite,
-    CancelWrite,
-    RegSelected(&'static str),
-    RegInputChanged(String),
-    RegSet,
-}
+pub(crate) use nerust_frontend_host::debugger::DebuggerEvent as DebugMessage;
 
 pub(crate) struct DebugState {
     bridge: Arc<DebugBridge>,
@@ -78,6 +41,10 @@ pub(crate) struct DebugState {
 
 pub(crate) struct DebugProgram {
     pub(crate) bridge: Arc<DebugBridge>,
+}
+
+impl super::window::GroupedProgram for DebugProgram {
+    const KIND: super::focus::AuxKind = super::focus::AuxKind::Debug;
 }
 
 impl Program for DebugProgram {
@@ -241,7 +208,7 @@ impl Program for DebugProgram {
 }
 
 pub(crate) struct DebugWindowHandle {
-    shell: crate::aux::shell::AuxShell<DebugProgram>,
+    shell: crate::aux::shell::AuxShell<super::window::WindowProgram<DebugProgram>>,
     bridge: Arc<DebugBridge>,
 }
 
@@ -297,6 +264,7 @@ fn cursor_page(physical: &iced::keyboard::key::Physical) -> Option<DebugMessage>
 
 impl DebugWindowHandle {
     pub(crate) fn new(
+        window: nerust_frontend_host::window::Window,
         display: DisplayCache,
         spaces: Vec<(SpaceId, String, u32)>,
         mem_addr: u32,
@@ -305,10 +273,9 @@ impl DebugWindowHandle {
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
         let bridge = Arc::new(DebugBridge::new(display, spaces, mem_addr, language));
-        let title = ui_text(language, UiText::Debugger).to_string();
         let surface = AuxSurface::open(
             event_loop,
-            &title,
+            &window.title,
             DEBUG_WINDOW_SIZE,
             Some(DEBUG_WINDOW_MIN_SIZE),
             position,
@@ -324,7 +291,8 @@ impl DebugWindowHandle {
         let program = DebugProgram {
             bridge: Arc::clone(&bridge),
         };
-        let (instance, _task) = program::Instance::new(program);
+        let (instance, _task) =
+            program::Instance::new(super::window::WindowProgram { window, program });
         let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
         Some(Self { shell, bridge })
     }

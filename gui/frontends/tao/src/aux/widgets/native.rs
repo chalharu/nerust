@@ -1,0 +1,340 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+use iced_winit::program;
+use nerust_frontend_host::{
+    application::ApplicationHost,
+    widget_session::{WidgetSession, WindowMailbox},
+    window::Window,
+};
+use tao::event_loop::EventLoopWindowTarget;
+
+use super::bindings::{ControlsBinding, ControlsState, Message};
+use crate::aux::shell::{AuxShell, AuxSurface};
+use crate::aux::window::{WidgetBinding, WindowProgram};
+
+/// A native window owns only surface/shell and typed widget signals.
+pub(crate) struct WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+{
+    shell: AuxShell<WindowProgram<B>>,
+    signals: S,
+    kind: crate::aux::focus::AuxKind,
+}
+
+pub(crate) trait WidgetSignals<B: WidgetBinding> {
+    fn close_flag(&self) -> &Arc<AtomicBool>;
+    fn refresh_flag(&self) -> &AtomicBool;
+    fn capture(&self, _event: &iced::Event) -> Option<B::Message> {
+        None
+    }
+}
+
+impl<B, S> WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+    S: WidgetSignals<B>,
+{
+    fn open(
+        window: nerust_frontend_host::window::Window,
+        binding: B,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
+        signals: S,
+        size: (f64, f64),
+    ) -> Option<Self> {
+        let kind = binding.kind();
+        let surface = AuxSurface::open(
+            event_loop,
+            &window.title,
+            size,
+            None,
+            None,
+            kind.log_tag(),
+            Arc::clone(signals.close_flag()),
+        )
+        .map_err(|error| {
+            // Typed scaffold failure: surface the tagged native detail here.
+            log::error!("{error}");
+            error
+        })
+        .ok()?;
+        // Birth geometry is a placeholder on some compositors; record
+        // it to tell "born 0x0, never resized" apart from later traffic.
+        let (viewport_w, viewport_h) = surface.viewport();
+        log::debug!(
+            "widget create: physical={viewport_w}x{viewport_h} scale={} bounds={:?}",
+            surface.scale(),
+            surface.bounds(),
+        );
+        let (instance, _task) = program::Instance::new(WindowProgram {
+            window,
+            program: binding,
+        });
+        let shell = AuxShell::assemble(surface, instance);
+        Some(Self {
+            shell,
+            signals,
+            kind,
+        })
+    }
+}
+
+impl<B, S> crate::aux::focus::AuxShellRef for WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+{
+    fn kind(&self) -> crate::aux::focus::AuxKind {
+        self.kind
+    }
+
+    fn shell(&self) -> &dyn crate::aux::shell::AuxShellOps {
+        &self.shell
+    }
+
+    fn shell_mut(&mut self) -> &mut dyn crate::aux::shell::AuxShellOps {
+        &mut self.shell
+    }
+}
+
+impl<B, S> crate::aux::focus::AuxEvents for WidgetWindow<B, S>
+where
+    B: WidgetBinding<Theme = iced::Theme, Renderer = iced_tiny_skia::Renderer>,
+    S: WidgetSignals<B>,
+{
+    fn handle(&mut self, mapped: iced::Event) -> bool {
+        let extra = self.signals.capture(&mapped);
+        self.shell
+            .pump_finish(mapped, extra, self.signals.refresh_flag())
+    }
+}
+
+pub(crate) struct WindowSignals {
+    session: ControlsState,
+    mailbox: WindowMailbox,
+    should_close: Arc<AtomicBool>,
+    view_invalidated: AtomicBool,
+}
+
+pub(crate) type ControlsWindowHandle = WidgetWindow<ControlsBinding, WindowSignals>;
+
+impl ControlsWindowHandle {
+    pub(crate) fn new(
+        window: Window,
+        session: WidgetSession,
+        event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
+    ) -> Option<Self> {
+        let binding = ControlsBinding::new(session);
+        let session = binding.session();
+        let signals = WindowSignals {
+            mailbox: session.borrow().mailbox(),
+            session: session.clone(),
+            should_close: Default::default(),
+            view_invalidated: AtomicBool::new(false),
+        };
+        Self::open(window, binding, event_loop, signals, (960.0, 720.0))
+    }
+}
+
+impl crate::aux::registry::AuxController for ControlsWindowHandle {
+    fn as_widget(&mut self) -> Option<&mut dyn crate::aux::registry::WidgetSessionPort> {
+        Some(self)
+    }
+    fn widget_mailbox(&self) -> Option<WindowMailbox> {
+        Some(self.signals.mailbox.clone())
+    }
+}
+
+impl crate::aux::registry::WidgetSessionPort for ControlsWindowHandle {
+    fn refresh_widget(&mut self, host: &mut ApplicationHost) -> Window {
+        let window = {
+            let mut session = self.signals.session.borrow_mut();
+            host.refresh_widget_session(&mut session);
+            session.window()
+        };
+        if self.signals.mailbox.take_invalidated() {
+            self.signals.view_invalidated.store(true, Ordering::Release);
+            self.shell.process([], &self.signals.view_invalidated);
+        }
+        window
+    }
+}
+
+impl WidgetSignals<ControlsBinding> for WindowSignals {
+    fn close_flag(&self) -> &Arc<AtomicBool> {
+        &self.should_close
+    }
+    fn refresh_flag(&self) -> &AtomicBool {
+        &self.view_invalidated
+    }
+    fn capture(&self, mapped: &iced::Event) -> Option<Message> {
+        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            physical_key,
+            repeat: false,
+            ..
+        }) = mapped
+        {
+            super::bindings::keyboard_key_from_physical(*physical_key).map(Message::capture_key)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::{Event, Point, keyboard, mouse};
+    use std::sync::atomic::AtomicBool;
+    use tao::{dpi::PhysicalPosition, event::WindowEvent};
+
+    use crate::aux::native::adapt_event;
+    use crate::convert::{FeedContext, feed_domain_event};
+
+    #[test]
+    fn widget_signals_keep_close_separate_from_repaint_and_clear() {
+        let mut support = crate::runtime::host::TestHost::new().host;
+        let (_, session) = super::super::bindings::tests::prepare(
+            &mut support,
+            crate::aux::focus::AuxKind::History,
+        );
+        let settings = WindowSignals {
+            mailbox: session.mailbox(),
+            session: std::rc::Rc::new(std::cell::RefCell::new(session)),
+            should_close: Default::default(),
+            view_invalidated: AtomicBool::new(false),
+        };
+        settings.close_flag().store(true, Ordering::Release);
+        settings.refresh_flag().store(true, Ordering::Release);
+        assert!(settings.refresh_flag().swap(false, Ordering::AcqRel));
+        assert!(settings.close_flag().load(Ordering::Acquire));
+
+        settings.mailbox.request_close();
+        settings.mailbox.invalidate();
+        assert!(settings.mailbox.take_invalidated());
+        assert!(settings.mailbox.close_requested());
+        assert!(!settings.mailbox.has_pending());
+    }
+
+    fn initial_cursor() -> mouse::Cursor {
+        mouse::Cursor::Available(Point::new(0.0, 0.0))
+    }
+
+    fn feed(
+        event: WindowEvent,
+        cursor: &mut mouse::Cursor,
+        modifiers: &mut keyboard::Modifiers,
+        should_close: &AtomicBool,
+    ) -> Option<Event> {
+        feed_domain_event(
+            adapt_event(&event),
+            &mut FeedContext {
+                cursor,
+                modifiers,
+                scale_factor: 1.0,
+                should_close,
+            },
+        )
+    }
+
+    // Helper: Tao's MouseInput/CursorMoved/etc require a deprecated modifiers field.
+    fn dummy_mods() -> tao::keyboard::ModifiersState {
+        tao::keyboard::ModifiersState::default()
+    }
+
+    // SAFETY: Tao's DeviceId::dummy() is unsafe but stable across versions.
+    // We call it once here rather than inlining unsafe in every test.
+    fn dummy_dev() -> tao::event::DeviceId {
+        unsafe { tao::event::DeviceId::dummy() }
+    }
+
+    #[test]
+    fn cursor_moved_updates_cursor_and_returns_event() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::CursorMoved {
+            device_id: dummy_dev(),
+            position: PhysicalPosition::new(200.0, 300.0),
+            modifiers: dummy_mods(),
+        };
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
+        assert!(result.is_some());
+        assert!(matches!(
+            result.unwrap(),
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+        ));
+        assert!(!should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn cursor_left_sets_unavailable() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::CursorLeft {
+            device_id: dummy_dev(),
+        };
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
+        assert!(result.is_none());
+        assert!(matches!(cursor, mouse::Cursor::Unavailable));
+    }
+
+    #[test]
+    fn close_requested_sets_flag() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::CloseRequested;
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
+        assert!(result.is_none());
+        assert!(should_close.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn mouse_input_pressed() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::MouseInput {
+            device_id: dummy_dev(),
+            state: tao::event::ElementState::Pressed,
+            button: tao::event::MouseButton::Left,
+            modifiers: dummy_mods(),
+        };
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
+        assert!(result.is_some());
+        assert!(matches!(
+            result.unwrap(),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+        ));
+    }
+
+    #[test]
+    fn mouse_other_button_ignored() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        let event = WindowEvent::MouseInput {
+            device_id: dummy_dev(),
+            state: tao::event::ElementState::Pressed,
+            button: tao::event::MouseButton::Other(5),
+            modifiers: dummy_mods(),
+        };
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn unhandled_events_return_none() {
+        let mut cursor = initial_cursor();
+        let mut modifiers = keyboard::Modifiers::default();
+        let should_close = AtomicBool::new(false);
+        // Focused is not handled by settings UI (falls through to _ => None).
+        let event = WindowEvent::Focused(true);
+        let result = feed(event, &mut cursor, &mut modifiers, &should_close);
+        assert!(result.is_none());
+    }
+}

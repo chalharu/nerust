@@ -44,10 +44,13 @@ impl crate::ports::WindowOpener for FakeOpener {
 
     fn create_aux(
         &self,
-        kind: crate::aux::focus::AuxKind,
+        window: nerust_frontend_host::window::Window,
         _params: crate::ports::AuxOpenParams,
     ) -> Option<Box<dyn crate::aux::registry::AuxController>> {
         use crate::aux::focus::AuxKind;
+        let nerust_frontend_host::window::WindowId::Auxiliary(kind) = window.id else {
+            return None;
+        };
         let call = match kind {
             AuxKind::Settings => OpenerCall::Settings,
             AuxKind::Debug => OpenerCall::Debug,
@@ -69,20 +72,18 @@ mod tests {
     #[test]
     fn fake_opener_records_each_aux_kind() {
         let opener = FakeOpener::failing("no display");
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::History);
         assert!(
             opener
-                .create_aux(
-                    AuxKind::History,
-                    AuxOpenParams::History {
-                        language: AppLanguage::English
-                    }
-                )
+                .create_aux(session.window(), AuxOpenParams::Controls { session })
                 .is_none()
         );
         assert!(
             opener
                 .create_aux(
-                    AuxKind::Debug,
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Debug),
                     AuxOpenParams::Debug {
                         display: Default::default(),
                         spaces: Vec::new(),
@@ -110,25 +111,12 @@ mod tests {
         use crate::aux::bridge::DebugBridge;
         use nerust_gui_viewmodel::debugger::DisplayCache;
         let opener = FakeOpener::failing("no display");
-        let snapshot = nerust_settings_core::model::snapshot::SettingsSnapshot {
-            shared: Default::default(),
-            local: Default::default(),
-            app_state: Default::default(),
-        };
+        let mut host = crate::runtime::host::TestHost::new().host;
+        let (_, session) =
+            crate::aux::widgets::bindings::tests::prepare(&mut host, AuxKind::Settings);
         assert!(
             opener
-                .create_aux(
-                    AuxKind::Settings,
-                    AuxOpenParams::Settings {
-                        snapshot,
-                        registry: std::sync::Arc::new(
-                            nerust_gui_shell::registry::SystemRegistry::new(Vec::new())
-                        ),
-                        audio: std::sync::Arc::new(
-                            nerust_core_traits::audio::AudioBackendRegistry::new()
-                        ),
-                    }
-                )
+                .create_aux(session.window(), AuxOpenParams::Controls { session })
                 .is_none()
         );
         let bridge = std::sync::Arc::new(DebugBridge::new(
@@ -140,7 +128,7 @@ mod tests {
         assert!(
             opener
                 .create_aux(
-                    AuxKind::Ppu,
+                    nerust_frontend_host::window::Window::auxiliary(AuxKind::Ppu),
                     AuxOpenParams::Ppu {
                         bridge,
                         position: None

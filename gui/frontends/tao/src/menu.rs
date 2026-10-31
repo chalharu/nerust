@@ -1,30 +1,19 @@
-use nerust_gui_runtime::slots::slot_label;
-use nerust_gui_shell::session::commands::SessionCommand;
-use nerust_persistence::model::StateSlotSummary;
-use nerust_settings_core::model::input::ShortcutBinding;
-use nerust_settings_core::model::language::AppLanguage;
+use nerust_frontend_host::{application::MenubarUpdate, menu::MenuCapabilities};
 use tao::window::Window as TaoWindow;
+
+pub(crate) const TAO_MENU_CAPABILITIES: MenuCapabilities = MenuCapabilities {
+    about: false,
+    dialog_ellipsis: true,
+    application_menu: cfg!(target_os = "macos"),
+};
 
 /// Headless-testable menu surface: production `AppMenu` drives the
 /// native menubar, test recorders observe the syncs. Object-safe so
 /// `HostState` holds it behind `Box<dyn MenuSink>`.
 pub(crate) trait MenuSink {
-    fn update(&mut self, sync: MenuSync<'_>);
+    fn update(&mut self, menu: MenubarUpdate);
     fn init_for_window(&self, window: &TaoWindow);
     fn clear_event_handler(&self);
-}
-
-/// One snapshot for a menu sync: a struct (not a long argument
-/// list) so adding a field never trips the arity lint. Shared by
-/// the real menu and the headless stub below.
-pub(crate) struct MenuSync<'a> {
-    pub(crate) loaded: bool,
-    pub(crate) paused: bool,
-    pub(crate) slots: &'a [StateSlotSummary],
-    pub(crate) active_slot: Option<u64>,
-    pub(crate) settings_open: bool,
-    pub(crate) language: AppLanguage,
-    pub(crate) shortcuts: &'a [ShortcutBinding],
 }
 
 #[cfg(any(
@@ -37,7 +26,11 @@ pub(crate) struct MenuSync<'a> {
     target_os = "windows"
 ))]
 pub(crate) mod imp {
-    use std::sync::{Arc, RwLock};
+    use std::{
+        collections::HashMap,
+        rc::Rc,
+        sync::{Arc, RwLock},
+    };
 
     #[cfg(any(
         target_os = "linux",
@@ -47,11 +40,17 @@ pub(crate) mod imp {
         target_os = "openbsd"
     ))]
     use gtk::prelude::WidgetExt;
-    use muda::{Menu, MenuEvent, MenuId, MenuItem, Submenu};
-    use nerust_settings_core::i18n::{UiText, menu_label_with_shortcut, text};
-    use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding, shortcut_key_label};
-    use nerust_settings_core::model::language::AppLanguage;
-    use tao::event_loop::EventLoopProxy;
+    use muda::{Menu, MenuEvent, MenuItem, Submenu};
+    use nerust_frontend_host::{
+        application::MenubarUpdate,
+        commands::{CommandDescriptor, CommandVisitor},
+        event::EventSink,
+        menu::{
+            MenuEntry, MenuId, MenuItem as HostItem, MenuVisitor, Menubar, NativeApplicationEntry,
+            NativeApplicationRole, Submenu as HostMenu,
+        },
+        widgets::MenuPresenter,
+    };
     #[cfg(target_os = "macos")]
     use tao::platform::macos::WindowExtMacOS;
     #[cfg(any(
@@ -65,9 +64,8 @@ pub(crate) mod imp {
     #[cfg(target_os = "windows")]
     use tao::platform::windows::WindowExtWindows;
 
-    use super::{MenuSync, SessionCommand, StateSlotSummary, TaoWindow, slot_label};
-    use crate::event::MenuCommand;
-    use crate::event::UserEvent;
+    use super::TaoWindow;
+    use crate::event::{MenuCommand, UserEvent};
 
     /// Best-effort menu construction: a failed append (torn-down
     /// native menu) logs and leaves a partial menu instead of
@@ -80,173 +78,40 @@ pub(crate) mod imp {
 
     pub(crate) struct AppMenu {
         menu_bar: Menu,
-        file_menu: Submenu,
-        emulation_menu: Submenu,
-        state_menu: Submenu,
-        open: MenuItem,
-        close: MenuItem,
-        settings: MenuItem,
-        debugger: MenuItem,
-        history: MenuItem,
-        pause: MenuItem,
-        resume: MenuItem,
-        reset: MenuItem,
-        quit: MenuItem,
-        create_slot: MenuItem,
-        save_active: MenuItem,
-        load_active: MenuItem,
-        active_slot_menu: Submenu,
-        save_slot_menu: Submenu,
-        load_slot_menu: Submenu,
-        delete_slot_menu: Submenu,
-        dynamic_commands: Arc<RwLock<Vec<(MenuId, SessionCommand)>>>,
+        menus: HashMap<MenuId, Submenu>,
+        items: Vec<(MenuId, Option<MenuCommand>, MenuItem)>,
+        commands: Arc<RwLock<Vec<(muda::MenuId, MenuCommand)>>>,
+        presenter: Rc<MenuPresenter>,
+        application_menu: Option<(Submenu, Vec<NativeApplicationEntry>)>,
     }
 
     impl AppMenu {
-        pub(crate) fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
+        pub(crate) fn new(sink: Arc<dyn EventSink + Send + Sync>) -> Self {
             let menu_bar = Menu::new();
-            let file_menu = Submenu::new("File", true);
-            let emulation_menu = Submenu::new("Emulation", true);
-            let state_menu = Submenu::new("Save States", true);
-            let active_slot_menu = Submenu::new("Select Active Slot", true);
-            let save_slot_menu = Submenu::new("Save Slot", true);
-            let load_slot_menu = Submenu::new("Load Slot", true);
-            let delete_slot_menu = Submenu::new("Delete Slot", true);
 
-            #[cfg(target_os = "macos")]
-            {
-                let app_menu = Submenu::new("App", true);
-                try_append(|| {
-                    app_menu.append_items(&[
-                        &muda::PredefinedMenuItem::about(None, None),
-                        &muda::PredefinedMenuItem::separator(),
-                        &muda::PredefinedMenuItem::services(None),
-                        &muda::PredefinedMenuItem::separator(),
-                        &muda::PredefinedMenuItem::hide(None),
-                        &muda::PredefinedMenuItem::hide_others(None),
-                        &muda::PredefinedMenuItem::show_all(None),
-                        &muda::PredefinedMenuItem::separator(),
-                        &muda::PredefinedMenuItem::quit(None),
-                    ])
-                });
-                try_append(|| menu_bar.append(&app_menu));
-            }
-
-            let open = MenuItem::new("Open ROM...", true, None);
-            let close = MenuItem::new("Close", true, None);
-            let settings = MenuItem::new("Settings...", true, None);
-            // Shortcut hints are filled by `update` from the live
-            // bindings; the constructor keeps plain labels so a
-            // rebound key never flashes the stale default first.
-            let debugger = MenuItem::new("Open Debugger", true, None);
-            let history = MenuItem::new("Notification history", true, None);
-            let pause = MenuItem::new("Pause", true, None);
-            let resume = MenuItem::new("Resume", false, None);
-            let reset = MenuItem::new("Reset", true, None);
-            let quit = MenuItem::new("Quit", true, None);
-            let create_slot = MenuItem::new("Create New Slot", true, None);
-            let save_active = MenuItem::new("Save Active Slot", true, None);
-            let load_active = MenuItem::new("Load Active Slot", false, None);
-
-            let open_id = open.id().clone();
-            let close_id = close.id().clone();
-            let settings_id = settings.id().clone();
-            let debugger_id = debugger.id().clone();
-            let history_id = history.id().clone();
-            let pause_id = pause.id().clone();
-            let resume_id = resume.id().clone();
-            let reset_id = reset.id().clone();
-            let quit_id = quit.id().clone();
-            let create_slot_id = create_slot.id().clone();
-            let save_active_id = save_active.id().clone();
-            let load_active_id = load_active.id().clone();
-            let dynamic_commands = Arc::new(RwLock::new(Vec::<(MenuId, SessionCommand)>::new()));
-            let dynamic_commands_handler = dynamic_commands.clone();
-
-            try_append(|| file_menu.append(&open));
-            try_append(|| file_menu.append(&close));
-            try_append(|| file_menu.append(&settings));
-            try_append(|| file_menu.append(&quit));
-            try_append(|| state_menu.append(&create_slot));
-            try_append(|| state_menu.append(&save_active));
-            try_append(|| state_menu.append(&load_active));
-            try_append(|| state_menu.append(&active_slot_menu));
-            try_append(|| state_menu.append(&save_slot_menu));
-            try_append(|| state_menu.append(&load_slot_menu));
-            try_append(|| state_menu.append(&delete_slot_menu));
-            try_append(|| emulation_menu.append(&pause));
-            try_append(|| emulation_menu.append(&resume));
-            try_append(|| emulation_menu.append(&reset));
-            try_append(|| emulation_menu.append(&state_menu));
-            try_append(|| emulation_menu.append(&debugger));
-            try_append(|| emulation_menu.append(&history));
-
-            try_append(|| menu_bar.append(&file_menu));
-            try_append(|| menu_bar.append(&emulation_menu));
-
+            let commands = Arc::new(RwLock::new(Vec::<(muda::MenuId, MenuCommand)>::new()));
+            let handler = commands.clone();
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-                let command = if event.id() == &open_id {
-                    Some(MenuCommand::Open)
-                } else if event.id() == &close_id {
-                    Some(MenuCommand::Close)
-                } else if event.id() == &settings_id {
-                    Some(MenuCommand::Settings)
-                } else if event.id() == &debugger_id {
-                    Some(MenuCommand::Debugger)
-                } else if event.id() == &history_id {
-                    Some(MenuCommand::NotificationHistory)
-                } else if event.id() == &pause_id {
-                    Some(MenuCommand::Session(SessionCommand::Pause))
-                } else if event.id() == &resume_id {
-                    Some(MenuCommand::Session(SessionCommand::Resume))
-                } else if event.id() == &reset_id {
-                    Some(MenuCommand::Session(SessionCommand::Reset))
-                } else if event.id() == &quit_id {
-                    Some(MenuCommand::Quit)
-                } else if event.id() == &create_slot_id {
-                    Some(MenuCommand::Session(SessionCommand::CreateSlot))
-                } else if event.id() == &save_active_id {
-                    Some(MenuCommand::Session(SessionCommand::SaveActiveSlotOrNew))
-                } else if event.id() == &load_active_id {
-                    Some(MenuCommand::Session(SessionCommand::LoadActiveSlot))
-                } else {
-                    dynamic_commands_handler
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .iter()
-                        .find_map(|(id, command)| {
-                            (event.id() == id).then_some(MenuCommand::Session(*command))
-                        })
-                };
+                // Release the routing lock before dispatching into the loop.
+                let command = handler
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .iter()
+                    .find_map(|(id, command)| (event.id() == id).then_some(*command));
                 if let Some(command) = command
-                    && let Err(error) = proxy.send_event(UserEvent::Menu(command))
+                    && !sink.send(UserEvent::Menu(command))
                 {
-                    log::debug!("menu event dropped after loop exit: {error}");
+                    log::debug!("menu event dropped after loop exit");
                 }
             }));
 
             Self {
                 menu_bar,
-                file_menu,
-                emulation_menu,
-                state_menu,
-                open,
-                close,
-                settings,
-                debugger,
-                history,
-                pause,
-                resume,
-                reset,
-                quit,
-                create_slot,
-                save_active,
-                load_active,
-                active_slot_menu,
-                save_slot_menu,
-                load_slot_menu,
-                delete_slot_menu,
-                dynamic_commands,
+                menus: HashMap::new(),
+                items: Vec::new(),
+                commands,
+                presenter: Rc::default(),
+                application_menu: None,
             }
         }
 
@@ -282,139 +147,181 @@ pub(crate) mod imp {
             }
         }
 
-        pub(crate) fn update(&mut self, sync: MenuSync<'_>) {
-            self.update_labels(sync.language, sync.shortcuts);
-            self.open.set_enabled(!sync.settings_open);
-            self.close.set_enabled(!sync.settings_open && sync.loaded);
-            self.settings.set_enabled(!sync.settings_open);
-            self.pause
-                .set_enabled(!sync.settings_open && sync.loaded && !sync.paused);
-            self.resume
-                .set_enabled(!sync.settings_open && sync.loaded && sync.paused);
-            self.reset.set_enabled(!sync.settings_open && sync.loaded);
-            // Coreless open is a designed state (NoCore status with
-            // guidance, same as F4): gating on `loaded` would disagree
-            // with the shortcut, so only the settings-open guard stays.
-            self.debugger.set_enabled(!sync.settings_open);
-            self.history.set_enabled(!sync.settings_open);
-            self.create_slot
-                .set_enabled(!sync.settings_open && sync.loaded);
-            self.save_active
-                .set_enabled(!sync.settings_open && sync.loaded);
-            self.load_active
-                .set_enabled(!sync.settings_open && sync.loaded && sync.active_slot.is_some());
-            self.rebuild_dynamic_slot_menus(sync.slots, sync.active_slot, sync.language);
+        pub(crate) fn update(&mut self, update: MenubarUpdate) {
+            let presenter = self.presenter.clone();
+            let mut next = presenter.submit(update.menubar);
+            while let Some(plan) = next {
+                plan.visit(&mut NativeVisitor {
+                    native: self,
+                    stack: Vec::new(),
+                    root_rebuild: false,
+                    declarations: Vec::new(),
+                    visited_menus: Vec::new(),
+                });
+                next = presenter.complete(plan);
+            }
         }
 
         pub(crate) fn clear_event_handler(&self) {
             MenuEvent::set_event_handler::<fn(MenuEvent)>(None);
         }
+    }
 
-        fn rebuild_dynamic_slot_menus(
-            &mut self,
-            slots: &[StateSlotSummary],
-            active_slot: Option<u64>,
-            language: AppLanguage,
-        ) {
-            clear_submenu(&self.active_slot_menu);
-            clear_submenu(&self.save_slot_menu);
-            clear_submenu(&self.load_slot_menu);
-            clear_submenu(&self.delete_slot_menu);
-            let mut commands = Vec::new();
-            if slots.is_empty() {
-                let placeholder = text(language, UiText::NoSaveSlots);
-                for menu in [
-                    &self.active_slot_menu,
-                    &self.save_slot_menu,
-                    &self.load_slot_menu,
-                    &self.delete_slot_menu,
-                ] {
-                    try_append(|| menu.append(&MenuItem::new(placeholder, false, None)));
+    fn predefined(entry: NativeApplicationEntry) -> muda::PredefinedMenuItem {
+        use NativeApplicationEntry::{Role, Separator};
+        use NativeApplicationRole as R;
+        use muda::PredefinedMenuItem as P;
+        match entry {
+            Separator => P::separator(),
+            Role(R::About) => P::about(None, None),
+            Role(R::Services) => P::services(None),
+            Role(R::Hide) => P::hide(None),
+            Role(R::HideOthers) => P::hide_others(None),
+            Role(R::ShowAll) => P::show_all(None),
+            Role(R::Quit) => P::quit(None),
+        }
+    }
+
+    struct NativeVisitor<'a> {
+        native: &'a mut AppMenu,
+        stack: Vec<(MenuId, bool)>,
+        root_rebuild: bool,
+        declarations: Vec<CommandDescriptor>,
+        visited_menus: Vec<MenuId>,
+    }
+
+    impl CommandVisitor for NativeVisitor<'_> {
+        fn command(&mut self, command: &CommandDescriptor) {
+            // Muda routes native IDs directly, not a named action registry.
+            // Declarations still validate each binding and supply enablement.
+            self.declarations.push(*command);
+        }
+    }
+
+    impl MenuVisitor for NativeVisitor<'_> {
+        fn begin_menubar(&mut self, menubar: &Menubar, rebuild: bool) {
+            self.root_rebuild = rebuild;
+            if rebuild {
+                for _ in 0..self.native.menu_bar.items().len() {
+                    let _ = self.native.menu_bar.remove_at(0);
                 }
             }
-            for slot in slots {
-                let select_item = MenuItem::new(slot_label(slot, active_slot), true, None);
-                commands.push((
-                    select_item.id().clone(),
-                    SessionCommand::SelectActiveSlot(slot.slot_id),
-                ));
-                try_append(|| self.active_slot_menu.append(&select_item));
-
-                let save_item = MenuItem::new(slot_label(slot, active_slot), true, None);
-                commands.push((
-                    save_item.id().clone(),
-                    SessionCommand::SaveSlot(slot.slot_id),
-                ));
-                try_append(|| self.save_slot_menu.append(&save_item));
-
-                let load_item = MenuItem::new(slot_label(slot, active_slot), true, None);
-                commands.push((
-                    load_item.id().clone(),
-                    SessionCommand::LoadSlot(slot.slot_id),
-                ));
-                try_append(|| self.load_slot_menu.append(&load_item));
-
-                let delete_item = MenuItem::new(slot_label(slot, active_slot), true, None);
-                commands.push((
-                    delete_item.id().clone(),
-                    SessionCommand::DeleteSlot(slot.slot_id),
-                ));
-                try_append(|| self.delete_slot_menu.append(&delete_item));
+            if let Some(app) = &menubar.application_menu {
+                let (native, entries) = self
+                    .native
+                    .application_menu
+                    .get_or_insert_with(|| (Submenu::new(&app.label, true), Vec::new()));
+                if native.text() != app.label {
+                    native.set_text(&app.label);
+                }
+                if *entries != app.entries {
+                    clear_submenu(native);
+                    for entry in &app.entries {
+                        try_append(|| native.append(&predefined(*entry)));
+                    }
+                    *entries = app.entries.clone();
+                }
+                if rebuild {
+                    try_append(|| self.native.menu_bar.append(native));
+                }
+            } else {
+                self.native.application_menu = None;
             }
-            *self
-                .dynamic_commands
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = commands;
         }
 
-        fn update_labels(&self, language: AppLanguage, shortcuts: &[ShortcutBinding]) {
-            self.file_menu.set_text(text(language, UiText::File));
-            self.emulation_menu
-                .set_text(text(language, UiText::Emulation));
-            self.state_menu.set_text(text(language, UiText::SaveStates));
-            self.active_slot_menu
-                .set_text(text(language, UiText::SelectActiveSlot));
-            self.save_slot_menu
-                .set_text(text(language, UiText::SaveSlot));
-            self.load_slot_menu
-                .set_text(text(language, UiText::LoadSlot));
-            self.delete_slot_menu
-                .set_text(text(language, UiText::DeleteSlot));
+        fn begin_menu(&mut self, menu: &HostMenu, rebuild: bool) {
+            self.visited_menus.push(menu.id);
+            let native = self
+                .native
+                .menus
+                .entry(menu.id)
+                .or_insert_with(|| Submenu::new(&menu.label, menu.enabled))
+                .clone();
+            if native.text() != menu.label {
+                native.set_text(&menu.label);
+            }
+            native.set_enabled(menu.enabled);
+            if let Some((parent, parent_rebuild)) = self.stack.last() {
+                if *parent_rebuild {
+                    try_append(|| self.native.menus[parent].append(&native));
+                }
+            } else if self.root_rebuild {
+                try_append(|| self.native.menu_bar.append(&native));
+            }
+            if rebuild {
+                clear_submenu(&native);
+                self.native.items.retain(|(parent, command, _)| {
+                    *parent != menu.id || menu.children.iter().any(|entry| {
+                        matches!(entry, MenuEntry::Item(item) if item.command == *command)
+                    })
+                });
+            }
+            self.stack.push((menu.id, rebuild));
+        }
 
-            self.open
-                .set_text(format!("{}...", text(language, UiText::Open)));
-            self.close.set_text(text(language, UiText::Close));
-            self.settings
-                .set_text(format!("{}...", text(language, UiText::Settings)));
-            self.debugger.set_text(shortcut_hint(
-                text(language, UiText::OpenDebugger),
-                shortcuts,
-                ShortcutAction::OpenDebugger,
-            ));
-            self.history
-                .set_text(text(language, UiText::NotificationHistory));
-            self.pause.set_text(text(language, UiText::Pause));
-            self.resume.set_text(text(language, UiText::Resume));
-            self.reset.set_text(text(language, UiText::Reset));
-            self.quit.set_text(text(language, UiText::Quit));
-            self.create_slot
-                .set_text(text(language, UiText::CreateSaveSlot));
-            self.save_active.set_text(shortcut_hint(
-                text(language, UiText::SaveActiveSlot),
-                shortcuts,
-                ShortcutAction::SaveActiveSlot,
-            ));
-            self.load_active.set_text(shortcut_hint(
-                text(language, UiText::LoadActiveSlot),
-                shortcuts,
-                ShortcutAction::LoadActiveSlot,
-            ));
+        fn item(&mut self, item: &HostItem) {
+            let declaration = item.command.and_then(|command| {
+                let (id, argument) = command.binding();
+                self.declarations
+                    .iter()
+                    .find(|d| d.id == id)
+                    .filter(|d| d.bind(argument) == Some(command))
+            });
+            let enabled = item.enabled && declaration.is_some_and(|d| d.enabled);
+            let (parent, rebuild) = *self.stack.last().expect("host item parent");
+            let native = if let Some((_, _, native)) = self
+                .native
+                .items
+                .iter()
+                .find(|(id, command, _)| *id == parent && *command == item.command)
+            {
+                native.clone()
+            } else {
+                let native = MenuItem::new(&item.label, item.enabled, None);
+                self.native
+                    .items
+                    .push((parent, item.command, native.clone()));
+                native
+            };
+            if native.text() != item.label {
+                native.set_text(&item.label);
+            }
+            native.set_enabled(enabled);
+            if rebuild {
+                try_append(|| self.native.menus[&parent].append(&native));
+            }
+        }
+
+        fn end_menu(&mut self, id: MenuId) {
+            let ended = self.stack.pop().map(|(id, _)| id);
+            debug_assert_eq!(ended, Some(id));
+        }
+
+        fn end_menubar(&mut self) {
+            self.native
+                .menus
+                .retain(|id, _| self.visited_menus.contains(id));
+            self.native
+                .items
+                .retain(|(id, _, _)| self.visited_menus.contains(id));
+            *self
+                .native
+                .commands
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = self
+                .native
+                .items
+                .iter()
+                .filter_map(|(_, command, item)| {
+                    command.map(|command| (item.id().clone(), command))
+                })
+                .collect();
         }
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, sync: super::MenuSync<'_>) {
-            AppMenu::update(self, sync);
+        fn update(&mut self, menu: MenubarUpdate) {
+            AppMenu::update(self, menu);
         }
 
         fn init_for_window(&self, window: &super::TaoWindow) {
@@ -423,17 +330,6 @@ pub(crate) mod imp {
 
         fn clear_event_handler(&self) {
             AppMenu::clear_event_handler(self);
-        }
-    }
-
-    /// Menu label with the action's *current* shortcut hint
-    /// (`Save Active Slot (F5)`), or the bare label when unbound.
-    /// Binding-driven so Settings rebinding never leaves a stale
-    /// hardcoded key in the menu.
-    fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: ShortcutAction) -> String {
-        match shortcut_key_label(shortcuts, action) {
-            Some(key) => menu_label_with_shortcut(base, key),
-            None => base.to_string(),
         }
     }
 
@@ -447,14 +343,16 @@ pub(crate) mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::try_append;
-        use nerust_keyboard::Key;
-        use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
+        use super::{MenuCommand, try_append};
+        use nerust_frontend_host::commands::MenuCommand as EventCommand;
+        use nerust_frontend_host::commands::NativeRole;
 
-        use super::shortcut_hint;
-
-        fn binding(action: ShortcutAction, key: Option<Key>) -> ShortcutBinding {
-            ShortcutBinding { action, key }
+        #[test]
+        fn native_commands_are_host_commands_without_conversion() {
+            let command: crate::event::MenuCommand = MenuCommand::Native(NativeRole::Quit);
+            assert_eq!(command, EventCommand::Native(NativeRole::Quit));
+            let about: crate::event::MenuCommand = MenuCommand::Native(NativeRole::About);
+            assert_eq!(about, EventCommand::Native(NativeRole::About));
         }
 
         #[test]
@@ -464,31 +362,464 @@ pub(crate) mod imp {
             try_append(|| Ok(()));
         }
 
+        /// Run alone under Xvfb: GTK3 owns the initializing test thread.
+        /// CI-only (ignored by default): needs a display, enabled in
+        /// CI with `--run-ignored only` under `xvfb-run`.
+        #[cfg(target_os = "linux")]
+        #[ignore = "needs display; CI-only under xvfb"]
         #[test]
-        fn shortcut_hint_appends_bound_key() {
-            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
-            assert_eq!(
-                shortcut_hint("Pause", &bindings, ShortcutAction::TogglePause),
-                "Pause (F5)"
-            );
-        }
+        fn gtk3_native_visitor_preserves_identity_and_current_routing() {
+            use std::{
+                collections::HashSet,
+                sync::{Arc, Mutex},
+            };
 
-        #[test]
-        fn shortcut_hint_bare_when_unbound() {
-            let bindings = [binding(ShortcutAction::TogglePause, Some(Key::F5))];
+            use gtk::prelude::*;
+            use muda::{MenuItem, MenuItemKind};
+            use nerust_frontend_host::commands::SessionCommand as S;
+            use nerust_frontend_host::{
+                application::{MenuSig, MenubarUpdate},
+                event::{EventCommand as HostEvent, EventSink},
+                menu::{MenuId, Menubar},
+            };
+            use nerust_gui_runtime::slots::slot_label;
+            use nerust_keyboard::Key;
+            use nerust_persistence::{model::StateSlotSummary, sidecar::StorageLocation};
+            use nerust_settings_core::{
+                i18n::{UiText, text},
+                model::{
+                    input::{ShortcutAction, ShortcutBinding, default_shortcut_bindings},
+                    language::AppLanguage,
+                },
+            };
+
+            use super::AppMenu;
+
+            // Submenus can contain a custom Box/AccelLabel rather than a label
+            // property. Inspect the actual GTK widget, not just muda's state.
+            fn gtk_label(widget: &gtk::Widget) -> Option<String> {
+                if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+                    return Some(label.text().to_string());
+                }
+                widget
+                    .downcast_ref::<gtk::Container>()?
+                    .children()
+                    .iter()
+                    .find_map(gtk_label)
+            }
+
+            fn walk(
+                native: Vec<MenuItemKind>,
+                widgets: Vec<gtk::Widget>,
+                seen: &mut HashSet<muda::MenuId>,
+            ) -> Vec<MenuItem> {
+                assert_eq!(native.len(), widgets.len(), "GTK children diverged");
+                let mut leaves = Vec::new();
+                for (entry, widget) in native.into_iter().zip(widgets) {
+                    assert!(seen.insert(entry.id().clone()), "duplicate native ID");
+                    let gtk_item = widget.downcast::<gtk::MenuItem>().unwrap();
+                    let (label, enabled) = match entry {
+                        MenuItemKind::Submenu(menu) => {
+                            let children = gtk_item
+                                .submenu()
+                                .unwrap()
+                                .downcast::<gtk::Menu>()
+                                .unwrap()
+                                .children();
+                            leaves.extend(walk(menu.items(), children, seen));
+                            (menu.text(), menu.is_enabled())
+                        }
+                        MenuItemKind::MenuItem(item) => {
+                            assert!(gtk_item.submenu().is_none());
+                            let state = (item.text(), item.is_enabled());
+                            leaves.push(item);
+                            state
+                        }
+                        _ => panic!("unexpected native menu kind"),
+                    };
+                    assert_eq!(
+                        gtk_label(gtk_item.upcast_ref()).as_deref(),
+                        Some(label.as_str())
+                    );
+                    assert_eq!(gtk_item.is_sensitive(), enabled);
+                }
+                leaves
+            }
+
+            fn slot(id: u64) -> StateSlotSummary {
+                StateSlotSummary {
+                    schema_version: 1,
+                    slot_id: id,
+                    path: StorageLocation::Native(format!("slot-{id}.nst").into()),
+                    saved_at: std::time::UNIX_EPOCH,
+                    has_thumbnail: false,
+                    emulator_version: "native-menu-test".into(),
+                }
+            }
+
+            fn item(menu: &AppMenu, command: MenuCommand) -> MenuItem {
+                menu.items
+                    .iter()
+                    .find(|(_, value, _)| *value == Some(command))
+                    .expect("command item")
+                    .2
+                    .clone()
+            }
+
+            fn sync_and_check(menu: &mut AppMenu, sig: &MenuSig, bar: &gtk::MenuBar) {
+                use MenuCommand as C;
+
+                // Fresh, owned allocations with equal content must not append
+                // duplicates or replace identities on repeated submissions.
+                for _ in 0..3 {
+                    let old_items = menu
+                        .items
+                        .iter()
+                        .map(|(parent, command, item)| (*parent, *command, item.id().clone()))
+                        .collect::<Vec<_>>();
+                    let old_menus = menu
+                        .menus
+                        .iter()
+                        .map(|(id, menu)| (*id, menu.id().clone()))
+                        .collect::<Vec<_>>();
+                    let slots = sig.slots.to_vec();
+                    let shortcuts = sig.shortcuts.to_vec();
+                    let signature = MenuSig {
+                        loaded: sig.loaded,
+                        paused: sig.paused,
+                        slots: slots.clone().into(),
+                        active_slot: sig.active_slot,
+                        settings_open: sig.settings_open,
+                        language: sig.language,
+                        shortcuts: shortcuts.into(),
+                    };
+                    menu.update(MenubarUpdate {
+                        menubar: Menubar::build(&signature, crate::menu::TAO_MENU_CAPABILITIES),
+                        signature,
+                    });
+                    let roots = menu.menu_bar.items();
+                    assert_eq!(roots.len(), 2);
+                    for (root, id) in roots.iter().zip([MenuId::File, MenuId::Emulation]) {
+                        assert_eq!(root.id(), menu.menus[&id].id());
+                    }
+                    assert_eq!(menu.menus.len(), 7);
+                    for (id, key) in [
+                        (MenuId::File, UiText::File),
+                        (MenuId::Emulation, UiText::Emulation),
+                        (MenuId::States, UiText::SaveStates),
+                        (MenuId::SelectSlot, UiText::SelectActiveSlot),
+                        (MenuId::SaveSlot, UiText::SaveSlot),
+                        (MenuId::LoadSlot, UiText::LoadSlot),
+                        (MenuId::DeleteSlot, UiText::DeleteSlot),
+                    ] {
+                        assert_eq!(menu.menus[&id].text(), text(sig.language, key));
+                    }
+                    for (id, count) in [
+                        (MenuId::File, 4),
+                        (MenuId::Emulation, 6),
+                        (MenuId::States, 7),
+                    ] {
+                        assert_eq!(menu.menus[&id].items().len(), count);
+                    }
+                    let mut expected = vec![
+                        (C::Open, EventCommand::Open),
+                        (C::Close, EventCommand::Close),
+                        (C::Settings, EventCommand::Settings),
+                        (
+                            C::Native(NativeRole::Quit),
+                            EventCommand::Native(NativeRole::Quit),
+                        ),
+                        (C::Debugger, EventCommand::Debugger),
+                        (C::NotificationHistory, EventCommand::NotificationHistory),
+                    ];
+                    for command in [
+                        S::Pause,
+                        S::Resume,
+                        S::Reset,
+                        S::CreateSlot,
+                        S::SaveActiveSlotOrNew,
+                        S::LoadActiveSlot,
+                    ] {
+                        expected.push((C::Session(command), EventCommand::Session(command)));
+                    }
+                    for (id, make_command) in [
+                        (MenuId::SelectSlot, S::SelectActiveSlot as fn(u64) -> S),
+                        (MenuId::SaveSlot, S::SaveSlot),
+                        (MenuId::LoadSlot, S::LoadSlot),
+                        (MenuId::DeleteSlot, S::DeleteSlot),
+                    ] {
+                        let submenu = &menu.menus[&id];
+                        assert_eq!(
+                            submenu.is_enabled(),
+                            sig.loaded && !sig.settings_open && !slots.is_empty()
+                        );
+                        let children = submenu.items();
+                        assert_eq!(children.len(), slots.len().max(1));
+                        if slots.is_empty() {
+                            let placeholder = children[0].as_menuitem().unwrap();
+                            assert_eq!(placeholder.text(), text(sig.language, UiText::NoSaveSlots));
+                            assert!(!placeholder.is_enabled());
+                            assert!(menu.items.iter().any(|(parent, command, item)| {
+                                *parent == id && command.is_none() && item.id() == placeholder.id()
+                            }));
+                        } else {
+                            for (child, slot) in children.iter().zip(&slots) {
+                                let command = make_command(slot.slot_id);
+                                let native = child.as_menuitem().unwrap();
+                                assert_eq!(native.id(), item(menu, C::Session(command)).id());
+                                assert_eq!(native.text(), slot_label(slot, sig.active_slot));
+                                expected
+                                    .push((C::Session(command), EventCommand::Session(command)));
+                            }
+                        }
+                    }
+                    let leaves = walk(roots, bar.children(), &mut HashSet::new());
+                    assert_eq!(leaves.len(), 12 + 4 * slots.len().max(1));
+                    assert_eq!(menu.items.len(), leaves.len(), "stale cached items");
+                    let routes = menu.commands.read().unwrap();
+                    assert_eq!(routes.len(), expected.len());
+                    assert_eq!(
+                        routes
+                            .iter()
+                            .map(|(id, _)| id)
+                            .collect::<HashSet<_>>()
+                            .len(),
+                        routes.len()
+                    );
+                    for leaf in &leaves {
+                        let cached = menu
+                            .items
+                            .iter()
+                            .filter(|(_, _, item)| item.id() == leaf.id())
+                            .collect::<Vec<_>>();
+                        assert_eq!(cached.len(), 1);
+                        let command = cached[0].1;
+                        let routed = routes
+                            .iter()
+                            .find(|(id, _)| id == leaf.id())
+                            .map(|(_, c)| *c);
+                        assert_eq!(routed, command, "native ID must route its current command");
+                        let enabled = match command {
+                            None => false,
+                            Some(C::Native(NativeRole::Quit)) => true,
+                            Some(_) if sig.settings_open => false,
+                            Some(C::Open | C::Settings | C::Debugger | C::NotificationHistory) => {
+                                true
+                            }
+                            Some(C::Session(S::Pause)) => sig.loaded && !sig.paused,
+                            Some(C::Session(S::Resume)) => sig.loaded && sig.paused,
+                            Some(C::Session(S::LoadActiveSlot)) => {
+                                sig.loaded && sig.active_slot.is_some()
+                            }
+                            Some(_) => sig.loaded,
+                        };
+                        assert_eq!(leaf.is_enabled(), enabled, "{command:?}");
+                    }
+                    for (command, event) in expected {
+                        let native = item(menu, command);
+                        let routed = routes.iter().find(|(id, _)| id == native.id()).unwrap().1;
+                        assert_eq!(routed, command);
+                        let transported: crate::event::MenuCommand = routed;
+                        assert_eq!(transported, event);
+                    }
+                    for (parent, command, id) in old_items {
+                        if let Some((_, _, current)) = menu
+                            .items
+                            .iter()
+                            .find(|(p, c, _)| *p == parent && *c == command)
+                        {
+                            assert_eq!(current.id(), &id, "unchanged command identity");
+                        } else {
+                            assert!(
+                                !leaves.iter().any(|item| item.id() == &id),
+                                "ghost native item"
+                            );
+                            assert!(
+                                !routes.iter().any(|(current, _)| current == &id),
+                                "stale routing"
+                            );
+                        }
+                    }
+                    for (id, native_id) in old_menus {
+                        assert_eq!(menu.menus[&id].id(), &native_id);
+                    }
+                }
+            }
+
+            gtk::init().expect("native menu test requires Xvfb/display");
+            #[derive(Default)]
+            struct RecordingSink(Mutex<Vec<HostEvent>>);
+            impl EventSink for RecordingSink {
+                fn send(&self, event: HostEvent) -> bool {
+                    self.0.lock().unwrap().push(event);
+                    true
+                }
+            }
+            let recording = Arc::new(RecordingSink::default());
+            let transport: Arc<dyn EventSink + Send + Sync> = recording.clone();
+            let mut menu = AppMenu::new(transport);
+            let window = gtk::Window::new(gtk::WindowType::Toplevel);
+            let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            window.add(&container);
+            menu.menu_bar
+                .init_for_gtk_window(&window, Some(&container))
+                .unwrap();
+            let bar = menu
+                .menu_bar
+                .clone()
+                .gtk_menubar_for_gtk_window(&window)
+                .unwrap();
+            let mut sig = MenuSig {
+                loaded: false,
+                paused: false,
+                settings_open: false,
+                language: AppLanguage::English,
+                active_slot: None,
+                slots: Vec::new().into(),
+                shortcuts: default_shortcut_bindings().into(),
+            };
+            sync_and_check(&mut menu, &sig, &bar);
+            // Activate the actual GTK leaf: muda's callback must transport the
+            // canonical Host command through the production dyn sink path.
+            let file = bar.children()[0]
+                .clone()
+                .downcast::<gtk::MenuItem>()
+                .unwrap();
+            let file_menu = file.submenu().unwrap().downcast::<gtk::Menu>().unwrap();
+            let old_open = file_menu.children()[0]
+                .clone()
+                .downcast::<gtk::MenuItem>()
+                .unwrap();
+            old_open.activate();
+            assert!(matches!(
+                recording.0.lock().unwrap().as_slice(),
+                [HostEvent::Menu(MenuCommand::Open)]
+            ));
+            assert_eq!(menu.menus[&MenuId::File].text(), "File");
             assert_eq!(
-                shortcut_hint("Pause", &[], ShortcutAction::TogglePause),
-                "Pause"
+                item(&menu, MenuCommand::Debugger).text(),
+                "Open Debugger (F4)"
             );
-            let unbound = [binding(ShortcutAction::TogglePause, None)];
+            sig.loaded = true;
+            sig.slots = vec![slot(42), slot(7)].into();
+            sig.active_slot = Some(42);
+            sync_and_check(&mut menu, &sig, &bar);
+            sig.paused = true;
+            sync_and_check(&mut menu, &sig, &bar);
+            sig.settings_open = true;
+            sync_and_check(&mut menu, &sig, &bar);
+            sig.settings_open = false;
+            sig.language = AppLanguage::Japanese;
+            sig.shortcuts = vec![
+                ShortcutBinding {
+                    action: ShortcutAction::OpenDebugger,
+                    key: Some(Key::F2),
+                },
+                ShortcutBinding {
+                    action: ShortcutAction::SaveActiveSlot,
+                    key: Some(Key::F3),
+                },
+                ShortcutBinding {
+                    action: ShortcutAction::LoadActiveSlot,
+                    key: None,
+                },
+            ]
+            .into();
+            sig.active_slot = Some(7);
+            sync_and_check(&mut menu, &sig, &bar);
+            assert_eq!(menu.menus[&MenuId::File].text(), "ファイル");
             assert_eq!(
-                shortcut_hint("Pause", &unbound, ShortcutAction::TogglePause),
-                "Pause"
+                menu.menus[&MenuId::Emulation].text(),
+                text(sig.language, UiText::Emulation)
             );
             assert_eq!(
-                shortcut_hint("Pause", &bindings, ShortcutAction::Reset),
-                "Pause"
+                item(&menu, MenuCommand::Open).text(),
+                format!("{}...", text(sig.language, UiText::Open))
             );
+            assert_eq!(
+                item(&menu, MenuCommand::Debugger).text(),
+                format!("{} (F2)", text(sig.language, UiText::OpenDebugger))
+            );
+            assert_eq!(
+                item(&menu, MenuCommand::Session(S::SaveActiveSlotOrNew)).text(),
+                format!("{} (F3)", text(sig.language, UiText::SaveActiveSlot))
+            );
+            assert_eq!(
+                item(&menu, MenuCommand::Session(S::LoadActiveSlot)).text(),
+                text(sig.language, UiText::LoadActiveSlot)
+            );
+            // Delete one slot, then the last: removed IDs/commands must vanish,
+            // while the surviving slot and static items retain their IDs.
+            sig.slots = vec![slot(7)].into();
+            sync_and_check(&mut menu, &sig, &bar);
+            sig.slots = Vec::new().into();
+            sig.active_slot = None;
+            sync_and_check(&mut menu, &sig, &bar);
+            sig.loaded = false;
+            sync_and_check(&mut menu, &sig, &bar);
+
+            // Root structure comes from Host, even when exercising a standard
+            // application menu on this test platform rather than macOS.
+            use nerust_frontend_host::menu::{
+                NativeApplicationEntry as A, NativeApplicationMenu, NativeApplicationRole as R,
+            };
+            let mut root = Menubar::build(&sig, crate::menu::TAO_MENU_CAPABILITIES);
+            root.application_menu = Some(NativeApplicationMenu {
+                label: "Host App".into(),
+                entries: vec![A::Role(R::About), A::Separator, A::Role(R::Quit)],
+            });
+            menu.update(MenubarUpdate {
+                signature: sig.clone(),
+                menubar: root.clone(),
+            });
+            let app = menu.application_menu.as_ref().unwrap().0.clone();
+            let app_id = app.id().clone();
+            let native_ids = app
+                .items()
+                .iter()
+                .map(|item| item.id().clone())
+                .collect::<Vec<_>>();
+            assert_eq!(native_ids.len(), 3);
+            assert_eq!(menu.menu_bar.items()[0].id(), &app_id);
+            assert_eq!(
+                menu.menu_bar.items()[1].id(),
+                menu.menus[&MenuId::File].id()
+            );
+            root.application_menu.as_mut().unwrap().label = "Relabeled App".into();
+            menu.update(MenubarUpdate {
+                signature: sig.clone(),
+                menubar: root.clone(),
+            });
+            let app = &menu.application_menu.as_ref().unwrap().0;
+            assert_eq!(app.id(), &app_id);
+            assert_eq!(app.text(), "Relabeled App");
+            assert_eq!(
+                app.items()
+                    .iter()
+                    .map(|item| item.id().clone())
+                    .collect::<Vec<_>>(),
+                native_ids
+            );
+
+            // Removing roots retires every command route, including callbacks
+            // from previously retained native widgets.
+            root.application_menu = None;
+            root.menus.clear();
+            menu.update(MenubarUpdate {
+                signature: sig.clone(),
+                menubar: root,
+            });
+            assert!(menu.menu_bar.items().is_empty());
+            assert!(menu.application_menu.is_none());
+            assert!(menu.menus.is_empty());
+            assert!(menu.items.is_empty());
+            assert!(menu.commands.read().unwrap().is_empty());
+            let delivered = recording.0.lock().unwrap().len();
+            old_open.activate();
+            assert_eq!(recording.0.lock().unwrap().len(), delivered);
+            menu.menu_bar.remove_for_gtk_window(&window).unwrap();
+            menu.clear_event_handler();
+            unsafe { window.destroy() };
         }
     }
 }
@@ -503,29 +834,27 @@ pub(crate) mod imp {
     target_os = "windows"
 )))]
 pub(crate) mod imp {
-    use nerust_settings_core::model::language::AppLanguage;
-    use tao::event_loop::EventLoopProxy;
-
-    use super::{MenuSync, TaoWindow};
-    use crate::event::UserEvent;
+    use super::{MenubarUpdate, TaoWindow};
+    use nerust_frontend_host::event::EventSink;
+    use std::sync::Arc;
 
     pub(crate) struct AppMenu;
 
     impl AppMenu {
-        pub(crate) fn new(_proxy: EventLoopProxy<UserEvent>) -> Self {
+        pub(crate) fn new(_sink: Arc<dyn EventSink + Send + Sync>) -> Self {
             Self
         }
 
         pub(crate) fn init_for_window(&self, _window: &TaoWindow) {}
 
-        pub(crate) fn update(&mut self, _sync: MenuSync<'_>) {}
+        pub(crate) fn update(&mut self, _menu: MenubarUpdate) {}
 
         pub(crate) fn clear_event_handler(&self) {}
     }
 
     impl super::MenuSink for AppMenu {
-        fn update(&mut self, sync: super::MenuSync<'_>) {
-            AppMenu::update(self, sync);
+        fn update(&mut self, menu: MenubarUpdate) {
+            AppMenu::update(self, menu);
         }
 
         fn init_for_window(&self, window: &super::TaoWindow) {

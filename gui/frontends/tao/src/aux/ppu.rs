@@ -44,8 +44,8 @@ use super::registry::AuxController;
 use nerust_gui_viewmodel::debugger::DebugImageRgba;
 use nerust_gui_viewmodel::debugger::scale2x_nearest;
 
-/// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
-/// tile start (+16 per tile). Generic geometry, no per-system branch.
+/// Tile hover delegates to the shared viewmodel line; tao only
+/// converts the iced point to raw coordinates at the boundary.
 fn tile_hover_text(
     language: nerust_settings_core::model::language::AppLanguage,
     label: &str,
@@ -53,11 +53,14 @@ fn tile_hover_text(
     height: u32,
     point: Point,
 ) -> String {
-    let sx = (point.x / 2.0).floor().clamp(0.0, width as f32 - 1.0) as u32;
-    let sy = (point.y / 2.0).floor().clamp(0.0, height as f32 - 1.0) as u32;
-    let cols = (width / 8).max(1);
-    let idx = (sy / 8) * cols + (sx / 8);
-    nerust_settings_core::i18n::tile_hover(language, label, idx, sx, sy, idx * 16)
+    nerust_gui_viewmodel::debugger::tile_hover_text(
+        language,
+        label,
+        width,
+        height,
+        f64::from(point.x),
+        f64::from(point.y),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +106,10 @@ impl PpuSnapshot {
 
 pub(crate) struct PpuProgram {
     pub(crate) bridge: Arc<DebugBridge>,
+}
+
+impl super::window::GroupedProgram for PpuProgram {
+    const KIND: super::focus::AuxKind = super::focus::AuxKind::Ppu;
 }
 
 impl Program for PpuProgram {
@@ -265,22 +272,20 @@ impl Program for PpuProgram {
 }
 
 pub(crate) struct PpuWindowHandle {
-    shell: crate::aux::shell::AuxShell<PpuProgram>,
+    shell: crate::aux::shell::AuxShell<super::window::WindowProgram<PpuProgram>>,
     bridge: Arc<DebugBridge>,
 }
 
 impl PpuWindowHandle {
     pub(crate) fn new(
+        window: nerust_frontend_host::window::Window,
         bridge: Arc<DebugBridge>,
         event_loop: &EventLoopWindowTarget<crate::event::UserEvent>,
         position: Option<(i32, i32)>,
     ) -> Option<Self> {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
-        let language = bridge.language();
-        let title = ui_text(language, UiText::PpuViewer).to_string();
         let surface = AuxSurface::open(
             event_loop,
-            &title,
+            &window.title,
             PPU_WINDOW_SIZE,
             None,
             position,
@@ -296,7 +301,8 @@ impl PpuWindowHandle {
         let program = PpuProgram {
             bridge: Arc::clone(&bridge),
         };
-        let (instance, _task) = program::Instance::new(program);
+        let (instance, _task) =
+            program::Instance::new(super::window::WindowProgram { window, program });
         let shell = crate::aux::shell::AuxShell::assemble(surface, instance);
         // The viewer opens on demand from the debugger toolbar: take
         // focus so keyboard and wheel go straight to the tiles.
@@ -344,6 +350,35 @@ impl super::focus::AuxEvents for PpuWindowHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outer_ppu_window_uses_common_title_and_existing_grouped_pipeline() {
+        use super::super::window::WindowProgram;
+        use nerust_frontend_host::{focus::AuxKind, window::Window};
+
+        let mut window = Window::auxiliary(AuxKind::Ppu);
+        window.title = "owned PPU title".into();
+        let mut program = WindowProgram {
+            window,
+            program: PpuProgram {
+                bridge: ppu_bridge(),
+            },
+        };
+        let (mut state, _) = program.boot();
+        let id = iced::window::Id::unique();
+        assert_eq!(program.title(&state, id), "owned PPU title");
+        drop(program.update(&mut state, PpuMessage::Sync));
+        assert_eq!(snapshot_read(&state.snapshot).scaled.len(), 1);
+        drop(program.view(&state, id));
+        // A different grouped contents cannot accidentally render this program.
+        program.window.contents = Window::auxiliary(AuxKind::Debug).contents;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                drop(program.view(&state, id));
+            }))
+            .is_err()
+        );
+    }
 
     #[test]
     fn tile_hover_reports_index_and_offset() {

@@ -47,6 +47,45 @@ fn ppu_hover_hint_is_canonical() {
 }
 
 #[test]
+fn tile_hover_text_matches_viewers() {
+    use nerust_settings_core::model::language::AppLanguage;
+    assert_eq!(
+        tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
+        "Pattern left tile #21 (px 44,13, +0x0150)"
+    );
+    let clamped = tile_hover_text(
+        AppLanguage::Japanese,
+        "Pattern right",
+        128,
+        128,
+        500.0,
+        500.0,
+    );
+    assert!(clamped.starts_with("Pattern right タイル #255 "));
+}
+
+#[test]
+fn disasm_marker_never_double_marks_pc() {
+    let pc = DisasmLine {
+        addr: 0xC293,
+        bytes: [0x60, 0, 0, 0],
+        len: 1,
+        text: "RTS".to_string(),
+        is_pc: true,
+        target: None,
+    };
+    let composed = format!(
+        "{}{}",
+        disasm_marker(pc.is_pc, true),
+        format_disasm_line(&pc)
+    );
+    assert!(composed.starts_with("  >0x"), "got {composed:?}");
+    assert_eq!(disasm_marker(false, true), "@ ");
+    assert_eq!(disasm_marker(false, false), "  ");
+    assert_eq!(disasm_marker(true, false), "  ");
+}
+
+#[test]
 fn scale2x_doubles_each_pixel() {
     // 2x1 red/green becomes 4x2 blocks.
     let rgba = vec![255, 0, 0, 0xFF, 0, 255, 0, 0xFF];
