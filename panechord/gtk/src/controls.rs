@@ -36,6 +36,15 @@ impl Tab {
     }
 }
 impl View {
+    pub fn separator(&self, parent: &Parent, id: &str, vertical: bool) {
+        let orientation = if vertical {
+            gtk::Orientation::Vertical
+        } else {
+            gtk::Orientation::Horizontal
+        };
+        self.mount_native(parent, id, &gtk::Separator::new(orientation));
+    }
+
     pub fn image_update_count(&self) -> usize {
         self.0.image_updates.get()
     }

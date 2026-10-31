@@ -270,6 +270,8 @@ controls! {
     ItemsControl { items: Property, item_template: String, viewport: Property, },
     ContentControl { content: Property, content_template: String, },
     Label { text: Property, },
+    Table { source: Property, },
+    Separator { #[serde(default)] orientation: Orientation, },
     TextBox { text: Property, validation: Option<Validation>, },
     Button { text: Property, command: String, argument: Option<Property>, },
     Native { factory: String, value: Property, },
@@ -616,7 +618,9 @@ impl Document {
                     read_only(argument, "argument")?;
                 }
             }
-            Control::Image { source, .. } => read_only(source, "source")?,
+            Control::Image { source, .. } | Control::Table { source, .. } => {
+                read_only(source, "source")?
+            }
             Control::Combo { items, .. }
             | Control::ItemsControl { items, .. }
             | Control::BindableLayout { items, .. } => read_only(items, "items")?,
@@ -842,6 +846,25 @@ impl Document {
 #[cfg(test)]
 mod scroll_tests {
     use super::*;
+
+    #[test]
+    fn table_source_is_read_only_and_separator_has_no_domain_properties() {
+        let mut value = serde_json::json!({"schema_version":2,"root":{"type":"Window","id":"window","title":{"literal":"Table"},
+            "content":{"type":"Table","id":"table","source":{"bind":{"path":"table"}}}}});
+        parse(&value.to_string(), "json", "table.json").unwrap();
+        value["root"]["content"]["source"]["bind"]["mode"] = "TwoWay".into();
+        assert!(
+            parse(&value.to_string(), "json", "table.json")
+                .unwrap_err()
+                .message
+                .contains("read-only")
+        );
+        value["root"]["content"] =
+            serde_json::json!({"type":"Separator","id":"line","orientation":"Horizontal"});
+        parse(&value.to_string(), "json", "table.json").unwrap();
+        value["root"]["content"]["text"] = serde_json::json!({"literal":"not a label"});
+        assert!(parse(&value.to_string(), "json", "table.json").is_err());
+    }
 
     #[test]
     fn text_styles_validate_scale_roles_and_rgb_before_generation() {

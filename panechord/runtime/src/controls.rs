@@ -14,6 +14,159 @@ pub struct Choice {
     pub id: String,
     pub label: String,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextOverflow {
+    #[default]
+    Clip,
+    Wrap,
+    EllipsizeMiddle,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableColumn {
+    pub title: String,
+    pub width: Option<f32>,
+    pub text: crate::TextStyle,
+    pub overflow: TextOverflow,
+    pub stretch: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableCell {
+    pub text: String,
+    pub foreground: Option<[u8; 3]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableRow {
+    pub key: String,
+    pub cells: Vec<TableCell>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Table {
+    pub columns: Arc<[TableColumn]>,
+    pub rows: Arc<[Arc<TableRow>]>,
+    pub empty_text: String,
+    pub column_gap: f32,
+    pub row_gap: f32,
+}
+
+impl Table {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.columns.is_empty()
+            || self.columns.len() > 64
+            || self.rows.len() > 16384
+            || self.rows.len() * self.columns.len() > 262144
+        {
+            return Err("table dimensions exceed limits");
+        }
+        if [self.column_gap, self.row_gap]
+            .into_iter()
+            .any(|gap| !gap.is_finite() || !(0.0..=4096.0).contains(&gap))
+        {
+            return Err("invalid table gap");
+        }
+        let mut bytes = self.empty_text.len();
+        for column in &*self.columns {
+            if column
+                .width
+                .is_some_and(|width| !width.is_finite() || !(1.0..=16384.0).contains(&width))
+            {
+                return Err("invalid table column width");
+            }
+            crate::Style {
+                text: Some(column.text),
+                ..Default::default()
+            }
+            .validate(crate::Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            })?;
+            bytes = bytes.saturating_add(column.title.len());
+        }
+        let mut keys = BTreeSet::new();
+        for row in &*self.rows {
+            if !crate::valid_item_key(&row.key) || row.key.len() > 256 || !keys.insert(&row.key) {
+                return Err("invalid or duplicate table row key");
+            }
+            if row.cells.len() != self.columns.len() {
+                return Err("table row has wrong cell count");
+            }
+            bytes =
+                bytes.saturating_add(row.cells.iter().map(|cell| cell.text.len()).sum::<usize>());
+        }
+        if bytes > 8 * 1024 * 1024 {
+            return Err("table text exceeds limits");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod table_tests {
+    use super::*;
+
+    fn fixture() -> Table {
+        Table {
+            columns: vec![TableColumn {
+                title: "Text".into(),
+                width: None,
+                text: Default::default(),
+                overflow: TextOverflow::Wrap,
+                stretch: true,
+            }]
+            .into(),
+            rows: vec![Arc::new(TableRow {
+                key: "one".into(),
+                cells: vec![TableCell {
+                    text: "value".into(),
+                    foreground: Some([70, 70, 70]),
+                }],
+            })]
+            .into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validates_shape_keys_geometry_and_text_budgets() {
+        let table = fixture();
+        assert_eq!(table.validate(), Ok(()));
+        let mut invalid = table.clone();
+        invalid.rows = vec![table.rows[0].clone(), table.rows[0].clone()].into();
+        assert_eq!(
+            invalid.validate(),
+            Err("invalid or duplicate table row key")
+        );
+        invalid = table.clone();
+        invalid.rows = vec![Arc::new(TableRow {
+            key: "one".into(),
+            cells: vec![],
+        })]
+        .into();
+        assert_eq!(invalid.validate(), Err("table row has wrong cell count"));
+        for gap in [f32::NAN, f32::INFINITY, -1.0, 4097.0] {
+            invalid = table.clone();
+            invalid.column_gap = gap;
+            assert_eq!(invalid.validate(), Err("invalid table gap"));
+        }
+        for width in [f32::NAN, 0.0, 16385.0] {
+            invalid = table.clone();
+            Arc::make_mut(&mut invalid.columns)[0].width = Some(width);
+            assert_eq!(invalid.validate(), Err("invalid table column width"));
+        }
+        invalid = table.clone();
+        invalid.empty_text = "x".repeat(8 * 1024 * 1024 + 1);
+        assert_eq!(invalid.validate(), Err("table text exceeds limits"));
+        invalid = table.clone();
+        invalid.rows = Arc::from([]);
+        assert_eq!(invalid.validate(), Ok(()));
+        invalid.columns = Arc::from([]);
+        assert_eq!(invalid.validate(), Err("table dimensions exceed limits"));
+    }
+}
+
 impl fmt::Display for Choice {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.label)
