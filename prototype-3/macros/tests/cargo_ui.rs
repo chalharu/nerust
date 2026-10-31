@@ -120,6 +120,11 @@ impl Fixture {
         self.rejects_at(expected, Some(8));
     }
     fn rejects_at(&self, expected: &[&str], expected_line: Option<u64>) {
+        let source_file = if self.root.join("ui.json").exists() {
+            "ui.json"
+        } else {
+            "ui.yaml"
+        };
         let output = self.cargo(&["check", "--message-format=json"]);
         assert!(!output.status.success(), "fixture unexpectedly compiled");
         let stdout = String::from_utf8(output.stdout).unwrap();
@@ -141,7 +146,7 @@ impl Fixture {
                 span["is_primary"] == true
                     && span["file_name"]
                         .as_str()
-                        .is_some_and(|path| path.ends_with("/ui.yaml"))
+                        .is_some_and(|path| path.ends_with(&format!("/{source_file}")))
             })
             .collect();
         assert!(
@@ -220,6 +225,35 @@ fn rustc_rejects_wrong_binding_type() {
 }
 
 #[test]
+fn json_downstream_diagnostic_has_external_primary_span() {
+    let fixture = Fixture::copy("wrong_type");
+    let source = serde_json::json!({
+        "schema_version": 2,
+        "root": {"type": "Window", "id": "window", "title": {"literal": "Title"},
+            "content": {"type": "TextBox", "id": "entry", "text": {"bind": {"path": "flag", "mode": "TwoWay"}}}}
+    });
+    let source = serde_json::to_string_pretty(&source).unwrap();
+    let document = wakui2_markup::parse(&source, "json", "ui.json").unwrap();
+    let line = document.source.node(None, "entry").unwrap().line as u64;
+    fs::write(fixture.root.join("ui.json"), source).unwrap();
+    let main = fs::read_to_string(fixture.root.join("main.rs")).unwrap();
+    fs::write(
+        fixture.root.join("main.rs"),
+        main.replace("ui.yaml", "ui.json"),
+    )
+    .unwrap();
+    fixture.rejects_at(
+        &[
+            "E0308",
+            "mismatched types",
+            "Binding<String>",
+            "Binding<bool>",
+        ],
+        Some(line),
+    );
+}
+
+#[test]
 fn rustc_rejects_unknown_command() {
     Fixture::copy("unknown_command").rejects(&[
         "E0599",
@@ -236,6 +270,27 @@ fn rustc_rejects_wrong_typed_command_argument() {
         "expected `i32`",
         "found `String`",
     ]);
+}
+
+#[test]
+fn typed_integer_literal_and_missing_argument_diagnostic() {
+    let fixture = Fixture::copy("wrong_argument");
+    let source = fs::read_to_string(fixture.root.join("ui.yaml")).unwrap();
+    let typed = source.replace(
+        "argument: {bind: {path: name}}",
+        "argument: {literal: {i32: 7}}",
+    );
+    fs::write(fixture.root.join("ui.yaml"), &typed).unwrap();
+    assert!(fixture.cargo(&["check"]).status.success());
+    fs::write(
+        fixture.root.join("ui.yaml"),
+        typed.replace("argument: {literal: {i32: 7}}", ""),
+    )
+    .unwrap();
+    fixture.rejects_at(
+        &["command argument is required", "add an argument property"],
+        Some(8),
+    );
 }
 
 fn document(content: &str) -> String {

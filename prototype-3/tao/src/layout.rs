@@ -122,6 +122,8 @@ fn grid_cell(style: &Style, cols: usize) -> (usize, usize, usize, usize) {
 }
 
 pub(crate) struct Panel {
+    visible: bool,
+    enabled: bool,
     policy: Policy,
     padding: Option<iced::Padding>,
     keys: Vec<String>,
@@ -131,6 +133,8 @@ pub(crate) struct Panel {
 impl Panel {
     pub fn element(policy: Policy, children: Vec<(String, Style, Element)>) -> Element {
         let mut panel = Self {
+            visible: true,
+            enabled: true,
             policy,
             padding: None,
             keys: Vec::new(),
@@ -144,8 +148,23 @@ impl Panel {
         }
         Element::new(panel)
     }
+    #[cfg(test)]
     pub fn frame(child: Element, padding: iced::Padding) -> Element {
+        Self::gated_frame(child, padding, true)
+    }
+    #[cfg(test)]
+    pub fn gated_frame(child: Element, padding: iced::Padding, enabled: bool) -> Element {
+        Self::appearance_frame(child, padding, true, enabled)
+    }
+    pub fn appearance_frame(
+        child: Element,
+        padding: iced::Padding,
+        visible: bool,
+        enabled: bool,
+    ) -> Element {
         Element::new(Self {
+            visible,
+            enabled,
             policy: Policy::Absolute,
             padding: Some(padding),
             keys: vec!["body".into()],
@@ -158,6 +177,9 @@ impl Panel {
 struct Keys(Vec<String>);
 impl Widget<Message, iced::Theme, Renderer> for Panel {
     fn size(&self) -> Size<Length> {
+        if !self.visible {
+            return Size::new(Length::Fixed(0.0), Length::Fixed(0.0));
+        }
         if self.padding.is_some() {
             self.children[0].as_widget().size()
         } else {
@@ -200,6 +222,14 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        if !self.visible {
+            let child = self.children[0].as_widget_mut().layout(
+                &mut tree.children[0],
+                renderer,
+                &layout::Limits::new(Size::ZERO, Size::ZERO),
+            );
+            return layout::Node::with_children(Size::ZERO, vec![child]);
+        }
         if let Some(padding) = self.padding {
             let child = self.children[0].as_widget_mut().layout(
                 &mut tree.children[0],
@@ -277,15 +307,24 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
             let occupied: f32 = nodes
                 .iter()
                 .zip(&self.styles)
+                .filter(|(node, _)| node.size() != Size::ZERO)
                 .map(|(node, style)| {
                     node.size().width + finite(style.margin.left) + finite(style.margin.right)
                 })
                 .sum::<f32>()
-                + finite(gap) * nodes.len().saturating_sub(1) as f32;
+                + finite(gap)
+                    * nodes
+                        .iter()
+                        .filter(|node| node.size() != Size::ZERO)
+                        .count()
+                        .saturating_sub(1) as f32;
             let flexible = self
                 .styles
                 .iter()
-                .filter(|style| style.placement.width.is_none())
+                .zip(&nodes)
+                .filter(|(style, node)| {
+                    style.placement.width.is_none() && node.size() != Size::ZERO
+                })
                 .count();
             let surplus = (available - occupied).max(0.0) / flexible.max(1) as f32;
             let natural: f32 = nodes
@@ -306,7 +345,7 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                 .zip(&self.styles)
                 .zip(&mut nodes)
             {
-                if style.placement.width.is_some() {
+                if style.placement.width.is_some() || node.size() == Size::ZERO {
                     continue;
                 }
                 let width = if horizontal {
@@ -335,11 +374,23 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
             .zip(&self.styles)
             .map(|(n, s)| (n.size(), *s))
             .collect();
-        let (size, positions) = geometry(self.policy, available, &measured);
+        let active: Vec<_> = measured
+            .iter()
+            .copied()
+            .filter(|(size, _)| *size != Size::ZERO)
+            .collect();
+        let (size, positions) = geometry(self.policy, available, &active);
+        let mut positions = positions.into_iter();
         let nodes = nodes
             .into_iter()
-            .zip(positions)
-            .map(|(n, p)| n.move_to(p))
+            .map(|node| {
+                let position = if node.size() == Size::ZERO {
+                    Point::ORIGIN
+                } else {
+                    positions.next().unwrap()
+                };
+                node.move_to(position)
+            })
             .collect();
         layout::Node::with_children(limits.resolve(Length::Shrink, Length::Shrink, size), nodes)
     }
@@ -353,6 +404,9 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        if !self.visible {
+            return;
+        }
         for ((child, state), bounds) in self
             .children
             .iter()
@@ -375,6 +429,9 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if !self.visible || !self.enabled {
+            return;
+        }
         // Reverse hit order agrees with draw order for overlapping absolute/grid children.
         let layouts: Vec<_> = layout.children().collect();
         for ((child, state), bounds) in self
@@ -396,6 +453,9 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
+        if !self.visible || !self.enabled {
+            return;
+        }
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
             for ((child, state), bounds) in self
@@ -418,6 +478,9 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        if !self.visible || !self.enabled {
+            return mouse::Interaction::default();
+        }
         self.children
             .iter()
             .zip(&tree.children)
@@ -437,6 +500,9 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'a, Message, iced::Theme, Renderer>> {
+        if !self.visible || !self.enabled {
+            return None;
+        }
         overlay::from_children(
             &mut self.children,
             tree,
@@ -607,6 +673,41 @@ mod tests {
         let replaced = panel(&[("b#3", 3)]);
         tree.diff(replaced.as_widget());
         assert_eq!(*tree.children[0].state.downcast_ref::<u32>(), 3);
+    }
+    #[test]
+    fn hidden_frame_retains_state_and_collapses_layout() {
+        let frame = |visible| {
+            Panel::appearance_frame(
+                iced::widget::container(Element::new(Probe(1)))
+                    .width(80.0)
+                    .height(20.0)
+                    .into(),
+                iced::Padding::ZERO,
+                visible,
+                true,
+            )
+        };
+        let shown = frame(true);
+        let mut tree = Tree::new(shown.as_widget());
+        *tree.children[0].state.downcast_mut::<u32>() = 42;
+        let mut hidden = frame(false);
+        tree.diff(hidden.as_widget());
+        let renderer = Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+        let limits = layout::Limits::new(Size::ZERO, Size::new(600.0, 200.0));
+        let node = hidden.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        assert_eq!(node.size(), Size::ZERO);
+        assert_eq!(*tree.children[0].state.downcast_ref::<u32>(), 42);
+        let mut restored = frame(true);
+        tree.diff(restored.as_widget());
+        assert_eq!(*tree.children[0].state.downcast_ref::<u32>(), 42);
+        assert!(
+            restored
+                .as_widget_mut()
+                .layout(&mut tree, &renderer, &limits)
+                .size()
+                .width
+                > 0.0
+        );
     }
     #[test]
     fn fill_siblings_do_not_crush_the_button_in_a_virtual_row() {

@@ -60,7 +60,7 @@ enum Handler {
     Button(Command),
     Toggle(Binding<bool>),
     Radio(Binding<String>, String),
-    Slider(Binding<f64>, wakui2_runtime::SliderRange),
+    Slider(Binding<f64>, wakui2_runtime::SliderRange, Rc<Cell<f64>>),
     Choice(Binding<String>, Binding<Vec<wakui2_runtime::Choice>>),
     Tab(Binding<String>),
     Dialog(Binding<bool>),
@@ -78,6 +78,8 @@ struct Node {
     id: String,
     scope: String,
     mounted: Cell<bool>,
+    visible: Cell<bool>,
+    enabled: Cell<bool>,
     owner: Weak<Inner>,
     parent: Weak<Node>,
     style: Cell<Style>,
@@ -90,6 +92,15 @@ struct Node {
     identity: usize,
 }
 impl Node {
+    fn interactive(&self) -> bool {
+        self.mounted.get()
+            && self.visible.get()
+            && self.enabled.get()
+            && self
+                .parent
+                .upgrade()
+                .is_none_or(|parent| parent.interactive())
+    }
     fn key(&self) -> String {
         format!("{}#{}", self.id, self.identity)
     }
@@ -137,7 +148,7 @@ impl Node {
             Kind::Dialog(_) => widget::Space::new().width(0).height(0).into(),
         };
         let p = self.style.get().padding;
-        layout::Panel::frame(
+        layout::Panel::appearance_frame(
             body,
             iced::Padding {
                 top: layout::finite(p.top),
@@ -145,6 +156,8 @@ impl Node {
                 bottom: layout::finite(p.bottom),
                 left: layout::finite(p.left),
             },
+            self.visible.get(),
+            self.enabled.get(),
         )
     }
 }
@@ -162,10 +175,12 @@ struct Inner {
     subscriptions: RefCell<Vec<Subscription>>,
     on_close: RefCell<Vec<Rc<dyn Fn()>>>,
     on_close_request: RefCell<Option<Rc<dyn Fn()>>>,
+    quit_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting_close: Cell<bool>,
     invalidate: RefCell<Option<Rc<dyn Fn()>>>,
     visible: Cell<bool>,
     closed: Cell<bool>,
+    image_updates: Cell<usize>,
     error: RefCell<Option<String>>,
     diagnostics: RefCell<Vec<String>>,
     scroll: RefCell<HashMap<String, f32>>,
@@ -185,6 +200,7 @@ impl Inner {
             return;
         }
         drop(self.on_close_request.take());
+        drop(self.quit_request.take());
         drop(self.subscriptions.take());
         // Drop widget subscriptions even if application retains Parent handles.
         let nodes: Vec<_> = self
@@ -220,6 +236,8 @@ impl View {
                 id: "__root".into(),
                 scope: String::new(),
                 mounted: Cell::new(true),
+                visible: Cell::new(true),
+                enabled: Cell::new(true),
                 owner: owner.clone(),
                 parent: Weak::new(),
                 style: Cell::new(Style::default()),
@@ -246,10 +264,12 @@ impl View {
             subscriptions: RefCell::default(),
             on_close: RefCell::default(),
             on_close_request: RefCell::default(),
+            quit_request: RefCell::default(),
             requesting_close: Cell::new(false),
             invalidate: RefCell::default(),
             visible: Cell::new(false),
             closed: Cell::new(false),
+            image_updates: Cell::new(0),
             error: RefCell::default(),
             diagnostics: RefCell::default(),
             scroll: RefCell::default(),
@@ -301,6 +321,8 @@ impl View {
             id: id.clone(),
             scope: if new_scope { id.clone() } else { scope.clone() },
             mounted: Cell::new(true),
+            visible: Cell::new(true),
+            enabled: Cell::new(true),
             owner: Rc::downgrade(&self.0),
             parent: Rc::downgrade(&parent.0),
             style: Cell::new(Style::default()),
@@ -545,6 +567,24 @@ impl View {
             self.0.report(panic_error(panic));
         }
     }
+    pub fn request_quit(&self) {
+        if self.0.closed.get() {
+            return;
+        }
+        let callback = self.0.quit_request.borrow().clone();
+        let Some(callback) = callback else {
+            self.request_close();
+            return;
+        };
+        if self.0.requesting_close.replace(true) {
+            return;
+        }
+        let result = catch_unwind(AssertUnwindSafe(|| callback()));
+        self.0.requesting_close.set(false);
+        if let Err(panic) = result {
+            self.0.report(panic_error(panic));
+        }
+    }
     /// Explicit, idempotent force teardown. Never dispatches a close request.
     pub fn close(&self) {
         self.0.shutdown();
@@ -647,9 +687,15 @@ impl View {
         }
     }
     pub fn edit(&self, id: &str, value: &str) -> Result<(), String> {
+        if !self.find(id).is_some_and(|node| node.interactive()) {
+            return Err("hidden, disabled or missing control".into());
+        }
         self.dispatch(Message::Edit(id.into(), value.into()))
     }
     pub fn click(&self, id: &str) -> Result<(), String> {
+        if !self.find(id).is_some_and(|node| node.interactive()) {
+            return Err("hidden, disabled or missing control".into());
+        }
         self.dispatch(Message::Click(id.into()))
     }
     pub fn text(&self, id: &str) -> Option<String> {
@@ -664,6 +710,11 @@ impl View {
     }
     pub fn error(&self) -> Option<String> {
         self.0.error.borrow().clone()
+    }
+    pub fn report_error(&self, error: String) {
+        if !self.0.closed.get() {
+            self.0.report(error);
+        }
     }
     pub fn mount_identity(&self, id: &str) -> Option<usize> {
         self.find(id).map(|n| n.identity)
@@ -1082,6 +1133,98 @@ fn panic_error(panic: Box<dyn std::any::Any + Send>) -> String {
 }
 /// Owns the native loop and UI-local scheduler. Main thread only; no GTK4 in this process.
 pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), String> {
+    run_host(move |host| {
+        host.present(&make(wakui2_runtime::UiHost::executor(host.as_ref())));
+        Ok(())
+    })
+}
+pub struct TaoHost {
+    executor: Rc<scheduler::Scheduler>,
+    views: RefCell<Vec<(usize, View)>>,
+    session: RefCell<Option<wakui2_runtime::Session>>,
+    next: Cell<usize>,
+    notify: Rc<dyn Fn(usize)>,
+}
+impl wakui2_runtime::UiHost for TaoHost {
+    fn executor(&self) -> Rc<dyn Executor> {
+        self.executor.clone()
+    }
+    fn attach(&self, session: wakui2_runtime::Session) -> Result<(), String> {
+        if session.shutdown().phase() == wakui2_runtime::ShutdownPhase::Closed {
+            return Err("cannot attach a closed Session".into());
+        }
+        if let Some(attached) = self.session.borrow().as_ref() {
+            return if attached.ptr_eq(&session) {
+                Ok(())
+            } else {
+                Err("TaoHost supports one Session; share it across all windows".into())
+            };
+        }
+        self.session.replace(Some(session));
+        Ok(())
+    }
+}
+impl TaoHost {
+    pub fn present(&self, view: &View) {
+        if view.0.closed.get() {
+            return;
+        }
+        if !self
+            .views
+            .borrow()
+            .iter()
+            .any(|(_, existing)| Rc::ptr_eq(&existing.0, &view.0))
+        {
+            let id = self.next.get();
+            self.next
+                .set(id.checked_add(1).expect("window ID exhausted"));
+            let notify = self.notify.clone();
+            view.0.invalidate.replace(Some(Rc::new(move || notify(id))));
+            self.views.borrow_mut().push((id, view.clone()));
+        }
+        view.present();
+    }
+    pub fn register_view(
+        &self,
+        session: &wakui2_runtime::Session,
+        id: &str,
+        view: &View,
+        hooks: wakui2_runtime::WindowHooks,
+    ) -> Result<(), String> {
+        if view.0.closed.get() {
+            return Err("cannot register a closed View".into());
+        }
+        wakui2_runtime::UiHost::attach(self, session.clone())?;
+        let token = session.register_window(id, hooks)?;
+        view.keep(token);
+        let shutdown = session.shutdown();
+        let executor = self.executor.clone();
+        view.0.quit_request.replace(Some(Rc::new(move || {
+            let shutdown = shutdown.clone();
+            executor.spawn(Box::pin(async move {
+                shutdown
+                    .request_shutdown(std::time::Duration::from_secs(5))
+                    .await;
+            }));
+        })));
+        self.present(view);
+        Ok(())
+    }
+}
+impl Drop for TaoHost {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.get_mut().take() {
+            session.shutdown().close_now();
+        }
+        for (_, view) in self.views.get_mut().drain(..) {
+            view.close();
+        }
+        self.executor.close();
+    }
+}
+pub fn run_host(
+    make: impl FnOnce(Rc<TaoHost>) -> Result<(), String> + 'static,
+) -> Result<(), String> {
     driver::run(make)
 }
 /// Rejects external reactor integration; use `run` on the main thread instead.

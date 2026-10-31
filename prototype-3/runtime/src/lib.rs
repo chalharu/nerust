@@ -13,7 +13,8 @@ mod store;
 pub use blocking::{BlockingPool, TaskError};
 pub use controls::{Choice, ImageFrame, SliderRange, TabPosition, validate_choices};
 pub use session::{
-    Session, ShutdownCoordinator, ShutdownOutcome, ShutdownPhase, UiHost, WindowHooks, run_async,
+    Session, ShutdownCoordinator, ShutdownFailure, ShutdownOutcome, ShutdownPhase, UiHost,
+    WindowHooks, run_async,
 };
 pub use shortcut::{Shortcut, ShortcutError, ShortcutTarget};
 pub use store::{
@@ -255,6 +256,96 @@ pub struct MenuItem<A = String> {
     pub shortcut: Option<String>,
     pub role: MenuRole,
     pub enabled: bool,
+}
+
+#[diagnostic::on_unimplemented(
+    message = "command argument is required; add an argument property to this Button"
+)]
+pub trait OmittedCommandArgument: Clone + 'static {
+    fn omitted() -> Self;
+}
+impl OmittedCommandArgument for String {
+    fn omitted() -> Self {
+        String::new()
+    }
+}
+pub fn omitted_command_argument<T: OmittedCommandArgument>() -> Binding<T> {
+    Binding::constant(T::omitted())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MenuNode<A = String> {
+    Item(MenuItem<A>),
+    Submenu {
+        id: String,
+        label: String,
+        enabled: bool,
+        children: Vec<MenuNode<A>>,
+    },
+}
+
+pub fn flatten_menu<A: Clone>(nodes: &[MenuNode<A>]) -> Result<Vec<MenuItem<A>>, String> {
+    fn walk<A: Clone>(
+        nodes: &[MenuNode<A>],
+        enabled: bool,
+        depth: usize,
+        ids: &mut std::collections::HashSet<String>,
+        result: &mut Vec<MenuItem<A>>,
+    ) -> Result<(), String> {
+        if depth > 64 {
+            return Err("menu depth limit exceeded".into());
+        }
+        for node in nodes {
+            let id = match node {
+                MenuNode::Item(item) => &item.id,
+                MenuNode::Submenu { id, .. } => id,
+            };
+            if !valid_item_key(id) || !ids.insert(id.clone()) || ids.len() > 4096 {
+                return Err("invalid/duplicate menu id or menu node limit".into());
+            }
+            match node {
+                MenuNode::Item(item) => {
+                    let mut item = item.clone();
+                    item.enabled &= enabled;
+                    result.push(item);
+                }
+                MenuNode::Submenu {
+                    enabled: local,
+                    children,
+                    ..
+                } => walk(children, enabled && *local, depth + 1, ids, result)?,
+            }
+        }
+        Ok(())
+    }
+    let mut items = Vec::new();
+    walk(
+        nodes,
+        true,
+        0,
+        &mut std::collections::HashSet::new(),
+        &mut items,
+    )?;
+    Ok(items)
+}
+
+pub fn checked_menu<A: Clone + PartialEq + 'static>(
+    source: Binding<Vec<MenuNode<A>>>,
+    validate: impl Fn(&[MenuItem<A>]) -> Result<(), String> + 'static,
+    report: impl Fn(String) + 'static,
+) -> Binding<Vec<MenuNode<A>>> {
+    let accepted = std::cell::RefCell::new(Vec::new());
+    source
+        .map(move |nodes| {
+            match flatten_menu(&nodes).and_then(|items| validate(&items)) {
+                Ok(()) => {
+                    accepted.replace(nodes);
+                }
+                Err(error) => report(error),
+            }
+            accepted.borrow().clone()
+        })
+        .distinct()
 }
 
 #[cfg(test)]

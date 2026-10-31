@@ -30,7 +30,10 @@ done
 output=$(cargo run --locked -p wakui3-settings --no-default-features --features backend-macos --example controls)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
+printf '%s\n' "$output" | grep -q '^CONTRACT3 PASS slider closed capacity conversion readonly hidden disabled normalized-display$'
 printf '%s\n' "$output" | grep -q '^TABS3 PASS top bottom left right selection retained$'
+printf '%s\n' "$output" | grep -q '^MENUS3 PASS nested typed-argument parent-enablement$'
+printf '%s\n' "$output" | grep -q '^DIALOG3 PASS readonly hidden-parent close-reopen$'
 output=$(cargo run --locked -p wakui3-macos --example multiwindow)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^MACOS3 PASS single-session repeated-attach foreign-attach-and-registration-rejected$'
@@ -40,4 +43,5 @@ printf '%s\n' "$output" | grep -q '^MACOS3 PASS multiwindow shared-store reopen 
 sh scripts/verify-tao-macos.sh
 python3 scripts/bundle-macos.py --verify
 python3 scripts/bundle-macos.py --package wakui3-library --verify
+sh scripts/measure-macos.sh
 printf '%s\n' 'VERIFY3 MACOS PASS: core regressions, AppKit settings/library, injected input, bounded dispatch and native drawing'
