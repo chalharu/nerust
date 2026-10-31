@@ -57,6 +57,28 @@ generated extension implementation. This also applies recursively to
 macro arguments containing explicit `Self` are rejected with a diagnostic;
 spell out the concrete model inside such macros.
 
+## Tab placement
+
+`Tab.position` is a static enum: `Top` (default), `Bottom`, `Left`, or `Right`.
+Left/Right display vertical headers. Selection still binds the stable page key;
+changing placement or selection retains page content and subscriptions on GTK,
+Tao, and AppKit. Overflowing vertical headers scroll. Omitting `position` preserves the
+existing horizontal Top layout.
+
+```yaml
+type: Tab
+id: pages
+position: Left
+selected: {bind: {path: page, mode: TwoWay}}
+pages:
+  - id: video
+    title: {literal: Video}
+    content: {type: Label, id: video_content, text: {literal: Video Settings}}
+  - id: audio
+    title: {literal: Audio}
+    content: {type: Label, id: audio_content, text: {literal: Audio Settings}}
+```
+
 ## Complete syntax example
 
 ```yaml

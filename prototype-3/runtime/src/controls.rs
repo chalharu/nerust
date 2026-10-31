@@ -1,5 +1,14 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TabPosition {
+    #[default]
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Choice {
     pub id: String,

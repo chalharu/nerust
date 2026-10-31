@@ -2,6 +2,86 @@ use super::*;
 
 #[cfg(target_os = "linux")]
 #[test]
+fn vertical_tabs_keep_headers_disjoint_and_page_identity_stable() {
+    use iced::{
+        Size,
+        advanced::{layout::Limits, widget::Tree},
+    };
+    use wakui2_runtime::TabPosition;
+    let harness = Harness::new();
+    let model = harness.store(String::from("video"));
+    let view = View::new(Binding::constant("Tabs".into()));
+    let tab = view.tab(
+        &view.root(),
+        "tabs",
+        model.bind(Clone::clone, Some(|state, value| *state = value)),
+    );
+    for key in ["video", "audio"] {
+        let page = view.tab_page(&tab, key, Binding::constant(key.into()), key);
+        view.label(
+            &page,
+            &format!("{key}_label"),
+            Binding::constant(format!("{key} settings")),
+        );
+    }
+    view.finish_tab(&tab).unwrap();
+    let identities: Vec<_> = tab
+        .0
+        .children
+        .borrow()
+        .iter()
+        .map(|page| page.identity)
+        .collect();
+    let renderer = iced_tiny_skia::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+    for position in [
+        TabPosition::Top,
+        TabPosition::Bottom,
+        TabPosition::Left,
+        TabPosition::Right,
+    ] {
+        view.tab_position("tabs", position).unwrap();
+        for width in [240.0, 440.0, 960.0] {
+            let mut element = tab.0.element();
+            let mut tree = Tree::new(element.as_widget());
+            let frame = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(Size::new(width, 140.0), Size::new(width, 140.0)),
+            );
+            let children = frame.children()[0].children();
+            assert_eq!(children.len(), 2);
+            let first = children[0].bounds();
+            let second = children[1].bounds();
+            assert!(!first.intersects(&second));
+            assert!(first.x >= 0.0 && second.x + second.width <= width + 0.01);
+            match position {
+                TabPosition::Left => assert!((first.width - 120.0).abs() < 0.01),
+                TabPosition::Right => {
+                    assert!((second.width - 120.0).abs() < 0.01);
+                    assert!((second.x + second.width - width).abs() < 0.01);
+                }
+                TabPosition::Top => assert!(first.y.abs() < 0.01),
+                TabPosition::Bottom => assert!((second.y + second.height - 140.0).abs() < 0.01),
+            }
+        }
+        view.select("tabs", "audio").unwrap();
+        assert_eq!(model.snapshot(), "audio");
+        view.select("tabs", "video").unwrap();
+        assert_eq!(
+            tab.0
+                .children
+                .borrow()
+                .iter()
+                .map(|page| page.identity)
+                .collect::<Vec<_>>(),
+            identities
+        );
+    }
+    view.close();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn combo_rejects_unknown_source_selection_and_accepts_recovery() {
     let harness = Harness::new();
     let model = harness.store(String::from("linear"));

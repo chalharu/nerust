@@ -30,6 +30,7 @@ done
 output=$(cargo run --locked -p wakui3-settings --no-default-features --features backend-macos --example controls)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
+printf '%s\n' "$output" | grep -q '^TABS3 PASS top bottom left right selection retained$'
 output=$(cargo run --locked -p wakui3-macos --example multiwindow)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^MACOS3 PASS single-session repeated-attach foreign-attach-and-registration-rejected$'

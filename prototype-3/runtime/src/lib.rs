@@ -11,7 +11,7 @@ mod shortcut;
 mod store;
 
 pub use blocking::{BlockingPool, TaskError};
-pub use controls::{Choice, ImageFrame, SliderRange, validate_choices};
+pub use controls::{Choice, ImageFrame, SliderRange, TabPosition, validate_choices};
 pub use session::{
     Session, ShutdownCoordinator, ShutdownOutcome, ShutdownPhase, UiHost, WindowHooks, run_async,
 };

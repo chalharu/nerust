@@ -31,6 +31,11 @@ def xdo(*arguments):
     return run("xdotool", *map(str, arguments)).decode().strip()
 
 
+def tab_text(image, *options):
+    pixels = run("convert", str(image), "-white-threshold", "40%", "png:-")
+    return subprocess.check_output(["tesseract", "stdin", "stdout", "--psm", "11", *options], input=pixels, timeout=30).decode()
+
+
 def capture(window, destination, expected=(), psm="6", pixel_check=lambda _: True):
     previous = None
     stable = 0
@@ -42,6 +47,8 @@ def capture(window, destination, expected=(), psm="6", pixel_check=lambda _: Tru
         stable = stable + 1 if digest == previous else 0
         if stable >= 2 and len(set(pixels)) > 8 and pixel_check(pixels):
             text = run("tesseract", str(destination), "stdout", "--psm", psm).decode()
+            if "audio" in expected:
+                text += tab_text(destination)
             normalized = re.sub(r"[^a-z0-9]", "", text.lower())
             if all(value in normalized for value in expected):
                 return
@@ -78,12 +85,20 @@ def controls_review():
                         while f"CONTROLS3 DRAW {width}x{height}" not in (output / f"controls-{backend}.log").read_text():
                             if process.poll() is not None or time.monotonic() >= deadline:
                                 raise RuntimeError(f"{backend}: resized frame was not drawn")
-                    for state, direction, expected in (("top", 4, ("nearest",)), ("bottom", 5, ("settings",))):
+                    for state, direction, expected in (("top", 4, ("nearest",)), ("bottom", 5, ("audio", "settings"))):
                         scroll(window, direction)
                         image = output / f"controls-{backend}-{width}x{height}-{state}.png"
                         capture(window, image, expected, pixel_check=lambda pixels: any(pixels[-3:]))
                         records.append({"backend": backend, "state": state, "width": width, "height": height, "image": image.name})
                 image = output / f"controls-{backend}-440x360-bottom.png"
+                rows = csv.DictReader(io.StringIO(tab_text(image, "tsv")), delimiter="\t")
+                tab_buttons = [row for row in rows if row["text"].lower() == "audio"]
+                if not tab_buttons:
+                    raise RuntimeError(f"{backend}: vertical Audio tab not found")
+                tab_button = tab_buttons[-1]
+                xdo("mousemove", "--window", window, int(tab_button["left"]) + int(tab_button["width"]) // 2, int(tab_button["top"]) + int(tab_button["height"]) // 2, "click", 1)
+                capture(window, output / f"controls-{backend}-vertical-audio.png", ("audiosettings",))
+                print(f"TABS3 CAPTURE {backend} vertical physical-click audio", flush=True)
                 rows = csv.DictReader(io.StringIO(run("tesseract", str(image), "stdout", "--psm", "6", "tsv").decode()), delimiter="\t")
                 buttons = [row for row in rows if row["text"].lower() == "settings"]
                 if not buttons:

@@ -48,6 +48,7 @@ root:
         style: {placement: {height: 128}}
       - type: Tab
         id: pages
+        position: Left
         selected: {bind: {path: page, mode: TwoWay}}
         style: {placement: {height: 140}}
         pages:

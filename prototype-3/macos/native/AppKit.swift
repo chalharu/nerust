@@ -90,9 +90,24 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
+final class TabButton: NSButton {
+    weak var tabs: Tabs?
+    var page = 0
+    @objc func selectPage(_ sender: Any?) { tabs?.body.selectTabViewItem(at: page) }
+}
+
+@MainActor
 final class Tabs: NSStackView {
     let header = NSSegmentedControl()
     let body = NSTabView()
+    let verticalHeader = DocumentStack()
+    let rail = NSScrollView()
+    var enabled = true
+    private lazy var bodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor)
+    private lazy var verticalBodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor, constant: -128)
+    private lazy var bodyHeight = body.heightAnchor.constraint(equalTo: heightAnchor)
+    private lazy var railWidth = rail.widthAnchor.constraint(equalToConstant: 120)
+    private lazy var railHeight = rail.heightAnchor.constraint(equalTo: heightAnchor)
     override init(frame: NSRect) {
         super.init(frame: frame)
         orientation = .vertical
@@ -101,10 +116,82 @@ final class Tabs: NSStackView {
         header.trackingMode = .selectOne
         header.segmentStyle = .rounded
         body.tabViewType = .noTabsNoBorder
+        distribution = .fill
+        body.setContentHuggingPriority(.defaultLow, for: .vertical)
+        header.setContentHuggingPriority(.defaultHigh, for: .vertical)
         addArrangedSubview(header)
         addArrangedSubview(body)
         body.translatesAutoresizingMaskIntoConstraints = false
-        body.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        verticalHeader.orientation = .vertical
+        verticalHeader.alignment = .leading
+        verticalHeader.spacing = 8
+        verticalHeader.translatesAutoresizingMaskIntoConstraints = false
+        rail.drawsBackground = false
+        rail.hasVerticalScroller = true
+        rail.translatesAutoresizingMaskIntoConstraints = false
+        rail.documentView = verticalHeader
+        verticalHeader.widthAnchor.constraint(equalTo: rail.contentView.widthAnchor).isActive = true
+        setPosition("Top")
+    }
+    func setPosition(_ position: String) {
+        let vertical = position == "Left" || position == "Right"
+        bodyWidth.isActive = false
+        verticalBodyWidth.isActive = false
+        bodyHeight.isActive = false
+        railWidth.isActive = false
+        railHeight.isActive = false
+        for view in arrangedSubviews { removeArrangedSubview(view); view.removeFromSuperview() }
+        orientation = vertical ? .horizontal : .vertical
+        alignment = vertical ? .top : .leading
+        let headings: NSView = vertical ? rail : header
+        if position == "Bottom" || position == "Right" {
+            addArrangedSubview(body); addArrangedSubview(headings)
+        } else { addArrangedSubview(headings); addArrangedSubview(body) }
+        bodyWidth.isActive = !vertical
+        verticalBodyWidth.isActive = vertical
+        bodyHeight.isActive = vertical
+        railWidth.isActive = vertical
+        railHeight.isActive = vertical
+    }
+    func rebuildHeader() {
+        header.segmentCount = body.numberOfTabViewItems
+        for view in verticalHeader.arrangedSubviews { verticalHeader.removeArrangedSubview(view); view.removeFromSuperview() }
+        for (index, item) in body.tabViewItems.enumerated() {
+            header.setLabel(item.label, forSegment: index)
+            let button = TabButton(title: item.label, target: nil, action: nil)
+            button.tabs = self
+            button.page = index
+            button.target = button
+            button.action = #selector(TabButton.selectPage(_:))
+            button.setButtonType(.pushOnPushOff)
+            button.bezelStyle = .rounded
+            button.cell?.alignment = .left
+            button.cell?.wraps = true
+            button.isEnabled = enabled
+            verticalHeader.addArrangedSubview(button)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.widthAnchor.constraint(equalTo: verticalHeader.widthAnchor).isActive = true
+        }
+        refreshSelection()
+        verticalHeader.setFrameSize(NSSize(width: 120, height: verticalHeader.fittingSize.height))
+    }
+    func activatePage(_ index: Int) {
+        if orientation == .horizontal, let button = verticalHeader.arrangedSubviews[index] as? NSButton {
+            button.performClick(nil)
+        } else { body.selectTabViewItem(at: index) }
+        refreshSelection()
+    }
+    func refreshSelection() {
+        let selected = body.selectedTabViewItem.map { body.indexOfTabViewItem($0) } ?? -1
+        header.selectedSegment = selected
+        for (index, view) in verticalHeader.arrangedSubviews.enumerated() {
+            (view as? NSButton)?.state = index == selected ? .on : .off
+        }
+    }
+    func setEnabled(_ enabled: Bool) {
+        self.enabled = enabled
+        header.isEnabled = enabled
+        for view in verticalHeader.arrangedSubviews { (view as? NSButton)?.isEnabled = enabled }
     }
     required init?(coder: NSCoder) { fatalError("coder construction unsupported") }
 }
@@ -225,8 +312,8 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         applying || !readonlyTabs.contains(tabView.identifier?.rawValue ?? "")
     }
     func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        if let id = tabView.identifier?.rawValue, let tabs = nodes[id] as? Tabs, let item = tabViewItem {
-            tabs.header.selectedSegment = tabView.indexOfTabViewItem(item)
+        if let id = tabView.identifier?.rawValue, let tabs = nodes[id] as? Tabs, tabViewItem != nil {
+            tabs.refreshSelection()
         }
         if !applying, let id = tabView.identifier?.rawValue, let key = tabViewItem?.identifier as? String { emit(id, key) }
     }
@@ -266,8 +353,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
             applying = false
             tabItems[id] = item
             if let tabs = nodes[parent] as? Tabs {
-                tabs.header.segmentCount = tab.numberOfTabViewItems
-                tabs.header.setLabel(id, forSegment: tab.numberOfTabViewItems - 1)
+                tabs.rebuildHeader()
             }
         } else { container?.addArrangedSubview(frame) }
         frame.translatesAutoresizingMaskIntoConstraints = false
@@ -480,7 +566,7 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
             if text == "1" { value.readonlyDialogs.remove(id) } else { value.readonlyDialogs.insert(id) }
         }
         if let tabs = value.nodes[id] as? Tabs {
-            tabs.header.isEnabled = text == "1"
+            tabs.setEnabled(text == "1")
             if text == "1" { value.readonlyTabs.remove(id) } else { value.readonlyTabs.insert(id) }
         }
     } else if property == 2 {
@@ -519,10 +605,11 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
         }
     } else if property == 8 { value.tabItems[id]?.identifier = text
     } else if property == 9 { value.dialogs[id]?.title = text
+    } else if property == 10, let tabs = value.nodes[id] as? Tabs { tabs.setPosition(text)
     } else if let item = value.tabItems[id] {
         item.label = text
         if let tab = item.tabView, let id = tab.identifier?.rawValue, let tabs = value.nodes[id] as? Tabs {
-            tabs.header.setLabel(text, forSegment: tab.indexOfTabViewItem(item))
+            tabs.rebuildHeader()
         }
     } else if let field = value.nodes[id] as? NSTextField {
         if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
@@ -586,9 +673,9 @@ public func action(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<
         value.activated(combo)
         return 1
     }
-    if kind == 5, let tab = (value.nodes[id] as? Tabs)?.body, !value.readonlyTabs.contains(id),
-       let item = tab.tabViewItems.first(where: { ($0.identifier as? String) == text }) {
-        tab.selectTabViewItem(item)
+    if kind == 5, let tabs = value.nodes[id] as? Tabs, !value.readonlyTabs.contains(id),
+       let item = tabs.body.tabViewItems.first(where: { ($0.identifier as? String) == text }) {
+        tabs.activatePage(tabs.body.indexOfTabViewItem(item))
         return 1
     }
     if kind == 6, value.dialogs[id] != nil, !value.readonlyDialogs.contains(id), text == "0" || text == "1" {

@@ -37,6 +37,7 @@ for backend in gtk tao; do
     output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui3-settings --no-default-features --features "backend-$backend" --example controls)
     printf '%s\n' "$output"
     printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
+    printf '%s\n' "$output" | grep -q '^TABS3 PASS top bottom left right selection retained$'
 done
 native_test -p wakui3-settings \
     native_tests::native_generated_shared_windows_survive_peer_close -- --exact --ignored --test-threads=1

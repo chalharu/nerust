@@ -413,9 +413,21 @@ fn control_inner(
             quote!(__wakui_view.image(&__wakui_parent, &__id, #source);)
         }
         Control::Tab {
-            selected, pages, ..
+            selected,
+            pages,
+            position,
+            ..
         } => {
             let selected = binding(selected, true)?;
+            let position = format_ident!(
+                "{}",
+                match position {
+                    wakui2_markup::TabPosition::Top => "Top",
+                    wakui2_markup::TabPosition::Bottom => "Bottom",
+                    wakui2_markup::TabPosition::Left => "Left",
+                    wakui2_markup::TabPosition::Right => "Right",
+                }
+            );
             let mut generated = Vec::new();
             for page in pages {
                 let key = &page.id;
@@ -431,7 +443,7 @@ fn control_inner(
                     #body
                 }));
             }
-            quote!(let __tab = __wakui_view.tab(&__wakui_parent, &__id, #selected); #(#generated)* __wakui_view.finish_tab(&__tab).expect("invalid Tab selection");)
+            quote!(let __tab = __wakui_view.tab(&__wakui_parent, &__id, #selected); __wakui_view.tab_position(&__id, ::wakui2_runtime::TabPosition::#position).expect("invalid Tab position"); #(#generated)* __wakui_view.finish_tab(&__tab).expect("invalid Tab selection");)
         }
         Control::Dialog {
             title,
@@ -521,6 +533,21 @@ mod tests {
             "dialog_content",
         ] {
             assert!(code.to_string().contains(method), "{method}");
+        }
+    }
+
+    #[test]
+    fn tab_positions_emit_runtime_enums() {
+        for position in ["Top", "Bottom", "Left", "Right"] {
+            let document = document(&format!(
+                "{{type: Tab, id: tabs, position: {position}, selected: {{literal: video}}, pages: [{{id: video, title: {{literal: Video}}, content: {{type: Label, id: label, text: {{literal: Video}}}}}}]}}"
+            ));
+            let code = generate(&document, &syn::parse_quote!(backend), false).unwrap();
+            syn::parse2::<syn::Expr>(quote!({ #code })).unwrap();
+            assert!(
+                code.to_string()
+                    .contains(&format!("TabPosition :: {position}"))
+            );
         }
     }
 

@@ -226,6 +226,30 @@ impl View {
         });
         Parent(id.into(), Rc::downgrade(&self.0))
     }
+    pub fn tab_position(
+        &self,
+        id: &str,
+        position: wakui2_runtime::TabPosition,
+    ) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
+        if !self.0.tabs.borrow().contains_key(id) {
+            return Err("missing Tab".into());
+        }
+        self.set(
+            id,
+            match position {
+                wakui2_runtime::TabPosition::Top => "Top",
+                wakui2_runtime::TabPosition::Bottom => "Bottom",
+                wakui2_runtime::TabPosition::Left => "Left",
+                wakui2_runtime::TabPosition::Right => "Right",
+            },
+            10,
+        );
+        Ok(())
+    }
+
     pub fn tab_page(&self, parent: &Parent, id: &str, title: Binding<String>, key: &str) -> Parent {
         self.add(parent, id, 11, 0.0);
         self.set(id, key, 8);
