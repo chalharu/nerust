@@ -21,6 +21,8 @@ members = [
   "console/nes/factory",
   "console/nes/settings",
   "gui/emu-thread",
+  "gui/application",
+  "gui/frontends/desktop",
   "gui/frontends/android",
   "gui/frontends/kernel",
   "gui/frontends/rom_tool",
@@ -89,6 +91,7 @@ nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard.workspace = true
 nerust_gui_shell.workspace = true
+nerust_desktop = { optional = true, workspace = true }
 wakui.workspace = true
 nerust_gbc_factory = { optional = true, workspace = true }
 nerust_gba_factory = { optional = true, workspace = true }
@@ -110,6 +113,7 @@ nerust_settings_core.workspace = true
 default = ["nes", "gbc", "gba", "wgpu", "cpal", "cubeb", "wakui/default"]
 cpal = ["nerust_sound_cpal"]
 cubeb = ["nerust_sound_cubeb"]
+desktop = ["dep:nerust_desktop"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
 gtk = ["wakui/gtk"]
@@ -209,6 +213,8 @@ nerust_core_traits = { path = "traits/core" }
 nerust_system_traits = { path = "traits/system" }
 nerust_console_input = { path = "console/input" }
 nerust_emu_thread = { path = "gui/emu-thread" }
+nerust_gui_application = { path = "gui/application" }
+nerust_desktop = { path = "gui/frontends/desktop" }
 nerust_gba_core = { path = "console/gba/core" }
 nerust_gba_device = { path = "console/gba/device" }
 nerust_gba_factory = { path = "console/gba/factory" }

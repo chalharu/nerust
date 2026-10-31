@@ -18,84 +18,89 @@ type TabPage = (String, Rc<RefCell<String>>, Weak<Node>);
 impl Tab {
     pub fn element(&self, _node: &Node) -> Element {
         let selected = self.current.borrow().clone();
-        let pages = self.pages.borrow();
-        let vertical = matches!(
-            self.position.get(),
-            panechord_runtime::TabPosition::Left | panechord_runtime::TabPosition::Right
-        );
-        let buttons: Vec<Element> = pages
-            .iter()
-            .map(|(key, title, _)| {
-                let active = *key == selected
-                    || (selected.is_empty()
-                        && pages.first().is_some_and(|(first, _, _)| first == key));
-                let button = widget::button(widget::text(title.borrow().clone()))
-                    .width(if vertical {
-                        Length::Fill
+        let pages = self.pages.borrow().clone();
+        let position = self.position.get();
+        let writable = self.selected.is_writable();
+        let id = _node.id.clone();
+        layout::AdaptiveHeight::element(Rc::new(move |fixed_height| {
+            let vertical = matches!(
+                position,
+                panechord_runtime::TabPosition::Left | panechord_runtime::TabPosition::Right
+            );
+            let buttons: Vec<Element> = pages
+                .iter()
+                .map(|(key, title, _)| {
+                    let active = *key == selected
+                        || (selected.is_empty()
+                            && pages.first().is_some_and(|(first, _, _)| first == key));
+                    let button = widget::button(widget::text(title.borrow().clone()))
+                        .width(if vertical {
+                            Length::Fill
+                        } else {
+                            Length::Shrink
+                        })
+                        .style(if active {
+                            widget::button::primary
+                        } else {
+                            widget::button::secondary
+                        });
+                    if writable {
+                        button
+                            .on_press(Message::Select(id.clone(), key.clone()))
+                            .into()
                     } else {
-                        Length::Shrink
-                    })
-                    .style(if active {
-                        widget::button::primary
-                    } else {
-                        widget::button::secondary
-                    });
-                if self.selected.is_writable() {
-                    button
-                        .on_press(Message::Select(_node.id.clone(), key.clone()))
-                        .into()
+                        button.into()
+                    }
+                })
+                .collect();
+            let body = pages
+                .iter()
+                .find(|(key, _, _)| *key == selected)
+                .or_else(|| selected.is_empty().then(|| pages.first()).flatten())
+                .and_then(|(_, _, node)| node.upgrade())
+                .map(|node| node.element())
+                .unwrap_or_else(|| widget::Space::new().into());
+            let body: Element = widget::container(body)
+                .width(Length::Fill)
+                .height(if fixed_height && !vertical {
+                    Length::Fill
                 } else {
-                    button.into()
+                    Length::Shrink
+                })
+                .into();
+            match position {
+                panechord_runtime::TabPosition::Top => {
+                    widget::column![widget::row(buttons).spacing(8), body]
+                        .spacing(8)
+                        .width(Length::Fill)
+                        .into()
                 }
-            })
-            .collect();
-        let body = pages
-            .iter()
-            .find(|(key, _, _)| *key == selected)
-            .or_else(|| selected.is_empty().then(|| pages.first()).flatten())
-            .and_then(|(_, _, node)| node.upgrade())
-            .map(|node| node.element())
-            .unwrap_or_else(|| widget::Space::new().into());
-        let body: Element = widget::container(body)
-            .width(Length::Fill)
-            .height(if vertical {
-                Length::Shrink
-            } else {
-                Length::Fill
-            })
-            .into();
-        match self.position.get() {
-            panechord_runtime::TabPosition::Top => {
-                widget::column![widget::row(buttons).spacing(8), body]
-                    .spacing(8)
-                    .width(Length::Fill)
-                    .into()
+                panechord_runtime::TabPosition::Bottom => {
+                    widget::column![body, widget::row(buttons).spacing(8)]
+                        .spacing(8)
+                        .width(Length::Fill)
+                        .into()
+                }
+                panechord_runtime::TabPosition::Left => widget::row![
+                    widget::scrollable(widget::column(buttons).spacing(8))
+                        .width(120)
+                        .height(Length::Shrink),
+                    body
+                ]
+                .spacing(12)
+                .width(Length::Fill)
+                .into(),
+                panechord_runtime::TabPosition::Right => widget::row![
+                    body,
+                    widget::scrollable(widget::column(buttons).spacing(8))
+                        .width(120)
+                        .height(Length::Shrink)
+                ]
+                .spacing(12)
+                .width(Length::Fill)
+                .into(),
             }
-            panechord_runtime::TabPosition::Bottom => {
-                widget::column![body, widget::row(buttons).spacing(8)]
-                    .spacing(8)
-                    .width(Length::Fill)
-                    .into()
-            }
-            panechord_runtime::TabPosition::Left => widget::row![
-                widget::scrollable(widget::column(buttons).spacing(8))
-                    .width(120)
-                    .height(Length::Shrink),
-                body
-            ]
-            .spacing(12)
-            .width(Length::Fill)
-            .into(),
-            panechord_runtime::TabPosition::Right => widget::row![
-                body,
-                widget::scrollable(widget::column(buttons).spacing(8))
-                    .width(120)
-                    .height(Length::Shrink)
-            ]
-            .spacing(12)
-            .width(Length::Fill)
-            .into(),
-        }
+        }))
     }
 }
 pub(super) struct Dialog {
