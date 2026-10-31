@@ -61,6 +61,10 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
         let columnsChanged = definition?.columns.map { $0.title } != next.columns.map { $0.title }
             || definition?.columns.map { $0.width } != next.columns.map { $0.width }
         definition = next
+        let headers = next.columns.contains { !$0.title.isEmpty }
+        if headers != (table.headerView != nil) {
+            table.headerView = headers ? NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 480, height: 24)) : nil
+        }
         empty.stringValue = next.emptyText
         empty.isHidden = !next.rows.isEmpty
         if columnsChanged {
@@ -778,7 +782,9 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let value = host(pointer)
     let id = string(idBytes, idCount)
     let text = string(textBytes, textCount)
-    if property == 13, let table = value.nodes[id] as? TableControl {
+    if property == 14, let field = value.nodes[id] as? NSTextField {
+        field.placeholderString = text
+    } else if property == 13, let table = value.nodes[id] as? TableControl {
         table.update(text)
     } else if property == 1 {
         value.capabilities[id] = text == "1"

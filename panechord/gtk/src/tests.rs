@@ -126,7 +126,41 @@ fn native_style_late_close_contract() {
     )
     .unwrap();
     assert_eq!(view.0.nodes.borrow()["horizontal"].frame.margin_top(), 2);
+    let placeholder = Store::new("Address (hex)".to_owned(), GtkHost::attach().executor());
+    view.entry_with_placeholder(
+        &view.root(),
+        "placeholder",
+        Binding::constant(String::new()),
+        placeholder.bind(Clone::clone, None),
+    );
+    assert_eq!(
+        view.widget::<gtk::Entry>("placeholder")
+            .unwrap()
+            .placeholder_text()
+            .as_deref(),
+        Some("Address (hex)")
+    );
+    view.try_style(
+        "placeholder",
+        Style {
+            placement: Placement {
+                width: Some(120.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let entry = view.widget::<gtk::Entry>("placeholder").unwrap();
+    assert!(entry.measure(gtk::Orientation::Horizontal, -1).0 <= 120);
+    assert_eq!(entry.width_chars(), 1);
+    view.try_style("placeholder", Style::default()).unwrap();
+    assert_eq!(entry.width_chars(), -1);
+    assert!(placeholder.update(|caption| *caption = "Page (hex)".into()));
+    assert_eq!(entry.placeholder_text().as_deref(), Some("Page (hex)"));
     view.close();
+    assert!(placeholder.update(|caption| *caption = "Late update".into()));
+    assert_eq!(entry.placeholder_text().as_deref(), Some("Page (hex)"));
     assert_eq!(
         view.try_style("__root", Style::default()),
         Err("view is closed".into())
@@ -263,6 +297,16 @@ fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
         "offscreen value did not size the column: {}",
         header.width()
     );
+    let headers = root.first_child().unwrap();
+    let separator = headers.next_sibling().unwrap();
+    assert!(model.update(|data| {
+        for column in Arc::make_mut(&mut data.columns) {
+            column.title.clear();
+        }
+    }));
+    assert!(!headers.is_visible() && !separator.is_visible());
+    assert!(model.update(|data| Arc::make_mut(&mut data.columns)[0].title = "Key".into()));
+    assert!(headers.is_visible() && separator.is_visible());
     assert!(model.update(|data| {
         data.rows = vec![Arc::new(TableRow {
             key: "bad/key".into(),

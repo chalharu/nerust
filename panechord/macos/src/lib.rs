@@ -581,6 +581,20 @@ impl View {
         });
     }
 
+    pub fn entry_with_placeholder(
+        &self,
+        parent: &Parent,
+        id: &str,
+        text: Binding<String>,
+        placeholder: Binding<String>,
+    ) {
+        self.entry(parent, id, text);
+        let key = id.to_owned();
+        self.bind(id, placeholder, move |view, value| {
+            view.set(&key, &value, 14)
+        });
+    }
+
     pub fn separator(&self, parent: &Parent, id: &str, vertical: bool) {
         self.add(parent, id, 16, if vertical { 1.0 } else { 0.0 });
     }

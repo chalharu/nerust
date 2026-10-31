@@ -36,6 +36,20 @@ impl Tab {
     }
 }
 impl View {
+    pub fn entry_with_placeholder(
+        &self,
+        parent: &Parent,
+        id: &str,
+        text: Binding<String>,
+        placeholder: Binding<String>,
+    ) {
+        self.entry(parent, id, text);
+        let entry = self.widget::<gtk::Entry>(id).unwrap();
+        self.bind_native(id, placeholder, &entry, |entry, value| {
+            entry.set_placeholder_text(Some(&value))
+        });
+    }
+
     pub fn separator(&self, parent: &Parent, id: &str, vertical: bool) {
         let orientation = if vertical {
             gtk::Orientation::Vertical

@@ -645,6 +645,13 @@ impl View {
             },
         };
         style.validate(layout).map_err(str::to_owned)?;
+        if let Ok(entry) = self.widget::<gtk::Entry>(id) {
+            entry.set_width_chars(if style.placement.width.is_some() {
+                1
+            } else {
+                -1
+            });
+        }
         if let Ok(label) = self.widget::<gtk::Label>(id) {
             table::apply_text_style(&label, style.text);
         }

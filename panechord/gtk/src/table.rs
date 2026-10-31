@@ -6,6 +6,7 @@ struct TableState {
     data: RefCell<Table>,
     rows: gio::ListStore,
     headers: gtk::Box,
+    separator: gtk::Separator,
     empty: gtk::Label,
     groups: RefCell<Vec<gtk::SizeGroup>>,
 }
@@ -76,6 +77,9 @@ impl TableState {
         let previous = self.data.replace(data.clone());
         self.empty.set_text(&data.empty_text);
         self.empty.set_visible(data.rows.is_empty());
+        let headers = data.columns.iter().any(|column| !column.title.is_empty());
+        self.headers.set_visible(headers);
+        self.separator.set_visible(headers);
         let columns_changed =
             previous.columns != data.columns || previous.column_gap != data.column_gap;
         if columns_changed {
@@ -145,12 +149,14 @@ impl View {
     pub fn table(&self, parent: &Parent, id: &str, data: Binding<Table>) {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let headers = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
         root.append(&headers);
-        root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        root.append(&separator);
         let state = Rc::new(TableState {
             data: RefCell::new(Table::default()),
             rows: gio::ListStore::new::<glib::BoxedAnyObject>(),
             headers,
+            separator,
             empty: gtk::Label::new(None),
             groups: RefCell::new(Vec::new()),
         });

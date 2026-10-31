@@ -458,7 +458,10 @@ fn control_inner(
             quote!(__panechord_view.table(&__panechord_parent,&__id,#source);)
         }
         Control::TextBox {
-            text, validation, ..
+            text,
+            placeholder,
+            validation,
+            ..
         } => {
             let text = binding(text, true)?;
             let validation = if let Some(v) = validation {
@@ -471,7 +474,13 @@ fn control_inner(
             } else {
                 quote!()
             };
-            quote!(let __text = #text; #validation __panechord_view.entry(&__panechord_parent,&__id,__text);)
+            let entry = if let Some(placeholder) = placeholder {
+                let placeholder = binding(placeholder, false)?;
+                quote!(__panechord_view.entry_with_placeholder(&__panechord_parent,&__id,__text,#placeholder);)
+            } else {
+                quote!(__panechord_view.entry(&__panechord_parent,&__id,__text);)
+            };
+            quote!(let __text = #text; #validation #entry)
         }
         Control::Button {
             text,
