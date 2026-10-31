@@ -656,6 +656,7 @@ impl View {
             pixels(padding.left)
         ));
         let p = style.placement;
+        frame.set_hexpand(p.width.is_none());
         frame.set_size_request(
             p.width.map(pixels).unwrap_or(-1),
             p.height.map(pixels).unwrap_or(-1),
