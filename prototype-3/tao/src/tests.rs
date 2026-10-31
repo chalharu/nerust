@@ -1,5 +1,136 @@
 use super::*;
 
+#[cfg(target_os = "linux")]
+#[derive(Clone, Default)]
+struct LayoutDraft {
+    name: String,
+    volume: String,
+    scale: String,
+}
+#[cfg(target_os = "linux")]
+#[derive(Clone, Default)]
+struct LayoutProjection {
+    error: String,
+    summary: String,
+    status: String,
+    warning: String,
+    menu_items: Vec<wakui2_runtime::MenuItem>,
+}
+#[cfg(target_os = "linux")]
+#[derive(Clone, Default)]
+struct SettingsLayout {
+    draft: LayoutDraft,
+    ui: LayoutProjection,
+    stay: bool,
+    leave: bool,
+}
+#[cfg(target_os = "linux")]
+#[wakui2_macros::commands]
+impl SettingsLayout {
+    #[command]
+    fn save(&mut self, _value: bool) {}
+    #[command]
+    fn save_exit(&mut self, _value: bool) {}
+    #[command]
+    fn cancel(&mut self) {}
+    #[command]
+    fn discard_exit(&mut self) {}
+    #[command]
+    fn keep_editing(&mut self) {}
+    #[command]
+    fn choose(&mut self, _value: String) {}
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn settings_yaml_layout_keeps_buttons_filled_and_controls_disjoint() {
+    use iced::{
+        Point, Rectangle, Size,
+        advanced::{layout, widget::Tree},
+    };
+    fn collect(
+        node: &Node,
+        frame: &layout::Node,
+        origin: Point,
+        result: &mut Vec<(String, Rectangle)>,
+    ) {
+        let bounds = frame.bounds();
+        let absolute = Rectangle {
+            x: origin.x + bounds.x,
+            y: origin.y + bounds.y,
+            ..bounds
+        };
+        if matches!(&*node.handler.borrow(), Some(Handler::Button(_))) {
+            assert!(
+                (frame.children()[0].size().width - bounds.width).abs() < 0.01,
+                "button body must fill its frame: {}",
+                node.id
+            );
+        }
+        if node.children.borrow().is_empty() {
+            result.push((node.id.clone(), absolute));
+        }
+        let body = &frame.children()[0];
+        let origin = Point::new(absolute.x + body.bounds().x, absolute.y + body.bounds().y);
+        for (child, frame) in node.children.borrow().iter().zip(body.children()) {
+            collect(child, frame, origin, result);
+        }
+    }
+    let harness = Harness::new();
+    let model = harness.store(SettingsLayout::default());
+    let view = wakui2_macros::view!("../settings/ui/settings.yaml", model, crate);
+    let renderer = iced_tiny_skia::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+    for (state, message) in [
+        ("initial", ""),
+        ("invalid", "Volume must be an integer from 0 to 100"),
+        (
+            "confirm",
+            "Unsaved changes. Save and exit, discard, or keep editing.",
+        ),
+        (
+            "long",
+            "A very long validation message with an_unbroken_word_that_must_not_escape_the_window_bounds and multiple lines of detail. A very long validation message with additional detail.",
+        ),
+    ] {
+        assert!(model.update(move |state| {
+            state.ui.error = message.into();
+            state.ui.warning = message.into();
+            state.ui.status = "Unsaved changes".into();
+            state.ui.summary = "Saved: Player | volume 42 | scale 1".into();
+        }));
+        for width in [440.0, 660.0, 960.0] {
+            let mut element = view.root().0.element();
+            let mut tree = Tree::new(element.as_widget());
+            let frame = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY)),
+            );
+            let mut bounds = Vec::new();
+            collect(&view.root().0, &frame, Point::ORIGIN, &mut bounds);
+            assert_eq!(bounds.len(), 16);
+            for (id, rect) in &bounds {
+                assert!(
+                    rect.x >= 19.9 && rect.x + rect.width <= width - 19.9,
+                    "{state}/{width}: {id}: {rect:?}"
+                );
+                assert!(
+                    rect.y >= 19.9 && rect.y + rect.height <= frame.size().height - 19.9,
+                    "{state}/{width}: {id} exceeds content height"
+                );
+            }
+            for (index, (id, rect)) in bounds.iter().enumerate() {
+                for (other, other_rect) in &bounds[index + 1..] {
+                    assert!(
+                        !rect.intersects(other_rect),
+                        "{state}/{width}: {id} overlaps {other}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 #[cfg(target_os = "linux")]
 fn style_late_close_and_viewport_writeback_contract() {

@@ -3784,6 +3784,7 @@ dependencies = [
  "iced_winit",
  "muda",
  "tao",
+ "wakui2-macros",
  "wakui2-runtime",
  "window_clipboard",
  "windows-sys 0.61.2",

@@ -88,7 +88,7 @@ fn main() -> Result<(), String> {
         let range = Store::new(
             Viewport {
                 count: 0,
-                row_height: 32.0,
+                row_height: 56.0,
                 ..Viewport::default()
             },
             executor.clone(),
@@ -455,15 +455,15 @@ fn main() -> Result<(), String> {
             let _ = range.update(move |viewport| *viewport = valid);
             println!("MACOS3 PASS viewport-contract initial-rejection retain-mounts last-page recovery");
             let before = row_builds.get();
-            assert_eq!(owner.frame_height("rows/90"), Some(32.0));
-            let _ = range.update(|viewport| viewport.row_height = 64.0);
-            assert_eq!(owner.frame_height("rows/90"), Some(64.0));
+            assert_eq!(owner.frame_height("rows/90"), Some(56.0));
+            let _ = range.update(|viewport| viewport.row_height = 72.0);
+            assert_eq!(owner.frame_height("rows/90"), Some(72.0));
             assert_eq!(row_builds.get(), before);
             assert_eq!(owner.item_keys("rows"), ["90", "91", "92", "93", "94", "95"]);
-            let _ = range.update(|viewport| viewport.row_height = 32.0);
-            assert_eq!(owner.frame_height("rows/90"), Some(32.0));
+            let _ = range.update(|viewport| viewport.row_height = 56.0);
+            assert_eq!(owner.frame_height("rows/90"), Some(56.0));
             assert_eq!(row_builds.get(), before);
-            println!("MACOS3 PASS dynamic-row-height native-frame 32-64-32 no-remount");
+            println!("MACOS3 PASS dynamic-row-height native-frame 56-72-56 no-remount");
             owner.probe_editing("rows/90/editor", true).unwrap();
             let _ = rows.update(|state| state.swap(90, 91));
             assert_eq!(row_builds.get(), before);

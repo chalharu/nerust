@@ -123,6 +123,7 @@ fn grid_cell(style: &Style, cols: usize) -> (usize, usize, usize, usize) {
 
 pub(crate) struct Panel {
     policy: Policy,
+    padding: Option<iced::Padding>,
     keys: Vec<String>,
     styles: Vec<Style>,
     children: Vec<Element>,
@@ -131,6 +132,7 @@ impl Panel {
     pub fn element(policy: Policy, children: Vec<(String, Style, Element)>) -> Element {
         let mut panel = Self {
             policy,
+            padding: None,
             keys: Vec::new(),
             styles: Vec::new(),
             children: Vec::new(),
@@ -142,12 +144,25 @@ impl Panel {
         }
         Element::new(panel)
     }
+    pub fn frame(child: Element, padding: iced::Padding) -> Element {
+        Element::new(Self {
+            policy: Policy::Absolute,
+            padding: Some(padding),
+            keys: vec!["body".into()],
+            styles: vec![Style::default()],
+            children: vec![child],
+        })
+    }
 }
 #[derive(Default)]
 struct Keys(Vec<String>);
 impl Widget<Message, iced::Theme, Renderer> for Panel {
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Shrink, Length::Shrink)
+        if self.padding.is_some() {
+            self.children[0].as_widget().size()
+        } else {
+            Size::new(Length::Shrink, Length::Shrink)
+        }
     }
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<Keys>()
@@ -185,7 +200,27 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        if let Some(padding) = self.padding {
+            let child = self.children[0].as_widget_mut().layout(
+                &mut tree.children[0],
+                renderer,
+                &limits.shrink(padding),
+            );
+            let size = child.size();
+            return layout::Node::with_children(
+                limits.resolve(
+                    Length::Shrink,
+                    Length::Shrink,
+                    Size::new(
+                        size.width + padding.left + padding.right,
+                        size.height + padding.top + padding.bottom,
+                    ),
+                ),
+                vec![child.move_to(Point::new(padding.left, padding.top))],
+            );
+        }
         let available = limits.max().width;
+        let siblings = self.children.len().max(1) as f32;
         let mut nodes = Vec::new();
         for ((child, state), style) in self
             .children
@@ -194,6 +229,20 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
             .zip(&self.styles)
         {
             let mut width = available;
+            if matches!(
+                self.policy,
+                Policy::Stack {
+                    horizontal: true,
+                    ..
+                }
+            ) && style.placement.width.is_none()
+                && matches!(
+                    child.as_widget().size().width,
+                    Length::Fill | Length::FillPortion(_)
+                )
+            {
+                width /= siblings;
+            }
             if let Policy::Grid { columns, gap } = self.policy {
                 let cols = columns.clamp(1, 4096) as usize;
                 let (_, _, _, span) = grid_cell(style, cols);
@@ -223,6 +272,63 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                 child_limits = child_limits.height(Length::Fixed(finite(h)));
             }
             nodes.push(child.as_widget_mut().layout(state, renderer, &child_limits));
+        }
+        if let Policy::Stack { horizontal, gap } = self.policy {
+            let occupied: f32 = nodes
+                .iter()
+                .zip(&self.styles)
+                .map(|(node, style)| {
+                    node.size().width + finite(style.margin.left) + finite(style.margin.right)
+                })
+                .sum::<f32>()
+                + finite(gap) * nodes.len().saturating_sub(1) as f32;
+            let flexible = self
+                .styles
+                .iter()
+                .filter(|style| style.placement.width.is_none())
+                .count();
+            let surplus = (available - occupied).max(0.0) / flexible.max(1) as f32;
+            let natural: f32 = nodes
+                .iter()
+                .zip(&self.styles)
+                .filter(|(_, style)| style.placement.width.is_none())
+                .map(|(node, _)| node.size().width)
+                .sum();
+            let compression = if occupied > available && natural > 0.0 {
+                ((natural - (occupied - available)) / natural).max(0.0)
+            } else {
+                1.0
+            };
+            for (((child, state), style), node) in self
+                .children
+                .iter_mut()
+                .zip(&mut tree.children)
+                .zip(&self.styles)
+                .zip(&mut nodes)
+            {
+                if style.placement.width.is_some() {
+                    continue;
+                }
+                let width = if horizontal {
+                    node.size().width * compression + surplus
+                } else {
+                    (available - finite(style.margin.left) - finite(style.margin.right)).max(0.0)
+                };
+                let mut child_limits = layout::Limits::new(
+                    Size::new(width, 0.0),
+                    Size::new(
+                        width,
+                        (limits.max().height
+                            - finite(style.margin.top)
+                            - finite(style.margin.bottom))
+                        .max(0.0),
+                    ),
+                );
+                if let Some(height) = style.placement.height {
+                    child_limits = child_limits.height(Length::Fixed(finite(height)));
+                }
+                *node = child.as_widget_mut().layout(state, renderer, &child_limits);
+            }
         }
         let measured: Vec<_> = nodes
             .iter()
@@ -503,6 +609,99 @@ mod tests {
         assert_eq!(*tree.children[0].state.downcast_ref::<u32>(), 3);
     }
     #[test]
+    fn fill_siblings_do_not_crush_the_button_in_a_virtual_row() {
+        for width in [392.0, 612.0, 912.0] {
+            let children = vec![
+                (
+                    "entry".into(),
+                    Style::default(),
+                    Panel::frame(
+                        iced::widget::text_input("", "Item 0").into(),
+                        iced::Padding::ZERO,
+                    ),
+                ),
+                (
+                    "button".into(),
+                    Style::default(),
+                    Panel::frame(
+                        iced::widget::button(iced::widget::text("Uppercase item")).into(),
+                        iced::Padding::ZERO,
+                    ),
+                ),
+                (
+                    "meter".into(),
+                    Style::default(),
+                    Panel::frame(
+                        iced::widget::progress_bar(0.0..=1.0, 0.5).into(),
+                        iced::Padding::ZERO,
+                    ),
+                ),
+            ];
+            let mut element = Panel::element(
+                Policy::Stack {
+                    horizontal: true,
+                    gap: 6.0,
+                },
+                children,
+            );
+            let mut tree = Tree::new(element.as_widget());
+            let renderer = Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY)),
+            );
+            let button = &node.children()[1];
+            if width >= 600.0 {
+                assert!(
+                    button.size().width >= 140.0,
+                    "button crushed by Fill siblings: {:?}",
+                    button.size()
+                );
+            }
+            assert!(
+                node.size().height <= 56.0,
+                "virtual row content exceeds its usable height: {:?}",
+                node.size()
+            );
+        }
+    }
+    #[test]
+    fn horizontal_stack_distributes_surplus_without_overflow() {
+        let mut panel = Panel::element(
+            Policy::Stack {
+                horizontal: true,
+                gap: 8.0,
+            },
+            [60.0, 120.0]
+                .into_iter()
+                .enumerate()
+                .map(|(index, width)| {
+                    (
+                        index.to_string(),
+                        Style::default(),
+                        iced::widget::container(iced::widget::Space::new().width(width).height(30))
+                            .into(),
+                    )
+                })
+                .collect(),
+        );
+        let renderer = Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+        let mut tree = Tree::new(panel.as_widget());
+        let node = panel.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(500.0, 200.0)),
+        );
+        assert_eq!(node.size().width, 500.0);
+        assert_eq!(node.children()[0].size().width, 216.0);
+        assert_eq!(node.children()[1].size().width, 276.0);
+        assert_eq!(node.children()[1].bounds().x, 224.0);
+        assert!(
+            node.children()[1].bounds().x + node.children()[1].size().width <= node.size().width
+        );
+    }
+    #[test]
     fn actual_iced_nodes_include_margins_padding_and_fixed_placement() {
         let view = crate::View::new(wakui2_runtime::Binding::constant("geometry".into()));
         view.mount(
@@ -540,7 +739,7 @@ mod tests {
             Rectangle {
                 x: 3.0,
                 y: 4.0,
-                width: 22.0,
+                width: 295.0,
                 height: 13.0
             }
         );
