@@ -494,6 +494,9 @@ impl View {
         });
         Parent(id.into(), Rc::downgrade(&self.0))
     }
+    pub fn navigation(&self, parent: &Parent, id: &str, selected: Binding<String>) -> Parent {
+        self.tab(parent, id, selected)
+    }
     pub fn tab_position(
         &self,
         id: &str,

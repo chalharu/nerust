@@ -15,7 +15,7 @@ pub fn shortcut_hint(base: &str, shortcuts: &[ShortcutBinding], action: Shortcut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wakui::Key;
+    use nerust_input_traits::Key;
 
     fn binding(action: ShortcutAction, key: Option<Key>) -> ShortcutBinding {
         ShortcutBinding { action, key }

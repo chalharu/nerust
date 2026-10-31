@@ -8,4 +8,8 @@ version.workspace = true
 
 [dependencies]
 downcast-rs.workspace = true
+serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+
+[dev-dependencies]
+strum.workspace = true

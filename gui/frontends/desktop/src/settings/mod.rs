@@ -71,7 +71,7 @@ impl Editor {
             vm,
             baseline: Rc::new(RefCell::new(snapshot)),
             closed: Rc::new(Cell::new(false)),
-            status: Store::new("Up to date".into(), executor.clone()),
+            status: Store::new(String::new(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),
             input_page: Store::new(String::new(), executor.clone()),
             system_page: Store::new(String::new(), executor.clone()),
@@ -107,11 +107,28 @@ impl Editor {
     }
     pub(crate) fn close(&self) {
         self.closed.set(true);
+        self.vm.capture.cancel_capture();
         self.status.close();
         self.page.close();
         self.input_page.close();
         self.system_page.close();
         self.close_prompt.close();
+    }
+    fn validation_status(&self) {
+        let message = self
+            .vm
+            .finish()
+            .err()
+            .map(|validation| {
+                validation
+                    .issues
+                    .iter()
+                    .map(|issue| issue.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let _ = self.status.update(move |status| *status = message);
     }
     fn binding<P: Clone + PartialEq + 'static, T: Clone + PartialEq + 'static>(
         &self,
@@ -124,7 +141,6 @@ impl Editor {
         let get = forward.clone();
         let closed = self.closed.clone();
         let vm = self.vm.clone();
-        let baseline = self.baseline.clone();
         let status = self.status.clone();
         let write = setter.map(|setter| {
             let writer: Rc<dyn Fn(T) -> Result<(), String>> = Rc::new(move |value| {
@@ -141,12 +157,7 @@ impl Editor {
                             .map(|issue| issue.message.as_str())
                             .collect::<Vec<_>>()
                             .join("\n"),
-                        Ok(snapshot) => if snapshot == *baseline.borrow() {
-                            "Up to date"
-                        } else {
-                            "Unsaved changes"
-                        }
-                        .into(),
+                        Ok(_) => String::new(),
                     },
                 };
                 let _ = status.update(move |status| *status = message);
@@ -184,9 +195,7 @@ impl Editor {
                 self.baseline.replace(snapshot);
                 Ok(())
             });
-        let message = result
-            .as_ref()
-            .map_or_else(Clone::clone, |_| "Up to date".into());
+        let message = result.as_ref().map_or_else(Clone::clone, |_| String::new());
         let _ = self.status.update(move |status| *status = message);
         result
     }
@@ -233,15 +242,6 @@ impl Editor {
         });
         let view_slot = Rc::new(RefCell::new(None::<WeakView>));
         let commit = apply.clone();
-        let editor = self.clone();
-        let accepted = self.clone();
-        let apply = self.status.command(
-            move |_| !accepted.closed.get() && accepted.dirty() && accepted.vm.finish().is_ok(),
-            move |_, ()| {
-                let _ = editor.apply(&apply);
-            },
-            Binding::constant(()),
-        );
         let exit = self.exit.clone();
         let close = view_slot.clone();
         let discard = self.close_prompt.command(
@@ -316,13 +316,26 @@ impl Editor {
                 Binding::constant(()),
             )
         });
+        let editor = self.clone();
+        let clear: layout::Capture = Rc::new(move |target| {
+            let vm = editor.vm.capture.clone();
+            let status = editor.status.clone();
+            let closed = editor.closed.clone();
+            editor.status.command(
+                move |_| !closed.get(),
+                move |_, ()| {
+                    let message = vm
+                        .clear_binding(&target)
+                        .map(|_| String::new())
+                        .unwrap_or_else(|error| error.to_string());
+                    let _ = status.update(move |status| *status = message);
+                },
+                Binding::constant(()),
+            )
+        });
         let bindings = Presentation {
-            input_pages: Binding::constant(layout::inputs(
-                &self.vm,
-                self.executor.clone(),
-                capture,
-            )),
-            system_pages: Binding::constant(layout::systems(&self.vm, self.executor.clone())),
+            input_pages: Binding::constant(layout::inputs(self, capture, clear)),
+            system_pages: Binding::constant(layout::systems(self)),
             input_selection: self
                 .input_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
@@ -396,13 +409,34 @@ impl Editor {
                 area_mode_choices,
                 set_status_area_mode
             ),
-            apply,
             cancel,
             accept,
             discard,
             keep,
         };
         let view = panechord::try_view!("ui/settings.yaml", bindings, panechord)?;
+        let editor = self.clone();
+        view.on_surface_event(Rc::new(move |event| {
+            if editor.closed.get() || editor.vm.capture.view.get().target.is_none() {
+                return;
+            }
+            if let panechord::WindowEvent::KeyboardInput {
+                key,
+                pressed: true,
+                repeat: false,
+                synthetic: false,
+            } = event
+            {
+                if key.as_str() == "Escape" {
+                    editor.vm.capture.cancel_capture();
+                } else if let Some(key) = crate::SessionAdapter::key(key) {
+                    editor.vm.capture.apply_captured_key(key);
+                } else {
+                    return;
+                }
+                editor.validation_status();
+            }
+        }));
         view_slot.replace(Some(view.downgrade()));
         Ok(view)
     }
@@ -499,7 +533,6 @@ struct Presentation {
     status_position: ChoiceBinding,
     area: ChoiceBinding,
     status_area: ChoiceBinding,
-    apply: Command,
     cancel: Command,
     accept: Command,
     discard: Command,
@@ -511,9 +544,6 @@ impl Presentation {
     }
     fn command_accept(&self, _: Binding<String>) -> Command {
         self.accept.clone()
-    }
-    fn command_apply(&self, _: Binding<String>) -> Command {
-        self.apply.clone()
     }
     fn command_discard(&self, _: Binding<String>) -> Command {
         self.discard.clone()

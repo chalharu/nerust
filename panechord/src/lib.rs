@@ -8,10 +8,22 @@ pub use panechord_runtime::*;
 ))]
 compile_error!("select exactly one Panechord native backend");
 
-#[cfg(any(feature = "gtk", feature = "tao", feature = "macos"))]
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
+))]
 pub fn run_host(
     make: impl FnOnce(std::rc::Rc<dyn WindowHost<View>>) -> Result<(), String> + 'static,
 ) -> Result<(), String> {
+    #[cfg(all(
+        feature = "native",
+        not(any(feature = "gtk", feature = "tao", feature = "macos"))
+    ))]
+    {
+        panechord_native::run_host(move |host| make(host))
+    }
     #[cfg(feature = "tao")]
     {
         panechord_tao::run_host(move |host| make(host))
@@ -38,3 +50,9 @@ pub use panechord_macos::{Parent, View, WeakView};
 pub use panechord_tao as tao;
 #[cfg(feature = "tao")]
 pub use panechord_tao::{Parent, View, WeakView};
+
+#[cfg(all(
+    feature = "native",
+    not(any(feature = "gtk", feature = "tao", feature = "macos"))
+))]
+pub use panechord_native::{Parent, View, WeakView};

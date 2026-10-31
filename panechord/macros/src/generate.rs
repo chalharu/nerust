@@ -70,6 +70,7 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
         quote!(let _ = &__close_model;)
     };
     Ok(quote!(
+        let __panechord_external = || __panechord_model.clone();
         let __panechord_view = #backend::View::new(#title);
         let __panechord_parent = __panechord_view.root();
         __panechord_view.style("__root",#style);
@@ -182,7 +183,11 @@ fn binding(prop: &Property, writable: bool) -> syn::Result<TokenStream> {
             };
             let dependency = fields[0].to_string();
             let base = if b.source == BindingSource::External {
-                let external = quote!(#model.#(#fields).*.clone());
+                let external = if b.path.starts_with("root.") {
+                    quote!(#model.#(#fields).*.clone())
+                } else {
+                    quote!((__panechord_external()).#(#fields).*.clone())
+                };
                 if writable && b.mode == Mode::TwoWay {
                     external
                 } else {
@@ -352,6 +357,7 @@ fn template(doc: &Document, name: &str, backend: &Path) -> syn::Result<TokenStre
         let __template_root = __panechord_root.clone();
         ::std::rc::Rc::new(move |__view: &#backend::View,__parent: &#backend::Parent,__scope: &str,__panechord_model: ::panechord_runtime::Store<_>| {
             let __panechord_root = __template_root.clone();
+            let __panechord_external = || __panechord_model.snapshot();
             let __panechord_view = __view;
             let __panechord_parent = __parent.clone();
             #body
@@ -567,9 +573,14 @@ fn control_inner(
             selected,
             pages,
             position,
+            presentation,
             ..
         } => {
             let selected = binding(selected, true)?;
+            let constructor = match presentation {
+                panechord_markup::TabPresentation::Tabs => format_ident!("tab"),
+                panechord_markup::TabPresentation::Sidebar => format_ident!("navigation"),
+            };
             let position = format_ident!(
                 "{}",
                 match position {
@@ -597,7 +608,7 @@ fn control_inner(
                 }));
             }
             quote!(
-                let __tab = __panechord_view.tab(&__panechord_parent, &__id, #selected);
+                let __tab = __panechord_view.#constructor(&__panechord_parent, &__id, #selected);
                 if let ::std::result::Result::Err(__error) = __panechord_view.tab_position(&__id, ::panechord_runtime::TabPosition::#position) {
                     __panechord_view.report_error(__error);
                 }
@@ -624,6 +635,7 @@ fn control_inner(
                 let __title_root = __panechord_root.clone();
                 __panechord_view.tab_items(&__panechord_parent, &__id, #items, #selected, ::std::rc::Rc::new(move |__panechord_model: ::panechord_runtime::Store<_>| {
                     let __panechord_root = __title_root.clone();
+                    let __panechord_external = || __panechord_model.snapshot();
                     #title
                 }), #template);
                 if let ::std::result::Result::Err(__error) = __panechord_view.tab_position(&__id, ::panechord_runtime::TabPosition::#position) {
@@ -729,7 +741,7 @@ mod tests {
         let code = generate(&document, &syn::parse_quote!(backend), false)
             .unwrap()
             .to_string();
-        assert!(code.contains("__panechord_model . name . clone ()"));
+        assert!(code.contains("(__panechord_external ()) . name . clone ()"));
         assert!(code.contains(". map (| value | value)"));
         assert!(!code.contains("bind_scoped_explicit"));
     }

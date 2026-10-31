@@ -7,9 +7,9 @@ use std::{
 };
 
 use nerust_core_traits::identity::SystemId;
+use nerust_input_traits::Key;
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
-use wakui::Key;
 
 use super::{ValidationState, catalog::FactoryCatalog};
 

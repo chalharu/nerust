@@ -232,6 +232,13 @@ pub enum TabPosition {
     Right,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum TabPresentation {
+    #[default]
+    Tabs,
+    Sidebar,
+}
+
 macro_rules! controls {
 	($($kind:ident { $($fields:tt)* }),* $(,)?) => {
 		#[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -281,7 +288,7 @@ controls! {
     Slider { value: Property, min: f64, max: f64, step: f64, },
     Combo { items: Property, selected: Property, },
     Image { source: Property, pointer: Option<Property>, },
-    Tab { selected: Property, #[serde(default)] position: TabPosition, pages: Vec<TabPage>, },
+    Tab { selected: Property, #[serde(default)] position: TabPosition, #[serde(default)] presentation: TabPresentation, pages: Vec<TabPage>, },
     TabItems { selected: Property, #[serde(default)] position: TabPosition, items: Property, title: Property, item_template: String, },
     Dialog { title: Property, open: Property, content: Box<Control>, },
 }

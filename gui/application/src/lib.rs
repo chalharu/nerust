@@ -17,6 +17,11 @@ pub enum SessionAction {
     Unload,
     SaveState,
     LoadState,
+    CreateSlot,
+    SelectSlot(u64),
+    SaveSlot(u64),
+    LoadSlot(u64),
+    DeleteSlot(u64),
     NextSlot,
     PreviousSlot,
 }

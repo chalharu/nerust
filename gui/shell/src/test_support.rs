@@ -6,7 +6,7 @@ use nerust_settings_core::model::{
     shared::DesktopSharedSettings,
 };
 
-use wakui::Key;
+use nerust_input_traits::Key;
 
 declare_system_id!(pub(crate) DummySystemId, "dummy");
 declare_system_id!(pub(crate) DummyOtherSystemId, "other");

@@ -59,6 +59,19 @@ impl SessionHandle {
         .with_epoch(Arc::clone(&self.emu.debug_epoch))
     }
 
+    pub fn debug_live_images_begin_since(
+        &self,
+        known_generation: Option<u64>,
+    ) -> crate::debug::LiveImagesFlight {
+        crate::debug::LiveImagesFlight::begin_since(
+            self.drain_ctx().core,
+            ImageNeed::Fetch,
+            crate::debug::DEBUG_DRAIN_TIMEOUT,
+            known_generation,
+        )
+        .with_epoch(Arc::clone(&self.emu.debug_epoch))
+    }
+
     /// Scoped transaction access: the guard never escapes, so holders cannot deadlock.
     /// Exactly one logging point for the poison recovery.
     fn with_txn<R>(

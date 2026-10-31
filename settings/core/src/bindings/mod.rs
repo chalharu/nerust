@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use crate::model::input::{KeyboardProfile, PersistedControlId};
 use crate::model::shared::DesktopSharedSettings;
 use nerust_core_traits::identity::SystemId;
+use nerust_input_traits::Key;
 use nerust_input_traits::{InputTopologyDescriptor, UnifiedFieldMap};
-use wakui::Key;
 
 /// Precomputed (attachment, control) → key lookup for one profile.
 /// Build once per pass; repeated validations reuse it instead of re-indexing.
@@ -213,12 +213,12 @@ mod tests {
         shared::DesktopSharedSettings,
     };
     use nerust_core_traits::declare_system_id;
+    use nerust_input_traits::Key;
     use nerust_input_traits::{
         AttachmentId, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor, DeviceKindId,
         DigitalControlDescriptor, DigitalControlId, InputTopologyDescriptor, PortDescriptor,
         PortId,
     };
-    use wakui::Key;
 
     use super::conflicting_keys;
 

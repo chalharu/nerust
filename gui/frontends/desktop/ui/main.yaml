@@ -5,31 +5,15 @@ root:
   title: {literal: "Nerust"}
   menus:
     - id: file
-      title: {literal: File}
+      title: {bind: {path: file_title, source: External}}
       command: choose
-      items:
-        - {id: open, label: {literal: "Open..."}, argument: {literal: open}, shortcut: Primary+O}
-        - {id: quit, label: {literal: Quit}, argument: {literal: quit}, shortcut: Primary+Q, role: Quit}
-        - {id: settings, label: {literal: "Settings..."}, argument: {literal: settings}, shortcut: Primary+Comma}
+      nested: true
+      items: {bind: {path: file_items, source: External}}
     - id: emulation
-      title: {literal: Emulation}
+      title: {bind: {path: emulation_title, source: External}}
       command: choose
-      items:
-        - {id: pause, label: {bind: {path: pause_label, source: External}}, argument: {literal: pause}, enabled: {bind: {path: loaded, source: External}}}
-        - {id: reset, label: {literal: Reset}, argument: {literal: reset}, enabled: {bind: {path: loaded, source: External}}}
-        - {id: save, label: {literal: Save State}, argument: {literal: save}, enabled: {bind: {path: loaded, source: External}}}
-        - {id: load, label: {literal: Load State}, argument: {literal: load}, enabled: {bind: {path: loaded, source: External}}}
-        - {id: next, label: {literal: Next Slot}, argument: {literal: next}, enabled: {bind: {path: loaded, source: External}}}
-        - {id: previous, label: {literal: Previous Slot}, argument: {literal: previous}, enabled: {bind: {path: loaded, source: External}}}
-        - {id: unload, label: {literal: Unload}, argument: {literal: unload}, enabled: {bind: {path: loaded, source: External}}}
-    - id: view
-      title: {literal: View}
-      command: choose
-      items:
-        - {id: fullscreen, label: {literal: Fullscreen}, argument: {literal: fullscreen}}
-        - {id: history, label: {literal: "Notification History..."}, argument: {literal: history}}
-        - {id: debugger, label: {literal: "Debugger..."}, argument: {literal: debugger}}
-        - {id: ppu, label: {literal: "PPU Viewer..."}, argument: {literal: ppu}}
+      nested: true
+      items: {bind: {path: emulation_items, source: External}}
   content:
     type: Native
     id: screen
