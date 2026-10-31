@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
+use nerust_input_traits::Key;
 use nerust_input_traits::UnifiedFieldMap;
 use nerust_settings_core::model::input::KeyboardBinding;
-use wakui::Key;
 
 /// One skipped duplicate binding, reported for the caller to log.
 /// First registration wins; later duplicates are dropped deterministically.

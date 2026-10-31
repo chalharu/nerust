@@ -24,24 +24,18 @@ members = [
   "gui/application",
   "gui/frontends/desktop",
   "gui/frontends/android",
-  "gui/frontends/kernel",
   "gui/frontends/rom_tool",
-  "gui/frontends/view-defs",
   "gui/run-options",
   "gui/runtime",
   "gui/shell",
   "gui/viewmodel",
-  "gui/wakui",
-  "gui/wakui-core",
-  "gui/wakui-default",
-  "gui/wakui-gtk",
-  "gui/wakui-tao",
   "crash-guard",
   "persistence",
   "panechord",
   "panechord/runtime",
   "panechord/markup",
   "panechord/macros",
+  "panechord/native",
   "panechord/gtk",
   "panechord/tao",
   "panechord/macos",
@@ -87,12 +81,10 @@ clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true
-nerust_frontend_viewdefs.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_crash_guard.workspace = true
 nerust_gui_shell.workspace = true
-nerust_desktop = { optional = true, workspace = true }
-wakui.workspace = true
+nerust_desktop = { workspace = true, default-features = false }
 nerust_gbc_factory = { optional = true, workspace = true }
 nerust_gba_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
@@ -110,17 +102,18 @@ nerust_gba_core.workspace = true
 nerust_settings_core.workspace = true
 
 [features]
-default = ["nes", "gbc", "gba", "wgpu", "cpal", "cubeb", "wakui/default"]
+default = ["nes", "gbc", "gba", "wgpu", "cpal", "cubeb", "desktop-native"]
 cpal = ["nerust_sound_cpal"]
 cubeb = ["nerust_sound_cubeb"]
-desktop = ["dep:nerust_desktop"]
+desktop = []
+desktop-native = ["desktop", "nerust_desktop/native"]
 gbc = ["nerust_gbc_factory"]
 gba = ["nerust_gba_factory"]
-gtk = ["wakui/gtk"]
+gtk = ["desktop", "nerust_desktop/gtk"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["wakui/tao"]
+tao = ["desktop", "nerust_desktop/tao"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
@@ -158,6 +151,7 @@ version = "0.1.0-dev"
 [workspace.dependencies]
 futures = { version = "=0.3.34" }
 panechord = { path = "panechord" }
+panechord-native = { path = "panechord/native" }
 panechord-runtime = { path = "panechord/runtime" }
 panechord-markup = { path = "panechord/markup" }
 panechord-macros = { path = "panechord/macros" }
@@ -226,8 +220,6 @@ nerust_gbc_settings = { path = "console/gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
-nerust_frontend_kernel = { path = "gui/frontends/kernel" }
-nerust_frontend_viewdefs = { path = "gui/frontends/view-defs" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
 nerust_nes_controller = { path = "console/nes/controller" }
@@ -296,11 +288,6 @@ tao = { version = "=0.37.2" }
 thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }
-wakui = { path = "gui/wakui", default-features = false }
-wakui_core = { path = "gui/wakui-core" }
-wakui_default = { path = "gui/wakui-default" }
-wakui_gtk = { path = "gui/wakui-gtk" }
-wakui_tao = { path = "gui/wakui-tao" }
 wgpu = { version = "=30.0.1" }
 winit = { version = "=0.30.13" }
 zerocopy = { features = ["derive"], version = "=0.8.63" }

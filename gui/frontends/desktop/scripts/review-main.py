@@ -26,8 +26,8 @@ def wait(predicate):
     raise RuntimeError("native View condition timed out")
 
 
-def capture(binary, original, destination, settings_review=False, history_review=False, debugger_review=False, ppu_review=False):
-    accessibility = settings_review or history_review or debugger_review or ppu_review
+def capture(binary, original, destination, settings_review=False, history_review=False, debugger_review=False, ppu_review=False, menu_review=False, settings_bindings=False, debugger_bindings=False):
+    accessibility = settings_review or history_review or debugger_review or ppu_review or menu_review
     if accessibility:
         import atspi_layout as layout
     output = Path(destination)
@@ -98,14 +98,15 @@ def capture(binary, original, destination, settings_review=False, history_review
                         execute("xdotool", "mousemove", "--window", window, "330", "260", "click", "1")
                         execute("xdotool", "key", "space")
                         snapshot("paused", expected="Paus")
-                        if history_review or debugger_review or ppu_review:
-                            def click_text(text):
+                        if history_review or debugger_review or ppu_review or menu_review:
+                            def click_text(text, prefix=False):
                                 def locate():
                                     app = layout.application(process.pid)
                                     if app is None:
                                         return None
                                     for node in layout.descendants(app):
-                                        if layout.normalized(node.name) != layout.normalized(text):
+                                        name, requested = layout.normalized(node.name), layout.normalized(text)
+                                        if name != requested and not (prefix and name.startswith(requested)):
                                             continue
                                         rectangle = layout.bounds(node)
                                         if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0 or rectangle["x"] < 0:
@@ -122,12 +123,72 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             target = target.parent
                                             if target is None or target == app:
                                                 break
-                                        return lambda rectangle=rectangle: execute("xdotool", "mousemove", str(rectangle["x"] + rectangle["width"] // 2), str(rectangle["y"] + rectangle["height"] // 2), "click", "1")
+                                        if node.getRoleName() in {"push button", "combo box", "menu item", "page tab"}:
+                                            return lambda rectangle=rectangle: execute("xdotool", "mousemove", str(rectangle["x"] + rectangle["width"] // 2), str(rectangle["y"] + rectangle["height"] // 2), "click", "1")
                                     return None
                                 perform = wait(locate)
                                 if perform() is False:
                                     raise RuntimeError(f"History Action rejected: {text}")
                                 print(f"VIEW HISTORY ACTION {text}", flush=True)
+
+                            if menu_review:
+                                def open_states():
+                                    click_text("Emulation")
+                                    click_text("Save States")
+
+                                def menu_snapshot(name, expected, absent=(), active=None):
+                                    def inspect():
+                                        app = layout.application(process.pid)
+                                        if app is None:
+                                            return None
+                                        nodes = [node for node in layout.descendants(app) if layout.bounds(node) is not None and layout.bounds(node)["width"] > 0 and layout.bounds(node)["height"] > 0]
+                                        labels = [layout.normalized(node.name) for node in nodes]
+                                        if not all(any(label.startswith(layout.normalized(text)) for label in labels) for text in expected):
+                                            return None
+                                        if any(any(label.startswith(layout.normalized(text)) for label in labels) for text in absent):
+                                            return None
+                                        if active is not None and not any(label.startswith(layout.normalized(f"Slot {active}")) and "active" in label for label in labels):
+                                            return None
+                                        image, tree_file = output / f"{name}.png", output / f"{name}.atspi.json"
+                                        execute("import", "-window", "root", str(image))
+                                        tree_file.write_text(json.dumps(layout.tree(app), indent=2) + "\n")
+                                        return {"state": name, "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                                                "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest(), "screen_capture": True}
+                                    try:
+                                        records.append(wait(inspect))
+                                    except Exception:
+                                        app = layout.application(process.pid)
+                                        if app is not None:
+                                            (output / f"{name}.atspi.json").write_text(json.dumps(layout.tree(app), indent=2) + "\n")
+                                            execute("import", "-window", "root", str(output / f"{name}.png"))
+                                            print(f"VIEW MENU TIMEOUT {name}: " + repr([node.name for node in layout.descendants(app)]), flush=True)
+                                        raise
+                                    print(f"VIEW CAPTURE {name}", flush=True)
+
+                                open_states()
+                                menu_snapshot("menu-states", ["Create Save Slot", "Save Active Slot", "Load Active Slot", "Select Active Slot", "Save Slot", "Load Slot", "Delete Slot"])
+                                click_text("Create Save Slot")
+                                open_states()
+                                click_text("Create Save Slot")
+                                open_states()
+                                click_text("Select Active Slot")
+                                menu_snapshot("menu-created", ["Slot 1", "Slot 2"], active=2)
+                                click_text("Slot 1", prefix=True)
+                                open_states()
+                                click_text("Select Active Slot")
+                                menu_snapshot("menu-selected", ["Slot 1", "Slot 2"], active=1)
+                                execute("xdotool", "key", "Escape", "Escape", "Escape")
+                                for verb in ("Save Slot", "Load Slot"):
+                                    open_states()
+                                    click_text(verb)
+                                    click_text("Slot 1", prefix=True)
+                                open_states()
+                                click_text("Delete Slot")
+                                click_text("Slot 2", prefix=True)
+                                open_states()
+                                click_text("Select Active Slot")
+                                menu_snapshot("menu-deleted", ["Slot 1"], ["Slot 2"], active=1)
+                                execute("xdotool", "key", "Escape", "Escape", "Escape")
 
                             def find_history():
                                 result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Notification History$"], capture_output=True, text=True)
@@ -135,8 +196,8 @@ def capture(binary, original, destination, settings_review=False, history_review
 
                             def open_history():
                                 execute("xdotool", "windowfocus", "--sync", window)
-                                click_text("View")
-                                click_text("Notification History...")
+                                click_text("Emulation")
+                                click_text("Notification History", prefix=True)
                                 native = wait(find_history)
                                 execute("xdotool", "windowfocus", "--sync", native)
                                 execute("xdotool", "windowsize", "--sync", native, "592", "428")
@@ -198,10 +259,13 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Debugger$"], capture_output=True, text=True)
                                     return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
-                                def open_debugger():
+                                def open_debugger(shortcut=False):
                                     execute("xdotool", "windowfocus", "--sync", window)
-                                    click_text("View")
-                                    click_text("Debugger...")
+                                    if shortcut:
+                                        execute("xdotool", "key", "F4")
+                                    else:
+                                        click_text("Emulation")
+                                        click_text("Open Debugger", prefix=True)
                                     native = wait(find_debugger)
                                     execute("xdotool", "windowfocus", "--sync", native)
                                     execute("xdotool", "windowsize", "--sync", native, "1100", "946")
@@ -221,6 +285,28 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             return None
                                         if sum("0x" in node.name for node in visible if node.getRoleName() == "label") < 3:
                                             return None
+                                        alignment = []
+                                        for node in visible:
+                                            if node.getRoleName() != "label" or node.parent.getRoleName() == "push button":
+                                                continue
+                                            label_name = layout.normalized(node.name)
+                                            if label_name not in {"space", "page", "watchnone", "freezenone", "pickaregister", "selectadumprow"} and not label_name.startswith(("disassembly", "selected", "set", "0x")):
+                                                continue
+                                            row = node.parent
+                                            while row is not None and row != frame:
+                                                if any(child.getRoleName() == "push button" for child in layout.descendants(row)):
+                                                    break
+                                                row = row.parent
+                                            if row is None or row == frame:
+                                                raise RuntimeError(f"Debugger horizontal row is missing: {node.name}")
+                                            label_bounds, row_bounds = layout.bounds(node), layout.bounds(row)
+                                            label_center = label_bounds["y"] + label_bounds["height"] / 2
+                                            row_center = row_bounds["y"] + row_bounds["height"] / 2
+                                            if abs(label_center - row_center) > 1:
+                                                raise RuntimeError(f"Debugger label is not vertically centered: {node.name}, label={label_bounds}, row={row_bounds}")
+                                            alignment.append({"label": node.name, "label_center_y": label_center, "row_center_y": row_center})
+                                        if len(alignment) < 7:
+                                            raise RuntimeError(f"Debugger alignment controls are missing: {alignment}")
                                         execute("import", "-window", native, str(image))
                                         tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
                                         footer = next(node for node in visible if node.getRoleName() == "push button" and node.name == "Refresh")
@@ -228,10 +314,10 @@ def capture(binary, original, destination, settings_review=False, history_review
                                         if rectangle["y"] + rectangle["height"] > outer["y"] + outer["height"] - 12:
                                             raise RuntimeError(f"Debugger footer margin is insufficient: frame={outer}, refresh={rectangle}")
                                         width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
-                                        if (width, height) != (1100, 946):
+                                        if width != 1100 or (height != 946 and not (debugger_bindings and height <= 1150)):
                                             raise RuntimeError(f"Debugger size drifted: {width}x{height}")
                                         return {"state": name, "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "width": width, "height": height,
-                                                "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest(), "scope": "read-only View layout; operation bindings not tested"}
+                                                "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest(), "alignment": alignment, "scope": "read-only View layout; operation bindings not tested"}
                                     try:
                                         records.append(wait(inspect))
                                     except Exception:
@@ -243,7 +329,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                         raise
                                     print(f"VIEW CAPTURE {name}", flush=True)
 
-                                native = open_debugger()
+                                native = open_debugger(shortcut=debugger_bindings)
                                 debugger_snapshot(native, "debugger-initial")
                                 import pyatspi
 
@@ -307,6 +393,73 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     debugger_snapshot(native, f"debugger-byte-{column}")
                                     records[-1]["measured"] = {"memory_accessible_content": rectangles, "content_gaps": gaps, "declared_column_gap": 2, "row_content_insets": row_insets, "disassembly_targets": targets, "selected_column": column, "bounds_semantics": "AT-SPI content bounds exclude button CSS padding/border; content gap is not layout gap."}
                                     records[-1]["scope"] = "presentation cell selection and layout; domain mutation bindings not tested"
+                                if debugger_bindings:
+                                    from gi.repository import GLib
+
+                                    def debug_labels():
+                                        if process.poll() is not None:
+                                            raise RuntimeError(f"Debugger operation exited the process: {process.returncode}; inspect rom.log")
+                                        try:
+                                            frame = layout.window(process.pid, "Debugger")
+                                            return [node for node in layout.descendants(frame) if node.getRoleName() == "label" and layout.visible_in_frame(node, frame)] if frame is not None else []
+                                        except GLib.Error:
+                                            if process.poll() is not None:
+                                                raise RuntimeError(f"Debugger operation exited the process: {process.returncode}; inspect rom.log")
+                                            return []
+
+                                    def wait_debug_text(text):
+                                        return wait(lambda: any(text.casefold() in node.name.casefold() for node in debug_labels()))
+
+                                    def edit_row(label_prefix, value):
+                                        def locate():
+                                            frame = layout.window(process.pid, "Debugger")
+                                            if frame is None:
+                                                return None
+                                            label = next((node for node in debug_labels() if node.name.casefold().startswith(label_prefix.casefold()) and node.parent.getRoleName() != "push button"), None)
+                                            if label is None:
+                                                return None
+                                            root = label.parent
+                                            while root is not None and root != frame:
+                                                for node in layout.descendants(root):
+                                                    try:
+                                                        editable = node.queryEditableText()
+                                                        return lambda editable=editable: editable.setTextContents(value)
+                                                    except (NotImplementedError, RuntimeError):
+                                                        pass
+                                                root = root.parent
+                                            return None
+                                        if wait(locate)() is False:
+                                            raise RuntimeError(f"Debugger field write rejected: {label_prefix}")
+
+                                    click_text("Step Instr")
+                                    wait_debug_text("Stepped")
+                                    debugger_snapshot(native, "debugger-stepped")
+                                    edit_row("Selected", "5A")
+                                    click_text("Write 0x", prefix=True)
+                                    wait_debug_text("5A")
+                                    wait(lambda: any(node.getRoleName() == "push button" and node.name == "Confirm" for node in layout.descendants(layout.window(process.pid, "Debugger"))))
+                                    debugger_snapshot(native, "debugger-write-staged")
+                                    click_text("Confirm")
+                                    wait(lambda: (cells := memory_cells()) and cells[2].name == "5A")
+                                    debugger_snapshot(native, "debugger-write-confirmed")
+                                    edit_row("Selected", "6B")
+                                    click_text("Write 0x", prefix=True)
+                                    wait_debug_text("6B")
+                                    click_text("Cancel")
+                                    wait(lambda: not any(node.getRoleName() == "push button" and node.name == "Confirm" and layout.visible_in_frame(node, layout.window(process.pid, "Debugger")) for node in layout.descendants(layout.window(process.pid, "Debugger"))))
+                                    if memory_cells()[2].name != "5A":
+                                        raise RuntimeError("Cancelled debugger write mutated memory")
+                                    debugger_snapshot(native, "debugger-write-cancelled")
+                                    click_text("Watch")
+                                    wait_debug_text("0x00000001: 5A")
+                                    debugger_snapshot(native, "debugger-watch")
+                                    edit_row("freeze: none", "5A")
+                                    click_text("Freeze")
+                                    wait_debug_text("0x00000001 = 5A")
+                                    debugger_snapshot(native, "debugger-freeze")
+                                    for record in records:
+                                        if record["state"] in {"debugger-stepped", "debugger-write-staged", "debugger-write-confirmed", "debugger-write-cancelled", "debugger-watch", "debugger-freeze"}:
+                                            record["scope"] = "native debugger step and memory write prepare/confirm/cancel plus watch/freeze bindings"
                                 action = layout.window(process.pid, "Debugger").queryAction()
                                 index = next(index for index in range(action.nActions) if action.getName(index) == "window.close")
                                 if not action.doAction(index):
@@ -321,8 +474,8 @@ def capture(binary, original, destination, settings_review=False, history_review
 
                                 def open_ppu():
                                     execute("xdotool", "windowfocus", "--sync", window)
-                                    click_text("View")
-                                    click_text("PPU Viewer...")
+                                    click_text("Emulation")
+                                    click_text("PPU Viewer", prefix=True)
                                     native = wait(find_ppu)
                                     execute("xdotool", "windowfocus", "--sync", native)
                                     execute("xdotool", "windowsize", "--sync", native, "560", "620")
@@ -413,8 +566,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
                                     visible = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
                                     labels = " ".join(node.name for node in visible)
-                                    footer = [node for node in visible if node.getRoleName() == "push button" and node.name in {"Apply", "Cancel", "OK"}]
-                                    if {node.name for node in footer} != {"Apply", "Cancel", "OK"}:
+                                    footer = [node for node in visible if node.getRoleName() == "push button" and node.name in {"Cancel", "OK"}]
+                                    if {node.name for node in footer} != {"Cancel", "OK"}:
                                         raise RuntimeError("Settings footer is missing controls")
                                     outer = layout.bounds(frame)
                                     for node in footer:
@@ -440,8 +593,64 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     return frame is not None and layout.select_page(frame, page)
                                 wait(locate)
 
-                            settings_snapshot("General", ["Language", "Storage", "Apply"])
-                            for page, expected in [("Video", ["VSync", "Scaling", "Apply"]), ("Audio", ["Volume:", "Latency:", "Apply"]), ("Notifications", ["Information", "Warning", "Apply"])]:
+                            def click_setting(command, row_label=None):
+                                def locate():
+                                    frame = settings_frame()
+                                    if frame is None:
+                                        return None
+                                    root = frame
+                                    if row_label is not None:
+                                        root = next((node for node in layout.descendants(frame) if node.getRoleName() == "label" and node.name == row_label and layout.visible_in_frame(node, frame)), None)
+                                        if root is None:
+                                            return None
+                                        while root != frame and not any(node.getRoleName() == "push button" for node in layout.descendants(root)):
+                                            root = root.parent
+                                    for node in layout.descendants(root):
+                                        if node.getRoleName() != "push button" or node.name != command:
+                                            continue
+                                        action = node.queryAction()
+                                        for index in range(action.nActions):
+                                            if action.getName(index) in {"click", "press", "activate", "button.activate"}:
+                                                return lambda action=action, index=index: action.doAction(index)
+                                    return None
+                                if wait(locate)() is False:
+                                    raise RuntimeError(f"Settings action was rejected: {row_label}/{command}")
+                                if command == "Change":
+                                    wait(lambda: any("Press a key" in node.name and layout.visible_in_frame(node, settings_frame()) for node in layout.descendants(settings_frame())))
+
+                            def change_setting_choice(row_label, steps=0, last=False):
+                                def locate():
+                                    frame = settings_frame()
+                                    if frame is None:
+                                        return None
+                                    for label in layout.descendants(frame):
+                                        if label.getRoleName() != "label" or label.name != row_label or not layout.visible_in_frame(label, frame):
+                                            continue
+                                        root = label.parent
+                                        while root is not None and root != frame:
+                                            combo = next((node for node in layout.descendants(root) if node.getRoleName() == "combo box" and layout.visible_in_frame(node, frame)), None)
+                                            if combo is not None:
+                                                rectangle, outer = layout.bounds(combo), layout.bounds(frame)
+                                                return lambda rectangle=rectangle, outer=outer: execute("xdotool", "mousemove", "--window", settings_window,
+                                                    str(rectangle["x"] - outer["x"] + rectangle["width"] // 2),
+                                                    str(rectangle["y"] - outer["y"] + rectangle["height"] // 2), "click", "1")
+                                            root = root.parent
+                                    return None
+                                if wait(locate)() is False:
+                                    raise RuntimeError(f"Settings choice rejected: {row_label}")
+                                try:
+                                    wait(lambda: any(node.getRoleName() in {"list box", "list"} and layout.bounds(node) is not None and layout.bounds(node)["width"] > 0 for node in layout.descendants(layout.application(process.pid))))
+                                except Exception:
+                                    app = layout.application(process.pid)
+                                    (output / "settings-choice-timeout.atspi.json").write_text(json.dumps(layout.tree(app), indent=2) + "\n")
+                                    print("VIEW CHOICE POPUP TIMEOUT " + repr([(node.name, node.getRoleName(), layout.bounds(node)) for node in layout.descendants(app) if node.getRoleName() != "label"]), flush=True)
+                                    raise
+                                print(f"VIEW CHOICE OPEN {row_label}", flush=True)
+                                execute("xdotool", "key", "End" if last else "Home", *(["Down"] * steps), "Return")
+                                print(f"VIEW CHOICE SENT {row_label}", flush=True)
+
+                            settings_snapshot("General", ["Language", "Storage", "OK"])
+                            for page, expected in [("Video", ["VSync", "Scaling", "OK"]), ("Audio", ["Volume:", "Latency:", "OK"]), ("Notifications", ["Information", "Warning", "OK"])]:
                                 click_page(page)
                                 settings_snapshot(page, expected)
                             def scroll_notifications_to_end():
@@ -460,13 +669,45 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             return True
                                 return False
                             wait(scroll_notifications_to_end)
-                            settings_snapshot("Notifications-bottom", ["Status display", "Overlay", "Apply"])
+                            settings_snapshot("Notifications-bottom", ["Status display", "Overlay", "OK"])
                             click_page("Input")
-                            settings_snapshot("Input", ["Shortcuts", "Select", "Start", "Apply"])
+                            settings_snapshot("Input", ["Shortcuts", "Select", "Start", "Change", "Clear", "OK"])
+                            if settings_bindings:
+                                change_setting_choice("Player 1")
+                                wait(lambda: not any(node.getRoleName() == "label" and node.name == "A" and layout.visible_in_frame(node, settings_frame()) for node in layout.descendants(settings_frame())))
+                                settings_snapshot("Controller-none", ["None", "OK"])
+                                change_setting_choice("Player 1", steps=1)
+                                settings_snapshot("Controller-restored", ["Select", "Start", "Change", "Clear", "OK"])
+                                click_setting("Change", "A")
+                                execute("xdotool", "key", "F7")
+                                settings_snapshot("Input-captured", ["F7", "OK"])
+                                click_setting("Clear", "A")
+                                settings_snapshot("Input-cleared", ["Unbound", "OK"])
                             click_page("Shortcuts")
-                            settings_snapshot("Shortcuts", ["Pause", "Reset", "Apply"])
+                            settings_snapshot("Shortcuts", ["Pause", "Reset", "Change", "Clear", "OK"])
+                            if settings_bindings:
+                                click_setting("Change", "Reset")
+                                execute("xdotool", "key", "F9")
+                                settings_snapshot("Shortcut-captured", ["F9", "OK"])
+                                click_setting("Change", "Reset")
+                                execute("xdotool", "key", "Escape")
+                                settings_snapshot("Shortcut-cancelled", ["F9", "OK"])
                             click_page("System")
-                            settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "Apply"])
+                            settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "OK"])
+                            if settings_bindings:
+                                change_setting_choice("Filter", last=True)
+                                click_setting("OK")
+                                wait(lambda: find_settings() is None)
+                                execute("xdotool", "windowfocus", "--sync", window)
+                                execute("xdotool", "key", "ctrl+comma")
+                                settings_window = wait(find_settings)
+                                execute("xdotool", "windowfocus", "--sync", settings_window)
+                                execute("xdotool", "windowsize", "--sync", settings_window, "900", "560")
+                                click_page("Input")
+                                click_page("Shortcuts")
+                                settings_snapshot("Shortcut-persisted", ["F9", "OK"])
+                                click_setting("Cancel")
+                                wait(lambda: find_settings() is None)
                             execute("xdotool", "windowfocus", "--sync", window)
                     execute("xdotool", "key", "ctrl+q")
                     exit_code = process.wait(timeout=15)
@@ -475,6 +716,13 @@ def capture(binary, original, destination, settings_review=False, history_review
                     shutdown_exit_codes[mode] = exit_code
                 finally:
                     if process.poll() is None:
+                        if accessibility:
+                            try:
+                                app = layout.application(process.pid)
+                                if app is not None:
+                                    (output / f"{mode}-failure.atspi.json").write_text(json.dumps(layout.tree(app), indent=2) + "\n")
+                            except Exception as diagnostic_error:
+                                print(f"VIEW DIAGNOSTIC UNAVAILABLE: {diagnostic_error}", flush=True)
                         process.terminate()
                     process.wait(timeout=15)
     (output / "evidence.json").write_text(json.dumps({"os": execute("uname", "-a"),
@@ -490,9 +738,9 @@ def capture(binary, original, destination, settings_review=False, history_review
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--history", "--debugger", "--ppu"}):
-            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--history|--debugger|--ppu]")
-        capture(*sys.argv[1:4], settings_review="--settings" in sys.argv[4:], history_review="--history" in sys.argv[4:], debugger_review="--debugger" in sys.argv[4:], ppu_review="--ppu" in sys.argv[4:])
+        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--settings-bindings", "--history", "--debugger", "--debugger-bindings", "--ppu", "--menu"}):
+            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--settings-bindings|--history|--debugger|--debugger-bindings|--ppu|--menu]")
+        capture(*sys.argv[1:4], settings_review=bool({"--settings", "--settings-bindings"}.intersection(sys.argv[4:])), history_review="--history" in sys.argv[4:], debugger_review=bool({"--debugger", "--debugger-bindings"}.intersection(sys.argv[4:])), ppu_review="--ppu" in sys.argv[4:], menu_review="--menu" in sys.argv[4:], settings_bindings="--settings-bindings" in sys.argv[4:], debugger_bindings="--debugger-bindings" in sys.argv[4:])
     except Exception as error:
         print(f"VIEW FAIL: {error}", file=sys.stderr)
         sys.exit(1)

@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
+use nerust_input_traits::Key;
 use nerust_input_traits::{AttachmentId, DigitalControlId};
-use wakui::Key;
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 

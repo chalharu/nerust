@@ -10,14 +10,17 @@ version.workspace = true
 [features]
 default = ["native"]
 native = ["panechord/native"]
+gtk = ["panechord/gtk"]
+tao = ["panechord/tao"]
 
 [dependencies]
 nerust_gui_viewmodel.workspace = true
 rfd.workspace = true
-wakui_core.workspace = true
+nerust_input_traits.workspace = true
 nerust_gui_application.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
+nerust_persistence.workspace = true
 nerust_render_traits = { workspace = true, features = ["renderer"] }
 nerust_core_traits.workspace = true
 nerust_system_traits.workspace = true

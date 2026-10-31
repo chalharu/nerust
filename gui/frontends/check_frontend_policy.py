@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
-"""Frontend dependency gate: flavors and Panechord stay framework-only.
+"""Frontend dependency gate.
 
-Checks:
-1. `[dependencies]` (plus target-specific and `[dev-dependencies]`)
-   of `wakui_tao`/`wakui_gtk` name zero `nerust_*` crates.
-2. `cargo tree --edges normal --depth 1` agrees (no direct normal edge
-   to any `nerust_*` crate).
-3. All `.rs` files in both flavors (production AND tests) name zero
-   `nerust_*` crates. String literals and comments are ignored, so
-   native window role names like "nerust_debug" do not count.
-4. `cargo tree -p wakui --edges normal` contains no `nerust_*`.
-5. Panechord manifests (including renamed/workspace dependencies), normal
-    dependency closures, source, examples and tests contain no nerust dependency.
-6. runtime/shell/viewmodel manifests have no Panechord dependency; integration
-    remains in the outer frontend adapter, not in application domain data.
-7. The desktop frontend contains no native backend dependencies, imports,
-    feature branches or OS branches; Panechord owns backend integration.
+Panechord manifests, dependency closures and Rust sources stay framework-only.
+Native backend selection belongs to Panechord, not the desktop adapter.
+Inner layers depend on neither the UI framework nor the removed Wakui stack.
 """
 
 import re
@@ -25,13 +13,9 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-FLAVORS = {
-    "wakui_tao": ROOT / "gui/wakui-tao",
-    "wakui_gtk": ROOT / "gui/wakui-gtk",
-}
 FRAMEWORKS = {"panechord": ROOT / "panechord"} | {
     f"panechord-{name}": ROOT / "panechord" / name
-    for name in ("runtime", "markup", "macros", "gtk", "tao", "macos", "demo", "settings", "library")
+    for name in ("runtime", "markup", "macros", "native", "gtk", "tao", "macos", "demo", "settings", "library")
 }
 
 
@@ -113,7 +97,7 @@ def desktop_backend_violations(crate_dir: Path) -> list[str]:
     failures: list[str] = []
     forbidden = {
         "gtk4", "gtk", "gdk4", "tao", "muda", "iced", "objc", "objc2",
-        "panechord-gtk", "panechord-tao", "panechord-macos",
+        "panechord-gtk", "panechord-tao", "panechord-macos", "panechord-native",
     }
     dependencies = toml_dependency_names(crate_dir / "Cargo.toml") & forbidden
     if dependencies:
@@ -137,7 +121,7 @@ def main() -> int:
     failures: list[str] = []
     failures.extend(desktop_backend_violations(ROOT / "gui/frontends/desktop"))
 
-    for package, crate_dir in (FLAVORS | FRAMEWORKS).items():
+    for package, crate_dir in FRAMEWORKS.items():
         bad = toml_nerust_deps(crate_dir / "Cargo.toml")
         if bad:
             failures.append(f"{package} Cargo.toml dependencies: {sorted(bad)}")
@@ -152,17 +136,14 @@ def main() -> int:
             shown = ", ".join(sites[:5])
             failures.append(f"{package} code names {name}: {shown}")
 
-    wakui_closure = cargo_closure_has_nerust("wakui")
-    if wakui_closure:
-        failures.append(f"wakui normal closure contains nerust_*: {wakui_closure}")
     for package in FRAMEWORKS:
         bad = cargo_closure_has_nerust(package)
         if bad:
             failures.append(f"{package} normal closure contains nerust: {bad}")
-    for domain in ("runtime", "shell", "viewmodel"):
-        bad = sorted(name for name in toml_dependency_names(ROOT / "gui" / domain / "Cargo.toml") if name.startswith("panechord"))
+    for domain in ("gui/runtime", "gui/shell", "gui/viewmodel", "gui/application", "settings/core", "traits/input"):
+        bad = sorted(name for name in toml_dependency_names(ROOT / domain / "Cargo.toml") if name.startswith(("panechord", "wakui")))
         if bad:
-            failures.append(f"inner domain {domain} depends on Panechord: {bad}")
+            failures.append(f"inner domain {domain} depends on a UI framework: {bad}")
 
     if failures:
         print("flavor policy gate FAILED:")

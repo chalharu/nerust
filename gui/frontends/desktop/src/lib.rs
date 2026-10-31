@@ -53,7 +53,8 @@ pub fn run(
             host.executor(),
         );
         let actions = Rc::new(RefCell::new(None));
-        let view = view::build(model.clone(), actions.clone());
+        let menus = Store::new(view::MenuModel::new(&application.borrow()), host.executor());
+        let view = view::build(model.clone(), menus.clone(), actions.clone());
         let app = application.clone();
         let render = renderer.clone();
         let output = model.clone();
@@ -72,6 +73,7 @@ pub fn run(
         let ppu_refresh = ppu_updates.clone();
         let settings_host = host.clone();
         let settings_session = session.clone();
+        let dispatch_source = Rc::downgrade(&actions);
         actions.replace(Some(Rc::new(move |intent| {
             if app.borrow().state().closed {
                 return false;
@@ -88,6 +90,13 @@ pub fn run(
                     }
                     let language = app.borrow().settings().shared.general.language;
                     let pane = ppu::Pane::new(language, executor.clone());
+                    let images = app.clone();
+                    pane.connect(
+                        app.borrow().session().media_revision(),
+                        Rc::new(move |generation| {
+                            images.borrow().session().ppu_live_begin(generation)
+                        }),
+                    );
                     let view = match pane.build() {
                         Ok(view) => view,
                         Err(error) => {
@@ -145,6 +154,23 @@ pub fn run(
                     }
                     let language = app.borrow().settings().shared.general.language;
                     let pane = debugger::Pane::new(language, executor.clone());
+                    let debug = app.clone();
+                    let Some(dispatch) = dispatch_source
+                        .upgrade()
+                        .and_then(|actions| actions.borrow().clone())
+                    else {
+                        return false;
+                    };
+                    let spaces = app.clone();
+                    pane.connect(
+                        app.borrow().session().debug_spaces(),
+                        Rc::new(move |actions, input| {
+                            debug.borrow().session().debug_begin(actions, input)
+                        }),
+                        dispatch,
+                        app.borrow().session().media_revision(),
+                        Rc::new(move || spaces.borrow().session().debug_spaces()),
+                    );
                     let view = match pane.build() {
                         Ok(view) => view,
                         Err(error) => {
@@ -363,8 +389,8 @@ pub fn run(
                     }));
                     true
                 }
-                view::Intent::TogglePause => {
-                    app.borrow_mut().toggle_pause();
+                view::Intent::Pause(paused) => {
+                    app.borrow_mut().set_pause(PauseReason::User, paused);
                     true
                 }
                 view::Intent::Session(action) => {
@@ -397,6 +423,7 @@ pub fn run(
         let app = application.clone();
         let render = renderer.clone();
         let output = model.clone();
+        let keyboard_actions = actions.clone();
         view.on_surface_event(Rc::new(move |event| {
             let mut app = app.borrow_mut();
             match event {
@@ -429,7 +456,12 @@ pub fn run(
                             Ok(())
                         }
                         Some(KeyboardShortcut::OpenDebugger) => {
-                            Err("Debugger is not connected".into())
+                            drop(app);
+                            let dispatch = keyboard_actions.borrow().clone();
+                            if let Some(dispatch) = dispatch {
+                                dispatch(view::Intent::Debugger);
+                            }
+                            return;
                         }
                         None => return,
                     };
@@ -442,10 +474,12 @@ pub fn run(
         let render = renderer.clone();
         let app = application.clone();
         let output = model.clone();
+        let closed_menus = menus.clone();
         view.on_close(Rc::new(move || {
             render.borrow_mut().close();
             app.borrow_mut().close();
             output.close();
+            closed_menus.close();
         }));
         let weak = view.downgrade();
         host.register_view(
@@ -474,6 +508,13 @@ pub fn run(
         let weak = view.downgrade();
         host.executor().spawn(Box::pin(async move {
             while weak.upgrade().is_some() && !application.borrow().state().closed {
+                let changed_menus = {
+                    let app = application.borrow();
+                    (!menus.snapshot().matches(&app)).then(|| view::MenuModel::new(&app))
+                };
+                if let Some(changed) = changed_menus {
+                    let _ = menus.update(move |model| *model = changed);
+                }
                 let (state, image) = {
                     let mut app = application.borrow_mut();
                     let profile = app.session().render_profile();
@@ -513,13 +554,21 @@ pub fn run(
                 }
                 let pane = debugger_refresh.borrow().clone();
                 if let Some(pane) = pane {
-                    let language = application.borrow().settings().shared.general.language;
-                    pane.poll(language);
+                    let app = application.borrow();
+                    let language = app.settings().shared.general.language;
+                    let loaded = app.state().loaded;
+                    let revision = app.session().media_revision();
+                    drop(app);
+                    pane.poll(language, loaded, revision);
                 }
                 let pane = ppu_refresh.borrow().clone();
                 if let Some(pane) = pane {
-                    let language = application.borrow().settings().shared.general.language;
-                    pane.poll(language);
+                    let app = application.borrow();
+                    let language = app.settings().shared.general.language;
+                    let loaded = app.state().loaded;
+                    let revision = app.session().media_revision();
+                    drop(app);
+                    pane.poll(language, loaded, revision);
                 }
                 let _ = model.update(move |model| {
                     model.state = state;

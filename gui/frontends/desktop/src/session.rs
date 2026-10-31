@@ -16,14 +16,46 @@ use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, Res
 
 pub struct SessionAdapter {
     session: SessionHandle,
+    media_revision: u64,
     loader: Box<dyn RomLoader>,
     held: bool,
-    pressed_keys: HashSet<wakui_core::Key>,
+    pressed_keys: HashSet<nerust_input_traits::Key>,
     audio: Arc<AudioBackendRegistry>,
     osd: nerust_gui_shell::session::osd::OsdManager,
 }
 
 impl SessionAdapter {
+    pub(crate) fn media_revision(&self) -> u64 {
+        self.media_revision
+    }
+
+    pub(crate) fn ppu_live_begin(
+        &self,
+        generation: Option<u64>,
+    ) -> nerust_gui_shell::debug::LiveImagesFlight {
+        self.session.debug_live_images_begin_since(generation)
+    }
+    pub(crate) fn debug_spaces(&self) -> Vec<nerust_core_traits::debugger::SpaceInfo> {
+        self.session.debug_spaces()
+    }
+
+    pub(crate) fn debug_begin(
+        &self,
+        actions: &[nerust_gui_shell::debug::DebugAction],
+        input: &nerust_gui_shell::debug::DebugDrainInput<'_>,
+    ) -> nerust_gui_shell::debug::DrainFlight {
+        self.session.debug_drain_begin(actions, input)
+    }
+
+    pub(crate) fn menu_slots(
+        &self,
+    ) -> (
+        Arc<[nerust_persistence::model::StateSlotSummary]>,
+        Option<u64>,
+    ) {
+        (self.session.slots_arc(), self.session.active_slot_id())
+    }
+
     pub(crate) fn debugger_layout_begin(&self) -> (String, nerust_gui_shell::debug::DrainFlight) {
         self.debug_layout_begin(false)
     }
@@ -57,7 +89,7 @@ impl SessionAdapter {
         )
     }
 
-    pub(crate) fn key(code: &panechord::KeyCode) -> Option<wakui_core::Key> {
+    pub(crate) fn key(code: &panechord::KeyCode) -> Option<nerust_input_traits::Key> {
         use serde::Deserialize;
         let mut name = String::new();
         for (index, character) in code.as_str().chars().enumerate() {
@@ -66,9 +98,9 @@ impl SessionAdapter {
             }
             name.push(character.to_ascii_lowercase());
         }
-        wakui_core::Key::deserialize(
-            serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&name),
-        )
+        nerust_input_traits::Key::deserialize(serde::de::value::StrDeserializer::<
+            serde::de::value::Error,
+        >::new(&name))
         .ok()
     }
 
@@ -104,6 +136,7 @@ impl SessionAdapter {
         .map_err(|error| error.to_string())?;
         Ok(Self {
             session,
+            media_revision: 0,
             loader,
             held: false,
             pressed_keys: HashSet::new(),
@@ -198,7 +231,7 @@ impl HistoryPort for SessionAdapter {
 }
 
 impl KeyboardPort for SessionAdapter {
-    type Key = wakui_core::Key;
+    type Key = nerust_input_traits::Key;
     type Shortcut = KeyboardShortcut;
 
     fn key_event(
@@ -246,7 +279,19 @@ impl FramePort for SessionAdapter {
 
 impl SessionActionPort for SessionAdapter {
     fn execute(&mut self, action: SessionAction) -> Result<bool, String> {
+        if let SessionAction::SelectSlot(id)
+        | SessionAction::SaveSlot(id)
+        | SessionAction::LoadSlot(id)
+        | SessionAction::DeleteSlot(id) = action
+            && !self.session.slots().iter().any(|slot| slot.slot_id == id)
+        {
+            return Ok(false);
+        }
         if action == SessionAction::Unload {
+            self.media_revision = self
+                .media_revision
+                .checked_add(1)
+                .ok_or_else(|| "media revision exhausted".to_owned())?;
             return self
                 .session
                 .unload()
@@ -258,6 +303,11 @@ impl SessionActionPort for SessionAdapter {
             SessionAction::Unload => unreachable!(),
             SessionAction::SaveState => SessionCommand::SaveActiveSlotOrNew,
             SessionAction::LoadState => SessionCommand::LoadActiveSlot,
+            SessionAction::CreateSlot => SessionCommand::CreateSlot,
+            SessionAction::SelectSlot(id) => SessionCommand::SelectActiveSlot(id),
+            SessionAction::SaveSlot(id) => SessionCommand::SaveSlot(id),
+            SessionAction::LoadSlot(id) => SessionCommand::LoadSlot(id),
+            SessionAction::DeleteSlot(id) => SessionCommand::DeleteSlot(id),
             SessionAction::NextSlot => SessionCommand::SelectNextSlot,
             SessionAction::PreviousSlot => SessionCommand::SelectPreviousSlot,
         };
@@ -317,6 +367,10 @@ impl RomLoadTarget for LoadTarget<'_> {
 
 impl MediaPort for SessionAdapter {
     fn load(&mut self, path: &Path) -> Result<(), String> {
+        self.media_revision = self
+            .media_revision
+            .checked_add(1)
+            .ok_or_else(|| "media revision exhausted".to_owned())?;
         self.loader
             .load_rom(
                 path,
@@ -363,11 +417,11 @@ mod tests {
     #[test]
     fn normalized_keys_bridge_to_existing_settings_without_a_frontend_key_table() {
         for (name, expected) in [
-            ("KeyV", wakui_core::Key::KeyV),
-            ("F11", wakui_core::Key::F11),
-            ("IntlYen", wakui_core::Key::IntlYen),
-            ("MetaLeft", wakui_core::Key::SuperLeft),
-            ("NumpadEnter", wakui_core::Key::NumpadEnter),
+            ("KeyV", nerust_input_traits::Key::KeyV),
+            ("F11", nerust_input_traits::Key::F11),
+            ("IntlYen", nerust_input_traits::Key::IntlYen),
+            ("MetaLeft", nerust_input_traits::Key::SuperLeft),
+            ("NumpadEnter", nerust_input_traits::Key::NumpadEnter),
         ] {
             assert_eq!(
                 SessionAdapter::key(&panechord::KeyCode::from_name(name)),

@@ -301,6 +301,7 @@ impl View {
         });
         self.signal("", &self.0.window, signal);
         let controller = gtk::EventControllerKey::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let pressed = keys.clone();
         let press = callback.clone();
         let signal = controller.connect_key_pressed(move |_, key, hardware_code, _| {

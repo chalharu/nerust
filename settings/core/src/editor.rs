@@ -3,7 +3,7 @@ use crate::model::{
     snapshot::SettingsSnapshot,
 };
 use nerust_core_traits::identity::SystemId;
-use wakui::Key;
+use nerust_input_traits::Key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
@@ -110,7 +110,7 @@ mod tests {
         snapshot::SettingsSnapshot,
     };
     use nerust_core_traits::declare_system_id;
-    use wakui::Key;
+    use nerust_input_traits::Key;
 
     use super::*;
 

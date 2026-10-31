@@ -21,7 +21,6 @@ nerust_render_osd.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-wakui.workspace = true
 nerust_settings_traits.workspace = true
 time.workspace = true
 
