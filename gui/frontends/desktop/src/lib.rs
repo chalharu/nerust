@@ -1,5 +1,6 @@
 mod debugger;
 mod history;
+mod ppu;
 mod render;
 mod session;
 mod settings;
@@ -66,6 +67,9 @@ pub fn run(
         let debugger_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
         let debugger_updates = Rc::new(RefCell::new(None::<Rc<debugger::Pane>>));
         let debugger_refresh = debugger_updates.clone();
+        let ppu_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let ppu_updates = Rc::new(RefCell::new(None::<Rc<ppu::Pane>>));
+        let ppu_refresh = ppu_updates.clone();
         let settings_host = host.clone();
         let settings_session = session.clone();
         actions.replace(Some(Rc::new(move |intent| {
@@ -73,6 +77,63 @@ pub fn run(
                 return false;
             }
             match intent {
+                view::Intent::Ppu => {
+                    if let Some(view) = ppu_window
+                        .borrow()
+                        .as_ref()
+                        .and_then(panechord::WeakView::upgrade)
+                    {
+                        view.present();
+                        return true;
+                    }
+                    let language = app.borrow().settings().shared.general.language;
+                    let pane = ppu::Pane::new(language, executor.clone());
+                    let view = match pane.build() {
+                        Ok(view) => view,
+                        Err(error) => {
+                            let _ = output.update(move |model| model.notice = Some(error));
+                            return false;
+                        }
+                    };
+                    let weak = view.downgrade();
+                    let close = weak.clone();
+                    let cancelled = pane.clone();
+                    if let Err(error) = settings_host.register_view(
+                        &settings_session,
+                        "ppu",
+                        &view,
+                        panechord::WindowHooks {
+                            confirm: Rc::new(|| Box::pin(async { true })),
+                            cancel: Rc::new(move || cancelled.cancel()),
+                            drain: Rc::new(|| Box::pin(async {})),
+                            close: Rc::new(move || {
+                                if let Some(view) = close.upgrade() {
+                                    view.close();
+                                }
+                            }),
+                        },
+                    ) {
+                        view.close();
+                        let _ = output.update(move |model| model.notice = Some(error));
+                        return false;
+                    }
+                    view.on_close_request(Rc::new(move || {
+                        if let Some(view) = weak.upgrade() {
+                            view.close();
+                        }
+                    }));
+                    let closed_window = ppu_window.clone();
+                    let closed_pane = ppu_updates.clone();
+                    view.on_close(Rc::new(move || {
+                        closed_window.replace(None);
+                        closed_pane.replace(None);
+                    }));
+                    let flight = app.borrow().session().ppu_layout_begin();
+                    pane.start(flight);
+                    ppu_window.replace(Some(view.downgrade()));
+                    ppu_updates.replace(Some(pane));
+                    true
+                }
                 view::Intent::Debugger => {
                     if let Some(view) = debugger_window
                         .borrow()
@@ -451,6 +512,11 @@ pub fn run(
                     }
                 }
                 let pane = debugger_refresh.borrow().clone();
+                if let Some(pane) = pane {
+                    let language = application.borrow().settings().shared.general.language;
+                    pane.poll(language);
+                }
+                let pane = ppu_refresh.borrow().clone();
                 if let Some(pane) = pane {
                     let language = application.borrow().settings().shared.general.language;
                     pane.poll(language);

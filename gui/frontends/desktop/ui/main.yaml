@@ -29,6 +29,7 @@ root:
         - {id: fullscreen, label: {literal: Fullscreen}, argument: {literal: fullscreen}}
         - {id: history, label: {literal: "Notification History..."}, argument: {literal: history}}
         - {id: debugger, label: {literal: "Debugger..."}, argument: {literal: debugger}}
+        - {id: ppu, label: {literal: "PPU Viewer..."}, argument: {literal: ppu}}
   content:
     type: Native
     id: screen

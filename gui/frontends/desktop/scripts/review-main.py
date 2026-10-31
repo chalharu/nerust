@@ -26,8 +26,8 @@ def wait(predicate):
     raise RuntimeError("native View condition timed out")
 
 
-def capture(binary, original, destination, settings_review=False, history_review=False, debugger_review=False):
-    accessibility = settings_review or history_review or debugger_review
+def capture(binary, original, destination, settings_review=False, history_review=False, debugger_review=False, ppu_review=False):
+    accessibility = settings_review or history_review or debugger_review or ppu_review
     if accessibility:
         import atspi_layout as layout
     output = Path(destination)
@@ -98,7 +98,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                         execute("xdotool", "mousemove", "--window", window, "330", "260", "click", "1")
                         execute("xdotool", "key", "space")
                         snapshot("paused", expected="Paus")
-                        if history_review or debugger_review:
+                        if history_review or debugger_review or ppu_review:
                             def click_text(text):
                                 def locate():
                                     app = layout.application(process.pid)
@@ -249,6 +249,76 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 wait(lambda: find_debugger() is None)
                                 native = open_debugger()
                                 debugger_snapshot(native, "debugger-reopened")
+                            if ppu_review:
+                                def find_ppu():
+                                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^PPU Viewer$"], capture_output=True, text=True)
+                                    return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
+
+                                def open_ppu():
+                                    execute("xdotool", "windowfocus", "--sync", window)
+                                    click_text("View")
+                                    click_text("PPU Viewer...")
+                                    native = wait(find_ppu)
+                                    execute("xdotool", "windowfocus", "--sync", native)
+                                    execute("xdotool", "windowsize", "--sync", native, "560", "620")
+                                    return native
+
+                                def ppu_frame():
+                                    return layout.window(process.pid, "PPU Viewer")
+
+                                def ppu_images():
+                                    frame = ppu_frame()
+                                    if frame is None:
+                                        return None
+                                    images = [node for node in layout.descendants(frame) if node.getRoleName() == "image" and layout.visible_in_frame(node, frame)]
+                                    return images or None
+
+                                def ppu_snapshot(native, name):
+                                    wait(ppu_images)
+                                    frame = ppu_frame()
+                                    image = output / f"{name}.png"
+                                    tree_file = output / f"{name}.atspi.json"
+                                    execute("import", "-window", native, str(image))
+                                    tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
+                                    width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
+                                    if (width, height) != (560, 620):
+                                        raise RuntimeError(f"PPU size drifted: {width}x{height}")
+                                    rectangles = [layout.bounds(node) for node in ppu_images()]
+                                    measured = {"images": rectangles}
+                                    if name == "ppu-initial":
+                                        outer = layout.bounds(frame)
+                                        labels = {node.name: layout.bounds(node) for node in layout.descendants(frame) if node.getRoleName() == "label"}
+                                        titles = [labels["Pattern left"], labels["Pattern right"]]
+                                        for title, picture in zip(titles, rectangles):
+                                            if picture["x"] - outer["x"] != 16 or picture["y"] - title["y"] - title["height"] != 12 or (picture["width"], picture["height"]) != (256, 256):
+                                                raise RuntimeError(f"PPU image geometry drifted: title={title}, image={picture}")
+                                        if titles[1]["y"] - rectangles[0]["y"] - rectangles[0]["height"] != 12:
+                                            raise RuntimeError("PPU image block gap drifted")
+                                        measured["titles"] = titles
+                                        measured["left_inset"] = 16
+                                        measured["title_image_gap"] = 12
+                                        measured["image_block_gap"] = 12
+                                    records.append({"state": name, "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "width": width, "height": height,
+                                                    "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest(), "measured": measured, "scope": "NES fixture read-only image snapshot and hover; live refresh binding not tested"})
+                                    print(f"VIEW CAPTURE {name}", flush=True)
+
+                                native = open_ppu()
+                                ppu_snapshot(native, "ppu-initial")
+                                picture = layout.bounds(wait(ppu_images)[0])
+                                outer = layout.bounds(ppu_frame())
+                                execute("xdotool", "mousemove", "--window", native, str(picture["x"] - outer["x"] + 20), str(picture["y"] - outer["y"] + 20))
+                                wait(lambda: any("0x" in node.name for node in layout.descendants(ppu_frame()) if node.getRoleName() == "label"))
+                                ppu_snapshot(native, "ppu-hover")
+                                execute("xdotool", "mousemove", "--window", native, "500", "500", "click", "--repeat", "12", "--delay", "50", "5")
+                                wait(lambda: any("== PPU flags ==" in node.name and layout.visible_in_frame(node, ppu_frame()) for node in layout.descendants(ppu_frame()) if node.getRoleName() == "label"))
+                                ppu_snapshot(native, "ppu-panels")
+                                action = ppu_frame().queryAction()
+                                close_index = next(index for index in range(action.nActions) if action.getName(index) == "window.close")
+                                if not action.doAction(close_index):
+                                    raise RuntimeError("PPU native close request was rejected")
+                                wait(lambda: find_ppu() is None)
+                                native = open_ppu()
+                                ppu_snapshot(native, "ppu-reopened")
                             execute("xdotool", "windowfocus", "--sync", window)
                         if settings_review:
                             execute("xdotool", "key", "ctrl+comma")
@@ -333,8 +403,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                             click_page("System")
                             settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "Apply"])
                             execute("xdotool", "windowfocus", "--sync", window)
-                    execute("xdotool", "key", "ctrl+q" if history_review or debugger_review else "alt+F4")
-                    if history_review or debugger_review:
+                    execute("xdotool", "key", "ctrl+q" if history_review or debugger_review or ppu_review else "alt+F4")
+                    if history_review or debugger_review or ppu_review:
                         exit_code = process.wait(timeout=15)
                         if exit_code != 0:
                             raise RuntimeError(f"History review shutdown failed: {exit_code}")
@@ -356,9 +426,9 @@ def capture(binary, original, destination, settings_review=False, history_review
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--history", "--debugger"}):
-            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--history|--debugger]")
-        capture(*sys.argv[1:4], settings_review="--settings" in sys.argv[4:], history_review="--history" in sys.argv[4:], debugger_review="--debugger" in sys.argv[4:])
+        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--history", "--debugger", "--ppu"}):
+            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--history|--debugger|--ppu]")
+        capture(*sys.argv[1:4], settings_review="--settings" in sys.argv[4:], history_review="--history" in sys.argv[4:], debugger_review="--debugger" in sys.argv[4:], ppu_review="--ppu" in sys.argv[4:])
     except Exception as error:
         print(f"VIEW FAIL: {error}", file=sys.stderr)
         sys.exit(1)
