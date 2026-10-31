@@ -403,12 +403,11 @@ def capture(binary, original, destination, settings_review=False, history_review
                             click_page("System")
                             settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "Apply"])
                             execute("xdotool", "windowfocus", "--sync", window)
-                    execute("xdotool", "key", "ctrl+q" if history_review or debugger_review or ppu_review else "alt+F4")
-                    if history_review or debugger_review or ppu_review:
-                        exit_code = process.wait(timeout=15)
-                        if exit_code != 0:
-                            raise RuntimeError(f"History review shutdown failed: {exit_code}")
-                        shutdown_exit_codes[mode] = exit_code
+                    execute("xdotool", "key", "ctrl+q")
+                    exit_code = process.wait(timeout=15)
+                    if exit_code != 0:
+                        raise RuntimeError(f"View review shutdown failed: {exit_code}")
+                    shutdown_exit_codes[mode] = exit_code
                 finally:
                     if process.poll() is None:
                         process.terminate()
