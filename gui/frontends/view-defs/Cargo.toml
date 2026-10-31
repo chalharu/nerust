@@ -7,7 +7,11 @@ name = "nerust_frontend_viewdefs"
 rust-version.workspace = true
 version.workspace = true
 
+[features]
+panechord = ["dep:panechord"]
+
 [dependencies]
+panechord = { workspace = true, optional = true }
 log.workspace = true
 raw-window-handle.workspace = true
 nerust_core_traits.workspace = true

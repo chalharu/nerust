@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+test "$(uname -s)" = Darwin || { printf '%s\n' 'macOS interactive desktop required' >&2; exit 1; }
+unset DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_INSERT_LIBRARIES
+export RUSTC_WRAPPER="$PWD/scripts/yaml-rustc.py" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export PANECHORD_ALLOW_CLIPBOARD_PROBE=1
+
+native_run() {
+    if output=$(python3 -c '
+import os, signal, subprocess, sys
+process = subprocess.Popen(sys.argv[1:], start_new_session=True)
+try:
+    seconds = float(os.environ.get("PANECHORD_NATIVE_TIMEOUT_SECONDS", "45"))
+    sys.exit(process.wait(timeout=seconds))
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+    print(f"Tao native run exceeded {seconds} seconds", file=sys.stderr)
+    sys.exit(124)
+' cargo run --locked "$@" 2>&1); then
+        printf '%s\n' "$output"
+    else
+        printf '%s\n' "$output" >&2
+        return 1
+    fi
+}
+
+cargo clippy --locked -p panechord-tao --all-targets -- -D warnings
+for package in panechord-demo panechord-settings panechord-library; do
+    cargo clippy --locked -p "$package" --all-targets --no-default-features --features backend-tao -- -D warnings
+    cargo build --locked -p "$package" --no-default-features --features backend-tao
+done
+cargo build --locked -p panechord-tao --example native_smoke
+native_run -p panechord-tao --example native_smoke
+printf '%s\n' "$output" | grep -q '^native-smoke: close callback OK'
+native_run -p panechord-settings --no-default-features --features backend-tao --example controls
+printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
+printf '%s\n' "$output" | grep -q '^CONTRACT3 PASS slider closed capacity conversion readonly hidden disabled normalized-display$'
+printf '%s\n' "$output" | grep -q '^TABS3 PASS top bottom left right selection retained$'
+printf '%s\n' "$output" | grep -q '^MENUS3 PASS nested typed-argument parent-enablement$'
+printf '%s\n' "$output" | grep -q '^DIALOG3 PASS readonly hidden-parent close-reopen$'
+cargo build --locked -p panechord-tao --example multiwindow
+native_run -p panechord-tao --example multiwindow
+printf '%s\n' "$output" | grep -q '^TAO3 PASS multiwindow drawn shared-store primary-close reopen foreign-and-closed-rejected veto-drain-close recoverable-auxiliary-error-isolated$'
+native_run -p panechord-demo --no-default-features --features backend-tao -- --smoke
+printf '%s\n' "$output" | grep -q '^PROTOTYPE2 PASS '
+native_run -p panechord-settings --no-default-features --features backend-tao -- --smoke
+for marker in 'entries readonly invalid-retention save-gating cancel-no-write' \
+    'async-save wm-close-veto menu-quit-veto keep-editing cancel-close' \
+    'busy-exit-waits newer-invalid-edit-reprompts' \
+    'final-save-exit saved-json verified model-closed'; do
+    printf '%s\n' "$output" | grep -q "^SETTINGS3 PASS $marker$"
+done
+native_run -p panechord-library --no-default-features --features backend-tao -- --smoke
+printf '%s\n' "$output" | grep -q '^LIBRARY3 tao PASS native-events scan filter selection invalid-folder recovery rescan$'
+printf '%s\n' "$output" | grep -q '^LIBRARY3 tao PASS native-close model-closed$'
+printf '%s\n' 'VERIFY3 TAO MACOS PASS: strict Clippy, native drawing/clipboard, gallery and settings/library automation'

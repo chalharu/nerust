@@ -1684,6 +1684,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd417de3d1d015fc3bfd2b1ea46dfc7bab72ef86f1cc7cc9c78e728b34a6d1fd"
 
 [[package]]
+name = "futures-timer"
+version = "3.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af43fadb8a98512d547e37b4e92e0ced13e205c061b87b4623eff01d918d6968"
+
+[[package]]
 name = "futures-util"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3506,6 +3512,7 @@ dependencies = [
  "nerust_render_traits",
  "nerust_settings_core",
  "nerust_system_traits",
+ "panechord",
  "raw-window-handle",
  "wakui",
 ]
@@ -4631,6 +4638,127 @@ dependencies = [
 ]
 
 [[package]]
+name = "panechord"
+version = "0.1.0-dev"
+dependencies = [
+ "panechord-gtk",
+ "panechord-macos",
+ "panechord-macros",
+ "panechord-runtime",
+ "panechord-tao",
+]
+
+[[package]]
+name = "panechord-demo"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "panechord-gtk",
+ "panechord-macros",
+ "panechord-runtime",
+ "panechord-tao",
+]
+
+[[package]]
+name = "panechord-gtk"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "gtk4",
+ "panechord-runtime",
+]
+
+[[package]]
+name = "panechord-library"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "panechord-gtk",
+ "panechord-macos",
+ "panechord-macros",
+ "panechord-runtime",
+ "panechord-tao",
+]
+
+[[package]]
+name = "panechord-macos"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "panechord-runtime",
+ "serde_json",
+]
+
+[[package]]
+name = "panechord-macros"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "panechord-markup",
+ "panechord-runtime",
+ "proc-macro-crate 3.5.0",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "panechord-markup"
+version = "0.1.0-dev"
+dependencies = [
+ "panechord-runtime",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "serde_path_to_error",
+]
+
+[[package]]
+name = "panechord-runtime"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "futures-timer",
+]
+
+[[package]]
+name = "panechord-settings"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "futures-timer",
+ "panechord-gtk",
+ "panechord-macos",
+ "panechord-macros",
+ "panechord-runtime",
+ "panechord-tao",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "panechord-tao"
+version = "0.1.0-dev"
+dependencies = [
+ "futures",
+ "gtk",
+ "iced",
+ "iced_tiny_skia",
+ "iced_winit",
+ "muda",
+ "panechord-macros",
+ "panechord-runtime",
+ "tao",
+ "window_clipboard",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5227,6 +5355,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ref-cast"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e440fb4e4b4147295338efb76001ab9e4efc0e5839df2c47fc5ac2381d365c3"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5382,6 +5530,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1c3a92094fa7d61aa124645844facb6b554dfc797136d0f5fd1f890e2bffc69"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5486,6 +5659,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_derive_internals"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5496,6 +5680,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
