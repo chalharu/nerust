@@ -1,3 +1,6 @@
+mod layout;
+
+use layout::BindingRowCommands;
 use nerust_gui_runtime::settings::{
     SettingsSnapshot,
     apply::{DirectoryValidationError, validate_directory_path_typed},
@@ -40,10 +43,13 @@ impl StoragePathValidator for FilesystemValidator {
 
 pub(crate) struct Editor {
     vm: SettingsViewModel,
+    executor: Rc<dyn Executor>,
     baseline: Rc<RefCell<SettingsSnapshot>>,
     closed: Rc<Cell<bool>>,
     status: Store<String>,
     page: Store<String>,
+    input_page: Store<String>,
+    system_page: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
 }
@@ -67,8 +73,11 @@ impl Editor {
             closed: Rc::new(Cell::new(false)),
             status: Store::new("Up to date".into(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),
+            input_page: Store::new(String::new(), executor.clone()),
+            system_page: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
-            close_prompt: Store::new(ExitChoice::Editing, executor),
+            close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
+            executor,
         }))
     }
     pub(crate) fn dirty(&self) -> bool {
@@ -100,6 +109,8 @@ impl Editor {
         self.closed.set(true);
         self.status.close();
         self.page.close();
+        self.input_page.close();
+        self.system_page.close();
         self.close_prompt.close();
     }
     fn binding<P: Clone + PartialEq + 'static, T: Clone + PartialEq + 'static>(
@@ -221,6 +232,7 @@ impl Editor {
             checked_integer(value, 10.0, 200.0).map(|value| value as u16)
         });
         let view_slot = Rc::new(RefCell::new(None::<WeakView>));
+        let commit = apply.clone();
         let editor = self.clone();
         let accepted = self.clone();
         let apply = self.status.command(
@@ -255,7 +267,68 @@ impl Editor {
             },
             Binding::constant(()),
         );
+        let exit = self.exit.clone();
+        let close = view_slot.clone();
+        let accepted = self.clone();
+        let cancel = self.status.command(
+            move |_| !accepted.closed.get() && accepted.exit.get() == ExitChoice::Editing,
+            move |_, ()| {
+                exit.set(ExitChoice::DiscardApproved);
+                if let Some(view) = close.borrow().as_ref().and_then(WeakView::upgrade) {
+                    view.close();
+                }
+            },
+            Binding::constant(()),
+        );
+        let editor = self.clone();
+        let accepted = self.clone();
+        let close = view_slot.clone();
+        let accept = self.status.command(
+            move |_| {
+                !accepted.closed.get()
+                    && accepted.exit.get() == ExitChoice::Editing
+                    && accepted.vm.finish().is_ok()
+            },
+            move |_, ()| {
+                if editor.apply(&commit).is_ok() {
+                    editor.exit.set(ExitChoice::DiscardApproved);
+                    if let Some(view) = close.borrow().as_ref().and_then(WeakView::upgrade) {
+                        view.close();
+                    }
+                }
+            },
+            Binding::constant(()),
+        );
+        let editor = self.clone();
+        let capture: layout::Capture = Rc::new(move |target| {
+            let vm = editor.vm.capture.clone();
+            let status = editor.status.clone();
+            let closed = editor.closed.clone();
+            editor.status.command(
+                move |_| !closed.get(),
+                move |_, ()| {
+                    let message = vm
+                        .start_capture(target.clone())
+                        .map(|_| vm.view.get().prompt)
+                        .unwrap_or_else(|error| error.to_string());
+                    let _ = status.update(move |status| *status = message);
+                },
+                Binding::constant(()),
+            )
+        });
         let bindings = Presentation {
+            input_pages: Binding::constant(layout::inputs(
+                &self.vm,
+                self.executor.clone(),
+                capture,
+            )),
+            system_pages: Binding::constant(layout::systems(&self.vm, self.executor.clone())),
+            input_selection: self
+                .input_page
+                .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
+            system_selection: self
+                .system_page
+                .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
             page: self
                 .page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
@@ -324,6 +397,8 @@ impl Editor {
                 set_status_area_mode
             ),
             apply,
+            cancel,
+            accept,
             discard,
             keep,
         };
@@ -390,6 +465,10 @@ fn integer_text(binding: Binding<u32>) -> Binding<String> {
 
 #[derive(Clone)]
 struct Presentation {
+    input_pages: Binding<Vec<panechord::Keyed<layout::InputPage>>>,
+    system_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
+    input_selection: Binding<String>,
+    system_selection: Binding<String>,
     page: Binding<String>,
     status: Binding<String>,
     confirmation: Binding<bool>,
@@ -421,10 +500,18 @@ struct Presentation {
     area: ChoiceBinding,
     status_area: ChoiceBinding,
     apply: Command,
+    cancel: Command,
+    accept: Command,
     discard: Command,
     keep: Command,
 }
 impl Presentation {
+    fn command_cancel(&self, _: Binding<String>) -> Command {
+        self.cancel.clone()
+    }
+    fn command_accept(&self, _: Binding<String>) -> Command {
+        self.accept.clone()
+    }
     fn command_apply(&self, _: Binding<String>) -> Command {
         self.apply.clone()
     }
