@@ -651,11 +651,14 @@ impl View {
                     data.rows
                         .iter()
                         .map(|row| {
-                            widget::Row::with_children(
+                            let row = widget::Row::with_children(
                                 data.columns
                                     .iter()
                                     .zip(&row.cells)
                                     .enumerate()
+                                    .filter(|(_, (column, value))| {
+                                        !column.hide_empty || !value.text.is_empty()
+                                    })
                                     .map(|(index, (column, value))| {
                                         let content = cell(
                                             column,
@@ -696,8 +699,8 @@ impl View {
                                     })
                                     .collect::<Vec<_>>(),
                             )
-                            .spacing(data.column_gap)
-                            .into()
+                            .spacing(data.column_gap);
+                            widget::container(row).padding(data.row_inset).into()
                         })
                         .collect::<Vec<_>>(),
                 )

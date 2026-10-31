@@ -16,6 +16,7 @@ struct TableDefinition: Decodable {
         let foreground: [Int]?
         let overflow: Int
         let stretch: Bool
+        let hideEmpty: Bool
         var font: NSFont {
             let size = NSFont.systemFontSize * scale
             return role == 2 ? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
@@ -29,6 +30,7 @@ struct TableDefinition: Decodable {
     let emptyText: String
     let columnGap: Double
     let rowGap: Double
+    let rowInset: Double
 }
 
 @MainActor
@@ -36,6 +38,7 @@ final class SelectableTableCell: NSTableCellView {
     weak var owner: TableControl?
     var rowKey = ""
     var column = 0
+    var textInsets: [NSLayoutConstraint] = []
     override func mouseDown(with event: NSEvent) {
         if owner?.selectionPresent == true { owner?.pick(self) }
         else { super.mouseDown(with: event) }
@@ -127,7 +130,7 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         guard let definition = definition else { return 16 }
-        return definition.columns.enumerated().reduce(CGFloat(selectionPresent ? 34 : 16)) { height, entry in
+        let height = definition.columns.enumerated().reduce(CGFloat(selectionPresent ? 34 : 16)) { height, entry in
             let (index, column) = entry
             guard column.overflow == 1 else { return max(height, column.font.ascender - column.font.descender) }
             let width = max(1, tableView.tableColumns[index].width - 4)
@@ -135,6 +138,7 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
                 with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: column.font])
             return max(height, ceil(measured.height))
         }
+        return height + definition.rowInset * 2
     }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let definition = definition, let tableColumn = tableColumn,
@@ -145,6 +149,7 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
         cell.owner = self
         cell.rowKey = definition.rows[row].key
         cell.column = index
+        cell.isHidden = column.hideEmpty && value.text.isEmpty
         cell.identifier = tableColumn.identifier
         cell.setAccessibilityIdentifier(definition.rows[row].key + "/" + String(index))
         let field = cell.textField ?? NSTextField(wrappingLabelWithString: "")
@@ -152,8 +157,12 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
             cell.textField = field
             cell.addSubview(field)
             field.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([field.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
-                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor), field.topAnchor.constraint(equalTo: cell.topAnchor)])
+            cell.textInsets = [field.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor), field.topAnchor.constraint(equalTo: cell.topAnchor)]
+            NSLayoutConstraint.activate(cell.textInsets)
+        }
+        for (index, constraint) in cell.textInsets.enumerated() {
+            constraint.constant = index == 1 ? -definition.rowInset : definition.rowInset
         }
         field.stringValue = value.text
         field.isSelectable = !selectionPresent

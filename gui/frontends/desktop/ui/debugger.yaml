@@ -44,7 +44,7 @@ root:
               - {type: Table, id: disassembly, style: {vertical_alignment: Stretch, placement: {height: 260}}, source: {bind: {path: disassembly}}, selection: {bind: {path: disassembly_selection, mode: TwoWay}}}
           - type: Scroll
             id: state_scroll
-            style: {vertical_alignment: Stretch, placement: {width: 410}}
+            style: {horizontal_alignment: Start, vertical_alignment: Stretch, placement: {width: 340}}
             content:
               type: StackLayout
               id: state
@@ -147,4 +147,3 @@ root:
             gap: 12
             children:
               - {type: Button, id: refresh, text: {bind: {path: captions.refresh}}, command: action, argument: {literal: refresh}}
-              - {type: Button, id: close, style: {horizontal_alignment: End}, text: {bind: {path: captions.close}}, command: close}

@@ -65,6 +65,7 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
                 _ => TextOverflow::Clip,
             },
             stretch: index == 3,
+            hide_empty: false,
         })
         .collect::<Vec<_>>()
         .into();
@@ -103,6 +104,7 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
         empty_text,
         column_gap: 12.0,
         row_gap: 2.0,
+        row_inset: 0.0,
     }
 }
 

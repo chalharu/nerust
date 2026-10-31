@@ -851,14 +851,16 @@ mod tests {
 
     #[test]
     fn axis_alignment_uses_inner_bounds_and_preserves_finite_positions() {
-        let mut style = Style::default();
-        style.horizontal_alignment = Some(Alignment::End);
-        style.vertical_alignment = Some(Alignment::Center);
-        style.margin = Edges {
-            left: 10.0,
-            right: 20.0,
-            top: 4.0,
-            bottom: 6.0,
+        let mut style = Style {
+            horizontal_alignment: Some(Alignment::End),
+            vertical_alignment: Some(Alignment::Center),
+            margin: Edges {
+                left: 10.0,
+                right: 20.0,
+                top: 4.0,
+                bottom: 6.0,
+            },
+            ..Style::default()
         };
         let vertical = Policy::Stack {
             horizontal: false,
