@@ -41,13 +41,13 @@ remain typed host/application composition, not a global YAML graph. Tao's unsupp
 external-host entry rejects without constructing a window. Applications needing
 multiple Tao windows must not select it until that capability is implemented.
 
-The schema still has 12 control/layout variants. CheckBox, Radio, Slider, Combo,
-Image, Tab, Dialog, arbitrary conditional/dynamic Style properties, recursive
-menus and arbitrary Grid tracks are not added as speculative framework surface.
-Native factories are explicit procedural extensions, not portable declarative
-support. Select the next real screen and implement its required controls before
-claiming that screen is portable. Grid already measures row heights; fixed
-virtual-item height is a separate constraint.
+The schema has 19 control/layout variants. CheckBox, Radio, Slider, Combo, Image,
+Tab and Dialog are required by nerust and implemented on GTK, Tao and AppKit.
+The shared controls example uses actual backend widgets and typed bindings;
+Tao uses software iced widgets and a nonblocking modal overlay, not OS controls.
+Arbitrary conditional/dynamic Style properties, recursive menus and arbitrary
+Grid tracks remain outside the supported subset. Grid already measures row
+heights; fixed virtual-item height is a separate constraint.
 
 Debugger/image migration is blocked on a representative main-application benchmark
 preserving existing image-generation gates, surface lifetime, selection, editing,
@@ -169,3 +169,31 @@ not depend on OCR. Native metrics, narrow-width line breaking and theme colors
 can differ; row structure, width distribution and reachability are the shared
 contract. Arbitrary explicit Absolute overlap or undersized custom templates are
 not automatically repaired by these layout rules.
+
+## Required Controls Follow-Up
+
+- CheckBox bool, Radio stable key, stepped Slider f64, Combo Choice IDs, shared
+  RGBA ImageFrame, retained Tab pages and nonblocking Dialog content are declarative.
+  Display-only TwoWay properties reject at their markup mode location.
+- Layout values are finite and bounded at 1,000,000 logical pixels; Grid columns
+  are 1..=4096. Combined margin/padding overflow rejects before native conversion.
+  try_layout rejects unavailable/foreign parents and duplicate IDs before mutation;
+  AppKit rejects unsupported layouts instead of returning a dangling Parent.
+- Shutdown cancellation aborts pending window waits before another work poll.
+  AppKit close-request flags recover after panic, preserve the payload, and
+  accepted no-op converter writes read back the canonical display value.
+- Formal Linux/macOS gates execute the same seven-control example, including
+  readonly rejection, slider normalization, invalid choices, Tab construction,
+  foreign/duplicate layouts and closed-view rejection. AppKit Tab registries are
+  released on row eviction; GTK Combo avoids same-value notify cycles.
+- Persistence injects PermissionDenied, StorageFull and Other at five IO stages
+  (15 conditions), checking complete old/new JSON, owned-temp cleanup and recovery.
+  These are fault injections, not real disk exhaustion or hardware power-loss proof.
+- XTest captures cover GTK/Tao 640x660, 960x660 and 440x360, top/bottom and a
+  physically opened modal. Resize capture waits for Tao's actual draw marker;
+  unchanged old pixels alone are not readiness. OCR is supplemented by image
+  inspection and modal pixels. Native minimum sizes and image allocation differ
+  from Tao's fixed frames; checked controls remain reachable and do not overlap.
+- AppKit 640/960 RGBA/control captures and the native control probe were checked.
+  Full external IME, accessibility, Developer ID/notarization, Windows replacement
+  and hardware power-loss gates remain manual pre-release requirements.

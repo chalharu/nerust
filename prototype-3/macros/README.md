@@ -141,8 +141,9 @@ root:
   `{bind: {path: field, mode: OneWay|TwoWay, converter: crate::Converter}}`.
   Default mode is OneWay. Dotted field paths are allowed, not arbitrary Rust
   expressions. Generated closures clone the field; Rust checks names and types.
-  TextBox/Native honor TwoWay. Display properties and command arguments are
-  read-only regardless of mode. Numeric primitive literals are `f64`.
+  TextBox/Native and interactive state properties of the seven required controls
+  honor TwoWay. Display properties, choice collections, image sources and command
+  arguments reject TwoWay rather than silently discarding it. Numeric primitive literals are `f64`.
 - Converter paths name a type or module with associated `forward(value)` and
   `backward(value) -> Result<_, String>` functions; expansion calls
   `Binding::convert`. E.g. `NumberText::forward(f64)->String` and

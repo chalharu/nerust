@@ -38,6 +38,40 @@ fn main() -> Result<(), String> {
     let passed = Rc::new(Cell::new(false));
     let finished = passed.clone();
     let result = wakui3_macos::run(move |executor| {
+        let recovery = View::new(Binding::constant("Recovery".into()));
+        let calls = Rc::new(Cell::new(0));
+        let observed = calls.clone();
+        recovery.on_close_request(Rc::new(move || {
+            observed.set(observed.get() + 1);
+            if observed.get() == 1 {
+                panic!("close recovery payload");
+            }
+        }));
+        recovery.request_close();
+        recovery.request_close();
+        assert_eq!(calls.get(), 2);
+        assert!(
+            recovery
+                .try_layout(&recovery.root(), "unsupported", Layout::Absolute)
+                .is_err()
+        );
+        let number = Store::new(2i32, executor.clone());
+        recovery.entry(
+            &recovery.root(),
+            "normalized",
+            number
+                .bind(|state| *state, Some(|state, value| *state = value))
+                .convert(
+                    |value| value.to_string(),
+                    |value: String| value.parse::<i32>().map_err(|error| error.to_string()),
+                ),
+        );
+        recovery.edit("normalized", "02").unwrap();
+        assert_eq!(recovery.text("normalized").as_deref(), Some("2"));
+        recovery.close();
+        println!(
+            "MACOS3 PASS close-recovery panic-flag-restored conversion-noop-normalized unsupported-layout-rejected"
+        );
         let model = Store::new(Model::default(), executor.clone());
         let view = View::new(Binding::constant("Wakui macOS conformance".into()));
         let parent = view.layout(

@@ -34,6 +34,8 @@ done
 cargo build --locked -p wakui2-tao --example native_smoke
 native_run -p wakui2-tao --example native_smoke
 printf '%s\n' "$output" | grep -q '^native-smoke: close callback OK'
+native_run -p wakui3-settings --no-default-features --features backend-tao --example controls
+printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
 native_run -p wakui2-demo --no-default-features --features backend-tao -- --smoke
 printf '%s\n' "$output" | grep -q '^PROTOTYPE2 PASS '
 native_run -p wakui3-settings --no-default-features --features backend-tao -- --smoke

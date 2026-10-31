@@ -1,0 +1,86 @@
+schema_version: 2
+root:
+  type: Window
+  id: controls_window
+  title: {literal: NES Controls}
+  content:
+    type: StackLayout
+    id: screen
+    gap: 12
+    padding: 20
+    children:
+      - type: CheckBox
+        id: vsync
+        text: {literal: VSync}
+        checked: {bind: {path: vsync, mode: TwoWay}}
+      - type: CheckBox
+        id: readonly
+        text: {literal: Read Only}
+        checked: {literal: true}
+      - type: StackLayout
+        id: regions
+        orientation: Horizontal
+        gap: 12
+        children:
+          - type: Radio
+            id: ntsc
+            text: {literal: NTSC}
+            selected: {bind: {path: region, mode: TwoWay}}
+            value: ntsc
+          - type: Radio
+            id: pal
+            text: {literal: PAL}
+            selected: {bind: {path: region, mode: TwoWay}}
+            value: pal
+      - type: Slider
+        id: volume
+        value: {bind: {path: volume, mode: TwoWay}}
+        min: 0
+        max: 100
+        step: 1
+      - type: Combo
+        id: renderer
+        items: {bind: {path: renderers}}
+        selected: {bind: {path: renderer, mode: TwoWay}}
+      - type: Image
+        id: frame
+        source: {bind: {path: frame}}
+        style: {placement: {height: 128}}
+      - type: Tab
+        id: pages
+        selected: {bind: {path: page, mode: TwoWay}}
+        style: {placement: {height: 140}}
+        pages:
+          - id: video
+            title: {literal: Video}
+            content:
+              type: Label
+              id: video_content
+              text: {literal: Video Settings}
+          - id: audio
+            title: {literal: Audio}
+            content:
+              type: Label
+              id: audio_content
+              text: {literal: Audio Settings}
+      - type: Button
+        id: open_dialog
+        text: {literal: Settings}
+        command: open_dialog
+      - type: Dialog
+        id: dialog
+        title: {literal: Settings}
+        open: {bind: {path: open, mode: TwoWay}}
+        content:
+          type: StackLayout
+          id: dialog_content
+          padding: 20
+          gap: 12
+          children:
+            - type: Label
+              id: dialog_title
+              text: {literal: Settings}
+            - type: Button
+              id: dismiss
+              text: {literal: Done}
+              command: dismiss

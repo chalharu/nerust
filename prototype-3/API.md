@@ -68,12 +68,19 @@ backend-specific. This does not unify other layout/style/menu error policies.
 `View` Clone, `Parent` Clone. `run(make: impl FnOnce(Rc<dyn Executor>)->View+'static)->Result<(),String>` native loop.
 
 - `View::new(title:Binding<String>)->Self`, `root()->Parent`.
-- `layout(&Parent,id:&str,layout:Layout)->Parent`.
+- `layout(&Parent,id:&str,layout:Layout)->Parent`; `try_layout` returns `Result<Parent,String>` and rejects invalid sizes, unavailable/foreign parents and duplicate IDs before mutation. AppKit only accepts Stack. The infallible wrapper panics on rejection.
 - `style(id:&str,Style)` applies leaf or container spacing/placement (root layout included).
 - `try_style(id:&str,Style)->Result<(),String>` validates before applying. Closed/unknown targets and invalid spacing/placement reject without mutation. Root is `__root`, never an arbitrary missing-ID alias. `style` records the same error through the backend error channel.
 - `label/entry(&Parent,id:&str,text:Binding<String>)`.
 - `button(&Parent,id:&str,text:Binding<String>,command:Command)`.
 - `meter(&Parent,id:&str,value:Binding<f64>)` native/custom primitive demo.
+- `checkbox(parent,id,text:Binding<String>,checked:Binding<bool>)` and `radio(parent,id,text,selected:Binding<String>,value:&str)`; Radio selects a stable key, CheckBox click toggles.
+- `slider(parent,id,value:Binding<f64>,SliderRange {min,max,step})`; finite range, positive step, nearest-step normalization. Invalid source values retain the last accepted display; invalid automation rejects.
+- `combo(parent,id,items:Binding<Vec<Choice>>,selected:Binding<String>)`; `Choice {id,label}`, unique nonempty slash-free IDs, at most 4096. Empty selection means no selected item.
+- `image(parent,id,source:Binding<Option<ImageFrame>>)`; validated straight-alpha RGBA8, dimensions 1..=8192, at most 64 MiB. ImageFrame shares Arc bytes; equality is frame identity plus dimensions, not a full pixel comparison. None clears the image. Native image minimum/allocation differs from iced fixed frames.
+- `tab(parent,id,selected)->Parent`, `tab_page(parent,id,title,key)->Parent`, `finish_tab(parent)->Result<(),String>`; 1..=256 unique pages. Codegen calls finish_tab after building pages. Switching retains content and subscriptions, invalid selection retains the accepted display. Empty selection displays the first page.
+- `dialog(parent,id,title:Binding<String>,open:Binding<bool>)->Parent`; native modal GTK/AppKit window or Tao input-blocking overlay. Does not block the executor; readonly open rejects automation/close changes.
+- automation `toggle(id,bool)`, `slide(id,f64)`, `select(id,key)`, `set_open(id,bool)` return `Result<(),String>`. Closed, missing, readonly or invalid operations reject. Native delivery/acceptance is not an eventual application receipt.
 - `items<T:Clone+'static>(&Parent,id:&str,items:Binding<Vec<Keyed<T>>>,viewport:Binding<Viewport>,template:Rc<dyn Fn(&View,&Parent,&str,Store<T>)>)`. Compile arbitrary recursive template body, not string rendering. Stable row scope IDs `{listid}/{key}/{localid}`. Duplicate keys rejected before changes. Native scrolling adjusts mounted range. `viewport(id,start)` automation. Drop mounted widget subscriptions on eviction; item Store persists in source.
 - `content<T:Clone+'static>(&Parent,id:&str,item:Binding<Option<Keyed<T>>>,template:Rc<dyn Fn(&View,&Parent,&str,Store<T>)>)`.
 - `menu(id:&str,title:Binding<String>,items:Binding<Vec<MenuItem>>,dispatch:Rc<dyn Fn(String)->bool>)` dynamic snapshots, shortcuts and native roles.
@@ -105,7 +112,8 @@ contracts: the complete template, including padding and wrapped text, must fit
 ### macOS practical-screen subset
 
 `wakui3-macos` supplies `View`/`Parent`/`run` for the settings and library screens,
-with AppKit Stack, Label, TextBox, Button, ItemsControl and Menu. It uses the same
+with AppKit Stack, Label, TextBox, Button, ItemsControl, Menu and the seven required
+controls. It uses the same
 code generation and existing application wiring; no runtime markup parser is added.
 The backend's internal build.rs compiles a Swift C ABI bridge. Grid/Flex/Absolute
 fail explicitly; ContentControl/custom meter are not implemented. `MacHost`
