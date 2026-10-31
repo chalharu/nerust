@@ -342,6 +342,14 @@ fn window_style_targets_the_internal_root() {
     assert_eq!(style.padding.right, 2.0);
     assert_eq!(style.padding.bottom, 3.0);
     assert_eq!(style.padding.left, 4.0);
+    assert_eq!(
+        style.horizontal_alignment,
+        Some(panechord_runtime::Alignment::End)
+    );
+    assert_eq!(
+        style.vertical_alignment,
+        Some(panechord_runtime::Alignment::Stretch)
+    );
 }
 #[test]
 fn items_and_bindable_layout_viewports_write_back_only_for_two_way() {
