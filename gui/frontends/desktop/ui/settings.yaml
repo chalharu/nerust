@@ -1,4 +1,62 @@
 schema_version: 2
+templates:
+  choice_row:
+    root:
+      type: StackLayout
+      id: choice_row
+      orientation: Horizontal
+      gap: 12
+      children:
+        - {type: Label, id: label, style: {placement: {width: 180}}, text: {bind: {path: label}}}
+        - {type: Combo, id: choice, items: {bind: {path: choices}}, selected: {bind: {path: selected}}}
+  binding_row:
+    root:
+      type: StackLayout
+      id: binding_row
+      orientation: Horizontal
+      gap: 12
+      children:
+        - {type: Label, id: label, style: {placement: {width: 180}}, text: {bind: {path: label}}}
+        - {type: Button, id: value, text: {bind: {path: value}}, command: capture}
+  binding_page:
+    root:
+      type: ItemsControl
+      id: bindings
+      items: {bind: {path: rows}}
+      viewport: {bind: {path: viewport}}
+      item_template: binding_row
+  input_page:
+    root:
+      type: StackLayout
+      id: input_fields
+      padding: 6
+      gap: 8
+      children:
+        - type: ItemsControl
+          id: controller_slots
+          visible: {bind: {path: has_slots}}
+          items: {bind: {path: slots}}
+          viewport: {bind: {path: slot_viewport}}
+          item_template: choice_row
+        - type: TabItems
+          id: players
+          visible: {bind: {path: show_section_tabs}}
+          selected: {bind: {path: section, mode: TwoWay}}
+          items: {bind: {path: sections}}
+          title: {bind: {path: label}}
+          item_template: binding_page
+        - type: ContentControl
+          id: single_section
+          content: {bind: {path: single_section}}
+          content_template: binding_page
+  system_page:
+    root:
+      type: ItemsControl
+      id: system_fields
+      padding: 6
+      items: {bind: {path: fields}}
+      viewport: {bind: {path: viewport}}
+      item_template: choice_row
 root:
   type: Window
   id: settings_window
@@ -19,66 +77,93 @@ root:
             content:
               type: StackLayout
               id: general_fields
-              padding: 12
-              gap: 8
+              padding: {left: 12}
+              gap: 12
               children:
-                - {type: Label, id: language_label, text: {literal: Language}}
-                - type: Combo
-                  id: language
-                  items: {bind: {path: language.items, source: External}}
-                  selected: {bind: {path: language.selected, source: External, mode: TwoWay}}
-                - {type: Label, id: storage_label, text: {literal: Storage}}
-                - type: Combo
-                  id: storage
-                  items: {bind: {path: storage.items, source: External}}
-                  selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}
+                - type: StackLayout
+                  id: language_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: language_label, style: {placement: {width: 120}}, text: {literal: Language}}
+                    - {type: Combo, id: language, items: {bind: {path: language.items, source: External}}, selected: {bind: {path: language.selected, source: External, mode: TwoWay}}}
+                - type: StackLayout
+                  id: storage_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: storage_label, style: {placement: {width: 120}}, text: {literal: Storage}}
+                    - {type: Combo, id: storage, items: {bind: {path: storage.items, source: External}}, selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}}
                 - type: TextBox
                   id: storage_directory
                   visible: {bind: {path: directory_visible, source: External}}
                   text: {bind: {path: directory, source: External, mode: TwoWay}}
+          - id: input
+            title: {literal: Input}
+            content:
+              type: TabItems
+              id: input_tabs
+              margin: {left: 12}
+              selected: {bind: {path: input_selection, source: External, mode: TwoWay}}
+              items: {bind: {path: input_pages, source: External}}
+              title: {bind: {path: label}}
+              item_template: input_page
           - id: video
             title: {literal: Video}
             content:
               type: StackLayout
               id: video_fields
-              padding: 12
-              gap: 8
+              padding: {left: 12}
+              gap: 12
               children:
                 - {type: CheckBox, id: fullscreen, text: {literal: Start fullscreen}, checked: {bind: {path: fullscreen, source: External, mode: TwoWay}}}
                 - {type: CheckBox, id: vsync, text: {literal: VSync}, checked: {bind: {path: vsync, source: External, mode: TwoWay}}}
-                - {type: Label, id: scaling_label, text: {literal: Scaling}}
-                - type: Combo
-                  id: scaling
-                  items: {bind: {path: scaling.items, source: External}}
-                  selected: {bind: {path: scaling.selected, source: External, mode: TwoWay}}
+                - type: StackLayout
+                  id: scaling_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: scaling_label, style: {placement: {width: 120}}, text: {literal: Scaling}}
+                    - {type: Combo, id: scaling, items: {bind: {path: scaling.items, source: External}}, selected: {bind: {path: scaling.selected, source: External, mode: TwoWay}}}
           - id: audio
             title: {literal: Audio}
             content:
               type: StackLayout
               id: audio_fields
-              padding: 12
-              gap: 8
+              padding: {left: 12}
+              gap: 12
               children:
                 - {type: CheckBox, id: mute, text: {literal: Mute}, checked: {bind: {path: muted, source: External, mode: TwoWay}}}
-                - {type: Label, id: volume_label, text: {bind: {path: volume_label, source: External}}}
-                - {type: Slider, id: volume, value: {bind: {path: volume, source: External, mode: TwoWay}}, min: 0, max: 100, step: 1}
-                - {type: Label, id: rate_label, text: {literal: Sample rate}}
-                - type: Combo
-                  id: sample_rate
-                  items: {bind: {path: sample_rate.items, source: External}}
-                  selected: {bind: {path: sample_rate.selected, source: External, mode: TwoWay}}
-                - {type: Label, id: latency_label, text: {bind: {path: latency_label, source: External}}}
-                - {type: Slider, id: latency, value: {bind: {path: latency, source: External, mode: TwoWay}}, min: 10, max: 200, step: 1}
+                - type: StackLayout
+                  id: volume_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: volume_label, style: {placement: {width: 120}}, text: {bind: {path: volume_label, source: External}}}
+                    - {type: Slider, id: volume, value: {bind: {path: volume, source: External, mode: TwoWay}}, min: 0, max: 100, step: 1}
+                - type: StackLayout
+                  id: rate_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: rate_label, style: {placement: {width: 120}}, text: {literal: Sample rate}}
+                    - {type: Combo, id: sample_rate, items: {bind: {path: sample_rate.items, source: External}}, selected: {bind: {path: sample_rate.selected, source: External, mode: TwoWay}}}
+                - type: StackLayout
+                  id: latency_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: latency_label, style: {placement: {width: 120}}, text: {bind: {path: latency_label, source: External}}}
+                    - {type: Slider, id: latency, value: {bind: {path: latency, source: External, mode: TwoWay}}, min: 10, max: 200, step: 1}
           - id: notifications
             title: {literal: Notifications}
             content:
               type: Scroll
               id: notification_viewport
               content:
-                type: Grid
+                type: StackLayout
                 id: notification_fields
-                padding: 12
-                columns: 2
+                padding: {left: 12, right: 12}
                 gap: 12
                 children:
                   - type: StackLayout
@@ -125,8 +210,25 @@ root:
                       - {type: CheckBox, id: status_enabled, text: {literal: Enabled}, checked: {bind: {path: status_enabled, source: External, mode: TwoWay}}}
                       - {type: Combo, id: status_position, items: {bind: {path: status_position.items, source: External}}, selected: {bind: {path: status_position.selected, source: External, mode: TwoWay}}}
                       - {type: Combo, id: status_area, items: {bind: {path: status_area.items, source: External}}, selected: {bind: {path: status_area.selected, source: External, mode: TwoWay}}}
-      - {type: Label, id: status, text: {bind: {path: status, source: External}}}
-      - {type: Button, id: apply, text: {literal: Apply}, command: apply}
+          - id: system
+            title: {literal: System}
+            content:
+              type: TabItems
+              id: system_tabs
+              margin: {left: 12}
+              selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
+              items: {bind: {path: system_pages, source: External}}
+              title: {bind: {path: label}}
+              item_template: system_page
+      - type: StackLayout
+        id: actions
+        orientation: Horizontal
+        gap: 12
+        children:
+          - {type: Label, id: status, text: {bind: {path: status, source: External}}}
+          - {type: Button, id: apply, style: {placement: {width: 100}}, text: {literal: Apply}, command: apply}
+          - {type: Button, id: cancel, style: {placement: {width: 100}}, text: {literal: Cancel}, command: cancel}
+          - {type: Button, id: accept, style: {placement: {width: 100}}, text: {literal: OK}, command: accept}
       - type: StackLayout
         id: confirmation
         gap: 8
