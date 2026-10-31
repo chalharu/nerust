@@ -33,6 +33,86 @@ use std::time::Duration;
 
 #[test]
 #[ignore = "isolated Xvfb native contract"]
+fn native_dynamic_tabs_preserve_reorder_and_release_removed_pages() {
+    gtk::init().unwrap();
+    let host = GtkHost::attach();
+    let first = Keyed::new("first", Store::new("First".to_owned(), host.executor()));
+    let second = Keyed::new("second", Store::new("Second".to_owned(), host.executor()));
+    let model = Store::new(
+        (vec![first.clone(), second.clone()], "second".to_owned()),
+        host.executor(),
+    );
+    let view = View::new(Binding::constant("dynamic tabs".into()));
+    view.tab_items(
+        &view.root(),
+        "pages",
+        model.bind(|state| state.0.clone(), None),
+        model.bind(
+            |state| state.1.clone(),
+            Some(|state, value| state.1 = value),
+        ),
+        Rc::new(|model| model.bind(Clone::clone, None)),
+        Rc::new(|view, parent, scope, model| {
+            view.label(
+                parent,
+                &format!("{scope}/label"),
+                model.bind(Clone::clone, None),
+            );
+        }),
+    );
+    let notebook = view.widget::<gtk::Notebook>("pages").unwrap();
+    let retained = view.widget::<gtk::Label>("pages/second/label").unwrap();
+    assert_eq!(notebook.n_pages(), 2);
+    assert_eq!(notebook.current_page(), Some(1));
+    assert!(model.update(|state| state.0.reverse()));
+    assert_eq!(notebook.current_page(), Some(0));
+    assert_eq!(
+        view.widget::<gtk::Label>("pages/second/label").unwrap(),
+        retained
+    );
+    let duplicate = first.clone();
+    assert!(model.update(move |state| state.0.push(duplicate)));
+    assert_eq!(notebook.n_pages(), 2);
+    let remaining = second.clone();
+    assert!(model.update(move |state| state.0 = vec![remaining]));
+    assert_eq!(notebook.n_pages(), 1);
+    assert!(view.widget::<gtk::Label>("pages/first/label").is_err());
+    assert!(first.model.update(|name| *name = "removed".into()));
+    assert!(second.model.update(|name| *name = "Retained".into()));
+    assert_eq!(retained.label(), "Retained");
+    assert!(model.update(|state| state.0.clear()));
+    assert_eq!(notebook.n_pages(), 0);
+    assert!(model.update(move |state| state.0 = vec![first]));
+    assert_eq!(notebook.n_pages(), 1);
+    view.close();
+    assert!(model.update(|state| state.0.clear()));
+
+    let next_page = Keyed::new("next", Store::new("Next".to_owned(), host.executor()));
+    let items = Store::new(vec![next_page.clone()], host.executor());
+    let publisher = items.clone();
+    let nested_view = View::new(Binding::constant("reentrant tabs".into()));
+    nested_view.tab_items(
+        &nested_view.root(),
+        "nested",
+        items.bind(Clone::clone, None),
+        Binding::constant("".into()),
+        Rc::new(|model| model.bind(Clone::clone, None)),
+        Rc::new(move |_, _, _, _| {
+            assert!(publisher.update(Vec::clear));
+        }),
+    );
+    assert_eq!(
+        nested_view
+            .widget::<gtk::Notebook>("nested")
+            .unwrap()
+            .n_pages(),
+        0
+    );
+    nested_view.close();
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
 fn native_grid_default_styles_and_scroll_preserve_allocation() {
     gtk::init().unwrap();
     let view = View::new(Binding::constant("Grid and Scroll".into()));
