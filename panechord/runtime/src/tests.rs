@@ -1,4 +1,64 @@
 #[test]
+fn dynamic_tab_reconcile_guard_releases_on_unwind_and_rejects_reentry() {
+    let busy = Cell::new(false);
+    {
+        let _guard = ReconcileGuard::enter(&busy).unwrap();
+        assert!(ReconcileGuard::enter(&busy).is_none());
+        assert!(busy.get());
+    }
+    assert!(!busy.get());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = ReconcileGuard::enter(&busy).unwrap();
+        panic!("template failed");
+    }));
+    assert_eq!(
+        result.unwrap_err().downcast_ref::<&str>(),
+        Some(&"template failed")
+    );
+    assert!(!busy.get());
+    assert!(ReconcileGuard::enter(&busy).is_some());
+}
+
+#[test]
+fn dynamic_tab_changes_preserve_models_and_reject_invalid_snapshots() {
+    let first = Keyed::new("first", Store::new(1, Rc::new(Inline::default())));
+    let second = Keyed::new("second", Store::new(2, Rc::new(Inline::default())));
+    let previous = vec![first.clone(), second.clone()];
+    let reordered = vec![second.clone(), first.clone()];
+    assert_eq!(tab_page_selection("second", &previous), "second");
+    assert_eq!(tab_page_selection("missing", &reordered), "second");
+    assert_eq!(tab_page_selection("", &previous), "first");
+    assert_eq!(tab_page_selection("first", &[] as &[Keyed<i32>]), "");
+    assert_eq!(
+        tab_page_changes(&previous, &reordered).unwrap(),
+        TabPageChanges {
+            removed: vec![],
+            added: vec![],
+        }
+    );
+    let replaced = Keyed::new("first", Store::new(3, Rc::new(Inline::default())));
+    assert_eq!(
+        tab_page_changes(&previous, &[replaced]).unwrap(),
+        TabPageChanges {
+            removed: vec![0, 1],
+            added: vec![0],
+        }
+    );
+    assert!(tab_page_changes(&previous, &[first.clone(), first.clone()]).is_err());
+    let invalid = Keyed {
+        key: "invalid/page".into(),
+        model: first.model.clone(),
+    };
+    assert!(tab_page_changes(&previous, &[invalid]).is_err());
+    assert!(tab_page_changes(&[], &vec![first; 257]).is_err());
+    assert_eq!(
+        tab_page_changes(&previous, &[]).unwrap().removed,
+        vec![0, 1]
+    );
+    assert_eq!(previous[1].model.snapshot(), 2);
+}
+
+#[test]
 fn default_grid_positions_follow_declaration_order_without_losing_explicit_spans() {
     let placement = Placement::default();
     assert_eq!(placement.grid_position(0, 2), (0, 0));
