@@ -241,6 +241,7 @@ controls! {
     Combo { items: Property, selected: Property, },
     Image { source: Property, },
     Tab { selected: Property, #[serde(default)] position: TabPosition, pages: Vec<TabPage>, },
+    TabItems { selected: Property, #[serde(default)] position: TabPosition, items: Property, title: Property, item_template: String, },
     Dialog { title: Property, open: Property, content: Box<Control>, },
 }
 
@@ -576,6 +577,10 @@ impl Document {
             Control::Combo { items, .. }
             | Control::ItemsControl { items, .. }
             | Control::BindableLayout { items, .. } => read_only(items, "items")?,
+            Control::TabItems { items, title, .. } => {
+                read_only(items, "items")?;
+                read_only(title, "title")?;
+            }
             Control::ContentControl { content, .. } => read_only(content, "content")?,
             Control::Window { title, .. } | Control::Dialog { title, .. } => {
                 read_only(title, "title")?
@@ -737,6 +742,19 @@ impl Document {
             }
             Control::ItemsControl { item_template, .. }
             | Control::BindableLayout { item_template, .. } => Some(item_template),
+            Control::TabItems {
+                selected,
+                item_template,
+                ..
+            } => {
+                if matches!(selected, Property::Literal(value) if !value.literal.is_string()) {
+                    return Err((
+                        format!("{path}.selected"),
+                        "Tab selection must be a string".into(),
+                    ));
+                }
+                Some(item_template)
+            }
             Control::ContentControl {
                 content_template, ..
             } => Some(content_template),
@@ -781,6 +799,29 @@ impl Document {
 #[cfg(test)]
 mod scroll_tests {
     use super::*;
+
+    #[test]
+    fn dynamic_tab_templates_validate_selection_and_read_only_properties() {
+        let value = serde_json::json!({
+            "schema_version": 2,
+            "templates": {"page": {"root": {"type":"Label", "id":"label", "text":{"bind":{"path":"label"}}}}},
+            "root": {"type":"Window", "id":"window", "title":{"literal":"Tabs"},
+                "content":{"type":"TabItems", "id":"tabs", "items":{"bind":{"path":"pages"}},
+                    "title":{"bind":{"path":"label"}}, "selected":{"literal":""}, "item_template":"page"}}
+        });
+        parse(&value.to_string(), "json", "tabs.json").unwrap();
+        let mut invalid = value.clone();
+        invalid["root"]["content"]["selected"] = serde_json::json!({"literal": 1});
+        assert!(parse(&invalid.to_string(), "json", "tabs.json").is_err());
+        for property in ["items", "title"] {
+            let mut invalid = value.clone();
+            invalid["root"]["content"][property]["bind"]["mode"] = "TwoWay".into();
+            assert!(parse(&invalid.to_string(), "json", "tabs.json").is_err());
+        }
+        let mut invalid = value;
+        invalid["root"]["content"]["item_template"] = "missing".into();
+        assert!(parse(&invalid.to_string(), "json", "tabs.json").is_err());
+    }
 
     #[test]
     fn scroll_content_is_validated_with_normal_control_bounds() {

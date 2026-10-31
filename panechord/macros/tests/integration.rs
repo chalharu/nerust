@@ -176,6 +176,25 @@ mod fake {
                 template(self, p, &format!("{id}/{}", item.key), item.model);
             }
         }
+        pub fn tab_items<T: Clone + 'static>(
+            &self,
+            parent: &Parent,
+            id: &str,
+            items: Binding<Vec<Keyed<T>>>,
+            _: Binding<String>,
+            title: Rc<dyn Fn(Store<T>) -> Binding<String>>,
+            template: Template<T>,
+        ) -> Parent {
+            for item in items.get() {
+                let scope = format!("{id}/{}", item.key);
+                self.label(parent, &scope, title(item.model.clone()));
+                template(self, parent, &scope, item.model);
+            }
+            Parent
+        }
+        pub fn tab_position(&self, _: &str, _: TabPosition) -> Result<(), String> {
+            Ok(())
+        }
         pub fn typed_menu(
             &self,
             id: &str,
@@ -267,12 +286,15 @@ fn constructs_all_controls_templates_and_typed_bindings() {
         assert!(texts.contains_key(id), "{id}");
     }
     assert_eq!(texts["rows/key/outer"].get(), "Title");
+    assert_eq!(texts["tabs/key"].get(), "row");
+    assert_eq!(texts["tabs/key/leaf"].get(), "row");
     assert!(!texts["caption"].is_writable());
     assert!(!texts["readonly"].set("ignored".into()));
     assert!(texts["name"].set("edited".into()));
     assert_eq!(model.snapshot().name, "edited");
     assert!(texts["rows/key/edit"].set("row edited".into()));
     assert_eq!(row.snapshot().name, "row edited");
+    assert_eq!(texts["tabs/key"].get(), "row edited");
     assert_eq!(texts["converted"].get(), "1");
     assert!(texts["converted"].set("2.5".into()));
     assert_eq!(model.snapshot().progress, 2.5);

@@ -13,16 +13,22 @@ pub(super) struct Tab {
     selected: Binding<String>,
     pages: RefCell<Vec<Choice>>,
     applying: Cell<bool>,
+    dynamic: Cell<bool>,
 }
 impl Tab {
     fn apply(&self) {
+        if self.applying.get() {
+            return;
+        }
         let selected = self.selected.get();
         let index = self
             .pages
             .borrow()
             .iter()
             .position(|page| page.id == selected);
-        if let Some(index) = index.or_else(|| selected.is_empty().then_some(0)) {
+        if let Some(index) =
+            index.or_else(|| (selected.is_empty() || self.dynamic.get()).then_some(0))
+        {
             self.applying.set(true);
             self.notebook.set_current_page(Some(index as u32));
             self.applying.set(false);
@@ -511,6 +517,7 @@ impl View {
             selected: selected.clone(),
             pages: RefCell::new(Vec::new()),
             applying: Cell::new(false),
+            dynamic: Cell::new(false),
         });
         self.0.tabs.borrow_mut().insert(id.into(), state.clone());
         let weak = Rc::downgrade(&state);
@@ -594,6 +601,96 @@ impl View {
             .expect("invalid Tab page")
     }
 
+    #[allow(clippy::type_complexity)]
+    pub fn tab_items<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        items: Binding<Vec<Keyed<T>>>,
+        selected: Binding<String>,
+        title: Rc<dyn Fn(Store<T>) -> Binding<String>>,
+        template: Rc<dyn Fn(&View, &Parent, &str, Store<T>)>,
+    ) -> Parent {
+        let tab = self.tab(parent, id, selected);
+        let state = self.0.tabs.borrow().get(id).unwrap().clone();
+        state.dynamic.set(true);
+        let weak = self.downgrade();
+        let prefix = id.to_owned();
+        let source = RefCell::new(Vec::<Keyed<T>>::new());
+        let pending = RefCell::new(None);
+        let reconciling = Cell::new(false);
+        let target = tab.clone();
+        self.keep_at(
+            id,
+            items.subscribe(Rc::new(move |next| {
+                pending.replace(Some(next));
+                let Some(_guard) = panechord_runtime::ReconcileGuard::enter(&reconciling) else {
+                    return;
+                };
+                loop {
+                    let next = pending.borrow_mut().take();
+                    let Some(next) = next else { break };
+                    let Some(view) = weak.upgrade() else { break };
+                    if view.0.closed.get() {
+                        break;
+                    }
+                    let previous = source.borrow().clone();
+                    let changes = match panechord_runtime::tab_page_changes(&previous, &next) {
+                        Ok(changes) => changes,
+                        Err(error) => {
+                            view.report_error(error.into());
+                            continue;
+                        }
+                    };
+                    let applying = panechord_runtime::ReconcileGuard::enter(&state.applying);
+                    for index in changes.removed {
+                        let key = &previous[index].key;
+                        state.pages.borrow_mut().retain(|page| &page.id != key);
+                        view.cleanup(&format!("{prefix}/{key}"));
+                    }
+                    for index in changes.added {
+                        let item = &next[index];
+                        let scope = format!("{prefix}/{}", item.key);
+                        match view.try_tab_page(
+                            &target,
+                            &scope,
+                            title(item.model.clone()),
+                            &item.key,
+                        ) {
+                            Ok(parent) => view.in_scope(&scope, || {
+                                template(&view, &parent, &scope, item.model.clone())
+                            }),
+                            Err(error) => view.report_error(error),
+                        }
+                    }
+                    let pages = state.pages.borrow().clone();
+                    state.pages.replace(
+                        next.iter()
+                            .filter_map(|item| {
+                                pages.iter().find(|page| page.id == item.key).cloned()
+                            })
+                            .collect(),
+                    );
+                    for (index, item) in next.iter().enumerate() {
+                        let frame = view
+                            .0
+                            .nodes
+                            .borrow()
+                            .get(&format!("{prefix}/{}", item.key))
+                            .map(|node| node.frame.clone());
+                        if let Some(frame) = frame {
+                            state.notebook.reorder_child(&frame, Some(index as u32));
+                        }
+                    }
+                    source.replace(next);
+                    drop(applying);
+                    state.apply();
+                }
+            })),
+        );
+        tab
+    }
+
     pub fn try_tab_page(
         &self,
         parent: &Parent,
@@ -632,7 +729,7 @@ impl View {
             .cloned()
             .unwrap();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        state.applying.set(true);
+        let previous_applying = state.applying.replace(true);
         self.mount_native(parent, id, &body);
         let label = gtk::Label::new(Some(&title.get()));
         let frame = self.0.nodes.borrow().get(id).unwrap().frame.clone();
@@ -641,7 +738,7 @@ impl View {
             id: key.into(),
             label: title.get(),
         });
-        state.applying.set(false);
+        state.applying.set(previous_applying);
         state.apply();
         self.bind_native(id, title, &label, |label, title| label.set_label(&title));
         Ok(Parent::new(&body, ParentKind::Stack))

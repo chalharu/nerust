@@ -435,6 +435,105 @@ impl View {
             .expect("invalid Tab page")
     }
 
+    #[allow(clippy::type_complexity)]
+    pub fn tab_items<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        items: Binding<Vec<Keyed<T>>>,
+        selected: Binding<String>,
+        title: Rc<dyn Fn(Store<T>) -> Binding<String>>,
+        template: Template<T>,
+    ) -> Parent {
+        let tab = self.tab(parent, id, selected);
+        let state = match &*tab.0.kind.borrow() {
+            Kind::Tab(state) => state.clone(),
+            _ => unreachable!(),
+        };
+        let weak = self.downgrade();
+        let target = Rc::downgrade(&tab.0);
+        let source = RefCell::new(Vec::<Keyed<T>>::new());
+        let pending = RefCell::new(None);
+        let reconciling = Cell::new(false);
+        self.bind(&tab.0, items, move |next| {
+            pending.replace(Some(next));
+            let Some(_guard) = panechord_runtime::ReconcileGuard::enter(&reconciling) else {
+                return;
+            };
+            loop {
+                let next = pending.borrow_mut().take();
+                let Some(next) = next else { break };
+                let (Some(view), Some(node)) = (weak.upgrade(), target.upgrade()) else {
+                    break;
+                };
+                if view.0.closed.get() || !node.mounted.get() {
+                    break;
+                }
+                let previous = source.borrow().clone();
+                let changes = match panechord_runtime::tab_page_changes(&previous, &next) {
+                    Ok(changes) => changes,
+                    Err(error) => {
+                        view.report_error(error.into());
+                        continue;
+                    }
+                };
+                for index in changes.removed {
+                    let key = &previous[index].key;
+                    state.pages.borrow_mut().retain(|(page, _, _)| page != key);
+                    let scope = format!("{}/{key}", node.id);
+                    let children = node.children.take();
+                    let (removed, retained): (Vec<_>, Vec<_>) =
+                        children.into_iter().partition(|child| child.id == scope);
+                    node.children.replace(retained);
+                    for child in removed {
+                        child.retire();
+                    }
+                }
+                for index in changes.added {
+                    let item = &next[index];
+                    let scope = format!("{}/{}", node.id, item.key);
+                    match view.try_tab_page(
+                        &Parent(node.clone()),
+                        &scope,
+                        title(item.model.clone()),
+                        &item.key,
+                    ) {
+                        Ok(parent) => view.in_template(&parent.0, || {
+                            template(&view, &parent, &scope, item.model.clone())
+                        }),
+                        Err(error) => view.report_error(error),
+                    }
+                }
+                let pages = state.pages.borrow().clone();
+                state.pages.replace(
+                    next.iter()
+                        .filter_map(|item| {
+                            pages.iter().find(|(key, _, _)| *key == item.key).cloned()
+                        })
+                        .collect(),
+                );
+                let children = node.children.take();
+                node.children.replace(
+                    next.iter()
+                        .filter_map(|item| {
+                            children
+                                .iter()
+                                .find(|child| child.id == format!("{}/{}", node.id, item.key))
+                                .cloned()
+                        })
+                        .collect(),
+                );
+                state.current.replace(panechord_runtime::tab_page_selection(
+                    &state.selected.get(),
+                    &next,
+                ));
+                source.replace(next);
+                state.ready.set(true);
+            }
+        });
+        tab
+    }
+
     pub fn try_tab_page(
         &self,
         parent: &Parent,

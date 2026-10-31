@@ -60,6 +60,81 @@ impl<S: Clone + 'static> PartialEq for Keyed<S> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct TabPageChanges {
+    pub removed: Vec<usize>,
+    pub added: Vec<usize>,
+}
+
+pub fn tab_page_selection<S: Clone + 'static>(selected: &str, pages: &[Keyed<S>]) -> String {
+    if pages.iter().any(|page| page.key == selected) {
+        selected.to_owned()
+    } else {
+        pages
+            .first()
+            .map(|page| page.key.clone())
+            .unwrap_or_default()
+    }
+}
+
+#[doc(hidden)]
+pub struct ReconcileGuard<'a>(&'a std::cell::Cell<bool>);
+
+impl<'a> ReconcileGuard<'a> {
+    pub fn enter(busy: &'a std::cell::Cell<bool>) -> Option<Self> {
+        if busy.replace(true) {
+            None
+        } else {
+            Some(Self(busy))
+        }
+    }
+}
+
+impl Drop for ReconcileGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
+}
+
+pub fn tab_page_changes<S: Clone + 'static>(
+    previous: &[Keyed<S>],
+    next: &[Keyed<S>],
+) -> Result<TabPageChanges, &'static str> {
+    use std::collections::HashMap;
+    if next.len() > 256 {
+        return Err("Tab allows at most 256 pages");
+    }
+    let mut next_by_key = HashMap::with_capacity(next.len());
+    for item in next {
+        if !valid_item_key(&item.key) {
+            return Err("invalid Tab page key");
+        }
+        if next_by_key.insert(item.key.as_str(), item).is_some() {
+            return Err("duplicate Tab page key");
+        }
+    }
+    let previous_by_key: HashMap<_, _> = previous
+        .iter()
+        .map(|item| (item.key.as_str(), item))
+        .collect();
+    Ok(TabPageChanges {
+        removed: previous
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                (next_by_key.get(item.key.as_str()).copied() != Some(item)).then_some(index)
+            })
+            .collect(),
+        added: next
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                (previous_by_key.get(item.key.as_str()).copied() != Some(item)).then_some(index)
+            })
+            .collect(),
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {
     pub start: usize,

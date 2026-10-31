@@ -549,6 +549,30 @@ fn control_inner(
                 }
             )
         }
+        Control::TabItems {
+            selected,
+            items,
+            title,
+            item_template,
+            position,
+            ..
+        } => {
+            let selected = binding(selected, true)?;
+            let items = binding(items, false)?;
+            let title = binding(title, false)?;
+            let template = template(doc, item_template, backend)?;
+            let position = format_ident!("{}", format!("{position:?}"));
+            quote!({
+                let __title_root = __panechord_root.clone();
+                __panechord_view.tab_items(&__panechord_parent, &__id, #items, #selected, ::std::rc::Rc::new(move |__panechord_model: ::panechord_runtime::Store<_>| {
+                    let __panechord_root = __title_root.clone();
+                    #title
+                }), #template);
+                if let ::std::result::Result::Err(__error) = __panechord_view.tab_position(&__id, ::panechord_runtime::TabPosition::#position) {
+                    __panechord_view.report_error(__error);
+                }
+            })
+        }
         Control::Dialog {
             title,
             open,
@@ -615,6 +639,30 @@ mod tests {
     fn document(content: &str) -> Document {
         panechord_markup::parse(&format!("schema_version: 2\nroot:\n  type: Window\n  id: w\n  title: {{literal: Title}}\n  content: {content}\n"),"yaml","test.yaml").unwrap()
     }
+    #[test]
+    fn dynamic_tabs_generate_item_scoped_titles_and_typed_template_calls() {
+        let mut document = document("{type: Label, id: placeholder, text: {literal: placeholder}}");
+        document.templates.insert("page".into(), panechord_markup::Template {
+            root: serde_json::from_value(serde_json::json!({"type":"Label", "id":"text", "text":{"bind":{"path":"label"}}})).unwrap(),
+        });
+        document.root = serde_json::from_value(serde_json::json!({
+            "type":"Window", "id":"window", "title":{"literal":"Tabs"},
+            "content":{"type":"TabItems", "id":"tabs", "items":{"bind":{"path":"pages"}},
+                "selected":{"bind":{"path":"selected","mode":"TwoWay"}}, "position":"Left",
+                "title":{"bind":{"path":"label"}}, "item_template":"page"}
+        }))
+        .unwrap();
+        let generated = generate(&document, &syn::parse_str("backend").unwrap(), false)
+            .unwrap()
+            .to_string();
+        assert!(generated.contains("tab_items"));
+        assert!(generated.contains("TabPosition :: Left"));
+        assert!(generated.contains("__title_root"));
+        assert!(generated.contains("s . label . clone"));
+        document.templates.clear();
+        assert!(generate(&document, &syn::parse_str("backend").unwrap(), false).is_err());
+    }
+
     #[test]
     fn external_bindings_keep_the_original_writer_only_for_two_way_controls() {
         let document = document(
