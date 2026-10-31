@@ -41,7 +41,7 @@ root:
                   - {type: TextBox, id: disassembly_addr, style: {placement: {width: 120}}, text: {bind: {path: disasm_addr, mode: TwoWay}}, placeholder: {bind: {path: captions.addr}}}
                   - {type: Button, id: disassembly_go, style: {horizontal_alignment: Start}, text: {bind: {path: captions.go}}, command: action, argument: {literal: disassembly_go}}
                   - {type: Button, id: back, style: {horizontal_alignment: Start}, text: {bind: {path: back}}, command: action, argument: {literal: back}}
-              - {type: Table, id: disassembly, style: {vertical_alignment: Stretch, placement: {height: 260}}, source: {bind: {path: disassembly}}}
+              - {type: Table, id: disassembly, style: {vertical_alignment: Stretch, placement: {height: 260}}, source: {bind: {path: disassembly}}, selection: {bind: {path: disassembly_selection, mode: TwoWay}}}
           - type: Scroll
             id: state_scroll
             style: {vertical_alignment: Stretch, placement: {width: 410}}
@@ -58,8 +58,8 @@ root:
                   orientation: Horizontal
                   gap: 16
                   children:
-                    - {type: Table, id: registers_left, style_binding: {bind: {path: register_style}}, source: {bind: {path: registers_left}}}
-                    - {type: Table, id: registers_right, style_binding: {bind: {path: register_style}}, source: {bind: {path: registers_right}}}
+                    - {type: Table, id: registers_left, style_binding: {bind: {path: register_style}}, source: {bind: {path: registers_left}}, selection: {bind: {path: register_left_selection, mode: TwoWay}}}
+                    - {type: Table, id: registers_right, style_binding: {bind: {path: register_style}}, source: {bind: {path: registers_right}}, selection: {bind: {path: register_right_selection, mode: TwoWay}}}
                 - type: StackLayout
                   id: register_edit
                   orientation: Horizontal
@@ -121,7 +121,7 @@ root:
               - {type: Button, id: page_next, style: {horizontal_alignment: Start}, text: {bind: {path: captions.next}}, command: action, argument: {literal: page_next}}
               - {type: TextBox, id: memory_addr, style: {placement: {width: 120}}, text: {bind: {path: memory_addr, mode: TwoWay}}, placeholder: {bind: {path: captions.addr}}}
               - {type: Button, id: memory_go, style: {horizontal_alignment: Start}, text: {bind: {path: captions.go}}, command: action, argument: {literal: memory_go}}
-          - {type: Table, id: dump, style: {vertical_alignment: Stretch, placement: {height: 300}}, source: {bind: {path: memory}}}
+          - {type: Table, id: dump, style: {vertical_alignment: Stretch, placement: {height: 300}}, source: {bind: {path: memory}}, selection: {bind: {path: memory_selection, mode: TwoWay}}}
           - type: StackLayout
             id: edit_row
             orientation: Horizontal
