@@ -453,9 +453,16 @@ fn control_inner(
             let vertical = matches!(orientation, Orientation::Vertical);
             quote!(__panechord_view.separator(&__panechord_parent,&__id,#vertical);)
         }
-        Control::Table { source, .. } => {
+        Control::Table {
+            source, selection, ..
+        } => {
             let source = binding(source, false)?;
-            quote!(__panechord_view.table(&__panechord_parent,&__id,#source);)
+            if let Some(selection) = selection {
+                let selection = binding(selection, true)?;
+                quote!(__panechord_view.table_with_selection(&__panechord_parent,&__id,#source,#selection);)
+            } else {
+                quote!(__panechord_view.table(&__panechord_parent,&__id,#source);)
+            }
         }
         Control::TextBox {
             text,
