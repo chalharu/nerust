@@ -816,10 +816,19 @@ public func image(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
 @_cdecl("w3_style") @MainActor
 public func style(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
            _ top: Double, _ right: Double, _ bottom: Double, _ left: Double,
-           _ width: Double, _ height: Double, _ horizontal: Int32, _ vertical: Int32) {
+           _ width: Double, _ height: Double, _ horizontal: Int32, _ vertical: Int32,
+           _ textRole: Int32, _ textScale: Double, _ red: Int32, _ green: Int32, _ blue: Int32) {
     let value = host(pointer)
     let id = string(idBytes, idCount)
     guard let frame = value.frames[id] else { return }
+    if let label = value.nodes[id] as? NSTextField, !label.isEditable {
+        let size = NSFont.systemFontSize * textScale
+        label.font = textRole == 3 ? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+            : textRole == 2 ? NSFont.boldSystemFont(ofSize: size * 1.2) : NSFont.systemFont(ofSize: size)
+        label.textColor = red >= 0 && green >= 0 && blue >= 0
+            ? NSColor(srgbRed: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255, alpha: 1)
+            : NSColor.labelColor
+    }
     if let constraints = value.dimensions[id] { NSLayoutConstraint.deactivate(constraints) }
     value.contentWidths[id]?.isActive = false
     value.contentHeights[id]?.isActive = false

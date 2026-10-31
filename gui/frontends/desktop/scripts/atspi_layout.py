@@ -72,6 +72,12 @@ def tree(accessible, parent_bounds=None):
     try:
         text = accessible.queryText()
         node["text"] = text.getText(0, text.characterCount)
+        if text.characterCount:
+            try:
+                attributes, start, end = text.getAttributeRun(0, True)
+                node["text_attribute_run"] = {"attributes": attributes, "start": start, "end": end}
+            except (NotImplementedError, RuntimeError):
+                pass
     except (NotImplementedError, RuntimeError):
         pass
     node["children"] = [tree(accessible.getChildAtIndex(index), rectangle) for index in range(accessible.childCount) if accessible.getChildAtIndex(index) is not None]

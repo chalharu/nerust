@@ -53,7 +53,7 @@ root:
   title: {bind: {path: title}}
   margin: 7
   padding: {top: 1, right: 2, bottom: 3, left: 4}
-  style: {horizontal_alignment: End, vertical_alignment: Stretch}
+  style: {horizontal_alignment: End, vertical_alignment: Stretch, text: {role: Code, scale: 0.8333333, foreground: [70, 70, 70]}}
   menus:
     - id: actions
       title: {literal: Actions}

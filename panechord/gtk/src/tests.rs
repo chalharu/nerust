@@ -51,6 +51,53 @@ fn native_style_late_close_contract() {
     assert_eq!(frame.halign(), gtk::Align::Fill);
     assert_eq!(frame.valign(), gtk::Align::Fill);
     assert!(!frame.is_vexpand_set());
+    let label = view.widget::<gtk::Label>("fixed").unwrap();
+    view.try_style(
+        "fixed",
+        Style {
+            text: Some(panechord_runtime::TextStyle {
+                role: panechord_runtime::TextRole::Code,
+                scale: 5.0 / 6.0,
+                foreground: Some([70, 70, 70]),
+            }),
+            ..Style::default()
+        },
+    )
+    .unwrap();
+    assert!(label.has_css_class("monospace"));
+    let attributes = label.attributes().unwrap().to_string();
+    assert!(attributes.contains("monospace"));
+    assert!(attributes.contains("scale"));
+    assert!(attributes.contains("foreground"));
+    let invalid = Style {
+        text: Some(panechord_runtime::TextStyle {
+            scale: f32::NAN,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        view.try_style("fixed", invalid),
+        Err("text scale must be finite and within (0, 16]".into())
+    );
+    assert!(label.has_css_class("monospace"));
+    view.try_style(
+        "fixed",
+        Style {
+            text: Some(panechord_runtime::TextStyle {
+                role: panechord_runtime::TextRole::Heading,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(label.has_css_class("heading"));
+    assert!(!label.has_css_class("monospace"));
+    view.try_style("fixed", Style::default()).unwrap();
+    assert!(!label.has_css_class("heading"));
+    assert!(label.attributes().is_none());
+    assert_eq!(label.text(), "Label");
     view.close();
     assert_eq!(
         view.try_style("__root", Style::default()),
