@@ -75,6 +75,68 @@ impl Drop for Fixture {
 }
 
 #[test]
+#[cfg(feature = "panechord")]
+fn panechord_tracks_actual_media_settings_and_host_owned_pause() {
+    use super::panechord::PanechordState;
+    use ::panechord::Executor;
+    struct Inline;
+    impl Executor for Inline {
+        fn spawn(&self, task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'static>>) {
+            use std::task::{Context, Poll, Waker};
+            let mut task = task;
+            assert!(matches!(
+                task.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(())
+            ));
+        }
+    }
+    let mut fixture = Fixture::new();
+    let state = PanechordState::new(&fixture.core, std::rc::Rc::new(Inline));
+    let binding = state.binding();
+    assert!(!binding.get().loaded);
+    assert!(binding.try_set(binding.get()).is_err());
+    fixture.core.note_settings_opened();
+    fixture.load();
+    assert!(state.publish(&fixture.core));
+    assert!(binding.get().loaded && binding.get().paused);
+    assert!(fixture.core.owns_pause(pause_owners::SETTINGS));
+    let original = binding.get().settings;
+    assert!(state.publish(&fixture.core));
+    assert!(std::rc::Rc::ptr_eq(&original, &binding.get().settings));
+    let mut settings = fixture.core.settings_snapshot().clone();
+    settings.shared.general.language = nerust_settings_core::model::language::AppLanguage::English;
+    fixture.core.apply_settings(settings.clone()).unwrap();
+    assert!(state.publish(&fixture.core));
+    assert_eq!(binding.get().settings.as_ref(), &settings);
+    assert!(!std::rc::Rc::ptr_eq(&original, &binding.get().settings));
+    fixture.core.note_settings_dismissed();
+    fixture.core.resume_session();
+    assert!(state.publish(&fixture.core));
+    assert!(!binding.get().paused);
+
+    let unloaded = std::rc::Rc::new(Fixture::new());
+    let loaded = std::rc::Rc::new(fixture);
+    let state = std::rc::Rc::new(state);
+    let weak = std::rc::Rc::downgrade(&state);
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let callback_armed = armed.clone();
+    let callback_unloaded = unloaded.clone();
+    let _subscription = binding.subscribe(std::rc::Rc::new(move |_| {
+        if callback_armed.replace(false) {
+            let state = weak.upgrade().unwrap();
+            assert!(state.publish(&loaded.core));
+            assert!(state.publish(&callback_unloaded.core));
+        }
+    }));
+    armed.set(true);
+    assert!(state.publish(&unloaded.core));
+    assert!(
+        !binding.get().loaded,
+        "the final reentrant publication must win"
+    );
+}
+
+#[test]
 fn focus_modal_and_explicit_pause_compose_across_actual_media_replacement() {
     let mut fixture = Fixture::new();
     fixture.load();
@@ -693,6 +755,15 @@ fn menu_events_execute_once_preserve_pause_owners_and_remain_total_coreless() {
 
 #[test]
 fn debugger_production_poll_drains_rows_and_gestures_pause() {
+    use nerust_settings_core::model::language::AppLanguage;
+    for language in [AppLanguage::English, AppLanguage::Japanese] {
+        debugger_production_poll_with_language(language);
+    }
+}
+
+fn debugger_production_poll_with_language(
+    language: nerust_settings_core::model::language::AppLanguage,
+) {
     use wakui::app::roles::{AuxPorts, PollPorts};
     use wakui::chrome::aux::{AuxWindows, OpenRequest};
     use wakui::scene::control::{Control, ControlEvent, ControlId, ControlInput, ControlVisitor};
@@ -732,6 +803,9 @@ fn debugger_production_poll_drains_rows_and_gestures_pause() {
     }
 
     let mut fixture = Fixture::new();
+    let mut settings = fixture.core.settings_snapshot().clone();
+    settings.shared.general.language = language;
+    fixture.core.apply_settings(settings).unwrap();
     fixture.load();
     let host = &mut fixture.core;
     let mut windows = AuxWindows::<AuxKind, u64, ()>::new();
@@ -763,7 +837,9 @@ fn debugger_production_poll_drains_rows_and_gestures_pause() {
     );
     // The pause gesture travels the same production path.
     let screen = host.widget_screen(id).expect("debug screen");
-    let pause = find_action(&screen, "Pause").or_else(|| find_action(&screen, "Resume"));
+    let chrome = host.debugger_chrome();
+    let pause =
+        find_action(&screen, &chrome.pause).or_else(|| find_action(&screen, &chrome.resume));
     host.widget_dispatch(
         id,
         ControlEvent::new(pause.expect("pause button"), ControlInput::Activate),
@@ -778,7 +854,7 @@ fn notification_strip_setting_commits_and_reserves_osd_rows() {
     use crate::widget_session::{WidgetSession, take_submission};
     use nerust_settings_core::i18n::{UiText, text};
     use wakui::app::roles::AuxPorts;
-    use wakui::chrome::aux::{AuxRegistryPort, AuxWindows, OpenRequest};
+    use wakui::chrome::aux::{AuxWindows, OpenRequest};
     use wakui::scene::control::{Control, ControlEvent, ControlId, ControlInput, ControlVisitor};
 
     fn find_by_label(session: &WidgetSession, label: &str) -> Option<ControlId> {

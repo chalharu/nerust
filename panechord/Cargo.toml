@@ -1,0 +1,20 @@
+[package]
+name = "panechord"
+description = "Declarative Rust UI with shared state and native backends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+panechord-runtime.workspace = true
+panechord-macros.workspace = true
+panechord-gtk = { workspace = true, optional = true }
+panechord-tao = { workspace = true, optional = true }
+panechord-macos = { workspace = true, optional = true }
+
+[features]
+default = []
+gtk = ["dep:panechord-gtk"]
+tao = ["dep:panechord-tao"]
+macos = ["dep:panechord-macos"]

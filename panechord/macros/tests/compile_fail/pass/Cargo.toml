@@ -1,0 +1,15 @@
+[package]
+name = "panechord-ui-pass"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+panechord-runtime = { path = "../../../../runtime" }
+panechord-macros = { path = "../../../../macros" }
+
+[[bin]]
+name = "probe"
+path = "main.rs"

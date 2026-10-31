@@ -1,0 +1,21 @@
+schema_version: 2
+root:
+  type: Window
+  id: window
+  title: {literal: Minimal Panechord}
+  content:
+    type: StackLayout
+    id: layout
+    padding: 16
+    gap: 8
+    children:
+      - type: TextBox
+        id: name
+        text: {bind: {path: name, mode: TwoWay}}
+      - type: Label
+        id: greeting
+        text: {bind: {path: name}}
+      - type: Button
+        id: greet
+        text: {literal: Greet}
+        command: greet

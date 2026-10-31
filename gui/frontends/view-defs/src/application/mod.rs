@@ -5,6 +5,8 @@ mod chrome;
 mod debug;
 mod frontend;
 mod osd;
+#[cfg(feature = "panechord")]
+pub mod panechord;
 #[cfg(test)]
 mod tests;
 mod window;

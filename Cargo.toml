@@ -36,6 +36,16 @@ members = [
   "gui/wakui-tao",
   "crash-guard",
   "persistence",
+  "panechord",
+  "panechord/runtime",
+  "panechord/markup",
+  "panechord/macros",
+  "panechord/gtk",
+  "panechord/tao",
+  "panechord/macos",
+  "panechord/demo",
+  "panechord/settings",
+  "panechord/library",
   "render/filters",
   "render/gl",
   "render/glwrap",
@@ -142,6 +152,14 @@ rust-version = "1.95"
 version = "0.1.0-dev"
 
 [workspace.dependencies]
+futures = { version = "=0.3.34" }
+panechord = { path = "panechord" }
+panechord-runtime = { path = "panechord/runtime" }
+panechord-markup = { path = "panechord/markup" }
+panechord-macros = { path = "panechord/macros" }
+panechord-gtk = { path = "panechord/gtk" }
+panechord-tao = { path = "panechord/tao" }
+panechord-macos = { path = "panechord/macos" }
 image = { version = "=0.25.10", default-features = false, features = [
   "png",
   "jpeg",
