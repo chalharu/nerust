@@ -449,6 +449,14 @@ fn control_inner(
             let text = binding(text, false)?;
             quote!(__panechord_view.label(&__panechord_parent,&__id,#text);)
         }
+        Control::Separator { orientation, .. } => {
+            let vertical = matches!(orientation, Orientation::Vertical);
+            quote!(__panechord_view.separator(&__panechord_parent,&__id,#vertical);)
+        }
+        Control::Table { source, .. } => {
+            let source = binding(source, false)?;
+            quote!(__panechord_view.table(&__panechord_parent,&__id,#source);)
+        }
         Control::TextBox {
             text, validation, ..
         } => {
