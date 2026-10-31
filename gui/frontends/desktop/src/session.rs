@@ -24,6 +24,37 @@ pub struct SessionAdapter {
 }
 
 impl SessionAdapter {
+    pub(crate) fn key(code: &panechord::KeyCode) -> Option<wakui_core::Key> {
+        use serde::Deserialize;
+        let mut name = String::new();
+        for (index, character) in code.as_str().chars().enumerate() {
+            if index > 0 && character.is_ascii_uppercase() {
+                name.push('_');
+            }
+            name.push(character.to_ascii_lowercase());
+        }
+        wakui_core::Key::deserialize(
+            serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&name),
+        )
+        .ok()
+    }
+
+    pub(crate) fn session_action(
+        action: nerust_settings_core::model::input::ShortcutAction,
+    ) -> Option<SessionAction> {
+        use nerust_settings_core::model::input::ShortcutAction;
+        Some(match action {
+            ShortcutAction::Reset => SessionAction::Reset,
+            ShortcutAction::SaveActiveSlot => SessionAction::SaveState,
+            ShortcutAction::LoadActiveSlot => SessionAction::LoadState,
+            ShortcutAction::SelectNextSlot => SessionAction::NextSlot,
+            ShortcutAction::SelectPreviousSlot => SessionAction::PreviousSlot,
+            ShortcutAction::TogglePause
+            | ShortcutAction::ToggleFullscreen
+            | ShortcutAction::OpenDebugger => return None,
+        })
+    }
+
     pub fn new(
         registry: Arc<SystemRegistry>,
         audio: Arc<AudioBackendRegistry>,
@@ -270,5 +301,22 @@ mod tests {
             )
             .paused
         );
+    }
+
+    #[test]
+    fn normalized_keys_bridge_to_existing_settings_without_a_frontend_key_table() {
+        for (name, expected) in [
+            ("KeyV", wakui_core::Key::KeyV),
+            ("F11", wakui_core::Key::F11),
+            ("IntlYen", wakui_core::Key::IntlYen),
+            ("MetaLeft", wakui_core::Key::SuperLeft),
+            ("NumpadEnter", wakui_core::Key::NumpadEnter),
+        ] {
+            assert_eq!(
+                SessionAdapter::key(&panechord::KeyCode::from_name(name)),
+                Some(expected)
+            );
+        }
+        assert_eq!(SessionAdapter::key(&panechord::KeyCode::Unidentified), None);
     }
 }

@@ -56,7 +56,15 @@ pub struct Binding {
     pub path: String,
     #[serde(default)]
     pub mode: Mode,
+    #[serde(default)]
+    pub source: BindingSource,
     pub converter: Option<String>,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+pub enum BindingSource {
+    #[default]
+    Store,
+    External,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, JsonSchema)]
 pub enum Mode {
@@ -134,10 +142,39 @@ pub struct Validation {
 pub struct Menu {
     pub id: String,
     pub title: Property,
-    pub items: Property,
+    pub items: MenuItems,
     pub command: String,
     #[serde(default)]
     pub nested: bool,
+}
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum MenuItems {
+    Entries(Vec<MenuEntry>),
+    Binding(Property),
+}
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MenuEntry {
+    pub id: String,
+    pub label: Property,
+    pub argument: Property,
+    pub shortcut: Option<String>,
+    #[serde(default)]
+    pub role: MenuRole,
+    pub enabled: Option<Property>,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+pub enum MenuRole {
+    #[default]
+    Normal,
+    Copy,
+    Cut,
+    Paste,
+    SelectAll,
+    About,
+    Quit,
+    Separator,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -186,6 +223,7 @@ macro_rules! controls {
 }
 controls! {
     Window { title: Property, content: Box<Control>, #[serde(default)] menus: Vec<Menu>, },
+    Scroll { #[serde(default)] orientation: Orientation, content: Box<Control>, },
     StackLayout { #[serde(default)] orientation: Orientation, #[serde(default)] gap: f32, #[serde(default)] children: Vec<Control>, },
     Grid { columns: u32, #[serde(default)] gap: f32, #[serde(default)] children: Vec<Control>, },
     AbsoluteLayout { #[serde(default)] children: Vec<Control>, },
@@ -554,7 +592,33 @@ impl Document {
                 }
                 for (index, m) in menus.iter().enumerate() {
                     read_only(&m.title, &format!("menus[{index}].title"))?;
-                    read_only(&m.items, &format!("menus[{index}].items"))?;
+                    match &m.items {
+                        MenuItems::Binding(items) => {
+                            read_only(items, &format!("menus[{index}].items"))?
+                        }
+                        MenuItems::Entries(entries) => {
+                            if m.nested {
+                                return Err(err("static entries cannot use nested menus".into()));
+                            }
+                            for (entry_index, entry) in entries.iter().enumerate() {
+                                let entry_path = format!("menus[{index}].items[{entry_index}]");
+                                read_only(&entry.label, &format!("{entry_path}.label"))?;
+                                read_only(&entry.argument, &format!("{entry_path}.argument"))?;
+                                if let Some(enabled) = &entry.enabled {
+                                    read_only(enabled, &format!("{entry_path}.enabled"))?;
+                                }
+                                if entry.id.is_empty()
+                                    || entry.id.contains('/')
+                                    || !ids.insert(entry.id.clone())
+                                {
+                                    return Err(err(format!(
+                                        "invalid or duplicate menu item id `{}`",
+                                        entry.id
+                                    )));
+                                }
+                            }
+                        }
+                    }
                     if m.id == "__root" {
                         return Err(err(
                             "menu id `__root` is reserved for the backend root".into()
@@ -605,7 +669,7 @@ impl Document {
                 children.extend(cs);
                 None
             }
-            Control::Dialog { content, .. } => {
+            Control::Dialog { content, .. } | Control::Scroll { content, .. } => {
                 self.walk(
                     content,
                     &format!("{path}.content"),
@@ -711,5 +775,20 @@ impl Document {
             stack.pop();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    #[test]
+    fn scroll_content_is_validated_with_normal_control_bounds() {
+        let source = r#"{"schema_version":2,"root":{"type":"Window","id":"root_window","title":{"literal":"Test"},"content":{"type":"Scroll","id":"viewport","content":{"type":"Label","id":"label","text":{"literal":"Content"}}}}}"#;
+        parse(source, "json", "scroll.json").unwrap();
+        let duplicate = source.replace("\"id\":\"label\"", "\"id\":\"viewport\"");
+        assert!(parse(&duplicate, "json", "scroll.json").is_err());
+        let nested = source.replace("\"type\":\"Label\",\"id\":\"label\",\"text\":{\"literal\":\"Content\"}", "\"type\":\"Window\",\"id\":\"window\",\"title\":{\"literal\":\"Nested\"},\"content\":{\"type\":\"Label\",\"id\":\"label\",\"text\":{\"literal\":\"Content\"}}");
+        assert!(parse(&nested, "json", "scroll.json").is_err());
     }
 }

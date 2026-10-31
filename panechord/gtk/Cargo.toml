@@ -8,4 +8,11 @@ rust-version.workspace = true
 raw-window-handle.workspace = true
 panechord-runtime.workspace = true
 futures.workspace = true
-gtk = { package = "gtk4", version = "=0.11.5" }
+gtk = { package = "gtk4", version = "=0.11.5", features = ["v4_8"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse"] }

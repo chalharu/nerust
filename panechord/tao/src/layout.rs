@@ -173,12 +173,15 @@ pub fn geometry(policy: Policy, available: f32, children: &[(Size, Style)]) -> (
             let cell = ((available - gap * (cols - 1) as f32) / cols as f32).max(0.0);
             let rows = children
                 .iter()
-                .map(|(_, s)| grid_cell(s, cols).0 + grid_cell(s, cols).2)
+                .enumerate()
+                .map(|(index, (_, style))| {
+                    grid_cell(style, cols, index).0 + grid_cell(style, cols, index).2
+                })
                 .max()
                 .unwrap_or(0);
             let mut heights = vec![0.0f32; rows];
-            for (size, style) in children {
-                let (r, _, span, _) = grid_cell(style, cols);
+            for (index, (size, style)) in children.iter().enumerate() {
+                let (r, _, span, _) = grid_cell(style, cols, index);
                 let need =
                     finite(size.height) + finite(style.margin.top) + finite(style.margin.bottom);
                 let occupied: f32 =
@@ -190,7 +193,7 @@ pub fn geometry(policy: Policy, available: f32, children: &[(Size, Style)]) -> (
                 }
             }
             for (index, (_, style)) in children.iter().enumerate() {
-                let (r, c, _, _) = grid_cell(style, cols);
+                let (r, c, _, _) = grid_cell(style, cols, index);
                 positions[index] = Point::new(
                     c as f32 * (cell + gap) + finite(style.margin.left),
                     heights[..r].iter().sum::<f32>() + r as f32 * gap + finite(style.margin.top),
@@ -213,10 +216,11 @@ fn horizontal_policy(policy: Policy) -> bool {
         }
     )
 }
-fn grid_cell(style: &Style, cols: usize) -> (usize, usize, usize, usize) {
+fn grid_cell(style: &Style, cols: usize, index: usize) -> (usize, usize, usize, usize) {
     let p = style.placement;
-    let row = p.row.clamp(0, 4095) as usize;
-    let col = (p.column.max(0) as usize).min(cols - 1);
+    let (row, column) = p.grid_position(index, cols as u32);
+    let row = row.clamp(0, 4095) as usize;
+    let col = (column.max(0) as usize).min(cols - 1);
     (
         row,
         col,
@@ -356,11 +360,12 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
         let available = limits.max().width;
         let siblings = self.children.len().max(1) as f32;
         let mut nodes = Vec::new();
-        for ((child, state), style) in self
+        for (index, ((child, state), style)) in self
             .children
             .iter_mut()
             .zip(&mut tree.children)
             .zip(&self.styles)
+            .enumerate()
         {
             let mut width = available;
             if matches!(
@@ -379,7 +384,7 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
             }
             if let Policy::Grid { columns, gap } = self.policy {
                 let cols = columns.clamp(1, 4096) as usize;
-                let (_, _, _, span) = grid_cell(style, cols);
+                let (_, _, _, span) = grid_cell(style, cols, index);
                 width = ((available - finite(gap) * (cols - 1) as f32) / cols as f32).max(0.0)
                     * span as f32
                     + finite(gap) * (span - 1) as f32;
@@ -719,6 +724,30 @@ mod tests {
         let (size, p) = geometry(Policy::Absolute, 100.0, &[(Size::new(20.0, 10.0), b)]);
         assert_eq!(p[0], Point::new(14.0, 16.0));
         assert_eq!(size, Size::new(36.0, 27.0));
+    }
+
+    #[test]
+    fn grid_default_children_follow_row_major_declaration_order() {
+        let children = vec![(Size::new(100.0, 20.0), Style::default()); 5];
+        let (size, positions) = geometry(
+            Policy::Grid {
+                columns: 2,
+                gap: 10.0,
+            },
+            210.0,
+            &children,
+        );
+        assert_eq!(
+            positions,
+            vec![
+                Point::ORIGIN,
+                Point::new(110.0, 0.0),
+                Point::new(0.0, 30.0),
+                Point::new(110.0, 30.0),
+                Point::new(0.0, 60.0)
+            ]
+        );
+        assert_eq!(size.height, 80.0);
     }
 
     struct Probe(u32);
