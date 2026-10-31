@@ -129,7 +129,18 @@ pub struct Style {
     pub margin: Edges,
     pub padding: Edges,
     pub placement: Placement,
+    pub horizontal_alignment: Option<Alignment>,
+    pub vertical_alignment: Option<Alignment>,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+pub enum Alignment {
+    Start,
+    Center,
+    End,
+    Stretch,
+}
+
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Validation {

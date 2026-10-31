@@ -209,6 +209,30 @@ pub struct Style {
     pub margin: Edges,
     pub padding: Edges,
     pub placement: Placement,
+    pub horizontal_alignment: Option<Alignment>,
+    pub vertical_alignment: Option<Alignment>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Alignment {
+    Start,
+    Center,
+    End,
+    Stretch,
+}
+
+impl Alignment {
+    pub fn offset(self, available: f32, extent: f32) -> f32 {
+        if !available.is_finite() || !extent.is_finite() {
+            return 0.0;
+        }
+        let surplus = (available.max(0.0) - extent.max(0.0)).max(0.0);
+        match self {
+            Self::Start | Self::Stretch => 0.0,
+            Self::Center => surplus / 2.0,
+            Self::End => surplus,
+        }
+    }
 }
 
 impl Placement {

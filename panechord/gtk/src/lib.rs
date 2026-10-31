@@ -2,6 +2,8 @@
 //! `GtkHost` attaches to an existing GTK main loop; `run` owns a native loop.
 //! Virtual rows have a fixed, clipped height in logical pixels (no overscan).
 //! Item keys must be unique; invalid snapshots leave the last valid UI intact.
+pub use panechord_runtime::Alignment;
+
 mod controls;
 pub use gtk;
 
@@ -656,7 +658,23 @@ impl View {
             pixels(padding.left)
         ));
         let p = style.placement;
-        frame.set_hexpand(p.width.is_none());
+        let alignment = |value| match value {
+            Some(Alignment::Start) => gtk::Align::Start,
+            Some(Alignment::Center) => gtk::Align::Center,
+            Some(Alignment::End) => gtk::Align::End,
+            Some(Alignment::Stretch) | None => gtk::Align::Fill,
+        };
+        frame.set_halign(alignment(style.horizontal_alignment));
+        frame.set_valign(alignment(style.vertical_alignment));
+        frame.set_hexpand(
+            p.width.is_none()
+                && matches!(style.horizontal_alignment, None | Some(Alignment::Stretch)),
+        );
+        if let Some(alignment) = style.vertical_alignment {
+            frame.set_vexpand(alignment == Alignment::Stretch);
+        } else {
+            frame.set_vexpand_set(false);
+        }
         frame.set_size_request(
             p.width.map(pixels).unwrap_or(-1),
             p.height.map(pixels).unwrap_or(-1),

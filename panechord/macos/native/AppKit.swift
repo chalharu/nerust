@@ -235,6 +235,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     var frames: [String: NSStackView] = [:]
     var dimensions: [String: [NSLayoutConstraint]] = [:]
     var contentWidths: [String: NSLayoutConstraint] = [:]
+    var contentHeights: [String: NSLayoutConstraint] = [:]
     var menus: [String: NSMenu] = [:]
     var menuItems: [String: NSMenuItem] = [:]
     var tabItems: [String: NSTabViewItem] = [:]
@@ -423,8 +424,10 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         view.translatesAutoresizingMaskIntoConstraints = false
         let contentWidth = view.widthAnchor.constraint(equalTo: frame.widthAnchor, constant: 0)
         contentWidth.isActive = true
-        if view is Tabs || view is Scrolling { view.heightAnchor.constraint(equalTo: frame.heightAnchor).isActive = true }
+        let contentHeight = view.heightAnchor.constraint(equalTo: frame.heightAnchor)
+        contentHeight.isActive = view is Tabs || view is Scrolling
         contentWidths[id] = contentWidth
+        contentHeights[id] = contentHeight
         if let container = container, container.orientation == .vertical, !floating, tab == nil {
             frame.widthAnchor.constraint(equalTo: container.widthAnchor,
                 constant: -(container.edgeInsets.left + container.edgeInsets.right)).isActive = true
@@ -482,6 +485,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
             }
             dimensions.removeValue(forKey: id)
             contentWidths.removeValue(forKey: id)
+            contentHeights.removeValue(forKey: id)
             parents.removeValue(forKey: id)
             visibility.removeValue(forKey: id)
             enablement.removeValue(forKey: id)
@@ -812,16 +816,35 @@ public func image(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
 @_cdecl("w3_style") @MainActor
 public func style(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
            _ top: Double, _ right: Double, _ bottom: Double, _ left: Double,
-           _ width: Double, _ height: Double) {
+           _ width: Double, _ height: Double, _ horizontal: Int32, _ vertical: Int32) {
     let value = host(pointer)
     let id = string(idBytes, idCount)
     guard let frame = value.frames[id] else { return }
+    if let constraints = value.dimensions[id] { NSLayoutConstraint.deactivate(constraints) }
+    value.contentWidths[id]?.isActive = false
+    value.contentHeights[id]?.isActive = false
     frame.edgeInsets = NSEdgeInsets(top: top, left: left, bottom: bottom, right: right)
     value.contentWidths[id]?.constant = -(left + right)
-    if let constraints = value.dimensions[id] { NSLayoutConstraint.deactivate(constraints) }
+    value.contentHeights[id]?.constant = -(top + bottom)
+    frame.alignment = horizontal == 2 ? .centerX : horizontal == 3 ? .trailing : .leading
+    let stretchWidth = horizontal == 0 || horizontal == 4
+    if let node = value.nodes[id], node !== frame {
+        frame.removeView(node)
+        frame.addView(node, in: vertical == 2 ? .center : vertical == 3 ? .bottom : .top)
+        value.contentHeights[id]?.isActive = vertical == 4 || (vertical == 0 && (node is Tabs || node is Scrolling))
+    }
+    value.contentWidths[id]?.isActive = stretchWidth
+    frame.setHuggingPriority(vertical == 4 ? NSLayoutConstraint.Priority(rawValue: 1) : .defaultLow, for: .vertical)
     var constraints: [NSLayoutConstraint] = []
-    if width >= 0 { constraints.append(frame.widthAnchor.constraint(equalToConstant: width)) }
+    if width >= 0 {
+        if stretchWidth { constraints.append(frame.widthAnchor.constraint(equalToConstant: width)) }
+        else if let node = value.nodes[id] { constraints.append(node.widthAnchor.constraint(equalToConstant: max(0, width - left - right))) }
+    }
     if height >= 0 { constraints.append(frame.heightAnchor.constraint(equalToConstant: height)) }
+    else if vertical > 0, vertical < 4, let container = frame.superview as? NSStackView, container.orientation == .horizontal {
+        constraints.append(frame.heightAnchor.constraint(equalTo: container.heightAnchor,
+            constant: -(container.edgeInsets.top + container.edgeInsets.bottom)))
+    }
     NSLayoutConstraint.activate(constraints)
     value.dimensions[id] = constraints
 }
