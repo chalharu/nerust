@@ -303,6 +303,7 @@ impl View {
 
     pub fn tab(&self, parent: &Parent, id: &str, selected: Binding<String>) -> Parent {
         let notebook = gtk::Notebook::new();
+        notebook.set_scrollable(true);
         notebook.set_vexpand(true);
         self.mount_native(parent, id, &notebook);
         self.0
@@ -364,6 +365,24 @@ impl View {
         );
         Parent::new(&notebook, ParentKind::Notebook)
     }
+    pub fn tab_position(
+        &self,
+        id: &str,
+        position: wakui2_runtime::TabPosition,
+    ) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
+        let state = self.0.tabs.borrow().get(id).cloned().ok_or("missing Tab")?;
+        state.notebook.set_tab_pos(match position {
+            wakui2_runtime::TabPosition::Top => gtk::PositionType::Top,
+            wakui2_runtime::TabPosition::Bottom => gtk::PositionType::Bottom,
+            wakui2_runtime::TabPosition::Left => gtk::PositionType::Left,
+            wakui2_runtime::TabPosition::Right => gtk::PositionType::Right,
+        });
+        Ok(())
+    }
+
     pub fn tab_page(&self, parent: &Parent, id: &str, title: Binding<String>, key: &str) -> Parent {
         let notebook = parent
             .widget

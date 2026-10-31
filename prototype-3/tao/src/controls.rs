@@ -12,23 +12,43 @@ pub(super) struct Tab {
     pages: RefCell<Vec<TabPage>>,
     current: RefCell<String>,
     ready: Cell<bool>,
+    position: Cell<wakui2_runtime::TabPosition>,
 }
 type TabPage = (String, Rc<RefCell<String>>, Weak<Node>);
 impl Tab {
     pub fn element(&self, _node: &Node) -> Element {
         let selected = self.current.borrow().clone();
         let pages = self.pages.borrow();
-        let header = widget::row(pages.iter().map(|(key, title, _)| {
-            let button = widget::button(widget::text(title.borrow().clone()));
-            if self.selected.is_writable() {
-                button
-                    .on_press(Message::Select(_node.id.clone(), key.clone()))
-                    .into()
-            } else {
-                button.into()
-            }
-        }))
-        .spacing(8);
+        let vertical = matches!(
+            self.position.get(),
+            wakui2_runtime::TabPosition::Left | wakui2_runtime::TabPosition::Right
+        );
+        let buttons: Vec<Element> = pages
+            .iter()
+            .map(|(key, title, _)| {
+                let active = *key == selected
+                    || (selected.is_empty()
+                        && pages.first().is_some_and(|(first, _, _)| first == key));
+                let button = widget::button(widget::text(title.borrow().clone()))
+                    .width(if vertical {
+                        Length::Fill
+                    } else {
+                        Length::Shrink
+                    })
+                    .style(if active {
+                        widget::button::primary
+                    } else {
+                        widget::button::secondary
+                    });
+                if self.selected.is_writable() {
+                    button
+                        .on_press(Message::Select(_node.id.clone(), key.clone()))
+                        .into()
+                } else {
+                    button.into()
+                }
+            })
+            .collect();
         let body = pages
             .iter()
             .find(|(key, _, _)| *key == selected)
@@ -36,10 +56,46 @@ impl Tab {
             .and_then(|(_, _, node)| node.upgrade())
             .map(|node| node.element())
             .unwrap_or_else(|| widget::Space::new().into());
-        widget::column![header, body]
-            .spacing(8)
+        let body: Element = widget::container(body)
             .width(Length::Fill)
-            .into()
+            .height(if vertical {
+                Length::Shrink
+            } else {
+                Length::Fill
+            })
+            .into();
+        match self.position.get() {
+            wakui2_runtime::TabPosition::Top => {
+                widget::column![widget::row(buttons).spacing(8), body]
+                    .spacing(8)
+                    .width(Length::Fill)
+                    .into()
+            }
+            wakui2_runtime::TabPosition::Bottom => {
+                widget::column![body, widget::row(buttons).spacing(8)]
+                    .spacing(8)
+                    .width(Length::Fill)
+                    .into()
+            }
+            wakui2_runtime::TabPosition::Left => widget::row![
+                widget::scrollable(widget::column(buttons).spacing(8))
+                    .width(120)
+                    .height(Length::Shrink),
+                body
+            ]
+            .spacing(12)
+            .width(Length::Fill)
+            .into(),
+            wakui2_runtime::TabPosition::Right => widget::row![
+                body,
+                widget::scrollable(widget::column(buttons).spacing(8))
+                    .width(120)
+                    .height(Length::Shrink)
+            ]
+            .spacing(12)
+            .width(Length::Fill)
+            .into(),
+        }
     }
 }
 pub(super) struct Dialog {
@@ -271,6 +327,7 @@ impl View {
             pages: RefCell::new(Vec::new()),
             current: RefCell::new(selected.get()),
             ready: Cell::new(false),
+            position: Cell::new(wakui2_runtime::TabPosition::Top),
         });
         let observed = state.clone();
         let weak = self.downgrade();
@@ -292,6 +349,24 @@ impl View {
         node.kind.replace(Kind::Tab(state));
         Parent(node)
     }
+    pub fn tab_position(
+        &self,
+        id: &str,
+        position: wakui2_runtime::TabPosition,
+    ) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
+        let node = self.find(id).ok_or("missing Tab")?;
+        let tab = match &*node.kind.borrow() {
+            Kind::Tab(tab) => tab.clone(),
+            _ => return Err("missing Tab".into()),
+        };
+        tab.position.set(position);
+        self.0.refresh();
+        Ok(())
+    }
+
     pub fn tab_page(&self, parent: &Parent, id: &str, title: Binding<String>, key: &str) -> Parent {
         let node = self.add(parent, id, Kind::Page);
         let title = self.bound_text(&node, title);

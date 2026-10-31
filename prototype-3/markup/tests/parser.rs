@@ -22,6 +22,32 @@ fn required_controls_and_read_only_modes_are_validated() {
 }
 use wakui2_markup::*;
 
+#[test]
+fn tab_positions_are_typed_and_default_to_top() {
+    for (value, expected) in [
+        ("", TabPosition::Top),
+        ("position: Top\n", TabPosition::Top),
+        ("position: Bottom\n", TabPosition::Bottom),
+        ("position: Left\n", TabPosition::Left),
+        ("position: Right\n", TabPosition::Right),
+    ] {
+        let source = doc(&format!(
+            "type: Tab\nid: tabs\n{value}selected: {{literal: video}}\npages: [{{id: video, title: {{literal: Video}}, content: {{type: Label, id: label, text: {{literal: Video}}}}}}]"
+        ));
+        let document = parse_yaml(&source).unwrap();
+        let Control::Window { content, .. } = document.root else {
+            unreachable!()
+        };
+        let Control::Tab { position, .. } = *content else {
+            unreachable!()
+        };
+        assert_eq!(position, expected);
+    }
+    let source =
+        doc("{type: Tab, id: tabs, selected: {literal: video}, position: Diagonal, pages: []}");
+    assert!(parse_yaml(&source).is_err());
+}
+
 fn doc(content: &str) -> String {
     format!(
         "schema_version: 2\nroot:\n  type: Window\n  id: main\n  title: {{literal: Title}}\n  content:\n{}",
