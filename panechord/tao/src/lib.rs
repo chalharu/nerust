@@ -35,6 +35,7 @@ type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 #[derive(Clone, Debug)]
 pub enum Message {
     Edit(String, String),
+    Pointer(String, Option<panechord_runtime::PointerPosition>),
     Click(String),
     Menu(String),
     Scroll(String, f32),
@@ -64,6 +65,7 @@ pub struct Parent(Rc<Node>);
 #[derive(Clone)]
 enum Handler {
     Entry(Binding<String>),
+    Pointer(Binding<Option<panechord_runtime::PointerPosition>>),
     Button(Command),
     Toggle(Binding<bool>),
     Radio(Binding<String>, String),
@@ -874,6 +876,7 @@ impl View {
         }
         let target = match &message {
             Message::Edit(id, _)
+            | Message::Pointer(id, _)
             | Message::Click(id)
             | Message::Scroll(id, _)
             | Message::Custom(id)
@@ -891,6 +894,27 @@ impl View {
         }
         match message {
             Message::Ignored => Ok(()),
+            Message::Pointer(id, position) => {
+                let node = self
+                    .find(&id)
+                    .ok_or_else(|| format!("missing pointer target: {id}"))?;
+                if !node.interactive()
+                    || position.is_some_and(|point| !point.x.is_finite() || !point.y.is_finite())
+                {
+                    return Ok(());
+                }
+                let handler = node.handler.borrow().clone();
+                if let Some(Handler::Pointer(binding)) = handler {
+                    if !binding.is_writable() {
+                        return Ok(());
+                    }
+                    binding
+                        .try_set(position)
+                        .map_err(|error| error.to_string())?;
+                    self.0.refresh();
+                }
+                Ok(())
+            }
             Message::Toggle(id, value) => self.control_update(&id, controls::Input::Toggle(value)),
             Message::Slide(id, value) => self.control_update(&id, controls::Input::Slide(value)),
             Message::Select(id, value) => self.control_update(&id, controls::Input::Select(value)),
