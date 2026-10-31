@@ -146,6 +146,15 @@ pub struct TabPage {
     pub content: Box<Control>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+pub enum TabPosition {
+    #[default]
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
 macro_rules! controls {
 	($($kind:ident { $($fields:tt)* }),* $(,)?) => {
 		#[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -185,7 +194,7 @@ controls! {
     Slider { value: Property, min: f64, max: f64, step: f64, },
     Combo { items: Property, selected: Property, },
     Image { source: Property, },
-    Tab { selected: Property, pages: Vec<TabPage>, },
+    Tab { selected: Property, #[serde(default)] position: TabPosition, pages: Vec<TabPage>, },
     Dialog { title: Property, open: Property, content: Box<Control>, },
 }
 

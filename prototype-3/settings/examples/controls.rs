@@ -104,6 +104,39 @@ fn main() -> Result<(), String> {
             probe.select("pages", "audio").unwrap();
             assert_eq!(model.snapshot().page, "audio");
             probe.select("pages", "video").unwrap();
+            for position in [
+                wakui2_runtime::TabPosition::Top,
+                wakui2_runtime::TabPosition::Bottom,
+                wakui2_runtime::TabPosition::Left,
+                wakui2_runtime::TabPosition::Right,
+            ] {
+                probe.tab_position("pages", position).unwrap();
+                probe.select("pages", "audio").unwrap();
+                assert_eq!(model.snapshot().page, "audio");
+                probe.select("pages", "video").unwrap();
+                assert_eq!(model.snapshot().page, "video");
+                #[cfg(feature = "backend-macos")]
+                if let Some(directory) = std::env::var_os("WAKUI_CONTROLS_CAPTURE") {
+                    let directory = std::path::PathBuf::from(directory);
+                    std::fs::create_dir_all(&directory).unwrap();
+                    probe
+                        .capture(&directory.join(format!("tabs-{position:?}.png")), 640.0)
+                        .unwrap();
+                }
+            }
+            probe
+                .tab_position("pages", wakui2_runtime::TabPosition::Left)
+                .unwrap();
+            assert!(
+                probe
+                    .tab_position("missing", wakui2_runtime::TabPosition::Left)
+                    .is_err()
+            );
+            assert!(
+                probe
+                    .tab_position("vsync", wakui2_runtime::TabPosition::Left)
+                    .is_err()
+            );
             #[cfg(feature = "backend-macos")]
             if let Some(directory) = std::env::var_os("WAKUI_CONTROLS_CAPTURE") {
                 let directory = std::path::PathBuf::from(directory);
@@ -156,11 +189,38 @@ fn main() -> Result<(), String> {
                 "only",
             );
             assert!(probe.finish_tab(&tab).is_err());
+            let readonly = probe.tab(
+                &probe.root(),
+                "readonly_tab",
+                wakui2_runtime::Binding::constant("one".into()),
+            );
+            for key in ["one", "two"] {
+                probe.tab_page(
+                    &readonly,
+                    &format!("readonly_{key}"),
+                    wakui2_runtime::Binding::constant(key.into()),
+                    key,
+                );
+            }
+            probe.finish_tab(&readonly).unwrap();
+            for position in [
+                wakui2_runtime::TabPosition::Left,
+                wakui2_runtime::TabPosition::Right,
+            ] {
+                probe.tab_position("readonly_tab", position).unwrap();
+                assert!(probe.select("readonly_tab", "two").is_err());
+            }
+            println!("TABS3 PASS top bottom left right selection retained");
             completed.set(true);
             println!("CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog");
             probe.close();
             assert!(probe.toggle("vsync", true).is_err());
             assert!(probe.select("pages", "video").is_err());
+            assert!(
+                probe
+                    .tab_position("pages", wakui2_runtime::TabPosition::Left)
+                    .is_err()
+            );
             assert!(probe.set_open("dialog", true).is_err());
         }));
         view
