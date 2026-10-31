@@ -124,6 +124,14 @@ def capture(binary, original, destination, settings_review=False):
                                     tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
                                     visible = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
                                     labels = " ".join(node.name for node in visible)
+                                    footer = [node for node in visible if node.getRoleName() == "push button" and node.name in {"Apply", "Cancel", "OK"}]
+                                    if {node.name for node in footer} != {"Apply", "Cancel", "OK"}:
+                                        raise RuntimeError("Settings footer is missing controls")
+                                    outer = layout.bounds(frame)
+                                    for node in footer:
+                                        rectangle = layout.bounds(node)
+                                        if rectangle["y"] + rectangle["height"] > outer["y"] + outer["height"] - 12:
+                                            raise RuntimeError("Settings footer does not preserve its bottom margin")
                                     if not all(layout.normalized(word) in layout.normalized(labels) for word in expected):
                                         return None
                                     if page == "Notifications":
@@ -131,6 +139,8 @@ def capture(binary, original, destination, settings_review=False):
                                         if len(sections) != 2 or sections[0] == sections[1]:
                                             raise RuntimeError("Notifications sections overlap or are missing")
                                     width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
+                                    if (width, height) != (900, 560):
+                                        raise RuntimeError(f"Settings size drifted: {width}x{height}")
                                     return {"state": f"settings-{page.lower()}", "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "width": width, "height": height, "ocr": text, "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest()}
                                 records.append(wait(inspect))
                                 print(f"VIEW CAPTURE settings-{page.lower()}", flush=True)
@@ -162,6 +172,12 @@ def capture(binary, original, destination, settings_review=False):
                                 return False
                             wait(scroll_notifications_to_end)
                             settings_snapshot("Notifications-bottom", ["Status display", "Overlay", "Apply"])
+                            click_page("Input")
+                            settings_snapshot("Input", ["Shortcuts", "Select", "Start", "Apply"])
+                            click_page("Shortcuts")
+                            settings_snapshot("Shortcuts", ["Pause", "Reset", "Apply"])
+                            click_page("System")
+                            settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "Apply"])
                             execute("xdotool", "windowfocus", "--sync", window)
                     execute("xdotool", "key", "alt+F4")
                 finally:
