@@ -33,6 +33,11 @@ cargo test --locked -p wakui3-settings
 cargo test --locked -p wakui3-settings --no-default-features --features backend-tao
 cargo test --locked -p wakui3-library
 cargo test --locked -p wakui3-library --no-default-features --features backend-tao
+for backend in gtk tao; do
+    output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui3-settings --no-default-features --features "backend-$backend" --example controls)
+    printf '%s\n' "$output"
+    printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
+done
 native_test -p wakui3-settings \
     native_tests::native_generated_shared_windows_survive_peer_close -- --exact --ignored --test-threads=1
 native_test -p wakui3-settings \

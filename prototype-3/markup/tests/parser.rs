@@ -1,3 +1,25 @@
+#[test]
+fn required_controls_and_read_only_modes_are_validated() {
+    for content in [
+        "type: CheckBox\nid: check\ntext: {literal: Enabled}\nchecked: {bind: {path: enabled, mode: TwoWay}}",
+        "type: Radio\nid: radio\ntext: {literal: Video}\nselected: {bind: {path: mode, mode: TwoWay}}\nvalue: video",
+        "type: Slider\nid: slider\nvalue: {bind: {path: volume, mode: TwoWay}}\nmin: 0\nmax: 100\nstep: 1",
+        "type: Combo\nid: combo\nitems: {bind: {path: choices}}\nselected: {bind: {path: choice, mode: TwoWay}}",
+        "type: Image\nid: image\nsource: {bind: {path: frame}}",
+        "type: Tab\nid: tab\nselected: {bind: {path: tab, mode: TwoWay}}\npages:\n  - id: video\n    title: {literal: Video}\n    content: {type: Label, id: video_content, text: {literal: Video}}",
+        "type: Dialog\nid: dialog\ntitle: {literal: Settings}\nopen: {bind: {path: open, mode: TwoWay}}\ncontent: {type: Label, id: dialog_content, text: {literal: Dialog}}",
+    ] {
+        assert!(parse_yaml(&doc(content)).is_ok(), "{content}");
+    }
+    for content in [
+        "type: Label\nid: label\ntext: {bind: {path: text, mode: TwoWay}}",
+        "type: Slider\nid: slider\nvalue: {literal: 1}\nmin: 0\nmax: 100\nstep: 0",
+        "type: Tab\nid: tab\nselected: {literal: video}\npages: []",
+        "type: Grid\nid: grid\ncolumns: 4294967295",
+    ] {
+        assert!(parse_yaml(&doc(content)).is_err(), "{content}");
+    }
+}
 use wakui2_markup::*;
 
 fn doc(content: &str) -> String {
@@ -285,4 +307,23 @@ fn unsupported_or_invalid_structures_have_explicit_errors() {
     );
     assert!(parse(&source, "xml", "unsupported.xml").is_err());
     assert!(parse_yaml(&format!("{source}\n---\n{source}")).is_err());
+}
+
+#[test]
+fn control_diagnostics_locate_tab_modes_and_combined_spacing() {
+    let source = doc(
+        "{type: Tab, id: tabs, selected: {literal: first}, pages: [{id: first, title: {bind: {path: title, mode: TwoWay}}, content: {type: Label, id: label, text: {literal: hi}}}]}",
+    );
+    assert_eq!(
+        parse_yaml(&source).unwrap_err().path,
+        "root.content.pages[0].title.bind.mode"
+    );
+    let source =
+        doc("{type: Label, id: label, text: {literal: hi}, margin: 800000, padding: 800000}");
+    assert!(
+        parse_yaml(&source)
+            .unwrap_err()
+            .message
+            .contains("combined")
+    );
 }
