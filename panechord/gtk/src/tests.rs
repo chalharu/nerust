@@ -31,6 +31,48 @@ use futures::{FutureExt, channel::oneshot};
 use panechord_runtime::{Edges, Placement, Policy, ShutdownOutcome, run_async};
 use std::time::Duration;
 
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_menu_declaration_order_survives_rebuild() {
+    gtk::init().unwrap();
+    let view = View::new(Binding::constant("Menus".into()));
+    for (id, title) in [
+        ("file", "File"),
+        ("emulation", "Emulation"),
+        ("help", "Help"),
+    ] {
+        view.typed_menu(
+            id,
+            Binding::constant(title.into()),
+            Binding::constant(Vec::<MenuItem>::new()),
+            Rc::new(|_| true),
+        );
+    }
+    let titles = || {
+        (0..view.0.menus.n_items())
+            .map(|index| {
+                view.0
+                    .menus
+                    .item_attribute_value(index, "label", None)
+                    .unwrap()
+                    .get::<String>()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(titles(), ["File", "Emulation", "Help"]);
+    view.0
+        .menu_states
+        .borrow()
+        .get("file")
+        .unwrap()
+        .title
+        .replace("Files".into());
+    view.rebuild_menubar();
+    assert_eq!(titles(), ["Files", "Emulation", "Help"]);
+    view.close();
+}
+
 #[cfg(target_os = "linux")]
 #[path = "x11_test.rs"]
 mod x11;
