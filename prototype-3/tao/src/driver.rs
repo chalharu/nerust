@@ -172,7 +172,7 @@ impl Painter {
         .width(iced::Length::Fill)
         .height(iced::Length::Fill);
         let mut ui = UserInterface::build(
-            content,
+            view.scene(content.into()),
             bounds,
             std::mem::take(&mut self.cache),
             &mut self.renderer,
@@ -351,6 +351,9 @@ impl Desktop {
                         .set_source_surface(&image, 0.0, 0.0)
                         .map_err(|e| e.to_string())?;
                     context.paint().map_err(|e| e.to_string())?;
+                    if std::env::var_os("WAKUI_CONTROLS_REVIEW").is_some() {
+                        eprintln!("CONTROLS3 DRAW {width}x{height}");
+                    }
                     dispatch(&owner, messages);
                     Ok(())
                 }));

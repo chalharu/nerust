@@ -106,21 +106,44 @@ impl Drop for OwnedTemp {
     }
 }
 fn save_via(path: &Path, temp: &Path, config: &Config) -> Result<(), String> {
+    save_via_checked(path, temp, config, |_| Ok(()))
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SaveStage {
+    Create,
+    Write,
+    FileSync,
+    Rename,
+    #[cfg(unix)]
+    DirectorySync,
+}
+fn save_via_checked(
+    path: &Path,
+    temp: &Path,
+    config: &Config,
+    check: impl Fn(SaveStage) -> io::Result<()>,
+) -> Result<(), String> {
     config.validate()?;
     let mut bytes = serde_json::to_vec_pretty(config).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
     let result = (|| -> io::Result<()> {
+        check(SaveStage::Create)?;
         let mut file = OpenOptions::new().write(true).create_new(true).open(temp)?;
         let mut owned = OwnedTemp(Some(temp.to_owned()));
-        let written = file.write_all(&bytes).and_then(|_| file.sync_all());
+        let written = check(SaveStage::Write)
+            .and_then(|_| file.write_all(&bytes))
+            .and_then(|_| check(SaveStage::FileSync))
+            .and_then(|_| file.sync_all());
         // In particular on Windows, close the handle BEFORE cleanup on error.
         drop(file);
         written?;
+        check(SaveStage::Rename)?;
         fs::rename(temp, path)?;
         // Never unlink this path again after publication (it could be reused).
         owned.0.take();
         #[cfg(unix)]
         {
+            check(SaveStage::DirectorySync)?;
             let parent = path
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
@@ -162,6 +185,52 @@ impl Drop for Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn injected_save_failures_preserve_complete_json_and_cleanup_owned_temp() {
+        for stage in [
+            SaveStage::Create,
+            SaveStage::Write,
+            SaveStage::FileSync,
+            SaveStage::Rename,
+            SaveStage::DirectorySync,
+        ] {
+            for kind in [
+                io::ErrorKind::PermissionDenied,
+                io::ErrorKind::StorageFull,
+                io::ErrorKind::Other,
+            ] {
+                let sandbox = Sandbox::new().unwrap();
+                let path = sandbox.path();
+                let temp = sandbox.dir.join("injected.tmp");
+                save(&path, &Config::default()).unwrap();
+                let changed = Config {
+                    name: "New complete config".into(),
+                    ..Config::default()
+                };
+                let result = save_via_checked(&path, &temp, &changed, |current| {
+                    if current == stage {
+                        Err(io::Error::new(kind, format!("injected {stage:?}")))
+                    } else {
+                        Ok(())
+                    }
+                });
+                assert!(result.unwrap_err().contains("injected"));
+                assert!(!temp.exists(), "{stage:?}/{kind:?}");
+                assert_eq!(
+                    load(&path).unwrap(),
+                    if stage == SaveStage::DirectorySync {
+                        changed
+                    } else {
+                        Config::default()
+                    }
+                );
+                assert_eq!(fs::read_dir(&sandbox.dir).unwrap().count(), 2);
+                save(&path, &Config::default()).unwrap();
+                assert_eq!(load(&path).unwrap(), Config::default());
+            }
+        }
+    }
     #[test]
     fn atomic_roundtrip_and_replacement() {
         let sandbox = Sandbox::new().unwrap();

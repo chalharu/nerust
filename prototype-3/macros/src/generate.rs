@@ -376,6 +376,74 @@ fn control_inner(
             let value = binding(value, true)?;
             quote!(let _: () = #factory(&__wakui_view,&__wakui_parent,&__id,#value);)
         }
+        Control::CheckBox { text, checked, .. } => {
+            let text = binding(text, false)?;
+            let checked = binding(checked, true)?;
+            quote!(__wakui_view.checkbox(&__wakui_parent, &__id, #text, #checked);)
+        }
+        Control::Radio {
+            text,
+            selected,
+            value,
+            ..
+        } => {
+            let text = binding(text, false)?;
+            let selected = binding(selected, true)?;
+            quote!(__wakui_view.radio(&__wakui_parent, &__id, #text, #selected, #value);)
+        }
+        Control::Slider {
+            value,
+            min,
+            max,
+            step,
+            ..
+        } => {
+            let value = binding(value, true)?;
+            quote!(__wakui_view.slider(&__wakui_parent, &__id, #value, ::wakui2_runtime::SliderRange { min: #min, max: #max, step: #step });)
+        }
+        Control::Combo {
+            items, selected, ..
+        } => {
+            let items = binding(items, false)?;
+            let selected = binding(selected, true)?;
+            quote!(__wakui_view.combo(&__wakui_parent, &__id, #items, #selected);)
+        }
+        Control::Image { source, .. } => {
+            let source = binding(source, false)?;
+            quote!(__wakui_view.image(&__wakui_parent, &__id, #source);)
+        }
+        Control::Tab {
+            selected, pages, ..
+        } => {
+            let selected = binding(selected, true)?;
+            let mut generated = Vec::new();
+            for page in pages {
+                let key = &page.id;
+                let id = if scoped.is_some() {
+                    quote!(::std::format!("{}/{}", __scope, #key))
+                } else {
+                    quote!(::std::string::String::from(#key))
+                };
+                let title = binding(&page.title, false)?;
+                let body = control(doc, &page.content, backend, scoped)?;
+                generated.push(quote!({
+                    let __wakui_parent = __wakui_view.tab_page(&__tab, &#id, #title, #key);
+                    #body
+                }));
+            }
+            quote!(let __tab = __wakui_view.tab(&__wakui_parent, &__id, #selected); #(#generated)* __wakui_view.finish_tab(&__tab).expect("invalid Tab selection");)
+        }
+        Control::Dialog {
+            title,
+            open,
+            content,
+            ..
+        } => {
+            let title = binding(title, false)?;
+            let open = binding(open, true)?;
+            let body = control(doc, content, backend, scoped)?;
+            quote!(let __wakui_parent = __wakui_view.dialog(&__wakui_parent, &__id, #title, #open); #body)
+        }
         Control::ItemsControl {
             items,
             item_template,
@@ -427,6 +495,35 @@ mod tests {
     fn document(content: &str) -> Document {
         wakui2_markup::parse(&format!("schema_version: 2\nroot:\n  type: Window\n  id: w\n  title: {{literal: Title}}\n  content: {content}\n"),"yaml","test.yaml").unwrap()
     }
+    #[test]
+    fn required_controls_emit_typed_backend_calls_and_nested_content() {
+        let d = document(
+            "{type: StackLayout, id: screen, children: [\
+            {type: CheckBox, id: check, text: {literal: Enabled}, checked: {bind: {path: enabled, mode: TwoWay}}},\
+            {type: Radio, id: radio, text: {literal: Video}, selected: {bind: {path: choice, mode: TwoWay}}, value: video},\
+            {type: Slider, id: slider, value: {bind: {path: volume, mode: TwoWay}}, min: 0, max: 100, step: 1},\
+            {type: Combo, id: combo, items: {bind: {path: choices}}, selected: {bind: {path: choice, mode: TwoWay}}},\
+            {type: Image, id: image, source: {bind: {path: frame}}},\
+            {type: Tab, id: tabs, selected: {bind: {path: tab, mode: TwoWay}}, pages: [{id: video, title: {literal: Video}, content: {type: Label, id: video_content, text: {literal: Video}}}]},\
+            {type: Dialog, id: dialog, title: {literal: Settings}, open: {bind: {path: open, mode: TwoWay}}, content: {type: Label, id: dialog_content, text: {literal: Dialog}}}\
+        ]}",
+        );
+        let code = generate(&d, &syn::parse_quote!(backend), false).unwrap();
+        syn::parse2::<syn::Expr>(quote!({ #code })).unwrap();
+        for method in [
+            "checkbox",
+            "radio",
+            "slider",
+            "combo",
+            "image",
+            "tab_page",
+            "dialog",
+            "dialog_content",
+        ] {
+            assert!(code.to_string().contains(method), "{method}");
+        }
+    }
+
     #[test]
     fn window_user_id_does_not_identify_the_backend_root() {
         let d = document("{type: Label, id: label, text: {literal: hello}}");

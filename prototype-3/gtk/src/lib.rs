@@ -2,6 +2,7 @@
 //! `GtkHost` attaches to an existing GTK main loop; `run` owns a native loop.
 //! Virtual rows have a fixed, clipped height in logical pixels (no overscan).
 //! Item keys must be unique; invalid snapshots leave the last valid UI intact.
+mod controls;
 pub use gtk;
 
 use std::{
@@ -33,6 +34,7 @@ enum ParentKind {
     Grid(u32),
     Flex,
     Absolute,
+    Notebook,
 }
 
 impl Parent {
@@ -70,6 +72,12 @@ impl Parent {
                 .downcast_ref::<gtk::Fixed>()
                 .unwrap()
                 .put(widget, 0.0, 0.0),
+            ParentKind::Notebook => {
+                self.widget
+                    .downcast_ref::<gtk::Notebook>()
+                    .unwrap()
+                    .append_page(widget, None::<&gtk::Widget>);
+            }
         }
     }
 
@@ -98,6 +106,12 @@ impl Parent {
                 .downcast_ref::<gtk::Fixed>()
                 .unwrap()
                 .remove(widget),
+            ParentKind::Notebook => {
+                let notebook = self.widget.downcast_ref::<gtk::Notebook>().unwrap();
+                if let Some(page) = notebook.page_num(widget) {
+                    notebook.remove_page(Some(page));
+                }
+            }
         }
     }
 }
@@ -155,6 +169,8 @@ struct Inner {
     resources: RefCell<HashMap<String, Resources>>,
     lists: RefCell<HashMap<String, Rc<dyn ListControl>>>,
     actions: RefCell<HashMap<String, Action>>,
+    control_actions: RefCell<HashMap<String, controls::Action>>,
+    tabs: RefCell<HashMap<String, Rc<controls::Tab>>>,
     on_close: RefCell<Vec<Rc<dyn Fn()>>>,
     on_close_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting_close: Cell<bool>,
@@ -197,6 +213,8 @@ impl Inner {
         // Never run token, signal or application destructors under a registry borrow.
         drop(self.resources.take());
         drop(self.lists.take());
+        drop(self.control_actions.take());
+        drop(self.tabs.take());
         self.menus.remove_all();
         self.window.remove_controller(&self.shortcuts);
         for (_, state) in self.menu_states.take() {
@@ -273,6 +291,8 @@ impl View {
             resources: RefCell::default(),
             lists: RefCell::default(),
             actions: RefCell::default(),
+            control_actions: RefCell::default(),
+            tabs: RefCell::default(),
             menu_states: RefCell::default(),
             on_close: RefCell::default(),
             on_close_request: RefCell::default(),
@@ -411,6 +431,11 @@ impl View {
     }
 
     fn cleanup(&self, prefix: &str) {
+        self.0
+            .control_actions
+            .borrow_mut()
+            .retain(|id, _| !scoped(id, prefix));
+        self.0.tabs.borrow_mut().retain(|id, _| !scoped(id, prefix));
         let resource_ids: Vec<_> = self
             .0
             .resources
@@ -474,6 +499,23 @@ impl View {
     }
 
     pub fn layout(&self, parent: &Parent, id: &str, layout: Layout) -> Parent {
+        self.try_layout(parent, id, layout).expect("invalid layout")
+    }
+    pub fn try_layout(&self, parent: &Parent, id: &str, layout: Layout) -> Result<Parent, String> {
+        layout.validate().map_err(str::to_owned)?;
+        if self.0.closed.get() || id.is_empty() || self.0.nodes.borrow().contains_key(id) {
+            return Err("closed view, empty or duplicate layout id".into());
+        }
+        if !parent
+            .widget
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok())
+            .is_some_and(|window| {
+                window == self.0.window || window.transient_for().as_ref() == Some(&self.0.window)
+            })
+        {
+            return Err("foreign or unavailable layout parent".into());
+        }
         let result = match layout {
             Layout::Stack { horizontal, gap } => {
                 let widget = gtk::Box::new(
@@ -514,7 +556,7 @@ impl View {
             Layout::Absolute => Parent::new(&gtk::Fixed::new(), ParentKind::Absolute),
         };
         self.mount_native(parent, id, &result.widget);
-        result
+        Ok(result)
     }
 
     pub fn style(&self, id: &str, style: Style) {
@@ -1114,6 +1156,18 @@ impl View {
         Ok(())
     }
     pub fn click(&self, id: &str) -> Result<(), String> {
+        if let Ok(check) = self.widget::<gtk::CheckButton>(id) {
+            if !check.is_sensitive() {
+                return Err("read-only control".into());
+            }
+            let active = if self.0.control_actions.borrow().contains_key(id) {
+                !check.is_active()
+            } else {
+                true
+            };
+            check.set_active(active);
+            return Ok(());
+        }
         let button = self.widget::<gtk::Button>(id)?;
         if !button.is_sensitive() {
             return Err(format!("disabled button: {id}"));

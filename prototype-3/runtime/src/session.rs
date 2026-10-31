@@ -188,6 +188,15 @@ impl ShutdownCoordinator {
         );
         self.core.phase.set(ShutdownPhase::Running);
         let cancel = self.core.cancel.borrow_mut().take();
+        let aborts: Vec<_> = self
+            .windows()
+            .into_iter()
+            .filter_map(|window| window.upgrade())
+            .filter_map(|window| window.abort.borrow_mut().take())
+            .collect();
+        for abort in aborts {
+            abort.abort();
+        }
         if let Some(cancel) = cancel {
             let _ = cancel.send(());
         }
