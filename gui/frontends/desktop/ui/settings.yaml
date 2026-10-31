@@ -1,0 +1,142 @@
+schema_version: 2
+root:
+  type: Window
+  id: settings_window
+  title: {literal: "nerust Settings"}
+  content:
+    type: StackLayout
+    id: content
+    padding: 12
+    gap: 12
+    children:
+      - type: Tab
+        id: pages
+        position: Left
+        selected: {bind: {path: page, source: External, mode: TwoWay}}
+        pages:
+          - id: general
+            title: {literal: General}
+            content:
+              type: StackLayout
+              id: general_fields
+              padding: 12
+              gap: 8
+              children:
+                - {type: Label, id: language_label, text: {literal: Language}}
+                - type: Combo
+                  id: language
+                  items: {bind: {path: language.items, source: External}}
+                  selected: {bind: {path: language.selected, source: External, mode: TwoWay}}
+                - {type: Label, id: storage_label, text: {literal: Storage}}
+                - type: Combo
+                  id: storage
+                  items: {bind: {path: storage.items, source: External}}
+                  selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}
+                - type: TextBox
+                  id: storage_directory
+                  visible: {bind: {path: directory_visible, source: External}}
+                  text: {bind: {path: directory, source: External, mode: TwoWay}}
+          - id: video
+            title: {literal: Video}
+            content:
+              type: StackLayout
+              id: video_fields
+              padding: 12
+              gap: 8
+              children:
+                - {type: CheckBox, id: fullscreen, text: {literal: Start fullscreen}, checked: {bind: {path: fullscreen, source: External, mode: TwoWay}}}
+                - {type: CheckBox, id: vsync, text: {literal: VSync}, checked: {bind: {path: vsync, source: External, mode: TwoWay}}}
+                - {type: Label, id: scaling_label, text: {literal: Scaling}}
+                - type: Combo
+                  id: scaling
+                  items: {bind: {path: scaling.items, source: External}}
+                  selected: {bind: {path: scaling.selected, source: External, mode: TwoWay}}
+          - id: audio
+            title: {literal: Audio}
+            content:
+              type: StackLayout
+              id: audio_fields
+              padding: 12
+              gap: 8
+              children:
+                - {type: CheckBox, id: mute, text: {literal: Mute}, checked: {bind: {path: muted, source: External, mode: TwoWay}}}
+                - {type: Label, id: volume_label, text: {bind: {path: volume_label, source: External}}}
+                - {type: Slider, id: volume, value: {bind: {path: volume, source: External, mode: TwoWay}}, min: 0, max: 100, step: 1}
+                - {type: Label, id: rate_label, text: {literal: Sample rate}}
+                - type: Combo
+                  id: sample_rate
+                  items: {bind: {path: sample_rate.items, source: External}}
+                  selected: {bind: {path: sample_rate.selected, source: External, mode: TwoWay}}
+                - {type: Label, id: latency_label, text: {bind: {path: latency_label, source: External}}}
+                - {type: Slider, id: latency, value: {bind: {path: latency, source: External, mode: TwoWay}}, min: 10, max: 200, step: 1}
+          - id: notifications
+            title: {literal: Notifications}
+            content:
+              type: Scroll
+              id: notification_viewport
+              content:
+                type: Grid
+                id: notification_fields
+                padding: 12
+                columns: 2
+                gap: 12
+                children:
+                  - type: StackLayout
+                    id: information
+                    gap: 8
+                    children:
+                      - {type: Label, id: info_label, text: {literal: Information}}
+                      - {type: CheckBox, id: info_enabled, text: {literal: Enabled}, checked: {bind: {path: info_enabled, source: External, mode: TwoWay}}}
+                      - {type: Label, id: info_duration_label, text: {literal: "Duration (ms)"}}
+                      - {type: TextBox, id: info_duration, text: {bind: {path: info_duration, source: External, mode: TwoWay}}}
+                      - {type: Label, id: info_color_label, text: {literal: Color}}
+                      - {type: Combo, id: info_color, items: {bind: {path: info_color.items, source: External}}, selected: {bind: {path: info_color.selected, source: External, mode: TwoWay}}}
+                  - type: StackLayout
+                    id: warning
+                    gap: 8
+                    children:
+                      - {type: Label, id: warning_label, text: {literal: Warning}}
+                      - {type: CheckBox, id: warning_enabled, text: {literal: Enabled}, checked: {bind: {path: warning_enabled, source: External, mode: TwoWay}}}
+                      - {type: Label, id: warning_duration_label, text: {literal: "Duration (ms)"}}
+                      - {type: TextBox, id: warning_duration, text: {bind: {path: warning_duration, source: External, mode: TwoWay}}}
+                      - {type: Label, id: warning_color_label, text: {literal: Color}}
+                      - {type: Combo, id: warning_color, items: {bind: {path: warning_color.items, source: External}}, selected: {bind: {path: warning_color.selected, source: External, mode: TwoWay}}}
+                  - type: StackLayout
+                    id: error
+                    gap: 8
+                    children:
+                      - {type: Label, id: error_label, text: {literal: Error}}
+                      - {type: CheckBox, id: error_enabled, text: {literal: On screen}, checked: {bind: {path: error_enabled, source: External, mode: TwoWay}}}
+                      - {type: CheckBox, id: error_modal, text: {literal: Modal dialog}, checked: {bind: {path: error_modal, source: External, mode: TwoWay}}}
+                      - {type: Label, id: error_color_label, text: {literal: Color}}
+                      - {type: Combo, id: error_color, items: {bind: {path: error_color.items, source: External}}, selected: {bind: {path: error_color.selected, source: External, mode: TwoWay}}}
+                  - type: StackLayout
+                    id: notification_display
+                    gap: 8
+                    children:
+                      - {type: Label, id: position_label, text: {literal: Notification display}}
+                      - {type: Combo, id: position, items: {bind: {path: position.items, source: External}}, selected: {bind: {path: position.selected, source: External, mode: TwoWay}}}
+                      - {type: Combo, id: area, items: {bind: {path: area.items, source: External}}, selected: {bind: {path: area.selected, source: External, mode: TwoWay}}}
+                  - type: StackLayout
+                    id: status_display
+                    gap: 8
+                    children:
+                      - {type: Label, id: status_display_label, text: {literal: Status display}}
+                      - {type: CheckBox, id: status_enabled, text: {literal: Enabled}, checked: {bind: {path: status_enabled, source: External, mode: TwoWay}}}
+                      - {type: Combo, id: status_position, items: {bind: {path: status_position.items, source: External}}, selected: {bind: {path: status_position.selected, source: External, mode: TwoWay}}}
+                      - {type: Combo, id: status_area, items: {bind: {path: status_area.items, source: External}}, selected: {bind: {path: status_area.selected, source: External, mode: TwoWay}}}
+      - {type: Label, id: status, text: {bind: {path: status, source: External}}}
+      - {type: Button, id: apply, text: {literal: Apply}, command: apply}
+      - type: StackLayout
+        id: confirmation
+        gap: 8
+        visible: {bind: {path: confirmation, source: External}}
+        children:
+          - {type: Label, id: confirm_label, text: {literal: "Discard unsaved changes?"}}
+          - type: StackLayout
+            id: confirm_actions
+            orientation: Horizontal
+            gap: 8
+            children:
+              - {type: Button, id: discard, text: {literal: Discard}, command: discard}
+              - {type: Button, id: keep, text: {literal: Keep Editing}, command: keep}

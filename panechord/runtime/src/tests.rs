@@ -1,4 +1,25 @@
 #[test]
+fn default_grid_positions_follow_declaration_order_without_losing_explicit_spans() {
+    let placement = Placement::default();
+    assert_eq!(placement.grid_position(0, 2), (0, 0));
+    assert_eq!(placement.grid_position(1, 2), (0, 1));
+    assert_eq!(placement.grid_position(2, 2), (1, 0));
+    assert_eq!(placement.grid_position(4, 2), (2, 0));
+    let explicit = Placement {
+        row: 3,
+        column: 1,
+        row_span: 2,
+        ..Placement::default()
+    };
+    assert_eq!(explicit.grid_position(0, 2), (3, 1));
+    let origin_span = Placement {
+        column_span: 2,
+        ..Placement::default()
+    };
+    assert_eq!(origin_span.grid_position(4, 2), (0, 0));
+}
+
+#[test]
 fn nested_menu_validates_complete_tree_and_inherits_enablement() {
     let item = MenuItem {
         id: "save".into(),
@@ -88,6 +109,43 @@ struct Model {
 }
 fn number(s: &Store<Model>) -> Binding<i32> {
     s.bind(|s| s.value, Some(|s, v| s.value = v))
+}
+
+#[test]
+fn combined_bindings_update_reentrantly_and_unsubscribe_all_sources() {
+    let (mut pool, store) = local(Model::default());
+    let combined = number(&store)
+        .zip(&store.bind(|model| model.enabled, None))
+        .distinct();
+    let (values, token) = record(&combined);
+    assert_eq!(*values.borrow(), vec![(0, false)]);
+    assert!(!combined.is_writable());
+    let output = store.clone();
+    let reentrant = combined.subscribe(Rc::new(move |(value, enabled)| {
+        if value == 1 && !enabled {
+            let _ = output.update(|model| model.enabled = true);
+        }
+    }));
+    assert!(number(&store).set(1));
+    pool.run_until_stalled();
+    assert_eq!(values.borrow().last(), Some(&(1, true)));
+    drop(token);
+    drop(reentrant);
+    let count = values.borrow().len();
+    assert!(number(&store).set(2));
+    pool.run_until_stalled();
+    assert_eq!(values.borrow().len(), count);
+    let sequence = Binding::sequence(vec![number(&store), Binding::constant(9)]).distinct();
+    let (values, token) = record(&sequence);
+    assert_eq!(*values.borrow(), vec![vec![2, 9]]);
+    assert!(number(&store).set(3));
+    pool.run_until_stalled();
+    assert_eq!(values.borrow().last(), Some(&vec![3, 9]));
+    drop(token);
+    let count = values.borrow().len();
+    assert!(number(&store).set(4));
+    pool.run_until_stalled();
+    assert_eq!(values.borrow().len(), count);
 }
 
 #[test]

@@ -2,6 +2,7 @@
 //! Native controls own editing/marked text; Rust owns bindings and scoped tokens.
 #![cfg(target_os = "macos")]
 mod controls;
+mod input;
 
 use futures::future::LocalBoxFuture;
 use panechord_runtime::{
@@ -122,6 +123,7 @@ unsafe extern "C" {
 pub struct Parent(String, Weak<Inner>);
 
 type Handler = Rc<dyn Fn(String)>;
+type SurfaceEventHandler = Rc<dyn Fn(&panechord_runtime::WindowEvent)>;
 type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 type Refresh = Rc<dyn Fn(&View)>;
 
@@ -150,6 +152,7 @@ struct Inner {
     tabs: RefCell<HashMap<String, controls::TabState>>,
     close_handlers: RefCell<Vec<Rc<dyn Fn()>>>,
     close_request: RefCell<Option<Rc<dyn Fn()>>>,
+    surface_event: RefCell<Option<SurfaceEventHandler>>,
     quit_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting: Cell<bool>,
     closed: Cell<bool>,
@@ -163,6 +166,7 @@ impl Inner {
             return;
         }
         drop(self.close_request.take());
+        drop(self.surface_event.take());
         drop(self.quit_request.take());
         drop(self.scopes.take());
         drop(self.handlers.take());
@@ -226,7 +230,12 @@ unsafe extern "C" fn dispatch(
             String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(text, text_len) })
                 .into_owned()
         };
-        if kind == 1 || kind == 3 {
+        if let Some(event) = input::event(kind, &text) {
+            let callback = inner.surface_event.borrow().clone();
+            if let Some(callback) = callback {
+                callback(&event);
+            }
+        } else if kind == 1 || kind == 3 {
             if inner.requesting.replace(true) {
                 return;
             }
@@ -300,6 +309,7 @@ impl View {
             tabs: RefCell::new(HashMap::new()),
             close_handlers: RefCell::new(Vec::new()),
             close_request: RefCell::new(None),
+            surface_event: RefCell::new(None),
             quit_request: RefCell::new(None),
             requesting: Cell::new(false),
             closed: Cell::new(false),
@@ -316,6 +326,11 @@ impl View {
 
     pub fn root(&self) -> Parent {
         Parent("__root".into(), Rc::downgrade(&self.0))
+    }
+    pub fn on_surface_event(&self, callback: SurfaceEventHandler) {
+        if !self.0.closed.get() {
+            self.0.surface_event.replace(Some(callback));
+        }
     }
     pub fn downgrade(&self) -> WeakView {
         WeakView(Rc::downgrade(&self.0))
@@ -462,6 +477,25 @@ impl View {
         self.add(parent, id, i32::from(horizontal), f64::from(gap));
         Ok(Parent(id.into(), Rc::downgrade(&self.0)))
     }
+    pub fn try_scroll(
+        &self,
+        parent: &Parent,
+        id: &str,
+        horizontal: bool,
+    ) -> Result<Parent, String> {
+        if self.0.closed.get()
+            || !parent.1.ptr_eq(&Rc::downgrade(&self.0))
+            || !self.0.nodes.borrow().contains(&parent.0)
+        {
+            return Err("closed view or unavailable parent".into());
+        }
+        if id.is_empty() || self.0.nodes.borrow().contains(id) {
+            return Err("empty or duplicate scroll id".into());
+        }
+        self.add(parent, id, 15, f64::from(horizontal));
+        Ok(Parent(id.into(), Rc::downgrade(&self.0)))
+    }
+
     pub fn style(&self, id: &str, style: Style) {
         if let Err(error) = self.try_style(id, style) {
             self.0.error.replace(Some(error));

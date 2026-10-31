@@ -1,4 +1,3 @@
-mod input;
 mod render;
 mod session;
 mod settings;
@@ -50,7 +49,8 @@ pub fn run(
             view::Model::new(application.borrow().state()),
             host.executor(),
         );
-        let view = view::build(model.clone());
+        let actions = Rc::new(RefCell::new(None));
+        let view = view::build(model.clone(), actions.clone());
         let app = application.clone();
         let render = renderer.clone();
         let output = model.clone();
@@ -60,146 +60,142 @@ pub fn run(
         let settings_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
         let settings_host = host.clone();
         let settings_session = session.clone();
-        view::menus(
-            &view,
-            &model,
-            Rc::new(move |intent| {
-                if app.borrow().state().closed {
-                    return false;
-                }
-                match intent {
-                    view::Intent::Settings => {
-                        if let Some(view) = settings_window
-                            .borrow()
-                            .as_ref()
-                            .and_then(|view| view.upgrade())
-                        {
-                            view.present();
-                            return true;
-                        }
-                        let editor = match settings::Editor::new(
-                            app.borrow().settings().clone(),
-                            app.borrow().session(),
-                            executor.clone(),
-                        ) {
-                            Ok(editor) => editor,
-                            Err(error) => {
-                                let _ = output.update(move |model| model.notice = Some(error));
-                                return false;
-                            }
-                        };
-                        let applied = app.clone();
-                        let quit = weak_view.clone();
-                        let view = match editor.build(
-                            Rc::new(move |snapshot| applied.borrow_mut().apply_settings(snapshot)),
-                            Rc::new(move || {
-                                if let Some(view) = quit.upgrade() {
-                                    view.request_quit();
-                                }
-                            }),
-                        ) {
-                            Ok(view) => view,
-                            Err(error) => {
-                                let _ = output.update(move |model| model.notice = Some(error));
-                                return false;
-                            }
-                        };
-                        let lease = Rc::new(RefCell::new(
-                            app.borrow_mut().acquire_pause(PauseReason::Settings),
-                        ));
-                        let released = app.clone();
-                        let closed = editor.clone();
-                        view.on_close(Rc::new(move || {
-                            closed.close();
-                            if let Some(lease) = lease.borrow_mut().take() {
-                                released.borrow_mut().release_pause(lease);
-                            }
-                        }));
-                        let weak = view.downgrade();
-                        let close = weak.clone();
-                        let confirm = editor.clone();
-                        let cancel = editor.clone();
-                        if let Err(error) = settings_host.register_view(
-                            &settings_session,
-                            "settings",
-                            &view,
-                            panechord::WindowHooks {
-                                confirm: Rc::new(move || {
-                                    let allowed = confirm.confirm_close(true);
-                                    Box::pin(async move { allowed })
-                                }),
-                                cancel: Rc::new(move || cancel.cancel_close()),
-                                drain: Rc::new(|| Box::pin(async {})),
-                                close: Rc::new(move || {
-                                    if let Some(view) = close.upgrade() {
-                                        view.close();
-                                    }
-                                }),
-                            },
-                        ) {
-                            view.close();
+        actions.replace(Some(Rc::new(move |intent| {
+            if app.borrow().state().closed {
+                return false;
+            }
+            match intent {
+                view::Intent::Settings => {
+                    if let Some(view) = settings_window
+                        .borrow()
+                        .as_ref()
+                        .and_then(|view| view.upgrade())
+                    {
+                        view.present();
+                        return true;
+                    }
+                    let editor = match settings::Editor::new(
+                        app.borrow().settings().clone(),
+                        app.borrow().session(),
+                        executor.clone(),
+                    ) {
+                        Ok(editor) => editor,
+                        Err(error) => {
                             let _ = output.update(move |model| model.notice = Some(error));
                             return false;
                         }
-                        view.on_close_request(Rc::new(move || {
-                            if editor.confirm_close(false)
-                                && let Some(view) = weak.upgrade()
-                            {
-                                view.close();
+                    };
+                    let applied = app.clone();
+                    let quit = weak_view.clone();
+                    let view = match editor.build(
+                        Rc::new(move |snapshot| applied.borrow_mut().apply_settings(snapshot)),
+                        Rc::new(move || {
+                            if let Some(view) = quit.upgrade() {
+                                view.request_quit();
                             }
-                        }));
-                        settings_window.replace(Some(view.downgrade()));
-                        true
-                    }
-                    view::Intent::Open => {
-                        if picker_active.replace(true) {
+                        }),
+                    ) {
+                        Ok(view) => view,
+                        Err(error) => {
+                            let _ = output.update(move |model| model.notice = Some(error));
                             return false;
                         }
-                        let lease = app.borrow_mut().acquire_pause(PauseReason::Modal);
-                        let app = app.clone();
-                        let output = output.clone();
-                        let picker = picker_active.clone();
-                        let weak_view = weak_view.clone();
-                        executor.spawn(Box::pin(async move {
-                            let selected = rfd::AsyncFileDialog::new().pick_file().await;
-                            picker.set(false);
-                            let mut app = app.borrow_mut();
-                            let error = if weak_view.upgrade().is_some() {
-                                selected.and_then(|file| app.load_media(file.path()).err())
-                            } else {
-                                None
-                            };
-                            if let Some(lease) = lease {
-                                app.release_pause(lease);
-                            }
-                            drop(app);
-                            let _ = output.update(move |model| model.notice = error);
-                        }));
-                        true
-                    }
-                    view::Intent::TogglePause => {
-                        app.borrow_mut().toggle_pause();
-                        true
-                    }
-                    view::Intent::Session(action) => {
-                        let result = app.borrow_mut().execute(action);
-                        let executed = result.as_ref().is_ok_and(|executed| *executed);
-                        let _ = output.update(move |model| model.notice = result.err());
-                        executed
-                    }
-                    view::Intent::Fullscreen => {
-                        render.borrow().toggle_fullscreen();
-                        true
-                    }
-                    view::Intent::Quit => {
-                        if let Some(view) = weak_view.upgrade() {
-                            view.request_quit();
+                    };
+                    let lease = Rc::new(RefCell::new(
+                        app.borrow_mut().acquire_pause(PauseReason::Settings),
+                    ));
+                    let released = app.clone();
+                    let closed = editor.clone();
+                    view.on_close(Rc::new(move || {
+                        closed.close();
+                        if let Some(lease) = lease.borrow_mut().take() {
+                            released.borrow_mut().release_pause(lease);
                         }
-                        true
+                    }));
+                    let weak = view.downgrade();
+                    let close = weak.clone();
+                    let confirm = editor.clone();
+                    let cancel = editor.clone();
+                    if let Err(error) = settings_host.register_view(
+                        &settings_session,
+                        "settings",
+                        &view,
+                        panechord::WindowHooks {
+                            confirm: Rc::new(move || {
+                                let allowed = confirm.confirm_close(true);
+                                Box::pin(async move { allowed })
+                            }),
+                            cancel: Rc::new(move || cancel.cancel_close()),
+                            drain: Rc::new(|| Box::pin(async {})),
+                            close: Rc::new(move || {
+                                if let Some(view) = close.upgrade() {
+                                    view.close();
+                                }
+                            }),
+                        },
+                    ) {
+                        view.close();
+                        let _ = output.update(move |model| model.notice = Some(error));
+                        return false;
                     }
+                    view.on_close_request(Rc::new(move || {
+                        if editor.confirm_close(false)
+                            && let Some(view) = weak.upgrade()
+                        {
+                            view.close();
+                        }
+                    }));
+                    settings_window.replace(Some(view.downgrade()));
+                    true
                 }
-            }),
-        );
+                view::Intent::Open => {
+                    if picker_active.replace(true) {
+                        return false;
+                    }
+                    let lease = app.borrow_mut().acquire_pause(PauseReason::Modal);
+                    let app = app.clone();
+                    let output = output.clone();
+                    let picker = picker_active.clone();
+                    let weak_view = weak_view.clone();
+                    executor.spawn(Box::pin(async move {
+                        let selected = rfd::AsyncFileDialog::new().pick_file().await;
+                        picker.set(false);
+                        let mut app = app.borrow_mut();
+                        let error = if weak_view.upgrade().is_some() {
+                            selected.and_then(|file| app.load_media(file.path()).err())
+                        } else {
+                            None
+                        };
+                        if let Some(lease) = lease {
+                            app.release_pause(lease);
+                        }
+                        drop(app);
+                        let _ = output.update(move |model| model.notice = error);
+                    }));
+                    true
+                }
+                view::Intent::TogglePause => {
+                    app.borrow_mut().toggle_pause();
+                    true
+                }
+                view::Intent::Session(action) => {
+                    let result = app.borrow_mut().execute(action);
+                    let executed = result.as_ref().is_ok_and(|executed| *executed);
+                    let _ = output.update(move |model| model.notice = result.err());
+                    executed
+                }
+                view::Intent::Fullscreen => {
+                    render.borrow().toggle_fullscreen();
+                    true
+                }
+                view::Intent::Quit => {
+                    if let Some(view) = weak_view.upgrade() {
+                        view.request_quit();
+                    }
+                    true
+                }
+            }
+        })));
         let render = renderer.clone();
         view.on_surface_ready(move |window| {
             render.borrow_mut().set_window(window);
@@ -227,7 +223,7 @@ pub fn run(
                     repeat: false,
                     synthetic: false,
                 } => {
-                    let Some(key) = input::key(key) else {
+                    let Some(key) = SessionAdapter::key(key) else {
                         return;
                     };
                     let result = match app.key_event(key, *pressed) {
@@ -235,8 +231,10 @@ pub fn run(
                             app.toggle_pause();
                             Ok(())
                         }
-                        Some(KeyboardShortcut::Session(action)) => input::session_action(action)
-                            .map_or(Ok(()), |action| app.execute(action).map(|_| ())),
+                        Some(KeyboardShortcut::Session(action)) => {
+                            SessionAdapter::session_action(action)
+                                .map_or(Ok(()), |action| app.execute(action).map(|_| ()))
+                        }
                         Some(KeyboardShortcut::ToggleFullscreen) => {
                             render.borrow().toggle_fullscreen();
                             Ok(())
