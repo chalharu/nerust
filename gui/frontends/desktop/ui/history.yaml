@@ -1,16 +1,4 @@
 schema_version: 2
-templates:
-  history_row:
-    root:
-      type: StackLayout
-      id: row
-      orientation: Horizontal
-      gap: 12
-      children:
-        - {type: Label, id: datetime, style: {text: {role: Code, scale: 0.8333333}, placement: {width: 170}}, text: {bind: {path: datetime}}}
-        - {type: Label, id: level, style_binding: {bind: {path: level_style}}, text: {bind: {path: level}}}
-        - {type: Label, id: module, style: {text: {role: Code, scale: 0.8333333}, placement: {width: 120}}, text: {bind: {path: module}}}
-        - {type: Label, id: message, text: {bind: {path: message}}}
 root:
   type: Window
   id: history_window
@@ -35,21 +23,5 @@ root:
             style: {vertical_alignment: Center}
             children:
               - {type: Label, id: count, style: {horizontal_alignment: End}, text: {bind: {path: count, source: External}}}
-      - type: StackLayout
-        id: headers
-        orientation: Horizontal
-        gap: 12
-        children:
-          - {type: Label, id: datetime_label, style: {text: {role: Heading}, placement: {width: 170}}, text: {bind: {path: datetime_label, source: External}}}
-          - {type: Label, id: severity_label, style: {text: {role: Heading}, placement: {width: 70}}, text: {bind: {path: severity_label, source: External}}}
-          - {type: Label, id: module_label, style: {text: {role: Heading}, placement: {width: 120}}, text: {bind: {path: module_label, source: External}}}
-          - {type: Label, id: message_label, style: {text: {role: Heading}}, text: {bind: {path: message_label, source: External}}}
-      - type: ItemsControl
-        id: table
-        style: {vertical_alignment: Stretch}
-        visible: {bind: {path: populated, source: External}}
-        items: {bind: {path: rows, source: External}}
-        viewport: {bind: {path: viewport, source: External}}
-        item_template: history_row
-      - {type: Label, id: empty, style: {vertical_alignment: Stretch, placement: {height: 264}}, visible: {bind: {path: empty, source: External}}, text: {bind: {path: empty_label, source: External}}}
+      - {type: Table, id: table, style: {vertical_alignment: Stretch, placement: {height: 300}}, source: {bind: {path: table, source: External}}}
       - {type: Button, id: close, style: {horizontal_alignment: End, vertical_alignment: End}, text: {bind: {path: close_label, source: External}}, command: close}

@@ -7,6 +7,122 @@ func string(_ bytes: UnsafePointer<UInt8>?, _ count: Int) -> String {
     return String(decoding: UnsafeBufferPointer(start: bytes, count: count), as: UTF8.self)
 }
 
+struct TableDefinition: Decodable {
+    struct Column: Decodable {
+        let title: String
+        let width: Double?
+        let role: Int
+        let scale: Double
+        let foreground: [Int]?
+        let overflow: Int
+        let stretch: Bool
+        var font: NSFont {
+            let size = NSFont.systemFontSize * scale
+            return role == 2 ? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+                : role == 1 ? NSFont.boldSystemFont(ofSize: size * 1.2) : NSFont.systemFont(ofSize: size)
+        }
+    }
+    struct Cell: Decodable { let text: String; let foreground: [Int]? }
+    struct Row: Decodable { let key: String; let cells: [Cell] }
+    let columns: [Column]
+    let rows: [Row]
+    let emptyText: String
+    let columnGap: Double
+    let rowGap: Double
+}
+
+@MainActor
+final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelegate {
+    let table = NSTableView()
+    let empty = NSTextField(labelWithString: "")
+    var definition: TableDefinition?
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 264))
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        drawsBackground = false
+        documentView = table
+        table.dataSource = self
+        table.delegate = self
+        table.allowsEmptySelection = true
+        table.allowsColumnReordering = false
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        contentView.addSubview(empty)
+        empty.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([empty.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            empty.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func update(_ text: String) {
+        guard let bytes = text.data(using: .utf8), let next = try? JSONDecoder().decode(TableDefinition.self, from: bytes) else { return }
+        let origin = contentView.bounds.origin
+        let columnsChanged = definition?.columns.map { $0.title } != next.columns.map { $0.title }
+            || definition?.columns.map { $0.width } != next.columns.map { $0.width }
+        definition = next
+        empty.stringValue = next.emptyText
+        empty.isHidden = !next.rows.isEmpty
+        if columnsChanged {
+            for column in table.tableColumns { table.removeTableColumn(column) }
+            for (index, value) in next.columns.enumerated() {
+                let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(String(index)))
+                column.title = value.title
+                column.headerCell.font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+                let natural = next.rows.reduce((value.title as NSString).size(withAttributes: [.font: column.headerCell.font!]).width) { width, row in
+                    max(width, (row.cells[index].text as NSString).size(withAttributes: [.font: value.font]).width)
+                }
+                column.width = value.width ?? (value.stretch ? 120 : min(400, natural + 4))
+                column.minWidth = value.width ?? 24
+                column.resizingMask = value.stretch ? .autoresizingMask : []
+                table.addTableColumn(column)
+            }
+        }
+        table.intercellSpacing = NSSize(width: next.columnGap, height: next.rowGap)
+        table.reloadData()
+        contentView.scroll(to: origin)
+        reflectScrolledClipView(contentView)
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { definition?.rows.count ?? 0 }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard let definition = definition else { return 16 }
+        return definition.columns.enumerated().reduce(CGFloat(16)) { height, entry in
+            let (index, column) = entry
+            guard column.overflow == 1 else { return max(height, column.font.ascender - column.font.descender) }
+            let width = max(1, tableView.tableColumns[index].width - 4)
+            let measured = (definition.rows[row].cells[index].text as NSString).boundingRect(
+                with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin], attributes: [.font: column.font])
+            return max(height, ceil(measured.height))
+        }
+    }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard let definition = definition, let tableColumn = tableColumn,
+            let index = Int(tableColumn.identifier.rawValue) else { return nil }
+        let column = definition.columns[index]
+        let value = definition.rows[row].cells[index]
+        let cell = (tableView.makeView(withIdentifier: tableColumn.identifier, owner: self) as? NSTableCellView) ?? NSTableCellView()
+        cell.identifier = tableColumn.identifier
+        cell.setAccessibilityIdentifier(definition.rows[row].key + "/" + String(index))
+        let field = cell.textField ?? NSTextField(wrappingLabelWithString: "")
+        if cell.textField == nil {
+            cell.textField = field
+            cell.addSubview(field)
+            field.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([field.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor), field.topAnchor.constraint(equalTo: cell.topAnchor)])
+        }
+        field.stringValue = value.text
+        field.isSelectable = true
+        field.font = column.font
+        field.maximumNumberOfLines = column.overflow == 1 ? 0 : 1
+        field.lineBreakMode = column.overflow == 2 ? .byTruncatingMiddle : column.overflow == 1 ? .byWordWrapping : .byClipping
+        let rgb = value.foreground ?? column.foreground
+        field.textColor = rgb.map { NSColor(srgbRed: Double($0[0]) / 255, green: Double($0[1]) / 255, blue: Double($0[2]) / 255, alpha: 1) } ?? .labelColor
+        return cell
+    }
+}
+
 @MainActor
 final class Rows: NSStackView {
     let body = NSStackView()
@@ -425,7 +541,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         let contentWidth = view.widthAnchor.constraint(equalTo: frame.widthAnchor, constant: 0)
         contentWidth.isActive = true
         let contentHeight = view.heightAnchor.constraint(equalTo: frame.heightAnchor)
-        contentHeight.isActive = view is Tabs || view is Scrolling
+        contentHeight.isActive = view is Tabs || view is Scrolling || view is TableControl
         contentWidths[id] = contentWidth
         contentHeights[id] = contentHeight
         if let container = container, container.orientation == .vertical, !floating, tab == nil {
@@ -636,6 +752,18 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         view = image
     case 15:
         view = Scrolling(horizontal: number != 0)
+    case 16:
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.setAccessibilityRole(.splitter)
+        if number != 0 {
+            separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        } else {
+            separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        }
+        view = separator
+    case 17:
+        view = TableControl()
     default:
         let rows = Rows()
         rows.changed = { [weak value] start in value?.emit(id, String(start), kind: 2) }
@@ -650,7 +778,9 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let value = host(pointer)
     let id = string(idBytes, idCount)
     let text = string(textBytes, textCount)
-    if property == 1 {
+    if property == 13, let table = value.nodes[id] as? TableControl {
+        table.update(text)
+    } else if property == 1 {
         value.capabilities[id] = text == "1"
         (value.nodes[id] as? NSControl)?.isEnabled = text == "1"
         if value.dialogs[id] != nil {

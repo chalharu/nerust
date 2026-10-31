@@ -5,6 +5,7 @@
 pub use panechord_runtime::Alignment;
 
 mod controls;
+mod table;
 pub use gtk;
 
 use std::{
@@ -645,30 +646,7 @@ impl View {
         };
         style.validate(layout).map_err(str::to_owned)?;
         if let Ok(label) = self.widget::<gtk::Label>(id) {
-            label.remove_css_class("heading");
-            label.remove_css_class("monospace");
-            if let Some(text) = style.text {
-                let attributes = gtk::pango::AttrList::new();
-                match text.role {
-                    panechord_runtime::TextRole::Body => {}
-                    panechord_runtime::TextRole::Heading => label.add_css_class("heading"),
-                    panechord_runtime::TextRole::Code => {
-                        label.add_css_class("monospace");
-                        attributes.insert(gtk::pango::AttrString::new_family("monospace"));
-                    }
-                }
-                attributes.insert(gtk::pango::AttrFloat::new_scale(f64::from(text.scale)));
-                if let Some([red, green, blue]) = text.foreground {
-                    attributes.insert(gtk::pango::AttrColor::new_foreground(
-                        u16::from(red) * 257,
-                        u16::from(green) * 257,
-                        u16::from(blue) * 257,
-                    ));
-                }
-                label.set_attributes(Some(&attributes));
-            } else {
-                label.set_attributes(None);
-            }
+            table::apply_text_style(&label, style.text);
         }
         let margin = style.margin;
         frame.set_margin_top(pixels(margin.top));

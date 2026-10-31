@@ -98,6 +98,34 @@ fn native_style_late_close_contract() {
     assert!(!label.has_css_class("heading"));
     assert!(label.attributes().is_none());
     assert_eq!(label.text(), "Label");
+    view.separator(&view.root(), "horizontal", false);
+    view.separator(&view.root(), "vertical", true);
+    assert_eq!(
+        view.widget::<gtk::Separator>("horizontal")
+            .unwrap()
+            .orientation(),
+        gtk::Orientation::Horizontal
+    );
+    assert_eq!(
+        view.widget::<gtk::Separator>("vertical")
+            .unwrap()
+            .orientation(),
+        gtk::Orientation::Vertical
+    );
+    view.try_style(
+        "horizontal",
+        Style {
+            margin: Edges {
+                top: 2.0,
+                right: 2.0,
+                bottom: 2.0,
+                left: 2.0,
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(view.0.nodes.borrow()["horizontal"].frame.margin_top(), 2);
     view.close();
     assert_eq!(
         view.try_style("__root", Style::default()),
@@ -113,6 +141,148 @@ use super::*;
 use futures::{FutureExt, channel::oneshot};
 use panechord_runtime::{Edges, Placement, Policy, ShutdownOutcome, run_async};
 use std::time::Duration;
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
+    use panechord_runtime::{Table, TableCell, TableColumn, TableRow, TextOverflow};
+    use std::sync::Arc;
+    gtk::init().unwrap();
+    let host = GtkHost::attach();
+    let data = Table {
+        columns: vec![
+            TableColumn {
+                title: "Key".into(),
+                width: Some(80.0),
+                text: Default::default(),
+                overflow: TextOverflow::Clip,
+                stretch: false,
+            },
+            TableColumn {
+                title: "Message".into(),
+                width: None,
+                text: Default::default(),
+                overflow: TextOverflow::Wrap,
+                stretch: true,
+            },
+        ]
+        .into(),
+        rows: (0..1000)
+            .map(|index| {
+                Arc::new(TableRow {
+                    key: index.to_string(),
+                    cells: vec![
+                        TableCell {
+                            text: index.to_string(),
+                            foreground: None,
+                        },
+                        TableCell {
+                            text: "long message requiring several wrapped lines ".repeat(10),
+                            foreground: None,
+                        },
+                    ],
+                })
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        column_gap: 12.0,
+        row_gap: 2.0,
+        empty_text: "No rows".into(),
+    };
+    let model = Store::new(data, host.executor());
+    let view = View::new(Binding::constant("table".into()));
+    view.table(&view.root(), "table", model.bind(Clone::clone, None));
+    view.native_window().set_default_size(420, 360);
+    view.present();
+    let ready = Rc::new(Cell::new(false));
+    let observed = ready.clone();
+    glib::timeout_add_local_once(Duration::from_millis(150), move || observed.set(true));
+    while !ready.get() {
+        glib::MainContext::default().iteration(true);
+    }
+    let root = view.widget::<gtk::Box>("table").unwrap();
+    let overlay = root
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Overlay>()
+        .unwrap();
+    let scroll = overlay
+        .child()
+        .unwrap()
+        .downcast::<gtk::ScrolledWindow>()
+        .unwrap();
+    let list = scroll.child().unwrap().downcast::<gtk::ListView>().unwrap();
+    assert_eq!(list.model().unwrap().n_items(), 1000);
+    let mut child = list.first_child();
+    let mut mounted = 0;
+    let mut wrapped = false;
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        mounted += 1;
+        if let Some(body) = widget.first_child()
+            && let Some(message) = body
+                .last_child()
+                .and_then(|widget| widget.downcast::<gtk::Label>().ok())
+        {
+            wrapped |= message.height() > 20;
+        }
+    }
+    assert!(mounted > 0 && mounted < 1000, "mounted {mounted} rows");
+    assert!(wrapped, "long text did not wrap");
+    let header = root.first_child().unwrap().first_child().unwrap();
+    let first = list
+        .first_child()
+        .unwrap()
+        .first_child()
+        .unwrap()
+        .first_child()
+        .unwrap();
+    assert_eq!(
+        header.compute_bounds(&root).unwrap().x(),
+        first.compute_bounds(&root).unwrap().x()
+    );
+    assert!(model.update(|data| {
+        Arc::make_mut(&mut data.columns)[0].width = None;
+        Arc::make_mut(&mut Arc::make_mut(&mut data.rows)[999]).cells[0].text =
+            "far longer offscreen column value".into();
+    }));
+    ready.set(false);
+    let observed = ready.clone();
+    glib::timeout_add_local_once(Duration::from_secs(2), move || observed.set(true));
+    let header = root.first_child().unwrap().first_child().unwrap();
+    assert!(
+        header.width_request() >= 200,
+        "natural width request: {}",
+        header.width_request()
+    );
+    while !ready.get() && header.width() < 200 {
+        glib::MainContext::default().iteration(true);
+    }
+    assert!(
+        header.width() >= 200,
+        "offscreen value did not size the column: {}",
+        header.width()
+    );
+    assert!(model.update(|data| {
+        data.rows = vec![Arc::new(TableRow {
+            key: "bad/key".into(),
+            cells: vec![],
+        })]
+        .into();
+    }));
+    assert_eq!(list.model().unwrap().n_items(), 1000);
+    assert!(
+        view.0
+            .error
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("table row key")
+    );
+    view.close();
+    assert!(model.update(|data| data.rows = Arc::from([])));
+    assert_eq!(list.model().unwrap().n_items(), 1000);
+}
 
 #[test]
 #[ignore = "isolated Xvfb native contract"]

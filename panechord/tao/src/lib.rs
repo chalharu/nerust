@@ -515,6 +515,131 @@ impl View {
         self.0.refresh();
         Ok(())
     }
+    pub fn table(&self, parent: &Parent, id: &str, binding: Binding<panechord_runtime::Table>) {
+        let node = self.add(parent, id, Kind::Content);
+        let data = Rc::new(RefCell::new((panechord_runtime::Table::default(), 0u64)));
+        let updated = data.clone();
+        let owner = self.downgrade();
+        self.bind(&node, binding, move |next| {
+            if let Err(error) = next.validate() {
+                if let Some(view) = owner.upgrade() {
+                    view.report_error(error.into());
+                }
+                return;
+            }
+            let mut state = updated.borrow_mut();
+            if state.0 != next {
+                state.0 = next;
+                state.1 = state.1.wrapping_add(1);
+            }
+        });
+        node.kind.replace(Kind::Leaf(Rc::new(move || {
+            let revision = data.borrow().1;
+            let latest = data.clone();
+            widget::lazy(revision, move |_| {
+                let data = latest.borrow().0.clone();
+                let cell = |column: &panechord_runtime::TableColumn,
+                            value: String,
+                            heading: bool,
+                            foreground: Option<[u8; 3]>| {
+                    let style = if heading {
+                        panechord_runtime::TextStyle {
+                            role: panechord_runtime::TextRole::Heading,
+                            ..Default::default()
+                        }
+                    } else {
+                        column.text
+                    };
+                    let (font, factor) = match style.role {
+                        panechord_runtime::TextRole::Body => (iced::Font::default(), 1.0),
+                        panechord_runtime::TextRole::Heading => (
+                            iced::Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Default::default()
+                            },
+                            1.2,
+                        ),
+                        panechord_runtime::TextRole::Code => (iced::Font::MONOSPACE, 1.0),
+                    };
+                    let width =
+                        column
+                            .width
+                            .map(iced::Length::Fixed)
+                            .unwrap_or(if column.stretch {
+                                iced::Length::Fill
+                            } else {
+                                iced::Length::Shrink
+                            });
+                    let mut text = widget::text(value)
+                        .font(font)
+                        .size(16.0 * factor * style.scale)
+                        .width(width)
+                        .wrapping(
+                            if !heading && column.overflow == panechord_runtime::TextOverflow::Wrap
+                            {
+                                iced::widget::text::Wrapping::WordOrGlyph
+                            } else {
+                                iced::widget::text::Wrapping::None
+                            },
+                        );
+                    if let Some([red, green, blue]) = foreground.or(style.foreground) {
+                        text = text.color(iced::Color::from_rgb8(red, green, blue));
+                    }
+                    Element::from(text)
+                };
+                let headers = widget::Row::with_children(
+                    data.columns
+                        .iter()
+                        .map(|column| cell(column, column.title.clone(), true, None))
+                        .collect::<Vec<_>>(),
+                )
+                .spacing(data.column_gap);
+                let rows = widget::Column::with_children(
+                    data.rows
+                        .iter()
+                        .map(|row| {
+                            widget::Row::with_children(
+                                data.columns
+                                    .iter()
+                                    .zip(&row.cells)
+                                    .map(|(column, value)| {
+                                        cell(column, value.text.clone(), false, value.foreground)
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                            .spacing(data.column_gap)
+                            .into()
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .spacing(data.row_gap);
+                let body: Element = if data.rows.is_empty() {
+                    widget::container(widget::text(data.empty_text))
+                        .center_x(iced::Length::Fill)
+                        .center_y(iced::Length::Fill)
+                        .into()
+                } else {
+                    widget::scrollable(rows).height(iced::Length::Fill).into()
+                };
+                widget::column![headers, widget::rule::horizontal(1), body]
+                    .spacing(2)
+                    .height(iced::Length::Fill)
+            })
+            .into()
+        })));
+    }
+
+    pub fn separator(&self, parent: &Parent, id: &str, vertical: bool) {
+        let node = self.add(parent, id, Kind::Content);
+        node.kind.replace(Kind::Leaf(Rc::new(move || {
+            if vertical {
+                widget::rule::vertical(1).into()
+            } else {
+                widget::rule::horizontal(1).into()
+            }
+        })));
+    }
+
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
         let node = self.add(parent, id, Kind::Content);
         let value = self.bound_text(&node, text);
