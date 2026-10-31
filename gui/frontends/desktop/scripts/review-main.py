@@ -447,7 +447,7 @@ def capture(binary, original, destination, settings_review=False, history_review
         "shutdown_exit_codes": shutdown_exit_codes,
         "display_geometry": execute("xdotool", "getdisplaygeometry"),
         "rom_sha256": hashlib.sha256(Path(original).read_bytes()).hexdigest(), "requested_settings_fixture": settings,
-        "measurement_units": "screen pixels", "insets_semantics": "Parent/child allocation distances, not inferred CSS margins.",
+        "measurement_units": "window-relative logical pixels; PNG dimensions are raster pixels", "insets_semantics": "Parent/child accessible content distances, not inferred CSS margins or border-box allocations.",
         "captures": records}, indent=2) + "\n")
     print(f"VIEW PASS captures={len(records)}", flush=True)
 
