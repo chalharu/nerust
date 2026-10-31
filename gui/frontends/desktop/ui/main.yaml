@@ -3,8 +3,32 @@ root:
   type: Window
   id: main
   title: {literal: "Nerust"}
+  menus:
+    - id: file
+      title: {literal: File}
+      command: choose
+      items:
+        - {id: open, label: {literal: "Open..."}, argument: {literal: open}, shortcut: Primary+O}
+        - {id: quit, label: {literal: Quit}, argument: {literal: quit}, shortcut: Primary+Q, role: Quit}
+        - {id: settings, label: {literal: "Settings..."}, argument: {literal: settings}, shortcut: Primary+Comma}
+    - id: emulation
+      title: {literal: Emulation}
+      command: choose
+      items:
+        - {id: pause, label: {bind: {path: pause_label, source: External}}, argument: {literal: pause}, enabled: {bind: {path: loaded, source: External}}}
+        - {id: reset, label: {literal: Reset}, argument: {literal: reset}, enabled: {bind: {path: loaded, source: External}}}
+        - {id: save, label: {literal: Save State}, argument: {literal: save}, enabled: {bind: {path: loaded, source: External}}}
+        - {id: load, label: {literal: Load State}, argument: {literal: load}, enabled: {bind: {path: loaded, source: External}}}
+        - {id: next, label: {literal: Next Slot}, argument: {literal: next}, enabled: {bind: {path: loaded, source: External}}}
+        - {id: previous, label: {literal: Previous Slot}, argument: {literal: previous}, enabled: {bind: {path: loaded, source: External}}}
+        - {id: unload, label: {literal: Unload}, argument: {literal: unload}, enabled: {bind: {path: loaded, source: External}}}
+    - id: view
+      title: {literal: View}
+      command: choose
+      items:
+        - {id: fullscreen, label: {literal: Fullscreen}, argument: {literal: fullscreen}}
   content:
     type: Native
     id: screen
     factory: crate::view::screen
-    value: {bind: {path: screen}}
+    value: {bind: {path: screen, source: External}}

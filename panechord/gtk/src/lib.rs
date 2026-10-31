@@ -136,6 +136,7 @@ struct Node {
     frame: gtk::Box,
     parent: Parent,
     css: gtk::CssProvider,
+    grid_index: usize,
 }
 
 trait ListControl {
@@ -256,6 +257,7 @@ impl View {
         let menus = gio::Menu::new();
         outer.append(&gtk::PopoverMenuBar::from_model(Some(&menus)));
         let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        canvas.set_vexpand(true);
         canvas.append(&root);
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -290,6 +292,7 @@ impl View {
                     frame: root,
                     parent: Parent::new(&canvas, ParentKind::Stack),
                     css,
+                    grid_index: 0,
                 },
             )])),
             resources: RefCell::default(),
@@ -353,6 +356,7 @@ impl View {
         frame
             .style_context()
             .add_provider(&css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        let grid_index = parent.next.get() as usize;
         parent.append(frame.upcast_ref());
         self.0.nodes.borrow_mut().insert(
             id.into(),
@@ -361,6 +365,7 @@ impl View {
                 frame,
                 parent: parent.clone(),
                 css,
+                grid_index,
             },
         );
     }
@@ -566,6 +571,47 @@ impl View {
         Ok(result)
     }
 
+    pub fn try_scroll(
+        &self,
+        parent: &Parent,
+        id: &str,
+        horizontal: bool,
+    ) -> Result<Parent, String> {
+        let content = self.try_layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            },
+        )?;
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(
+            if horizontal {
+                gtk::PolicyType::Automatic
+            } else {
+                gtk::PolicyType::Never
+            },
+            if horizontal {
+                gtk::PolicyType::Never
+            } else {
+                gtk::PolicyType::Automatic
+            },
+        );
+        scroll.set_overlay_scrolling(false);
+        scroll.set_hexpand(true);
+        scroll.set_vexpand(true);
+        let mut nodes = self.0.nodes.borrow_mut();
+        let node = nodes.get_mut(id).expect("validated scroll node");
+        node.frame.remove(&content.widget);
+        scroll.set_child(Some(&content.widget));
+        node.frame.append(&scroll);
+        node.frame.set_hexpand(true);
+        node.frame.set_vexpand(true);
+        node.widget = scroll.upcast();
+        Ok(content)
+    }
+
     pub fn style(&self, id: &str, style: Style) {
         if let Err(error) = self.try_style(id, style) {
             self.0.error.replace(Some(error));
@@ -575,12 +621,17 @@ impl View {
         if self.0.closed.get() {
             return Err("view is closed".into());
         }
-        let (frame, parent, css) = {
+        let (frame, parent, css, grid_index) = {
             let nodes = self.0.nodes.borrow();
             let node = nodes
                 .get(id)
                 .ok_or_else(|| format!("style target not mounted: {id}"))?;
-            (node.frame.clone(), node.parent.clone(), node.css.clone())
+            (
+                node.frame.clone(),
+                node.parent.clone(),
+                node.css.clone(),
+                node.grid_index,
+            )
         };
         let layout = match parent.kind {
             ParentKind::Grid(columns) => Layout::Grid { columns, gap: 0.0 },
@@ -610,10 +661,11 @@ impl View {
             p.height.map(pixels).unwrap_or(-1),
         );
         match parent.kind {
-            ParentKind::Grid(_) => {
+            ParentKind::Grid(columns) => {
                 let grid = parent.widget.downcast_ref::<gtk::Grid>().unwrap();
+                let (row, column) = p.grid_position(grid_index, columns);
                 grid.remove(&frame);
-                grid.attach(&frame, p.column, p.row, p.column_span, p.row_span);
+                grid.attach(&frame, column, row, p.column_span, p.row_span);
             }
             ParentKind::Absolute => {
                 parent

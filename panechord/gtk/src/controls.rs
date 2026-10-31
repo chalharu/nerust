@@ -505,7 +505,7 @@ impl View {
             .get(id)
             .unwrap()
             .frame
-            .set_vexpand(false);
+            .set_vexpand(true);
         let state = Rc::new(Tab {
             notebook: notebook.clone(),
             selected: selected.clone(),
@@ -573,6 +573,19 @@ impl View {
             panechord_runtime::TabPosition::Left => gtk::PositionType::Left,
             panechord_runtime::TabPosition::Right => gtk::PositionType::Right,
         });
+        if let Some(header) = state.notebook.first_child() {
+            header.set_size_request(
+                if matches!(
+                    position,
+                    panechord_runtime::TabPosition::Left | panechord_runtime::TabPosition::Right
+                ) {
+                    120
+                } else {
+                    -1
+                },
+                -1,
+            );
+        }
         Ok(())
     }
 

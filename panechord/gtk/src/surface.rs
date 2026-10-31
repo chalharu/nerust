@@ -1,5 +1,5 @@
 use crate::{GtkHost, Parent, View, gtk};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
 use panechord_runtime::{
@@ -12,7 +12,25 @@ use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 pub(crate) type ViewportHook = Rc<dyn Fn(f32, f32)>;
 
-struct Surface(gtk::Window);
+struct Surface {
+    window: gtk::Window,
+    #[cfg(target_os = "macos")]
+    native_view: std::cell::OnceCell<objc2::rc::Retained<objc2_app_kit::NSView>>,
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn gdk_macos_surface_get_native_window(
+        surface: *mut gtk::gdk::ffi::GdkSurface,
+    ) -> *mut std::ffi::c_void;
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "C" {
+    fn gdk_win32_surface_get_handle(
+        surface: *mut gtk::gdk::ffi::GdkSurface,
+    ) -> *mut std::ffi::c_void;
+}
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
@@ -33,7 +51,7 @@ impl HasDisplayHandle for Surface {
         #[cfg(target_os = "linux")]
         {
             use raw_window_handle::{RawDisplayHandle, WaylandDisplayHandle, XlibDisplayHandle};
-            let display = gtk::prelude::WidgetExt::display(&self.0);
+            let display = gtk::prelude::WidgetExt::display(&self.window);
             let raw = if display.type_().name().contains("X11") {
                 let pointer = unsafe { gdk_x11_display_get_xdisplay(display.to_glib_none().0) };
                 RawDisplayHandle::Xlib(XlibDisplayHandle::new(
@@ -51,7 +69,23 @@ impl HasDisplayHandle for Surface {
             };
             Ok(unsafe { DisplayHandle::borrow_raw(raw) })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            let display = gtk::prelude::WidgetExt::display(&self.window);
+            if !display.type_().name().contains("Macos") {
+                return Err(HandleError::NotSupported);
+            }
+            Ok(DisplayHandle::appkit())
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let display = gtk::prelude::WidgetExt::display(&self.window);
+            if !display.type_().name().contains("Win32") {
+                return Err(HandleError::NotSupported);
+            }
+            Ok(DisplayHandle::windows())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         Err(HandleError::NotSupported)
     }
 }
@@ -61,7 +95,7 @@ impl HasWindowHandle for Surface {
         #[cfg(target_os = "linux")]
         {
             use raw_window_handle::{RawWindowHandle, WaylandWindowHandle, XlibWindowHandle};
-            let surface = self.0.surface().ok_or(HandleError::Unavailable)?;
+            let surface = self.window.surface().ok_or(HandleError::Unavailable)?;
             let raw = if surface.type_().name().contains("X11") {
                 let xid = unsafe { gdk_x11_surface_get_xid(surface.to_glib_none().0) };
                 if xid == 0 {
@@ -79,17 +113,58 @@ impl HasWindowHandle for Surface {
             };
             Ok(unsafe { WindowHandle::borrow_raw(raw) })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            if self.native_view.get().is_none() {
+                let surface = self.window.surface().ok_or(HandleError::Unavailable)?;
+                if !surface.type_().name().contains("Macos") {
+                    return Err(HandleError::NotSupported);
+                }
+                let pointer =
+                    unsafe { gdk_macos_surface_get_native_window(surface.to_glib_none().0) };
+                let window = unsafe {
+                    objc2::rc::Retained::<objc2_app_kit::NSWindow>::retain(pointer.cast())
+                }
+                .ok_or(HandleError::Unavailable)?;
+                let view = window.contentView().ok_or(HandleError::Unavailable)?;
+                let _ = self.native_view.set(view);
+            }
+            let view = self.native_view.get().ok_or(HandleError::Unavailable)?;
+            let pointer =
+                std::ptr::NonNull::new(objc2::rc::Retained::as_ptr(view).cast_mut().cast())
+                    .ok_or(HandleError::Unavailable)?;
+            Ok(unsafe {
+                WindowHandle::borrow_raw(raw_window_handle::RawWindowHandle::AppKit(
+                    raw_window_handle::AppKitWindowHandle::new(pointer),
+                ))
+            })
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let surface = self.window.surface().ok_or(HandleError::Unavailable)?;
+            if !surface.type_().name().contains("Win32") {
+                return Err(HandleError::NotSupported);
+            }
+            let pointer = unsafe { gdk_win32_surface_get_handle(surface.to_glib_none().0) };
+            let hwnd =
+                std::num::NonZeroIsize::new(pointer as isize).ok_or(HandleError::Unavailable)?;
+            Ok(unsafe {
+                WindowHandle::borrow_raw(raw_window_handle::RawWindowHandle::Win32(
+                    raw_window_handle::Win32WindowHandle::new(hwnd),
+                ))
+            })
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         Err(HandleError::NotSupported)
     }
 }
 
 impl WindowSurface for Surface {
     fn scale_factor(&self) -> f64 {
-        f64::from(self.0.scale_factor().max(1))
+        f64::from(self.window.scale_factor().max(1))
     }
     fn toggle_fullscreen(&self) {
-        self.0.set_fullscreened(!self.0.is_fullscreen());
+        self.window.set_fullscreened(!self.window.is_fullscreen());
     }
 }
 
@@ -106,13 +181,41 @@ impl WindowHost<View> for GtkHost {
     }
 }
 
-fn key_code(key: gtk::gdk::Key) -> KeyCode {
+fn key_code(_key: gtk::gdk::Key, hardware_code: u32) -> KeyCode {
+    #[cfg(target_os = "macos")]
+    {
+        panechord_runtime::native_keys::macos(hardware_code)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        hardware_code
+            .checked_sub(8)
+            .map(panechord_runtime::native_keys::evdev)
+            .unwrap_or(KeyCode::Unidentified)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        panechord_runtime::native_keys::windows_set1(unsafe {
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::MapVirtualKeyW(
+                hardware_code,
+                windows_sys::Win32::UI::Input::KeyboardAndMouse::MAPVK_VK_TO_VSC_EX,
+            )
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        key_name(_key)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn key_name(key: gtk::gdk::Key) -> KeyCode {
     if let Some(character) = key.to_unicode() {
         if character.is_ascii_alphabetic() {
-            return KeyCode::new(format!("Key{}", character.to_ascii_uppercase()));
+            return KeyCode::from_name(&format!("Key{}", character.to_ascii_uppercase()));
         }
         if character.is_ascii_digit() {
-            return KeyCode::new(format!("Digit{character}"));
+            return KeyCode::from_name(&format!("Digit{character}"));
         }
     }
     let name = key.name().map(|name| name.to_string()).unwrap_or_default();
@@ -144,7 +247,7 @@ fn key_code(key: gtk::gdk::Key) -> KeyCode {
         "backslash" | "bar" => "Backslash",
         "minus" | "underscore" => "Minus",
         "equal" => "Equal",
-        "plus" => "Plus",
+        "plus" => "Equal",
         "grave" | "asciitilde" => "Backquote",
         "Page_Up" => "PageUp",
         "Page_Down" => "PageDown",
@@ -159,7 +262,7 @@ fn key_code(key: gtk::gdk::Key) -> KeyCode {
         "KP_Decimal" => "NumpadDecimal",
         _ => name.as_str(),
     };
-    KeyCode::new(canonical)
+    KeyCode::from_name(canonical)
 }
 
 impl View {
@@ -171,7 +274,11 @@ impl View {
             return Err("view is closed".into());
         }
         gtk::prelude::WidgetExt::realize(&self.0.window);
-        callback(Rc::new(Surface(self.0.window.clone())))
+        callback(Rc::new(Surface {
+            window: self.0.window.clone(),
+            #[cfg(target_os = "macos")]
+            native_view: std::cell::OnceCell::new(),
+        }))
     }
 
     pub fn on_surface_viewport(&self, callback: ViewportHook) {
@@ -196,9 +303,9 @@ impl View {
         let controller = gtk::EventControllerKey::new();
         let pressed = keys.clone();
         let press = callback.clone();
-        let signal = controller.connect_key_pressed(move |_, key, _, _| {
-            let key = key_code(key);
-            let repeat = !pressed.borrow_mut().insert(key.clone());
+        let signal = controller.connect_key_pressed(move |_, key, hardware_code, _| {
+            let key = key_code(key, hardware_code);
+            let repeat = !pressed.borrow_mut().insert(key);
             press(&WindowEvent::KeyboardInput {
                 key,
                 pressed: true,
@@ -208,8 +315,8 @@ impl View {
             gtk::glib::Propagation::Proceed
         });
         self.signal("", &controller, signal);
-        let signal = controller.connect_key_released(move |_, key, _, _| {
-            let key = key_code(key);
+        let signal = controller.connect_key_released(move |_, key, hardware_code, _| {
+            let key = key_code(key, hardware_code);
             keys.borrow_mut().remove(&key);
             callback(&WindowEvent::KeyboardInput {
                 key,

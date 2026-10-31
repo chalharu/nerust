@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -11,7 +10,8 @@ import tempfile
 import threading
 import time
 
-import pyatspi
+import atspi_layout
+from atspi_layout import bounds, descendants, in_frame, normalized, tree
 
 
 def execute(*arguments):
@@ -56,67 +56,11 @@ def review(binary, original, destination):
                     execute("xdotool", "windowraise", window)
                     execute("xdotool", "windowfocus", "--sync", window)
 
-                def normalized(text):
-                    return re.sub(r"[^a-z0-9]", "", text.casefold())
-
-                def descendants(accessible):
-                    yield accessible
-                    for index in range(accessible.childCount):
-                        child = accessible.getChildAtIndex(index)
-                        if child is not None:
-                            yield from descendants(child)
-
                 def application():
-                    desktop = pyatspi.Registry.getDesktop(0)
-                    for index in range(desktop.childCount):
-                        candidate = desktop.getChildAtIndex(index)
-                        if candidate.get_process_id() == process.pid:
-                            return candidate
-                    return None
+                    return atspi_layout.application(process.pid)
 
                 def accessible_window(window):
-                    app = application()
-                    if app is None:
-                        return None
-                    title = normalized(execute("xdotool", "getwindowname", window))
-                    for accessible in descendants(app):
-                        if accessible.getRoleName() in {"frame", "dialog", "window"} and normalized(accessible.name) == title:
-                            return accessible
-                    return None
-
-                def bounds(accessible):
-                    try:
-                        rectangle = accessible.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
-                        return {"x": rectangle.x, "y": rectangle.y, "width": rectangle.width, "height": rectangle.height}
-                    except (NotImplementedError, RuntimeError):
-                        return None
-
-                def tree(accessible, parent_bounds=None):
-                    node = {"name": accessible.name, "role": accessible.getRoleName(), "showing": accessible.getState().contains(pyatspi.STATE_SHOWING), "bounds": bounds(accessible)}
-                    node["states"] = [str(state) for state in accessible.getState().getStates()]
-                    rectangle = node["bounds"]
-                    if rectangle is not None and parent_bounds is not None:
-                        node["parent_allocation_insets"] = {"left": rectangle["x"] - parent_bounds["x"], "top": rectangle["y"] - parent_bounds["y"], "right": parent_bounds["x"] + parent_bounds["width"] - rectangle["x"] - rectangle["width"], "bottom": parent_bounds["y"] + parent_bounds["height"] - rectangle["y"] - rectangle["height"]}
-                    try:
-                        action = accessible.queryAction()
-                        node["actions"] = [action.getName(index) for index in range(action.nActions)]
-                    except (NotImplementedError, RuntimeError):
-                        node["actions"] = []
-                    try:
-                        text = accessible.queryText()
-                        node["text"] = text.getText(0, text.characterCount)
-                    except (NotImplementedError, RuntimeError):
-                        pass
-                    node["children"] = [tree(accessible.getChildAtIndex(index), rectangle) for index in range(accessible.childCount) if accessible.getChildAtIndex(index) is not None]
-                    for previous, current in zip(node["children"], node["children"][1:]):
-                        before, after = previous["bounds"], current["bounds"]
-                        if before is not None and after is not None:
-                            current["previous_sibling_distance"] = {"horizontal": after["x"] - before["x"] - before["width"], "vertical": after["y"] - before["y"] - before["height"]}
-                    return node
-
-                def in_frame(accessible, frame):
-                    rectangle, origin = bounds(accessible), bounds(frame)
-                    return rectangle is not None and origin is not None and rectangle["width"] > 0 and rectangle["height"] > 0 and rectangle["x"] < origin["x"] + origin["width"] and rectangle["y"] < origin["y"] + origin["height"] and rectangle["x"] + rectangle["width"] > origin["x"] and rectangle["y"] + rectangle["height"] > origin["y"]
+                    return atspi_layout.window(process.pid, execute("xdotool", "getwindowname", window))
 
                 def snapshot(window, name, expected):
                     image = output / f"{name}.png"

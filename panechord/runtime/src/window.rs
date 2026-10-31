@@ -1,18 +1,5 @@
-use crate::{Session, UiHost, WindowHooks};
+use crate::{KeyCode, Session, UiHost, WindowHooks};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct KeyCode(String);
-
-impl KeyCode {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
 
 #[derive(Clone, Debug)]
 pub enum WindowEvent {

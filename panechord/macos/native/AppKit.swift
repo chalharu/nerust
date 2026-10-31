@@ -66,6 +66,33 @@ final class DocumentStack: NSStackView {
 }
 
 @MainActor
+final class Scrolling: NSScrollView {
+    let body = DocumentStack()
+
+    init(horizontal: Bool) {
+        super.init(frame: .zero)
+        hasHorizontalScroller = horizontal
+        hasVerticalScroller = !horizontal
+        autohidesScrollers = false
+        drawsBackground = false
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 0
+        documentView = body
+        body.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            body.topAnchor.constraint(equalTo: contentView.topAnchor),
+            horizontal
+                ? body.heightAnchor.constraint(equalTo: contentView.heightAnchor)
+                : body.widthAnchor.constraint(equalTo: contentView.widthAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("coder construction unsupported") }
+}
+
+@MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     static let shared = ApplicationDelegate()
     weak var active: Host?
@@ -222,6 +249,8 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     var closed = false
     weak var editingProbe: NSTextView?
     var editingProbeText = ""
+    var inputMonitor: Any?
+    var pressedCodes = Set<UInt16>()
     let bar = NSMenu()
 
     override init() {
@@ -274,12 +303,38 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
                                      ("Select All", #selector(NSText.selectAll(_:)), "a")] {
             editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
         }
+        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            guard let self, !self.closed, event.window === self.window else { return event }
+            let pressed: Bool
+            if event.type == .flagsChanged {
+                pressed = !self.pressedCodes.contains(event.keyCode)
+            } else {
+                pressed = event.type == .keyDown
+            }
+            if pressed { self.pressedCodes.insert(event.keyCode) }
+            else { self.pressedCodes.remove(event.keyCode) }
+            let repeated = event.type == .keyDown && event.isARepeat
+            self.emit("", String(event.keyCode), kind: pressed ? (repeated ? 7 : 5) : 6)
+            return event
+        }
+    }
+
+    func stopInput() {
+        if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+        inputMonitor = nil
+        pressedCodes.removeAll()
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
         guard !closed else { return }
         ApplicationDelegate.shared.active = self
         NSApp.mainMenu = bar
+        emit("", "1", kind: 4)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        pressedCodes.removeAll()
+        emit("", "0", kind: 4)
     }
 
     func emit(_ id: String, _ value: String = "", kind: Int32 = 0) {
@@ -332,7 +387,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     }
 
     func attach(_ view: NSView, parent: String, id: String, floating: Bool = false) {
-        let container = (nodes[parent] as? Rows)?.body ?? nodes[parent] as? NSStackView
+        let container = (nodes[parent] as? Rows)?.body ?? (nodes[parent] as? Scrolling)?.body ?? nodes[parent] as? NSStackView
         let tab = (nodes[parent] as? Tabs)?.body
         guard floating || container != nil || tab != nil else { return }
         let frame = NSStackView()
@@ -368,7 +423,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         view.translatesAutoresizingMaskIntoConstraints = false
         let contentWidth = view.widthAnchor.constraint(equalTo: frame.widthAnchor, constant: 0)
         contentWidth.isActive = true
-        if view is Tabs { view.heightAnchor.constraint(equalTo: frame.heightAnchor).isActive = true }
+        if view is Tabs || view is Scrolling { view.heightAnchor.constraint(equalTo: frame.heightAnchor).isActive = true }
         contentWidths[id] = contentWidth
         if let container = container, container.orientation == .vertical, !floating, tab == nil {
             frame.widthAnchor.constraint(equalTo: container.widthAnchor,
@@ -455,6 +510,7 @@ public func destroy(_ pointer: UnsafeMutableRawPointer) {
     value.callback = nil
     value.window.delegate = nil
     value.closed = true
+    value.stopInput()
     ApplicationDelegate.shared.retire(value)
     value.window.close()
     Unmanaged<Host>.fromOpaque(pointer).release()
@@ -471,6 +527,7 @@ public func present(_ pointer: UnsafeMutableRawPointer) {
 public func close(_ pointer: UnsafeMutableRawPointer) {
     let value = host(pointer)
     value.closed = true
+    value.stopInput()
     for panel in value.dialogs.values {
         if panel.sheetParent != nil { value.window.endSheet(panel) }
         panel.orderOut(nil)
@@ -570,6 +627,8 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         image.imageScaling = .scaleProportionallyUpOrDown
         image.imageAlignment = .alignCenter
         view = image
+    case 15:
+        view = Scrolling(horizontal: number != 0)
     default:
         let rows = Rows()
         rows.changed = { [weak value] start in value?.emit(id, String(start), kind: 2) }

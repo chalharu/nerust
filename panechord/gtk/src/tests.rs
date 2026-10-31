@@ -33,6 +33,60 @@ use std::time::Duration;
 
 #[test]
 #[ignore = "isolated Xvfb native contract"]
+fn native_grid_default_styles_and_scroll_preserve_allocation() {
+    gtk::init().unwrap();
+    let view = View::new(Binding::constant("Grid and Scroll".into()));
+    let viewport = view.try_scroll(&view.root(), "viewport", false).unwrap();
+    let grid = view
+        .try_layout(
+            &viewport,
+            "grid",
+            Layout::Grid {
+                columns: 2,
+                gap: 12.0,
+            },
+        )
+        .unwrap();
+    let native = grid.widget.downcast_ref::<gtk::Grid>().unwrap();
+    for index in 0..5 {
+        let id = format!("child-{index}");
+        view.label(&grid, &id, Binding::constant(id.clone()));
+        for padding in [0.0, 12.0, 0.0] {
+            view.try_style(
+                &id,
+                Style {
+                    padding: Edges {
+                        top: padding,
+                        right: padding,
+                        bottom: padding,
+                        left: padding,
+                    },
+                    ..Style::default()
+                },
+            )
+            .unwrap();
+            let frame = view.0.nodes.borrow().get(&id).unwrap().frame.clone();
+            assert_eq!(native.query_child(&frame), (index % 2, index / 2, 1, 1));
+        }
+    }
+    let scroll = view.widget::<gtk::ScrolledWindow>("viewport").unwrap();
+    assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Never);
+    assert_eq!(scroll.vscrollbar_policy(), gtk::PolicyType::Automatic);
+    assert!(view.try_scroll(&viewport, "viewport", false).is_err());
+    view.tab(&view.root(), "tabs", Binding::constant("general".into()));
+    view.tab_position("tabs", panechord_runtime::TabPosition::Left)
+        .unwrap();
+    let notebook = view.widget::<gtk::Notebook>("tabs").unwrap();
+    assert_eq!(notebook.first_child().unwrap().width_request(), 120);
+    view.tab_position("tabs", panechord_runtime::TabPosition::Top)
+        .unwrap();
+    assert_eq!(notebook.first_child().unwrap().width_request(), -1);
+    view.close();
+    assert!(view.try_scroll(&view.root(), "closed", false).is_err());
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
 fn native_menu_declaration_order_survives_rebuild() {
     gtk::init().unwrap();
     let view = View::new(Binding::constant("Menus".into()));

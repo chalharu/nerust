@@ -26,7 +26,9 @@ def wait(predicate):
     raise RuntimeError("native View condition timed out")
 
 
-def capture(binary, original, destination):
+def capture(binary, original, destination, settings_review=False):
+    if settings_review:
+        import atspi_layout as layout
     output = Path(destination)
     output.mkdir(parents=True, exist_ok=True)
     (output / "evidence.json").unlink(missing_ok=True)
@@ -39,7 +41,7 @@ def capture(binary, original, destination):
         for directory in [root / "config" / "nerust", root / "settings" / "config"]:
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "settings.yaml").write_text(yaml.safe_dump(settings))
-        environment = dict(os.environ, NO_AT_BRIDGE="1", GDK_BACKEND="x11",
+        environment = dict(os.environ, NO_AT_BRIDGE="0" if settings_review else "1", GTK_A11Y="atspi" if settings_review else os.environ.get("GTK_A11Y", "none"), GDK_BACKEND="x11",
                            XDG_CONFIG_HOME=str(root / "config"), XDG_DATA_HOME=str(root / "data"),
                            NERUST_SETTINGS_ROOT=str(root / "settings"))
         for mode, arguments in [("empty", []), ("rom", [str(rom)])]:
@@ -94,6 +96,73 @@ def capture(binary, original, destination):
                         execute("xdotool", "mousemove", "--window", window, "330", "260", "click", "1")
                         execute("xdotool", "key", "space")
                         snapshot("paused", expected="Paus")
+                        if settings_review:
+                            execute("xdotool", "key", "ctrl+comma")
+
+                            def find_settings():
+                                result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^nerust Settings$"], capture_output=True, text=True)
+                                return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
+
+                            settings_window = wait(find_settings)
+                            execute("xdotool", "windowfocus", "--sync", settings_window)
+                            execute("xdotool", "windowsize", "--sync", settings_window, "900", "560")
+
+                            def settings_frame():
+                                return layout.window(process.pid, execute("xdotool", "getwindowname", settings_window))
+
+                            def settings_snapshot(page, expected):
+                                image = output / f"settings-{page.lower()}.png"
+                                def inspect():
+                                    if process.poll() is not None:
+                                        raise RuntimeError("application exited during Settings capture")
+                                    frame = settings_frame()
+                                    if frame is None:
+                                        return None
+                                    execute("import", "-window", settings_window, str(image))
+                                    text = execute("tesseract", str(image), "stdout", "--psm", "11")
+                                    tree_file = output / f"settings-{page.lower()}.atspi.json"
+                                    tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
+                                    visible = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
+                                    labels = " ".join(node.name for node in visible)
+                                    if not all(layout.normalized(word) in layout.normalized(labels) for word in expected):
+                                        return None
+                                    if page == "Notifications":
+                                        sections = [layout.bounds(node) for node in visible if node.name in {"Information", "Warning"}]
+                                        if len(sections) != 2 or sections[0] == sections[1]:
+                                            raise RuntimeError("Notifications sections overlap or are missing")
+                                    width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
+                                    return {"state": f"settings-{page.lower()}", "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "width": width, "height": height, "ocr": text, "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest()}
+                                records.append(wait(inspect))
+                                print(f"VIEW CAPTURE settings-{page.lower()}", flush=True)
+
+                            def click_page(page):
+                                def locate():
+                                    frame = settings_frame()
+                                    return frame is not None and layout.select_page(frame, page)
+                                wait(locate)
+
+                            settings_snapshot("General", ["Language", "Storage", "Apply"])
+                            for page, expected in [("Video", ["VSync", "Scaling", "Apply"]), ("Audio", ["Volume:", "Latency:", "Apply"]), ("Notifications", ["Information", "Warning", "Apply"])]:
+                                click_page(page)
+                                settings_snapshot(page, expected)
+                            def scroll_notifications_to_end():
+                                frame = settings_frame()
+                                if frame is None:
+                                    return False
+                                for node in layout.descendants(frame):
+                                    if node.getRoleName() == "scroll bar" and layout.visible_in_frame(node, frame):
+                                        try:
+                                            value = node.queryValue()
+                                            if value.maximumValue > value.minimumValue:
+                                                return value.setCurrentValue(value.maximumValue)
+                                        except NotImplementedError:
+                                            rectangle = layout.bounds(node)
+                                            execute("xdotool", "mousemove", str(rectangle["x"] + rectangle["width"] // 2), str(rectangle["y"] + rectangle["height"] - 2), "click", "1")
+                                            return True
+                                return False
+                            wait(scroll_notifications_to_end)
+                            settings_snapshot("Notifications-bottom", ["Status display", "Overlay", "Apply"])
+                            execute("xdotool", "windowfocus", "--sync", window)
                     execute("xdotool", "key", "alt+F4")
                 finally:
                     if process.poll() is None:
@@ -107,9 +176,9 @@ def capture(binary, original, destination):
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) != 4:
-            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT")
-        capture(*sys.argv[1:])
+        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] != "--settings"):
+            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings]")
+        capture(*sys.argv[1:4], settings_review=len(sys.argv) == 5)
     except Exception as error:
         print(f"VIEW FAIL: {error}", file=sys.stderr)
         sys.exit(1)

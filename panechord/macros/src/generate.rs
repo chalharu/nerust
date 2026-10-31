@@ -1,4 +1,6 @@
-use panechord_markup::{Control, Document, Edges, Mode, Orientation, Property, Style};
+use panechord_markup::{
+    BindingSource, Control, Document, Edges, Mode, Orientation, Property, Style,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Path};
@@ -23,7 +25,27 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
     for menu in menus {
         let id = &menu.id;
         let title = binding(&menu.title, false)?;
-        let items = binding(&menu.items, false)?;
+        let items = match &menu.items {
+            panechord_markup::MenuItems::Binding(items) => binding(items, false)?,
+            panechord_markup::MenuItems::Entries(entries) => {
+                let entries = entries.iter().map(|entry| {
+                    let id = &entry.id;
+                    let label = binding(&entry.label, false)?;
+                    let argument = binding(&entry.argument, false)?;
+                    let enabled = entry.enabled.as_ref().map(|value| binding(value, false)).transpose()?.unwrap_or_else(|| quote!(::panechord_runtime::Binding::constant(true)));
+                    let role = format_ident!("{}", format!("{:?}", entry.role));
+                    let shortcut = match &entry.shortcut {
+                        Some(value) => quote!(Some(::std::string::String::from(#value))),
+                        None => quote!(None),
+                    };
+                    Ok(quote!((#label).zip(&(#argument)).zip(&(#enabled)).map(|((label, argument), enabled)| ::panechord_runtime::MenuItem {
+                        id: ::std::string::String::from(#id), label, argument, shortcut: #shortcut,
+                        role: ::panechord_runtime::MenuRole::#role, enabled,
+                    })))
+                }).collect::<syn::Result<Vec<_>>>()?;
+                quote!(::panechord_runtime::Binding::sequence(vec![#(#entries),*]).distinct())
+            }
+        };
         let command = command(&menu.command)?;
         let method = if menu.nested {
             format_ident!("hierarchical_menu")
@@ -159,8 +181,16 @@ fn binding(prop: &Property, writable: bool) -> syn::Result<TokenStream> {
                 quote!(::std::option::Option::None)
             };
             let dependency = fields[0].to_string();
-            let base =
-                quote!(#model.bind_scoped_explicit(#dependency,|s| s.#(#fields).*.clone(),#writer));
+            let base = if b.source == BindingSource::External {
+                let external = quote!(#model.#(#fields).*.clone());
+                if writable && b.mode == Mode::TwoWay {
+                    external
+                } else {
+                    quote!((#external).map(|value| value))
+                }
+            } else {
+                quote!(#model.bind_scoped_explicit(#dependency,|s| s.#(#fields).*.clone(),#writer))
+            };
             if let Some(converter) = &b.converter {
                 let converter = path(converter)?;
                 quote!((#base).convert(#converter::forward,#converter::backward))
@@ -176,6 +206,7 @@ fn field_writer(value: &str) -> syn::Result<TokenStream> {
             bind: panechord_markup::Binding {
                 path: value.into(),
                 mode: Mode::TwoWay,
+                source: BindingSource::Store,
                 converter: None,
             },
         }),
@@ -385,6 +416,18 @@ fn control_inner(
             scoped,
             quote!(::panechord_runtime::Layout::Flex {gap:#gap}),
         )?,
+        Control::Scroll {
+            orientation,
+            content,
+            ..
+        } => {
+            let horizontal = matches!(orientation, panechord_markup::Orientation::Horizontal);
+            let body = control(doc, content, backend, scoped)?;
+            quote!(match __panechord_view.try_scroll(&__panechord_parent, &__id, #horizontal) {
+                ::std::result::Result::Ok(__panechord_parent) => { #body }
+                ::std::result::Result::Err(__error) => __panechord_view.report_error(__error),
+            })
+        }
         Control::Label { text, .. } => {
             let text = binding(text, false)?;
             quote!(__panechord_view.label(&__panechord_parent,&__id,#text);)
@@ -573,6 +616,28 @@ mod tests {
         panechord_markup::parse(&format!("schema_version: 2\nroot:\n  type: Window\n  id: w\n  title: {{literal: Title}}\n  content: {content}\n"),"yaml","test.yaml").unwrap()
     }
     #[test]
+    fn external_bindings_keep_the_original_writer_only_for_two_way_controls() {
+        let document = document(
+            "{type: StackLayout, id: fields, children: [{type: TextBox, id: edit, text: {bind: {path: name, source: External, mode: TwoWay}}}, {type: Label, id: read, text: {bind: {path: name, source: External}}}]}",
+        );
+        let code = generate(&document, &syn::parse_quote!(backend), false)
+            .unwrap()
+            .to_string();
+        assert!(code.contains("__panechord_model . name . clone ()"));
+        assert!(code.contains(". map (| value | value)"));
+        assert!(!code.contains("bind_scoped_explicit"));
+    }
+    #[test]
+    fn static_menu_entries_emit_reactive_bindings_and_native_roles() {
+        let document = panechord_markup::parse("schema_version: 2\nroot:\n  type: Window\n  id: main\n  title: {literal: Main}\n  menus:\n    - id: file\n      title: {literal: File}\n      command: choose\n      items:\n        - id: quit\n          label: {bind: {path: label, source: External}}\n          enabled: {bind: {path: enabled, source: External}}\n          argument: {literal: quit}\n          role: Quit\n          shortcut: Primary+Q\n  content: {type: Label, id: content, text: {literal: Main}}", "yaml", "menu.yaml").unwrap();
+        let code = generate(&document, &syn::parse_quote!(backend), false)
+            .unwrap()
+            .to_string();
+        assert!(code.contains("Binding :: sequence"));
+        assert!(code.contains("MenuRole :: Quit"));
+        assert!(code.contains("command_choose"));
+    }
+    #[test]
     fn required_controls_emit_typed_backend_calls_and_nested_content() {
         let d = document(
             "{type: StackLayout, id: screen, children: [\
@@ -581,6 +646,7 @@ mod tests {
             {type: Slider, id: slider, value: {bind: {path: volume, mode: TwoWay}}, min: 0, max: 100, step: 1},\
             {type: Combo, id: combo, items: {bind: {path: choices}}, selected: {bind: {path: choice, mode: TwoWay}}},\
             {type: Image, id: image, source: {bind: {path: frame}}},\
+            {type: Scroll, id: viewport, content: {type: Label, id: viewport_content, text: {literal: Content}}},\
             {type: Tab, id: tabs, selected: {bind: {path: tab, mode: TwoWay}}, pages: [{id: video, title: {literal: Video}, content: {type: Label, id: video_content, text: {literal: Video}}}]},\
             {type: Dialog, id: dialog, title: {literal: Settings}, open: {bind: {path: open, mode: TwoWay}}, content: {type: Label, id: dialog_content, text: {literal: Dialog}}}\
         ]}",
@@ -593,6 +659,8 @@ mod tests {
             "slider",
             "combo",
             "image",
+            "try_scroll",
+            "viewport_content",
             "tab_page",
             "dialog",
             "dialog_content",

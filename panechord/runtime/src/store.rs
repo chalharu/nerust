@@ -128,6 +128,50 @@ impl<T: Clone + 'static> Binding<T> {
             }),
         }
     }
+    pub fn zip<U: Clone + 'static>(&self, other: &Binding<U>) -> Binding<(T, U)> {
+        let left = self.clone();
+        let right = other.clone();
+        let read_left = left.clone();
+        let read_right = right.clone();
+        Binding::external(
+            move || (read_left.get(), read_right.get()),
+            None,
+            move |callback| {
+                let read = right.clone();
+                let notify = callback.clone();
+                let first = left.subscribe(Rc::new(move |value| notify((value, read.get()))));
+                let read = left.clone();
+                let second = right.subscribe(Rc::new(move |value| callback((read.get(), value))));
+                Subscription::new(move || {
+                    drop(first);
+                    drop(second);
+                })
+            },
+        )
+    }
+
+    pub fn sequence(sources: Vec<Self>) -> Binding<Vec<T>> {
+        let sources = Rc::new(sources);
+        let read = sources.clone();
+        Binding::external(
+            move || read.iter().map(Binding::get).collect(),
+            None,
+            move |callback| {
+                callback(sources.iter().map(Binding::get).collect());
+                let tokens: Vec<_> = sources
+                    .iter()
+                    .map(|source| {
+                        let read = sources.clone();
+                        let notify = callback.clone();
+                        source.subscribe(Rc::new(move |_| {
+                            notify(read.iter().map(Binding::get).collect())
+                        }))
+                    })
+                    .collect();
+                Subscription::new(move || drop(tokens))
+            },
+        )
+    }
     /// Read-only projection. Projected equal values may repeat.
     pub fn map<U: Clone + 'static>(&self, forward: impl Fn(T) -> U + 'static) -> Binding<U> {
         let forward = Rc::new(forward);

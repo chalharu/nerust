@@ -17,6 +17,7 @@ nerust_gui_runtime.workspace = true
 nerust_input_traits.workspace = true
 nerust_persistence.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }
+nerust_render_osd.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 thiserror.workspace = true

@@ -1,6 +1,7 @@
 pub mod context;
 pub mod debug;
 pub mod emu_core;
+pub mod frame_composer;
 pub(crate) mod keyboard_defaults;
 pub mod load;
 pub mod registry;
