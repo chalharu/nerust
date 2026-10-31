@@ -7,7 +7,7 @@ use iced::{
         widget::{self, Tree},
     },
 };
-use panechord_runtime::{Layout as Policy, Style};
+use panechord_runtime::{Alignment, Layout as Policy, Style};
 type Renderer = iced_tiny_skia::Renderer;
 
 pub(crate) struct AdaptiveHeight {
@@ -155,6 +155,26 @@ pub fn geometry(policy: Policy, available: f32, children: &[(Size, Style)]) -> (
                     y += height + gap;
                 }
             }
+            if !wrap {
+                for (position, (size, style)) in positions.iter_mut().zip(children) {
+                    if horizontal {
+                        let height = (extent.height
+                            - finite(style.margin.top)
+                            - finite(style.margin.bottom))
+                        .max(0.0);
+                        position.y += style
+                            .vertical_alignment
+                            .unwrap_or(Alignment::Start)
+                            .offset(height, finite(size.height));
+                    } else if let Some(alignment) = style.horizontal_alignment {
+                        let width =
+                            (available - finite(style.margin.left) - finite(style.margin.right))
+                                .max(0.0);
+                        position.x += alignment.offset(width, finite(size.width));
+                        extent.width = extent.width.max(available);
+                    }
+                }
+            }
         }
         Policy::Absolute => {
             for (index, (size, style)) in children.iter().enumerate() {
@@ -192,11 +212,31 @@ pub fn geometry(policy: Policy, available: f32, children: &[(Size, Style)]) -> (
                     }
                 }
             }
-            for (index, (_, style)) in children.iter().enumerate() {
-                let (r, c, _, _) = grid_cell(style, cols, index);
+            for (index, (size, style)) in children.iter().enumerate() {
+                let (r, c, row_span, column_span) = grid_cell(style, cols, index);
+                let width = (cell * column_span as f32 + gap * (column_span - 1) as f32
+                    - finite(style.margin.left)
+                    - finite(style.margin.right))
+                .max(0.0);
+                let height = (heights[r..r + row_span].iter().sum::<f32>()
+                    + gap * (row_span - 1) as f32
+                    - finite(style.margin.top)
+                    - finite(style.margin.bottom))
+                .max(0.0);
                 positions[index] = Point::new(
-                    c as f32 * (cell + gap) + finite(style.margin.left),
-                    heights[..r].iter().sum::<f32>() + r as f32 * gap + finite(style.margin.top),
+                    c as f32 * (cell + gap)
+                        + finite(style.margin.left)
+                        + style
+                            .horizontal_alignment
+                            .unwrap_or(Alignment::Start)
+                            .offset(width, finite(size.width)),
+                    heights[..r].iter().sum::<f32>()
+                        + r as f32 * gap
+                        + finite(style.margin.top)
+                        + style
+                            .vertical_alignment
+                            .unwrap_or(Alignment::Start)
+                            .offset(height, finite(size.height)),
                 );
             }
             extent = Size::new(
@@ -397,12 +437,14 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
             );
             // Grid cells consume equal tracks, not merely a maximum width for
             // otherwise shrink-sized children. Explicit width remains bounded.
-            let min =
-                if matches!(self.policy, Policy::Grid { .. }) && style.placement.width.is_none() {
-                    Size::new(width, 0.0)
-                } else {
-                    Size::ZERO
-                };
+            let min = if matches!(self.policy, Policy::Grid { .. })
+                && style.placement.width.is_none()
+                && matches!(style.horizontal_alignment, None | Some(Alignment::Stretch))
+            {
+                Size::new(width, 0.0)
+            } else {
+                Size::ZERO
+            };
             let mut child_limits = layout::Limits::new(min, max);
             if let Some(w) = style.placement.width {
                 child_limits = child_limits.width(Length::Fixed(finite(w)));
@@ -432,14 +474,19 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                 .iter()
                 .zip(&nodes)
                 .filter(|(style, node)| {
-                    style.placement.width.is_none() && node.size() != Size::ZERO
+                    style.placement.width.is_none()
+                        && node.size() != Size::ZERO
+                        && matches!(style.horizontal_alignment, None | Some(Alignment::Stretch))
                 })
                 .count();
             let surplus = (available - occupied).max(0.0) / flexible.max(1) as f32;
             let natural: f32 = nodes
                 .iter()
                 .zip(&self.styles)
-                .filter(|(_, style)| style.placement.width.is_none())
+                .filter(|(_, style)| {
+                    style.placement.width.is_none()
+                        && matches!(style.horizontal_alignment, None | Some(Alignment::Stretch))
+                })
                 .map(|(node, _)| node.size().width)
                 .sum();
             let compression = if occupied > available && natural > 0.0 {
@@ -454,7 +501,13 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                 .zip(&self.styles)
                 .zip(&mut nodes)
             {
-                if style.placement.width.is_some() || node.size() == Size::ZERO {
+                if style.placement.width.is_some()
+                    || node.size() == Size::ZERO
+                    || matches!(
+                        style.horizontal_alignment,
+                        Some(Alignment::Start | Alignment::Center | Alignment::End)
+                    )
+                {
                     continue;
                 }
                 let width = if horizontal {
@@ -476,6 +529,52 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                     child_limits = child_limits.height(Length::Fixed(finite(height)));
                 }
                 *node = child.as_widget_mut().layout(state, renderer, &child_limits);
+            }
+            if !horizontal && limits.max().height.is_finite() {
+                let visible = nodes
+                    .iter()
+                    .filter(|node| node.size() != Size::ZERO)
+                    .count();
+                let occupied = nodes
+                    .iter()
+                    .zip(&self.styles)
+                    .filter(|(node, _)| node.size() != Size::ZERO)
+                    .map(|(node, style)| {
+                        node.size().height + finite(style.margin.top) + finite(style.margin.bottom)
+                    })
+                    .sum::<f32>()
+                    + finite(gap) * visible.saturating_sub(1) as f32;
+                let count = nodes
+                    .iter()
+                    .zip(&self.styles)
+                    .filter(|(node, style)| {
+                        node.size() != Size::ZERO
+                            && style.placement.height.is_none()
+                            && style.vertical_alignment == Some(Alignment::Stretch)
+                    })
+                    .count();
+                let surplus = (limits.max().height - occupied).max(0.0) / count.max(1) as f32;
+                for (((child, state), style), node) in self
+                    .children
+                    .iter_mut()
+                    .zip(&mut tree.children)
+                    .zip(&self.styles)
+                    .zip(&mut nodes)
+                {
+                    if node.size() == Size::ZERO
+                        || style.placement.height.is_some()
+                        || style.vertical_alignment != Some(Alignment::Stretch)
+                    {
+                        continue;
+                    }
+                    let height = node.size().height + surplus;
+                    let size = Size::new(node.size().width, height);
+                    *node = child.as_widget_mut().layout(
+                        state,
+                        renderer,
+                        &layout::Limits::new(size, size).height(Length::Fixed(height)),
+                    );
+                }
             }
         }
         let measured: Vec<_> = nodes
@@ -748,6 +847,59 @@ mod tests {
             ]
         );
         assert_eq!(size.height, 80.0);
+    }
+
+    #[test]
+    fn axis_alignment_uses_inner_bounds_and_preserves_finite_positions() {
+        let mut style = Style::default();
+        style.horizontal_alignment = Some(Alignment::End);
+        style.vertical_alignment = Some(Alignment::Center);
+        style.margin = Edges {
+            left: 10.0,
+            right: 20.0,
+            top: 4.0,
+            bottom: 6.0,
+        };
+        let vertical = Policy::Stack {
+            horizontal: false,
+            gap: 0.0,
+        };
+        let (size, positions) = geometry(vertical, 200.0, &[(Size::new(40.0, 10.0), style)]);
+        assert_eq!(size.width, 200.0);
+        assert_eq!(positions[0], Point::new(140.0, 4.0));
+        style.horizontal_alignment = Some(Alignment::Center);
+        assert_eq!(
+            geometry(vertical, 200.0, &[(Size::new(40.0, 10.0), style)]).1[0].x,
+            75.0
+        );
+        let (_, positions) = geometry(
+            Policy::Stack {
+                horizontal: true,
+                gap: 0.0,
+            },
+            200.0,
+            &[
+                (Size::new(40.0, 10.0), style),
+                (Size::new(40.0, 40.0), Style::default()),
+            ],
+        );
+        assert_eq!(positions[0].y, 14.0);
+        assert_eq!(Alignment::End.offset(10.0, 20.0), 0.0);
+        assert_eq!(Alignment::Center.offset(f32::INFINITY, 20.0), 0.0);
+        assert_eq!(Alignment::End.offset(20.0, f32::NAN), 0.0);
+        style.horizontal_alignment = Some(Alignment::End);
+        let (_, positions) = geometry(
+            Policy::Grid {
+                columns: 2,
+                gap: 0.0,
+            },
+            200.0,
+            &[
+                (Size::new(40.0, 10.0), style),
+                (Size::new(100.0, 40.0), Style::default()),
+            ],
+        );
+        assert_eq!(positions[0], Point::new(40.0, 14.0));
     }
 
     struct Probe(u32);

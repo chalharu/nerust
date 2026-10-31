@@ -76,6 +76,8 @@ unsafe extern "C" {
         left: f64,
         width: f64,
         height: f64,
+        horizontal_alignment: i32,
+        vertical_alignment: i32,
     );
     fn w3_remove(host: *mut c_void, id: *const u8, id_len: usize);
     fn w3_reorder(
@@ -517,6 +519,13 @@ impl View {
         let padding = style.padding;
         let margin = style.margin;
         let placement = style.placement;
+        let alignment = |value| match value {
+            None => 0,
+            Some(panechord_runtime::Alignment::Start) => 1,
+            Some(panechord_runtime::Alignment::Center) => 2,
+            Some(panechord_runtime::Alignment::End) => 3,
+            Some(panechord_runtime::Alignment::Stretch) => 4,
+        };
         unsafe {
             w3_style(
                 self.0.native.get(),
@@ -528,6 +537,8 @@ impl View {
                 f64::from(padding.left + margin.left),
                 f64::from(placement.width.unwrap_or(-1.0)),
                 f64::from(placement.height.unwrap_or(-1.0)),
+                alignment(style.horizontal_alignment),
+                alignment(style.vertical_alignment),
             );
         }
         Ok(())

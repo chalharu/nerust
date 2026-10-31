@@ -25,6 +25,32 @@ fn native_style_late_close_contract() {
     view.try_style("fixed", Style::default()).unwrap();
     assert!(frame.hexpands());
     assert_eq!(frame.width_request(), -1);
+    view.try_style(
+        "fixed",
+        Style {
+            horizontal_alignment: Some(Alignment::End),
+            vertical_alignment: Some(Alignment::Center),
+            ..Style::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(frame.halign(), gtk::Align::End);
+    assert_eq!(frame.valign(), gtk::Align::Center);
+    assert!(!frame.hexpands());
+    assert!(!frame.vexpands());
+    view.try_style(
+        "fixed",
+        Style {
+            vertical_alignment: Some(Alignment::Stretch),
+            ..Style::default()
+        },
+    )
+    .unwrap();
+    assert!(frame.vexpands());
+    view.try_style("fixed", Style::default()).unwrap();
+    assert_eq!(frame.halign(), gtk::Align::Fill);
+    assert_eq!(frame.valign(), gtk::Align::Fill);
+    assert!(!frame.is_vexpand_set());
     view.close();
     assert_eq!(
         view.try_style("__root", Style::default()),
