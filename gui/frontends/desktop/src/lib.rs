@@ -1,3 +1,4 @@
+mod debugger;
 mod history;
 mod render;
 mod session;
@@ -62,6 +63,9 @@ pub fn run(
         let history_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
         let history_updates = Rc::new(RefCell::new(None::<Rc<history::Pane>>));
         let history_refresh = history_updates.clone();
+        let debugger_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let debugger_updates = Rc::new(RefCell::new(None::<Rc<debugger::Pane>>));
+        let debugger_refresh = debugger_updates.clone();
         let settings_host = host.clone();
         let settings_session = session.clone();
         actions.replace(Some(Rc::new(move |intent| {
@@ -69,6 +73,63 @@ pub fn run(
                 return false;
             }
             match intent {
+                view::Intent::Debugger => {
+                    if let Some(view) = debugger_window
+                        .borrow()
+                        .as_ref()
+                        .and_then(panechord::WeakView::upgrade)
+                    {
+                        view.present();
+                        return true;
+                    }
+                    let language = app.borrow().settings().shared.general.language;
+                    let pane = debugger::Pane::new(language, executor.clone());
+                    let view = match pane.build() {
+                        Ok(view) => view,
+                        Err(error) => {
+                            let _ = output.update(move |model| model.notice = Some(error));
+                            return false;
+                        }
+                    };
+                    let weak = view.downgrade();
+                    let close = weak.clone();
+                    let cancelled = pane.clone();
+                    if let Err(error) = settings_host.register_view(
+                        &settings_session,
+                        "debugger",
+                        &view,
+                        panechord::WindowHooks {
+                            confirm: Rc::new(|| Box::pin(async { true })),
+                            cancel: Rc::new(move || cancelled.cancel()),
+                            drain: Rc::new(|| Box::pin(async {})),
+                            close: Rc::new(move || {
+                                if let Some(view) = close.upgrade() {
+                                    view.close();
+                                }
+                            }),
+                        },
+                    ) {
+                        view.close();
+                        let _ = output.update(move |model| model.notice = Some(error));
+                        return false;
+                    }
+                    view.on_close_request(Rc::new(move || {
+                        if let Some(view) = weak.upgrade() {
+                            view.close();
+                        }
+                    }));
+                    let closed_window = debugger_window.clone();
+                    let closed_pane = debugger_updates.clone();
+                    view.on_close(Rc::new(move || {
+                        closed_window.replace(None);
+                        closed_pane.replace(None);
+                    }));
+                    let (space, flight) = app.borrow().session().debugger_layout_begin();
+                    pane.start(space, flight);
+                    debugger_window.replace(Some(view.downgrade()));
+                    debugger_updates.replace(Some(pane));
+                    true
+                }
                 view::Intent::History => {
                     if let Some(view) = history_window
                         .borrow()
@@ -388,6 +449,11 @@ pub fn run(
                     if let Some((revision, language, lines)) = snapshot {
                         pane.refresh(revision, language, &lines);
                     }
+                }
+                let pane = debugger_refresh.borrow().clone();
+                if let Some(pane) = pane {
+                    let language = application.borrow().settings().shared.general.language;
+                    pane.poll(language);
                 }
                 let _ = model.update(move |model| {
                     model.state = state;

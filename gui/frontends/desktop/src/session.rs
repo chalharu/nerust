@@ -24,6 +24,28 @@ pub struct SessionAdapter {
 }
 
 impl SessionAdapter {
+    pub(crate) fn debugger_layout_begin(&self) -> (String, nerust_gui_shell::debug::DrainFlight) {
+        let spaces = self.session.debug_spaces();
+        let space = spaces.first();
+        let input = nerust_gui_shell::debug::DebugDrainInput {
+            space: space.map(|space| space.id),
+            mem_addr: space.map(|space| *space.range.start()).unwrap_or(0),
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: None,
+            prev_dump_rows: &[],
+            need_images: false,
+        };
+        (
+            space
+                .map(|space| space.name.to_string())
+                .unwrap_or_default(),
+            self.session
+                .debug_drain_begin(&[nerust_gui_shell::debug::DebugAction::Refresh], &input),
+        )
+    }
+
     pub(crate) fn key(code: &panechord::KeyCode) -> Option<wakui_core::Key> {
         use serde::Deserialize;
         let mut name = String::new();

@@ -1,0 +1,150 @@
+schema_version: 2
+root:
+  type: Window
+  id: debugger_window
+  title: {bind: {path: captions.title}}
+  content:
+    type: StackLayout
+    id: content
+    style: {vertical_alignment: Stretch}
+    margin: {top: 12, right: 16, bottom: 12, left: 16}
+    gap: 8
+    children:
+      - type: StackLayout
+        id: panes
+        orientation: Horizontal
+        style: {vertical_alignment: Stretch}
+        gap: 16
+        children:
+          - type: StackLayout
+            id: left
+            style: {vertical_alignment: Stretch}
+            gap: 12
+            children:
+              - {type: Label, id: title, text: {bind: {path: captions.title}}}
+              - type: StackLayout
+                id: toolbar
+                orientation: Horizontal
+                gap: 12
+                children:
+                  - {type: Button, id: pause, style: {horizontal_alignment: Start}, text: {bind: {path: captions.pause}}, command: action, argument: {literal: pause}}
+                  - {type: Button, id: step_frame, style: {horizontal_alignment: Start}, text: {bind: {path: captions.step_frame}}, command: action, argument: {literal: step_frame}}
+                  - {type: Button, id: step_instruction, style: {horizontal_alignment: Start}, text: {bind: {path: captions.step_instruction}}, command: action, argument: {literal: step_instruction}}
+                  - {type: Button, id: ppu, style: {horizontal_alignment: Start}, text: {bind: {path: captions.ppu}}, command: action, argument: {literal: ppu}}
+              - type: StackLayout
+                id: disassembly_nav
+                orientation: Horizontal
+                gap: 12
+                children:
+                  - {type: Label, id: disassembly_title, text: {bind: {path: captions.disassembly}}}
+                  - {type: Button, id: follow_pc, style: {horizontal_alignment: Start}, text: {bind: {path: captions.follow_pc}}, command: action, argument: {literal: follow_pc}}
+                  - {type: TextBox, id: disassembly_addr, style: {placement: {width: 120}}, text: {bind: {path: disasm_addr, mode: TwoWay}}, placeholder: {bind: {path: captions.addr}}}
+                  - {type: Button, id: disassembly_go, style: {horizontal_alignment: Start}, text: {bind: {path: captions.go}}, command: action, argument: {literal: disassembly_go}}
+                  - {type: Button, id: back, style: {horizontal_alignment: Start}, text: {bind: {path: back}}, command: action, argument: {literal: back}}
+              - {type: Table, id: disassembly, style: {vertical_alignment: Stretch, placement: {height: 260}}, source: {bind: {path: disassembly}}}
+          - type: Scroll
+            id: state_scroll
+            style: {vertical_alignment: Stretch, placement: {width: 410}}
+            content:
+              type: StackLayout
+              id: state
+              gap: 12
+              children:
+                - {type: Label, id: status, text: {bind: {path: status}}}
+                - {type: Label, id: registers_title, text: {bind: {path: captions.registers}}}
+                - type: StackLayout
+                  id: registers
+                  visible: {bind: {path: registers_visible}}
+                  orientation: Horizontal
+                  gap: 16
+                  children:
+                    - {type: Table, id: registers_left, style_binding: {bind: {path: register_style}}, source: {bind: {path: registers_left}}}
+                    - {type: Table, id: registers_right, style_binding: {bind: {path: register_style}}, source: {bind: {path: registers_right}}}
+                - type: StackLayout
+                  id: register_edit
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Label, id: register_target, style: {placement: {width: 140}}, text: {bind: {path: reg_target}}}
+                    - {type: TextBox, id: register_value, style: {placement: {width: 120}}, text: {bind: {path: register_value, mode: TwoWay}}, placeholder: {bind: {path: captions.hex}}}
+                    - {type: Button, id: register_set, style: {horizontal_alignment: Start}, text: {bind: {path: captions.set}}, command: action, argument: {literal: register_set}}
+                - {type: Label, id: watch_title, text: {bind: {path: captions.watch}}}
+                - type: StackLayout
+                  id: watch_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: Button, id: watch, style: {horizontal_alignment: Start}, text: {bind: {path: captions.watch}}, command: action, argument: {literal: watch}}
+                    - {type: Label, id: watch_value, text: {bind: {path: watch}}}
+                    - {type: Button, id: watch_clear, style: {horizontal_alignment: Start}, text: {bind: {path: captions.clear}}, command: action, argument: {literal: watch_clear}}
+                - {type: Label, id: freeze_title, text: {bind: {path: captions.freeze}}}
+                - type: StackLayout
+                  id: freeze_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: TextBox, id: freeze_value, style: {placement: {width: 120}}, text: {bind: {path: freeze_value, mode: TwoWay}}, placeholder: {bind: {path: captions.hex_byte}}}
+                    - {type: Button, id: freeze, style: {horizontal_alignment: Start}, text: {bind: {path: captions.freeze}}, command: action, argument: {literal: freeze}}
+                    - {type: Label, id: freeze_label, text: {bind: {path: freeze}}}
+                    - {type: Button, id: freeze_clear, style: {horizontal_alignment: Start}, text: {bind: {path: captions.clear}}, command: action, argument: {literal: freeze_clear}}
+                - {type: Label, id: bookmarks_title, text: {bind: {path: captions.bookmarks}}}
+                - type: StackLayout
+                  id: bookmark_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - {type: TextBox, id: bookmark_label, text: {bind: {path: bookmark_label, mode: TwoWay}}, placeholder: {bind: {path: captions.label}}}
+                    - {type: Button, id: bookmark_add, style: {horizontal_alignment: Start}, text: {bind: {path: captions.add}}, command: action, argument: {literal: bookmark_add}}
+                - {type: Table, id: bookmarks, style: {placement: {height: 50}}, source: {bind: {path: bookmarks}}}
+      - type: StackLayout
+        id: memory
+        style: {vertical_alignment: Stretch}
+        gap: 8
+        children:
+          - {type: Label, id: memory_title, text: {bind: {path: captions.memory}}}
+          - type: StackLayout
+            id: space_row
+            orientation: Horizontal
+            gap: 12
+            children:
+              - {type: Label, id: space_title, style: {placement: {width: 150}}, text: {bind: {path: captions.space}}}
+              - {type: Button, id: space_previous, style: {horizontal_alignment: Start}, text: {bind: {path: captions.previous}}, command: action, argument: {literal: space_previous}}
+              - {type: Label, id: space, text: {bind: {path: space}}}
+              - {type: Button, id: space_next, style: {horizontal_alignment: Start}, text: {bind: {path: captions.next}}, command: action, argument: {literal: space_next}}
+          - type: StackLayout
+            id: memory_nav
+            orientation: Horizontal
+            gap: 12
+            children:
+              - {type: Label, id: page_title, style: {placement: {width: 150}}, text: {bind: {path: captions.page}}}
+              - {type: Button, id: page_previous, style: {horizontal_alignment: Start}, text: {bind: {path: captions.previous}}, command: action, argument: {literal: page_previous}}
+              - {type: Button, id: page_next, style: {horizontal_alignment: Start}, text: {bind: {path: captions.next}}, command: action, argument: {literal: page_next}}
+              - {type: TextBox, id: memory_addr, style: {placement: {width: 120}}, text: {bind: {path: memory_addr, mode: TwoWay}}, placeholder: {bind: {path: captions.addr}}}
+              - {type: Button, id: memory_go, style: {horizontal_alignment: Start}, text: {bind: {path: captions.go}}, command: action, argument: {literal: memory_go}}
+          - {type: Table, id: dump, style: {vertical_alignment: Stretch, placement: {height: 300}}, source: {bind: {path: memory}}}
+          - type: StackLayout
+            id: edit_row
+            orientation: Horizontal
+            gap: 12
+            children:
+              - {type: Label, id: selected, style: {placement: {width: 240}}, text: {bind: {path: selected}}}
+              - {type: TextBox, id: edit_value, style: {placement: {width: 120}}, text: {bind: {path: edit_value, mode: TwoWay}}, placeholder: {bind: {path: captions.hex_byte}}}
+              - {type: Button, id: write, style: {horizontal_alignment: Start}, text: {bind: {path: captions.write}}, command: action, argument: {literal: write}}
+              - {type: Button, id: edit_watch, style: {horizontal_alignment: Start}, text: {bind: {path: captions.watch}}, command: action, argument: {literal: watch}}
+              - {type: Button, id: edit_freeze, style: {horizontal_alignment: Start}, text: {bind: {path: captions.freeze}}, command: action, argument: {literal: edit_freeze}}
+          - type: StackLayout
+            id: confirmation
+            orientation: Horizontal
+            visible: {bind: {path: pending}}
+            gap: 12
+            children:
+              - {type: Label, id: confirmation_text, text: {bind: {path: confirmation}}}
+              - {type: Button, id: confirm, style: {horizontal_alignment: Start}, text: {bind: {path: captions.confirm}}, command: action, argument: {literal: confirm}}
+              - {type: Button, id: cancel, style: {horizontal_alignment: Start}, text: {bind: {path: captions.cancel}}, command: action, argument: {literal: cancel}}
+          - type: StackLayout
+            id: footer
+            orientation: Horizontal
+            gap: 12
+            children:
+              - {type: Button, id: refresh, text: {bind: {path: captions.refresh}}, command: action, argument: {literal: refresh}}
+              - {type: Button, id: close, style: {horizontal_alignment: End}, text: {bind: {path: captions.close}}, command: close}
