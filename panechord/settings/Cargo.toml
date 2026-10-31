@@ -1,0 +1,23 @@
+[package]
+name = "panechord-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["backend-gtk"]
+backend-gtk = ["dep:panechord-gtk"]
+backend-tao = ["dep:panechord-tao"]
+backend-macos = ["dep:panechord-macos"]
+
+[dependencies]
+panechord-runtime.workspace = true
+panechord-macros.workspace = true
+panechord-gtk = { workspace = true, optional = true }
+panechord-tao = { workspace = true, optional = true }
+panechord-macos = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+futures.workspace = true
+futures-timer = "3.0"
