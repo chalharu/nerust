@@ -169,7 +169,11 @@ def capture(binary, original, destination, settings_review=False):
                         process.terminate()
                     process.wait(timeout=15)
     (output / "evidence.json").write_text(json.dumps({"os": execute("uname", "-a"),
-        "rom_sha256": hashlib.sha256(Path(original).read_bytes()).hexdigest(), "comparison_settings": settings,
+        "source_revision": os.environ.get("NERUST_SOURCE_REVISION"),
+        "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
+        "display_geometry": execute("xdotool", "getdisplaygeometry"),
+        "rom_sha256": hashlib.sha256(Path(original).read_bytes()).hexdigest(), "requested_settings_fixture": settings,
+        "measurement_units": "screen pixels", "insets_semantics": "Parent/child allocation distances, not inferred CSS margins.",
         "captures": records}, indent=2) + "\n")
     print(f"VIEW PASS captures={len(records)}", flush=True)
 
