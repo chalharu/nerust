@@ -271,7 +271,7 @@ controls! {
     ItemsControl { items: Property, item_template: String, viewport: Property, },
     ContentControl { content: Property, content_template: String, },
     Label { text: Property, },
-    Table { source: Property, },
+    Table { source: Property, selection: Option<Property>, },
     Separator { #[serde(default)] orientation: Orientation, },
     TextBox { text: Property, placeholder: Option<Property>, validation: Option<Validation>, },
     Button { text: Property, command: String, argument: Option<Property>, },

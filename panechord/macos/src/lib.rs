@@ -581,6 +581,45 @@ impl View {
         });
     }
 
+    pub fn table_with_selection(
+        &self,
+        parent: &Parent,
+        id: &str,
+        binding: Binding<panechord_runtime::Table>,
+        selection: Binding<Option<panechord_runtime::TableSelection>>,
+    ) {
+        self.table(parent, id, binding.clone());
+        let accepted = Rc::new(RefCell::new(panechord_runtime::Table::default()));
+        let updated = accepted.clone();
+        self.bind(id, binding, move |_, data| {
+            if data.validate().is_ok() {
+                updated.replace(data);
+            }
+        });
+        self.set(id, if selection.is_writable() { "1" } else { "0" }, 18);
+        let writer = selection.clone();
+        let data = accepted.clone();
+        self.0.handlers.borrow_mut().insert(
+            id.into(),
+            Rc::new(move |value| {
+                if let Ok((row_key, column)) = serde_json::from_str::<(String, usize)>(&value) {
+                    let selection = panechord_runtime::TableSelection { row_key, column };
+                    let valid = selection.validate(&data.borrow());
+                    if valid.is_ok() {
+                        let _ = writer.try_set(Some(selection));
+                    }
+                }
+            }),
+        );
+        let key = id.to_owned();
+        self.bind(id, selection, move |view, selection| {
+            let valid = selection.as_ref().map(|selection| selection.validate(&accepted.borrow()));
+            if let Some(Err(error)) = valid { view.report_error(error.into()); return; }
+            let value = selection.map(|selection| serde_json::json!({"row_key":selection.row_key,"column":selection.column}));
+            view.set(&key, &serde_json::to_string(&value).unwrap(), 17);
+        });
+    }
+
     pub fn entry_with_placeholder(
         &self,
         parent: &Parent,

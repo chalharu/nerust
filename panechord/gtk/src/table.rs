@@ -1,5 +1,5 @@
 use super::*;
-use panechord_runtime::{Table, TableColumn, TableRow, TextOverflow};
+use panechord_runtime::{Table, TableColumn, TableRow, TableSelection, TextOverflow};
 use std::sync::Arc;
 
 struct TableState {
@@ -9,6 +9,10 @@ struct TableState {
     separator: gtk::Separator,
     empty: gtk::Label,
     groups: RefCell<Vec<gtk::SizeGroup>>,
+    selection: Option<Binding<Option<TableSelection>>>,
+    selected: RefCell<Option<TableSelection>>,
+    mounted: RefCell<HashMap<String, Vec<glib::WeakRef<gtk::ToggleButton>>>>,
+    owner: WeakView,
 }
 
 pub(super) fn apply_text_style(label: &gtk::Label, text: Option<panechord_runtime::TextStyle>) {
@@ -40,6 +44,11 @@ pub(super) fn apply_text_style(label: &gtk::Label, text: Option<panechord_runtim
 
 fn label(column: &TableColumn, value: &str, heading: bool) -> gtk::Label {
     let label = gtk::Label::new(Some(value));
+    configure_label(&label, column, heading);
+    label
+}
+
+fn configure_label(label: &gtk::Label, column: &TableColumn, heading: bool) {
     label.set_xalign(0.0);
     label.set_hexpand(column.stretch);
     label.set_halign(gtk::Align::Fill);
@@ -48,7 +57,7 @@ fn label(column: &TableColumn, value: &str, heading: bool) -> gtk::Label {
         label.set_size_request(width.round() as i32, -1);
     }
     apply_text_style(
-        &label,
+        label,
         Some(if heading {
             panechord_runtime::TextStyle {
                 role: panechord_runtime::TextRole::Heading,
@@ -69,10 +78,46 @@ fn label(column: &TableColumn, value: &str, heading: bool) -> gtk::Label {
         }
         _ => label.set_ellipsize(gtk::pango::EllipsizeMode::End),
     }
-    label
+}
+
+fn set_selected(button: &gtk::ToggleButton, active: bool) {
+    button.set_active(active);
+    if active {
+        button.remove_css_class("flat");
+        button.add_css_class("suggested-action");
+    } else {
+        button.remove_css_class("suggested-action");
+        button.add_css_class("flat");
+    }
 }
 
 impl TableState {
+    fn select(&self, selected: Option<TableSelection>) {
+        let validation = selected
+            .as_ref()
+            .map(|selection| selection.validate(&self.data.borrow()));
+        if let Some(Err(error)) = validation {
+            if let Some(view) = self.owner.upgrade() {
+                view.report_error(error.into());
+            }
+            return;
+        }
+        self.selected.replace(selected.clone());
+        let mounted = self.mounted.borrow().clone();
+        for (key, cells) in mounted {
+            for (column, cell) in cells.into_iter().enumerate() {
+                if let Some(button) = cell.upgrade() {
+                    set_selected(
+                        &button,
+                        selected.as_ref().is_some_and(|selected| {
+                            selected.row_key == key && selected.column == column
+                        }),
+                    );
+                }
+            }
+        }
+    }
+
     fn replace(&self, data: Table) {
         let previous = self.data.replace(data.clone());
         self.empty.set_text(&data.empty_text);
@@ -114,6 +159,16 @@ impl TableState {
                         layout.set_text(&row.cells[index].text);
                         width.max(layout.pixel_size().0)
                     });
+                    let width = if self.selection.is_some() {
+                        sample.set_size_request(width, -1);
+                        let button = gtk::ToggleButton::new();
+                        button.add_css_class("flat");
+                        button.add_css_class("text-button");
+                        button.set_child(Some(&sample));
+                        button.measure(gtk::Orientation::Horizontal, -1).1
+                    } else {
+                        width
+                    };
                     widget.set_size_request(width, -1);
                 }
             }
@@ -142,11 +197,34 @@ impl TableState {
             (previous.rows.len() - prefix - suffix) as u32,
             &objects,
         );
+        if let Some(selection) = &self.selection {
+            self.select(selection.get());
+        }
     }
 }
 
 impl View {
     pub fn table(&self, parent: &Parent, id: &str, data: Binding<Table>) {
+        self.table_impl(parent, id, data, None);
+    }
+
+    pub fn table_with_selection(
+        &self,
+        parent: &Parent,
+        id: &str,
+        data: Binding<Table>,
+        selection: Binding<Option<TableSelection>>,
+    ) {
+        self.table_impl(parent, id, data, Some(selection));
+    }
+
+    fn table_impl(
+        &self,
+        parent: &Parent,
+        id: &str,
+        data: Binding<Table>,
+        selection: Option<Binding<Option<TableSelection>>>,
+    ) {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 2);
         let headers = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
@@ -159,6 +237,10 @@ impl View {
             separator,
             empty: gtk::Label::new(None),
             groups: RefCell::new(Vec::new()),
+            selection: selection.clone(),
+            selected: RefCell::new(None),
+            mounted: RefCell::new(HashMap::new()),
+            owner: self.downgrade(),
         });
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(|_, object| {
@@ -178,6 +260,10 @@ impl View {
                 .unwrap();
             let row = row.borrow::<Arc<TableRow>>();
             let body = item.child().unwrap().downcast::<gtk::Box>().unwrap();
+            state
+                .mounted
+                .borrow_mut()
+                .remove(body.widget_name().as_str());
             if let Some(row) = body.parent() {
                 row.style_context()
                     .add_provider(&row_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -185,32 +271,88 @@ impl View {
             while let Some(child) = body.first_child() {
                 body.remove(&child);
             }
-            let data = state.data.borrow();
+            let data = state.data.borrow().clone();
             body.set_spacing(data.column_gap.round() as i32);
             body.set_margin_bottom(data.row_gap.round() as i32);
             body.set_widget_name(&row.key);
+            let mut mounted = Vec::new();
             for (index, (column, cell)) in data.columns.iter().zip(&row.cells).enumerate() {
                 let mut column = column.clone();
                 column.text.foreground = cell.foreground.or(column.text.foreground);
-                let label = label(&column, &cell.text, false);
-                label.set_selectable(true);
-                state.groups.borrow()[index].add_widget(&label);
-                body.append(&label);
+                if let Some(selection) = &state.selection {
+                    let width = column.width.take();
+                    let button = gtk::ToggleButton::with_label(&cell.text);
+                    let label = button.child().unwrap().downcast::<gtk::Label>().unwrap();
+                    configure_label(&label, &column, false);
+                    button.add_css_class("flat");
+                    button.add_css_class("text-button");
+                    button.set_hexpand(column.stretch);
+                    if let Some(width) = width {
+                        button.set_size_request(width.round() as i32, -1);
+                    }
+                    set_selected(
+                        &button,
+                        state.selected.borrow().as_ref().is_some_and(|selected| {
+                            selected.row_key == row.key && selected.column == index
+                        }),
+                    );
+                    let weak = Rc::downgrade(&state);
+                    let writer = selection.clone();
+                    let selected = TableSelection {
+                        row_key: row.key.clone(),
+                        column: index,
+                    };
+                    button.connect_clicked(move |button| {
+                        let Some(state) = weak.upgrade() else { return };
+                        if state.owner.upgrade().is_none() {
+                            return;
+                        }
+                        let mounted = state
+                            .mounted
+                            .borrow()
+                            .get(&selected.row_key)
+                            .and_then(|cells| cells.get(selected.column))
+                            .and_then(glib::WeakRef::upgrade)
+                            .is_some_and(|current| current == *button);
+                        let valid = selected.validate(&state.data.borrow()).is_ok();
+                        if mounted && valid && writer.is_writable() {
+                            let _ = writer.try_set(Some(selected.clone()));
+                        }
+                        let active = *state.selected.borrow() == Some(selected.clone());
+                        set_selected(button, active);
+                    });
+                    state.groups.borrow()[index].add_widget(&button);
+                    body.append(&button);
+                    mounted.push(button.downgrade());
+                } else {
+                    let label = label(&column, &cell.text, false);
+                    label.set_selectable(true);
+                    state.groups.borrow()[index].add_widget(&label);
+                    body.append(&label);
+                }
             }
+            state.mounted.borrow_mut().insert(row.key.clone(), mounted);
         });
-        factory.connect_unbind(|_, object| {
+        let weak = Rc::downgrade(&state);
+        factory.connect_unbind(move |_, object| {
             let item = object.downcast_ref::<gtk::ListItem>().unwrap();
             if let Some(body) = item
                 .child()
                 .and_then(|child| child.downcast::<gtk::Box>().ok())
             {
+                if let Some(state) = weak.upgrade() {
+                    state
+                        .mounted
+                        .borrow_mut()
+                        .remove(body.widget_name().as_str());
+                }
                 while let Some(child) = body.first_child() {
                     body.remove(&child);
                 }
             }
         });
-        let selection = gtk::NoSelection::new(Some(state.rows.clone()));
-        let list = gtk::ListView::new(Some(selection), Some(factory));
+        let native_selection = gtk::NoSelection::new(Some(state.rows.clone()));
+        let list = gtk::ListView::new(Some(native_selection), Some(factory));
         list.set_vexpand(true);
         list.set_hexpand(true);
         let scroll = gtk::ScrolledWindow::new();
@@ -241,6 +383,17 @@ impl View {
                 }
             }
         });
+        if let Some(selection) = selection {
+            let weak = Rc::downgrade(&state);
+            self.keep_at(
+                id,
+                selection.subscribe(Rc::new(move |selected| {
+                    if let Some(state) = weak.upgrade() {
+                        state.select(selected);
+                    }
+                })),
+            );
+        }
         self.keep_at(id, Subscription::new(move || drop(state)));
     }
 }
