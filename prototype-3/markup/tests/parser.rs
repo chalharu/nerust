@@ -23,6 +23,36 @@ fn required_controls_and_read_only_modes_are_validated() {
 use wakui2_markup::*;
 
 #[test]
+fn reactive_appearance_has_one_way_boolean_contracts() {
+    for property in [
+        "visible: {literal: false}",
+        "enabled: {bind: {path: ready}}",
+        "style_binding: {bind: {path: layout}}",
+    ] {
+        assert!(
+            parse_yaml(&doc(&format!(
+                "type: Label\nid: label\ntext: {{literal: text}}\n{property}"
+            )))
+            .is_ok()
+        );
+    }
+    for property in [
+        "visible: {literal: 1}",
+        "enabled: {literal: text}",
+        "visible: {bind: {path: shown, mode: TwoWay}}",
+        "enabled: {bind: {path: ready, mode: TwoWay}}",
+        "style_binding: {bind: {path: layout, mode: TwoWay}}",
+    ] {
+        assert!(
+            parse_yaml(&doc(&format!(
+                "type: Label\nid: label\ntext: {{literal: text}}\n{property}"
+            )))
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn tab_positions_are_typed_and_default_to_top() {
     for (value, expected) in [
         ("", TabPosition::Top),
@@ -46,6 +76,23 @@ fn tab_positions_are_typed_and_default_to_top() {
     let source =
         doc("{type: Tab, id: tabs, selected: {literal: video}, position: Diagonal, pages: []}");
     assert!(parse_yaml(&source).is_err());
+}
+
+#[test]
+fn tab_literal_selection_is_checked_before_construction() {
+    for selected in ["video", "audio", "''", "missing", "42"] {
+        let source = doc(&format!(
+            "type: Tab\nid: tabs\nselected: {{literal: {selected}}}\npages:\n  - {{id: video, title: {{literal: Video}}, content: {{type: Label, id: video_label, text: {{literal: Video}}}}}}\n  - {{id: audio, title: {{literal: Audio}}, content: {{type: Label, id: audio_label, text: {{literal: Audio}}}}}}"
+        ));
+        let result = parse_yaml(&source);
+        if matches!(selected, "missing" | "42") {
+            let error = result.unwrap_err();
+            assert_eq!(error.path, "root.content.selected");
+            assert!(error.span.is_some());
+        } else {
+            assert!(result.is_ok());
+        }
+    }
 }
 
 fn doc(content: &str) -> String {

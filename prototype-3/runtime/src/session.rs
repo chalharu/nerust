@@ -6,8 +6,10 @@ use futures::{
     future::{AbortHandle, Abortable, Either, LocalBoxFuture, join_all, select},
 };
 use std::{
+    any::Any,
     cell::{Cell, RefCell},
     collections::BTreeMap,
+    panic::{AssertUnwindSafe, catch_unwind},
     rc::{Rc, Weak},
     time::Duration,
 };
@@ -55,12 +57,21 @@ pub enum ShutdownPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShutdownOutcome {
     Closed,
+    Failed,
     Cancelled,
     TimedOut,
     Busy,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShutdownFailure {
+    pub window: Option<String>,
+    pub operation: &'static str,
+    pub message: String,
+}
+
 struct WindowSlot {
+    id: String,
     hooks: WindowHooks,
     cancelled: Cell<bool>,
     removed: Cell<bool>,
@@ -97,6 +108,7 @@ struct ShutdownCore {
     phase: Cell<ShutdownPhase>,
     generation: Cell<u64>,
     cancel: RefCell<Option<oneshot::Sender<()>>>,
+    failures: RefCell<Vec<ShutdownFailure>>,
 }
 #[derive(Clone)]
 pub struct ShutdownCoordinator {
@@ -115,11 +127,51 @@ impl ShutdownCoordinator {
                 phase: Cell::new(ShutdownPhase::Running),
                 generation: Cell::new(0),
                 cancel: RefCell::new(None),
+                failures: RefCell::new(Vec::new()),
             }),
         }
     }
     pub fn phase(&self) -> ShutdownPhase {
         self.core.phase.get()
+    }
+    pub fn failures(&self) -> Vec<ShutdownFailure> {
+        self.core.failures.borrow().clone()
+    }
+    fn record_failure(
+        &self,
+        window: Option<String>,
+        operation: &'static str,
+        payload: Box<dyn Any + Send>,
+    ) {
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_owned())
+            })
+            .unwrap_or_else(|| "non-string panic payload".into());
+        self.core.failures.borrow_mut().push(ShutdownFailure {
+            window,
+            operation,
+            message,
+        });
+    }
+    fn attempt(&self, window: &WindowSlot, operation: &'static str, action: impl FnOnce()) -> bool {
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(action)) {
+            self.record_failure(Some(window.id.clone()), operation, payload);
+            false
+        } else {
+            true
+        }
+    }
+    fn closed_outcome(&self) -> ShutdownOutcome {
+        if self.core.failures.borrow().is_empty() {
+            ShutdownOutcome::Closed
+        } else {
+            ShutdownOutcome::Failed
+        }
     }
     pub fn window_count(&self) -> usize {
         self.core
@@ -149,6 +201,7 @@ impl ShutdownCoordinator {
             return Err(format!("duplicate window: {id}"));
         }
         let hooks = Rc::new(WindowSlot {
+            id: id.clone(),
             hooks,
             cancelled: Cell::new(false),
             removed: Cell::new(false),
@@ -172,6 +225,7 @@ impl ShutdownCoordinator {
     }
     /// Cancels an in-progress request without closing windows. Work already
     /// cancelled during Draining cannot be resurrected; applications may retry.
+    #[must_use]
     pub fn cancel_shutdown(&self) -> bool {
         if !matches!(
             self.phase(),
@@ -215,8 +269,8 @@ impl ShutdownCoordinator {
         for window in windows.into_values() {
             if let Some(window) = window.upgrade() {
                 window.remove();
-                window.cancel();
-                (window.hooks.close)();
+                self.attempt(&window, "cancel", || window.cancel());
+                self.attempt(&window, "close", || (window.hooks.close)());
             }
         }
     }
@@ -225,7 +279,7 @@ impl ShutdownCoordinator {
     /// Dropping the request future restores Running (unless already Closed).
     pub async fn request_shutdown(&self, timeout: Duration) -> ShutdownOutcome {
         match self.phase() {
-            ShutdownPhase::Closed => return ShutdownOutcome::Closed,
+            ShutdownPhase::Closed => return self.closed_outcome(),
             ShutdownPhase::Running => (),
             _ => return ShutdownOutcome::Busy,
         }
@@ -272,7 +326,10 @@ impl ShutdownCoordinator {
             let mut drains = Vec::new();
             for window in &windows {
                 if let Some(window) = window.upgrade() {
-                    window.cancel();
+                    if !self.attempt(&window, "cancel", || window.cancel()) {
+                        self.close_now();
+                        return Some(false);
+                    }
                     if self.core.generation.get() != generation
                         || self.phase() == ShutdownPhase::Closed
                     {
@@ -287,25 +344,32 @@ impl ShutdownCoordinator {
             }
         }
         .boxed_local();
-        let result = select(work, canceled).await;
+        let result = match AssertUnwindSafe(select(work, canceled))
+            .catch_unwind()
+            .await
+        {
+            Ok(result) => result,
+            Err(payload) => {
+                let operation = if self.phase() == ShutdownPhase::Confirming {
+                    "confirm"
+                } else {
+                    "drain"
+                };
+                self.record_failure(None, operation, payload);
+                self.close_now();
+                return self.closed_outcome();
+            }
+        };
         // A callback may cancel/close synchronously even if work is already Ready.
         let outcome = if self.phase() == ShutdownPhase::Closed {
-            ShutdownOutcome::Closed
+            self.closed_outcome()
         } else if self.core.generation.get() != generation {
             ShutdownOutcome::Cancelled
         } else {
             match result {
                 Either::Left((Some(true), _)) => {
-                    // Cancellation was already issued before draining.
-                    self.core.phase.set(ShutdownPhase::Closed);
-                    let windows = std::mem::take(&mut *self.core.windows.borrow_mut());
-                    for window in windows.into_values() {
-                        if let Some(window) = window.upgrade() {
-                            window.remove();
-                            (window.hooks.close)();
-                        }
-                    }
-                    ShutdownOutcome::Closed
+                    self.close_now();
+                    self.closed_outcome()
                 }
                 Either::Left((Some(false), _)) => {
                     self.core.phase.set(ShutdownPhase::Running);
@@ -313,7 +377,11 @@ impl ShutdownCoordinator {
                 }
                 Either::Left((None, _)) => {
                     self.close_now();
-                    ShutdownOutcome::TimedOut
+                    if self.core.failures.borrow().is_empty() {
+                        ShutdownOutcome::TimedOut
+                    } else {
+                        ShutdownOutcome::Failed
+                    }
                 }
                 Either::Right(_) => ShutdownOutcome::Cancelled,
             }

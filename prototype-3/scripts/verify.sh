@@ -37,6 +37,9 @@ for backend in gtk tao; do
     output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui3-settings --no-default-features --features "backend-$backend" --example controls)
     printf '%s\n' "$output"
     printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
+    printf '%s\n' "$output" | grep -q '^CONTRACT3 PASS slider closed capacity conversion readonly hidden disabled normalized-display$'
+    printf '%s\n' "$output" | grep -q '^MENUS3 PASS nested typed-argument parent-enablement$'
+    printf '%s\n' "$output" | grep -q '^DIALOG3 PASS readonly hidden-parent close-reopen$'
     printf '%s\n' "$output" | grep -q '^TABS3 PASS top bottom left right selection retained$'
 done
 native_test -p wakui3-settings \
@@ -80,6 +83,10 @@ cargo build --locked -p wakui2-tao --example native_smoke
 output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui2-tao --example native_smoke)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^native-smoke: close callback OK'
+cargo build --locked -p wakui2-tao --example multiwindow
+output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui2-tao --example multiwindow)
+printf '%s\n' "$output"
+printf '%s\n' "$output" | grep -q '^TAO3 PASS multiwindow drawn shared-store primary-close reopen foreign-and-closed-rejected veto-drain-close$'
 settings_smoke() {
     output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui3-settings "$@" -- --smoke)
     printf '%s\n' "$output"

@@ -30,7 +30,187 @@ impl Tab {
     }
 }
 impl View {
+    pub fn image_update_count(&self) -> usize {
+        self.0.image_updates.get()
+    }
+    pub fn hierarchical_menu<A: Clone + PartialEq + 'static>(
+        &self,
+        id: &str,
+        title: Binding<String>,
+        items: Binding<Vec<wakui2_runtime::MenuNode<A>>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
+    ) {
+        let weak = self.downgrade();
+        let checked = wakui2_runtime::checked_menu(
+            items,
+            |items| {
+                for item in items {
+                    if item
+                        .shortcut
+                        .as_ref()
+                        .is_some_and(|shortcut| super::parse_shortcut(shortcut).is_none())
+                    {
+                        return Err("invalid GTK menu shortcut".into());
+                    }
+                }
+                Ok(())
+            },
+            move |error| {
+                if let Some(view) = weak.upgrade() {
+                    view.report_error(error);
+                }
+            },
+        );
+        self.typed_menu(
+            id,
+            title,
+            checked.map(|tree| wakui2_runtime::flatten_menu(&tree).unwrap()),
+            dispatch,
+        );
+        let weak = self.downgrade();
+        let key = id.to_owned();
+        let token = checked.subscribe(Rc::new(move |tree| {
+            fn menu<A>(view: &View, key: &str, tree: &[wakui2_runtime::MenuNode<A>]) -> gio::Menu {
+                let result = gio::Menu::new();
+                let mut section = gio::Menu::new();
+                for node in tree {
+                    match node {
+                        wakui2_runtime::MenuNode::Item(item) => {
+                            if item.role == MenuRole::Separator {
+                                if section.n_items() > 0 {
+                                    result.append_section(None, &section);
+                                    section = gio::Menu::new();
+                                }
+                                continue;
+                            }
+                            if let Some(action) =
+                                view.0.actions.borrow().get(&format!("{key}/{}", item.id))
+                            {
+                                section.append(
+                                    Some(&item.label),
+                                    Some(&format!("wakui.{}", action.name)),
+                                );
+                            }
+                        }
+                        wakui2_runtime::MenuNode::Submenu {
+                            label, children, ..
+                        } => section.append_submenu(Some(label), &menu(view, key, children)),
+                    }
+                }
+                if section.n_items() > 0 {
+                    result.append_section(None, &section);
+                }
+                result
+            }
+            if let Some(view) = weak.upgrade() {
+                let state = view.0.menu_states.borrow().get(&key).cloned();
+                if let Some(state) = state {
+                    let nested = menu(&view, &key, &tree);
+                    state.menu.remove_all();
+                    state.menu.append_section(None, &nested);
+                }
+            }
+        }));
+        self.keep(token);
+    }
+    pub fn visible(&self, id: &str, binding: Binding<bool>) {
+        let frame = self.0.nodes.borrow().get(id).map(|node| node.frame.clone());
+        if let Some(frame) = frame {
+            self.bind_native(id, binding, &frame, |frame, value| frame.set_visible(value));
+        } else {
+            self.report_error(format!("missing visibility target: {id}"));
+        }
+    }
+    pub fn enabled(&self, id: &str, binding: Binding<bool>) {
+        let frame = self.0.nodes.borrow().get(id).map(|node| node.frame.clone());
+        if let Some(frame) = frame {
+            self.bind_native(id, binding, &frame, |frame, value| {
+                frame.set_sensitive(value)
+            });
+        } else {
+            self.report_error(format!("missing enablement target: {id}"));
+        }
+    }
+    pub fn style_binding(&self, id: &str, binding: Binding<Style>) {
+        let widget = self
+            .0
+            .nodes
+            .borrow()
+            .get(id)
+            .map(|node| node.widget.clone());
+        if let Some(widget) = widget {
+            let key = id.to_owned();
+            let weak = self.downgrade();
+            self.bind_native(id, binding, &widget, move |_, value| {
+                if let Some(view) = weak.upgrade() {
+                    view.style(&key, value);
+                }
+            });
+        } else {
+            self.report_error(format!("missing style target: {id}"));
+        }
+    }
+    pub(super) fn require_interactive(&self, id: &str) -> Result<(), String> {
+        let widget = self
+            .0
+            .nodes
+            .borrow()
+            .get(id)
+            .map(|node| node.widget.clone())
+            .ok_or("missing control")?;
+        Self::require_active_widget(Some(widget))
+    }
+    fn require_active_widget(mut current: Option<gtk::Widget>) -> Result<(), String> {
+        while let Some(widget) = current {
+            if widget.is::<gtk::Window>() {
+                break;
+            }
+            if !widget.get_sensitive() || !widget.get_visible() {
+                return Err("hidden or disabled control".into());
+            }
+            current = widget.parent();
+        }
+        Ok(())
+    }
+    pub fn slider_value(&self, id: &str) -> Option<f64> {
+        if self.0.closed.get() {
+            return None;
+        }
+        self.0.nodes.borrow().get(id).and_then(|node| {
+            node.widget
+                .downcast_ref::<gtk::Scale>()
+                .map(|slider| slider.value())
+        })
+    }
+    pub fn error(&self) -> Option<String> {
+        self.0.error.borrow().clone()
+    }
+    pub fn report_error(&self, error: String) {
+        if !self.0.closed.get() {
+            self.0.error.replace(Some(error));
+        }
+    }
     fn control_action(&self, id: &str, value: Input) -> Result<(), String> {
+        if matches!(value, Input::Open(_)) {
+            if !self
+                .0
+                .nodes
+                .borrow()
+                .get(id)
+                .is_some_and(|node| node.widget.is_sensitive())
+            {
+                return Err("missing or disabled control".into());
+            }
+            let parent = self
+                .0
+                .nodes
+                .borrow()
+                .get(id)
+                .and_then(|node| node.frame.parent());
+            Self::require_active_widget(parent)?;
+        } else {
+            self.require_interactive(id)?;
+        }
         if self.0.closed.get() {
             return Err("view is closed".into());
         }
@@ -157,8 +337,11 @@ impl View {
         self.mount_native(parent, id, &slider);
         let applying = Rc::new(Cell::new(false));
         let guard = applying.clone();
+        let current = Rc::new(Cell::new(range.min));
+        let observed = current.clone();
         self.bind_native(id, value.clone(), &slider, move |slider, value| {
             if let Ok(value) = range.normalize(value) {
+                observed.set(value);
                 guard.set(true);
                 slider.set_value(value);
                 guard.set(false);
@@ -171,7 +354,7 @@ impl View {
                     let _ = writer.try_set(value);
                 }
                 applying.set(true);
-                slider.set_value(writer.get());
+                slider.set_value(current.get());
                 applying.set(false);
             }
         });
@@ -185,9 +368,8 @@ impl View {
                 if !value.is_writable() {
                     return Err("read-only control".into());
                 }
-                range.normalize(next).map_err(str::to_owned)?;
-                slider.set_value(next);
-                Ok(())
+                let next = range.normalize(next).map_err(str::to_owned)?;
+                value.try_set(next).map_err(|error| error.to_string())
             }),
         );
     }
@@ -284,7 +466,11 @@ impl View {
             .unwrap()
             .frame
             .set_vexpand(false);
-        self.bind_native(id, source, &picture, |picture, frame| {
+        let weak = self.downgrade();
+        self.bind_native(id, source, &picture, move |picture, frame| {
+            if let Some(view) = weak.upgrade() {
+                view.0.image_updates.set(view.0.image_updates.get() + 1);
+            }
             if let Some(frame) = frame {
                 let bytes = glib::Bytes::from_owned(frame.pixels().clone());
                 let texture = gtk::gdk::MemoryTexture::new(
@@ -384,6 +570,35 @@ impl View {
     }
 
     pub fn tab_page(&self, parent: &Parent, id: &str, title: Binding<String>, key: &str) -> Parent {
+        self.try_tab_page(parent, id, title, key)
+            .expect("invalid Tab page")
+    }
+
+    pub fn try_tab_page(
+        &self,
+        parent: &Parent,
+        id: &str,
+        title: Binding<String>,
+        key: &str,
+    ) -> Result<Parent, String> {
+        if self.0.closed.get() || id.is_empty() || self.0.nodes.borrow().contains_key(id) {
+            return Err("closed view, empty or duplicate page id".into());
+        }
+        let state = self
+            .0
+            .tabs
+            .borrow()
+            .values()
+            .find(|state| state.notebook.upcast_ref::<gtk::Widget>() == &parent.widget)
+            .cloned()
+            .ok_or("missing or foreign Tab parent")?;
+        if parent.widget.root().is_none()
+            || !wakui2_runtime::valid_item_key(key)
+            || state.pages.borrow().len() >= 256
+            || state.pages.borrow().iter().any(|page| page.id == key)
+        {
+            return Err("unavailable Tab, invalid or duplicate page key, or page limit".into());
+        }
         let notebook = parent
             .widget
             .downcast_ref::<gtk::Notebook>()
@@ -409,7 +624,7 @@ impl View {
         state.applying.set(false);
         state.apply();
         self.bind_native(id, title, &label, |label, title| label.set_label(&title));
-        Parent::new(&body, ParentKind::Stack)
+        Ok(Parent::new(&body, ParentKind::Stack))
     }
 
     pub fn finish_tab(&self, parent: &Parent) -> Result<(), String> {

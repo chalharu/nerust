@@ -1501,6 +1501,44 @@ fn native_menu_namespaces() {
     let _ = items.update(Vec::clear);
     assert!(view.activate_menu("open").unwrap_err().contains("missing"));
     assert!(view.0.actions.borrow().is_empty());
+    view.hierarchical_menu(
+        "tree",
+        Binding::constant("Tree".into()),
+        Binding::constant(vec![
+            wakui2_runtime::MenuNode::Item(menu_item("first", MenuRole::Normal, None)),
+            wakui2_runtime::MenuNode::Item(menu_item("separator", MenuRole::Separator, None)),
+            wakui2_runtime::MenuNode::Submenu {
+                id: "group".into(),
+                label: "Group".into(),
+                enabled: true,
+                children: vec![wakui2_runtime::MenuNode::Item(menu_item(
+                    "last",
+                    MenuRole::Normal,
+                    None,
+                ))],
+            },
+        ]),
+        Rc::new(|_| true),
+    );
+    let native = view.0.menu_states.borrow()["tree"]
+        .menu
+        .item_link(0, gio::MENU_LINK_SECTION)
+        .unwrap();
+    assert_eq!(
+        native.n_items(),
+        2,
+        "separator splits two nonempty sections"
+    );
+    for index in 0..2 {
+        assert_eq!(
+            native
+                .item_link(index, gio::MENU_LINK_SECTION)
+                .unwrap()
+                .n_items(),
+            1
+        );
+    }
+    view.activate_menu("tree/last").unwrap();
     view.close();
     assert!(
         view.activate_menu("tools/open")

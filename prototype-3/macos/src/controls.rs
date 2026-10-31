@@ -1,8 +1,107 @@
 use super::*;
 pub(super) type TabState = (Binding<String>, Vec<Choice>);
-use wakui2_runtime::{Choice, ImageFrame, SliderRange, validate_choices};
+pub(super) type SliderAction = Rc<dyn Fn(f64) -> Result<(), String>>;
+use wakui2_runtime::{Choice, ImageFrame, MenuRole, SliderRange, validate_choices};
 
 impl View {
+    pub fn image_update_count(&self) -> usize {
+        self.0.image_updates.get()
+    }
+    pub fn hierarchical_menu<A: Clone + PartialEq + 'static>(
+        &self,
+        id: &str,
+        title: Binding<String>,
+        items: Binding<Vec<wakui2_runtime::MenuNode<A>>>,
+        dispatch: Rc<dyn Fn(A) -> bool>,
+    ) {
+        let weak = self.downgrade();
+        let checked = wakui2_runtime::checked_menu(
+            items,
+            |items| {
+                for item in items {
+                    if let Some(shortcut) = &item.shortcut {
+                        Shortcut::parse(shortcut).map_err(|error| error.to_string())?;
+                    }
+                }
+                Ok(())
+            },
+            move |error| {
+                if let Some(view) = weak.upgrade() {
+                    view.report_error(error);
+                }
+            },
+        );
+        self.typed_menu(
+            id,
+            title.clone(),
+            checked.map(|tree| wakui2_runtime::flatten_menu(&tree).unwrap()),
+            dispatch,
+        );
+        let weak = self.downgrade();
+        let key = id.to_owned();
+        let render = Rc::new(move |tree: Vec<wakui2_runtime::MenuNode<A>>| {
+            fn json<A>(tree: &[wakui2_runtime::MenuNode<A>]) -> Vec<serde_json::Value> {
+                tree.iter().map(|node| match node {
+                    wakui2_runtime::MenuNode::Item(item) => serde_json::json!({"id": item.id, "separator": item.role == MenuRole::Separator}),
+                    wakui2_runtime::MenuNode::Submenu { label, enabled, children, .. } => serde_json::json!({"label": label, "enabled": enabled, "children": json(children)}),
+                }).collect()
+            }
+            if let Some(view) = weak.upgrade() {
+                let json = serde_json::to_string(&json(&tree)).unwrap();
+                unsafe {
+                    w3_menu_tree(
+                        view.0.native.get(),
+                        key.as_ptr(),
+                        key.len(),
+                        json.as_ptr(),
+                        json.len(),
+                    );
+                }
+            }
+        });
+        self.keep(checked.subscribe(render.clone()));
+        self.keep(title.subscribe(Rc::new(move |_| render(checked.get()))));
+    }
+    pub fn visible(&self, id: &str, binding: Binding<bool>) {
+        if !self.0.nodes.borrow().contains(id) {
+            self.report_error(format!("missing visibility target: {id}"));
+            return;
+        }
+        let key = id.to_owned();
+        self.bind(id, binding, move |view, value| {
+            view.set(&key, if value { "1" } else { "0" }, 11)
+        });
+    }
+    pub fn enabled(&self, id: &str, binding: Binding<bool>) {
+        if !self.0.nodes.borrow().contains(id) {
+            self.report_error(format!("missing enablement target: {id}"));
+            return;
+        }
+        let key = id.to_owned();
+        self.bind(id, binding, move |view, value| {
+            view.set(&key, if value { "1" } else { "0" }, 12)
+        });
+    }
+    pub fn style_binding(&self, id: &str, binding: Binding<Style>) {
+        let key = id.to_owned();
+        self.bind(id, binding, move |view, value| view.style(&key, value));
+    }
+    pub fn slider_value(&self, id: &str) -> Option<f64> {
+        if self.0.closed.get() {
+            return None;
+        }
+        let mut value = 0.0;
+        unsafe { w3_slider_value(self.0.native.get(), id.as_ptr(), id.len(), &mut value) }
+            .then_some(value)
+    }
+    pub fn error(&self) -> Option<String> {
+        self.0.error.borrow().clone()
+    }
+    pub fn report_error(&self, error: String) {
+        if !self.0.closed.get() {
+            self.0.error.replace(Some(error));
+        }
+    }
     fn boolean_control(&self, id: &str, binding: Binding<bool>, property: i32) {
         let weak = self.downgrade();
         let key = id.to_owned();
@@ -84,6 +183,18 @@ impl View {
         );
         self.set(id, if value.is_writable() { "1" } else { "0" }, 1);
         let writer = value.clone();
+        let typed_writer = value.clone();
+        self.0.slider_actions.borrow_mut().insert(
+            id.into(),
+            Rc::new(move |next| {
+                let next = range.normalize(next).map_err(str::to_owned)?;
+                typed_writer
+                    .try_set(next)
+                    .map_err(|error| error.to_string())
+            }),
+        );
+        let current = Rc::new(Cell::new(range.min));
+        let observed = current.clone();
         let weak = self.downgrade();
         let key = id.to_owned();
         self.0.handlers.borrow_mut().insert(
@@ -97,13 +208,16 @@ impl View {
                     let _ = writer.try_set(value);
                 }
                 if let Some(view) = weak.upgrade() {
-                    view.set(&key, &writer.get().to_string(), 6);
+                    view.set(&key, &current.get().to_string(), 6);
                 }
             }),
         );
         let key = id.to_owned();
         self.bind(id, value, move |view, value| match range.normalize(value) {
-            Ok(value) => view.set(&key, &value.to_string(), 6),
+            Ok(value) => {
+                observed.set(value);
+                view.set(&key, &value.to_string(), 6);
+            }
             Err(error) => {
                 view.0.error.replace(Some(error.into()));
             }
@@ -160,6 +274,7 @@ impl View {
         self.add(parent, id, 13, 0.0);
         let key = id.to_owned();
         self.bind(id, source, move |view, frame| {
+            view.0.image_updates.set(view.0.image_updates.get() + 1);
             let (pixels, length, width, height) =
                 frame.as_ref().map_or((std::ptr::null(), 0, 0, 0), |frame| {
                     (
@@ -251,6 +366,38 @@ impl View {
     }
 
     pub fn tab_page(&self, parent: &Parent, id: &str, title: Binding<String>, key: &str) -> Parent {
+        self.try_tab_page(parent, id, title, key)
+            .expect("invalid Tab page")
+    }
+
+    pub fn try_tab_page(
+        &self,
+        parent: &Parent,
+        id: &str,
+        title: Binding<String>,
+        key: &str,
+    ) -> Result<Parent, String> {
+        if self.0.closed.get()
+            || !parent.1.ptr_eq(&Rc::downgrade(&self.0))
+            || !self.0.nodes.borrow().contains(&parent.0)
+            || id.is_empty()
+            || self.0.nodes.borrow().contains(id)
+        {
+            return Err("closed view, unavailable parent, empty or duplicate page id".into());
+        }
+        let (_, pages) = self
+            .0
+            .tabs
+            .borrow()
+            .get(&parent.0)
+            .cloned()
+            .ok_or("missing Tab parent")?;
+        if !wakui2_runtime::valid_item_key(key)
+            || pages.len() >= 256
+            || pages.iter().any(|page| page.id == key)
+        {
+            return Err("invalid or duplicate page key, or page limit".into());
+        }
         self.add(parent, id, 11, 0.0);
         self.set(id, key, 8);
         let page = Choice {
@@ -269,11 +416,11 @@ impl View {
         let page_id = id.to_owned();
         self.bind(id, title, move |view, title| view.set(&page_id, &title, 0));
         self.set(&parent.0, &selected, 6);
-        Parent(id.into(), Rc::downgrade(&self.0))
+        Ok(Parent(id.into(), Rc::downgrade(&self.0)))
     }
 
     pub fn finish_tab(&self, parent: &Parent) -> Result<(), String> {
-        if self.0.closed.get() {
+        if self.0.closed.get() || !parent.1.ptr_eq(&Rc::downgrade(&self.0)) {
             return Err("view is closed".into());
         }
         let (selected, pages) = self
@@ -307,7 +454,15 @@ impl View {
         self.action(id, if value { "1" } else { "0" }, 3)
     }
     pub fn slide(&self, id: &str, value: f64) -> Result<(), String> {
-        self.action(id, &value.to_string(), 4)
+        self.action(id, "", 7)?;
+        let action = self
+            .0
+            .slider_actions
+            .borrow()
+            .get(id)
+            .cloned()
+            .ok_or("missing slider")?;
+        action(value)
     }
     pub fn select(&self, id: &str, value: &str) -> Result<(), String> {
         self.action(id, value, 5)

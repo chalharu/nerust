@@ -201,6 +201,10 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     let window: NSWindow
     let root = DocumentStack()
     var nodes: [String: NSView] = [:]
+    var parents: [String: String] = [:]
+    var visibility: [String: Bool] = [:]
+    var enablement: [String: Bool] = [:]
+    var capabilities: [String: Bool] = [:]
     var frames: [String: NSStackView] = [:]
     var dimensions: [String: [NSLayoutConstraint]] = [:]
     var contentWidths: [String: NSLayoutConstraint] = [:]
@@ -371,6 +375,7 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
                 constant: -(container.edgeInsets.left + container.edgeInsets.right)).isActive = true
         }
         nodes[id] = view
+        parents[id] = parent
         frames[id] = frame
         view.identifier = NSUserInterfaceItemIdentifier(id)
         view.setAccessibilityIdentifier(id)
@@ -385,6 +390,21 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
             view.nextKeyView = focusable[(index + 1) % focusable.count]
         }
         window.initialFirstResponder = focusable.first
+    }
+    func interactive(_ id: String) -> Bool {
+        var current: String? = id
+        while let key = current {
+            if visibility[key] == false || enablement[key] == false { return false }
+            current = parents[key]
+        }
+        return true
+    }
+    func refreshEnablement() {
+        for (id, view) in nodes {
+            let enabled = interactive(id) && capabilities[id] != false
+            (view as? NSControl)?.isEnabled = enabled
+            (view as? Tabs)?.setEnabled(enabled)
+        }
     }
 
     func remove(_ prefix: String) {
@@ -404,6 +424,10 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
             }
             dimensions.removeValue(forKey: id)
             contentWidths.removeValue(forKey: id)
+            parents.removeValue(forKey: id)
+            visibility.removeValue(forKey: id)
+            enablement.removeValue(forKey: id)
+            capabilities.removeValue(forKey: id)
             if let node = nodes.removeValue(forKey: id) { focusable.removeAll { $0 === node } }
         }
         keyLoop()
@@ -561,6 +585,7 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let id = string(idBytes, idCount)
     let text = string(textBytes, textCount)
     if property == 1 {
+        value.capabilities[id] = text == "1"
         (value.nodes[id] as? NSControl)?.isEnabled = text == "1"
         if value.dialogs[id] != nil {
             if text == "1" { value.readonlyDialogs.remove(id) } else { value.readonlyDialogs.insert(id) }
@@ -569,6 +594,14 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
             tabs.setEnabled(text == "1")
             if text == "1" { value.readonlyTabs.remove(id) } else { value.readonlyTabs.insert(id) }
         }
+        value.refreshEnablement()
+    } else if property == 11 {
+        value.visibility[id] = text == "1"
+        value.frames[id]?.isHidden = text != "1"
+        value.refreshEnablement()
+    } else if property == 12 {
+        value.enablement[id] = text == "1"
+        value.refreshEnablement()
     } else if property == 2 {
         value.window.title = text
     } else if property == 3 {
@@ -617,6 +650,14 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     } else if let button = value.nodes[id] as? NSButton { button.title = text }
 }
 
+@_cdecl("w3_slider_value") @MainActor
+public func sliderValue(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
+                        _ output: UnsafeMutablePointer<Double>) -> Bool {
+    guard let slider = host(pointer).nodes[string(idBytes, idCount)] as? NSSlider else { return false }
+    output.pointee = slider.doubleValue
+    return true
+}
+
 @_cdecl("w3_text") @MainActor
 public func text(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
           _ output: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
@@ -641,6 +682,8 @@ public func action(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<
             _ textBytes: UnsafePointer<UInt8>?, _ textCount: Int, _ kind: Int32) -> Int32 {
     let value = host(pointer)
     let id = string(idBytes, idCount)
+    if !value.interactive(id) { return 0 }
+    if kind == 7, let slider = value.nodes[id] as? NSSlider, slider.isEnabled { return 1 }
     if kind == 0, let field = value.nodes[id] as? NSTextField, field.isEditable, field.isEnabled {
         field.stringValue = string(textBytes, textCount)
         value.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
@@ -837,6 +880,35 @@ public func menu(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
         submenu.addItem(native)
         value.menuItems[key] = native
     }
+}
+
+@_cdecl("w3_menu_tree") @MainActor
+public func menuTree(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
+                     _ jsonBytes: UnsafePointer<UInt8>?, _ jsonCount: Int) {
+    let value = host(pointer)
+    let id = string(idBytes, idCount)
+    guard let root = value.menus[id], let data = string(jsonBytes, jsonCount).data(using: .utf8),
+          let tree = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+    func build(_ menu: NSMenu, _ nodes: [[String: Any]]) {
+        for node in nodes {
+            if let children = node["children"] as? [[String: Any]] {
+                let title = node["label"] as? String ?? ""
+                let child = NSMenu(title: title)
+                child.autoenablesItems = false
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.isEnabled = node["enabled"] as? Bool ?? true
+                item.submenu = child
+                build(child, children)
+                menu.addItem(item)
+            } else if node["separator"] as? Bool == true { menu.addItem(.separator()) }
+            else if let key = node["id"] as? String, let item = value.menuItems[id + "/" + key] {
+                item.menu?.removeItem(item)
+                menu.addItem(item)
+            }
+        }
+    }
+    root.removeAllItems()
+    build(root, tree)
 }
 
 @_cdecl("w3_input_probe") @MainActor
