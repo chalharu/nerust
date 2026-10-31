@@ -3492,7 +3492,6 @@ dependencies = [
  "nerust_gui_shell",
  "nerust_gui_viewmodel",
  "nerust_nes_factory",
- "nerust_render_osd",
  "nerust_render_softbuffer",
  "nerust_render_traits",
  "nerust_settings_core",
@@ -3500,6 +3499,7 @@ dependencies = [
  "panechord",
  "raw-window-handle",
  "rfd",
+ "serde",
  "wakui_core",
 ]
 
@@ -3702,6 +3702,7 @@ dependencies = [
  "nerust_input_traits",
  "nerust_nes_settings",
  "nerust_persistence",
+ "nerust_render_osd",
  "nerust_render_traits",
  "nerust_settings_core",
  "nerust_settings_traits",
@@ -4694,8 +4695,11 @@ version = "0.1.0-dev"
 dependencies = [
  "futures",
  "gtk4",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
  "panechord-runtime",
  "raw-window-handle",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

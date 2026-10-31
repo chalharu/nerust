@@ -1,4 +1,7 @@
-use nerust_gui_shell::session::osd::{OsdManager, OsdPresenter, OsdSync, OsdSyncInput};
+use nerust_gui_shell::{
+    frame_composer::FrameComposer,
+    session::osd::{OsdManager, OsdSyncInput},
+};
 use nerust_render_traits::{FrameBuffer, SurfaceSize, renderer::RenderPipeline};
 use nerust_render_traits::{
     VideoRenderProfile,
@@ -6,68 +9,6 @@ use nerust_render_traits::{
 };
 use panechord::{ImageFrame, WindowSurface};
 use std::{cell::Cell, rc::Rc};
-
-pub(crate) struct FrameComposer {
-    presenter: OsdPresenter,
-    raster: nerust_render_osd::OsdRaster,
-}
-
-impl FrameComposer {
-    pub(crate) fn new() -> Self {
-        Self {
-            presenter: OsdPresenter::new(),
-            raster: nerust_render_osd::OsdRaster::new(),
-        }
-    }
-
-    pub(crate) fn invalidate(&mut self) {
-        self.presenter.invalidate();
-    }
-
-    pub(crate) fn render(
-        &mut self,
-        pipeline: &mut dyn RenderPipeline,
-        frame: &FrameBuffer,
-        size: SurfaceSize,
-        osd: &OsdManager,
-        mut sync: OsdSyncInput,
-    ) -> Result<Option<ImageFrame>, String> {
-        if size.width == 0 || size.height == 0 {
-            return Ok(None);
-        }
-        if pipeline.size() != size {
-            pipeline.resize(size);
-        }
-        sync.width = size.width;
-        sync.height = size.height;
-        let (top, bottom) = sync.chrome.reserved_rows();
-        pipeline.set_reserved_strip(nerust_render_traits::ReservedStrip {
-            top: nerust_render_traits::renderer::strip_pixels(size.height, top, sync.ui_scale),
-            bottom: nerust_render_traits::renderer::strip_pixels(
-                size.height,
-                bottom,
-                sync.ui_scale,
-            ),
-        });
-        match self.presenter.sync(osd, sync) {
-            OsdSync::Skip => {}
-            OsdSync::Clear => pipeline.set_osd_layer(None),
-            OsdSync::Render(plan) => {
-                let (width, height) = (plan.width, plan.height);
-                pipeline.set_osd_layer(self.raster.rasterize(&plan.into_content(), width, height));
-            }
-        }
-        let Some(image) = pipeline.render_image(frame, size) else {
-            return Ok(None);
-        };
-        if image.stride_bytes != image.width as usize * 4 {
-            return Err("renderer returned a non-packed RGBA frame".into());
-        }
-        ImageFrame::new(image.width, image.height, image.pixels.into())
-            .map(Some)
-            .map_err(str::to_owned)
-    }
-}
 
 pub(crate) struct RenderAdapter {
     pipeline: Option<Box<dyn RenderPipeline>>,
@@ -165,7 +106,12 @@ impl RenderAdapter {
             return Ok(None);
         };
         self.composer
-            .render(pipeline.as_mut(), frame, size, osd, sync)
+            .render(pipeline.as_mut(), frame, size, osd, sync)?
+            .map(|image| {
+                ImageFrame::new(image.width, image.height, image.pixels.into())
+                    .map_err(str::to_owned)
+            })
+            .transpose()
     }
 
     fn detach_pipeline(&mut self) {
@@ -267,9 +213,9 @@ mod tests {
         }
     }
 
-    fn has_osd_pixels(image: &ImageFrame) -> bool {
+    fn has_osd_pixels(image: &nerust_render_traits::RenderedImage) -> bool {
         image
-            .pixels()
+            .pixels
             .as_chunks::<4>()
             .0
             .iter()
@@ -308,7 +254,7 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        assert_eq!(cleared.pixels(), quiet.pixels());
+        assert_eq!(cleared.pixels, quiet.pixels);
     }
 
     #[test]
@@ -322,7 +268,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(pipeline.size(), size);
-            assert_eq!((image.width(), image.height()), (size.width, size.height));
+            assert_eq!((image.width, image.height), (size.width, size.height));
             assert!(has_osd_pixels(&image));
         }
     }
@@ -350,7 +296,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(has_osd_pixels(&restored));
-        assert_eq!(restored.pixels(), initial.pixels());
+        assert_eq!(restored.pixels, initial.pixels);
     }
 
     #[test]

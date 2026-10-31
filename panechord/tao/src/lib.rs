@@ -74,6 +74,7 @@ enum Handler {
 }
 enum Kind {
     Panel(Layout),
+    Scroll(bool),
     Leaf(ElementFactory),
     Items(Rc<dyn ItemHost>),
     Content,
@@ -137,6 +138,32 @@ impl Node {
                         .map(|n| (n.key(), n.style.get(), n.element()))
                         .collect(),
                 )
+            }
+            Kind::Scroll(horizontal) => {
+                let body = layout::Panel::element(
+                    Layout::Stack {
+                        horizontal: false,
+                        gap: 0.0,
+                    },
+                    self.children
+                        .borrow()
+                        .iter()
+                        .map(|node| (node.key(), node.style.get(), node.element()))
+                        .collect(),
+                );
+                widget::scrollable(body)
+                    .direction(if *horizontal {
+                        widget::scrollable::Direction::Horizontal(
+                            widget::scrollable::Scrollbar::default(),
+                        )
+                    } else {
+                        widget::scrollable::Direction::Vertical(
+                            widget::scrollable::Scrollbar::default(),
+                        )
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
             }
             Kind::Leaf(factory) => factory(),
             Kind::Content | Kind::Page => layout::Panel::element(
@@ -442,6 +469,24 @@ impl View {
         }
         Ok(Parent(self.add(parent, id, Kind::Panel(layout))))
     }
+    pub fn try_scroll(
+        &self,
+        parent: &Parent,
+        id: &str,
+        horizontal: bool,
+    ) -> Result<Parent, String> {
+        let content = self.try_layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            },
+        )?;
+        content.0.kind.replace(Kind::Scroll(horizontal));
+        Ok(content)
+    }
+
     pub fn style(&self, id: &str, style: Style) {
         if let Err(error) = self.try_style(id, style) {
             self.0.report(error);

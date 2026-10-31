@@ -4,8 +4,12 @@
 //! and capture native widgets weakly. Bindings retain frozen snapshots, not the
 //! Store owner. User callbacks, destructors and future polls run outside runtime
 //! RefCell borrows. Executors may poll immediately inside `spawn`.
+mod key;
 mod window;
-pub use window::{KeyCode, WindowEvent, WindowHost, WindowSurface};
+pub use key::KeyCode;
+#[doc(hidden)]
+pub mod native_keys;
+pub use window::{WindowEvent, WindowHost, WindowSurface};
 mod blocking;
 mod controls;
 mod session;
@@ -130,6 +134,17 @@ pub struct Style {
     pub margin: Edges,
     pub padding: Edges,
     pub placement: Placement,
+}
+
+impl Placement {
+    pub fn grid_position(self, index: usize, columns: u32) -> (i32, i32) {
+        if self.row == 0 && self.column == 0 && self.row_span == 1 && self.column_span == 1 {
+            let columns = columns.max(1) as usize;
+            ((index / columns) as i32, (index % columns) as i32)
+        } else {
+            (self.row, self.column)
+        }
+    }
 }
 
 impl Style {
