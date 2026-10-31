@@ -1,5 +1,6 @@
 use super::*;
 use panechord_runtime::{Choice, ImageFrame, SliderRange, validate_choices};
+type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 
 pub(super) enum Input {
     Toggle(bool),
@@ -36,6 +37,90 @@ impl Tab {
     }
 }
 impl View {
+    pub fn repeat<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        items: Binding<Vec<Keyed<T>>>,
+        gap: f32,
+        template: Template<T>,
+    ) {
+        if !(0.0..=4096.0).contains(&gap) {
+            self.report_error("invalid Repeat gap".into());
+            return;
+        }
+        let container = self.layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: false,
+                gap,
+            },
+        );
+        let native = self.widget::<gtk::Box>(id).unwrap();
+        let current = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
+        let pending = Rc::new(RefCell::new(None));
+        let busy = Rc::new(Cell::new(false));
+        let weak = self.downgrade();
+        let key = id.to_owned();
+        self.keep_at(
+            id,
+            items.subscribe(Rc::new(move |items| {
+                pending.replace(Some(items));
+                let Some(_guard) = panechord_runtime::ReconcileGuard::enter(&busy) else {
+                    return;
+                };
+                let Some(view) = weak.upgrade() else { return };
+                loop {
+                    let next = pending.borrow_mut().take();
+                    let Some(items) = next else { break };
+                    if view.0.closed.get() {
+                        break;
+                    }
+                    if let Err(error) = panechord_runtime::validate_repeat_items(&items) {
+                        view.report_error(error.into());
+                        continue;
+                    }
+                    let previous = current.replace(items.clone());
+                    for item in &previous {
+                        if !items.iter().any(|candidate| candidate == item) {
+                            view.cleanup(&format!("{key}/{}", item.key));
+                        }
+                    }
+                    for item in &items {
+                        if view.0.closed.get() {
+                            return;
+                        }
+                        if !previous.iter().any(|candidate| candidate == item) {
+                            view.content(
+                                &container,
+                                &format!("{key}/{}", item.key),
+                                Binding::constant(Some(item.clone())),
+                                template.clone(),
+                            );
+                        }
+                    }
+                    let mut after: Option<gtk::Widget> = None;
+                    for item in items {
+                        if view.0.closed.get() {
+                            return;
+                        }
+                        let frame = view
+                            .0
+                            .nodes
+                            .borrow()
+                            .get(&format!("{key}/{}", item.key))
+                            .unwrap()
+                            .frame
+                            .clone();
+                        native.reorder_child_after(&frame, after.as_ref());
+                        after = Some(frame.upcast());
+                    }
+                }
+            })),
+        );
+    }
+
     pub fn entry_with_placeholder(
         &self,
         parent: &Parent,
@@ -485,6 +570,47 @@ impl View {
                     .ok_or("unknown selected choice")?;
                 combo.set_selected(index as u32);
                 Ok(())
+            }),
+        );
+    }
+
+    pub fn image_with_pointer(
+        &self,
+        parent: &Parent,
+        id: &str,
+        source: Binding<Option<ImageFrame>>,
+        pointer: Binding<Option<panechord_runtime::PointerPosition>>,
+    ) {
+        self.image(parent, id, source);
+        let picture = self.widget::<gtk::Picture>(id).unwrap();
+        let motion = gtk::EventControllerMotion::new();
+        let weak = self.downgrade();
+        let writer = pointer.clone();
+        let moved = motion.connect_motion(move |_, x, y| {
+            if x.is_finite()
+                && y.is_finite()
+                && (x as f32).is_finite()
+                && (y as f32).is_finite()
+                && weak.upgrade().is_some_and(|view| !view.0.closed.get())
+            {
+                let _ = writer.try_set(Some(panechord_runtime::PointerPosition {
+                    x: x as f32,
+                    y: y as f32,
+                }));
+            }
+        });
+        let weak = self.downgrade();
+        let exited = motion.connect_leave(move |_| {
+            if weak.upgrade().is_some_and(|view| !view.0.closed.get()) {
+                let _ = pointer.try_set(None);
+            }
+        });
+        picture.add_controller(motion.clone());
+        self.keep_at(
+            id,
+            panechord_runtime::Subscription::new(move || {
+                motion.disconnect(moved);
+                motion.disconnect(exited);
             }),
         );
     }

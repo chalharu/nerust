@@ -178,6 +178,116 @@ use std::time::Duration;
 
 #[test]
 #[ignore = "isolated Xvfb native contract"]
+fn native_image_pointer_is_local_and_stops_after_close() {
+    use panechord_runtime::PointerPosition;
+    gtk::init().unwrap();
+    let model = Store::new(None::<PointerPosition>, GtkHost::attach().executor());
+    let view = View::new(Binding::constant("pointer".into()));
+    view.image_with_pointer(
+        &view.root(),
+        "image",
+        Binding::constant(None),
+        model.bind(
+            Clone::clone,
+            Some(|target: &mut Option<PointerPosition>, value| *target = value),
+        ),
+    );
+    let picture = view.widget::<gtk::Picture>("image").unwrap();
+    let controllers = picture.observe_controllers();
+    let motion = (0..controllers.n_items())
+        .find_map(|index| {
+            controllers
+                .item(index)?
+                .downcast::<gtk::EventControllerMotion>()
+                .ok()
+        })
+        .unwrap();
+    motion.emit_by_name::<()>("motion", &[&12.5_f64, &31.0_f64]);
+    assert_eq!(model.snapshot(), Some(PointerPosition { x: 12.5, y: 31.0 }));
+    motion.emit_by_name::<()>("leave", &[]);
+    assert_eq!(model.snapshot(), None);
+    motion.emit_by_name::<()>("motion", &[&f64::NAN, &8.0_f64]);
+    assert_eq!(model.snapshot(), None);
+    view.close();
+    motion.emit_by_name::<()>("motion", &[&7.0_f64, &8.0_f64]);
+    assert_eq!(model.snapshot(), None);
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_repeat_reorders_natural_children_and_cleans_removed_scopes() {
+    gtk::init().unwrap();
+    let executor = GtkHost::attach().executor();
+    let first = Keyed::new("first", Store::new("First".to_owned(), executor.clone()));
+    let second = Keyed::new("second", Store::new("Second".to_owned(), executor.clone()));
+    let rows = Store::new(vec![first.clone(), second.clone()], executor);
+    let reentered = rows.clone();
+    let view = View::new(Binding::constant("repeat".into()));
+    view.repeat(
+        &view.root(),
+        "repeat",
+        rows.bind(Clone::clone, None),
+        12.0,
+        Rc::new(move |view, parent, scope, model| {
+            view.label(
+                parent,
+                &format!("{scope}/label"),
+                model.bind(Clone::clone, None),
+            );
+            if model.snapshot() == "Third" {
+                assert!(reentered.update(|rows| rows.reverse()));
+            }
+        }),
+    );
+    let root = view.widget::<gtk::Box>("repeat").unwrap();
+    let first_frame = root.first_child().unwrap();
+    let second_frame = root.last_child().unwrap();
+    assert_eq!(first_frame.height_request(), -1);
+    assert_eq!(second_frame.height_request(), -1);
+    assert!(rows.update(|rows| rows.reverse()));
+    assert_eq!(root.first_child(), Some(second_frame.clone()));
+    assert_eq!(root.last_child(), Some(first_frame));
+    let removed = view
+        .widget::<gtk::Label>("repeat/first/first/label")
+        .unwrap();
+    assert!(rows.update(|rows| rows.retain(|row| row.key != "first")));
+    assert!(first.model.update(|label| *label = "Late".into()));
+    assert_eq!(removed.text(), "First");
+    assert!(
+        view.widget::<gtk::Label>("repeat/first/first/label")
+            .is_err()
+    );
+    assert_eq!(root.first_child(), Some(second_frame.clone()));
+    assert_eq!(root.last_child(), Some(second_frame));
+    let third = Keyed::new(
+        "third",
+        Store::new("Third".to_owned(), GtkHost::attach().executor()),
+    );
+    assert!(rows.update(move |rows| rows.push(third)));
+    let third_frame = view.0.nodes.borrow()["repeat/third"]
+        .frame
+        .clone()
+        .upcast::<gtk::Widget>();
+    assert_eq!(root.first_child(), Some(third_frame.clone()));
+    let invalid = Keyed {
+        key: "invalid/key".into(),
+        model: second.model.clone(),
+    };
+    assert!(rows.update(move |rows| *rows = vec![invalid]));
+    assert_eq!(root.first_child(), Some(third_frame));
+    assert!(
+        view.0
+            .error
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("Repeat keys")
+    );
+    view.close();
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
 fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
     use panechord_runtime::{Table, TableCell, TableColumn, TableRow, TextOverflow};
     use std::sync::Arc;

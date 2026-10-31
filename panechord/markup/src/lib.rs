@@ -266,6 +266,7 @@ controls! {
     Grid { columns: u32, #[serde(default)] gap: f32, #[serde(default)] children: Vec<Control>, },
     AbsoluteLayout { #[serde(default)] children: Vec<Control>, },
     FlexLayout { #[serde(default)] gap: f32, #[serde(default)] children: Vec<Control>, },
+    Repeat { items: Property, item_template: String, #[serde(default)] gap: f32, },
     BindableLayout { items: Property, item_template: String, viewport: Property, },
     ItemsControl { items: Property, item_template: String, viewport: Property, },
     ContentControl { content: Property, content_template: String, },
@@ -279,7 +280,7 @@ controls! {
     Radio { text: Property, selected: Property, value: String, },
     Slider { value: Property, min: f64, max: f64, step: f64, },
     Combo { items: Property, selected: Property, },
-    Image { source: Property, },
+    Image { source: Property, pointer: Option<Property>, },
     Tab { selected: Property, #[serde(default)] position: TabPosition, pages: Vec<TabPage>, },
     TabItems { selected: Property, #[serde(default)] position: TabPosition, items: Property, title: Property, item_template: String, },
     Dialog { title: Property, open: Property, content: Box<Control>, },
@@ -791,6 +792,18 @@ impl Document {
                 }
                 None
             }
+            Control::Repeat {
+                item_template,
+                gap,
+                items,
+                ..
+            } => {
+                read_only(items, "items")?;
+                if !gap.is_finite() || !(0.0..=4096.0).contains(gap) {
+                    return Err(err("invalid Repeat gap".into()));
+                }
+                Some(item_template)
+            }
             Control::ItemsControl { item_template, .. }
             | Control::BindableLayout { item_template, .. } => Some(item_template),
             Control::TabItems {
@@ -850,6 +863,25 @@ impl Document {
 #[cfg(test)]
 mod scroll_tests {
     use super::*;
+
+    #[test]
+    fn repeat_requires_a_valid_template_read_only_items_and_finite_gap() {
+        let value = serde_json::json!({"schema_version":2,
+            "templates":{"row":{"root":{"type":"Label","id":"label","text":{"bind":{"path":"label"}}}}},
+            "root":{"type":"Window","id":"window","title":{"literal":"Repeat"},"content":{"type":"Repeat","id":"rows","items":{"bind":{"path":"rows"}},"item_template":"row","gap":12}}});
+        parse(&value.to_string(), "json", "repeat.json").unwrap();
+        let mut invalid = value.clone();
+        invalid["root"]["content"]["items"]["bind"]["mode"] = "TwoWay".into();
+        assert!(parse(&invalid.to_string(), "json", "repeat.json").is_err());
+        let mut invalid = value.clone();
+        invalid["root"]["content"]["item_template"] = "missing".into();
+        assert!(parse(&invalid.to_string(), "json", "repeat.json").is_err());
+        for gap in [-1.0, 4096.1] {
+            let mut invalid = value.clone();
+            invalid["root"]["content"]["gap"] = gap.into();
+            assert!(parse(&invalid.to_string(), "json", "repeat.json").is_err());
+        }
+    }
 
     #[test]
     fn textbox_placeholder_is_optional_and_read_only() {

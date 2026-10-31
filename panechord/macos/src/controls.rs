@@ -2,8 +2,133 @@ use super::*;
 pub(super) type TabState = (Binding<String>, Vec<Choice>);
 pub(super) type SliderAction = Rc<dyn Fn(f64) -> Result<(), String>>;
 use panechord_runtime::{Choice, ImageFrame, MenuRole, SliderRange, validate_choices};
+type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 
 impl View {
+    pub fn content<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        item: Binding<Option<Keyed<T>>>,
+        template: Template<T>,
+    ) {
+        let container = self.layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: false,
+                gap: 0.0,
+            },
+        );
+        let current = Rc::new(RefCell::new(None::<Keyed<T>>));
+        let pending = Rc::new(RefCell::new(None));
+        let busy = Rc::new(Cell::new(false));
+        let key = id.to_owned();
+        self.bind(id, item, move |view, item| {
+            pending.replace(Some(item));
+            let Some(_guard) = panechord_runtime::ReconcileGuard::enter(&busy) else {
+                return;
+            };
+            loop {
+                let next = pending.borrow_mut().take();
+                let Some(item) = next else { break };
+                if view.0.closed.get() {
+                    break;
+                }
+                if item.as_ref().is_some_and(|item| {
+                    !panechord_runtime::valid_item_key(&item.key) || item.key.len() > 256
+                }) {
+                    view.report_error("invalid ContentControl key".into());
+                    continue;
+                }
+                if *current.borrow() == item {
+                    continue;
+                }
+                let previous = current.replace(item.clone());
+                if let Some(previous) = previous {
+                    view.remove(&format!("{key}/{}", previous.key));
+                }
+                if view.0.closed.get() {
+                    return;
+                }
+                if let Some(item) = item {
+                    let scope = format!("{key}/{}", item.key);
+                    view.in_scope(&scope, || template(view, &container, &scope, item.model));
+                }
+            }
+        });
+    }
+
+    pub fn repeat<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        items: Binding<Vec<Keyed<T>>>,
+        gap: f32,
+        template: Template<T>,
+    ) {
+        if !(0.0..=4096.0).contains(&gap) {
+            self.report_error("invalid Repeat gap".into());
+            return;
+        }
+        let container = self.layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: false,
+                gap,
+            },
+        );
+        let current = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
+        let pending = Rc::new(RefCell::new(None));
+        let busy = Rc::new(Cell::new(false));
+        let key = id.to_owned();
+        self.bind(id, items, move |view, items| {
+            pending.replace(Some(items));
+            let Some(_guard) = panechord_runtime::ReconcileGuard::enter(&busy) else {
+                return;
+            };
+            loop {
+                let next = pending.borrow_mut().take();
+                let Some(items) = next else { break };
+                if view.0.closed.get() {
+                    break;
+                }
+                if let Err(error) = panechord_runtime::validate_repeat_items(&items) {
+                    view.report_error(error.into());
+                    continue;
+                }
+                let previous = current.replace(items.clone());
+                for item in &previous {
+                    if !items.iter().any(|candidate| candidate == item) {
+                        view.remove(&format!("{key}/{}", item.key));
+                    }
+                }
+                for item in &items {
+                    if view.0.closed.get() {
+                        return;
+                    }
+                    if !previous.iter().any(|candidate| candidate == item) {
+                        view.content(
+                            &container,
+                            &format!("{key}/{}", item.key),
+                            Binding::constant(Some(item.clone())),
+                            template.clone(),
+                        );
+                    }
+                }
+                if view.0.closed.get() {
+                    return;
+                }
+                let ordered: Vec<_> = items
+                    .iter()
+                    .map(|item| format!("{key}/{}", item.key))
+                    .collect();
+                view.set(&key, &serde_json::to_string(&ordered).unwrap(), 16);
+            }
+        });
+    }
+
     pub fn image_update_count(&self) -> usize {
         self.0.image_updates.get()
     }
@@ -271,6 +396,31 @@ impl View {
         let update = refresh.clone();
         self.bind(id, items, move |view, _| update(view));
         self.bind(id, selected, move |view, _| refresh(view));
+    }
+
+    pub fn image_with_pointer(
+        &self,
+        parent: &Parent,
+        id: &str,
+        source: Binding<Option<ImageFrame>>,
+        pointer: Binding<Option<panechord_runtime::PointerPosition>>,
+    ) {
+        self.image(parent, id, source);
+        self.set(id, if pointer.is_writable() { "1" } else { "0" }, 15);
+        self.0.handlers.borrow_mut().insert(
+            id.into(),
+            Rc::new(move |value| {
+                if let Ok(position) = serde_json::from_str::<Option<[f32; 2]>>(&value) {
+                    if position.is_some_and(|point| !point[0].is_finite() || !point[1].is_finite())
+                    {
+                        return;
+                    }
+                    let _ = pointer.try_set(
+                        position.map(|[x, y]| panechord_runtime::PointerPosition { x, y }),
+                    );
+                }
+            }),
+        );
     }
 
     pub fn image(&self, parent: &Parent, id: &str, source: Binding<Option<ImageFrame>>) {
