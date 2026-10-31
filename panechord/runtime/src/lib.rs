@@ -211,6 +211,32 @@ pub struct Style {
     pub placement: Placement,
     pub horizontal_alignment: Option<Alignment>,
     pub vertical_alignment: Option<Alignment>,
+    pub text: Option<TextStyle>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TextRole {
+    #[default]
+    Body,
+    Heading,
+    Code,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextStyle {
+    pub role: TextRole,
+    pub scale: f32,
+    pub foreground: Option<[u8; 3]>,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            role: TextRole::Body,
+            scale: 1.0,
+            foreground: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +275,12 @@ impl Placement {
 impl Style {
     pub fn validate(self, parent: Layout) -> Result<(), &'static str> {
         parent.validate()?;
+        if self
+            .text
+            .is_some_and(|text| !text.scale.is_finite() || text.scale <= 0.0 || text.scale > 16.0)
+        {
+            return Err("text scale must be finite and within (0, 16]");
+        }
         for edges in [self.margin, self.padding] {
             if [edges.top, edges.right, edges.bottom, edges.left]
                 .iter()

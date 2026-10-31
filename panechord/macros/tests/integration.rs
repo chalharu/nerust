@@ -350,6 +350,10 @@ fn window_style_targets_the_internal_root() {
         style.vertical_alignment,
         Some(panechord_runtime::Alignment::Stretch)
     );
+    let text = style.text.unwrap();
+    assert_eq!(text.role, panechord_runtime::TextRole::Code);
+    assert_eq!(text.scale, 0.8333333);
+    assert_eq!(text.foreground, Some([70, 70, 70]));
 }
 #[test]
 fn items_and_bindable_layout_viewports_write_back_only_for_two_way() {

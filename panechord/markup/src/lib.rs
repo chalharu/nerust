@@ -131,6 +131,33 @@ pub struct Style {
     pub placement: Placement,
     pub horizontal_alignment: Option<Alignment>,
     pub vertical_alignment: Option<Alignment>,
+    pub text: Option<TextStyle>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+pub enum TextRole {
+    #[default]
+    Body,
+    Heading,
+    Code,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct TextStyle {
+    pub role: TextRole,
+    pub scale: f32,
+    pub foreground: Option<[u8; 3]>,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            role: TextRole::Body,
+            scale: 1.0,
+            foreground: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
@@ -523,6 +550,11 @@ impl Document {
             return Err(err(format!("duplicate id `{}`", c.id())));
         }
         let s = c.style();
+        if s.text
+            .is_some_and(|text| !text.scale.is_finite() || text.scale <= 0.0 || text.scale > 16.0)
+        {
+            return Err(err("text scale must be finite and within (0, 16]".into()));
+        }
         let sides = |e: &Edges| match e {
             Edges::Scalar(v) => vec![*v; 4],
             Edges::Sides(v) => vec![v.top, v.right, v.bottom, v.left],
@@ -810,6 +842,23 @@ impl Document {
 #[cfg(test)]
 mod scroll_tests {
     use super::*;
+
+    #[test]
+    fn text_styles_validate_scale_roles_and_rgb_before_generation() {
+        let value = serde_json::json!({"schema_version":2,"root":{"type":"Window","id":"window","title":{"literal":"Text"},
+            "content":{"type":"Label","id":"label","text":{"literal":"Text"},"style":{"text":{"role":"Code","scale":0.8333333,"foreground":[70,70,70]}}}}});
+        parse(&value.to_string(), "json", "text.json").unwrap();
+        for scale in [0.0, -1.0, 16.001] {
+            let mut invalid = value.clone();
+            invalid["root"]["content"]["style"]["text"]["scale"] = scale.into();
+            assert!(parse(&invalid.to_string(), "json", "text.json").is_err());
+        }
+        let mut invalid = value.clone();
+        invalid["root"]["content"]["style"]["text"]["foreground"] = serde_json::json!([256, 0, 0]);
+        assert!(parse(&invalid.to_string(), "json", "text.json").is_err());
+        let nan = "schema_version: 2\nroot:\n  type: Window\n  id: window\n  title: {literal: Text}\n  content:\n    type: Label\n    id: label\n    text: {literal: Text}\n    style: {text: {scale: .nan}}\n";
+        assert!(parse(nan, "yaml", "text.yaml").is_err());
+    }
 
     #[test]
     fn dynamic_tab_templates_validate_selection_and_read_only_properties() {
