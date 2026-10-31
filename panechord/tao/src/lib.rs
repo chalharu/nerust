@@ -518,10 +518,28 @@ impl View {
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
         let node = self.add(parent, id, Kind::Content);
         let value = self.bound_text(&node, text);
+        let styled = Rc::downgrade(&node);
         node.kind.replace(Kind::Leaf(Rc::new(move || {
-            widget::text(value.borrow().clone())
-                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                .into()
+            let mut label = widget::text(value.borrow().clone())
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+            if let Some(style) = styled.upgrade().and_then(|node| node.style.get().text) {
+                let (font, factor) = match style.role {
+                    panechord_runtime::TextRole::Body => (iced::Font::default(), 1.0),
+                    panechord_runtime::TextRole::Heading => (
+                        iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        },
+                        1.2,
+                    ),
+                    panechord_runtime::TextRole::Code => (iced::Font::MONOSPACE, 1.0),
+                };
+                label = label.font(font).size(16.0 * factor * style.scale);
+                if let Some([red, green, blue]) = style.foreground {
+                    label = label.color(iced::Color::from_rgb8(red, green, blue));
+                }
+            }
+            label.into()
         })));
     }
     pub fn entry(&self, parent: &Parent, id: &str, text: Binding<String>) {

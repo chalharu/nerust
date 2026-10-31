@@ -7,9 +7,9 @@ templates:
       orientation: Horizontal
       gap: 12
       children:
-        - {type: Label, id: datetime, style: {placement: {width: 170}}, text: {bind: {path: datetime}}}
-        - {type: Label, id: level, style: {placement: {width: 70}}, text: {bind: {path: level}}}
-        - {type: Label, id: module, style: {placement: {width: 120}}, text: {bind: {path: module}}}
+        - {type: Label, id: datetime, style: {text: {role: Code, scale: 0.8333333}, placement: {width: 170}}, text: {bind: {path: datetime}}}
+        - {type: Label, id: level, style_binding: {bind: {path: level_style}}, text: {bind: {path: level}}}
+        - {type: Label, id: module, style: {text: {role: Code, scale: 0.8333333}, placement: {width: 120}}, text: {bind: {path: module}}}
         - {type: Label, id: message, text: {bind: {path: message}}}
 root:
   type: Window
@@ -40,10 +40,10 @@ root:
         orientation: Horizontal
         gap: 12
         children:
-          - {type: Label, id: datetime_label, style: {placement: {width: 170}}, text: {bind: {path: datetime_label, source: External}}}
-          - {type: Label, id: severity_label, style: {placement: {width: 70}}, text: {bind: {path: severity_label, source: External}}}
-          - {type: Label, id: module_label, style: {placement: {width: 120}}, text: {bind: {path: module_label, source: External}}}
-          - {type: Label, id: message_label, text: {bind: {path: message_label, source: External}}}
+          - {type: Label, id: datetime_label, style: {text: {role: Heading}, placement: {width: 170}}, text: {bind: {path: datetime_label, source: External}}}
+          - {type: Label, id: severity_label, style: {text: {role: Heading}, placement: {width: 70}}, text: {bind: {path: severity_label, source: External}}}
+          - {type: Label, id: module_label, style: {text: {role: Heading}, placement: {width: 120}}, text: {bind: {path: module_label, source: External}}}
+          - {type: Label, id: message_label, style: {text: {role: Heading}}, text: {bind: {path: message_label, source: External}}}
       - type: ItemsControl
         id: table
         style: {vertical_alignment: Stretch}

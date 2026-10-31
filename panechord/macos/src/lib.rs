@@ -78,6 +78,11 @@ unsafe extern "C" {
         height: f64,
         horizontal_alignment: i32,
         vertical_alignment: i32,
+        text_role: i32,
+        text_scale: f64,
+        red: i32,
+        green: i32,
+        blue: i32,
     );
     fn w3_remove(host: *mut c_void, id: *const u8, id_len: usize);
     fn w3_reorder(
@@ -519,6 +524,17 @@ impl View {
         let padding = style.padding;
         let margin = style.margin;
         let placement = style.placement;
+        let text = style.text.unwrap_or_default();
+        let text_role = match style.text.map(|text| text.role) {
+            None => 0,
+            Some(panechord_runtime::TextRole::Body) => 1,
+            Some(panechord_runtime::TextRole::Heading) => 2,
+            Some(panechord_runtime::TextRole::Code) => 3,
+        };
+        let colour = text
+            .foreground
+            .map(|rgb| rgb.map(i32::from))
+            .unwrap_or([-1; 3]);
         let alignment = |value| match value {
             None => 0,
             Some(panechord_runtime::Alignment::Start) => 1,
@@ -539,6 +555,11 @@ impl View {
                 f64::from(placement.height.unwrap_or(-1.0)),
                 alignment(style.horizontal_alignment),
                 alignment(style.vertical_alignment),
+                text_role,
+                f64::from(text.scale),
+                colour[0],
+                colour[1],
+                colour[2],
             );
         }
         Ok(())

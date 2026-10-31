@@ -14,6 +14,7 @@ struct Row {
     level: String,
     module: String,
     message: String,
+    level_style: panechord::Style,
 }
 
 #[derive(Clone)]
@@ -135,6 +136,17 @@ impl Pane {
                             level: row.level.into(),
                             module: row.module,
                             message: row.message,
+                            level_style: panechord::Style {
+                                placement: panechord::Placement {
+                                    width: Some(70.0),
+                                    ..Default::default()
+                                },
+                                text: Some(panechord::TextStyle {
+                                    foreground: Some([row.rgb.0, row.rgb.1, row.rgb.2]),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            },
                         },
                         self.executor.clone(),
                     ),
