@@ -463,6 +463,9 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     }
 
     func remove(_ prefix: String) {
+        let previousApplying = applying
+        applying = true
+        defer { applying = previousApplying }
         let ids = nodes.keys.filter { $0 == prefix || $0.hasPrefix(prefix + "/") }
         for id in ids.sorted(by: { $0.count > $1.count }) {
             if let panel = dialogs.removeValue(forKey: id) {
@@ -832,9 +835,29 @@ public func remove(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<
 public func reorder(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int,
                     _ orderBytes: UnsafePointer<UInt8>?, _ orderCount: Int) -> Int32 {
     let value = host(pointer)
-    guard let rows = value.nodes[string(idBytes, idCount)] as? Rows,
-          let data = string(orderBytes, orderCount).data(using: .utf8),
+    let id = string(idBytes, idCount)
+    guard let data = string(orderBytes, orderCount).data(using: .utf8),
           let ids = try? JSONSerialization.jsonObject(with: data) as? [String],
+          Set(ids).count == ids.count else { return 0 }
+    if let tabs = value.nodes[id] as? Tabs {
+        let items = ids.compactMap { value.tabItems[$0] }
+        guard items.count == ids.count, items.count == tabs.body.numberOfTabViewItems,
+              items.allSatisfy({ $0.tabView === tabs.body }) else { return 0 }
+        let selected = tabs.body.selectedTabViewItem
+        let previousApplying = value.applying
+        value.applying = true
+        defer { value.applying = previousApplying }
+        for (index, item) in items.enumerated() {
+            if tabs.body.tabViewItem(at: index) !== item {
+                tabs.body.removeTabViewItem(item)
+                tabs.body.insertTabViewItem(item, at: index)
+            }
+        }
+        if let selected = selected { tabs.body.selectTabViewItem(selected) }
+        tabs.rebuildHeader()
+        return 1
+    }
+    guard let rows = value.nodes[id] as? Rows,
           ids.count == rows.body.arrangedSubviews.count else { return 0 }
     let frames = ids.compactMap { value.frames[$0] }
     guard frames.count == ids.count, Set(ids).count == ids.count,

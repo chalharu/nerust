@@ -23,6 +23,44 @@ use super::*;
 
 #[cfg(target_os = "linux")]
 #[test]
+fn dynamic_tabs_keep_identity_across_reorder_and_model_replacement() {
+    let harness = Harness::new();
+    let first = Keyed::new("first", harness.store("First".to_owned()));
+    let second = Keyed::new("second", harness.store("Second".to_owned()));
+    let model = harness.store(vec![first.clone(), second.clone()]);
+    let view = View::new(Binding::constant("dynamic tabs".into()));
+    let tab = view.tab_items(
+        &view.root(),
+        "pages",
+        model.bind(Clone::clone, None),
+        Binding::constant("second".into()),
+        Rc::new(|model| model.bind(Clone::clone, None)),
+        Rc::new(|view, parent, scope, model| {
+            view.label(
+                parent,
+                &format!("{scope}/label"),
+                model.bind(Clone::clone, None),
+            )
+        }),
+    );
+    let retained = view.find("pages/second/label").unwrap().identity;
+    assert!(model.update(|pages| pages.reverse()));
+    assert_eq!(view.find("pages/second/label").unwrap().identity, retained);
+    assert_eq!(tab.0.children.borrow()[0].id, "pages/second");
+    let duplicate = first.clone();
+    assert!(model.update(move |pages| pages.push(duplicate)));
+    assert_eq!(tab.0.children.borrow().len(), 2);
+    let replacement = Keyed::new("second", harness.store("Replacement".to_owned()));
+    assert!(model.update(move |pages| *pages = vec![replacement]));
+    assert_ne!(view.find("pages/second/label").unwrap().identity, retained);
+    assert!(view.find("pages/first/label").is_none());
+    assert!(model.update(Vec::clear));
+    assert!(tab.0.children.borrow().is_empty());
+    view.close();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn horizontal_tabs_reserve_height_before_stack_footer() {
     use iced::{
         Size,

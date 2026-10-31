@@ -111,6 +111,13 @@ root:
             id: selected
             content: {bind: {path: selected}}
             content_template: row
+          - type: TabItems
+            id: tabs
+            items: {bind: {path: rows}}
+            selected: {literal: ""}
+            position: Left
+            title: {bind: {path: name}}
+            item_template: leaf
           - type: Native
             id: progress
             factory: crate::meter
