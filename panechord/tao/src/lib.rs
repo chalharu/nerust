@@ -621,9 +621,11 @@ impl View {
                 } else {
                     widget::scrollable(rows).height(iced::Length::Fill).into()
                 };
-                widget::column![headers, widget::rule::horizontal(1), body]
-                    .spacing(2)
-                    .height(iced::Length::Fill)
+                let mut table = widget::Column::new().spacing(2).height(iced::Length::Fill);
+                if data.columns.iter().any(|column| !column.title.is_empty()) {
+                    table = table.push(headers).push(widget::rule::horizontal(1));
+                }
+                table.push(body)
             })
             .into()
         })));
@@ -668,14 +670,28 @@ impl View {
         })));
     }
     pub fn entry(&self, parent: &Parent, id: &str, text: Binding<String>) {
+        self.entry_with_placeholder(parent, id, text, Binding::constant(String::new()));
+    }
+    pub fn entry_with_placeholder(
+        &self,
+        parent: &Parent,
+        id: &str,
+        text: Binding<String>,
+        placeholder: Binding<String>,
+    ) {
         let node = self.add(parent, id, Kind::Content);
         let value = self.bound_text(&node, text.clone());
+        let caption = Rc::new(RefCell::new(String::new()));
+        let output = caption.clone();
+        self.bind(&node, placeholder, move |value| {
+            output.replace(value);
+        });
         let editable = text.is_writable();
         let key = node.id.clone();
         node.handler.replace(Some(Handler::Entry(text)));
         node.kind.replace(Kind::Leaf(Rc::new(move || {
             let key = key.clone();
-            let input = widget::text_input("", &value.borrow());
+            let input = widget::text_input(&caption.borrow(), &value.borrow());
             if editable {
                 input
                     .on_input(move |v| Message::Edit(key.clone(), v))
