@@ -3,6 +3,12 @@ root:
   type: Window
   id: controls_window
   title: {literal: NES Controls}
+  menus:
+    - id: emulation
+      title: {bind: {path: menu_title}}
+      nested: true
+      items: {bind: {path: menu_tree}}
+      command: select_slot
   content:
     type: StackLayout
     id: screen
@@ -34,6 +40,9 @@ root:
             value: pal
       - type: Slider
         id: volume
+        visible: {bind: {path: shown}}
+        enabled: {bind: {path: ready}}
+        style_binding: {bind: {path: volume_style}}
         value: {bind: {path: volume, mode: TwoWay}}
         min: 0
         max: 100

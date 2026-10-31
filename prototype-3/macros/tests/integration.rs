@@ -106,6 +106,17 @@ mod fake {
     #[derive(Clone, Default)]
     pub struct View(pub Rc<RefCell<State>>);
     impl View {
+        pub fn try_layout(
+            &self,
+            parent: &Parent,
+            id: &str,
+            value: Layout,
+        ) -> Result<Parent, String> {
+            Ok(self.layout(parent, id, value))
+        }
+        pub fn report_error(&self, error: String) {
+            panic!("{error}");
+        }
         pub fn new(title: Binding<String>) -> Self {
             let v = Self::default();
             v.0.borrow_mut().title = Some(title);

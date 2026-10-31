@@ -176,6 +176,7 @@ struct Inner {
     requesting_close: Cell<bool>,
     coordinated_close: RefCell<Option<Rc<CoordinatedClose>>>,
     closed: Cell<bool>,
+    image_updates: Cell<usize>,
     error: RefCell<Option<String>>,
 }
 
@@ -299,6 +300,7 @@ impl View {
             requesting_close: Cell::new(false),
             coordinated_close: RefCell::default(),
             closed: Cell::new(false),
+            image_updates: Cell::new(0),
             error: RefCell::default(),
         }));
         let weak = Rc::downgrade(&view.0);
@@ -1148,6 +1150,7 @@ impl View {
             .ok_or_else(|| format!("missing or wrong control: {id}"))
     }
     pub fn edit(&self, id: &str, value: &str) -> Result<(), String> {
+        self.require_interactive(id)?;
         let entry = self.widget::<gtk::Entry>(id)?;
         if !entry.is_editable() {
             return Err(format!("read-only entry: {id}"));
@@ -1156,6 +1159,7 @@ impl View {
         Ok(())
     }
     pub fn click(&self, id: &str) -> Result<(), String> {
+        self.require_interactive(id)?;
         if let Ok(check) = self.widget::<gtk::CheckButton>(id) {
             if !check.is_sensitive() {
                 return Err("read-only control".into());

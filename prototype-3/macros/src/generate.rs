@@ -18,19 +18,25 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
     let title = located(doc, None, doc.root.id(), binding(title, false)?);
     let body = control(doc, content, backend, None)?;
     let style = style(&doc.root.style());
+    let appearance = appearance(&doc.root, quote!("__root"))?;
     let mut menu_code = Vec::new();
     for menu in menus {
         let id = &menu.id;
         let title = binding(&menu.title, false)?;
         let items = binding(&menu.items, false)?;
         let command = command(&menu.command)?;
+        let method = if menu.nested {
+            format_ident!("hierarchical_menu")
+        } else {
+            format_ident!("typed_menu")
+        };
         menu_code.push(located(
             doc,
             None,
             id,
             quote!({
                 let __dispatch_model = __wakui_model.clone();
-                __wakui_view.typed_menu(#id,#title,#items,::std::rc::Rc::new(move |__arg| {
+                __wakui_view.#method(#id,#title,#items,::std::rc::Rc::new(move |__arg| {
                     __dispatch_model.#command(::wakui2_runtime::Binding::constant(__arg)).invoke()
                 }));
             }),
@@ -46,6 +52,7 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
         let __wakui_parent = __wakui_view.root();
         __wakui_view.style("__root",#style);
         #body
+        #appearance
         #(#menu_code)*
         let __close_model = __wakui_root.clone();
         __wakui_view.on_close(::std::rc::Rc::new(move || { #close }));
@@ -55,6 +62,31 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
 
 fn error(message: impl std::fmt::Display) -> syn::Error {
     syn::Error::new(proc_macro2::Span::call_site(), message)
+}
+fn appearance(control: &Control, id: TokenStream) -> syn::Result<TokenStream> {
+    let mut calls = Vec::new();
+    for (name, property) in control.appearance() {
+        if let Some(property) = property {
+            let value = if name == "style_binding" {
+                if let Property::Literal(value) = property {
+                    let literal =
+                        serde_json::from_value::<wakui2_markup::Style>(value.literal.clone())
+                            .map_err(|error_value| {
+                                error(format!("invalid style literal: {error_value}"))
+                            })?;
+                    let value = style(&literal);
+                    quote!(::wakui2_runtime::Binding::constant(#value))
+                } else {
+                    binding(property, false)?
+                }
+            } else {
+                binding(property, false)?
+            };
+            let method = format_ident!("{name}");
+            calls.push(quote!(__wakui_view.#method(#id, #value);));
+        }
+    }
+    Ok(quote!(#(#calls)*))
 }
 fn located(doc: &Document, scope: Option<&str>, id: &str, body: TokenStream) -> TokenStream {
     let Some(span) = doc.source.node(scope, id) else {
@@ -162,6 +194,28 @@ fn literal(value: &serde_json::Value) -> syn::Result<TokenStream> {
                 .filter(|v| v.is_finite())
                 .ok_or_else(|| error("invalid numeric literal"))?;
             quote!(#n)
+        }
+        Value::Object(value) if value.len() == 1 && value.contains_key("u64") => {
+            let value = value["u64"]
+                .as_u64()
+                .ok_or_else(|| error("u64 literal must be an unsigned 64-bit integer"))?;
+            let value = proc_macro2::Literal::u64_suffixed(value);
+            quote!(#value)
+        }
+        Value::Object(value) if value.len() == 1 && value.contains_key("i64") => {
+            let value = value["i64"]
+                .as_i64()
+                .ok_or_else(|| error("i64 literal must be a signed 64-bit integer"))?;
+            let value = proc_macro2::Literal::i64_suffixed(value);
+            quote!(#value)
+        }
+        Value::Object(value) if value.len() == 1 && value.contains_key("i32") => {
+            let value: i32 = value["i32"]
+                .as_i64()
+                .and_then(|value| value.try_into().ok())
+                .ok_or_else(|| error("i32 literal must be a signed 32-bit integer"))?;
+            let value = proc_macro2::Literal::i32_suffixed(value);
+            quote!(#value)
         }
         Value::Object(v)
             if v.keys()
@@ -364,11 +418,7 @@ fn control_inner(
                 .as_ref()
                 .map(|p| binding(p, false))
                 .transpose()?
-                .unwrap_or_else(|| {
-                    quote!(::wakui2_runtime::Binding::constant(
-                        ::std::string::String::new()
-                    ))
-                });
+                .unwrap_or_else(|| quote!(::wakui2_runtime::omitted_command_argument()));
             quote!(__wakui_view.button(&__wakui_parent,&__id,#text,#model.#name(#argument));)
         }
         Control::Native { factory, value, .. } => {
@@ -439,11 +489,22 @@ fn control_inner(
                 let title = binding(&page.title, false)?;
                 let body = control(doc, &page.content, backend, scoped)?;
                 generated.push(quote!({
-                    let __wakui_parent = __wakui_view.tab_page(&__tab, &#id, #title, #key);
-                    #body
+                    match __wakui_view.try_tab_page(&__tab, &#id, #title, #key) {
+                        ::std::result::Result::Ok(__wakui_parent) => { #body }
+                        ::std::result::Result::Err(__error) => __wakui_view.report_error(__error),
+                    }
                 }));
             }
-            quote!(let __tab = __wakui_view.tab(&__wakui_parent, &__id, #selected); __wakui_view.tab_position(&__id, ::wakui2_runtime::TabPosition::#position).expect("invalid Tab position"); #(#generated)* __wakui_view.finish_tab(&__tab).expect("invalid Tab selection");)
+            quote!(
+                let __tab = __wakui_view.tab(&__wakui_parent, &__id, #selected);
+                if let ::std::result::Result::Err(__error) = __wakui_view.tab_position(&__id, ::wakui2_runtime::TabPosition::#position) {
+                    __wakui_view.report_error(__error);
+                }
+                #(#generated)*
+                if let ::std::result::Result::Err(__error) = __wakui_view.finish_tab(&__tab) {
+                    __wakui_view.report_error(__error);
+                }
+            )
         }
         Control::Dialog {
             title,
@@ -483,7 +544,8 @@ fn control_inner(
             quote!(__wakui_view.content(&__wakui_parent,&__id,#item,#template);)
         }
     };
-    Ok(quote!({let __id = #id; #code __wakui_view.style(&__id,#s);}))
+    let appearance = appearance(c, quote!(&__id))?;
+    Ok(quote!({let __id = #id; #code __wakui_view.style(&__id,#s); #appearance}))
 }
 fn layout(
     doc: &Document,
@@ -497,7 +559,10 @@ fn layout(
         .map(|c| control(doc, c, backend, scoped))
         .collect::<Result<_, _>>()?;
     Ok(
-        quote!(let __wakui_parent = __wakui_view.layout(&__wakui_parent,&__id,#value); #(#children)*),
+        quote!(match __wakui_view.try_layout(&__wakui_parent,&__id,#value) {
+            ::std::result::Result::Ok(__wakui_parent) => { #(#children)* }
+            ::std::result::Result::Err(__error) => __wakui_view.report_error(__error),
+        }),
     )
 }
 

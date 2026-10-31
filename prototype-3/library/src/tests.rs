@@ -266,6 +266,10 @@ fn scan_actual_temp_metadata_is_nonwriting_and_case_insensitive() {
     std::fs::create_dir(sandbox.dir.join("directory.nes")).unwrap();
     let before = std::fs::read_dir(&sandbox.dir).unwrap().count();
     let original = std::fs::read(sandbox.dir.join("Alpha.nes")).unwrap();
+    let modified = std::fs::metadata(sandbox.dir.join("Alpha.nes"))
+        .unwrap()
+        .modified()
+        .unwrap();
     let report = scan::scan(sandbox.dir.clone(), String::new()).unwrap();
     assert_eq!(report.entries.len(), 4);
     assert!(
@@ -282,6 +286,13 @@ fn scan_actual_temp_metadata_is_nonwriting_and_case_insensitive() {
         "GBC"
     );
     assert_eq!(std::fs::read_dir(&sandbox.dir).unwrap().count(), before);
+    assert_eq!(
+        std::fs::metadata(sandbox.dir.join("Alpha.nes"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
     assert_eq!(
         std::fs::read(sandbox.dir.join("Alpha.nes")).unwrap(),
         original
@@ -302,6 +313,49 @@ fn actual_scan_caps_results_and_ignores_symlinks() {
     assert_eq!(report.entries.len(), scan::MAX_RESULTS);
     assert!(report.capped);
     assert!(report.entries.iter().all(|e| e.system == "NES"));
+    let mut expected: Vec<_> = (0..scan::MAX_RESULTS + 1)
+        .map(|index| sandbox.dir.join(format!("{index}.nes")))
+        .collect();
+    expected.sort();
+    expected.truncate(scan::MAX_RESULTS);
+    assert_eq!(
+        report
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        scan::scan(sandbox.dir.clone(), String::new()).unwrap(),
+        report
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_names_keep_distinct_selection_keys() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let sandbox = Sandbox::new().unwrap();
+    for name in [b"same\xff.nes", b"same\xfe.nes"] {
+        std::fs::write(sandbox.dir.join(OsString::from_vec(name.to_vec())), []).unwrap();
+    }
+    let report = scan::scan(sandbox.dir.clone(), String::new()).unwrap();
+    assert_eq!(report.entries.len(), 2);
+    assert_eq!(report.entries[0].name, report.entries[1].name);
+    assert_ne!(report.entries[0].key(), report.entries[1].key());
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_paths_have_distinct_keys_without_lossy_aliasing() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    let mut first = entry("same");
+    let mut second = entry("same");
+    first.path = PathBuf::from(OsString::from_vec(b"same\xff.nes".to_vec()));
+    second.path = PathBuf::from(OsString::from_vec(b"same\xfe.nes".to_vec()));
+    assert_eq!(first.path.to_string_lossy(), second.path.to_string_lossy());
+    assert_ne!(first.key(), second.key());
 }
 
 #[test]

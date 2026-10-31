@@ -56,6 +56,7 @@ unsafe extern "C" {
         output: *mut u8,
         capacity: usize,
     ) -> isize;
+    fn w3_slider_value(host: *mut c_void, id: *const u8, id_len: usize, output: *mut f64) -> bool;
     fn w3_action(
         host: *mut c_void,
         id: *const u8,
@@ -94,6 +95,13 @@ unsafe extern "C" {
         height: f64,
     );
     fn w3_menu(host: *mut c_void, id: *const u8, id_len: usize, json: *const u8, json_len: usize);
+    fn w3_menu_tree(
+        host: *mut c_void,
+        id: *const u8,
+        id_len: usize,
+        json: *const u8,
+        json_len: usize,
+    );
     fn w3_input_probe(host: *mut c_void, id: *const u8, id_len: usize) -> i32;
     fn w3_editing_probe(host: *mut c_void, id: *const u8, id_len: usize, begin: i32) -> i32;
     fn w3_post_key(host: *mut c_void, id: *const u8, id_len: usize) -> i32;
@@ -134,6 +142,7 @@ struct Inner {
     scope: RefCell<String>,
     scopes: RefCell<HashMap<String, Scope>>,
     handlers: RefCell<HashMap<String, Handler>>,
+    slider_actions: RefCell<HashMap<String, controls::SliderAction>>,
     viewport_handlers: RefCell<HashMap<String, Handler>>,
     nodes: RefCell<HashSet<String>>,
     lists: RefCell<HashMap<String, Rc<List>>>,
@@ -144,6 +153,7 @@ struct Inner {
     quit_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting: Cell<bool>,
     closed: Cell<bool>,
+    image_updates: Cell<usize>,
     error: RefCell<Option<String>>,
 }
 
@@ -156,6 +166,7 @@ impl Inner {
         drop(self.quit_request.take());
         drop(self.scopes.take());
         drop(self.handlers.take());
+        drop(self.slider_actions.take());
         drop(self.viewport_handlers.take());
         drop(self.lists.take());
         drop(self.menu_errors.take());
@@ -281,6 +292,7 @@ impl View {
             scope: RefCell::new("__root".into()),
             scopes: RefCell::new(HashMap::new()),
             handlers: RefCell::new(HashMap::new()),
+            slider_actions: RefCell::new(HashMap::new()),
             viewport_handlers: RefCell::new(HashMap::new()),
             nodes: RefCell::new(HashSet::from(["__root".into()])),
             lists: RefCell::new(HashMap::new()),
@@ -291,6 +303,7 @@ impl View {
             quit_request: RefCell::new(None),
             requesting: Cell::new(false),
             closed: Cell::new(false),
+            image_updates: Cell::new(0),
             error: RefCell::new(None),
         });
         inner
@@ -385,6 +398,10 @@ impl View {
     }
     fn remove(&self, prefix: &str) {
         self.0.nodes.borrow_mut().retain(|id| !within(id, prefix));
+        self.0
+            .slider_actions
+            .borrow_mut()
+            .retain(|id, _| !within(id, prefix));
         let scopes: Vec<_> = self
             .0
             .scopes

@@ -136,6 +136,8 @@ pub struct Menu {
     pub title: Property,
     pub items: Property,
     pub command: String,
+    #[serde(default)]
+    pub nested: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -163,10 +165,16 @@ macro_rules! controls {
 			id: String,
 			#[serde(default)] style: Style,
 			margin: Option<Edges>, padding: Option<Edges>,
+            visible: Option<Property>, enabled: Option<Property>, style_binding: Option<Property>,
 			$($fields)*
 		}),* }
 		impl Control {
 			pub fn id(&self) -> &str { match self { $(Self::$kind { id, .. } => id),* } }
+            pub fn appearance(&self) -> [(&'static str, Option<&Property>); 3] {
+                match self { $(Self::$kind { visible, enabled, style_binding, .. } => [
+                    ("visible", visible.as_ref()), ("enabled", enabled.as_ref()), ("style_binding", style_binding.as_ref())
+                ]),* }
+            }
 			pub fn style(&self) -> Style { match self { $(Self::$kind {style,margin,padding,..} => {
 				let mut s = style.clone();
 				if let Some(v) = margin { s.margin = v.clone(); }
@@ -506,6 +514,16 @@ impl Document {
                 Ok(())
             }
         };
+        for (name, property) in c.appearance() {
+            if let Some(property) = property {
+                read_only(property, name)?;
+                if name != "style_binding"
+                    && matches!(property, Property::Literal(value) if !value.literal.is_boolean())
+                {
+                    return Err((format!("{path}.{name}"), "expected boolean literal".into()));
+                }
+            }
+        }
         match c {
             Control::Label { text, .. }
             | Control::CheckBox { text, .. }
@@ -598,9 +616,25 @@ impl Document {
                 )?;
                 None
             }
-            Control::Tab { pages, .. } => {
+            Control::Tab {
+                selected, pages, ..
+            } => {
                 if pages.is_empty() || pages.len() > 256 {
                     return Err(err("Tab requires 1..=256 pages".into()));
+                }
+                if let Property::Literal(value) = selected {
+                    let selected = value.literal.as_str().ok_or_else(|| {
+                        (
+                            format!("{path}.selected"),
+                            "Tab selection must be a string".into(),
+                        )
+                    })?;
+                    if !selected.is_empty() && !pages.iter().any(|page| page.id == selected) {
+                        return Err((
+                            format!("{path}.selected"),
+                            "unknown selected tab page".into(),
+                        ));
+                    }
                 }
                 for (index, page) in pages.iter().enumerate() {
                     if !wakui2_runtime::valid_item_key(&page.id)

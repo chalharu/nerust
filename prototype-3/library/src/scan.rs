@@ -1,5 +1,5 @@
 //! Directory metadata only: never open ROM contents, recurse or follow symlinks.
-use std::{fs, path::PathBuf};
+use std::{collections::BTreeMap, fs, path::PathBuf};
 
 pub const MAX_RESULTS: usize = 256;
 pub const MAX_VISITED: usize = 8192;
@@ -45,6 +45,7 @@ pub fn scan(folder: PathBuf, filter: String) -> Result<Report, String> {
         .map_err(|error| format!("Cannot scan {}: {error}", folder.display()))?;
     let filter = filter.to_lowercase();
     let mut report = Report::default();
+    let mut selected = BTreeMap::new();
     for (visited, entry) in directory.enumerate() {
         if visited >= MAX_VISITED {
             report.capped = true;
@@ -79,17 +80,20 @@ pub fn scan(folder: PathBuf, filter: String) -> Result<Report, String> {
         if !metadata.is_file() {
             continue;
         }
-        if report.entries.len() == MAX_RESULTS {
+        selected.insert(
+            path.clone(),
+            Entry {
+                path,
+                name,
+                system: system.into(),
+                bytes: metadata.len(),
+            },
+        );
+        if selected.len() > MAX_RESULTS {
+            selected.pop_last();
             report.capped = true;
-            break;
         }
-        report.entries.push(Entry {
-            path,
-            name,
-            system: system.into(),
-            bytes: metadata.len(),
-        });
     }
-    report.entries.sort_by(|a, b| a.path.cmp(&b.path));
+    report.entries = selected.into_values().collect();
     Ok(report)
 }

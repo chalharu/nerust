@@ -104,13 +104,63 @@ pub(super) struct Dialog {
 }
 
 impl View {
+    pub fn image_update_count(&self) -> usize {
+        self.0.image_updates.get()
+    }
+    pub fn visible(&self, id: &str, binding: Binding<bool>) {
+        if let Some(node) = self.find(id) {
+            let weak = Rc::downgrade(&node);
+            self.bind(&node, binding, move |value| {
+                if let Some(node) = weak.upgrade() {
+                    node.visible.set(value);
+                }
+            });
+        } else {
+            self.report_error(format!("missing visibility target: {id}"));
+        }
+    }
+    pub fn enabled(&self, id: &str, binding: Binding<bool>) {
+        if let Some(node) = self.find(id) {
+            let weak = Rc::downgrade(&node);
+            self.bind(&node, binding, move |value| {
+                if let Some(node) = weak.upgrade() {
+                    node.enabled.set(value);
+                }
+            });
+        } else {
+            self.report_error(format!("missing enablement target: {id}"));
+        }
+    }
+    pub fn style_binding(&self, id: &str, binding: Binding<Style>) {
+        if let Some(node) = self.find(id) {
+            let key = id.to_owned();
+            let weak = self.downgrade();
+            self.bind(&node, binding, move |value| {
+                if let Some(view) = weak.upgrade() {
+                    view.style(&key, value);
+                }
+            });
+        } else {
+            self.report_error(format!("missing style target: {id}"));
+        }
+    }
+    pub fn slider_value(&self, id: &str) -> Option<f64> {
+        self.find(id)
+            .and_then(|node| match &*node.handler.borrow() {
+                Some(Handler::Slider(_, _, value)) => Some(value.get()),
+                _ => None,
+            })
+    }
     pub(super) fn control_update(&self, id: &str, input: Input) -> Result<(), String> {
         let node = self.find(id).ok_or("missing or wrong control")?;
+        if !node.interactive() {
+            return Err("hidden or disabled control".into());
+        }
         let handler = node.handler.borrow().clone();
         match (handler, input) {
             (Some(Handler::Toggle(binding)), Input::Toggle(value))
             | (Some(Handler::Dialog(binding)), Input::Open(value)) => binding.try_set(value),
-            (Some(Handler::Slider(binding, range)), Input::Slide(value)) => {
+            (Some(Handler::Slider(binding, range, _)), Input::Slide(value)) => {
                 let value = range.normalize(value).map_err(str::to_owned)?;
                 binding.try_set(value)
             }
@@ -228,7 +278,8 @@ impl View {
             }
         });
         let writable = value.is_writable();
-        node.handler.replace(Some(Handler::Slider(value, range)));
+        node.handler
+            .replace(Some(Handler::Slider(value, range, current.clone())));
         let key = node.id.clone();
         node.kind.replace(Kind::Leaf(Rc::new(move || {
             let key = key.clone();
@@ -303,7 +354,11 @@ impl View {
         let node = self.add(parent, id, Kind::Content);
         let image = Rc::new(RefCell::new(None));
         let observed = image.clone();
+        let weak = self.downgrade();
         self.bind(&node, source, move |frame| {
+            if let Some(view) = weak.upgrade() {
+                view.0.image_updates.set(view.0.image_updates.get() + 1);
+            }
             observed.replace(frame.map(|frame| {
                 widget::image::Handle::from_rgba(
                     frame.width(),
@@ -368,6 +423,37 @@ impl View {
     }
 
     pub fn tab_page(&self, parent: &Parent, id: &str, title: Binding<String>, key: &str) -> Parent {
+        self.try_tab_page(parent, id, title, key)
+            .expect("invalid Tab page")
+    }
+
+    pub fn try_tab_page(
+        &self,
+        parent: &Parent,
+        id: &str,
+        title: Binding<String>,
+        key: &str,
+    ) -> Result<Parent, String> {
+        if self.0.closed.get()
+            || !parent.0.mounted.get()
+            || !parent.0.owner.ptr_eq(&Rc::downgrade(&self.0))
+            || id.is_empty()
+            || self.find(id).is_some()
+        {
+            return Err("closed view, unavailable parent, empty or duplicate page id".into());
+        }
+        {
+            let kind = parent.0.kind.borrow();
+            let Kind::Tab(tab) = &*kind else {
+                return Err("missing Tab parent".into());
+            };
+            if !wakui2_runtime::valid_item_key(key)
+                || tab.pages.borrow().len() >= 256
+                || tab.pages.borrow().iter().any(|(page, _, _)| page == key)
+            {
+                return Err("invalid or duplicate page key, or page limit".into());
+            }
+        }
         let node = self.add(parent, id, Kind::Page);
         let title = self.bound_text(&node, title);
         let kind = parent.0.kind.borrow();
@@ -377,10 +463,13 @@ impl View {
         tab.pages
             .borrow_mut()
             .push((key.into(), title, Rc::downgrade(&node)));
-        Parent(node)
+        Ok(Parent(node))
     }
     pub fn finish_tab(&self, parent: &Parent) -> Result<(), String> {
-        if self.0.closed.get() || !parent.0.mounted.get() {
+        if self.0.closed.get()
+            || !parent.0.mounted.get()
+            || !parent.0.owner.ptr_eq(&Rc::downgrade(&self.0))
+        {
             return Err("view or Tab is closed".into());
         }
         let kind = parent.0.kind.borrow();

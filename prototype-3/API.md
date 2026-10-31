@@ -185,7 +185,48 @@ Rust spans, errors and exit status remain. Formal gates enable this wrapper.
 Without it rustc still checks types, but the primary location can remain view!.
 Downstream probes assert YAML lines for typo, type mismatch, unknown command,
 factory input/return, validator input, converter and typed Menu mismatch.
-This is not an editor LSP, and JSON input does not have node source spans yet.
+JSON nodes also retain source spans; downstream Cargo UI checks assert an external
+JSON primary span after rustc type rejection. This is not an editor LSP. Stable
+Rust still needs the diagnostic wrapper to replace arbitrary external-file spans.
+
+`try_view!` and `try_owned_view!` return `Result<View, String>` for reported initial
+construction errors. Failure closes the partial View; the owning variant also
+closes its consumed StoreOwner, while a shared Store remains open. These are not
+catch-all wrappers for arbitrary panics in application callbacks or native allocation.
+Generated layouts/pages use `try_layout`/`try_tab_page`; literal Tab selections
+must be empty or name a declared page. Late template errors remain View diagnostics.
+
+All controls accept optional OneWay `visible`, `enabled` and `style_binding`.
+Visibility retains the mounted control; enablement also respects ancestors and
+does not restore a readonly writer or override Command enablement. `style_binding`
+is a full `Binding<Style>` replacement, validated before mutation, not a partial
+CSS patch. Window creation/closure still belongs to the typed host.
+
+Menu declarations with `nested: true` bind `Vec<MenuNode<A>>` and call
+`hierarchical_menu`. Submenus carry stable IDs, labels, enablement and children;
+leaf items retain typed arguments and shortcuts. Whole-tree validation preserves
+the last accepted snapshot. Limits are 64 levels and 4096 nodes with unique IDs.
+Existing flat `MenuItem<A>` and `typed_menu` remain supported.
+
+Numeric literals remain f64 by default. Command arguments may explicitly use
+`{literal: {i32: 7}}`, `{literal: {i64: -7}}` or `{literal: {u64: 7}}`;
+out-of-range or noninteger payloads reject. Omitted String arguments preserve the
+legacy empty value; other argument types receive an explicit required-argument diagnostic.
+
+Tao `run_host` provides a single-loop `TaoHost` for independent native windows.
+Use `UiHost::executor`, `register_view(session,id,view,hooks)` and `present`;
+closing a window does not close shared models or the scheduler while another
+window survives. Foreign Session/closed View registrations reject, and IDs can
+be reused only after their prior registration closes. External reactor attachment
+without this owned host is still unsupported.
+
+`slide` reports normalized write acceptance, not eventual application. Closed,
+capacity, conversion, readonly, hidden and disabled inputs reject without false
+display changes. `slider_value` exposes the retained numeric display, not raw
+model data; it returns None after View closure. `image_update_count` counts image
+setter/Handle creation, not compositor presentations or hardware uploads.
+Shutdown hook panics are recorded in `ShutdownCoordinator::failures`; teardown
+continues for the remaining windows and returns `ShutdownOutcome::Failed`.
 
 ## Common layout and settings contract
 

@@ -50,6 +50,33 @@ pub fn owned_view(input: TokenStream) -> TokenStream {
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
+#[proc_macro]
+pub fn try_view(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ViewInput);
+    expand_try_view(input, false)
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
+#[proc_macro]
+pub fn try_owned_view(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ViewInput);
+    expand_try_view(input, true)
+        .unwrap_or_else(|error| error.to_compile_error())
+        .into()
+}
+fn expand_try_view(input: ViewInput, owned: bool) -> syn::Result<proc_macro2::TokenStream> {
+    let body = expand_view(input, owned)?;
+    Ok(quote!({
+        let __constructed = { #body };
+        match __constructed.error() {
+            ::std::option::Option::Some(__error) => {
+                __constructed.close();
+                ::std::result::Result::Err(__error)
+            }
+            ::std::option::Option::None => ::std::result::Result::Ok(__constructed),
+        }
+    }))
+}
 fn expand_view(input: ViewInput, owned: bool) -> syn::Result<proc_macro2::TokenStream> {
     let fail = |message: String| syn::Error::new(input.file.span(), message);
     let base = std::env::var_os("CARGO_MANIFEST_DIR")

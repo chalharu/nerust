@@ -50,4 +50,31 @@ workload() {
 }
 workload wakui3-settings model::tests::perf::settings_draft_projection settings "${WAKUI_SETTINGS_P50_NS:-1000000}" "${WAKUI_SETTINGS_P95_NS:-5000000}"
 workload wakui3-library tests::perf::library_rescan_projection library "${WAKUI_LIBRARY_P50_NS:-5000000}" "${WAKUI_LIBRARY_P95_NS:-20000000}"
+integration() {
+    cargo build --locked --release -p wakui3-settings --example integration "$@"
+    if [ "$(uname -s)" = Darwin ]; then
+        output=$(python3 -c '
+import os, signal, subprocess, sys
+process = subprocess.Popen(sys.argv[1:], start_new_session=True)
+try:
+    sys.exit(process.wait(timeout=float(os.environ.get("WAKUI_NATIVE_TIMEOUT_SECONDS", "45"))))
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+    print("integration native watchdog expired", file=sys.stderr)
+    sys.exit(124)
+' cargo run --locked --release -p wakui3-settings --example integration "$@")
+    else
+        output=$(timeout "${WAKUI_NATIVE_TIMEOUT_SECONDS:-45}" xvfb-run -a target/release/examples/integration)
+    fi
+    printf '%s\n' "$output"
+    printf '%s\n' "$output" | grep -q '^INTEGRATION3 release=true samples=128 .* windows=4 images=8 generation-gate no-change retained-edit-selection reopen$'
+    printf '%s\n' "$output" | assert_budget 'INTEGRATION3 release=true ' "${WAKUI_INTEGRATION_P50_NS:-5000000}" "${WAKUI_INTEGRATION_P95_NS:-10000000}"
+}
+if [ "$(uname -s)" = Darwin ]; then
+    integration --no-default-features --features backend-macos
+else
+    integration
+fi
+integration --no-default-features --features backend-tao
 printf '%s\n' 'MEASURE3 PASS: release clone/projection contracts and p50/p95 CPU budgets'

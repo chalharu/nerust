@@ -24,13 +24,18 @@ PNG codecへ解決され、native画像取得中にSIGBUSとなることを実�
 
 アプリのbuild.rsやUI契約crateは不要。backend内部のbuild.rsだけがSwiftをコンパイルする。
 Swiftモード5、SDK付属のAppKit、追加Swift packageなし。
-開発用dylibはCargo OUT_DIRの絶対install nameで参照するため、target内の生成物を
-単体コピーして配布できる構成ではない。app bundle、codesign、notarizationは未実装。
+bridgeのinstall nameは`@rpath/libWakui3AppKit.dylib`。
+`python3 scripts/bundle-macos.py --verify`でアプリ・bridge・相対rpathをbundleへ配置し、
+ad-hoc codesignと再配置後のsmokeを検証する。Libraryは`--package wakui3-library`を指定する。
+Cargoの単体exampleはCargoのloader設定を使うため、binaryだけのコピーは配布手順ではない。
+Developer ID署名・notarizationは未認証で、ad-hoc署名の成功から推定しない。
 deployment targetの既定は11.0だが、最低OSやIntelでの実機動作を確認した意味ではない。
 
 ## 契約
 
 - 主な対象は設定と一覧の二画面。Stack、Label、TextBox、Button、固定高ItemsControl、Menu。
+  CheckBox、Radio、Slider、Combo、Image、Tab、Dialogと保持型visible/enabled/Style Binding、
+  typed submenuも共通契約で検証する。本体への組込みは必須の移行目的である。
   Grid/Flex/Absoluteは実行時エラー。ContentControl/custom meterはAPI未実装でコンパイル不可。
   GTK/Tao全galleryとの完全な機能互換は主張しない。
 - main threadの`MacHost`が共通loopを駆動する。UiHost/Sessionへ接続し、複数Windowを保持する。
