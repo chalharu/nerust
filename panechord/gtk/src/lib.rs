@@ -589,6 +589,7 @@ impl View {
             },
         )?;
         let scroll = gtk::ScrolledWindow::new();
+        scroll.set_propagate_natural_width(!horizontal);
         scroll.set_policy(
             if horizontal {
                 gtk::PolicyType::Automatic

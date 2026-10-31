@@ -29,6 +29,7 @@ pub struct TableColumn {
     pub text: crate::TextStyle,
     pub overflow: TextOverflow,
     pub stretch: bool,
+    pub hide_empty: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,9 +52,19 @@ pub struct TableSelection {
 
 impl TableSelection {
     pub fn validate(&self, table: &Table) -> Result<(), &'static str> {
-        if self.column >= table.columns.len()
-            || !table.rows.iter().any(|row| row.key == self.row_key)
-        {
+        let valid = table
+            .columns
+            .get(self.column)
+            .and_then(|column| {
+                table
+                    .rows
+                    .iter()
+                    .find(|row| row.key == self.row_key)
+                    .and_then(|row| row.cells.get(self.column))
+                    .map(|cell| !column.hide_empty || !cell.text.is_empty())
+            })
+            .unwrap_or(false);
+        if !valid {
             return Err("unknown table selection");
         }
         Ok(())
@@ -67,6 +78,7 @@ pub struct Table {
     pub empty_text: String,
     pub column_gap: f32,
     pub row_gap: f32,
+    pub row_inset: f32,
 }
 
 impl Table {
@@ -78,7 +90,7 @@ impl Table {
         {
             return Err("table dimensions exceed limits");
         }
-        if [self.column_gap, self.row_gap]
+        if [self.column_gap, self.row_gap, self.row_inset]
             .into_iter()
             .any(|gap| !gap.is_finite() || !(0.0..=4096.0).contains(&gap))
         {
@@ -132,6 +144,7 @@ mod table_tests {
                 text: Default::default(),
                 overflow: TextOverflow::Wrap,
                 stretch: true,
+                hide_empty: false,
             }]
             .into(),
             rows: vec![Arc::new(TableRow {
@@ -166,6 +179,9 @@ mod table_tests {
         for gap in [f32::NAN, f32::INFINITY, -1.0, 4097.0] {
             invalid = table.clone();
             invalid.column_gap = gap;
+            assert_eq!(invalid.validate(), Err("invalid table gap"));
+            invalid = table.clone();
+            invalid.row_inset = gap;
             assert_eq!(invalid.validate(), Err("invalid table gap"));
         }
         for width in [f32::NAN, 0.0, 16385.0] {
@@ -206,6 +222,28 @@ mod table_tests {
         ] {
             assert_eq!(selection.validate(&table), Err("unknown table selection"));
         }
+        let mut hidden = table.clone();
+        Arc::make_mut(&mut hidden.columns)[0].hide_empty = true;
+        Arc::make_mut(&mut Arc::make_mut(&mut hidden.rows)[0]).cells[0]
+            .text
+            .clear();
+        assert_eq!(
+            TableSelection {
+                row_key: "one".into(),
+                column: 0
+            }
+            .validate(&hidden),
+            Err("unknown table selection")
+        );
+        Arc::make_mut(&mut hidden.columns)[0].hide_empty = false;
+        assert_eq!(
+            TableSelection {
+                row_key: "one".into(),
+                column: 0
+            }
+            .validate(&hidden),
+            Ok(())
+        );
     }
 }
 
