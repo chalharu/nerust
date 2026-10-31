@@ -1410,7 +1410,7 @@ impl<T: Clone + 'static> Rows<T> {
                     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
                     let row = gtk::ScrolledWindow::builder()
                         .hscrollbar_policy(gtk::PolicyType::Never)
-                        .vscrollbar_policy(gtk::PolicyType::Never)
+                        .vscrollbar_policy(gtk::PolicyType::External)
                         .child(&body)
                         .build();
                     row.set_widget_name(&item.key);
@@ -1426,7 +1426,11 @@ impl<T: Clone + 'static> Rows<T> {
                     });
                     Mounted { item, row }
                 };
-                row.row.set_height_request(pixels(viewport.row_height));
+                let height = pixels(viewport.row_height);
+                row.row.set_min_content_height(height);
+                row.row.set_max_content_height(height);
+                row.row.set_propagate_natural_height(true);
+                row.row.set_height_request(height);
                 row.row.set_vexpand(false);
                 mounted.push(row);
             }
