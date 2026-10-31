@@ -1,0 +1,49 @@
+schema_version: 2
+templates:
+  history_row:
+    root:
+      type: StackLayout
+      id: row
+      orientation: Horizontal
+      gap: 12
+      children:
+        - {type: Label, id: datetime, style: {placement: {width: 170}}, text: {bind: {path: datetime}}}
+        - {type: Label, id: level, style: {placement: {width: 70}}, text: {bind: {path: level}}}
+        - {type: Label, id: module, style: {placement: {width: 120}}, text: {bind: {path: module}}}
+        - {type: Label, id: message, text: {bind: {path: message}}}
+root:
+  type: Window
+  id: history_window
+  title: {bind: {path: title, source: External}}
+  content:
+    type: StackLayout
+    id: content
+    padding: 16
+    gap: 12
+    children:
+      - type: StackLayout
+        id: toolbar
+        orientation: Horizontal
+        gap: 12
+        children:
+          - {type: Label, id: level_label, style: {placement: {width: 50}}, text: {bind: {path: level_label, source: External}}}
+          - {type: Combo, id: filter, style: {placement: {width: 110}}, items: {bind: {path: choices, source: External}}, selected: {bind: {path: selected, source: External, mode: TwoWay}}}
+          - {type: Button, id: clear, style: {placement: {width: 130}}, text: {bind: {path: clear_label, source: External}}, command: clear}
+          - {type: Label, id: count, text: {bind: {path: count, source: External}}}
+      - type: StackLayout
+        id: headers
+        orientation: Horizontal
+        gap: 12
+        children:
+          - {type: Label, id: datetime_label, style: {placement: {width: 170}}, text: {bind: {path: datetime_label, source: External}}}
+          - {type: Label, id: severity_label, style: {placement: {width: 70}}, text: {bind: {path: severity_label, source: External}}}
+          - {type: Label, id: module_label, style: {placement: {width: 120}}, text: {bind: {path: module_label, source: External}}}
+          - {type: Label, id: message_label, text: {bind: {path: message_label, source: External}}}
+      - type: ItemsControl
+        id: table
+        visible: {bind: {path: populated, source: External}}
+        items: {bind: {path: rows, source: External}}
+        viewport: {bind: {path: viewport, source: External}}
+        item_template: history_row
+      - {type: Label, id: empty, style: {placement: {height: 264}}, visible: {bind: {path: empty, source: External}}, text: {bind: {path: empty_label, source: External}}}
+      - {type: Button, id: close, text: {bind: {path: close_label, source: External}}, command: close}
