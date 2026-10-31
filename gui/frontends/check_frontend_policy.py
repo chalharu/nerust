@@ -14,6 +14,8 @@ Checks:
     dependency closures, source, examples and tests contain no nerust dependency.
 6. runtime/shell/viewmodel manifests have no Panechord dependency; integration
     remains in the outer frontend adapter, not in application domain data.
+7. The desktop frontend contains no native backend dependencies, imports,
+    feature branches or OS branches; Panechord owns backend integration.
 """
 
 import re
@@ -107,8 +109,33 @@ def cargo_closure_has_nerust(package: str) -> list[str]:
     return sorted(set(found))
 
 
+def desktop_backend_violations(crate_dir: Path) -> list[str]:
+    failures: list[str] = []
+    forbidden = {
+        "gtk4", "gtk", "gdk4", "tao", "muda", "iced", "objc", "objc2",
+        "panechord-gtk", "panechord-tao", "panechord-macos",
+    }
+    dependencies = toml_dependency_names(crate_dir / "Cargo.toml") & forbidden
+    if dependencies:
+        failures.append(f"desktop native backend dependencies: {sorted(dependencies)}")
+    patterns = (
+        r"panechord::(?:tao|gtk|macos)\b",
+        r"\b(?:panechord_tao|panechord_gtk|panechord_macos|gtk|tao|iced|muda|objc2)::",
+        r'feature\s*=\s*"(?:tao|gtk|macos)"',
+        r'\btarget_os\s*=',
+    )
+    for directory in ("src", "examples", "tests"):
+        for path in sorted((crate_dir / directory).rglob("*.rs")):
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                code = re.sub(r"//.*$", "", line)
+                if any(re.search(pattern, code) for pattern in patterns):
+                    failures.append(f"desktop backend-specific code: {path.relative_to(ROOT)}:{number}")
+    return failures
+
+
 def main() -> int:
     failures: list[str] = []
+    failures.extend(desktop_backend_violations(ROOT / "gui/frontends/desktop"))
 
     for package, crate_dir in (FLAVORS | FRAMEWORKS).items():
         bad = toml_nerust_deps(crate_dir / "Cargo.toml")
@@ -142,7 +169,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print("frontend policy gate OK: flavors and Panechord are repo-free; inner domains have no Panechord dependency")
+    print("frontend policy gate OK: Panechord owns native backends; desktop is backend-neutral; inner domains have no Panechord dependency")
     return 0
 
 

@@ -61,6 +61,16 @@ fn main() -> Result<(), String> {
         let allow = Rc::new(Cell::new(false));
         let primary = view("Tao primary", &model);
         let auxiliary = view("Tao auxiliary", &model);
+        let native_ready = Rc::new(Cell::new(0));
+        for view in [&primary, &auxiliary] {
+            let ready = native_ready.clone();
+            view.on_native_window(move |window| {
+                assert!(window.inner_size().width > 0);
+                ready.set(ready.get() + 1);
+                Ok(())
+            })?;
+            assert!(view.on_native_window(|_| Ok(())).is_err());
+        }
         host.register_view(&session, "main", &primary, hooks(&primary, allow.clone()))?;
         host.register_view(
             &session,
@@ -72,6 +82,8 @@ fn main() -> Result<(), String> {
         let executor = host.executor();
         executor.spawn(Box::pin(async move {
             drawn(&[primary.clone(), auxiliary.clone()]).await;
+            assert_eq!(native_ready.get(), 2);
+            assert!(primary.on_native_window(|_| Ok(())).is_err());
             assert_eq!(session.shutdown().window_count(), 2);
             primary.close();
             tick().await;

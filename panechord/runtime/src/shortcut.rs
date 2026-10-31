@@ -1,5 +1,5 @@
 //! Portable menu shortcut grammar: modifiers first, then one ASCII letter,
-//! digit, F1..F12, or editing/navigation key. Tokens are case-insensitive and
+//! digit, F1..F12, Comma, or editing/navigation key. Tokens are case-insensitive and
 //! trimmed. Modifiers: Primary, Ctrl, Cmd, Alt, Shift (no duplicates).
 //! Primary resolves to Cmd on macOS, Ctrl elsewhere. This is not a promise of
 //! physical-key/layout identity: GTK uses keyvals, muda's Accelerator uses Code.
@@ -38,6 +38,7 @@ impl std::error::Error for ShortcutError {}
 
 // canonical, GTK keyval name, muda Code name
 const KEYS: &[(&str, &str, &str)] = &[
+    ("Comma", "comma", "Comma"),
     ("Enter", "Return", "Enter"),
     ("Tab", "Tab", "Tab"),
     ("Space", "space", "Space"),
@@ -185,6 +186,14 @@ mod tests {
                 format!("Ctrl+Key{key}")
             );
         }
+    }
+    #[test]
+    fn preferences_shortcut_resolves_comma_for_both_targets() {
+        let shortcut = Shortcut::parse("Primary+Comma").unwrap();
+        assert_eq!(shortcut.to_gtk_for(ShortcutTarget::MacOS), "<Meta>comma");
+        assert_eq!(shortcut.to_gtk_for(ShortcutTarget::Other), "<Control>comma");
+        assert_eq!(shortcut.to_muda_for(ShortcutTarget::MacOS), "Cmd+Comma");
+        assert_eq!(shortcut.to_muda_for(ShortcutTarget::Other), "Ctrl+Comma");
     }
     #[test]
     fn modifiers_are_normalized_without_implicit_shift() {

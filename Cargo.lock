@@ -3395,6 +3395,7 @@ dependencies = [
  "log",
  "nerust_core_traits",
  "nerust_crash_guard",
+ "nerust_desktop",
  "nerust_frontend_viewdefs",
  "nerust_gba_core",
  "nerust_gba_factory",
@@ -3478,6 +3479,29 @@ dependencies = [
 [[package]]
 name = "nerust_crash_guard"
 version = "0.1.0-dev"
+
+[[package]]
+name = "nerust_desktop"
+version = "0.1.0-dev"
+dependencies = [
+ "futures-timer",
+ "log",
+ "nerust_core_traits",
+ "nerust_gui_application",
+ "nerust_gui_runtime",
+ "nerust_gui_shell",
+ "nerust_gui_viewmodel",
+ "nerust_nes_factory",
+ "nerust_render_osd",
+ "nerust_render_softbuffer",
+ "nerust_render_traits",
+ "nerust_settings_core",
+ "nerust_system_traits",
+ "panechord",
+ "raw-window-handle",
+ "rfd",
+ "wakui_core",
+]
 
 [[package]]
 name = "nerust_emu_thread"
@@ -3639,6 +3663,10 @@ dependencies = [
  "log",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "nerust_gui_application"
+version = "0.1.0-dev"
 
 [[package]]
 name = "nerust_gui_runtime"
@@ -4667,6 +4695,7 @@ dependencies = [
  "futures",
  "gtk4",
  "panechord-runtime",
+ "raw-window-handle",
 ]
 
 [[package]]
@@ -4724,6 +4753,7 @@ version = "0.1.0-dev"
 dependencies = [
  "futures",
  "futures-timer",
+ "raw-window-handle",
 ]
 
 [[package]]
@@ -4753,6 +4783,7 @@ dependencies = [
  "muda",
  "panechord-macros",
  "panechord-runtime",
+ "raw-window-handle",
  "tao",
  "window_clipboard",
  "windows-sys 0.61.2",

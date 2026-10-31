@@ -178,6 +178,8 @@ struct Inner {
     coordinated_close: RefCell<Option<Rc<CoordinatedClose>>>,
     closed: Cell<bool>,
     image_updates: Cell<usize>,
+    surface_viewport: RefCell<Option<surface::ViewportHook>>,
+    surface_size: Cell<(f32, f32)>,
     error: RefCell<Option<String>>,
 }
 
@@ -302,6 +304,8 @@ impl View {
             coordinated_close: RefCell::default(),
             closed: Cell::new(false),
             image_updates: Cell::new(0),
+            surface_viewport: RefCell::default(),
+            surface_size: Cell::new((0.0, 0.0)),
             error: RefCell::default(),
         }));
         let weak = Rc::downgrade(&view.0);
@@ -1502,6 +1506,7 @@ pub struct GtkHost {
     executor: Rc<GtkExecutor>,
     sessions: Rc<RefCell<Vec<Session>>>,
     windows: Rc<RefCell<HashMap<String, View>>>,
+    application: RefCell<Option<gtk::Application>>,
 }
 
 impl GtkHost {
@@ -1526,6 +1531,7 @@ impl GtkHost {
             executor,
             sessions,
             windows: Rc::new(RefCell::new(HashMap::new())),
+            application: RefCell::default(),
         }
     }
     pub fn executor(&self) -> Rc<dyn Executor> {
@@ -1572,15 +1578,11 @@ impl GtkHost {
     /// Default hooks confirm immediately and have no application work to drain.
     /// Applications can separately register their own cancellation/drain hooks.
     pub fn register_view(&self, session: &Session, id: &str, view: &View) -> Result<(), String> {
-        if self.executor.closed.get() || view.0.closed.get() {
-            return Err("host or view is closed".into());
-        }
-        if self.windows.borrow().contains_key(id) {
-            return Err(format!("duplicate GTK window: {id}"));
-        }
         let weak = Rc::downgrade(&view.0);
-        let token = session.register_window(
+        self.register_view_with_hooks(
+            session,
             id,
+            view,
             WindowHooks {
                 confirm: Rc::new(|| Box::pin(async { true })),
                 cancel: Rc::new(|| {}),
@@ -1591,7 +1593,23 @@ impl GtkHost {
                     }
                 }),
             },
-        )?;
+        )
+    }
+
+    pub fn register_view_with_hooks(
+        &self,
+        session: &Session,
+        id: &str,
+        view: &View,
+        hooks: WindowHooks,
+    ) -> Result<(), String> {
+        if self.executor.closed.get() || view.0.closed.get() {
+            return Err("host or view is closed".into());
+        }
+        if self.windows.borrow().contains_key(id) {
+            return Err(format!("duplicate GTK window: {id}"));
+        }
+        let token = session.register_window(id, hooks)?;
         view.keep_at("", token);
         self.windows.borrow_mut().insert(id.into(), view.clone());
         let weak = Rc::downgrade(&self.windows);
@@ -1606,6 +1624,10 @@ impl GtkHost {
                 executor.schedule_reap();
             }
         }));
+        if let Some(application) = self.application.borrow().as_ref() {
+            view.0.window.set_application(Some(application));
+            view.present();
+        }
         Ok(())
     }
     pub fn close(&self) {
@@ -1826,6 +1848,50 @@ pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), 
     }
     Ok(())
 }
+
+pub fn run_host(
+    make: impl FnOnce(Rc<GtkHost>) -> Result<(), String> + 'static,
+) -> Result<(), String> {
+    gtk::init().map_err(|error| error.to_string())?;
+    let host = Rc::new(GtkHost::attach());
+    let app = gtk::Application::new(None::<&str>, gio::ApplicationFlags::NON_UNIQUE);
+    app.register(None::<&gio::Cancellable>)
+        .map_err(|error| error.to_string())?;
+    let error = Rc::new(RefCell::new(None));
+    let failure = error.clone();
+    let pending = Rc::downgrade(&host);
+    let make = RefCell::new(Some(make));
+    let activate = app.connect_activate(move |app| {
+        let Some(make) = make.borrow_mut().take() else {
+            return;
+        };
+        let Some(host) = pending.upgrade() else {
+            app.quit();
+            return;
+        };
+        host.application.replace(Some(app.clone()));
+        let result = catch_unwind(AssertUnwindSafe(|| make(host.clone())))
+            .unwrap_or_else(|panic| Err(panic_error(panic)));
+        if let Err(error) = result {
+            failure.replace(Some(error));
+            app.quit();
+        } else if host.windows.borrow().is_empty() {
+            app.quit();
+        }
+    });
+    let status = app.run_with_args(&["panechord"]);
+    app.disconnect(activate);
+    host.close();
+    if let Some(error) = error.take() {
+        return Err(error);
+    }
+    if status != glib::ExitCode::SUCCESS {
+        return Err(format!("GTK exited with {status:?}"));
+    }
+    Ok(())
+}
+
+mod surface;
 
 #[cfg(test)]
 mod tests;

@@ -144,6 +144,11 @@ impl Painter {
     }
     fn pump(&mut self, view: &View, bounds: Size, event: iced::Event, draw: bool) -> Vec<Message> {
         use iced_winit::core::window::RedrawRequest;
+        view.0.surface_bounds.set((bounds.width, bounds.height));
+        let viewport = view.0.native_viewport.borrow().clone();
+        if let Some(viewport) = viewport {
+            viewport(bounds.width, bounds.height);
+        }
         if matches!(
             event,
             iced::Event::Window(iced::window::Event::RedrawRequested(_))
@@ -664,6 +669,15 @@ pub(super) fn run(
                 }
                 match Desktop::open(target, &view, proxy.clone()) {
                     Ok(desktop) => {
+                        view.0.native_published.set(true);
+                        let ready = view.0.native_ready.take();
+                        if let Some(ready) = ready
+                            && let Err(message) = ready(desktop.window.clone())
+                        {
+                            error = Some(message.clone());
+                            fail(&view, message);
+                            continue;
+                        }
                         desktop.refresh();
                         desktops.insert(id, desktop);
                     }
@@ -696,6 +710,10 @@ pub(super) fn run(
                         .iter()
                         .find(|(_, desktop)| desktop.window.id() == window_id)
                     {
+                        let callback = desktop.view.0.native_event.borrow().clone();
+                        if let Some(callback) = callback {
+                            callback(&event);
+                        }
                         match event {
                             WindowEvent::CloseRequested => desktop.view.request_close(),
                             WindowEvent::Destroyed => desktop.view.close(),

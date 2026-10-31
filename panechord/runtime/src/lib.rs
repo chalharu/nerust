@@ -4,6 +4,8 @@
 //! and capture native widgets weakly. Bindings retain frozen snapshots, not the
 //! Store owner. User callbacks, destructors and future polls run outside runtime
 //! RefCell borrows. Executors may poll immediately inside `spawn`.
+mod window;
+pub use window::{KeyCode, WindowEvent, WindowHost, WindowSurface};
 mod blocking;
 mod controls;
 mod session;
