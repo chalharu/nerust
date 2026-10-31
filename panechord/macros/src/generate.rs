@@ -535,9 +535,26 @@ fn control_inner(
             let selected = binding(selected, true)?;
             quote!(__panechord_view.combo(&__panechord_parent, &__id, #items, #selected);)
         }
-        Control::Image { source, .. } => {
+        Control::Image {
+            source, pointer, ..
+        } => {
             let source = binding(source, false)?;
-            quote!(__panechord_view.image(&__panechord_parent, &__id, #source);)
+            if let Some(pointer) = pointer {
+                let pointer = binding(pointer, true)?;
+                quote!(__panechord_view.image_with_pointer(&__panechord_parent, &__id, #source, #pointer);)
+            } else {
+                quote!(__panechord_view.image(&__panechord_parent, &__id, #source);)
+            }
+        }
+        Control::Repeat {
+            items,
+            item_template,
+            gap,
+            ..
+        } => {
+            let items = binding(items, false)?;
+            let template = template(doc, item_template, backend)?;
+            quote!(__panechord_view.repeat(&__panechord_parent, &__id, #items, #gap, #template);)
         }
         Control::Tab {
             selected,

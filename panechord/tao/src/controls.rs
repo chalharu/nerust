@@ -109,6 +109,86 @@ pub(super) struct Dialog {
 }
 
 impl View {
+    pub fn repeat<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        items: Binding<Vec<Keyed<T>>>,
+        gap: f32,
+        template: Template<T>,
+    ) {
+        if !(0.0..=4096.0).contains(&gap) {
+            self.report_error("invalid Repeat gap".into());
+            return;
+        }
+        let container = self.layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: false,
+                gap,
+            },
+        );
+        let node = container.0.clone();
+        let current = Rc::new(RefCell::new(Vec::<Keyed<T>>::new()));
+        let pending = Rc::new(RefCell::new(None));
+        let busy = Rc::new(Cell::new(false));
+        let weak = self.downgrade();
+        let key = id.to_owned();
+        self.bind(&node, items, move |items| {
+            pending.replace(Some(items));
+            let Some(_guard) = panechord_runtime::ReconcileGuard::enter(&busy) else {
+                return;
+            };
+            let Some(view) = weak.upgrade() else { return };
+            loop {
+                let next = pending.borrow_mut().take();
+                let Some(items) = next else { break };
+                if view.0.closed.get() {
+                    break;
+                }
+                if let Err(error) = panechord_runtime::validate_repeat_items(&items) {
+                    view.report_error(error.into());
+                    continue;
+                }
+                let previous = current.replace(items.clone());
+                for item in &previous {
+                    if !items.iter().any(|candidate| candidate == item) {
+                        let scope = format!("{key}/{}", item.key);
+                        let mut children = container.0.children.take();
+                        let removed: Vec<_> =
+                            children.extract_if(.., |child| child.id == scope).collect();
+                        container.0.children.replace(children);
+                        for child in removed {
+                            child.retire();
+                        }
+                    }
+                }
+                for item in &items {
+                    if view.0.closed.get() {
+                        return;
+                    }
+                    if !previous.iter().any(|candidate| candidate == item) {
+                        view.content(
+                            &container,
+                            &format!("{key}/{}", item.key),
+                            Binding::constant(Some(item.clone())),
+                            template.clone(),
+                        );
+                    }
+                }
+                if view.0.closed.get() {
+                    return;
+                }
+                let ordered = items
+                    .iter()
+                    .filter_map(|item| view.find(&format!("{key}/{}", item.key)))
+                    .collect();
+                container.0.children.replace(ordered);
+            }
+        });
+    }
+
     pub fn image_update_count(&self) -> usize {
         self.0.image_updates.get()
     }
@@ -358,6 +438,38 @@ impl View {
             .into()
         })));
     }
+    pub fn image_with_pointer(
+        &self,
+        parent: &Parent,
+        id: &str,
+        source: Binding<Option<ImageFrame>>,
+        pointer: Binding<Option<panechord_runtime::PointerPosition>>,
+    ) {
+        self.image(parent, id, source);
+        let node = self.find(id).unwrap();
+        let factory = match &*node.kind.borrow() {
+            Kind::Leaf(factory) => factory.clone(),
+            _ => unreachable!(),
+        };
+        node.handler.replace(Some(Handler::Pointer(pointer)));
+        let key = node.key();
+        node.kind.replace(Kind::Leaf(Rc::new(move || {
+            let moved = key.clone();
+            widget::mouse_area(factory())
+                .on_move(move |position| {
+                    Message::Pointer(
+                        moved.clone(),
+                        Some(panechord_runtime::PointerPosition {
+                            x: position.x,
+                            y: position.y,
+                        }),
+                    )
+                })
+                .on_exit(Message::Pointer(key.clone(), None))
+                .into()
+        })));
+    }
+
     pub fn image(&self, parent: &Parent, id: &str, source: Binding<Option<ImageFrame>>) {
         let node = self.add(parent, id, Kind::Content);
         let image = Rc::new(RefCell::new(None));
