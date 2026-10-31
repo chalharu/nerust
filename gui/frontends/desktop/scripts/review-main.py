@@ -26,8 +26,9 @@ def wait(predicate):
     raise RuntimeError("native View condition timed out")
 
 
-def capture(binary, original, destination, settings_review=False, history_review=False):
-    if settings_review or history_review:
+def capture(binary, original, destination, settings_review=False, history_review=False, debugger_review=False):
+    accessibility = settings_review or history_review or debugger_review
+    if accessibility:
         import atspi_layout as layout
     output = Path(destination)
     output.mkdir(parents=True, exist_ok=True)
@@ -42,7 +43,7 @@ def capture(binary, original, destination, settings_review=False, history_review
         for directory in [root / "config" / "nerust", root / "settings" / "config"]:
             directory.mkdir(parents=True, exist_ok=True)
             (directory / "settings.yaml").write_text(yaml.safe_dump(settings))
-        environment = dict(os.environ, NO_AT_BRIDGE="0" if settings_review or history_review else "1", GTK_A11Y="atspi" if settings_review or history_review else os.environ.get("GTK_A11Y", "none"), GDK_BACKEND="x11",
+        environment = dict(os.environ, NO_AT_BRIDGE="0" if accessibility else "1", GTK_A11Y="atspi" if accessibility else os.environ.get("GTK_A11Y", "none"), GDK_BACKEND="x11",
                            XDG_CONFIG_HOME=str(root / "config"), XDG_DATA_HOME=str(root / "data"),
                            NERUST_SETTINGS_ROOT=str(root / "settings"))
         for mode, arguments in [("empty", []), ("rom", [str(rom)])]:
@@ -97,7 +98,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                         execute("xdotool", "mousemove", "--window", window, "330", "260", "click", "1")
                         execute("xdotool", "key", "space")
                         snapshot("paused", expected="Paus")
-                        if history_review:
+                        if history_review or debugger_review:
                             def click_text(text):
                                 def locate():
                                     app = layout.application(process.pid)
@@ -177,20 +178,77 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     raise
                                 print(f"VIEW CAPTURE {name}", flush=True)
 
-                            native = open_history()
-                            history_snapshot(native, "history-all", ["Clear history", "Close", "Date/Time", "Level", "Module", "Message"])
-                            click_text("All")
-                            execute("xdotool", "key", "Home", "Down", "Down", "Return")
-                            history_snapshot(native, "history-warning", ["Warning", "No notifications", "Close"])
-                            click_text("Warning")
-                            execute("xdotool", "key", "Home", "Return")
-                            history_snapshot(native, "history-restored", ["All", "Clear history", "Close"], ["No notifications"])
-                            click_text("Clear history")
-                            history_snapshot(native, "history-empty", ["No notifications", "Close"])
-                            click_text("Close")
-                            wait(lambda: find_history() is None)
-                            native = open_history()
-                            history_snapshot(native, "history-reopened", ["All", "No notifications", "Close"])
+                            if history_review:
+                                native = open_history()
+                                history_snapshot(native, "history-all", ["Clear history", "Close", "Date/Time", "Level", "Module", "Message"])
+                                click_text("All")
+                                execute("xdotool", "key", "Home", "Down", "Down", "Return")
+                                history_snapshot(native, "history-warning", ["Warning", "No notifications", "Close"])
+                                click_text("Warning")
+                                execute("xdotool", "key", "Home", "Return")
+                                history_snapshot(native, "history-restored", ["All", "Clear history", "Close"], ["No notifications"])
+                                click_text("Clear history")
+                                history_snapshot(native, "history-empty", ["No notifications", "Close"])
+                                click_text("Close")
+                                wait(lambda: find_history() is None)
+                                native = open_history()
+                                history_snapshot(native, "history-reopened", ["All", "No notifications", "Close"])
+                            if debugger_review:
+                                def find_debugger():
+                                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Debugger$"], capture_output=True, text=True)
+                                    return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
+
+                                def open_debugger():
+                                    execute("xdotool", "windowfocus", "--sync", window)
+                                    click_text("View")
+                                    click_text("Debugger...")
+                                    native = wait(find_debugger)
+                                    execute("xdotool", "windowfocus", "--sync", native)
+                                    execute("xdotool", "windowsize", "--sync", native, "1100", "946")
+                                    return native
+
+                                def debugger_snapshot(native, name):
+                                    image = output / f"{name}.png"
+                                    tree_file = output / f"{name}.atspi.json"
+                                    def inspect():
+                                        frame = layout.window(process.pid, "Debugger")
+                                        if frame is None:
+                                            return None
+                                        visible = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
+                                        labels = {layout.normalized(node.name) for node in visible}
+                                        expected = ["Registers", "Watch", "Freeze", "Bookmarks", "Memory", "Space", "Page", "Refresh", "Close"]
+                                        if not all(layout.normalized(label) in labels for label in expected):
+                                            return None
+                                        if sum("0x" in node.name for node in visible if node.getRoleName() == "label") < 3:
+                                            return None
+                                        execute("import", "-window", native, str(image))
+                                        tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
+                                        footer = next(node for node in visible if node.getRoleName() == "push button" and node.name == "Close")
+                                        outer, rectangle = layout.bounds(frame), layout.bounds(footer)
+                                        if rectangle["y"] + rectangle["height"] > outer["y"] + outer["height"] - 12:
+                                            raise RuntimeError(f"Debugger footer margin is insufficient: frame={outer}, close={rectangle}")
+                                        width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
+                                        if (width, height) != (1100, 946):
+                                            raise RuntimeError(f"Debugger size drifted: {width}x{height}")
+                                        return {"state": name, "image": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "width": width, "height": height,
+                                                "layout": tree_file.name, "layout_sha256": hashlib.sha256(tree_file.read_bytes()).hexdigest(), "scope": "read-only View layout; operation bindings not tested"}
+                                    try:
+                                        records.append(wait(inspect))
+                                    except Exception:
+                                        frame = layout.window(process.pid, "Debugger")
+                                        if frame is not None:
+                                            execute("import", "-window", native, str(image))
+                                            tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
+                                            print(f"VIEW DEBUGGER TIMEOUT {name}: " + repr([node.name for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]), flush=True)
+                                        raise
+                                    print(f"VIEW CAPTURE {name}", flush=True)
+
+                                native = open_debugger()
+                                debugger_snapshot(native, "debugger-initial")
+                                click_text("Close")
+                                wait(lambda: find_debugger() is None)
+                                native = open_debugger()
+                                debugger_snapshot(native, "debugger-reopened")
                             execute("xdotool", "windowfocus", "--sync", window)
                         if settings_review:
                             execute("xdotool", "key", "ctrl+comma")
@@ -275,8 +333,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                             click_page("System")
                             settings_snapshot("System", ["Filter", "MMC3 IRQ Variant", "Apply"])
                             execute("xdotool", "windowfocus", "--sync", window)
-                    execute("xdotool", "key", "ctrl+q" if history_review else "alt+F4")
-                    if history_review:
+                    execute("xdotool", "key", "ctrl+q" if history_review or debugger_review else "alt+F4")
+                    if history_review or debugger_review:
                         exit_code = process.wait(timeout=15)
                         if exit_code != 0:
                             raise RuntimeError(f"History review shutdown failed: {exit_code}")
@@ -298,9 +356,9 @@ def capture(binary, original, destination, settings_review=False, history_review
 
 if __name__ == "__main__":
     try:
-        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--history"}):
-            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--history]")
-        capture(*sys.argv[1:4], settings_review="--settings" in sys.argv[4:], history_review="--history" in sys.argv[4:])
+        if len(sys.argv) not in (4, 5) or (len(sys.argv) == 5 and sys.argv[4] not in {"--settings", "--history", "--debugger"}):
+            raise RuntimeError("usage: review-main.py BINARY ROM OUTPUT [--settings|--history|--debugger]")
+        capture(*sys.argv[1:4], settings_review="--settings" in sys.argv[4:], history_review="--history" in sys.argv[4:], debugger_review="--debugger" in sys.argv[4:])
     except Exception as error:
         print(f"VIEW FAIL: {error}", file=sys.stderr)
         sys.exit(1)
