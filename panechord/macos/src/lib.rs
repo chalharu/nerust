@@ -572,11 +572,11 @@ impl View {
             let columns: Vec<_> = data.columns.iter().map(|column| serde_json::json!({
                 "title":column.title,"width":column.width,"scale":column.text.scale,
                 "role":match column.text.role { panechord_runtime::TextRole::Body => 0, panechord_runtime::TextRole::Heading => 1, panechord_runtime::TextRole::Code => 2 },
-                "foreground":column.text.foreground,"stretch":column.stretch,
+                "foreground":column.text.foreground,"stretch":column.stretch,"hideEmpty":column.hide_empty,
                 "overflow":match column.overflow { panechord_runtime::TextOverflow::Clip => 0, panechord_runtime::TextOverflow::Wrap => 1, panechord_runtime::TextOverflow::EllipsizeMiddle => 2 },
             })).collect();
             let rows: Vec<_> = data.rows.iter().map(|row| serde_json::json!({"key":row.key,"cells":row.cells.iter().map(|cell| serde_json::json!({"text":cell.text,"foreground":cell.foreground})).collect::<Vec<_>>() })).collect();
-            let payload = serde_json::json!({"columns":columns,"rows":rows,"emptyText":data.empty_text,"columnGap":data.column_gap,"rowGap":data.row_gap}).to_string();
+            let payload = serde_json::json!({"columns":columns,"rows":rows,"emptyText":data.empty_text,"columnGap":data.column_gap,"rowGap":data.row_gap,"rowInset":data.row_inset}).to_string();
             view.set(&key, &payload, 13);
         });
     }

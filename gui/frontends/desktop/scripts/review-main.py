@@ -216,17 +216,17 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             return None
                                         visible = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
                                         labels = {layout.normalized(node.name) for node in visible}
-                                        expected = ["Registers", "Watch", "Freeze", "Bookmarks", "Memory", "Space", "Page", "Refresh", "Close"]
+                                        expected = ["Registers", "Watch", "Freeze", "Bookmarks", "Memory", "Space", "Page", "Refresh"]
                                         if not all(layout.normalized(label) in labels for label in expected):
                                             return None
                                         if sum("0x" in node.name for node in visible if node.getRoleName() == "label") < 3:
                                             return None
                                         execute("import", "-window", native, str(image))
                                         tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
-                                        footer = next(node for node in visible if node.getRoleName() == "push button" and node.name == "Close")
+                                        footer = next(node for node in visible if node.getRoleName() == "push button" and node.name == "Refresh")
                                         outer, rectangle = layout.bounds(frame), layout.bounds(footer)
                                         if rectangle["y"] + rectangle["height"] > outer["y"] + outer["height"] - 12:
-                                            raise RuntimeError(f"Debugger footer margin is insufficient: frame={outer}, close={rectangle}")
+                                            raise RuntimeError(f"Debugger footer margin is insufficient: frame={outer}, refresh={rectangle}")
                                         width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
                                         if (width, height) != (1100, 946):
                                             raise RuntimeError(f"Debugger size drifted: {width}x{height}")
@@ -247,17 +247,50 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 debugger_snapshot(native, "debugger-initial")
                                 import pyatspi
 
+                                def register_cells():
+                                    frame = layout.window(process.pid, "Debugger")
+                                    if frame is None:
+                                        return None
+                                    cells = [node for node in layout.descendants(frame) if node.getRoleName() == "push button" and ": 0x" in node.name and layout.visible_in_frame(node, frame)]
+                                    return cells if len(cells) >= 2 else None
+
+                                registers = wait(register_cells)
+                                for column, selected_index in enumerate([0, (len(registers) + 1) // 2]):
+                                    registers = wait(register_cells)
+                                    register_name = registers[selected_index].name.split(":", 1)[0]
+                                    action = registers[selected_index].queryAction()
+                                    index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
+                                    if not action.doAction(index):
+                                        raise RuntimeError("Register selection was rejected")
+                                    wait(lambda: (cells := register_cells()) and cells[selected_index].getState().contains(pyatspi.STATE_PRESSED))
+                                    if any(cell.getState().contains(pyatspi.STATE_PRESSED) for index, cell in enumerate(register_cells()) if index != selected_index):
+                                        raise RuntimeError("Previous register selection remained active")
+                                    frame = layout.window(process.pid, "Debugger")
+                                    if not any(node.name == f"Set {register_name}" for node in layout.descendants(frame)):
+                                        raise RuntimeError("Register target caption did not follow selection")
+                                    debugger_snapshot(native, f"debugger-register-{column}")
+                                    records[-1]["measured"] = {"register_accessible_content": [layout.bounds(cell) for cell in register_cells()], "selected_register": register_name}
+                                    records[-1]["scope"] = "exclusive presentation register selection and layout; domain mutation bindings not tested"
+
                                 def memory_cells():
                                     frame = layout.window(process.pid, "Debugger")
                                     if frame is None:
                                         return None
-                                    heads = [node for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name.strip() == "0x00000000:" and layout.visible_in_frame(node, frame)]
+                                    heads = [node for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name.lstrip("> *").strip() == "0x00000000:" and layout.visible_in_frame(node, frame)]
                                     if not heads:
                                         return None
                                     cells = [node for node in heads[0].parent if node.getRoleName() == "push button"]
                                     return cells if len(cells) == 17 else None
 
                                 cells = wait(memory_cells)
+                                body, row = layout.bounds(cells[0].parent), layout.bounds(cells[0].parent.parent)
+                                row_insets = {"left": body["x"] - row["x"], "top": body["y"] - row["y"], "right": row["x"] + row["width"] - body["x"] - body["width"], "bottom": row["y"] + row["height"] - body["y"] - body["height"]}
+                                if row_insets != {"left": 2, "top": 2, "right": 2, "bottom": 2}:
+                                    raise RuntimeError(f"Memory row content insets drifted: {row_insets}")
+                                frame = layout.window(process.pid, "Debugger")
+                                targets = [layout.bounds(node) for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name == "\u2192" and layout.visible_in_frame(node, frame)]
+                                if not targets:
+                                    raise RuntimeError("NES fixture did not expose a visible disassembly target")
                                 rectangles = [layout.bounds(cell) for cell in cells]
                                 gaps = [right["x"] - left["x"] - left["width"] for left, right in zip(rectangles, rectangles[1:])]
                                 if gaps != [36] * 16:
@@ -268,13 +301,16 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
                                     if not action.doAction(index):
                                         raise RuntimeError("Memory cell selection was rejected")
-                                    wait(lambda: memory_cells()[column].getState().contains(pyatspi.STATE_PRESSED))
+                                    wait(lambda: (cells := memory_cells()) and cells[column].getState().contains(pyatspi.STATE_PRESSED))
                                     if any(cell.getState().contains(pyatspi.STATE_PRESSED) for index, cell in enumerate(memory_cells()) if index != column):
                                         raise RuntimeError("Previous memory cell selection remained active")
                                     debugger_snapshot(native, f"debugger-byte-{column}")
-                                    records[-1]["measured"] = {"memory_accessible_content": rectangles, "content_gaps": gaps, "declared_column_gap": 2, "selected_column": column, "bounds_semantics": "AT-SPI content bounds exclude button CSS padding/border; content gap is not layout gap."}
+                                    records[-1]["measured"] = {"memory_accessible_content": rectangles, "content_gaps": gaps, "declared_column_gap": 2, "row_content_insets": row_insets, "disassembly_targets": targets, "selected_column": column, "bounds_semantics": "AT-SPI content bounds exclude button CSS padding/border; content gap is not layout gap."}
                                     records[-1]["scope"] = "presentation cell selection and layout; domain mutation bindings not tested"
-                                click_text("Close")
+                                action = layout.window(process.pid, "Debugger").queryAction()
+                                index = next(index for index in range(action.nActions) if action.getName(index) == "window.close")
+                                if not action.doAction(index):
+                                    raise RuntimeError("Debugger native close request was rejected")
                                 wait(lambda: find_debugger() is None)
                                 native = open_debugger()
                                 debugger_snapshot(native, "debugger-reopened")

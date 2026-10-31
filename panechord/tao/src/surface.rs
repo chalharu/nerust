@@ -257,22 +257,6 @@ impl View {
     }
 }
 
-#[cfg(test)]
-mod input_tests {
-    use super::*;
-    #[test]
-    fn native_tao_codes_map_directly_to_common_physical_keys() {
-        for (native, common) in [
-            (crate::NativeKeyCode::KeyV, KeyCode::KeyV),
-            (crate::NativeKeyCode::ShiftRight, KeyCode::ShiftRight),
-            (crate::NativeKeyCode::F35, KeyCode::F35),
-            (crate::NativeKeyCode::IntlYen, KeyCode::IntlYen),
-        ] {
-            assert_eq!(View::key_code(native), common);
-        }
-    }
-}
-
 pub(super) fn element(frame: Option<ImageFrame>, width: f32, height: f32) -> crate::Element {
     use iced::{Length, widget};
     let content: crate::Element = if let Some(frame) = frame {
@@ -298,4 +282,20 @@ pub(super) fn element(frame: Option<ImageFrame>, width: f32, height: f32) -> cra
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    #[test]
+    fn native_tao_codes_map_directly_to_common_physical_keys() {
+        for (native, common) in [
+            (crate::NativeKeyCode::KeyV, KeyCode::KeyV),
+            (crate::NativeKeyCode::ShiftRight, KeyCode::ShiftRight),
+            (crate::NativeKeyCode::F35, KeyCode::F35),
+            (crate::NativeKeyCode::IntlYen, KeyCode::IntlYen),
+        ] {
+            assert_eq!(View::key_code(native), common);
+        }
+    }
 }

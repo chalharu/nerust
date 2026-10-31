@@ -2,6 +2,12 @@ use super::*;
 use panechord_runtime::{Table, TableColumn, TableRow, TableSelection, TextOverflow};
 use std::sync::Arc;
 
+#[derive(Clone)]
+struct MountedRow {
+    body: glib::WeakRef<gtk::Box>,
+    cells: Vec<glib::WeakRef<gtk::ToggleButton>>,
+}
+
 struct TableState {
     data: RefCell<Table>,
     rows: gio::ListStore,
@@ -11,7 +17,7 @@ struct TableState {
     groups: RefCell<Vec<gtk::SizeGroup>>,
     selection: Option<Binding<Option<TableSelection>>>,
     selected: RefCell<Option<TableSelection>>,
-    mounted: RefCell<HashMap<String, Vec<glib::WeakRef<gtk::ToggleButton>>>>,
+    mounted: RefCell<HashMap<String, MountedRow>>,
     owner: WeakView,
 }
 
@@ -92,6 +98,18 @@ fn set_selected(button: &gtk::ToggleButton, active: bool) {
 }
 
 impl TableState {
+    fn unmount(&self, body: &gtk::Box) {
+        let key = body.widget_name();
+        let mut mounted = self.mounted.borrow_mut();
+        if mounted
+            .get(key.as_str())
+            .and_then(|row| row.body.upgrade())
+            .is_some_and(|current| current == *body)
+        {
+            mounted.remove(key.as_str());
+        }
+    }
+
     fn select(&self, selected: Option<TableSelection>) {
         let validation = selected
             .as_ref()
@@ -104,8 +122,8 @@ impl TableState {
         }
         self.selected.replace(selected.clone());
         let mounted = self.mounted.borrow().clone();
-        for (key, cells) in mounted {
-            for (column, cell) in cells.into_iter().enumerate() {
+        for (key, row) in mounted {
+            for (column, cell) in row.cells.into_iter().enumerate() {
                 if let Some(button) = cell.upgrade() {
                     set_selected(
                         &button,
@@ -175,7 +193,10 @@ impl TableState {
         }
         let mut prefix = 0;
         let mut suffix = 0;
-        if !columns_changed && previous.row_gap == data.row_gap {
+        if !columns_changed
+            && previous.row_gap == data.row_gap
+            && previous.row_inset == data.row_inset
+        {
             while prefix < previous.rows.len().min(data.rows.len())
                 && previous.rows[prefix] == data.rows[prefix]
             {
@@ -260,10 +281,7 @@ impl View {
                 .unwrap();
             let row = row.borrow::<Arc<TableRow>>();
             let body = item.child().unwrap().downcast::<gtk::Box>().unwrap();
-            state
-                .mounted
-                .borrow_mut()
-                .remove(body.widget_name().as_str());
+            state.unmount(&body);
             if let Some(row) = body.parent() {
                 row.style_context()
                     .add_provider(&row_css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -273,7 +291,11 @@ impl View {
             }
             let data = state.data.borrow().clone();
             body.set_spacing(data.column_gap.round() as i32);
-            body.set_margin_bottom(data.row_gap.round() as i32);
+            let inset = data.row_inset.round() as i32;
+            body.set_margin_top(inset);
+            body.set_margin_start(inset);
+            body.set_margin_end(inset);
+            body.set_margin_bottom(data.row_gap.round() as i32 + inset);
             body.set_widget_name(&row.key);
             let mut mounted = Vec::new();
             for (index, (column, cell)) in data.columns.iter().zip(&row.cells).enumerate() {
@@ -284,6 +306,8 @@ impl View {
                     let button = gtk::ToggleButton::with_label(&cell.text);
                     let label = button.child().unwrap().downcast::<gtk::Label>().unwrap();
                     configure_label(&label, &column, false);
+                    label.set_valign(gtk::Align::Center);
+                    button.set_visible(!column.hide_empty || !cell.text.is_empty());
                     button.add_css_class("flat");
                     button.add_css_class("text-button");
                     button.set_hexpand(column.stretch);
@@ -311,11 +335,16 @@ impl View {
                             .mounted
                             .borrow()
                             .get(&selected.row_key)
-                            .and_then(|cells| cells.get(selected.column))
+                            .and_then(|row| row.cells.get(selected.column))
                             .and_then(glib::WeakRef::upgrade)
                             .is_some_and(|current| current == *button);
                         let valid = selected.validate(&state.data.borrow()).is_ok();
-                        if mounted && valid && writer.is_writable() {
+                        if mounted
+                            && valid
+                            && button.is_visible()
+                            && button.is_sensitive()
+                            && writer.is_writable()
+                        {
                             let _ = writer.try_set(Some(selected.clone()));
                         }
                         let active = *state.selected.borrow() == Some(selected.clone());
@@ -326,12 +355,19 @@ impl View {
                     mounted.push(button.downgrade());
                 } else {
                     let label = label(&column, &cell.text, false);
+                    label.set_visible(!column.hide_empty || !cell.text.is_empty());
                     label.set_selectable(true);
                     state.groups.borrow()[index].add_widget(&label);
                     body.append(&label);
                 }
             }
-            state.mounted.borrow_mut().insert(row.key.clone(), mounted);
+            state.mounted.borrow_mut().insert(
+                row.key.clone(),
+                MountedRow {
+                    body: body.downgrade(),
+                    cells: mounted,
+                },
+            );
         });
         let weak = Rc::downgrade(&state);
         factory.connect_unbind(move |_, object| {
@@ -341,10 +377,7 @@ impl View {
                 .and_then(|child| child.downcast::<gtk::Box>().ok())
             {
                 if let Some(state) = weak.upgrade() {
-                    state
-                        .mounted
-                        .borrow_mut()
-                        .remove(body.widget_name().as_str());
+                    state.unmount(&body);
                 }
                 while let Some(child) = body.first_child() {
                     body.remove(&child);

@@ -304,6 +304,7 @@ fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
                 text: Default::default(),
                 overflow: TextOverflow::Clip,
                 stretch: false,
+                hide_empty: false,
             },
             TableColumn {
                 title: "Message".into(),
@@ -311,6 +312,7 @@ fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
                 text: Default::default(),
                 overflow: TextOverflow::Wrap,
                 stretch: true,
+                hide_empty: false,
             },
         ]
         .into(),
@@ -334,6 +336,7 @@ fn native_table_wraps_virtualizes_and_rejects_invalid_snapshots() {
             .into(),
         column_gap: 12.0,
         row_gap: 2.0,
+        row_inset: 0.0,
         empty_text: "No rows".into(),
     };
     let model = Store::new(data, host.executor());
@@ -457,6 +460,7 @@ fn native_table_selection_writes_back_and_stops_after_close() {
             text: Default::default(),
             overflow: TextOverflow::Clip,
             stretch: true,
+            hide_empty: false,
         }]
         .into(),
         rows: vec![Arc::new(TableRow {
@@ -478,6 +482,7 @@ fn native_table_selection_writes_back_and_stops_after_close() {
             foreground: None,
         });
     data.column_gap = 2.0;
+    data.row_inset = 2.0;
     let data = Store::new(data, GtkHost::attach().executor());
     let source = data.bind(Clone::clone, None::<fn(&mut Table, Table)>);
     let writer = selection.bind(
@@ -518,7 +523,18 @@ fn native_table_selection_writes_back_and_stops_after_close() {
         .downcast::<gtk::ToggleButton>()
         .unwrap();
     let body = button.parent().unwrap().downcast::<gtk::Box>().unwrap();
+    let label = button.child().unwrap().downcast::<gtk::Label>().unwrap();
+    assert_eq!(label.valign(), gtk::Align::Center);
     assert_eq!(body.spacing(), 2);
+    assert_eq!(
+        (
+            body.margin_top(),
+            body.margin_start(),
+            body.margin_end(),
+            body.margin_bottom()
+        ),
+        (2, 2, 2, 2)
+    );
     assert!(button.next_sibling().is_some());
     button.emit_clicked();
     assert_eq!(
@@ -529,8 +545,53 @@ fn native_table_selection_writes_back_and_stops_after_close() {
         })
     );
     assert!(button.is_active());
+    let retired = button.clone();
+    assert!(data.update(|table| {
+        Arc::make_mut(&mut Arc::make_mut(&mut table.rows)[0]).cells[0]
+            .text
+            .push('!')
+    }));
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let button = loop {
+        let current = list
+            .first_child()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::ToggleButton>()
+            .unwrap();
+        if current != retired {
+            break current;
+        }
+        assert!(std::time::Instant::now() < deadline, "row did not rebind");
+        glib::MainContext::default().iteration(true);
+    };
+    let next = button
+        .next_sibling()
+        .unwrap()
+        .downcast::<gtk::ToggleButton>()
+        .unwrap();
+    next.emit_clicked();
+    assert_eq!(
+        selection.snapshot(),
+        Some(TableSelection {
+            row_key: "row".into(),
+            column: 1
+        })
+    );
+    retired.emit_clicked();
+    assert_eq!(
+        selection.snapshot(),
+        Some(TableSelection {
+            row_key: "row".into(),
+            column: 1
+        })
+    );
     assert!(selection.update(|selection| *selection = None));
     assert!(!button.is_active());
+    assert!(!next.is_active());
     assert!(data.update(|table| table.rows = Arc::from([])));
     button.emit_clicked();
     assert_eq!(selection.snapshot(), None);
@@ -709,6 +770,12 @@ fn native_grid_default_styles_and_scroll_preserve_allocation() {
     let scroll = view.widget::<gtk::ScrolledWindow>("viewport").unwrap();
     assert_eq!(scroll.hscrollbar_policy(), gtk::PolicyType::Never);
     assert_eq!(scroll.vscrollbar_policy(), gtk::PolicyType::Automatic);
+    assert!(scroll.property::<bool>("propagate-natural-width"));
+    view.try_scroll(&view.root(), "horizontal", true).unwrap();
+    let horizontal = view.widget::<gtk::ScrolledWindow>("horizontal").unwrap();
+    assert!(!horizontal.property::<bool>("propagate-natural-width"));
+    assert_eq!(horizontal.hscrollbar_policy(), gtk::PolicyType::Automatic);
+    assert_eq!(horizontal.vscrollbar_policy(), gtk::PolicyType::Never);
     assert!(view.try_scroll(&viewport, "viewport", false).is_err());
     view.tab(&view.root(), "tabs", Binding::constant("general".into()));
     view.tab_position("tabs", panechord_runtime::TabPosition::Left)
