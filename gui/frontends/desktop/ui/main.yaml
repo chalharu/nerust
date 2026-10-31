@@ -27,6 +27,7 @@ root:
       command: choose
       items:
         - {id: fullscreen, label: {literal: Fullscreen}, argument: {literal: fullscreen}}
+        - {id: history, label: {literal: "Notification History..."}, argument: {literal: history}}
   content:
     type: Native
     id: screen

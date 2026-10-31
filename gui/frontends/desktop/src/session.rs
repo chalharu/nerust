@@ -2,8 +2,8 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 
 use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_gui_application::{
-    EmulationPort, FramePort, KeyboardPort, MediaPort, SessionAction, SessionActionPort,
-    SettingsPort,
+    EmulationPort, FramePort, HistoryPort, KeyboardPort, MediaPort, SessionAction,
+    SessionActionPort, SettingsPort,
 };
 use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsPaths, SettingsSnapshot};
 use nerust_gui_shell::{
@@ -114,6 +114,24 @@ impl SessionAdapter {
     pub fn chrome(&self) -> nerust_gui_shell::session::osd::OsdChrome {
         self.session.chrome()
     }
+
+    pub(crate) fn history_revision(&self) -> u64 {
+        self.session.notification_history_seq()
+    }
+
+    pub(crate) fn history_lines(
+        &self,
+        cache: &mut nerust_gui_shell::session::session_query::HistoryView,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Vec<nerust_gui_shell::session::osd::HistoryLine> {
+        cache
+            .lines(
+                self.session.notification_history(),
+                self.history_revision(),
+                language,
+            )
+            .to_vec()
+    }
 }
 
 impl EmulationPort for SessionAdapter {
@@ -137,6 +155,12 @@ impl EmulationPort for SessionAdapter {
     fn flush(&mut self) {
         KeyboardPort::clear_input(self);
         self.session.flush_before_exit();
+    }
+}
+
+impl HistoryPort for SessionAdapter {
+    fn clear_history(&mut self) {
+        self.session.clear_notification_history();
     }
 }
 
