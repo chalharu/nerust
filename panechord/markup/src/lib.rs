@@ -272,7 +272,7 @@ controls! {
     Label { text: Property, },
     Table { source: Property, },
     Separator { #[serde(default)] orientation: Orientation, },
-    TextBox { text: Property, validation: Option<Validation>, },
+    TextBox { text: Property, placeholder: Option<Property>, validation: Option<Validation>, },
     Button { text: Property, command: String, argument: Option<Property>, },
     Native { factory: String, value: Property, },
     CheckBox { text: Property, checked: Property, },
@@ -609,6 +609,10 @@ impl Document {
             }
         }
         match c {
+            Control::TextBox {
+                placeholder: Some(placeholder),
+                ..
+            } => read_only(placeholder, "placeholder")?,
             Control::Label { text, .. }
             | Control::CheckBox { text, .. }
             | Control::Radio { text, .. } => read_only(text, "text")?,
@@ -846,6 +850,22 @@ impl Document {
 #[cfg(test)]
 mod scroll_tests {
     use super::*;
+
+    #[test]
+    fn textbox_placeholder_is_optional_and_read_only() {
+        let mut value = serde_json::json!({"schema_version":2,"root":{"type":"Window","id":"window","title":{"literal":"Entry"},
+            "content":{"type":"TextBox","id":"entry","text":{"bind":{"path":"text","mode":"TwoWay"}}}}});
+        parse(&value.to_string(), "json", "entry.json").unwrap();
+        value["root"]["content"]["placeholder"] = serde_json::json!({"bind":{"path":"caption"}});
+        parse(&value.to_string(), "json", "entry.json").unwrap();
+        value["root"]["content"]["placeholder"]["bind"]["mode"] = "TwoWay".into();
+        assert!(
+            parse(&value.to_string(), "json", "entry.json")
+                .unwrap_err()
+                .message
+                .contains("read-only")
+        );
+    }
 
     #[test]
     fn table_source_is_read_only_and_separator_has_no_domain_properties() {
