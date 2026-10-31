@@ -36,6 +36,7 @@ type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 pub enum Message {
     Edit(String, String),
     Pointer(String, Option<panechord_runtime::PointerPosition>),
+    TableCell(String, panechord_runtime::TableSelection),
     Click(String),
     Menu(String),
     Scroll(String, f32),
@@ -66,6 +67,10 @@ pub struct Parent(Rc<Node>);
 enum Handler {
     Entry(Binding<String>),
     Pointer(Binding<Option<panechord_runtime::PointerPosition>>),
+    Table(
+        Binding<Option<panechord_runtime::TableSelection>>,
+        Rc<RefCell<(panechord_runtime::Table, u64)>>,
+    ),
     Button(Command),
     Toggle(Binding<bool>),
     Radio(Binding<String>, String),
@@ -518,6 +523,24 @@ impl View {
         Ok(())
     }
     pub fn table(&self, parent: &Parent, id: &str, binding: Binding<panechord_runtime::Table>) {
+        self.table_impl(parent, id, binding, None);
+    }
+    pub fn table_with_selection(
+        &self,
+        parent: &Parent,
+        id: &str,
+        binding: Binding<panechord_runtime::Table>,
+        selection: Binding<Option<panechord_runtime::TableSelection>>,
+    ) {
+        self.table_impl(parent, id, binding, Some(selection));
+    }
+    fn table_impl(
+        &self,
+        parent: &Parent,
+        id: &str,
+        binding: Binding<panechord_runtime::Table>,
+        selection: Option<Binding<Option<panechord_runtime::TableSelection>>>,
+    ) {
         let node = self.add(parent, id, Kind::Content);
         let data = Rc::new(RefCell::new((panechord_runtime::Table::default(), 0u64)));
         let updated = data.clone();
@@ -535,9 +558,37 @@ impl View {
                 state.1 = state.1.wrapping_add(1);
             }
         });
+        let selected = Rc::new(RefCell::new(None::<panechord_runtime::TableSelection>));
+        let selectable = selection.is_some();
+        if let Some(selection) = selection {
+            node.handler
+                .replace(Some(Handler::Table(selection.clone(), data.clone())));
+            let output = selected.clone();
+            let latest = data.clone();
+            let owner = self.downgrade();
+            self.bind(&node, selection, move |selection| {
+                let validation = selection
+                    .as_ref()
+                    .map(|selection| selection.validate(&latest.borrow().0));
+                if let Some(Err(error)) = validation {
+                    if let Some(view) = owner.upgrade() {
+                        view.report_error(error.into());
+                    }
+                    return;
+                }
+                if *output.borrow() != selection {
+                    output.replace(selection);
+                    let mut state = latest.borrow_mut();
+                    state.1 = state.1.wrapping_add(1);
+                }
+            });
+        }
+        let key = node.key();
         node.kind.replace(Kind::Leaf(Rc::new(move || {
             let revision = data.borrow().1;
             let latest = data.clone();
+            let selected = selected.borrow().clone();
+            let key = key.clone();
             widget::lazy(revision, move |_| {
                 let data = latest.borrow().0.clone();
                 let cell = |column: &panechord_runtime::TableColumn,
@@ -604,8 +655,44 @@ impl View {
                                 data.columns
                                     .iter()
                                     .zip(&row.cells)
-                                    .map(|(column, value)| {
-                                        cell(column, value.text.clone(), false, value.foreground)
+                                    .enumerate()
+                                    .map(|(index, (column, value))| {
+                                        let content = cell(
+                                            column,
+                                            value.text.clone(),
+                                            false,
+                                            value.foreground,
+                                        );
+                                        if selectable {
+                                            let selection = panechord_runtime::TableSelection {
+                                                row_key: row.key.clone(),
+                                                column: index,
+                                            };
+                                            let active = selected.as_ref() == Some(&selection);
+                                            let width = column
+                                                .width
+                                                .map(iced::Length::Fixed)
+                                                .unwrap_or(if column.stretch {
+                                                    iced::Length::Fill
+                                                } else {
+                                                    iced::Length::Shrink
+                                                });
+                                            widget::button(content)
+                                                .width(width)
+                                                .padding(8)
+                                                .style(if active {
+                                                    widget::button::primary
+                                                } else {
+                                                    widget::button::text
+                                                })
+                                                .on_press(Message::TableCell(
+                                                    key.clone(),
+                                                    selection,
+                                                ))
+                                                .into()
+                                        } else {
+                                            content
+                                        }
                                     })
                                     .collect::<Vec<_>>(),
                             )
@@ -877,6 +964,7 @@ impl View {
         let target = match &message {
             Message::Edit(id, _)
             | Message::Pointer(id, _)
+            | Message::TableCell(id, _)
             | Message::Click(id)
             | Message::Scroll(id, _)
             | Message::Custom(id)
@@ -894,6 +982,25 @@ impl View {
         }
         match message {
             Message::Ignored => Ok(()),
+            Message::TableCell(id, selection) => {
+                let node = self
+                    .find(&id)
+                    .ok_or_else(|| format!("missing table: {id}"))?;
+                if !node.interactive() {
+                    return Ok(());
+                }
+                let handler = node.handler.borrow().clone();
+                if let Some(Handler::Table(binding, data)) = handler {
+                    let valid = selection.validate(&data.borrow().0);
+                    if valid.is_ok() && binding.is_writable() {
+                        binding
+                            .try_set(Some(selection))
+                            .map_err(|error| error.to_string())?;
+                        self.0.refresh();
+                    }
+                }
+                Ok(())
+            }
             Message::Pointer(id, position) => {
                 let node = self
                     .find(&id)

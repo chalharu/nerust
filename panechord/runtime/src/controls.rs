@@ -43,6 +43,23 @@ pub struct TableRow {
     pub cells: Vec<TableCell>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableSelection {
+    pub row_key: String,
+    pub column: usize,
+}
+
+impl TableSelection {
+    pub fn validate(&self, table: &Table) -> Result<(), &'static str> {
+        if self.column >= table.columns.len()
+            || !table.rows.iter().any(|row| row.key == self.row_key)
+        {
+            return Err("unknown table selection");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Table {
     pub columns: Arc<[TableColumn]>,
@@ -164,6 +181,31 @@ mod table_tests {
         assert_eq!(invalid.validate(), Ok(()));
         invalid.columns = Arc::from([]);
         assert_eq!(invalid.validate(), Err("table dimensions exceed limits"));
+    }
+
+    #[test]
+    fn selection_requires_a_current_row_and_column() {
+        let table = fixture();
+        assert_eq!(
+            TableSelection {
+                row_key: "one".into(),
+                column: 0
+            }
+            .validate(&table),
+            Ok(())
+        );
+        for selection in [
+            TableSelection {
+                row_key: "removed".into(),
+                column: 0,
+            },
+            TableSelection {
+                row_key: "one".into(),
+                column: 1,
+            },
+        ] {
+            assert_eq!(selection.validate(&table), Err("unknown table selection"));
+        }
     }
 }
 
