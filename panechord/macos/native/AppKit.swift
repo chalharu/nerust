@@ -344,6 +344,36 @@ final class Tabs: NSStackView {
 }
 
 @MainActor
+final class PointerImage: NSImageView {
+    weak var owner: Host?
+    var key = ""
+    var pointerEnabled = false
+    private var pointerArea: NSTrackingArea?
+    override var isFlipped: Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = pointerArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        pointerArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard pointerEnabled, let owner, !owner.closed, owner.interactive(key) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard let data = try? JSONSerialization.data(withJSONObject: [point.x, point.y]),
+              let value = String(data: data, encoding: .utf8) else { return }
+        owner.emit(key, value)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard pointerEnabled, let owner, !owner.closed, owner.interactive(key) else { return }
+        owner.emit(key, "null")
+    }
+}
+
+@MainActor
 final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDelegate {
     let window: NSWindow
     let root = DocumentStack()
@@ -750,7 +780,9 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         stack.spacing = 8
         view = stack
     case 13:
-        let image = NSImageView()
+        let image = PointerImage()
+        image.owner = value
+        image.key = id
         image.imageScaling = .scaleProportionallyUpOrDown
         image.imageAlignment = .alignCenter
         view = image
@@ -782,7 +814,16 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let value = host(pointer)
     let id = string(idBytes, idCount)
     let text = string(textBytes, textCount)
-    if property == 14, let field = value.nodes[id] as? NSTextField {
+    if property == 16, let stack = value.nodes[id] as? NSStackView,
+       let data = text.data(using: .utf8), let keys = try? JSONDecoder().decode([String].self, from: data) {
+        for key in keys {
+            guard let frame = value.frames[key], stack.arrangedSubviews.contains(frame) else { continue }
+            stack.removeArrangedSubview(frame)
+            stack.addArrangedSubview(frame)
+        }
+    } else if property == 15, let image = value.nodes[id] as? PointerImage {
+        image.pointerEnabled = text == "1"
+    } else if property == 14, let field = value.nodes[id] as? NSTextField {
         field.placeholderString = text
     } else if property == 13, let table = value.nodes[id] as? TableControl {
         table.update(text)

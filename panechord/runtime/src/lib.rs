@@ -31,6 +31,12 @@ pub use store::{
     validation,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointerPosition {
+    pub x: f32,
+    pub y: f32,
+}
+
 /// Whether an item key is nonempty and contains no hierarchical scope separator (`/`).
 /// Backends must also validate snapshot keys because public fields bypass `Keyed::new`.
 pub fn valid_item_key(key: &str) -> bool {
@@ -61,6 +67,19 @@ impl<S: Clone + 'static> PartialEq for Keyed<S> {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key && self.model.ptr_eq(&other.model)
     }
+}
+
+#[doc(hidden)]
+pub fn validate_repeat_items<T: Clone + 'static>(items: &[Keyed<T>]) -> Result<(), &'static str> {
+    let mut keys = std::collections::HashSet::new();
+    if items.len() > 256
+        || items.iter().any(|item| {
+            !valid_item_key(&item.key) || item.key.len() > 256 || !keys.insert(item.key.as_str())
+        })
+    {
+        return Err("invalid Repeat keys or item limit");
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
