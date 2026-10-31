@@ -102,5 +102,5 @@ root:
       - type: BindableLayout
         id: bound_rows
         items: {bind: {path: rows}}
-        viewport: {literal: {start: 0, count: 1, row_height: 56}}
+        viewport: {literal: {start: 0, count: 1, row_height: 64}}
         item_template: row

@@ -114,7 +114,7 @@ The follow-up passed these local gates on macOS Apple Silicon and Linux Docker:
 - Runtime: 67 passed. Macro integration: 12 passed. Cargo UI: 11 passed.
   Diagnostic wrapper: six passed. Persistence: eight passed, including explicit
   unlock while a duplicated file description remains open and killed-writer recovery.
-- Linux Tao unit suite: 28 passed, three ignored; the formal runner separately
+- Linux Tao unit suite after the layout follow-up: 31 passed, four ignored; the formal runner separately
   invokes display-dependent tests in isolated processes. The added GTK native
   Style/late-close contract test executed and passed, rather than matching zero tests.
 - Dedicated GitHub workflow: actionlint 1.7.7 passed. Hosted CI must still be checked
@@ -123,3 +123,49 @@ The follow-up passed these local gates on macOS Apple Silicon and Linux Docker:
 The final Docker COPY-path run exposed a lock lifetime race when process spawning
 overlapped file closure. Explicit unlock and a deterministic duplicated-descriptor
 regression fixed it; the complete Linux and macOS formal gates then passed again.
+
+## Layout Follow-Up
+
+The subsequent visual review found real issues, not just transient test windows:
+
+- GTK settings stretched horizontal button frames, while Tao retained text widths.
+  Tao now shares surplus width and forwards frame constraints to the control body.
+- Fill entries/meters could crush a sibling button in gallery rows. Their initial
+  measurement is now bounded; a real-widget regression covers three widths.
+- Short GTK/Tao windows had no outer content scroller. Both now keep menus fixed
+  and scroll the content. GTK labels and Tao labels/buttons wrap long words.
+- Tao 0.37.2's Linux discrete wheel path reads smooth deltas, producing zero movement
+  for XTest wheel buttons. A GTK3 boundary bridge preserves discrete directions;
+  a native regression checks the displayed content position, not just row data.
+- Gallery virtual rows now reserve 64 logical pixels for wrapped controls. AppKit's
+  editable conformance row had a label plus editor in 32 pixels; it now uses 56,
+  with a 56/72/56 no-remount regression. Its old capture really did clip labels.
+
+Verification on this revision:
+
+- Actual settings YAML: four projection states at 440/660/960 logical widths,
+  16 controls each, frame/body width checks, horizontal bounds and pairwise
+  nonintersection. GTK uses native allocations and verifies bottom reachability
+  at height 360. Tao uses real iced widget nodes, not geometry-helper mocks.
+- XTest settings captures: initial, invalid and exit-confirmation states at
+  660x520, 960x520 and 440x360 on both backends, plus the six short-window bottoms.
+  OCR waits for the expected state; repeated identical pixels alone can still be
+  an old frame. OCR is a readiness aid, not proof that every glyph is visible.
+- Gallery/library: both backends, the same three sizes, top and bottom captures;
+  gallery bottom waits for its Absolute caption. AppKit 640/960 conformance images
+  were also inspected after the editable-row correction. No unintended control
+  overlap or inaccessible bottom control remained in these checked cases.
+- `verify-docker.sh` and `verify-macos.sh` passed, including strict Clippy, native
+  regressions, input paths, release CPU gates on Linux and relocated macOS bundles.
+  One direct AppKit conformance invocation hit its reaction-chain input-starvation
+  assertion; the subsequent complete formal macOS run passed. This remains a test
+  timing caveat, not evidence that arbitrary input latency is certified.
+
+Regenerate settings images on an isolated X11 desktop with xdotool, ImageMagick
+and Tesseract installed: `python3 scripts/review-settings-layout.py` from this
+workspace. Images and `captures.json` are under ignored `target/layout-review/`.
+The native geometry/wheel regressions are mandatory in `scripts/verify.sh` and do
+not depend on OCR. Native metrics, narrow-width line breaking and theme colors
+can differ; row structure, width distribution and reachability are the shared
+contract. Arbitrary explicit Absolute overlap or undersized custom templates are
+not automatically repaired by these layout rules.

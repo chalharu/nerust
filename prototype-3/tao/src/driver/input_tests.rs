@@ -5,6 +5,81 @@ use std::time::Duration;
 use tao::platform::unix::EventLoopBuilderExtUnix;
 use wakui2_runtime::{Binding, Store};
 
+#[test]
+#[ignore = "requires X11 display, xdotool/XTest and an isolated GTK3 process"]
+fn native_x11_discrete_wheel_scrolls_window_content() {
+    use iced::{
+        Size,
+        advanced::{Widget, layout, widget::Tree},
+    };
+    struct Probe(Rc<std::cell::Cell<f32>>);
+    impl Widget<Message, iced::Theme, iced_tiny_skia::Renderer> for Probe {
+        fn size(&self) -> Size<iced::Length> {
+            Size::new(iced::Length::Fill, iced::Length::Shrink)
+        }
+        fn layout(
+            &mut self,
+            _: &mut Tree,
+            _: &iced_tiny_skia::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(Size::new(limits.max().width, 1000.0))
+        }
+        fn draw(
+            &self,
+            _: &Tree,
+            _: &mut iced_tiny_skia::Renderer,
+            _: &iced::Theme,
+            _: &iced::advanced::renderer::Style,
+            layout: layout::Layout<'_>,
+            _: mouse::Cursor,
+            viewport: &iced::Rectangle,
+        ) {
+            self.0.set(layout.bounds().y - viewport.y);
+        }
+    }
+    let position = Rc::new(std::cell::Cell::new(f32::NAN));
+    let observed = position.clone();
+    let view = View::new(Binding::constant("native root scroll".into()));
+    view.mount(
+        &view.root(),
+        "probe",
+        Rc::new(move || iced::Element::new(Probe(observed.clone()))),
+        Vec::new(),
+    );
+    let mut input = NativeInput::new(&view);
+    let initial = position.get();
+    assert!(initial.is_finite(), "native draw did not execute");
+    let output = std::process::Command::new("xdotool")
+        .args(["search", "--onlyvisible", "--name", "native root scroll"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let window = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        std::process::Command::new("xdotool")
+            .args(["mousemove", "--window", window.trim(), "10", "90"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    input.turn();
+    assert!(
+        std::process::Command::new("xdotool")
+            .args(["click", "5"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    input.turn();
+    assert!(
+        position.get() < initial - 1.0,
+        "native wheel did not move drawn content: {initial} -> {}",
+        position.get()
+    );
+    view.close();
+}
+
 // Only the GTK-independent, dynamically loaded XTest helper is shared.
 #[path = "../../../gtk/src/x11_test.rs"]
 mod x11;

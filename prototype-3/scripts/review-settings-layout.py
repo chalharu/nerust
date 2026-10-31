@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Capture real GTK/Tao settings through XTest on an isolated X11 desktop.
+
+Requires xdotool, ImageMagick and Tesseract, plus an otherwise unused DISPLAY. Native
+geometry assertions are part of verify.sh; these images are visual evidence.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+OUTPUT = ROOT / "target/layout-review"
+OUTPUT.mkdir(parents=True, exist_ok=True)
+os.chdir(ROOT)
+os.environ.update(GDK_BACKEND="x11", GSK_RENDERER="cairo", GTK_A11Y="none")
+
+
+def run(*arguments):
+    return subprocess.check_output(arguments, timeout=30)
+
+
+def xdo(*arguments):
+    return run("xdotool", *map(str, arguments)).decode().strip()
+
+
+def capture(window, destination, expected=()):
+    previous = None
+    stable = 0
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        run("import", "-window", window, str(destination))
+        pixels = run("convert", str(destination), "rgb:-")
+        digest = hashlib.sha256(pixels).digest()
+        stable = stable + 1 if digest == previous else 0
+        if stable >= 2 and len(set(pixels)) > 8:
+            text = run("tesseract", str(destination), "stdout", "--psm", "6").decode()
+            normalized = re.sub(r"[^a-z0-9]", "", text.lower())
+            if all(value in normalized for value in expected):
+                return
+        previous = digest
+    raise RuntimeError(f"drawing did not stabilize: {destination}")
+
+
+def scroll(window, direction):
+    xdo("mousemove", "--window", window, 10, 90)
+    xdo("click", "--repeat", 30, "--delay", 0, direction)
+
+
+def edit(window, y, text):
+    xdo("mousemove", "--window", window, 60, y, "click", 1)
+    xdo("key", "ctrl+a")
+    xdo("type", "--clearmodifiers", text)
+
+
+records = []
+for backend in ("gtk", "tao"):
+    subprocess.run(
+        ["cargo", "build", "--locked", "-p", "wakui3-settings", "--no-default-features", "--features", f"backend-{backend}"],
+        check=True,
+    )
+    with tempfile.TemporaryDirectory(prefix="wakui3-layout-") as temporary:
+        with (OUTPUT / f"{backend}.log").open("w") as log:
+            process = subprocess.Popen(
+                [str(ROOT / "target/debug/wakui3-settings"), "--config", str(Path(temporary) / "settings.json")],
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+            try:
+                windows = xdo("search", "--sync", "--onlyvisible", "--name", "Wakui 3.*Settings").splitlines()
+                window = windows[-1]
+                xdo("windowfocus", "--sync", window)
+                for state in ("initial", "invalid", "confirm"):
+                    xdo("windowsize", "--sync", window, 660, 520)
+                    scroll(window, 4)
+                    capture(window, OUTPUT / f"{backend}-ready.png")
+                    if state == "invalid":
+                        edit(window, 185, "abc")
+                    elif state == "confirm":
+                        edit(window, 185, "42")
+                        edit(window, 113, "LayoutPlayer")
+                        capture(window, OUTPUT / f"{backend}-dirty-ready.png", ("layoutplayer", "unsavedchanges"))
+                        xdo("key", "ctrl+q")
+                    for width, height in ((660, 520), (960, 520), (440, 360)):
+                        xdo("windowsize", "--sync", window, width, height)
+                        scroll(window, 4)
+                        destination = OUTPUT / f"{backend}-{state}-{width}x{height}-top.png"
+                        expected = ("playerpreferences",)
+                        if height == 520:
+                            expected += {"initial": ("uptodate",), "invalid": ("volumemustbeaninteger",), "confirm": ("discardorkeepediting",)}[state]
+                        capture(window, destination, expected)
+                        if process.poll() is not None:
+                            raise RuntimeError(f"{backend} unexpectedly closed during {state}")
+                        records.append({"backend": backend, "state": state, "width": width, "height": height, "image": destination.name})
+                        if height == 360:
+                            scroll(window, 5)
+                            expected = {"initial": ("uptodate",), "invalid": ("unsavedchanges",), "confirm": ("keepediting", "unsavedchanges")}[state]
+                            capture(window, OUTPUT / f"{backend}-{state}-{width}x{height}-bottom.png", expected)
+                    print(f"LAYOUT3 CAPTURE {backend} {state}", flush=True)
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
+
+(OUTPUT / "captures.json").write_text(json.dumps(records, indent=2) + "\n")
+print(f"LAYOUT3 CAPTURE PASS {len(records)} states/sizes; inspect top/bottom images in {OUTPUT}")

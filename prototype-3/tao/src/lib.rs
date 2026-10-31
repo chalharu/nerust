@@ -120,14 +120,15 @@ impl Node {
             Kind::Items(host) => host.element(self),
         };
         let p = self.style.get().padding;
-        widget::container(body)
-            .padding(iced::Padding {
+        layout::Panel::frame(
+            body,
+            iced::Padding {
                 top: layout::finite(p.top),
                 right: layout::finite(p.right),
                 bottom: layout::finite(p.bottom),
                 left: layout::finite(p.left),
-            })
-            .into()
+            },
+        )
     }
 }
 struct Inner {
@@ -372,7 +373,9 @@ impl View {
         let node = self.add(parent, id, Kind::Content);
         let value = self.bound_text(&node, text);
         node.kind.replace(Kind::Leaf(Rc::new(move || {
-            widget::text(value.borrow().clone()).into()
+            widget::text(value.borrow().clone())
+                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                .into()
         })));
     }
     pub fn entry(&self, parent: &Parent, id: &str, text: Binding<String>) {
@@ -402,9 +405,13 @@ impl View {
         node.handler.replace(Some(Handler::Button(command)));
         let key = node.id.clone();
         node.kind.replace(Kind::Leaf(Rc::new(move || {
-            widget::button(widget::text(value.borrow().clone()))
-                .on_press_maybe(enabled.get().then(|| Message::Click(key.clone())))
-                .into()
+            widget::button(
+                widget::text(value.borrow().clone())
+                    .align_x(iced::alignment::Horizontal::Center)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+            )
+            .on_press_maybe(enabled.get().then(|| Message::Click(key.clone())))
+            .into()
         })));
     }
     /// Genuine extension point for application-defined iced/advanced widgets.

@@ -15,6 +15,14 @@ spacing is rejected by `try_style` before mutation. A finite explicitly placed s
 the enclosing available size. Root styling uses `__root`; missing IDs never
 silently become aliases. `style` records validation failures in diagnostics.
 
+Stack fills its cross-axis width and shares horizontal surplus among children
+without explicit widths. Fill entries/meters are bounded during natural sizing,
+so they cannot crush adjacent buttons. Padding frames preserve width constraints
+through to the actual control. Text wraps long words and button captions center.
+Window content has a vertical scroller outside any nested virtual list; Linux
+discrete wheel directions are bridged separately from Tao's smooth-scroll deltas.
+Templates must still fit their fixed row height, including wrapping and padding.
+
 Common subset with GTK: Grid fills the available logical width with equal tracks
 of `(available - (columns-1)*gap)/columns`; children without explicit widths fill
 their track/span (minus margins), and spans include internal gaps. Explicit rows,

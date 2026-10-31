@@ -17,3 +17,6 @@ window_clipboard = "=0.5.1"
 gtk = "=0.18.2"
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+wakui2-macros.workspace = true

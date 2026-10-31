@@ -233,7 +233,16 @@ impl View {
         root.set_vexpand(true);
         let menus = gio::Menu::new();
         outer.append(&gtk::PopoverMenuBar::from_model(Some(&menus)));
-        outer.append(&root);
+        let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        canvas.append(&root);
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .hexpand(true)
+            .vexpand(true)
+            .child(&canvas)
+            .build();
+        outer.append(&scroll);
         window.set_child(Some(&outer));
         root.set_widget_name("__root");
         let css = gtk::CssProvider::new();
@@ -257,7 +266,7 @@ impl View {
                 Node {
                     widget: root.clone().upcast(),
                     frame: root,
-                    parent: Parent::new(&outer, ParentKind::Stack),
+                    parent: Parent::new(&canvas, ParentKind::Stack),
                     css,
                 },
             )])),
@@ -572,6 +581,8 @@ impl View {
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         label.set_wrap(true);
         self.mount_native(parent, id, &label);
         self.bind_native(id, text, &label, |label, text| label.set_text(&text));

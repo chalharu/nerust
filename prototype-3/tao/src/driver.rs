@@ -162,14 +162,15 @@ impl Painter {
             self.deadline = None;
         }
         let root = &view.0.root.0;
-        let content = iced::widget::container(super::layout::Panel::element(
+        let content = iced::widget::scrollable(super::layout::Panel::element(
             wakui2_runtime::Layout::Stack {
                 horizontal: false,
                 gap: 0.0,
             },
             vec![(root.key(), root.style.get(), root.element())],
         ))
-        .width(iced::Length::Fill);
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill);
         let mut ui = UserInterface::build(
             content,
             bounds,
@@ -263,7 +264,7 @@ struct Desktop {
     #[cfg(target_os = "linux")]
     area: gtk::DrawingArea,
     #[cfg(target_os = "linux")]
-    signals: Vec<gtk::glib::SignalHandlerId>,
+    signals: Vec<(gtk::Widget, gtk::glib::SignalHandlerId)>,
     #[cfg(not(target_os = "linux"))]
     compositor: Compositor,
     #[cfg(not(target_os = "linux"))]
@@ -361,13 +362,64 @@ impl Desktop {
                 proxy.send(Native::Turn);
                 gtk::glib::Propagation::Stop
             });
+            let out = Rc::downgrade(&painter);
+            let owner = view.downgrade();
+            let surface = area.downgrade();
+            let scroll = window
+                .gtk_window()
+                .connect_scroll_event(move |window, event| {
+                    let (horizontal, vertical) = match event.direction() {
+                        gtk::gdk::ScrollDirection::Up => (0.0, 1.0),
+                        gtk::gdk::ScrollDirection::Down => (0.0, -1.0),
+                        gtk::gdk::ScrollDirection::Left => (1.0, 0.0),
+                        gtk::gdk::ScrollDirection::Right => (-1.0, 0.0),
+                        _ => return gtk::glib::Propagation::Proceed,
+                    };
+                    if let (Some(painter), Some(view), Some(area)) =
+                        (out.upgrade(), owner.upgrade(), surface.upgrade())
+                    {
+                        let offset = area.translate_coordinates(window, 0, 0).unwrap_or_default();
+                        let position = event.position();
+                        let cursor = iced::Point::new(
+                            position.0 as f32 - offset.0 as f32,
+                            position.1 as f32 - offset.1 as f32,
+                        );
+                        if cursor.x >= 0.0 && cursor.y >= 0.0 {
+                            let messages = {
+                                let mut painter = painter.borrow_mut();
+                                painter.cursor = mouse::Cursor::Available(cursor);
+                                painter.pump(
+                                    &view,
+                                    Size::new(
+                                        area.allocated_width() as f32,
+                                        area.allocated_height() as f32,
+                                    ),
+                                    iced::Event::Mouse(mouse::Event::WheelScrolled {
+                                        delta: mouse::ScrollDelta::Lines {
+                                            x: horizontal,
+                                            y: vertical,
+                                        },
+                                    }),
+                                    false,
+                                )
+                            };
+                            dispatch(&view, messages);
+                            area.queue_draw();
+                        }
+                    }
+                    gtk::glib::Propagation::Proceed
+                });
             area.show();
+            let signals = vec![
+                (area.clone().upcast(), draw),
+                (window.gtk_window().clone().upcast(), scroll),
+            ];
             Ok(Self {
                 window,
                 view: view.clone(),
                 painter,
                 area,
-                signals: vec![draw],
+                signals,
             })
         }
         #[cfg(not(target_os = "linux"))]
@@ -511,8 +563,8 @@ impl Drop for Desktop {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
         {
-            for signal in self.signals.drain(..) {
-                self.area.disconnect(signal);
+            for (widget, signal) in self.signals.drain(..) {
+                widget.disconnect(signal);
             }
             if let Err(error) = super::menu::clear_accelerators(&self.view.0.menus.items()) {
                 self.view.0.report(error);

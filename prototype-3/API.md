@@ -84,6 +84,22 @@ backend-specific. This does not unify other layout/style/menu error policies.
 - automation `edit`, `click`, `activate_menu` -> Result<(),String>; `text(id)->Option<String>`, `item_keys(id)->Vec<String>` (mounted keys), `title()->String`, `mounted_count(id)->usize`, `viewport(id,start)`.
 - `native_*` extension factory is an application function called by generated code, e.g. `crate::meter(view,parent,id,binding)` calling backend `meter`; GTK must expose a genuine custom-widget mounting API for external primitive construction; Tao can mount custom iced Element factory. Neither should misrepresent software widgets as OS native.
 
+### Shared layout behavior
+
+Vertical Stack children fill the available width after margins unless explicitly
+sized. Horizontal Stack distributes surplus width among non-explicit children,
+rather than leaving all buttons at their text width. Tao bounds Fill siblings
+during natural-width measurement so an entry or meter cannot monopolize a row.
+Native font metrics and minimum sizes still differ; equal layout does not mean
+equal pixels or identical text wrapping. Labels and button captions can wrap long
+words; button captions are centered.
+
+GTK/Tao window content scrolls vertically when it exceeds the viewport; the native
+menu remains outside that scroll area. An edge clipped while scrolling is not a
+missing control. Explicit placements and fixed virtual row heights remain caller
+contracts: the complete template, including padding and wrapped text, must fit
+`row_height`. Fixed rows are not automatically enlarged by the window scroller.
+
 ## Codegen input
 
 ### macOS practical-screen subset

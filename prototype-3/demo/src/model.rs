@@ -64,7 +64,7 @@ impl Settings {
             viewport: Viewport {
                 start: 0,
                 count: 4,
-                row_height: 56.0,
+                row_height: 64.0,
             },
             menu_items: vec![
                 menu_item("save", "Save", "save", Some(shortcut())),

@@ -35,6 +35,8 @@ cargo test --locked -p wakui3-library
 cargo test --locked -p wakui3-library --no-default-features --features backend-tao
 native_test -p wakui3-settings \
     native_tests::native_generated_shared_windows_survive_peer_close -- --exact --ignored --test-threads=1
+native_test -p wakui3-settings \
+    native_tests::native_settings_layout_is_disjoint_and_scrolls_when_short -- --exact --ignored --test-threads=1
 for name in native_contract native_executor_completion native_invalid_keyed_snapshots \
     native_root_style native_menu_namespaces native_coordinated_multiwindow_close \
     native_coordinated_close_timeout native_coordinated_close_cancel \
@@ -56,6 +58,8 @@ GTK_IM_MODULE=simple WAKUI_REQUIRE_XTEST=1 native_test -p wakui2-tao --lib \
     driver::input_tests::native_x11_keyboard_ime_signal_iced_fields_and_clipboard -- --exact --ignored --test-threads=1
 native_test -p wakui2-tao --lib \
     driver::input_tests::native_backend_focus_loss_clears_iced_modifiers -- --exact --ignored --test-threads=1
+native_test -p wakui2-tao --lib \
+    driver::input_tests::native_x11_discrete_wheel_scrolls_window_content -- --exact --ignored --test-threads=1
 cargo build --locked -p wakui2-demo --example minimal
 cargo build --locked -p wakui2-demo
 output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p wakui2-demo -- --smoke)
