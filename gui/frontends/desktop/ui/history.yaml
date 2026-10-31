@@ -18,6 +18,7 @@ root:
   content:
     type: StackLayout
     id: content
+    style: {vertical_alignment: Stretch}
     padding: 16
     gap: 12
     children:
@@ -26,10 +27,14 @@ root:
         orientation: Horizontal
         gap: 12
         children:
-          - {type: Label, id: level_label, style: {placement: {width: 50}}, text: {bind: {path: level_label, source: External}}}
-          - {type: Combo, id: filter, style: {placement: {width: 110}}, items: {bind: {path: choices, source: External}}, selected: {bind: {path: selected, source: External, mode: TwoWay}}}
-          - {type: Button, id: clear, style: {placement: {width: 130}}, text: {bind: {path: clear_label, source: External}}, command: clear}
-          - {type: Label, id: count, text: {bind: {path: count, source: External}}}
+          - {type: Label, id: level_label, style: {vertical_alignment: Center, placement: {width: 50}}, text: {bind: {path: level_label, source: External}}}
+          - {type: Combo, id: filter, style: {vertical_alignment: Center, placement: {width: 110}}, items: {bind: {path: choices, source: External}}, selected: {bind: {path: selected, source: External, mode: TwoWay}}}
+          - {type: Button, id: clear, style: {vertical_alignment: Center, placement: {width: 130}}, text: {bind: {path: clear_label, source: External}}, command: clear}
+          - type: StackLayout
+            id: count_area
+            style: {vertical_alignment: Center}
+            children:
+              - {type: Label, id: count, style: {horizontal_alignment: End}, text: {bind: {path: count, source: External}}}
       - type: StackLayout
         id: headers
         orientation: Horizontal
@@ -41,9 +46,10 @@ root:
           - {type: Label, id: message_label, text: {bind: {path: message_label, source: External}}}
       - type: ItemsControl
         id: table
+        style: {vertical_alignment: Stretch}
         visible: {bind: {path: populated, source: External}}
         items: {bind: {path: rows, source: External}}
         viewport: {bind: {path: viewport, source: External}}
         item_template: history_row
-      - {type: Label, id: empty, style: {placement: {height: 264}}, visible: {bind: {path: empty, source: External}}, text: {bind: {path: empty_label, source: External}}}
-      - {type: Button, id: close, text: {bind: {path: close_label, source: External}}, command: close}
+      - {type: Label, id: empty, style: {vertical_alignment: Stretch, placement: {height: 264}}, visible: {bind: {path: empty, source: External}}, text: {bind: {path: empty_label, source: External}}}
+      - {type: Button, id: close, style: {horizontal_alignment: End, vertical_alignment: End}, text: {bind: {path: close_label, source: External}}, command: close}

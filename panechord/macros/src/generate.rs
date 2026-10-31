@@ -320,7 +320,18 @@ fn style(s: &Style) -> TokenStream {
     };
     let width = option(p.width);
     let height = option(p.height);
-    quote!(::panechord_runtime::Style {margin:#margin,padding:#padding,placement: ::panechord_runtime::Placement {
+    let alignment = |value: Option<panechord_markup::Alignment>| {
+        value.map_or_else(
+            || quote!(::std::option::Option::None),
+            |value| {
+                let name = format_ident!("{}", format!("{value:?}"));
+                quote!(::std::option::Option::Some(::panechord_runtime::Alignment::#name))
+            },
+        )
+    };
+    let horizontal_alignment = alignment(s.horizontal_alignment);
+    let vertical_alignment = alignment(s.vertical_alignment);
+    quote!(::panechord_runtime::Style {margin:#margin,padding:#padding,horizontal_alignment:#horizontal_alignment,vertical_alignment:#vertical_alignment,placement: ::panechord_runtime::Placement {
         row:#row,column:#column,row_span:#row_span,column_span:#column_span,x:#x,y:#y,width:#width,height:#height
     }})
 }
