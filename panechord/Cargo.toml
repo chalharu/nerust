@@ -15,6 +15,7 @@ panechord-macos = { workspace = true, optional = true }
 
 [features]
 default = []
+native = ["tao"]
 gtk = ["dep:panechord-gtk"]
 tao = ["dep:panechord-tao"]
 macos = ["dep:panechord-macos"]

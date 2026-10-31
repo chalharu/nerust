@@ -1,4 +1,91 @@
+#[test]
+fn unloaded_surface_stays_finite_inside_scrollable_root() {
+    use iced::{
+        Size,
+        advanced::{layout::Limits, widget::Tree},
+    };
+    let renderer = iced_tiny_skia::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+    for (width, height) in [(660.0, 495.0), (548.0, 411.0)] {
+        let mut element = super::surface::element(None, width, height);
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &Limits::new(Size::ZERO, Size::new(width, f32::INFINITY)),
+        );
+        assert!(node.size().width.is_finite());
+        assert!(node.size().height.is_finite());
+        assert_eq!(node.size(), Size::new(width, height));
+    }
+}
+
 use super::*;
+
+#[cfg(target_os = "linux")]
+#[test]
+fn horizontal_tabs_reserve_height_before_stack_footer() {
+    use iced::{
+        Size,
+        advanced::{layout::Limits, widget::Tree},
+    };
+    let harness = Harness::new();
+    let model = harness.store(String::from("general"));
+    let view = View::new(Binding::constant("Settings".into()));
+    let tab = view.tab(
+        &view.root(),
+        "tabs",
+        model.bind(Clone::clone, Some(|state, value| *state = value)),
+    );
+    let page = view.tab_page(
+        &tab,
+        "general",
+        Binding::constant("General".into()),
+        "general",
+    );
+    for id in ["language", "storage", "directory"] {
+        view.label(&page, id, Binding::constant(id.into()));
+    }
+    view.finish_tab(&tab).unwrap();
+    view.label(
+        &view.root(),
+        "status",
+        Binding::constant("Unsaved changes".into()),
+    );
+    view.button(
+        &view.root(),
+        "apply",
+        Binding::constant("Apply".into()),
+        model.command(|_| true, |_, ()| {}, Binding::constant(())),
+    );
+    let renderer = iced_tiny_skia::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+    for width in [440.0, 660.0, 960.0] {
+        let mut element = view.root().0.element();
+        let mut tree = Tree::new(element.as_widget());
+        let frame = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &Limits::new(Size::ZERO, Size::new(width, 520.0)),
+        );
+        let children = frame.children()[0].children();
+        let tabs = children[0].bounds();
+        let status = children[1].bounds();
+        let apply = children[2].bounds();
+        assert!(
+            tabs.height > 60.0,
+            "tab body must contribute intrinsic height: {tabs:?}"
+        );
+        assert!(
+            status.y >= tabs.y + tabs.height,
+            "status overlaps tabs: {tabs:?} {status:?}"
+        );
+        assert!(apply.y >= status.y + status.height, "Apply overlaps status");
+        assert!(
+            apply.y + apply.height <= 520.0,
+            "footer must remain in the viewport"
+        );
+    }
+    view.close();
+}
 
 #[cfg(target_os = "linux")]
 #[test]

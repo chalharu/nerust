@@ -1110,6 +1110,18 @@ impl Drop for MacHost {
     }
 }
 
+impl panechord_runtime::WindowHost<View> for MacHost {
+    fn register_view(
+        &self,
+        session: &Session,
+        id: &str,
+        view: &View,
+        hooks: WindowHooks,
+    ) -> Result<(), String> {
+        MacHost::register_view(self, session, id, view, hooks)
+    }
+}
+
 pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), String> {
     run_host(move |host| {
         host.present(&make(host.executor()));

@@ -674,6 +674,64 @@ fn binding_conversions_readonly_initial_and_equal_suppression() {
 }
 
 #[test]
+fn external_binding_rejects_conversion_and_closed_guard_and_releases_subscription() {
+    let value = Rc::new(Cell::new(1));
+    let listener = Rc::new(RefCell::new(None::<Rc<dyn Fn(i32)>>));
+    let read = value.clone();
+    let write = value.clone();
+    let notify = listener.clone();
+    let subscribe = listener.clone();
+    let initial = value.clone();
+    let binding = Binding::external(
+        move || read.get(),
+        Some(Rc::new(move |value| {
+            if value < 0 {
+                return Err("negative value".into());
+            }
+            write.set(value);
+            let callback = notify.borrow().clone();
+            if let Some(callback) = callback {
+                callback(value);
+            }
+            Ok(())
+        })),
+        move |callback| {
+            callback(initial.get());
+            subscribe.replace(Some(callback));
+            let listener = subscribe.clone();
+            Subscription::new(move || {
+                listener.take();
+            })
+        },
+    );
+    let (values, token) = record(&binding);
+    assert_eq!(*values.borrow(), [1]);
+    assert_eq!(binding.get(), 1);
+    assert_eq!(
+        binding.try_set(-1),
+        Err(WriteError::Conversion("negative value".into()))
+    );
+    assert!(binding.set(42));
+    assert_eq!(*values.borrow(), [1, 42]);
+    drop(token);
+    assert!(listener.borrow().is_none());
+}
+
+#[test]
+fn external_readonly_binding_cannot_write() {
+    let binding = Binding::external(
+        || 42,
+        None,
+        |callback| {
+            callback(42);
+            Subscription::empty()
+        },
+    );
+    assert!(!binding.is_writable());
+    assert_eq!(binding.try_set(1), Err(WriteError::ReadOnly));
+}
+
+#[test]
 fn fifo_callbacks_reenter_without_interleaving_notifications() {
     let (_, store) = local(Model::default());
     let log = Rc::new(RefCell::new(Vec::new()));

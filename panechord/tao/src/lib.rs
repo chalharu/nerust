@@ -6,6 +6,7 @@ mod input;
 mod layout;
 mod menu;
 mod scheduler;
+mod surface;
 #[cfg(test)]
 mod tests;
 
@@ -23,6 +24,12 @@ use std::{
 /// Application primitives may return any iced widget, including advanced widgets.
 pub type Element = iced::Element<'static, Message, iced::Theme, iced_tiny_skia::Renderer>;
 pub type ElementFactory = Rc<dyn Fn() -> Element>;
+type NativeViewportHook = Rc<dyn Fn(f32, f32)>;
+pub use iced;
+pub use tao::{
+    event::ElementState as NativeElementState, keyboard::KeyCode as NativeKeyCode,
+    window::Fullscreen as NativeFullscreen,
+};
 type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 
 #[derive(Clone, Debug)]
@@ -161,7 +168,17 @@ impl Node {
         )
     }
 }
+pub use tao::event::WindowEvent as NativeWindowEvent;
+pub use tao::window::Window as NativeWindow;
+type NativeWindowHook = Box<dyn FnOnce(std::sync::Arc<NativeWindow>) -> Result<(), String>>;
+type NativeEventHook = Rc<dyn Fn(&NativeWindowEvent<'_>)>;
+
 struct Inner {
+    native_ready: RefCell<Option<NativeWindowHook>>,
+    native_published: Cell<bool>,
+    native_event: RefCell<Option<NativeEventHook>>,
+    native_viewport: RefCell<Option<NativeViewportHook>>,
+    surface_bounds: Cell<(f32, f32)>,
     root: Parent,
     title: RefCell<String>,
     nodes: RefCell<HashMap<String, Weak<Node>>>,
@@ -201,6 +218,9 @@ impl Inner {
             return;
         }
         drop(self.on_close_request.take());
+        drop(self.native_ready.take());
+        drop(self.native_event.take());
+        drop(self.native_viewport.take());
         drop(self.quit_request.take());
         drop(self.subscriptions.take());
         // Drop widget subscriptions even if application retains Parent handles.
@@ -233,6 +253,11 @@ impl Drop for Inner {
 impl View {
     pub fn new(title: Binding<String>) -> Self {
         let view = Self(Rc::new_cyclic(|owner| Inner {
+            native_ready: RefCell::default(),
+            native_published: Cell::new(false),
+            native_event: RefCell::default(),
+            native_viewport: RefCell::default(),
+            surface_bounds: Cell::new((1.0, 1.0)),
             root: Parent(Rc::new(Node {
                 id: "__root".into(),
                 scope: String::new(),
@@ -290,6 +315,31 @@ impl View {
         view.keep(token);
         view
     }
+    pub fn on_native_window(
+        &self,
+        callback: impl FnOnce(std::sync::Arc<NativeWindow>) -> Result<(), String> + 'static,
+    ) -> Result<(), String> {
+        if self.0.closed.get() || self.0.native_published.get() {
+            return Err("native window callback must be registered before presentation".into());
+        }
+        if self.0.native_ready.borrow().is_some() {
+            return Err("native window callback already registered".into());
+        }
+        self.0.native_ready.replace(Some(Box::new(callback)));
+        Ok(())
+    }
+
+    pub fn on_native_event(&self, callback: Rc<dyn Fn(&NativeWindowEvent<'_>)>) {
+        if !self.0.closed.get() {
+            self.0.native_event.replace(Some(callback));
+        }
+    }
+    pub fn on_native_viewport(&self, callback: Rc<dyn Fn(f32, f32)>) {
+        if !self.0.closed.get() {
+            self.0.native_viewport.replace(Some(callback));
+        }
+    }
+
     fn find(&self, id: &str) -> Option<Rc<Node>> {
         self.0
             .nodes
@@ -476,6 +526,23 @@ impl View {
     ) {
         let node = self.add(parent, id, Kind::Leaf(factory));
         node.subscriptions.replace(subscriptions);
+    }
+    pub fn mount_bound<T: Clone + 'static>(
+        &self,
+        parent: &Parent,
+        id: &str,
+        source: Binding<T>,
+        factory: Rc<dyn Fn(T) -> Element>,
+    ) {
+        let node = self.add(parent, id, Kind::Content);
+        let current = Rc::new(RefCell::new(source.get()));
+        let observed = current.clone();
+        self.bind(&node, source, move |value| {
+            observed.replace(value);
+        });
+        node.kind.replace(Kind::Leaf(Rc::new(move || {
+            factory(current.borrow().clone())
+        })));
     }
     pub fn on_custom(&self, id: &str, callback: Rc<dyn Fn()>) -> Result<(), String> {
         let node = self

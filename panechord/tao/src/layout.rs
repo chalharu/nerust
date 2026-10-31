@@ -10,6 +10,110 @@ use iced::{
 use panechord_runtime::{Layout as Policy, Style};
 type Renderer = iced_tiny_skia::Renderer;
 
+pub(crate) struct AdaptiveHeight {
+    build: std::rc::Rc<dyn Fn(bool) -> Element>,
+    child: Element,
+}
+
+impl AdaptiveHeight {
+    pub fn element(build: std::rc::Rc<dyn Fn(bool) -> Element>) -> Element {
+        let child = build(false);
+        Element::new(Self { build, child })
+    }
+}
+
+impl Widget<Message, iced::Theme, Renderer> for AdaptiveHeight {
+    fn size(&self) -> Size<Length> {
+        self.child.as_widget().size()
+    }
+    fn tag(&self) -> widget::tree::Tag {
+        self.child.as_widget().tag()
+    }
+    fn state(&self) -> widget::tree::State {
+        self.child.as_widget().state()
+    }
+    fn children(&self) -> Vec<Tree> {
+        self.child.as_widget().children()
+    }
+    fn diff(&self, tree: &mut Tree) {
+        self.child.as_widget().diff(tree);
+    }
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.child = (self.build)(limits.min().height > 0.0);
+        tree.diff(self.child.as_widget());
+        self.child.as_widget_mut().layout(tree, renderer, limits)
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: layout::Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.child
+            .as_widget()
+            .draw(tree, renderer, theme, style, layout, cursor, viewport);
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: layout::Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.child.as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+        );
+    }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: layout::Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.child
+            .as_widget_mut()
+            .operate(tree, layout, renderer, operation);
+    }
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: layout::Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.child
+            .as_widget()
+            .mouse_interaction(tree, layout, cursor, viewport, renderer)
+    }
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut Tree,
+        layout: layout::Layout<'a>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'a, Message, iced::Theme, Renderer>> {
+        self.child
+            .as_widget_mut()
+            .overlay(tree, layout, renderer, viewport, translation)
+    }
+}
+
 pub(crate) fn finite(v: f32) -> f32 {
     if v.is_finite() { v.max(0.0) } else { 0.0 }
 }
