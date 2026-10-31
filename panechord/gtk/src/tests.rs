@@ -33,6 +33,55 @@ use std::time::Duration;
 
 #[test]
 #[ignore = "isolated Xvfb native contract"]
+fn native_item_rows_keep_configured_height_with_grid_entries() {
+    gtk::init().unwrap();
+    let host = GtkHost::attach();
+    let view = View::new(Binding::constant("rows".into()));
+    let rows: Vec<_> = (0..8)
+        .map(|index| Keyed::new(index.to_string(), Store::new(index, host.executor())))
+        .collect();
+    view.items(
+        &view.root(),
+        "rows",
+        Binding::constant(rows),
+        Binding::constant(Viewport {
+            count: 8,
+            row_height: 34.0,
+            ..Viewport::default()
+        }),
+        Rc::new(|view, parent, scope, _| {
+            let grid = view.layout(
+                parent,
+                &format!("{scope}/grid"),
+                Layout::Grid {
+                    columns: 2,
+                    gap: 12.0,
+                },
+            );
+            view.label(
+                &grid,
+                &format!("{scope}/label"),
+                Binding::constant("Toggle Pause".into()),
+            );
+            view.entry(
+                &grid,
+                &format!("{scope}/entry"),
+                Binding::constant("Space".into()),
+            );
+        }),
+    );
+    let scroll = view.widget::<gtk::ScrolledWindow>("rows").unwrap();
+    let container = scroll.child().unwrap().first_child().unwrap();
+    let row = container.first_child().unwrap().next_sibling().unwrap();
+    let grid = view.widget::<gtk::Grid>("rows/0/grid").unwrap();
+    assert_eq!(grid.measure(gtk::Orientation::Vertical, 700).0, 34);
+    assert_eq!(row.measure(gtk::Orientation::Vertical, 700).0, 34);
+    assert_eq!(row.measure(gtk::Orientation::Vertical, 700).1, 34);
+    view.close();
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
 fn native_dynamic_tabs_preserve_reorder_and_release_removed_pages() {
     gtk::init().unwrap();
     let host = GtkHost::attach();
