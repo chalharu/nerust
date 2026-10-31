@@ -145,6 +145,7 @@ trait ListControl {
 }
 
 struct MenuState {
+    order: u64,
     menu: gio::Menu,
     title: RefCell<String>,
     actions: RefCell<Vec<String>>,
@@ -869,7 +870,14 @@ impl View {
             !self.0.menu_states.borrow().contains_key(id),
             "duplicate menu id: {id}"
         );
+        let order = self.0.serial.get();
+        self.0.serial.set(
+            order
+                .checked_add(1)
+                .expect("menu registration serial exhausted"),
+        );
         let state = Rc::new(MenuState {
+            order,
             menu: gio::Menu::new(),
             title: RefCell::new(String::new()),
             actions: RefCell::new(Vec::new()),
@@ -912,7 +920,7 @@ impl View {
             .iter()
             .map(|(id, state)| (id.clone(), state.clone()))
             .collect();
-        menus.sort_by(|a, b| a.0.cmp(&b.0));
+        menus.sort_by_key(|(_, state)| state.order);
         self.0.menus.remove_all();
         for (_, state) in menus {
             self.0
