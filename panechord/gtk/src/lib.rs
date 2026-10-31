@@ -38,6 +38,7 @@ enum ParentKind {
     Flex,
     Absolute,
     Notebook,
+    PageStack,
 }
 
 impl Parent {
@@ -81,6 +82,12 @@ impl Parent {
                     .unwrap()
                     .append_page(widget, None::<&gtk::Widget>);
             }
+            ParentKind::PageStack => {
+                self.widget
+                    .downcast_ref::<gtk::Stack>()
+                    .unwrap()
+                    .add_child(widget);
+            }
         }
     }
 
@@ -115,6 +122,11 @@ impl Parent {
                     notebook.remove_page(Some(page));
                 }
             }
+            ParentKind::PageStack => self
+                .widget
+                .downcast_ref::<gtk::Stack>()
+                .unwrap()
+                .remove(widget),
         }
     }
 }
@@ -602,7 +614,6 @@ impl View {
                 gtk::PolicyType::Automatic
             },
         );
-        scroll.set_overlay_scrolling(false);
         scroll.set_hexpand(true);
         scroll.set_vexpand(true);
         let mut nodes = self.0.nodes.borrow_mut();
@@ -718,9 +729,6 @@ impl View {
     pub fn label(&self, parent: &Parent, id: &str, text: Binding<String>) {
         let label = gtk::Label::new(None);
         label.set_xalign(0.0);
-        label.set_wrap(true);
-        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        label.set_wrap(true);
         self.mount_native(parent, id, &label);
         self.bind_native(id, text, &label, |label, text| label.set_text(&text));
     }

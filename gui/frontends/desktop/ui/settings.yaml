@@ -7,43 +7,46 @@ templates:
       orientation: Horizontal
       gap: 12
       children:
-        - {type: Label, id: label, style: {placement: {width: 180}}, text: {bind: {path: label}}}
-        - {type: Combo, id: choice, items: {bind: {path: choices}}, selected: {bind: {path: selected}}}
+        - {type: Label, id: label, style: {vertical_alignment: Center, placement: {width: 192}}, text: {bind: {path: label, source: External}}}
+        - {type: Combo, id: choice, style: {horizontal_alignment: Start, vertical_alignment: Center}, enabled: {bind: {path: enabled, source: External}}, items: {bind: {path: choices, source: External}}, selected: {bind: {path: selected, source: External, mode: TwoWay}}}
   binding_row:
     root:
       type: StackLayout
       id: binding_row
       orientation: Horizontal
-      gap: 12
+      gap: 8
       children:
-        - {type: Label, id: label, style: {placement: {width: 180}}, text: {bind: {path: label}}}
-        - {type: Button, id: value, text: {bind: {path: value}}, command: capture}
+        - {type: Label, id: label, style: {vertical_alignment: Center, placement: {width: 160}}, text: {bind: {path: label, source: External}}}
+        - {type: Label, id: value, style: {vertical_alignment: Center}, text: {bind: {path: value, source: External}}}
+        - {type: Button, id: change, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {literal: Change}, command: capture}
+        - {type: Button, id: clear, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {literal: Clear}, command: clear}
   binding_page:
     root:
-      type: ItemsControl
+      type: Repeat
       id: bindings
-      items: {bind: {path: rows}}
-      viewport: {bind: {path: viewport}}
+      padding: 6
+      gap: 8
+      items: {bind: {path: rows, source: External}}
       item_template: binding_row
   input_page:
     root:
       type: StackLayout
       id: input_fields
       padding: 6
-      gap: 8
+      gap: 6
       children:
-        - type: ItemsControl
+        - type: Repeat
           id: controller_slots
           visible: {bind: {path: has_slots}}
           items: {bind: {path: slots}}
-          viewport: {bind: {path: slot_viewport}}
+          gap: 6
           item_template: choice_row
         - type: TabItems
           id: players
           visible: {bind: {path: show_section_tabs}}
           selected: {bind: {path: section, mode: TwoWay}}
-          items: {bind: {path: sections}}
-          title: {bind: {path: label}}
+          items: {bind: {path: sections, source: External}}
+          title: {bind: {path: label, source: External}}
           item_template: binding_page
         - type: ContentControl
           id: single_section
@@ -70,6 +73,7 @@ root:
       - type: Tab
         id: pages
         position: Left
+        presentation: Sidebar
         selected: {bind: {path: page, source: External, mode: TwoWay}}
         pages:
           - id: general
@@ -77,7 +81,6 @@ root:
             content:
               type: StackLayout
               id: general_fields
-              padding: {left: 12}
               gap: 12
               children:
                 - type: StackLayout
@@ -85,15 +88,15 @@ root:
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: language_label, style: {placement: {width: 120}}, text: {literal: Language}}
-                    - {type: Combo, id: language, items: {bind: {path: language.items, source: External}}, selected: {bind: {path: language.selected, source: External, mode: TwoWay}}}
+                    - {type: Label, id: language_label, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {literal: UI Language}}
+                    - {type: Combo, id: language, style: {horizontal_alignment: Start, vertical_alignment: Center}, items: {bind: {path: language.items, source: External}}, selected: {bind: {path: language.selected, source: External, mode: TwoWay}}}
                 - type: StackLayout
                   id: storage_row
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: storage_label, style: {placement: {width: 120}}, text: {literal: Storage}}
-                    - {type: Combo, id: storage, items: {bind: {path: storage.items, source: External}}, selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}}
+                    - {type: Label, id: storage_label, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {literal: Save storage policy}}
+                    - {type: Combo, id: storage, style: {horizontal_alignment: Start, vertical_alignment: Center}, items: {bind: {path: storage.items, source: External}}, selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}}
                 - type: TextBox
                   id: storage_directory
                   visible: {bind: {path: directory_visible, source: External}}
@@ -101,19 +104,20 @@ root:
           - id: input
             title: {literal: Input}
             content:
-              type: TabItems
-              id: input_tabs
-              margin: {left: 12}
-              selected: {bind: {path: input_selection, source: External, mode: TwoWay}}
-              items: {bind: {path: input_pages, source: External}}
-              title: {bind: {path: label}}
-              item_template: input_page
+              type: Scroll
+              id: input_scroll
+              content:
+                type: TabItems
+                id: input_tabs
+                selected: {bind: {path: input_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: input_pages, source: External}}
+                title: {bind: {path: label}}
+                item_template: input_page
           - id: video
             title: {literal: Video}
             content:
               type: StackLayout
               id: video_fields
-              padding: {left: 12}
               gap: 12
               children:
                 - {type: CheckBox, id: fullscreen, text: {literal: Start fullscreen}, checked: {bind: {path: fullscreen, source: External, mode: TwoWay}}}
@@ -130,7 +134,6 @@ root:
             content:
               type: StackLayout
               id: audio_fields
-              padding: {left: 12}
               gap: 12
               children:
                 - {type: CheckBox, id: mute, text: {literal: Mute}, checked: {bind: {path: muted, source: External, mode: TwoWay}}}
@@ -215,20 +218,20 @@ root:
             content:
               type: TabItems
               id: system_tabs
-              margin: {left: 12}
               selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
               items: {bind: {path: system_pages, source: External}}
               title: {bind: {path: label}}
               item_template: system_page
+      - {type: Label, id: status, text: {bind: {path: status, source: External}}}
       - type: StackLayout
         id: actions
         orientation: Horizontal
+        style: {horizontal_alignment: End}
+        margin: {top: 12}
         gap: 12
         children:
-          - {type: Label, id: status, text: {bind: {path: status, source: External}}}
-          - {type: Button, id: apply, style: {placement: {width: 100}}, text: {literal: Apply}, command: apply}
-          - {type: Button, id: cancel, style: {placement: {width: 100}}, text: {literal: Cancel}, command: cancel}
-          - {type: Button, id: accept, style: {placement: {width: 100}}, text: {literal: OK}, command: accept}
+          - {type: Button, id: cancel, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {literal: Cancel}, command: cancel}
+          - {type: Button, id: accept, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {literal: OK}, command: accept}
       - type: StackLayout
         id: confirmation
         gap: 8

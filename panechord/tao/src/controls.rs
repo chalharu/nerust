@@ -524,6 +524,9 @@ impl View {
         node.kind.replace(Kind::Tab(state));
         Parent(node)
     }
+    pub fn navigation(&self, parent: &Parent, id: &str, selected: Binding<String>) -> Parent {
+        self.tab(parent, id, selected)
+    }
     pub fn tab_position(
         &self,
         id: &str,

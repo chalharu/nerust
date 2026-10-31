@@ -134,7 +134,7 @@ jobs:
           # Display-requiring tests are #[ignore]d by default and run only
           # here, under Xvfb. Scoped to the tao frontend package so
           # unrelated ignores (optional ROMs, probe helpers) stay skipped.
-          xvfb-run cargo llvm-cov nextest --no-report -p wakui_tao --lib \
+          xvfb-run cargo llvm-cov nextest --no-report -p panechord-tao --lib \
             --run-ignored only
           cargo llvm-cov report \
             --no-default-ignore-filename-regex \

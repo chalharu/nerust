@@ -9,14 +9,50 @@ pub(super) enum Input {
     Open(bool),
 }
 pub(super) type Action = Rc<dyn Fn(Input) -> Result<(), String>>;
+enum TabContainer {
+    Notebook(gtk::Notebook),
+    Sidebar {
+        stack: gtk::Stack,
+        sidebar: gtk::StackSidebar,
+    },
+}
+impl TabContainer {
+    fn widget(&self) -> &gtk::Widget {
+        match self {
+            Self::Notebook(notebook) => notebook.upcast_ref(),
+            Self::Sidebar { stack, .. } => stack.upcast_ref(),
+        }
+    }
+    fn notebook(&self) -> &gtk::Notebook {
+        match self {
+            Self::Notebook(notebook) => notebook,
+            Self::Sidebar { .. } => unreachable!("Notebook-only operation"),
+        }
+    }
+}
 pub(super) struct Tab {
-    notebook: gtk::Notebook,
+    container: TabContainer,
     selected: Binding<String>,
     pages: RefCell<Vec<Choice>>,
     applying: Cell<bool>,
     dynamic: Cell<bool>,
 }
 impl Tab {
+    fn select_index(&self, index: u32) {
+        match &self.container {
+            TabContainer::Notebook(notebook) => notebook.set_current_page(Some(index)),
+            TabContainer::Sidebar { stack, .. } => {
+                let key = self
+                    .pages
+                    .borrow()
+                    .get(index as usize)
+                    .map(|page| page.id.clone());
+                if let Some(key) = key {
+                    stack.set_visible_child_name(&key);
+                }
+            }
+        }
+    }
     fn apply(&self) {
         if self.applying.get() {
             return;
@@ -31,7 +67,7 @@ impl Tab {
             index.or_else(|| (selected.is_empty() || self.dynamic.get()).then_some(0))
         {
             self.applying.set(true);
-            self.notebook.set_current_page(Some(index as u32));
+            self.select_index(index as u32);
             self.applying.set(false);
         }
     }
@@ -505,6 +541,30 @@ impl View {
         let combo = gtk::DropDown::from_strings(&[]);
         combo.set_sensitive(selected.is_writable());
         combo.set_hexpand(true);
+        let widths = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+        let factory = gtk::SignalListItemFactory::new();
+        let group = widths.clone();
+        factory.connect_setup(move |_, object| {
+            let item = object.downcast_ref::<gtk::ListItem>().unwrap();
+            let label = gtk::Label::new(None);
+            label.set_xalign(0.0);
+            group.add_widget(&label);
+            item.set_child(Some(&label));
+        });
+        factory.connect_bind(|_, object| {
+            let item = object.downcast_ref::<gtk::ListItem>().unwrap();
+            let value = item
+                .item()
+                .unwrap()
+                .downcast::<gtk::StringObject>()
+                .unwrap();
+            item.child()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap()
+                .set_text(&value.string());
+        });
+        combo.set_factory(Some(&factory));
         self.mount_native(parent, id, &combo);
         let applying = Rc::new(Cell::new(false));
         let source = items.clone();
@@ -512,6 +572,7 @@ impl View {
         let guard = applying.clone();
         let weak = self.downgrade();
         let previous = RefCell::new(None::<Vec<Choice>>);
+        let measurements = RefCell::new(Vec::<gtk::Label>::new());
         let refresh: Rc<dyn Fn(&gtk::DropDown)> = Rc::new(move |combo| {
             let choices = source.get();
             let selected = selection.get();
@@ -521,10 +582,22 @@ impl View {
                 }
                 return;
             }
-            let labels: Vec<_> = choices.iter().map(|choice| choice.label.as_str()).collect();
             guard.set(true);
             if previous.borrow().as_ref() != Some(&choices) {
                 previous.replace(Some(choices.clone()));
+                for label in measurements.take() {
+                    widths.remove_widget(&label);
+                }
+                let labels = choices
+                    .iter()
+                    .map(|choice| {
+                        let label = gtk::Label::new(Some(&choice.label));
+                        widths.add_widget(&label);
+                        label
+                    })
+                    .collect();
+                measurements.replace(labels);
+                let labels: Vec<_> = choices.iter().map(|choice| choice.label.as_str()).collect();
                 combo.set_model(Some(&gtk::StringList::new(&labels)));
             }
             let index = choices
@@ -662,7 +735,7 @@ impl View {
             .frame
             .set_vexpand(true);
         let state = Rc::new(Tab {
-            notebook: notebook.clone(),
+            container: TabContainer::Notebook(notebook.clone()),
             selected: selected.clone(),
             pages: RefCell::new(Vec::new()),
             applying: Cell::new(false),
@@ -708,11 +781,80 @@ impl View {
                     .iter()
                     .position(|page| page.id == value)
                     .ok_or("unknown selected choice")?;
-                state.notebook.set_current_page(Some(index as u32));
+                state.select_index(index as u32);
                 Ok(())
             }),
         );
         Parent::new(&notebook, ParentKind::Notebook)
+    }
+    pub fn navigation(&self, parent: &Parent, id: &str, selected: Binding<String>) -> Parent {
+        let stack = gtk::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        let sidebar = gtk::StackSidebar::new();
+        sidebar.set_stack(&stack);
+        sidebar.set_vexpand(true);
+        let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        body.append(&sidebar);
+        body.append(&stack);
+        self.mount_native(parent, id, &body);
+        self.0
+            .nodes
+            .borrow()
+            .get(id)
+            .unwrap()
+            .frame
+            .set_vexpand(true);
+        let state = Rc::new(Tab {
+            container: TabContainer::Sidebar {
+                stack: stack.clone(),
+                sidebar,
+            },
+            selected: selected.clone(),
+            pages: RefCell::new(Vec::new()),
+            applying: Cell::new(false),
+            dynamic: Cell::new(false),
+        });
+        self.0.tabs.borrow_mut().insert(id.into(), state.clone());
+        let weak = Rc::downgrade(&state);
+        let signal = stack.connect_visible_child_name_notify(move |stack| {
+            if let Some(state) = weak.upgrade()
+                && !state.applying.get()
+            {
+                if let Some(key) = stack.visible_child_name() {
+                    let _ = state.selected.try_set(key.to_string());
+                }
+                state.apply();
+            }
+        });
+        self.signal(id, &stack, signal);
+        let weak = Rc::downgrade(&state);
+        self.bind_native(id, selected.clone(), &stack, move |_, _| {
+            if let Some(state) = weak.upgrade() {
+                state.apply();
+            }
+        });
+        self.0.control_actions.borrow_mut().insert(
+            id.into(),
+            Rc::new(move |input| {
+                let Input::Select(value) = input else {
+                    return Err("wrong control operation".into());
+                };
+                if !selected.is_writable() {
+                    return Err("read-only control".into());
+                }
+                validate_choices(&state.pages.borrow(), &value).map_err(str::to_owned)?;
+                let index = state
+                    .pages
+                    .borrow()
+                    .iter()
+                    .position(|page| page.id == value)
+                    .ok_or("unknown selected choice")?;
+                state.select_index(index as u32);
+                Ok(())
+            }),
+        );
+        Parent::new(&stack, ParentKind::PageStack)
     }
     pub fn tab_position(
         &self,
@@ -723,13 +865,27 @@ impl View {
             return Err("view is closed".into());
         }
         let state = self.0.tabs.borrow().get(id).cloned().ok_or("missing Tab")?;
-        state.notebook.set_tab_pos(match position {
+        if let TabContainer::Sidebar { stack, sidebar } = &state.container {
+            let body = self.widget::<gtk::Box>(id)?;
+            match position {
+                panechord_runtime::TabPosition::Left => {
+                    body.reorder_child_after(sidebar, None::<&gtk::Widget>)
+                }
+                panechord_runtime::TabPosition::Right => {
+                    body.reorder_child_after(sidebar, Some(stack))
+                }
+                _ => return Err("Sidebar requires Left or Right position".into()),
+            }
+            return Ok(());
+        }
+        let notebook = state.container.notebook();
+        notebook.set_tab_pos(match position {
             panechord_runtime::TabPosition::Top => gtk::PositionType::Top,
             panechord_runtime::TabPosition::Bottom => gtk::PositionType::Bottom,
             panechord_runtime::TabPosition::Left => gtk::PositionType::Left,
             panechord_runtime::TabPosition::Right => gtk::PositionType::Right,
         });
-        if let Some(header) = state.notebook.first_child() {
+        if let Some(header) = notebook.first_child() {
             header.set_size_request(
                 if matches!(
                     position,
@@ -828,7 +984,10 @@ impl View {
                             .get(&format!("{prefix}/{}", item.key))
                             .map(|node| node.frame.clone());
                         if let Some(frame) = frame {
-                            state.notebook.reorder_child(&frame, Some(index as u32));
+                            state
+                                .container
+                                .notebook()
+                                .reorder_child(&frame, Some(index as u32));
                         }
                     }
                     source.replace(next);
@@ -855,7 +1014,7 @@ impl View {
             .tabs
             .borrow()
             .values()
-            .find(|state| state.notebook.upcast_ref::<gtk::Widget>() == &parent.widget)
+            .find(|state| state.container.widget() == &parent.widget)
             .cloned()
             .ok_or("missing or foreign Tab parent")?;
         if parent.widget.root().is_none()
@@ -865,31 +1024,36 @@ impl View {
         {
             return Err("unavailable Tab, invalid or duplicate page key, or page limit".into());
         }
-        let notebook = parent
-            .widget
-            .downcast_ref::<gtk::Notebook>()
-            .expect("tab_page requires Tab parent");
-        let state = self
-            .0
-            .tabs
-            .borrow()
-            .values()
-            .find(|state| &state.notebook == notebook)
-            .cloned()
-            .unwrap();
         let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let previous_applying = state.applying.replace(true);
         self.mount_native(parent, id, &body);
-        let label = gtk::Label::new(Some(&title.get()));
         let frame = self.0.nodes.borrow().get(id).unwrap().frame.clone();
-        notebook.set_tab_label(&frame, Some(&label));
+        match &state.container {
+            TabContainer::Notebook(notebook) => {
+                let label = gtk::Label::new(Some(&title.get()));
+                notebook.set_tab_label(&frame, Some(&label));
+                self.bind_native(id, title.clone(), &label, |label, title| {
+                    label.set_label(&title)
+                });
+            }
+            TabContainer::Sidebar { stack, .. } => {
+                let page = stack.page(&frame);
+                page.set_name(key);
+                page.set_title(&title.get());
+                let weak = stack.downgrade();
+                self.bind_native(id, title.clone(), &frame, move |frame, title| {
+                    if let Some(stack) = weak.upgrade() {
+                        stack.page(frame).set_title(&title);
+                    }
+                });
+            }
+        }
         state.pages.borrow_mut().push(Choice {
             id: key.into(),
             label: title.get(),
         });
         state.applying.set(previous_applying);
         state.apply();
-        self.bind_native(id, title, &label, |label, title| label.set_label(&title));
         Ok(Parent::new(&body, ParentKind::Stack))
     }
 
@@ -902,7 +1066,7 @@ impl View {
             .tabs
             .borrow()
             .values()
-            .find(|state| state.notebook.upcast_ref::<gtk::Widget>() == &parent.widget)
+            .find(|state| state.container.widget() == &parent.widget)
             .cloned()
             .ok_or("missing Tab parent")?;
         if !(1..=256).contains(&state.pages.borrow().len()) {

@@ -9,13 +9,14 @@ rust-version.workspace = true
 [dependencies]
 panechord-runtime.workspace = true
 panechord-macros.workspace = true
+panechord-native = { workspace = true, optional = true }
 panechord-gtk = { workspace = true, optional = true }
 panechord-tao = { workspace = true, optional = true }
 panechord-macos = { workspace = true, optional = true }
 
 [features]
 default = []
-native = ["tao"]
+native = ["dep:panechord-native"]
 gtk = ["dep:panechord-gtk"]
 tao = ["dep:panechord-tao"]
 macos = ["dep:panechord-macos"]

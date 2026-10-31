@@ -8,10 +8,38 @@ use panechord::{Binding, Command, Executor, Store, View};
 use panechord::{
     Table, TableCell, TableColumn, TableRow, TableSelection, TextOverflow, TextRole, TextStyle,
 };
-use std::{cell::RefCell, collections::BTreeMap, ops::Deref, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    ops::Deref,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 type MemoryTargets = BTreeMap<String, (nerust_core_traits::debugger::HexRow, bool)>;
 type RegisterTargets = BTreeMap<String, (&'static str, u64)>;
+pub(crate) type Begin = Rc<
+    dyn Fn(
+        &[nerust_gui_shell::debug::DebugAction],
+        &nerust_gui_shell::debug::DebugDrainInput<'_>,
+    ) -> nerust_gui_shell::debug::DrainFlight,
+>;
+type Action = Rc<dyn Fn(String)>;
+
+struct Operations {
+    begin: Begin,
+    spaces: Vec<nerust_core_traits::debugger::SpaceInfo>,
+    nav: NavState,
+    display: DisplayCache,
+    dispatch: crate::view::Dispatch,
+    watch: Option<u32>,
+    freeze: Option<(u32, u8)>,
+    bookmarks: BTreeMap<String, (String, nerust_core_traits::debugger::SpaceId, u32)>,
+    next_bookmark: u64,
+    media_revision: u64,
+    spaces_source: Rc<dyn Fn() -> Vec<nerust_core_traits::debugger::SpaceInfo>>,
+}
 
 fn register_key(name: &str) -> String {
     name.bytes().map(|byte| format!("{byte:02X}")).collect()
@@ -332,6 +360,7 @@ struct Model {
     registers_visible: bool,
     memory: Table,
     bookmarks: Table,
+    bookmark_selection: Option<TableSelection>,
     status: String,
     back: String,
     reg_target: String,
@@ -353,7 +382,12 @@ struct Model {
 pub(crate) struct Pane {
     model: Store<Model>,
     flight: RefCell<Option<nerust_gui_shell::debug::DrainFlight>>,
+    automatic: Cell<bool>,
+    next_refresh: Cell<Instant>,
     selection: RefCell<Option<panechord::Subscription>>,
+    operations: RefCell<Option<Operations>>,
+    action: Rc<RefCell<Option<Action>>>,
+    activation: RefCell<Option<panechord::Subscription>>,
 }
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
@@ -379,6 +413,7 @@ impl Pane {
                     registers_right,
                     memory: projection.memory,
                     bookmarks: code_table([]),
+                    bookmark_selection: None,
                     register_style: projection.register_style,
                     registers_visible: projection.registers_visible,
                     status: label(UiText::NoCore),
@@ -401,7 +436,12 @@ impl Pane {
                 executor,
             ),
             flight: RefCell::new(None),
+            automatic: Cell::new(false),
+            next_refresh: Cell::new(Instant::now()),
             selection: RefCell::new(None),
+            operations: RefCell::new(None),
+            action: Rc::new(RefCell::new(None)),
+            activation: RefCell::new(None),
         });
         let source = pane.model.bind(
             |model| {
@@ -458,7 +498,331 @@ impl Pane {
             });
         });
         pane.selection.replace(Some(subscription));
+        let weak = Rc::downgrade(&pane);
+        let source = pane.model.bind(
+            |model| {
+                (
+                    model.disassembly_selection.clone(),
+                    model.bookmark_selection.clone(),
+                )
+            },
+            None::<fn(&mut Model, _)>,
+        );
+        let activation = pane.model.watch(source, move |_, (disassembly, bookmark)| {
+            let Some(pane) = weak.upgrade() else {
+                return;
+            };
+            if disassembly.is_some_and(|selection| selection.column == 1) {
+                pane.execute("disassembly_target");
+            }
+            if let Some(selection) = bookmark {
+                pane.execute(if selection.column == 1 {
+                    "bookmark_remove"
+                } else {
+                    "bookmark_go"
+                });
+            }
+        });
+        pane.activation.replace(Some(activation));
         pane
+    }
+
+    pub(crate) fn connect(
+        self: &Rc<Self>,
+        spaces: Vec<nerust_core_traits::debugger::SpaceInfo>,
+        begin: Begin,
+        dispatch: crate::view::Dispatch,
+        media_revision: u64,
+        spaces_source: Rc<dyn Fn() -> Vec<nerust_core_traits::debugger::SpaceInfo>>,
+    ) {
+        let start = spaces.first().map_or(0, |space| *space.range.start());
+        self.operations.replace(Some(Operations {
+            nav: NavState::new(spaces.len(), start),
+            spaces,
+            begin,
+            display: DisplayCache::default(),
+            dispatch,
+            watch: None,
+            freeze: None,
+            bookmarks: BTreeMap::new(),
+            next_bookmark: 0,
+            media_revision,
+            spaces_source,
+        }));
+        let weak = Rc::downgrade(self);
+        self.action.replace(Some(Rc::new(move |action| {
+            if let Some(pane) = weak.upgrade() {
+                pane.execute(&action);
+            }
+        })));
+    }
+
+    fn execute(&self, action: &str) {
+        if self.model.is_closed()
+            || !self.model.snapshot().enabled
+            || self.flight.borrow().is_some()
+        {
+            return;
+        }
+        let snapshot = self.model.snapshot();
+        let result = self.begin_action(action, &snapshot);
+        match result {
+            Ok(Some(flight)) => {
+                self.flight.replace(Some(flight));
+                let _ = self.model.update(|model| model.enabled = false);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = self.model.update(move |model| model.status = error);
+            }
+        }
+    }
+
+    fn begin_action(
+        &self,
+        action: &str,
+        model: &Model,
+    ) -> Result<Option<nerust_gui_shell::debug::DrainFlight>, String> {
+        use nerust_gui_shell::debug::DebugAction;
+        use nerust_gui_viewmodel::debugger::parse_hex_addr;
+        let mut operations = self.operations.borrow_mut();
+        let Some(operations) = operations.as_mut() else {
+            return Ok(None);
+        };
+        let memory = || {
+            model
+                .memory_selection
+                .as_ref()
+                .and_then(|selection| selected_memory(selection, &model.memory_targets))
+                .ok_or_else(|| text(model.language, UiText::SelectDumpRow).to_owned())
+        };
+        let register = model
+            .register_marked
+            .as_ref()
+            .and_then(|selection| model.register_targets.get(&selection.row_key))
+            .map(|(name, _)| *name);
+        let hex = |input: &str| {
+            let input = input.trim();
+            let input = input
+                .strip_prefix("0x")
+                .or_else(|| input.strip_prefix('$'))
+                .unwrap_or(input);
+            u64::from_str_radix(input, 16).map_err(|_| "Invalid hexadecimal value".to_owned())
+        };
+        let current = operations
+            .display
+            .disasm_lines
+            .first()
+            .map_or(0, |line| line.addr);
+        let mut actions = vec![DebugAction::Refresh];
+        match action {
+            "poll" => actions.clear(),
+            "refresh" => {}
+            "pause" => {
+                (operations.dispatch)(crate::view::Intent::Pause(!operations.display.paused));
+            }
+            "step_frame" | "step_instruction" => {
+                (operations.dispatch)(crate::view::Intent::Pause(true));
+                actions = vec![if action == "step_frame" {
+                    DebugAction::StepFrame
+                } else {
+                    DebugAction::StepInstr
+                }];
+            }
+            "ppu" => {
+                (operations.dispatch)(crate::view::Intent::Ppu);
+                return Ok(None);
+            }
+            "follow_pc" => operations.nav.follow(),
+            "back" => {
+                operations.nav.go_back();
+            }
+            "disassembly_go" => {
+                let addr = parse_hex_addr(&model.disasm_addr)
+                    .ok_or_else(|| "Invalid hexadecimal address".to_owned())?;
+                operations.nav.navigate(current, addr);
+            }
+            "disassembly_target" => {
+                let selected = model
+                    .disassembly_selection
+                    .as_ref()
+                    .ok_or_else(|| "Select an instruction".to_owned())?;
+                let line = operations
+                    .display
+                    .disasm_lines
+                    .iter()
+                    .find(|line| format!("{:08X}", line.addr) == selected.row_key)
+                    .ok_or_else(|| "Instruction selection is no longer available".to_owned())?;
+                let addr = if selected.column == 1 {
+                    line.target.unwrap_or(line.addr)
+                } else {
+                    line.addr
+                };
+                operations.nav.navigate(current, addr);
+            }
+            "space_previous" | "space_next" => {
+                if let Some(index) =
+                    operations
+                        .nav
+                        .cycle_space(if action == "space_previous" { -1 } else { 1 })
+                {
+                    let start = *operations.spaces[index].range.start();
+                    operations.nav.set_space(index, start);
+                    operations.watch = None;
+                    operations.freeze = None;
+                    operations.display.dump_rows.clear();
+                    actions = vec![DebugAction::MemNav];
+                }
+            }
+            "page_previous" | "page_next" => {
+                let delta = (nerust_core_traits::debugger::DEBUG_DUMP_PAGE_ROWS * 16) as i32;
+                operations.nav.page_mem(if action == "page_previous" {
+                    -delta
+                } else {
+                    delta
+                });
+                actions = vec![DebugAction::MemNav];
+            }
+            "memory_go" => {
+                let addr = parse_hex_addr(&model.memory_addr)
+                    .ok_or_else(|| "Invalid hexadecimal address".to_owned())?;
+                operations.nav.go_mem(addr);
+                actions = vec![DebugAction::MemNav];
+            }
+            "watch" | "edit_watch" => operations.watch = Some(memory()?.0),
+            "watch_clear" => operations.watch = None,
+            "freeze" | "edit_freeze" => {
+                let (addr, old) = memory()?;
+                let value = if action == "edit_freeze" && model.freeze_value.trim().is_empty() {
+                    old.ok_or_else(|| "Selected byte is unavailable".to_owned())?
+                } else {
+                    u8::try_from(hex(&model.freeze_value)?)
+                        .map_err(|_| "Value must fit in one byte".to_owned())?
+                };
+                if !operations
+                    .spaces
+                    .get(operations.nav.space_idx())
+                    .is_some_and(|space| {
+                        space.access == nerust_core_traits::debugger::SpaceAccess::ReadWrite
+                    })
+                {
+                    return Err("Selected address space is read-only".into());
+                }
+                operations.freeze = Some((addr, value));
+            }
+            "freeze_clear" => operations.freeze = None,
+            "register_set" => {
+                if register.is_none() {
+                    return Err(text(model.language, UiText::PickRegister).to_owned());
+                }
+                actions = vec![DebugAction::RegisterWrite(hex(&model.register_value)?)];
+            }
+            "write" => {
+                let (addr, old) = memory()?;
+                if old.is_none() {
+                    return Err("Selected byte is unavailable".into());
+                }
+                if !operations
+                    .spaces
+                    .get(operations.nav.space_idx())
+                    .is_some_and(|space| {
+                        space.access == nerust_core_traits::debugger::SpaceAccess::ReadWrite
+                    })
+                {
+                    return Err("Selected address space is read-only".into());
+                }
+                let value = hex(&model.edit_value)?;
+                if value > u64::from(u8::MAX) {
+                    return Err("Value must fit in one byte".into());
+                }
+                actions = vec![DebugAction::SelectRow(addr), DebugAction::EditStage(value)];
+            }
+            "confirm" if model.pending => actions = vec![DebugAction::WriteConfirm],
+            "cancel" => actions = vec![DebugAction::EditCancel],
+            "bookmark_add" => {
+                let addr = model
+                    .disassembly_selection
+                    .as_ref()
+                    .and_then(|selected| {
+                        operations
+                            .display
+                            .disasm_lines
+                            .iter()
+                            .find(|line| format!("{:08X}", line.addr) == selected.row_key)
+                    })
+                    .map_or(current, |line| line.addr);
+                if operations.bookmarks.len() >= 256 {
+                    return Err("Bookmark limit reached".into());
+                }
+                let label = if model.bookmark_label.trim().is_empty() {
+                    format!("0x{addr:08X}")
+                } else {
+                    model.bookmark_label.trim().to_owned()
+                };
+                let space = operations
+                    .spaces
+                    .get(operations.nav.space_idx())
+                    .ok_or_else(|| "No address space is available".to_owned())?
+                    .id;
+                let key = operations.next_bookmark.to_string();
+                operations.next_bookmark = operations
+                    .next_bookmark
+                    .checked_add(1)
+                    .ok_or_else(|| "Bookmark identity limit reached".to_owned())?;
+                operations.bookmarks.insert(key, (label, space, addr));
+                let table = bookmark_table(&operations.bookmarks);
+                let _ = self.model.update(move |model| model.bookmarks = table);
+                return Ok(None);
+            }
+            "bookmark_go" | "bookmark_remove" => {
+                let selected = model
+                    .bookmark_selection
+                    .as_ref()
+                    .ok_or_else(|| "Select a bookmark".to_owned())?;
+                let (_, space, addr) = operations
+                    .bookmarks
+                    .get(&selected.row_key)
+                    .ok_or_else(|| "Bookmark is no longer available".to_owned())?;
+                let (space, addr) = (*space, *addr);
+                if action == "bookmark_remove" {
+                    operations.bookmarks.remove(&selected.row_key);
+                    let table = bookmark_table(&operations.bookmarks);
+                    let _ = self.model.update(move |model| {
+                        model.bookmarks = table;
+                        model.bookmark_selection = None;
+                    });
+                    return Ok(None);
+                }
+                let index = operations
+                    .spaces
+                    .iter()
+                    .position(|candidate| candidate.id == space)
+                    .ok_or_else(|| "Bookmark address space is no longer available".to_owned())?;
+                operations.nav.set_space(index, addr);
+                operations.nav.navigate(current, addr);
+                operations.watch = None;
+                operations.freeze = None;
+                let _ = self.model.update(|model| model.bookmark_selection = None);
+                actions = vec![DebugAction::MemNav];
+            }
+            _ => return Ok(None),
+        }
+        {
+            let input = nerust_gui_shell::debug::DebugDrainInput {
+                space: operations
+                    .spaces
+                    .get(operations.nav.space_idx())
+                    .map(|space| space.id),
+                mem_addr: operations.nav.mem_addr(),
+                dis_addr: operations.nav.dis_addr(),
+                watch: operations.watch,
+                reg_target: register,
+                freeze: operations.freeze,
+                prev_dump_rows: &operations.display.dump_rows,
+                need_images: false,
+            };
+            Ok(Some((operations.begin)(&actions, &input)))
+        }
     }
 
     pub(crate) fn start(&self, space: String, flight: nerust_gui_shell::debug::DrainFlight) {
@@ -471,12 +835,60 @@ impl Pane {
 
     pub(crate) fn cancel(&self) {
         self.flight.borrow_mut().take();
+        self.action.borrow_mut().take();
+        self.operations.borrow_mut().take();
     }
 
-    pub(crate) fn poll(&self, language: AppLanguage) {
+    pub(crate) fn poll(&self, language: AppLanguage, loaded: bool, media_revision: u64) {
         if self.model.is_closed() {
             self.cancel();
             return;
+        }
+        let reset = {
+            let mut operations = self.operations.borrow_mut();
+            if let Some(operations) = operations.as_mut() {
+                if operations.media_revision != media_revision {
+                    operations.media_revision = media_revision;
+                    operations.spaces = (operations.spaces_source)();
+                    let start = operations
+                        .spaces
+                        .first()
+                        .map_or(0, |space| *space.range.start());
+                    operations.nav = NavState::new(operations.spaces.len(), start);
+                    operations.watch = None;
+                    operations.freeze = None;
+                    operations.bookmarks.clear();
+                    operations.display = DisplayCache::default();
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if reset {
+            self.flight.borrow_mut().take();
+            self.automatic.set(false);
+            self.refresh(&DisplayCache::default(), language);
+            let _ = self.model.update(|model| {
+                model.bookmarks = code_table([]);
+                model.bookmark_selection = None;
+                model.memory_selection = None;
+                model.pending = false;
+                model.register_value.clear();
+                model.edit_value.clear();
+                model.freeze_value.clear();
+                model.enabled = false;
+            });
+        }
+        if !loaded {
+            let _ = self.model.update(|model| model.enabled = false);
+            return;
+        }
+        if reset {
+            let _ = self.model.update(|model| model.enabled = true);
+            self.execute("refresh");
         }
         let output = {
             let mut flight = self.flight.borrow_mut();
@@ -489,7 +901,72 @@ impl Pane {
             }
         };
         if let Some(output) = output {
+            let automatic = self.automatic.replace(false);
+            self.next_refresh
+                .set(Instant::now() + Duration::from_millis(250));
             self.refresh(&output.display, language);
+            if let Some(operations) = self.operations.borrow_mut().as_mut() {
+                operations.display = output.display;
+                let memory_addr = operations.nav.mem_input().to_owned();
+                let disasm_addr = operations.nav.dis_input().to_owned();
+                let back = format!(
+                    "{} ({})",
+                    text(language, UiText::Back),
+                    operations.nav.back_len()
+                );
+                let space = operations
+                    .spaces
+                    .get(operations.nav.space_idx())
+                    .map(|space| space.name.to_owned())
+                    .unwrap_or_default();
+                let watch = operations
+                    .watch
+                    .map(|addr| {
+                        format!(
+                            "0x{addr:08X}: {}",
+                            operations
+                                .display
+                                .watch_value
+                                .map(|value| format!("{value:02X}"))
+                                .unwrap_or_else(|| "??".into())
+                        )
+                    })
+                    .unwrap_or_else(|| text(language, UiText::WatchNone).to_owned());
+                let freeze = operations
+                    .freeze
+                    .map(|(addr, value)| format!("0x{addr:08X} = {value:02X}"))
+                    .unwrap_or_else(|| text(language, UiText::FreezeNone).to_owned());
+                let pin = operations.nav.dis_addr();
+                let _ = self.model.update(move |model| {
+                    if !automatic {
+                        model.memory_addr = memory_addr;
+                        model.disasm_addr = disasm_addr;
+                    }
+                    model.back = back;
+                    model.space = space;
+                    model.watch = watch;
+                    model.freeze = freeze;
+                    if let Some(addr) = pin {
+                        model.captions.disassembly =
+                            format!("{} (0x{addr:08X})", text(language, UiText::Disassembly));
+                    }
+                });
+            }
+            let connected = self.operations.borrow().is_some();
+            let _ = self.model.update(move |model| model.enabled = connected);
+        }
+        let refresh = self.flight.borrow().is_none()
+            && Instant::now() >= self.next_refresh.get()
+            && self.operations.borrow().as_ref().is_some_and(|operations| {
+                (!operations.display.paused || self.model.snapshot().language != language)
+                    && !matches!(
+                        operations.display.status,
+                        nerust_gui_viewmodel::debugger::StatusMessage::OutcomeUnknown
+                    )
+            });
+        if refresh {
+            self.automatic.set(true);
+            self.execute("poll");
         }
     }
 
@@ -547,6 +1024,7 @@ impl Pane {
     pub(crate) fn build(self: &Rc<Self>) -> Result<View, String> {
         let bindings = Presentation {
             model: self.model.clone(),
+            action: self.action.clone(),
         };
         let view = panechord::try_view!("ui/debugger.yaml", bindings, panechord)?;
         let pane = self.clone();
@@ -554,15 +1032,45 @@ impl Pane {
             pane.cancel();
             let selection = pane.selection.borrow_mut().take();
             drop(selection);
+            let activation = pane.activation.borrow_mut().take();
+            drop(activation);
             pane.model.close();
         }));
         Ok(view)
     }
 }
 
+fn bookmark_table(
+    bookmarks: &BTreeMap<String, (String, nerust_core_traits::debugger::SpaceId, u32)>,
+) -> Table {
+    let mut table = code_table(
+        bookmarks
+            .iter()
+            .map(|(key, (label, _, addr))| (key.clone(), format!("{label} 0x{addr:08X}"))),
+    );
+    let mut columns = table.columns.to_vec();
+    columns.push(TableColumn {
+        title: String::new(),
+        width: Some(40.0),
+        text: TextStyle::default(),
+        overflow: TextOverflow::Clip,
+        stretch: false,
+        hide_empty: false,
+    });
+    table.columns = columns.into();
+    for row in Arc::make_mut(&mut table.rows) {
+        Arc::make_mut(row).cells.push(TableCell {
+            text: "\u{00D7}".into(),
+            foreground: None,
+        });
+    }
+    table
+}
+
 #[derive(Clone)]
 struct Presentation {
     model: Store<Model>,
+    action: Rc<RefCell<Option<Action>>>,
 }
 impl Deref for Presentation {
     type Target = Store<Model>;
@@ -572,8 +1080,32 @@ impl Deref for Presentation {
 }
 impl Presentation {
     fn command_action(&self, argument: Binding<String>) -> Command {
-        self.model
-            .command(|model| model.enabled, |_, _: String| {}, argument)
+        let name = argument.get();
+        let action = self.action.clone();
+        self.model.command(
+            move |model| {
+                model.enabled
+                    && match name.as_str() {
+                        "confirm" | "cancel" => model.pending,
+                        "register_set" => model.register_marked.is_some(),
+                        "write" | "watch" | "edit_watch" | "freeze" | "edit_freeze" => {
+                            model.memory_selection.is_some()
+                        }
+                        "refresh" | "pause" | "step_frame" | "step_instruction" | "ppu"
+                        | "follow_pc" | "back" | "disassembly_go" | "space_previous"
+                        | "space_next" | "page_previous" | "page_next" | "memory_go"
+                        | "watch_clear" | "freeze_clear" | "bookmark_add" => true,
+                        _ => false,
+                    }
+            },
+            move |_, name: String| {
+                let dispatch = action.borrow().clone();
+                if let Some(dispatch) = dispatch {
+                    dispatch(name);
+                }
+            },
+            argument,
+        )
     }
 }
 

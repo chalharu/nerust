@@ -1219,6 +1219,15 @@ impl LiveImagesFlight {
         need_images: ImageNeed,
         deadline: Duration,
     ) -> Self {
+        Self::begin_since(core, need_images, deadline, None)
+    }
+
+    pub(crate) fn begin_since(
+        core: Option<Box<dyn LiveCore>>,
+        need_images: ImageNeed,
+        deadline: Duration,
+        known_generation: Option<u64>,
+    ) -> Self {
         if need_images == ImageNeed::Skip {
             return Self::ready(None, deadline);
         }
@@ -1231,6 +1240,9 @@ impl LiveImagesFlight {
             core.mark_images_dirty();
         }
         if let Some((generation, shared)) = core.images_cache_lookup() {
+            if known_generation == Some(generation) {
+                return Self::ready(None, deadline);
+            }
             return Self {
                 core: Some(core),
                 epoch: None,

@@ -108,10 +108,6 @@ pub fn run() -> i32 {
         .unwrap();
 
     let gpu_factory = create_factory();
-    // Capability query on the factory object, not a feature flag: the
-    // active pipeline decides whether a live vsync toggle must rebuild.
-    #[cfg(not(feature = "desktop"))]
-    let supports_vsync = gpu_factory.supports_vsync().then_some(true);
     let factories: Vec<Arc<dyn CoreFactory>> = vec![
         #[cfg(feature = "nes")]
         Arc::new(nerust_nes_factory::NesFactory),
@@ -136,34 +132,13 @@ pub fn run() -> i32 {
         audio_registry,
     };
 
-    #[cfg(feature = "desktop")]
-    return run_desktop(ctx, options.rom_path);
-
-    #[cfg(all(feature = "gtk", feature = "tao"))]
-    compile_error!("Features 'gtk' and 'tao' are mutually exclusive. Enable only one frontend.");
-
-    // File operands only; flags were already consumed by the CLI parse.
-    // Backends apply their platform file-open convention to these.
-    #[cfg(not(feature = "desktop"))]
-    let arguments = EmulatorArguments(
-        options
-            .rom_path
-            .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-    );
-    #[cfg(not(feature = "desktop"))]
-    let Some(boot) = boot_frontend(ctx, supports_vsync, arguments) else {
-        return 1;
-    };
-    #[cfg(not(feature = "desktop"))]
-    return run_frontend(boot);
+    run_desktop(ctx, options.rom_path)
 }
 
-#[cfg(feature = "desktop")]
 fn run_desktop(context: FrontendContext, rom: Option<PathBuf>) -> i32 {
     use nerust_gui_runtime::settings::{
-        HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsPaths,
     };
     let capabilities = HostBackendCapabilities {
         window: HostWindowCapabilities {
@@ -171,7 +146,9 @@ fn run_desktop(context: FrontendContext, rom: Option<PathBuf>) -> i32 {
             supports_fullscreen_default: true,
             supports_scaling: true,
         },
-        presentation: None,
+        presentation: Some(BackendPresentationCapabilities {
+            supports_vsync: context.gpu_factory.supports_vsync(),
+        }),
     };
     let settings = std::env::var_os("NERUST_SETTINGS_ROOT")
         .map(|root| SettingsPaths::from_root(PathBuf::from(root)));
@@ -190,113 +167,6 @@ fn run_desktop(context: FrontendContext, rom: Option<PathBuf>) -> i32 {
             101
         }
     }
-}
-
-/// Composition-root launch arguments: file operands with flags already
-/// consumed by the CLI parse. Its own type rather than a bare `Vec<String>`,
-/// so the backend `run` bound ([`LaunchArguments`](wakui::app::boundary::LaunchArguments))
-/// checks the bundle at compile time: the wrong arguments never mix in.
-#[cfg(not(feature = "desktop"))]
-struct EmulatorArguments(Vec<String>);
-
-#[cfg(not(feature = "desktop"))]
-impl wakui::app::boundary::LaunchArguments for EmulatorArguments {
-    fn files(&self) -> Vec<String> {
-        self.0.clone()
-    }
-}
-
-/// Composition-root boot: the only place that turns a [`FrontendContext`]
-/// into a frontend [`Application`](wakui::app::boundary::Application). Native
-/// frontends never name the context, session, or settings-path types.
-/// The composition root's own arguments type travels inside the bundle (see
-/// [`Application::builder`](wakui::app::boundary::ApplicationBuilder)); neither
-/// the framework nor the backends interpret it beyond file operands.
-#[cfg(not(feature = "desktop"))]
-fn boot_frontend(
-    ctx: FrontendContext,
-    supports_vsync: Option<bool>,
-    arguments: EmulatorArguments,
-) -> Option<
-    wakui::app::boundary::Application<nerust_frontend_viewdefs::focus::AuxKind, EmulatorArguments>,
-> {
-    use nerust_frontend_viewdefs::bootstrap::{backend_capabilities, boot};
-    match boot(
-        ctx,
-        backend_capabilities(true, supports_vsync),
-        None,
-        arguments,
-    ) {
-        Ok(boot) => Some(boot),
-        Err(detail) => {
-            log::error!("failed to initialise frontend: {detail}");
-            // The bundle died before any window existed: match the old tao
-            // init-failure dialog copy (always English, stderr stays home).
-            show_error_dialog("nerust", &detail);
-            None
-        }
-    }
-}
-
-/// Frontend dispatch: the backend is selected by the `wakui` facade
-/// feature (`wakui/default` picks the platform default, `wakui/gtk` and
-/// `wakui/tao` select explicitly), so only this single `run` call exists.
-/// Crash containment and boot failure dialogs are shared (see `run_guarded`).
-/// Opaque launch arguments travel inside the bundle.
-#[cfg(not(feature = "desktop"))]
-fn run_frontend(
-    boot: wakui::app::boundary::Application<
-        nerust_frontend_viewdefs::focus::AuxKind,
-        EmulatorArguments,
-    >,
-) -> i32 {
-    run_guarded(boot, wakui::run)
-}
-
-/// Crash containment lives here, in the composition root: a crash must
-/// never look like a clean exit. Frontend `run` functions stay unguarded.
-#[cfg(not(feature = "desktop"))]
-fn run_guarded(
-    boot: wakui::app::boundary::Application<
-        nerust_frontend_viewdefs::focus::AuxKind,
-        EmulatorArguments,
-    >,
-    runner: fn(
-        wakui::app::boundary::Application<
-            nerust_frontend_viewdefs::focus::AuxKind,
-            EmulatorArguments,
-        >,
-    ) -> i32,
-) -> i32 {
-    // A crash must never look like a clean exit; the dialog runs first.
-    // Exhaustive: a future outcome must not silently pass through.
-    // Rust panic convention: a crash never exits 0.
-    match nerust_crash_guard::run_guarded_with(
-        || runner(boot),
-        nerust_crash_guard::default_sink,
-        nerust_crash_guard::capture_backtrace,
-    ) {
-        nerust_crash_guard::GuardOutcome::Completed(code) => code,
-        nerust_crash_guard::GuardOutcome::Crashed(report) => {
-            // Always English: crash copy must not depend on the settings
-            // stack that may have just died. Stderr stays the log home.
-            let dialog = crash_dialog_text(report.message());
-            eprintln!("{dialog}");
-            show_error_dialog(crash_title(), &dialog);
-            101
-        }
-    }
-}
-
-/// Native error dialog on boot-failure/crash paths. Blocking; safe with no
-/// event loop running. stderr already carries the message, so a missing
-/// display degrades to the log. The `show_message_dialog` entry point comes
-/// from the `wakui` facade's selected backend; vocabulary lives in
-/// `wakui::dialog`.
-#[cfg(not(feature = "desktop"))]
-fn show_error_dialog(title: &str, detail: &str) {
-    let dialog = wakui::chrome::dialog::MessageDialog::error(title, detail);
-    wakui::show_message_dialog(&dialog);
 }
 
 /// Crash dialog copy: inline literals, never the catalog.
@@ -542,15 +412,6 @@ mod tests {
             registry.detect(&gba_media).unwrap().unwrap().system_id(),
             gba_id
         );
-    }
-
-    #[test]
-    #[cfg(not(feature = "desktop"))]
-    fn emulator_arguments_expose_only_file_operands() {
-        use wakui::app::boundary::LaunchArguments as _;
-        let arguments = super::EmulatorArguments(vec!["game.nes".to_string()]);
-        assert_eq!(arguments.files(), ["game.nes"]);
-        assert!(super::EmulatorArguments(Vec::new()).files().is_empty());
     }
 
     #[test]

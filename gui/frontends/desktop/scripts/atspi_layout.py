@@ -52,6 +52,9 @@ def visible_in_frame(accessible, frame):
         return False
     parent = accessible.parent
     while parent is not None and parent != frame:
+        rectangle = bounds(parent)
+        if rectangle is not None and (rectangle["width"] <= 0 or rectangle["height"] <= 0):
+            return False
         if parent.getRoleName() in {"scroll pane", "viewport"} and not in_frame(accessible, parent):
             return False
         parent = parent.parent
