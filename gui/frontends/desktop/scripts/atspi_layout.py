@@ -36,7 +36,7 @@ def window(process_id, title):
 
 def bounds(accessible):
     try:
-        rectangle = accessible.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+        rectangle = accessible.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
         return {"x": rectangle.x, "y": rectangle.y, "width": rectangle.width, "height": rectangle.height}
     except (NotImplementedError, RuntimeError):
         return None
@@ -60,6 +60,8 @@ def visible_in_frame(accessible, frame):
 
 def tree(accessible, parent_bounds=None):
     node = {"name": accessible.name, "role": accessible.getRoleName(), "showing": accessible.getState().contains(pyatspi.STATE_SHOWING), "bounds": bounds(accessible)}
+    if parent_bounds is None:
+        node["coordinate_system"] = "window-relative logical pixels"
     node["states"] = [str(state) for state in accessible.getState().getStates()]
     rectangle = node["bounds"]
     if rectangle is not None and parent_bounds is not None:
