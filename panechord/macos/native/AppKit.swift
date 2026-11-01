@@ -539,6 +539,16 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         emit("", "0", kind: 4)
     }
 
+    func windowDidResize(_ notification: Notification) {
+        guard !closed else { return }
+        emitSurfaceSize()
+    }
+
+    func emitSurfaceSize() {
+        let size = window.contentView?.bounds.size ?? .zero
+        emit("", "\(size.width),\(size.height)", kind: 8)
+    }
+
     func emit(_ id: String, _ value: String = "", kind: Int32 = 0) {
         guard let callback = callback else { return }
         Array(id.utf8).withUnsafeBufferPointer { key in
@@ -747,6 +757,29 @@ public func close(_ pointer: UnsafeMutableRawPointer) {
 @_cdecl("w3_focused") @MainActor
 public func focused(_ pointer: UnsafeMutableRawPointer) -> Int32 {
     NSApp.isActive && host(pointer).window.isKeyWindow ? 1 : 0
+}
+
+@_cdecl("w3_surface_view") @MainActor
+public func surfaceView(_ pointer: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer? {
+    guard let view = host(pointer).window.contentView else { return nil }
+    return Unmanaged.passUnretained(view).toOpaque()
+}
+
+@_cdecl("w3_surface_size") @MainActor
+public func surfaceSize(_ pointer: UnsafeMutableRawPointer, _ width: UnsafeMutablePointer<Double>, _ height: UnsafeMutablePointer<Double>) {
+    let size = host(pointer).window.contentView?.bounds.size ?? .zero
+    width.pointee = size.width
+    height.pointee = size.height
+}
+
+@_cdecl("w3_surface_scale") @MainActor
+public func surfaceScale(_ pointer: UnsafeMutableRawPointer) -> Double {
+    host(pointer).window.backingScaleFactor
+}
+
+@_cdecl("w3_toggle_fullscreen") @MainActor
+public func toggleFullscreen(_ pointer: UnsafeMutableRawPointer) {
+    host(pointer).window.toggleFullScreen(nil)
 }
 
 @_cdecl("w3_render") @MainActor
