@@ -76,7 +76,7 @@ fn begin_request(current: &AndroidSettings) -> Option<(SettingsRequestId, String
         let defs = AndroidSettings::cached_setting_defs_locked(&mut state.defs_cache, current);
         Some((
             request_id,
-            AndroidSettings::dialog_payload_from_defs(request_id.0, &defs),
+            AndroidSettings::dialog_payload_from_defs(request_id.0, &defs, current.language),
         ))
     })
 }
