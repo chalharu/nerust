@@ -370,7 +370,13 @@ mod tests {
         assert!(renderer.last_render_error.is_none());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     #[test]
     fn render_image_returns_rgba_without_presenting() {
         use nerust_render_traits::{
@@ -403,7 +409,13 @@ mod tests {
         assert_eq!(&image.pixels[..4], &[255, 0, 0, 255]);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     #[test]
     fn device_attach_rebuild_preserves_profile_strips_vsync_and_osd() {
         use nerust_render_traits::{

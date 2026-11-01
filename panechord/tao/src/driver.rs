@@ -1,7 +1,7 @@
 //! Native loop adapted from prototype_1; rendering and futures remain UI-local.
 use super::{Message, TaoHost, View, input, panic_error, scheduler::Scheduler};
 use iced::{Size, mouse};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
 use iced_tiny_skia::{
     graphics::Compositor as _,
     window::{Compositor, Surface, compositor},
@@ -23,10 +23,10 @@ use tao::{
     platform::run_return::EventLoopExtRunReturn,
     window::{Window, WindowBuilder},
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 use {gtk::prelude::*, tao::platform::unix::WindowExtUnix};
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
 mod input_tests;
 
 #[derive(Debug)]
@@ -38,16 +38,16 @@ enum Native {
 }
 #[derive(Clone)]
 struct Proxy(EventLoopProxy<Native>);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 static NUDGE_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 impl Proxy {
     fn send(&self, event: Native) {
         let sent = self.0.send_event(event).is_ok();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         let _ = sent;
         // Tao Linux's crossbeam proxy does not wake blocking gtk_main_iteration_do.
         // This is a one-shot wake, not a periodic poll or a cross-thread UI call.
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         if sent && !NUDGE_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
             gtk::glib::idle_add_once(|| {
                 NUDGE_PENDING.store(false, std::sync::atomic::Ordering::Release);
@@ -257,15 +257,15 @@ struct Desktop {
     view: View,
     painter: Rc<RefCell<Painter>>,
     active: std::cell::Cell<bool>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
     area: gtk::DrawingArea,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
     signals: Vec<(gtk::Widget, gtk::glib::SignalHandlerId)>,
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
     compositor: Compositor,
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
     surface: Surface,
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
     size: (u32, u32),
 }
 impl Desktop {
@@ -283,7 +283,7 @@ impl Desktop {
                 .map_err(|e| e.to_string())?,
         );
         let painter = Rc::new(RefCell::new(Painter::new(window.clone(), view)));
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
             let vbox = window
                 .default_vbox()
@@ -422,7 +422,7 @@ impl Desktop {
                 signals,
             })
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         {
             let _ = proxy;
             #[cfg(target_os = "windows")]
@@ -447,14 +447,14 @@ impl Desktop {
         }
     }
     fn bounds(&self) -> Size {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
             Size::new(
                 self.area.allocated_width().max(0) as f32,
                 self.area.allocated_height().max(0) as f32,
             )
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         {
             let s = self
                 .window
@@ -469,7 +469,7 @@ impl Desktop {
         self.view.0.menus().init_for_nsapp();
     }
     fn offset(&self) -> iced::Point {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
             let (x, y) = self
                 .area
@@ -477,7 +477,7 @@ impl Desktop {
                 .unwrap_or_default();
             iced::Point::new(x as f32, y as f32)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         {
             iced::Point::ORIGIN
         }
@@ -493,13 +493,13 @@ impl Desktop {
                 cursor.y + offset.y,
             ));
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         self.area.queue_draw();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         self.window.request_redraw();
     }
     fn event(&self, event: &WindowEvent<'_>) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         if self.painter.borrow().cursor.position().is_some()
             && matches!(
                 event,
@@ -530,7 +530,7 @@ impl Desktop {
         dispatch(&self.view, messages);
         self.refresh();
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
     fn draw(&mut self) -> Result<(), String> {
         let s = self.window.inner_size();
         if s.width == 0 || s.height == 0 {
@@ -565,7 +565,7 @@ impl Desktop {
 }
 impl Drop for Desktop {
     fn drop(&mut self) {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
             for (widget, signal) in self.signals.drain(..) {
                 widget.disconnect(signal);
@@ -731,7 +731,7 @@ pub(super) fn run(
                         }
                     }
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
                 Event::RedrawRequested(id) => {
                     if let Some(desktop) = desktops
                         .values_mut()

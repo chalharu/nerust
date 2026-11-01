@@ -831,13 +831,13 @@ fn native_menu_declaration_order_survives_rebuild() {
     view.close();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 #[path = "x11_test.rs"]
 mod x11;
 
 /// Actual X server key delivery through GTK's own IMContextSimple. No emitted
 /// commit signal, direct Editable mutation, ibus/fcitx or Japanese preedit IME.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 #[test]
 #[ignore = "isolated Xvfb, GTK_IM_MODULE=simple; optional libXtst (PANECHORD_REQUIRE_XTEST=1 makes absence fail)"]
 fn native_x11_japanese_compose_focus_clipboard_and_rejection() {
