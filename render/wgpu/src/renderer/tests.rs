@@ -238,14 +238,12 @@ fn present_modes_honor_vsync_and_supported_fallbacks() {
 #[test]
 fn headless_device_compiles_shaders_and_roundtrips_texture() {
     let instance = crate::surface::default_instance();
-    let adapter = match pollster::block_on(instance.request_adapter(
-        &wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        },
-    )) {
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    })) {
         Ok(adapter) => adapter,
         Err(err) => {
             assert!(
@@ -256,24 +254,23 @@ fn headless_device_compiles_shaders_and_roundtrips_texture() {
             return;
         }
     };
-    let (device, queue) = match pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
+    let (device, queue) =
+        match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("nerust_headless_test_device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             ..Default::default()
-        },
-    )) {
-        Ok(pair) => pair,
-        Err(err) => {
-            assert!(
-                std::env::var_os("NERUST_REQUIRE_GPU_TESTS").is_none(),
-                "GPU tests require a device: {err:?}"
-            );
-            eprintln!("SKIP headless wgpu: no device ({err:?})");
-            return;
-        }
-    };
+        })) {
+            Ok(pair) => pair,
+            Err(err) => {
+                assert!(
+                    std::env::var_os("NERUST_REQUIRE_GPU_TESTS").is_none(),
+                    "GPU tests require a device: {err:?}"
+                );
+                eprintln!("SKIP headless wgpu: no device ({err:?})");
+                return;
+            }
+        };
     // The production WGSL bundle must compile on this backend (Metal on macOS).
     let _shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("nerust_headless_test_shader"),
