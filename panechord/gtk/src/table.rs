@@ -345,7 +345,7 @@ impl View {
                             && button.is_sensitive()
                             && writer.is_writable()
                         {
-                            let _ = writer.try_set(Some(selected.clone()));
+                            panechord_runtime::ignore_write(writer.try_set(Some(selected.clone())));
                         }
                         let active = *state.selected.borrow() == Some(selected.clone());
                         set_selected(button, active);

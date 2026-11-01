@@ -131,7 +131,6 @@ impl Pane {
         if self.media_revision.replace(Some(media_revision)) != Some(media_revision) {
             self.flight.borrow_mut().take();
             self.live.borrow_mut().take();
-            self.generation.set(None);
             self.refresh(DisplayCache::default());
             self.generation.set(None);
         }

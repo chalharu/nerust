@@ -389,6 +389,78 @@ pub(crate) struct Pane {
     action: Rc<RefCell<Option<Action>>>,
     activation: RefCell<Option<panechord::Subscription>>,
 }
+/// Assistance command names. yaml `command:` values and test drivers route
+/// through strings; parsed once here so both the enablement gate and the
+/// batch builder match on the enum. A new command fails to compile until
+/// both are updated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssistAction {
+    Poll,
+    Refresh,
+    Pause,
+    StepFrame,
+    StepInstruction,
+    Ppu,
+    FollowPc,
+    Back,
+    DisassemblyGo,
+    DisassemblyTarget,
+    SpacePrevious,
+    SpaceNext,
+    PagePrevious,
+    PageNext,
+    MemoryGo,
+    Watch,
+    EditWatch,
+    WatchClear,
+    Freeze,
+    EditFreeze,
+    FreezeClear,
+    RegisterSet,
+    Write,
+    Cancel,
+    Confirm,
+    BookmarkAdd,
+    BookmarkGo,
+    BookmarkRemove,
+}
+
+impl AssistAction {
+    fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "poll" => Self::Poll,
+            "refresh" => Self::Refresh,
+            "pause" => Self::Pause,
+            "step_frame" => Self::StepFrame,
+            "step_instruction" => Self::StepInstruction,
+            "ppu" => Self::Ppu,
+            "follow_pc" => Self::FollowPc,
+            "back" => Self::Back,
+            "disassembly_go" => Self::DisassemblyGo,
+            "disassembly_target" => Self::DisassemblyTarget,
+            "space_previous" => Self::SpacePrevious,
+            "space_next" => Self::SpaceNext,
+            "page_previous" => Self::PagePrevious,
+            "page_next" => Self::PageNext,
+            "memory_go" => Self::MemoryGo,
+            "watch" => Self::Watch,
+            "edit_watch" => Self::EditWatch,
+            "watch_clear" => Self::WatchClear,
+            "freeze" => Self::Freeze,
+            "edit_freeze" => Self::EditFreeze,
+            "freeze_clear" => Self::FreezeClear,
+            "register_set" => Self::RegisterSet,
+            "write" => Self::Write,
+            "cancel" => Self::Cancel,
+            "confirm" => Self::Confirm,
+            "bookmark_add" => Self::BookmarkAdd,
+            "bookmark_go" => Self::BookmarkGo,
+            "bookmark_remove" => Self::BookmarkRemove,
+            _ => return None,
+        })
+    }
+}
+
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
         let projection = project(&DisplayCache::default());
@@ -558,6 +630,9 @@ impl Pane {
     }
 
     fn execute(&self, action: &str) {
+        let Some(action) = AssistAction::parse(action) else {
+            return;
+        };
         if self.model.is_closed()
             || !self.model.snapshot().enabled
             || self.flight.borrow().is_some()
@@ -580,7 +655,7 @@ impl Pane {
 
     fn begin_action(
         &self,
-        action: &str,
+        action: AssistAction,
         model: &Model,
     ) -> Result<Option<nerust_gui_shell::debug::DrainFlight>, String> {
         use nerust_gui_shell::debug::DebugAction;
@@ -616,33 +691,33 @@ impl Pane {
             .map_or(0, |line| line.addr);
         let mut actions = vec![DebugAction::Refresh];
         match action {
-            "poll" => actions.clear(),
-            "refresh" => {}
-            "pause" => {
+            AssistAction::Poll => actions.clear(),
+            AssistAction::Refresh => {}
+            AssistAction::Pause => {
                 (operations.dispatch)(crate::view::Intent::Pause(!operations.display.paused));
             }
-            "step_frame" | "step_instruction" => {
+            AssistAction::StepFrame | AssistAction::StepInstruction => {
                 (operations.dispatch)(crate::view::Intent::Pause(true));
-                actions = vec![if action == "step_frame" {
+                actions = vec![if action == AssistAction::StepFrame {
                     DebugAction::StepFrame
                 } else {
                     DebugAction::StepInstr
                 }];
             }
-            "ppu" => {
+            AssistAction::Ppu => {
                 (operations.dispatch)(crate::view::Intent::Ppu);
                 return Ok(None);
             }
-            "follow_pc" => operations.nav.follow(),
-            "back" => {
+            AssistAction::FollowPc => operations.nav.follow(),
+            AssistAction::Back => {
                 operations.nav.go_back();
             }
-            "disassembly_go" => {
+            AssistAction::DisassemblyGo => {
                 let addr = parse_hex_addr(&model.disasm_addr)
                     .ok_or_else(|| "Invalid hexadecimal address".to_owned())?;
                 operations.nav.navigate(current, addr);
             }
-            "disassembly_target" => {
+            AssistAction::DisassemblyTarget => {
                 let selected = model
                     .disassembly_selection
                     .as_ref()
@@ -660,11 +735,15 @@ impl Pane {
                 };
                 operations.nav.navigate(current, addr);
             }
-            "space_previous" | "space_next" => {
+            AssistAction::SpacePrevious | AssistAction::SpaceNext => {
                 if let Some(index) =
                     operations
                         .nav
-                        .cycle_space(if action == "space_previous" { -1 } else { 1 })
+                        .cycle_space(if action == AssistAction::SpacePrevious {
+                            -1
+                        } else {
+                            1
+                        })
                 {
                     let start = *operations.spaces[index].range.start();
                     operations.nav.set_space(index, start);
@@ -674,31 +753,34 @@ impl Pane {
                     actions = vec![DebugAction::MemNav];
                 }
             }
-            "page_previous" | "page_next" => {
+            AssistAction::PagePrevious | AssistAction::PageNext => {
                 let delta = (nerust_core_traits::debugger::DEBUG_DUMP_PAGE_ROWS * 16) as i32;
-                operations.nav.page_mem(if action == "page_previous" {
-                    -delta
-                } else {
-                    delta
-                });
+                operations
+                    .nav
+                    .page_mem(if action == AssistAction::PagePrevious {
+                        -delta
+                    } else {
+                        delta
+                    });
                 actions = vec![DebugAction::MemNav];
             }
-            "memory_go" => {
+            AssistAction::MemoryGo => {
                 let addr = parse_hex_addr(&model.memory_addr)
                     .ok_or_else(|| "Invalid hexadecimal address".to_owned())?;
                 operations.nav.go_mem(addr);
                 actions = vec![DebugAction::MemNav];
             }
-            "watch" | "edit_watch" => operations.watch = Some(memory()?.0),
-            "watch_clear" => operations.watch = None,
-            "freeze" | "edit_freeze" => {
+            AssistAction::Watch | AssistAction::EditWatch => operations.watch = Some(memory()?.0),
+            AssistAction::WatchClear => operations.watch = None,
+            AssistAction::Freeze | AssistAction::EditFreeze => {
                 let (addr, old) = memory()?;
-                let value = if action == "edit_freeze" && model.freeze_value.trim().is_empty() {
-                    old.ok_or_else(|| "Selected byte is unavailable".to_owned())?
-                } else {
-                    u8::try_from(hex(&model.freeze_value)?)
-                        .map_err(|_| "Value must fit in one byte".to_owned())?
-                };
+                let value =
+                    if action == AssistAction::EditFreeze && model.freeze_value.trim().is_empty() {
+                        old.ok_or_else(|| "Selected byte is unavailable".to_owned())?
+                    } else {
+                        u8::try_from(hex(&model.freeze_value)?)
+                            .map_err(|_| "Value must fit in one byte".to_owned())?
+                    };
                 if !operations
                     .spaces
                     .get(operations.nav.space_idx())
@@ -710,14 +792,14 @@ impl Pane {
                 }
                 operations.freeze = Some((addr, value));
             }
-            "freeze_clear" => operations.freeze = None,
-            "register_set" => {
+            AssistAction::FreezeClear => operations.freeze = None,
+            AssistAction::RegisterSet => {
                 if register.is_none() {
                     return Err(text(model.language, UiText::PickRegister).to_owned());
                 }
                 actions = vec![DebugAction::RegisterWrite(hex(&model.register_value)?)];
             }
-            "write" => {
+            AssistAction::Write => {
                 let (addr, old) = memory()?;
                 if old.is_none() {
                     return Err("Selected byte is unavailable".into());
@@ -737,9 +819,14 @@ impl Pane {
                 }
                 actions = vec![DebugAction::SelectRow(addr), DebugAction::EditStage(value)];
             }
-            "confirm" if model.pending => actions = vec![DebugAction::WriteConfirm],
-            "cancel" => actions = vec![DebugAction::EditCancel],
-            "bookmark_add" => {
+            AssistAction::Confirm => {
+                if !model.pending {
+                    return Ok(None);
+                }
+                actions = vec![DebugAction::WriteConfirm];
+            }
+            AssistAction::Cancel => actions = vec![DebugAction::EditCancel],
+            AssistAction::BookmarkAdd => {
                 let addr = model
                     .disassembly_selection
                     .as_ref()
@@ -774,7 +861,7 @@ impl Pane {
                 let _ = self.model.update(move |model| model.bookmarks = table);
                 return Ok(None);
             }
-            "bookmark_go" | "bookmark_remove" => {
+            AssistAction::BookmarkGo | AssistAction::BookmarkRemove => {
                 let selected = model
                     .bookmark_selection
                     .as_ref()
@@ -784,7 +871,7 @@ impl Pane {
                     .get(&selected.row_key)
                     .ok_or_else(|| "Bookmark is no longer available".to_owned())?;
                 let (space, addr) = (*space, *addr);
-                if action == "bookmark_remove" {
+                if action == AssistAction::BookmarkRemove {
                     operations.bookmarks.remove(&selected.row_key);
                     let table = bookmark_table(&operations.bookmarks);
                     let _ = self.model.update(move |model| {
@@ -805,7 +892,6 @@ impl Pane {
                 let _ = self.model.update(|model| model.bookmark_selection = None);
                 actions = vec![DebugAction::MemNav];
             }
-            _ => return Ok(None),
         }
         {
             let input = nerust_gui_shell::debug::DebugDrainInput {
@@ -1096,18 +1182,32 @@ impl Presentation {
         self.model.command(
             move |model| {
                 model.enabled
-                    && match name.as_str() {
-                        "confirm" | "cancel" => model.pending,
-                        "register_set" => model.register_marked.is_some(),
-                        "write" | "watch" | "edit_watch" | "freeze" | "edit_freeze" => {
-                            model.memory_selection.is_some()
-                        }
-                        "refresh" | "pause" | "step_frame" | "step_instruction" | "ppu"
-                        | "follow_pc" | "back" | "disassembly_go" | "space_previous"
-                        | "space_next" | "page_previous" | "page_next" | "memory_go"
-                        | "watch_clear" | "freeze_clear" | "bookmark_add" => true,
+                    && AssistAction::parse(&name).is_some_and(|action| match action {
+                        AssistAction::Confirm | AssistAction::Cancel => model.pending,
+                        AssistAction::RegisterSet => model.register_marked.is_some(),
+                        AssistAction::Write
+                        | AssistAction::Watch
+                        | AssistAction::EditWatch
+                        | AssistAction::Freeze
+                        | AssistAction::EditFreeze => model.memory_selection.is_some(),
+                        AssistAction::Refresh
+                        | AssistAction::Pause
+                        | AssistAction::StepFrame
+                        | AssistAction::StepInstruction
+                        | AssistAction::Ppu
+                        | AssistAction::FollowPc
+                        | AssistAction::Back
+                        | AssistAction::DisassemblyGo
+                        | AssistAction::SpacePrevious
+                        | AssistAction::SpaceNext
+                        | AssistAction::PagePrevious
+                        | AssistAction::PageNext
+                        | AssistAction::MemoryGo
+                        | AssistAction::WatchClear
+                        | AssistAction::FreezeClear
+                        | AssistAction::BookmarkAdd => true,
                         _ => false,
-                    }
+                    })
             },
             move |_, name: String| {
                 let dispatch = action.borrow().clone();

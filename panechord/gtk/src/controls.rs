@@ -214,7 +214,12 @@ impl View {
         self.typed_menu(
             id,
             title,
-            checked.map(|tree| panechord_runtime::flatten_menu(&tree).unwrap()),
+            checked.map(|tree| {
+                // `checked_menu` above only yields previously validated trees,
+                // so this cannot fail; degrade to vacant rather than panic if
+                // validation ever diverges.
+                panechord_runtime::flatten_menu(&tree).unwrap_or_default()
+            }),
             dispatch,
         );
         let weak = self.downgrade();
@@ -417,7 +422,7 @@ impl View {
         let writer = checked.clone();
         let signal = check.connect_toggled(move |check| {
             if !guard.get() {
-                let _ = writer.try_set(check.is_active());
+                panechord_runtime::ignore_write(writer.try_set(check.is_active()));
                 guard.set(true);
                 check.set_active(writer.get());
                 guard.set(false);
@@ -473,7 +478,7 @@ impl View {
         let choice = value.to_owned();
         let signal = radio.connect_toggled(move |radio| {
             if !applying.get() && radio.is_active() {
-                let _ = writer.try_set(choice.clone());
+                panechord_runtime::ignore_write(writer.try_set(choice.clone()));
                 applying.set(true);
                 radio.set_active(writer.get() == choice);
                 applying.set(false);
@@ -513,7 +518,7 @@ impl View {
         let signal = slider.connect_value_changed(move |slider| {
             if !applying.get() {
                 if let Ok(value) = range.normalize(slider.value()) {
-                    let _ = writer.try_set(value);
+                    panechord_runtime::ignore_write(writer.try_set(value));
                 }
                 applying.set(true);
                 slider.set_value(current.get());
@@ -625,7 +630,7 @@ impl View {
                 if let Some(choice) = choices.get().get(combo.selected() as usize)
                     && writer.get() != choice.id
                 {
-                    let _ = writer.try_set(choice.id.clone());
+                    panechord_runtime::ignore_write(writer.try_set(choice.id.clone()));
                 }
                 refresh(combo);
             }
@@ -671,10 +676,12 @@ impl View {
                 && (y as f32).is_finite()
                 && weak.upgrade().is_some_and(|view| !view.0.closed.get())
             {
-                let _ = writer.try_set(Some(panechord_runtime::PointerPosition {
-                    x: x as f32,
-                    y: y as f32,
-                }));
+                panechord_runtime::ignore_write(writer.try_set(Some(
+                    panechord_runtime::PointerPosition {
+                        x: x as f32,
+                        y: y as f32,
+                    },
+                )));
             }
         });
         let weak = self.downgrade();
@@ -1116,7 +1123,7 @@ impl View {
         });
         let writer = open.clone();
         let signal = window.connect_close_request(move |_| {
-            let _ = writer.try_set(false);
+            panechord_runtime::ignore_write(writer.try_set(false));
             glib::Propagation::Stop
         });
         self.signal(id, &window, signal);

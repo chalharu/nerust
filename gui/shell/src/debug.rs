@@ -12,8 +12,7 @@ use nerust_core_traits::debugger::{
     InspectError, InspectRequest, InspectResult, SnapshotResult, SpaceId, StepUnit,
 };
 use nerust_gui_runtime::debug_transaction::WriteTransaction;
-use nerust_gui_runtime::debugger as debug_vm;
-use nerust_gui_runtime::debugger::{self as vm, DisplayCache};
+use nerust_gui_runtime::debugger::{self as debug_outcome, DisplayCache};
 
 use crate::emu_core::{LiveCore, LiveDebugPort};
 
@@ -131,47 +130,47 @@ impl CoreFailure {
     /// carries the once-rendered detail.
     fn refused(
         self,
-        wrap: impl FnOnce(String) -> debug_vm::StatusMessage,
-    ) -> debug_vm::StatusMessage {
+        wrap: impl FnOnce(String) -> debug_outcome::StatusMessage,
+    ) -> debug_outcome::StatusMessage {
         match self {
-            Self::OutcomeUnknown => debug_vm::StatusMessage::OutcomeUnknown,
-            Self::NoCore => debug_vm::StatusMessage::NoCore,
+            Self::OutcomeUnknown => debug_outcome::StatusMessage::OutcomeUnknown,
+            Self::NoCore => debug_outcome::StatusMessage::NoCore,
             Self::TransportGone => {
-                debug_vm::StatusMessage::ThreadFailed("transport unavailable".to_string())
+                debug_outcome::StatusMessage::ThreadFailed("transport unavailable".to_string())
             }
             failure => wrap(failure.detail()),
         }
     }
 
-    pub(crate) fn thread_status(self) -> debug_vm::StatusMessage {
-        self.refused(debug_vm::StatusMessage::ThreadFailed)
+    pub(crate) fn thread_status(self) -> debug_outcome::StatusMessage {
+        self.refused(debug_outcome::StatusMessage::ThreadFailed)
     }
 
-    pub(crate) fn register_status(self) -> debug_vm::StatusMessage {
+    pub(crate) fn register_status(self) -> debug_outcome::StatusMessage {
         self.refused(|detail| {
             if detail.is_empty() {
-                debug_vm::StatusMessage::RegisterRefused("refused".to_string())
+                debug_outcome::StatusMessage::RegisterRefused("refused".to_string())
             } else {
-                debug_vm::StatusMessage::RegisterRefused(detail)
+                debug_outcome::StatusMessage::RegisterRefused(detail)
             }
         })
     }
 
-    pub(crate) fn write_status(self) -> debug_vm::StatusMessage {
-        self.refused(debug_vm::StatusMessage::WriteRefused)
+    pub(crate) fn write_status(self) -> debug_outcome::StatusMessage {
+        self.refused(debug_outcome::StatusMessage::WriteRefused)
     }
 
-    pub(crate) fn pause_status(self, pausing: bool) -> debug_vm::StatusMessage {
+    pub(crate) fn pause_status(self, pausing: bool) -> debug_outcome::StatusMessage {
         // Pause/Resume share the refusal mapping with a site-specific wrap.
         if pausing {
-            self.refused(debug_vm::StatusMessage::PauseFailed)
+            self.refused(debug_outcome::StatusMessage::PauseFailed)
         } else {
-            self.refused(debug_vm::StatusMessage::ResumeFailed)
+            self.refused(debug_outcome::StatusMessage::ResumeFailed)
         }
     }
 
-    pub(crate) fn step_status(self) -> debug_vm::StatusMessage {
-        self.refused(debug_vm::StatusMessage::StepFailed)
+    pub(crate) fn step_status(self) -> debug_outcome::StatusMessage {
+        self.refused(debug_outcome::StatusMessage::StepFailed)
     }
 }
 
@@ -377,7 +376,7 @@ pub struct DrainFlight {
     steps: VecDeque<StepUnit>,
     commits: VecDeque<CommitOp>,
     preps: VecDeque<PrepOp>,
-    status: Option<vm::StatusMessage>,
+    status: Option<debug_outcome::StatusMessage>,
     state_changing: bool,
     reselected: Option<(u32, Option<u8>)>,
     /// Confirmed write in flight (taken at send time for the status).
@@ -499,7 +498,7 @@ impl DrainFlight {
             self.images = Arc::new(Vec::new());
             self.images_gen = 0;
             self.watch_value = None;
-            self.status = Some(vm::StatusMessage::NoCore);
+            self.status = Some(debug_outcome::StatusMessage::NoCore);
             self.reselected = None;
             return DrainPoll::Done(Box::new(self.finish()));
         }
@@ -684,7 +683,7 @@ impl DrainFlight {
         let (space, addr, value) = match staged {
             Some(staged) => staged,
             None => {
-                self.status = Some(vm::StatusMessage::NothingToWrite);
+                self.status = Some(debug_outcome::StatusMessage::NothingToWrite);
                 return;
             }
         };
@@ -738,7 +737,7 @@ impl DrainFlight {
                 self.status = Some(CoreFailure::from(error).thread_status());
             }
             None => {
-                self.status = Some(vm::StatusMessage::NoCore);
+                self.status = Some(debug_outcome::StatusMessage::NoCore);
             }
         }
     }
@@ -927,7 +926,7 @@ impl DrainFlight {
                 if let Some(core) = self.ctx.core.as_ref() {
                     core.mark_images_dirty();
                 }
-                self.status = Some(vm::StatusMessage::Stepped(count));
+                self.status = Some(debug_outcome::StatusMessage::Stepped(count));
             }
             Err(error) => {
                 self.status = Some(CoreFailure::from(error).step_status());
@@ -949,12 +948,12 @@ impl DrainFlight {
         self.status = Some(match (confirm, reply) {
             (true, Ok(())) => {
                 let (_, addr, value) = self.confirm_sent.unwrap_or((SpaceId(0), 0, 0));
-                vm::StatusMessage::WroteMemory { addr, value }
+                debug_outcome::StatusMessage::WroteMemory { addr, value }
             }
             (true, Err(error)) => CoreFailure::from(error).write_status(),
             (false, Ok(())) => {
                 let (name, value) = self.reg_sent.unwrap_or(("?", 0));
-                vm::StatusMessage::RegisterWrote { name, value }
+                debug_outcome::StatusMessage::RegisterWrote { name, value }
             }
             (false, Err(error)) => CoreFailure::from(error).register_status(),
         });
@@ -976,7 +975,7 @@ impl DrainFlight {
     ///   idempotent, while a step re-send may advance twice (at-least-once);
     /// - state-changing traffic still discards staged values, as before.
     fn resolve_mutation_unknown(&mut self) {
-        self.status = Some(vm::StatusMessage::OutcomeUnknown);
+        self.status = Some(debug_outcome::StatusMessage::OutcomeUnknown);
         self.ctx.with_txn(|txn| txn.clear());
         self.steps.clear();
         self.commits.clear();
@@ -1056,9 +1055,9 @@ impl DrainFlight {
         let snap = self.snap.take().unwrap_or_default();
         let paused = self.ctx.paused_mirror();
         let status = self.status.take().unwrap_or(if paused {
-            vm::StatusMessage::Paused
+            debug_outcome::StatusMessage::Paused
         } else {
-            vm::StatusMessage::Running
+            debug_outcome::StatusMessage::Running
         });
         DrainSnapshot {
             regs: snap.regs,
@@ -1103,9 +1102,9 @@ pub struct DrainSnapshot {
     /// Pause truth behind this batch.
     pub paused: bool,
     /// Batch status for the status line.
-    pub status: vm::StatusMessage,
+    pub status: debug_outcome::StatusMessage,
     /// Staged but uncommitted write, if any.
-    pub pending: Option<vm::PendingWrite>,
+    pub pending: Option<debug_outcome::PendingWrite>,
     /// Fresh `(address, old byte)` when the batch selected a row.
     pub reselected: Option<(u32, Option<u8>)>,
 }
@@ -1115,11 +1114,11 @@ impl DrainSnapshot {
     pub fn into_display(self, prev_dump_rows: &[HexRow]) -> DisplayCache {
         DisplayCache {
             regs: self.regs,
-            diff: vm::diff_rows(prev_dump_rows, &self.dump_rows),
+            diff: debug_outcome::diff_rows(prev_dump_rows, &self.dump_rows),
             dump_rows: self.dump_rows,
             disasm_lines: self.disasm,
             panels: self.panels,
-            images: self.images.iter().map(vm::rgba_image).collect(),
+            images: self.images.iter().map(debug_outcome::rgba_image).collect(),
             images_gen: self.images_gen,
             watch_value: self.watch_value,
             paused: self.paused,
@@ -1139,17 +1138,17 @@ impl DrainCtx {
 
     /// Fire-and-forget pause/resume with the same status wording as the session pause/resume.
     /// Sends never block; only the metrics lock is touched.
-    fn pause_mirror(&self, pause: bool) -> vm::StatusMessage {
+    fn pause_mirror(&self, pause: bool) -> debug_outcome::StatusMessage {
         let Some(core) = self.core.as_ref() else {
-            return vm::StatusMessage::NoCore;
+            return debug_outcome::StatusMessage::NoCore;
         };
         if !pause && self.execution_held {
-            return vm::StatusMessage::Paused;
+            return debug_outcome::StatusMessage::Paused;
         }
         let result = if pause { core.pause() } else { core.resume() };
         match result {
-            Ok(()) if pause => vm::StatusMessage::Paused,
-            Ok(()) => vm::StatusMessage::Resume,
+            Ok(()) if pause => debug_outcome::StatusMessage::Paused,
+            Ok(()) => debug_outcome::StatusMessage::Resume,
             Err(error) => CoreFailure::from(error).pause_status(pause),
         }
     }
@@ -1158,7 +1157,7 @@ impl DrainCtx {
     fn step_send(
         &self,
         unit: StepUnit,
-    ) -> Result<Receiver<Result<u64, DebuggerError>>, vm::StatusMessage> {
+    ) -> Result<Receiver<Result<u64, DebuggerError>>, debug_outcome::StatusMessage> {
         match self.core_port() {
             Some(port) => {
                 let reply = port
@@ -1169,7 +1168,7 @@ impl DrainCtx {
                 }
                 Ok(reply)
             }
-            None => Err(vm::StatusMessage::NoCore),
+            None => Err(debug_outcome::StatusMessage::NoCore),
         }
     }
 }
@@ -1260,7 +1259,7 @@ impl LiveImagesFlight {
                         generation,
                         images: shared
                             .iter()
-                            .map(vm::rgba_image)
+                            .map(debug_outcome::rgba_image)
                             .map(crate::emu_core::images::LiveImage::from)
                             .collect(),
                     },
@@ -1340,7 +1339,7 @@ impl LiveImagesFlight {
         let items = stored
             .images
             .iter()
-            .map(vm::rgba_image)
+            .map(debug_outcome::rgba_image)
             .map(LiveImage::from)
             .collect();
         Some(LiveImageBatch {
@@ -1459,7 +1458,7 @@ mod tests {
         let DrainPoll::Done(output) = flight.poll() else {
             panic!("stale flight must settle immediately")
         };
-        assert_eq!(output.display.status, vm::StatusMessage::NoCore);
+        assert_eq!(output.display.status, debug_outcome::StatusMessage::NoCore);
         assert!(output.display.pending.is_none());
         assert_eq!(txn.lock().unwrap().pending(), pending);
     }
@@ -1547,7 +1546,10 @@ mod tests {
         let DrainPoll::Done(output) = flight.poll() else {
             panic!("zero budget settles immediately")
         };
-        assert_eq!(output.display.status, vm::StatusMessage::OutcomeUnknown);
+        assert_eq!(
+            output.display.status,
+            debug_outcome::StatusMessage::OutcomeUnknown
+        );
         assert_eq!(
             sends.load(Ordering::SeqCst),
             1,
@@ -1634,7 +1636,10 @@ mod tests {
         let DrainPoll::Done(output) = flight.poll() else {
             panic!("zero budget settles immediately")
         };
-        assert_eq!(output.display.status, vm::StatusMessage::OutcomeUnknown);
+        assert_eq!(
+            output.display.status,
+            debug_outcome::StatusMessage::OutcomeUnknown
+        );
         assert!(output.display.pending.is_none());
         assert!(txn.lock().unwrap().pending().is_none());
         // Manual re-entry: a fresh select/stage carries the new value; the
@@ -1651,7 +1656,7 @@ mod tests {
         assert_eq!(output.display.pending.map(|pending| pending.value), Some(3));
         assert!(!matches!(
             output.display.status,
-            vm::StatusMessage::OutcomeUnknown
+            debug_outcome::StatusMessage::OutcomeUnknown
         ));
         assert_eq!(
             txn.lock().unwrap().pending().map(|pending| pending.value),
@@ -1743,7 +1748,7 @@ mod tests {
             };
             assert!(!matches!(
                 output.display.status,
-                vm::StatusMessage::OutcomeUnknown
+                debug_outcome::StatusMessage::OutcomeUnknown
             ));
         }
         assert_eq!(
@@ -1793,7 +1798,10 @@ mod port_tests {
 
     #[test]
     fn drain_ctx_exposes_narrow_debug_port() {
-        let empty = DrainCtx::new(None, Arc::new(Mutex::new(vm::WriteTransaction::Empty)));
+        let empty = DrainCtx::new(
+            None,
+            Arc::new(Mutex::new(debug_outcome::WriteTransaction::Empty)),
+        );
         assert!(empty.core_port().is_none());
     }
 }
