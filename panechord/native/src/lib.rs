@@ -12,6 +12,10 @@ pub use panechord_gtk::*;
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
-    target_os = "dragonfly"
+    target_os = "dragonfly",
+    target_os = "macos"
 )))]
 pub use panechord_tao::*;
+
+#[cfg(target_os = "macos")]
+pub use panechord_macos::*;
