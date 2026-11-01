@@ -11,21 +11,29 @@ compile_error!("select exactly one Panechord native backend");
 #[cfg(feature = "gtk")]
 pub use panechord_gtk as gtk;
 #[cfg(feature = "gtk")]
-pub use panechord_gtk::{Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size};
+pub use panechord_gtk::{
+    Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size,
+};
 #[cfg(feature = "macos")]
 pub use panechord_macos as macos;
 #[cfg(feature = "macos")]
-pub use panechord_macos::{Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size};
+pub use panechord_macos::{
+    Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size,
+};
 #[cfg(feature = "tao")]
 pub use panechord_tao as tao;
 #[cfg(feature = "tao")]
-pub use panechord_tao::{Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size};
+pub use panechord_tao::{
+    Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size,
+};
 
 #[cfg(all(
     feature = "native",
     not(any(feature = "gtk", feature = "tao", feature = "macos"))
 ))]
-pub use panechord_native::{Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size};
+pub use panechord_native::{
+    Parent, View, WeakView, pick_file, set_allows_automatic_window_tabbing, set_initial_window_size,
+};
 
 /// Startup builder: backend-resolved run configuration flows into the
 /// application instead of views querying backend capabilities, so every
@@ -61,11 +69,15 @@ pub struct RunnerBuilder {
     automatic_window_tabbing: Option<bool>,
     initial_window_size: Option<(u32, u32)>,
 }
-/// macOS-only builder options, mirroring tao's `WindowBuilderExtMacOS`.
-/// Available only on Apple targets; other platforms have no window tabbing.
-#[cfg(all(
-    target_os = "macos",
-    any(feature = "native", feature = "gtk", feature = "tao", feature = "macos")
+/// Window-tabbing builder option, mirroring tao's `WindowBuilderExtMacOS`.
+/// Portable across targets so frontend crates stay backend-neutral (the
+/// frontend policy gate forbids `target_os` in desktop code); off macOS
+/// every backend treats the stored flag as a no-op.
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
 ))]
 pub trait RunnerBuilderExtMacOS: Sized {
     /// Opt out of (or back into) AppKit automatic window tabbing. Takes
@@ -75,9 +87,11 @@ pub trait RunnerBuilderExtMacOS: Sized {
     fn allows_automatic_window_tabbing(self, enabled: bool) -> Self;
 }
 
-#[cfg(all(
-    target_os = "macos",
-    any(feature = "native", feature = "gtk", feature = "tao", feature = "macos")
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
 ))]
 impl RunnerBuilderExtMacOS for RunnerBuilder {
     fn allows_automatic_window_tabbing(mut self, enabled: bool) -> Self {
