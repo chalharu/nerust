@@ -147,11 +147,10 @@ impl Node {
                 )
             }
             Kind::Scroll(horizontal) => {
-                // Window roots and dialogs offer unbounded height (the
-                // driver wraps the whole window in a scrollable); a Fill
-                // scrollable collapses to zero there. Size to content when
-                // unbounded so the outer scroll carries overflow, and fill
-                // (scrolling inside) when bounded.
+                // Window roots offer bounded height (the driver never wraps
+                // the window in a scrollable); a Fill scrollable would
+                // collapse to zero under unbounded limits, so size to
+                // content there and fill (scrolling inside) when bounded.
                 let horizontal = *horizontal;
                 let kids: Vec<(String, Style, Rc<Node>)> = self
                     .children
