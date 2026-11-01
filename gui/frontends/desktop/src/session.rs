@@ -29,6 +29,9 @@ impl SessionAdapter {
         self.media_revision
     }
 
+    /// Test-only access to the shell handle (pause/resume/reads).
+    /// Production reaches the session through the typed port traits.
+    #[cfg(test)]
     pub(crate) fn handle(&self) -> &nerust_gui_shell::session::SessionHandle {
         &self.session
     }
