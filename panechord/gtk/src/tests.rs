@@ -2349,6 +2349,80 @@ fn native_menu_namespaces() {
 }
 
 #[test]
+fn vacant_hierarchical_menus_stay_out_of_the_menubar() {
+    gtk::init().expect(
+        "vacant_hierarchical_menus_stay_out_of_the_menubar requires a display: run under Xvfb",
+    );
+    let host = GtkHost::attach();
+    let view = View::new(Binding::constant("Vacant menus".into()));
+    // The conditional menu installs first but stays fully vacant (no label,
+    // no items), like the macOS application menu off its platform. Both the
+    // title and the items ride Stores, mirroring the desktop MenuModel.
+    let app_title = Store::new(String::new(), host.executor());
+    let app = Store::new(
+        Vec::<panechord_runtime::MenuNode<String>>::new(),
+        host.executor(),
+    );
+    view.hierarchical_menu(
+        "app",
+        app_title.bind(Clone::clone, None),
+        app.bind(Clone::clone, None),
+        Rc::new(|_| true),
+    );
+    let file = Store::new(
+        vec![panechord_runtime::MenuNode::Item(menu_item(
+            "open",
+            MenuRole::Normal,
+            None,
+        ))],
+        host.executor(),
+    );
+    view.hierarchical_menu(
+        "file",
+        Binding::constant("File".into()),
+        file.bind(Clone::clone, None),
+        Rc::new(|_| true),
+    );
+    assert!(view.0.error.borrow().is_none());
+    assert_eq!(view.0.menus.n_items(), 1, "vacant menu stays out");
+    // Populating (label and items, as one model change) attaches at the
+    // install position, not at the end.
+    let _ = app_title.update(|title| *title = "App".into());
+    let _ = app.update(|items| {
+        *items = vec![panechord_runtime::MenuNode::Item(menu_item(
+            "about",
+            MenuRole::Normal,
+            None,
+        ))];
+    });
+    assert!(view.0.error.borrow().is_none());
+    assert_eq!(view.0.menus.n_items(), 2);
+    let labels = (0..view.0.menus.n_items())
+        .map(|index| {
+            view.0
+                .menus
+                .item_attribute_value(index, "label", None)
+                .unwrap()
+                .get::<String>()
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["App", "File"]);
+    view.activate_menu("app/about").unwrap();
+    // Emptying (label and items) withdraws the menu and retires its routes.
+    let _ = app_title.update(String::clear);
+    let _ = app.update(Vec::clear);
+    assert_eq!(view.0.menus.n_items(), 1);
+    assert!(
+        view.activate_menu("app/about")
+            .unwrap_err()
+            .contains("missing")
+    );
+    view.close();
+    host.close();
+}
+
+#[test]
 fn native_contract() {
     gtk::init().expect("native_contract requires a display: run under Xvfb");
     let host = GtkHost::attach();

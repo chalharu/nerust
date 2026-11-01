@@ -1372,3 +1372,64 @@ fn native_menu_append_failure(hierarchical: bool) {
         window.destroy();
     }
 }
+
+// Builds native menus: AppKit requires the main thread, which libtest
+// cannot provide (see README). The attach/withdraw logic runs on
+// Linux/Windows; macOS coverage comes from the native review harness.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn vacant_menus_attach_only_while_populated_and_keep_install_order() {
+    use panechord_runtime::{MenuItem, MenuNode, MenuRole};
+    fn leaf(id: &str) -> MenuNode<String> {
+        MenuNode::Item(MenuItem {
+            id: id.into(),
+            label: id.into(),
+            argument: String::new(),
+            shortcut: None,
+            role: MenuRole::Normal,
+            enabled: true,
+        })
+    }
+    fn titles(view: &View) -> Vec<String> {
+        view.0
+            .menus()
+            .items()
+            .iter()
+            .map(|item| item.as_submenu().unwrap().text())
+            .collect()
+    }
+    let h = Harness::new();
+    let app = h.store(Vec::<MenuNode<String>>::new());
+    let view = View::new(Binding::constant("vacant".into()));
+    // The conditional menu installs first but stays vacant, like the macOS
+    // application menu off its platform.
+    view.hierarchical_menu(
+        "app",
+        Binding::constant("App".into()),
+        app.bind(Clone::clone, None),
+        Rc::new(|_| true),
+    );
+    view.hierarchical_menu(
+        "file",
+        Binding::constant("File".into()),
+        Binding::constant(vec![leaf("open")]),
+        Rc::new(|_| true),
+    );
+    h.pump();
+    assert_eq!(titles(&view), ["File"]);
+    // Populating attaches at the install position, not at the end.
+    assert!(app.update(|items| *items = vec![leaf("about")]));
+    h.pump();
+    assert_eq!(titles(&view), ["App", "File"]);
+    view.activate_menu("app/about").unwrap();
+    // Emptying withdraws the menu and retires its routes.
+    assert!(app.update(|items| items.clear()));
+    h.pump();
+    assert_eq!(titles(&view), ["File"]);
+    assert!(view.activate_menu("app/about").is_err());
+    // A repopulated menu returns to its install position.
+    assert!(app.update(|items| *items = vec![leaf("about")]));
+    h.pump();
+    assert_eq!(titles(&view), ["App", "File"]);
+    view.close();
+}

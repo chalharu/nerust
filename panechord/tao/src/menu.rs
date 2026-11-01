@@ -198,10 +198,17 @@ impl View {
             .retain(|n| !Rc::ptr_eq(n, &node));
         self.0.menu_nodes.borrow_mut().push(node);
         let submenu = muda::Submenu::new(title.get(), true);
-        if let Err(e) = self.0.menus().append(&submenu) {
-            self.0.report(e.to_string());
-            return;
-        }
+        // Vacant menus never occupy the menubar: the root attach is deferred
+        // until the first non-empty snapshot and withdrawn when emptied, so
+        // platform-conditional menus (e.g. the macOS application menu, empty
+        // elsewhere) stay invisible off their platform. Subscriptions fire
+        // synchronously, so initial attaches preserve install order; a late
+        // attach inserts at its install position via the order ledger.
+        let root = self.0.menus().clone();
+        let order = self.0.menu_order.get();
+        self.0
+            .menu_order
+            .set(order.checked_add(1).expect("menu order exhausted"));
         let menu = submenu.clone();
         let weak = Rc::downgrade(&self.0);
         let token = title.subscribe(Rc::new(move |text| {
@@ -302,6 +309,47 @@ impl View {
                 }
             };
             let old = submenu.items();
+            if native.is_empty() {
+                // Nothing to show: withdraw the vacancy and retire its routes
+                // so stale native IDs can neither render nor dispatch.
+                {
+                    let mut slots = inner.menu_attached.borrow_mut();
+                    if let Some(index) = slots.iter().position(|(id, _)| *id == order) {
+                        match root.remove(&submenu) {
+                            Ok(()) => {
+                                slots.remove(index);
+                            }
+                            Err(error) => {
+                                inner.report(error.to_string());
+                            }
+                        }
+                    }
+                }
+                for key in old_keys.take() {
+                    inner.menu_actions.borrow_mut().remove(&key);
+                }
+                for id in old_native.take() {
+                    inner.menu_ids.borrow_mut().remove(&id);
+                }
+                for (item, _) in old_accelerators.take() {
+                    let _ = item.set_accelerator(None);
+                }
+                inner.refresh();
+                return;
+            }
+            {
+                let mut slots = inner.menu_attached.borrow_mut();
+                if !slots.iter().any(|(id, _)| *id == order) {
+                    let position = slots.partition_point(|(id, _)| *id < order);
+                    match root.insert(&submenu, position) {
+                        Ok(()) => slots.insert(position, (order, submenu.clone())),
+                        Err(error) => {
+                            inner.report(error.to_string());
+                            return;
+                        }
+                    }
+                }
+            }
             // Offscreen Submenu + root insert is not a strong-guarantee swap:
             // muda platform attach can fail while creating descendants, before its
             // public children registry is updated. Restore the existing submenu instead.
