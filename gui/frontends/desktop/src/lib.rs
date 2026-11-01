@@ -14,9 +14,8 @@ use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsPaths};
 use nerust_gui_shell::context::FrontendContext;
 use nerust_gui_shell::session::KeyboardShortcut;
 use nerust_settings_core::model::input::ShortcutAction;
-use panechord::{Store, WindowEvent};
-#[cfg(target_os = "macos")]
 use panechord::RunnerBuilderExtMacOS;
+use panechord::{Store, WindowEvent};
 use std::{
     cell::{Cell, RefCell},
     path::PathBuf,
@@ -77,10 +76,9 @@ pub fn run(
     // Separate windows (main + settings/debugger/history) must never merge
     // into the system tab bar: backends apply this to windows created after
     // the call, so it flows through the runner before any view is built.
-    #[cfg(target_os = "macos")]
-    {
-        runner = runner.allows_automatic_window_tabbing(false);
-    }
+    // Portable by design (a no-op off macOS) so this crate stays free of
+    // `target_os` backend branches per the frontend policy gate.
+    runner = runner.allows_automatic_window_tabbing(false);
     if let Some(size) = remembered_size {
         runner = runner.initial_window_size(size.width, size.height);
     }
