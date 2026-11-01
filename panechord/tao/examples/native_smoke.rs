@@ -88,7 +88,13 @@ impl iced::advanced::Widget<panechord_tao::Message, iced::Theme, iced_tiny_skia:
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 fn find_menu(widget: gtk::Widget, label: &str) -> Option<gtk::MenuItem> {
     use gtk::prelude::*;
     if let Some(item) = widget.downcast_ref::<gtk::MenuItem>() {
@@ -108,7 +114,13 @@ fn find_menu(widget: gtk::Widget, label: &str) -> Option<gtk::MenuItem> {
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 async fn native_menu_probe(invoked: &Cell<bool>) {
     use gtk::prelude::*;
     let window = gtk::Window::list_toplevels()
@@ -296,7 +308,13 @@ fn main() -> Result<(), String> {
                 clipboard_ok.get(),
                 "custom advanced primitive could not roundtrip the system clipboard"
             );
-            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+                target_os = "dragonfly"
+            ))]
             {
                 use gtk::prelude::*;
                 let window = gtk::Window::list_toplevels()
@@ -314,7 +332,13 @@ fn main() -> Result<(), String> {
                 assert!(window.is_visible(), "first request was vetoed");
                 native_menu_probe(&invoked).await;
             }
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+                target_os = "dragonfly"
+            )))]
             out.request_close(); // Native WM delivery on these platforms is unverified.
             out.edit("entry", "worker woke UI").unwrap();
             out.viewport("rows", 80);
@@ -327,7 +351,13 @@ fn main() -> Result<(), String> {
                 out.frame_count(),
                 out.mounted_count("rows")
             );
-            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+                target_os = "dragonfly"
+            ))]
             {
                 use gtk::prelude::*;
                 let quit = gtk::Window::list_toplevels()
@@ -357,7 +387,13 @@ fn main() -> Result<(), String> {
                 // assert from on_close rather than awaiting another scheduler turn.
                 assert!(!model.is_closed());
             }
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+                target_os = "dragonfly"
+            )))]
             {
                 out.activate_menu("file/quit").unwrap();
                 out.activate_menu("file/quit").unwrap();
@@ -366,9 +402,21 @@ fn main() -> Result<(), String> {
         view
     })?;
     assert!(closed.get(), "native Quit must close the owning View");
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     println!("native-smoke: close callback OK (Linux native WM/menu/Primary+Q requests)");
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    )))]
     println!(
         "native-smoke: close callback OK (API close/menu requests; native delivery unverified)"
     );

@@ -243,7 +243,9 @@ struct MacSurface {
 
 impl HasDisplayHandle for MacSurface {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        Ok(unsafe { DisplayHandle::borrow_raw(RawDisplayHandle::AppKit(AppKitDisplayHandle::new())) })
+        Ok(unsafe {
+            DisplayHandle::borrow_raw(RawDisplayHandle::AppKit(AppKitDisplayHandle::new()))
+        })
     }
 }
 
@@ -322,8 +324,7 @@ unsafe extern "C" fn dispatch(
             // bounds and notify the render viewport hook.
             let mut dims = text.split(',');
             if let (Some(width), Some(height)) = (dims.next(), dims.next())
-                && let (Ok(width), Ok(height)) =
-                    (width.parse::<f32>(), height.parse::<f32>())
+                && let (Ok(width), Ok(height)) = (width.parse::<f32>(), height.parse::<f32>())
                 && width > 0.0
                 && height > 0.0
             {
@@ -457,10 +458,8 @@ impl View {
         if self.0.closed.get() {
             return Err("view is closed".into());
         }
-        let ns_view =
-            NonNull::new(unsafe { w3_surface_view(self.0.native.get()) }).ok_or_else(|| {
-                "native surface view unavailable".to_owned()
-            })?;
+        let ns_view = NonNull::new(unsafe { w3_surface_view(self.0.native.get()) })
+            .ok_or_else(|| "native surface view unavailable".to_owned())?;
         callback(Rc::new(MacSurface {
             inner: Rc::clone(&self.0),
             ns_view,

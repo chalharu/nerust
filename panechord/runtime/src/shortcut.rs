@@ -169,7 +169,10 @@ impl Shortcut {
         }
         let key = if self.key.len() == 1 {
             self.key.to_ascii_lowercase()
-        } else if let Some(n) = self.key.strip_prefix('F').and_then(|n| n.parse::<u32>().ok())
+        } else if let Some(n) = self
+            .key
+            .strip_prefix('F')
+            .and_then(|n| n.parse::<u32>().ok())
             && (1..=12).contains(&n)
         {
             // NSF1FunctionKey..NSF12FunctionKey (U+F704..U+F70F).
@@ -261,7 +264,11 @@ mod tests {
         assert_eq!(shortcut.to_appkit(), Some(((1 << 20), ",".into())));
         let shortcut = Shortcut::parse("Primary+F5").unwrap();
         assert_eq!(shortcut.to_appkit().map(|(flags, _)| flags), Some(1 << 20));
-        assert!(shortcut.to_appkit().is_some_and(|(_, key)| key.chars().count() == 1));
+        assert!(
+            shortcut
+                .to_appkit()
+                .is_some_and(|(_, key)| key.chars().count() == 1)
+        );
         assert_eq!(Shortcut::parse("Primary+Home").unwrap().to_appkit(), None);
     }
     #[test]
