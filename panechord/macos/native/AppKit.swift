@@ -400,7 +400,34 @@ final class PointerImage: NSImageView {
     var key = ""
     var pointerEnabled = false
     private var pointerArea: NSTrackingArea?
+    private var aspect: CGFloat = 1.0
+    private var aspectConstraint: NSLayoutConstraint?
+    private var lastEmittedSize = NSZeroSize
     override var isFlipped: Bool { true }
+    // The rendered pixels must never drive layout: the view fills the stack
+    // width and keeps the last frame aspect, like the GTK DrawingArea.
+    override var intrinsicContentSize: NSSize { .zero }
+
+    func updateAspect(_ width: Int, _ height: Int) {
+        guard width > 0, height > 0 else { return }
+        aspect = CGFloat(height) / CGFloat(max(width, 1))
+        aspectConstraint?.isActive = false
+        aspectConstraint = heightAnchor.constraint(equalTo: widthAnchor, multiplier: aspect)
+        aspectConstraint?.isActive = true
+    }
+
+    override func layout() {
+        super.layout()
+        // Report the live window content size (not the view bounds): it is
+        // the viewport truth the renderer must match, like tao's window
+        // inner size. Change-gated so steady state stays silent.
+        guard let content = owner?.window.contentView?.bounds.size,
+              content.width > 0, content.height > 0, content != lastEmittedSize else { return }
+        lastEmittedSize = content
+        if let owner, !owner.closed {
+            owner.emit("", "\(content.width),\(content.height)", kind: 8)
+        }
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -493,18 +520,6 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         let quit = NSMenuItem(title: "Quit Panechord", action: #selector(ApplicationDelegate.quitRequested), keyEquivalent: "q")
         quit.target = ApplicationDelegate.shared
         appMenu.addItem(quit)
-        let edit = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        edit.submenu = editMenu
-        bar.addItem(edit)
-        for (title, action, key) in [("Undo", Selector(("undo:")), "z"),
-                                     ("Redo", Selector(("redo:")), "Z"),
-                                     ("Cut", #selector(NSText.cut(_:)), "x"),
-                                     ("Copy", #selector(NSText.copy(_:)), "c"),
-                                     ("Paste", #selector(NSText.paste(_:)), "v"),
-                                     ("Select All", #selector(NSText.selectAll(_:)), "a")] {
-            editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
-        }
         inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self, !self.closed, event.window === self.window else { return event }
             let pressed: Bool
@@ -782,6 +797,22 @@ public func toggleFullscreen(_ pointer: UnsafeMutableRawPointer) {
     host(pointer).window.toggleFullScreen(nil)
 }
 
+@_cdecl("w3_pick_file") @MainActor
+public func pickFile(_ output: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.resolvesAliases = true
+    guard panel.runModal() == .OK, let url = panel.url else { return -1 }
+    let bytes = Array(url.path.utf8)
+    guard bytes.count <= capacity else { return -2 }
+    if let output, capacity > 0 {
+        output.update(from: bytes, count: bytes.count)
+    }
+    return bytes.count
+}
+
 @_cdecl("w3_render") @MainActor
 public func render(_ pointer: UnsafeMutableRawPointer) {
     let value = host(pointer)
@@ -869,6 +900,17 @@ public func add(_ pointer: UnsafeMutableRawPointer, _ parentBytes: UnsafePointer
         image.key = id
         image.imageScaling = .scaleProportionallyUpOrDown
         image.imageAlignment = .alignCenter
+        image.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        image.setContentHuggingPriority(.defaultLow, for: .vertical)
+        // Seed from the live window content so the first layout already
+        // matches the viewport the renderer will use; per-frame updates
+        // keep tracking after that.
+        let content = value.window.contentView?.bounds.size ?? .zero
+        if content.width > 0, content.height > 0 {
+            image.updateAspect(Int(content.width), Int(content.height))
+        } else {
+            image.updateAspect(4, 3)
+        }
         view = image
     case 15:
         view = Scrolling(horizontal: number != 0)
@@ -1080,6 +1122,7 @@ public func image(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
     let image = NSImage(size: NSSize(width: Int(width), height: Int(height)))
     image.addRepresentation(bitmap)
     imageView.image = image
+    (imageView as? PointerImage)?.updateAspect(Int(width), Int(height))
     return 1
 }
 
@@ -1237,7 +1280,16 @@ public func menu(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
         submenu.autoenablesItems = false
         let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         parent.submenu = submenu
-        value.bar.addItem(parent)
+        if id == "app", let stub = value.bar.items.first {
+            // The view owns the HIG application menu (About/Preferences/Quit
+            // with real labels and shortcuts): it replaces the Host stub so
+            // AppKit shows a single application menu. Hosts without an "app"
+            // menu keep the stub.
+            value.bar.insertItem(parent, at: 0)
+            value.bar.removeItem(stub)
+        } else {
+            value.bar.addItem(parent)
+        }
         value.menus[id] = submenu
     }
     submenu.title = title
@@ -1263,6 +1315,20 @@ public func menu(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
         if role == "Quit" { native.action = #selector(ApplicationDelegate.quitRequested); native.target = ApplicationDelegate.shared }
         submenu.addItem(native)
         value.menuItems[key] = native
+    }
+}
+
+@_cdecl("w3_menu_remove") @MainActor
+public func menuRemove(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UInt8>?, _ idCount: Int) {
+    let value = host(pointer)
+    let id = string(idBytes, idCount)
+    if let menu = value.menus.removeValue(forKey: id),
+       let index = value.bar.items.firstIndex(where: { $0.submenu === menu }) {
+        value.bar.removeItem(at: index)
+    }
+    let prefix = id + "/"
+    for key in value.menuItems.keys.filter({ $0.hasPrefix(prefix) }) {
+        value.menuItems.removeValue(forKey: key)
     }
 }
 

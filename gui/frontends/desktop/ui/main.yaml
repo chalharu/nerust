@@ -30,6 +30,15 @@ root:
           label: {literal: ""}
           argument: {bind: {path: inert_arg, source: External}}
           role: Separator
+        - id: open
+          label: {bind: {path: open_label, source: External}}
+          argument: {bind: {path: open_arg, source: External}}
+          enabled: {bind: {path: available, source: External}}
+          shortcut: Primary+O
+        - id: close
+          label: {bind: {path: close_label, source: External}}
+          argument: {bind: {path: close_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
         - id: quit
           label: {bind: {path: quit_label, source: External}}
           argument: {bind: {path: quit_arg, source: External}}
@@ -40,6 +49,7 @@ root:
       title: {bind: {path: file_title, source: External}}
       command: choose
       nested: true
+      visible: {bind: {path: file_visible, source: External}}
       items:
         - id: open
           label: {bind: {path: open_label, source: External}}

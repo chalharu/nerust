@@ -36,6 +36,7 @@ pub(crate) struct MenuModel {
     // model only supplies localized labels, enablement, dynamic subtrees,
     // and the injected application-menu switch.
     app_visible: bool,
+    file_visible: bool,
     available: bool,
     loaded: bool,
     pause_enabled: bool,
@@ -131,6 +132,7 @@ impl MenuModel {
             slots: slots.clone(),
             active_slot,
             app_visible: application_menu,
+            file_visible: !application_menu,
             available,
             loaded,
             pause_enabled: loaded && !state.user_paused,
@@ -193,6 +195,7 @@ pub(crate) fn screen(view: &View, parent: &Parent, id: &str, source: Binding<Opt
 struct Presentation {
     screen: Binding<Option<ImageFrame>>,
     app_visible: Binding<bool>,
+    file_visible: Binding<bool>,
     available: Binding<bool>,
     loaded: Binding<bool>,
     pause_enabled: Binding<bool>,
@@ -270,6 +273,7 @@ pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actio
     let bindings = Presentation {
         screen: model.bind(|model| model.screen.clone(), None),
         app_visible: menus.bind(|model| model.app_visible, None),
+        file_visible: menus.bind(|model| model.file_visible, None),
         available: menus.bind(|model| model.available, None),
         loaded: menus.bind(|model| model.loaded, None),
         pause_enabled: menus.bind(|model| model.pause_enabled, None),
@@ -342,6 +346,7 @@ mod tests {
         for application_menu in [false, true] {
             let model = MenuModel::new(&app, application_menu);
             assert_eq!(model.app_visible, application_menu);
+            assert_eq!(model.file_visible, !application_menu);
             assert_eq!(model.file_title, text(model.language, UiText::File));
             assert_eq!(
                 model.emulation_title,

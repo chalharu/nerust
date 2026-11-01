@@ -308,6 +308,16 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
     }
 }
 
+/// Native file picker. rfd drives the portal subprocess on Linux (never the
+/// GTK main loop) and the native panel on macOS/Windows, so this is safe to
+/// await from any executor thread.
+pub async fn pick_file() -> Option<std::path::PathBuf> {
+    rfd::AsyncFileDialog::new()
+        .pick_file()
+        .await
+        .map(|file| file.path().to_owned())
+}
+
 impl View {
     pub fn new(title: Binding<String>) -> Self {
         let view = Self(Rc::new_cyclic(|owner| Inner {
