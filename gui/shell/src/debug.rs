@@ -967,6 +967,14 @@ impl DrainFlight {
 
     /// A deadline/disconnection does not undo a queued write or step. Never retry it or
     /// continue into freeze/prepare writes whose prerequisites are now unknown.
+    ///
+    /// Post-unknown re-entry policy (the desktop stops its automatic poll on
+    /// `OutcomeUnknown`; only a manual operation starts a new flight):
+    /// - the shared transaction is cleared, so a later manual write restarts
+    ///   from select/stage instead of reusing a staged value of unknown fate;
+    /// - memory/register/freeze re-sends repeat the same value and are
+    ///   idempotent, while a step re-send may advance twice (at-least-once);
+    /// - state-changing traffic still discards staged values, as before.
     fn resolve_mutation_unknown(&mut self) {
         self.status = Some(vm::StatusMessage::OutcomeUnknown);
         self.ctx.with_txn(|txn| txn.clear());
@@ -1547,6 +1555,201 @@ mod tests {
         );
         assert!(txn.lock().unwrap().pending().is_none());
         assert!(output.reselected.is_none());
+    }
+
+    /// Post-unknown re-entry policy: the shared transaction is cleared, so a
+    /// later manual write restarts from select/stage with the new value
+    /// instead of reusing a staged value of unknown fate.
+    #[test]
+    fn unknown_commit_clears_staged_write_and_manual_reentry_restarts_clean() {
+        use crate::emu_core::{EmuCore, EmuThreadPort};
+        use nerust_core_traits::EmuCommand;
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        use std::sync::{atomic::AtomicBool, mpsc};
+
+        #[derive(Debug)]
+        struct NeverReplies {
+            frame: Arc<Mutex<FrameBuffer>>,
+        }
+        impl EmuThreadPort for NeverReplies {
+            fn send(&self, command: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+                match command {
+                    // Accept the write, then drop the reply: deadline expiry
+                    // reports OutcomeUnknown without undoing the write.
+                    EmuCommand::WriteMemory { .. } => Ok(()),
+                    other => Err(mpsc::TrySendError::Disconnected(other)),
+                }
+            }
+            fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+                &self.frame
+            }
+            fn frame_count(&self) -> u64 {
+                0
+            }
+            fn fps(&self) -> f32 {
+                0.0
+            }
+        }
+        fn live_core(port: Arc<NeverReplies>) -> EmuCore {
+            let frame = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+                0,
+                0,
+                PixelFormat::Rgba,
+            )));
+            EmuCore::new(
+                port,
+                crate::test_helpers::build_test_core_parts().render_profile,
+                frame,
+                FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba),
+                Arc::new(AtomicBool::new(true)),
+            )
+        }
+        let port = Arc::new(NeverReplies {
+            frame: Arc::new(Mutex::new(FrameBuffer::with_capacity(
+                0,
+                0,
+                PixelFormat::Rgba,
+            ))),
+        });
+        let txn = Arc::new(Mutex::new(WriteTransaction::Empty));
+        // Stage a write through the transaction, like the UI confirm path.
+        txn.lock().unwrap().prepare(SpaceId(0), 0x20, Some(1));
+        txn.lock().unwrap().stage(2);
+        let input = DebugDrainInput {
+            space: Some(SpaceId(0)),
+            mem_addr: 0x20,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: None,
+            prev_dump_rows: &[],
+            need_images: false,
+        };
+        let mut flight = DrainFlight::begin(
+            DrainCtx::new(Some(Box::new(live_core(port.clone()))), txn.clone()),
+            &[DebugAction::WriteConfirm],
+            &input,
+            Duration::ZERO,
+        );
+        let DrainPoll::Done(output) = flight.poll() else {
+            panic!("zero budget settles immediately")
+        };
+        assert_eq!(output.display.status, vm::StatusMessage::OutcomeUnknown);
+        assert!(output.display.pending.is_none());
+        assert!(txn.lock().unwrap().pending().is_none());
+        // Manual re-entry: a fresh select/stage carries the new value; the
+        // unknown write is never retried or treated as unapplied.
+        let mut retry = DrainFlight::begin(
+            DrainCtx::new(Some(Box::new(live_core(port))), txn.clone()),
+            &[DebugAction::SelectRow(0x20), DebugAction::EditStage(3)],
+            &input,
+            Duration::from_secs(5),
+        );
+        let DrainPoll::Done(output) = retry.poll() else {
+            panic!("local-only batch settles immediately")
+        };
+        assert_eq!(output.display.pending.map(|pending| pending.value), Some(3));
+        assert!(!matches!(
+            output.display.status,
+            vm::StatusMessage::OutcomeUnknown
+        ));
+        assert_eq!(
+            txn.lock().unwrap().pending().map(|pending| pending.value),
+            Some(3)
+        );
+    }
+
+    /// Freeze re-sends repeat the same value, so an unknown outcome followed
+    /// by a manual refresh converges instead of diverging.
+    #[test]
+    fn freeze_resend_repeats_the_same_value() {
+        use crate::emu_core::{EmuCore, EmuThreadPort};
+        use nerust_core_traits::EmuCommand;
+        use nerust_render_traits::{FrameBuffer, PixelFormat};
+        use std::sync::{atomic::AtomicBool, mpsc};
+
+        #[derive(Debug)]
+        struct RecordingPort {
+            writes: Mutex<Vec<(SpaceId, u32, u64)>>,
+            frame: Arc<Mutex<FrameBuffer>>,
+        }
+        impl EmuThreadPort for RecordingPort {
+            fn send(&self, command: EmuCommand) -> Result<(), mpsc::TrySendError<EmuCommand>> {
+                match command {
+                    EmuCommand::WriteMemory { req, reply } => {
+                        self.writes
+                            .lock()
+                            .unwrap()
+                            .push((req.space, req.addr, req.value));
+                        let _ = reply.send(Ok(()));
+                        Ok(())
+                    }
+                    other => Err(mpsc::TrySendError::Disconnected(other)),
+                }
+            }
+            fn shared_frame_buffer(&self) -> &Arc<Mutex<FrameBuffer>> {
+                &self.frame
+            }
+            fn frame_count(&self) -> u64 {
+                0
+            }
+            fn fps(&self) -> f32 {
+                0.0
+            }
+        }
+        // One recording port shared across both flights.
+        let port = Arc::new(RecordingPort {
+            writes: Mutex::new(Vec::new()),
+            frame: Arc::new(Mutex::new(FrameBuffer::with_capacity(
+                0,
+                0,
+                PixelFormat::Rgba,
+            ))),
+        });
+        let live_core = || {
+            let frame = Arc::new(Mutex::new(FrameBuffer::with_capacity(
+                0,
+                0,
+                PixelFormat::Rgba,
+            )));
+            EmuCore::new(
+                port.clone(),
+                crate::test_helpers::build_test_core_parts().render_profile,
+                frame,
+                FrameBuffer::with_capacity(0, 0, PixelFormat::Rgba),
+                Arc::new(AtomicBool::new(true)),
+            )
+        };
+        let txn = Arc::new(Mutex::new(WriteTransaction::Empty));
+        let input = DebugDrainInput {
+            space: Some(SpaceId(0)),
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: Some((0x40, 0xAB)),
+            prev_dump_rows: &[],
+            need_images: false,
+        };
+        for _ in 0..2 {
+            let mut flight = DrainFlight::begin(
+                DrainCtx::new(Some(Box::new(live_core())), txn.clone()),
+                &[DebugAction::Refresh],
+                &input,
+                Duration::from_secs(5),
+            );
+            let DrainPoll::Done(output) = flight.poll() else {
+                panic!("replied batch settles immediately")
+            };
+            assert!(!matches!(
+                output.display.status,
+                vm::StatusMessage::OutcomeUnknown
+            ));
+        }
+        assert_eq!(
+            *port.writes.lock().unwrap(),
+            vec![(SpaceId(0), 0x40, 0xAB), (SpaceId(0), 0x40, 0xAB),]
+        );
     }
 
     #[test]
