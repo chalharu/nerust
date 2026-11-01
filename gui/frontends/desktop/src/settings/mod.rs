@@ -10,6 +10,10 @@ use nerust_gui_viewmodel::settings::{
     ViewModelError,
     dto::{ChoiceView, choice_position},
 };
+use nerust_settings_core::{
+    i18n::{UiText, text as ui_text},
+    model::language::AppLanguage,
+};
 use panechord::{Binding, Choice, Command, Executor, Store, Subscription, View, WeakView};
 use std::{
     cell::{Cell, RefCell},
@@ -178,6 +182,22 @@ impl Editor {
         )
         .distinct()
     }
+    /// Localized label that follows the draft language live: changing the
+    /// UI language in the dialog re-renders every bound caption without
+    /// reopening. Choice items already localize this way in the viewmodel;
+    /// these cover the static YAML literals.
+    fn tr(&self, key: UiText) -> Binding<String> {
+        let general = self.vm.general.clone();
+        self.binding(
+            general.view.clone(),
+            move |value| ui_text(value.language, key).to_string(),
+            None,
+        )
+    }
+    fn language(&self) -> Binding<AppLanguage> {
+        let general = self.vm.general.clone();
+        self.binding(general.view.clone(), |value| value.language, None)
+    }
     fn apply(&self, apply: &Apply) -> Result<(), String> {
         let result = self
             .vm
@@ -240,6 +260,7 @@ impl Editor {
         let latency = field!(audio, latency_ms, set_latency).convert(f64::from, |value| {
             checked_integer(value, 10.0, 200.0).map(|value| value as u16)
         });
+        let language = self.language();
         let view_slot = Rc::new(RefCell::new(None::<WeakView>));
         let commit = apply.clone();
         let exit = self.exit.clone();
@@ -367,9 +388,14 @@ impl Editor {
             vsync: field!(video, vsync, set_vsync),
             scaling: choices!(video, scaling, scaling_choices, set_scaling),
             muted: field!(audio, muted, set_mute),
-            volume_label: volume.map(|value| format!("Volume: {value:.0}%")),
+            volume_label: language.clone().zip(&volume).map(|(lang, value)| {
+                format!("{}: {value:.0}%", ui_text(lang, UiText::MasterVolume))
+            }),
             volume,
-            latency_label: latency.map(|value| format!("Latency: {value:.0} ms")),
+            latency_label: language
+                .clone()
+                .zip(&latency)
+                .map(|(lang, value)| format!("{}: {value:.0} ms", ui_text(lang, UiText::Latency))),
             latency,
             sample_rate: choices!(audio, sample_rate, sample_rate_choices, set_sample_rate),
             info_enabled: field!(notifications, info_enabled, set_info_enabled),
@@ -424,6 +450,47 @@ impl Editor {
                 |value| value.position.same_edge(value.status_position),
                 None,
             ),
+            labels: Labels {
+                title: self.binding(
+                    self.vm.general.view.clone(),
+                    |value| format!("nerust {}", ui_text(value.language, UiText::Settings)),
+                    None,
+                ),
+                tab_general: self.tr(UiText::General),
+                tab_input: self.tr(UiText::Input),
+                tab_video: self.tr(UiText::Video),
+                tab_audio: self.tr(UiText::Audio),
+                tab_notifications: self.tr(UiText::Notifications),
+                tab_system: self.tr(UiText::System),
+                language: self.tr(UiText::Language),
+                storage_policy: self.tr(UiText::SaveStoragePolicy),
+                fullscreen: self.tr(UiText::FullscreenDefault),
+                vsync: self.tr(UiText::Vsync),
+                scaling: self.tr(UiText::Scaling),
+                mute: self.tr(UiText::Mute),
+                sample_rate: self.tr(UiText::SampleRate),
+                info: self.tr(UiText::NotificationInfo),
+                info_enabled: self.tr(UiText::NotificationEnabled),
+                info_duration: self.tr(UiText::NotificationDuration),
+                info_color: self.tr(UiText::NotificationColor),
+                warning: self.tr(UiText::NotificationWarning),
+                warning_enabled: self.tr(UiText::NotificationEnabled),
+                warning_duration: self.tr(UiText::NotificationDuration),
+                warning_color: self.tr(UiText::NotificationColor),
+                error: self.tr(UiText::NotificationError),
+                error_enabled: self.tr(UiText::NotificationErrorOnScreen),
+                error_modal: self.tr(UiText::NotificationErrorModal),
+                error_color: self.tr(UiText::NotificationColor),
+                display_section: self.tr(UiText::NotificationSectionDisplay),
+                status_section: self.tr(UiText::NotificationSectionStatus),
+                status_enabled: self.tr(UiText::NotificationEnabled),
+                follow_note: self.tr(UiText::NotificationStatusAreaFollows),
+                cancel: self.tr(UiText::Cancel),
+                ok: self.tr(UiText::Ok),
+                confirm: self.tr(UiText::DiscardUnsavedChanges),
+                discard: self.tr(UiText::Discard),
+                keep: self.tr(UiText::KeepEditing),
+            },
             cancel,
             accept,
             discard,
@@ -461,6 +528,48 @@ impl Editor {
 struct ChoiceBinding {
     items: Binding<Vec<Choice>>,
     selected: Binding<String>,
+}
+
+/// Static YAML captions as language-following bindings. Literals never
+/// update; every settings caption rides the draft language through these
+/// so switching UI language re-renders the open dialog in place.
+#[derive(Clone)]
+struct Labels {
+    title: Binding<String>,
+    tab_general: Binding<String>,
+    tab_input: Binding<String>,
+    tab_video: Binding<String>,
+    tab_audio: Binding<String>,
+    tab_notifications: Binding<String>,
+    tab_system: Binding<String>,
+    language: Binding<String>,
+    storage_policy: Binding<String>,
+    fullscreen: Binding<String>,
+    vsync: Binding<String>,
+    scaling: Binding<String>,
+    mute: Binding<String>,
+    sample_rate: Binding<String>,
+    info: Binding<String>,
+    info_enabled: Binding<String>,
+    info_duration: Binding<String>,
+    info_color: Binding<String>,
+    warning: Binding<String>,
+    warning_enabled: Binding<String>,
+    warning_duration: Binding<String>,
+    warning_color: Binding<String>,
+    error: Binding<String>,
+    error_enabled: Binding<String>,
+    error_modal: Binding<String>,
+    error_color: Binding<String>,
+    display_section: Binding<String>,
+    status_section: Binding<String>,
+    status_enabled: Binding<String>,
+    follow_note: Binding<String>,
+    cancel: Binding<String>,
+    ok: Binding<String>,
+    confirm: Binding<String>,
+    discard: Binding<String>,
+    keep: Binding<String>,
 }
 fn choice<T: Clone + Eq + 'static>(
     choices: Binding<Vec<ChoiceView<T>>>,
@@ -550,6 +659,7 @@ struct Presentation {
     status_area: ChoiceBinding,
     status_area_enabled: Binding<bool>,
     status_area_follows: Binding<bool>,
+    labels: Labels,
     cancel: Command,
     accept: Command,
     discard: Command,
@@ -680,5 +790,39 @@ mod tests {
             .expect("position applies");
         assert!(!follows.get());
         assert!(enabled.get());
+    }
+
+    /// Settings captions follow the draft language live: switching to
+    /// Japanese re-renders every bound label in the open dialog, so no
+    /// caption may stay a static literal.
+    #[test]
+    fn settings_labels_follow_draft_language() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        use nerust_settings_core::model::language::AppLanguage;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let general = editor.tr(UiText::General);
+        let enabled = editor.tr(UiText::NotificationEnabled);
+        assert_eq!(general.get(), "General");
+        assert_eq!(enabled.get(), "Enabled");
+        editor
+            .vm
+            .general
+            .set_language(AppLanguage::Japanese)
+            .expect("language applies");
+        assert_eq!(general.get(), "一般");
+        assert_eq!(enabled.get(), "有効");
+        assert_eq!(
+            editor.tr(UiText::DiscardUnsavedChanges).get(),
+            "保存されていない変更を破棄しますか？"
+        );
+        editor
+            .vm
+            .general
+            .set_language(AppLanguage::English)
+            .expect("language applies");
+        assert_eq!(general.get(), "General");
     }
 }
