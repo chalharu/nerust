@@ -3498,7 +3498,6 @@ dependencies = [
  "nerust_system_traits",
  "panechord",
  "raw-window-handle",
- "rfd",
  "serde",
  "wakui_core",
 ]
@@ -4788,6 +4787,7 @@ dependencies = [
  "panechord-macros",
  "panechord-runtime",
  "raw-window-handle",
+ "rfd",
  "tao",
  "window_clipboard",
  "windows-sys 0.61.2",

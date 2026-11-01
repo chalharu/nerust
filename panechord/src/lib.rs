@@ -11,21 +11,21 @@ compile_error!("select exactly one Panechord native backend");
 #[cfg(feature = "gtk")]
 pub use panechord_gtk as gtk;
 #[cfg(feature = "gtk")]
-pub use panechord_gtk::{Parent, View, WeakView};
+pub use panechord_gtk::{Parent, View, WeakView, pick_file};
 #[cfg(feature = "macos")]
 pub use panechord_macos as macos;
 #[cfg(feature = "macos")]
-pub use panechord_macos::{Parent, View, WeakView};
+pub use panechord_macos::{Parent, View, WeakView, pick_file};
 #[cfg(feature = "tao")]
 pub use panechord_tao as tao;
 #[cfg(feature = "tao")]
-pub use panechord_tao::{Parent, View, WeakView};
+pub use panechord_tao::{Parent, View, WeakView, pick_file};
 
 #[cfg(all(
     feature = "native",
     not(any(feature = "gtk", feature = "tao", feature = "macos"))
 ))]
-pub use panechord_native::{Parent, View, WeakView};
+pub use panechord_native::{Parent, View, WeakView, pick_file};
 
 /// Startup builder: backend-resolved run configuration flows into the
 /// application instead of views querying backend capabilities, so every

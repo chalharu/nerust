@@ -108,6 +108,7 @@ unsafe extern "C" {
         height: f64,
     );
     fn w3_menu(host: *mut c_void, id: *const u8, id_len: usize, json: *const u8, json_len: usize);
+    fn w3_menu_remove(host: *mut c_void, id: *const u8, id_len: usize);
     fn w3_menu_tree(
         host: *mut c_void,
         id: *const u8,
@@ -133,6 +134,7 @@ unsafe extern "C" {
     fn w3_surface_size(host: *mut c_void, width: *mut f64, height: *mut f64);
     fn w3_surface_scale(host: *mut c_void) -> f64;
     fn w3_toggle_fullscreen(host: *mut c_void);
+    fn w3_pick_file(output: *mut u8, capacity: usize) -> i32;
 }
 
 #[derive(Clone)]
@@ -374,6 +376,20 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
     panechord_runtime::RunnerConfig {
         application_menu: true,
     }
+}
+
+/// Native file picker. Must run on the AppKit main thread (the host executor
+/// does); `NSOpenPanel` runs its own nested loop while modal, so a single
+/// blocking call is correct modality with no second open.
+pub async fn pick_file() -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let mut buffer = vec![0u8; 8 * 1024];
+    let written = unsafe { w3_pick_file(buffer.as_mut_ptr(), buffer.len()) };
+    if written <= 0 {
+        return None;
+    }
+    let path = std::ffi::OsStr::from_bytes(&buffer[..written as usize]);
+    Some(std::path::PathBuf::from(path))
 }
 
 impl View {
@@ -1054,6 +1070,12 @@ impl View {
         let source = items.clone();
         let heading = title.clone();
         let refresh: Refresh = Rc::new(move |view| {
+            // Vacant menus (hidden by visible bindings) stay out of the
+            // menubar; remove a previously installed one if it empties.
+            if heading.get().is_empty() && source.get().is_empty() {
+                view.remove_menu(&key);
+                return;
+            }
             let mut seen = HashSet::new();
             let mut native = Vec::new();
             let mut handlers: Vec<(String, Handler)> = Vec::new();
@@ -1123,6 +1145,29 @@ impl View {
 
     pub fn menu_error(&self, id: &str) -> Option<String> {
         self.0.menu_errors.borrow().get(id).cloned()
+    }
+
+    fn remove_menu(&self, id: &str) {
+        if self.0.closed.get() {
+            return;
+        }
+        let prefix = format!("{id}/");
+        let keys: Vec<_> = self
+            .0
+            .handlers
+            .borrow()
+            .keys()
+            .filter(|id| id.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for id in keys {
+            let old = self.0.handlers.borrow_mut().remove(&id);
+            drop(old);
+        }
+        self.0.menu_errors.borrow_mut().remove(id);
+        unsafe {
+            w3_menu_remove(self.0.native.get(), id.as_ptr(), id.len());
+        }
     }
 
     pub fn on_close(&self, callback: Rc<dyn Fn()>) {

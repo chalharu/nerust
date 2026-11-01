@@ -173,6 +173,7 @@ dyn-clone = { version = "=1.0.20" }
 dyn-eq = { version = "=0.1.3" }
 dyn-hash = { version = "=1.0.0" }
 flume = { version = "=0.12.0" }
+futures-timer = { version = "=3.0" }
 glob = { version = "=0.3.4" }
 gdk = { package = "gdk4", version = "=0.11.5" }
 gdk-macos = { package = "gdk4-macos", version = "=0.11.5" }

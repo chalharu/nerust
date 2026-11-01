@@ -410,11 +410,11 @@ pub fn run(
                     let picker = picker_active.clone();
                     let weak_view = weak_view.clone();
                     executor.spawn(Box::pin(async move {
-                        let selected = rfd::AsyncFileDialog::new().pick_file().await;
+                        let selected = panechord::pick_file().await;
                         picker.set(false);
                         let mut app = app.borrow_mut();
                         let error = if weak_view.upgrade().is_some() {
-                            selected.and_then(|file| app.load_media(file.path()).err())
+                            selected.and_then(|path| app.load_media(&path).err())
                         } else {
                             None
                         };
