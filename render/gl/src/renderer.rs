@@ -676,7 +676,7 @@ fn upload_frame(
 pub struct GlFactory;
 
 impl GlFactory {
-    fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
+    pub(crate) fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
         // Single cfg-selected expression: exactly one arm compiles per
         // platform, so no dead Glx/Wgl/Egl shadow survives.
         #[cfg(target_os = "macos")]
