@@ -198,7 +198,7 @@ impl View {
             .retain(|n| !Rc::ptr_eq(n, &node));
         self.0.menu_nodes.borrow_mut().push(node);
         let submenu = muda::Submenu::new(title.get(), true);
-        if let Err(e) = self.0.menus.append(&submenu) {
+        if let Err(e) = self.0.menus().append(&submenu) {
             self.0.report(e.to_string());
             return;
         }
