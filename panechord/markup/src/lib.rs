@@ -184,6 +184,11 @@ pub struct Menu {
     pub command: String,
     #[serde(default)]
     pub nested: bool,
+    /// Conditional menus, DataTemplate-style: when false the menu desugars to
+    /// an empty title with empty content, which backends keep out of the
+    /// menubar. Platform-conditional menus (like the macOS application menu)
+    /// stay in the single shared template instead of forking it.
+    pub visible: Option<Property>,
 }
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
 #[serde(untagged)]
@@ -196,13 +201,27 @@ pub enum MenuItems {
 pub struct MenuEntry {
     pub id: String,
     pub label: Property,
-    pub argument: Property,
-    pub shortcut: Option<String>,
+    /// Leaf activation. Absent on submenu entries, which carry `children`.
+    pub argument: Option<Property>,
+    pub shortcut: Option<ShortcutSpec>,
     #[serde(default)]
     pub role: MenuRole,
     pub enabled: Option<Property>,
+    /// Submenu children: a static list or a bound dynamic subtree (for
+    /// example a DataTemplate-style list like save slots). Present only on
+    /// submenu entries, which must set `nested: true` on the menu.
+    pub children: Option<MenuItems>,
 }
-#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+
+/// A menu accelerator: either a static canonical shortcut (`Primary+O`) or a
+/// bound one for configuration-dependent accelerators.
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ShortcutSpec {
+    Text(String),
+    Bound(Property),
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum MenuRole {
     #[default]
     Normal,
@@ -503,6 +522,85 @@ fn lexical_yaml(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Recursive menu-entry validation shared by the document walk: ids stay
+/// unique across nesting levels, submenu entries carry children instead of an
+/// argument, and native roles/shortcuts stay on leaves only.
+fn validate_menu_entries(
+    entries: &[MenuEntry],
+    base: &str,
+    ids: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let one_way = |property: &Property, name: &str| {
+        if matches!(property, Property::Bind(bound) if bound.bind.mode == Mode::TwoWay) {
+            Err(format!(
+                "{name}.bind.mode: TwoWay is not supported for a read-only property"
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    for (index, entry) in entries.iter().enumerate() {
+        let path = format!("{base}[{index}]");
+        one_way(&entry.label, &format!("{path}.label"))?;
+        if let Some(enabled) = &entry.enabled {
+            one_way(enabled, &format!("{path}.enabled"))?;
+        }
+        if let Some(shortcut) = &entry.shortcut
+            && let ShortcutSpec::Bound(property) = shortcut
+        {
+            one_way(property, &format!("{path}.shortcut"))?;
+        }
+        if entry.id.is_empty() || entry.id.contains('/') || !ids.insert(entry.id.clone()) {
+            return Err(format!("invalid or duplicate menu item id `{}`", entry.id));
+        }
+        match &entry.children {
+            Some(MenuItems::Entries(children)) => {
+                if entry.argument.is_some() {
+                    return Err(format!("submenu entry `{}` takes no argument", entry.id));
+                }
+                if entry.role != MenuRole::Normal {
+                    return Err(format!(
+                        "native role on submenu entry `{}` is unsupported",
+                        entry.id
+                    ));
+                }
+                if entry.shortcut.is_some() {
+                    return Err(format!(
+                        "shortcut on submenu entry `{}` is unsupported",
+                        entry.id
+                    ));
+                }
+                validate_menu_entries(children, &format!("{path}.children"), ids)?;
+            }
+            Some(MenuItems::Binding(children)) => {
+                if entry.argument.is_some() {
+                    return Err(format!("submenu entry `{}` takes no argument", entry.id));
+                }
+                if entry.role != MenuRole::Normal {
+                    return Err(format!(
+                        "native role on submenu entry `{}` is unsupported",
+                        entry.id
+                    ));
+                }
+                if entry.shortcut.is_some() {
+                    return Err(format!(
+                        "shortcut on submenu entry `{}` is unsupported",
+                        entry.id
+                    ));
+                }
+                one_way(children, &format!("{path}.children"))?;
+            }
+            None => {
+                let Some(argument) = &entry.argument else {
+                    return Err(format!("leaf entry `{}` needs an argument", entry.id));
+                };
+                one_way(argument, &format!("{path}.argument"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Document {
     pub fn validate(&self) -> Result<(), (String, String)> {
         if self.schema_version != 2 {
@@ -661,26 +759,19 @@ impl Document {
                             read_only(items, &format!("menus[{index}].items"))?
                         }
                         MenuItems::Entries(entries) => {
-                            if m.nested {
-                                return Err(err("static entries cannot use nested menus".into()));
+                            let nested = entries.iter().any(|entry| entry.children.is_some());
+                            if nested && !m.nested {
+                                return Err(err("static submenus require nested menus".into()));
                             }
-                            for (entry_index, entry) in entries.iter().enumerate() {
-                                let entry_path = format!("menus[{index}].items[{entry_index}]");
-                                read_only(&entry.label, &format!("{entry_path}.label"))?;
-                                read_only(&entry.argument, &format!("{entry_path}.argument"))?;
-                                if let Some(enabled) = &entry.enabled {
-                                    read_only(enabled, &format!("{entry_path}.enabled"))?;
-                                }
-                                if entry.id.is_empty()
-                                    || entry.id.contains('/')
-                                    || !ids.insert(entry.id.clone())
-                                {
-                                    return Err(err(format!(
-                                        "invalid or duplicate menu item id `{}`",
-                                        entry.id
-                                    )));
-                                }
-                            }
+                            // Entry ids are namespaced per menu by the
+                            // backends, so uniqueness is checked within the
+                            // menu rather than against control ids.
+                            validate_menu_entries(
+                                entries,
+                                &format!("menus[{index}].items"),
+                                &mut BTreeSet::new(),
+                            )
+                            .map_err(|message| (path.to_string(), message))?;
                         }
                     }
                     if m.id == "__root" {

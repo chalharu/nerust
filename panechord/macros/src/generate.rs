@@ -25,29 +25,46 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
     for menu in menus {
         let id = &menu.id;
         let title = binding(&menu.title, false)?;
+        // Static subtrees need node construction; flat static entries keep the
+        // leaf path. Validation guarantees children imply nested.
+        let hierarchical = menu.nested
+            || matches!(
+                &menu.items,
+                panechord_markup::MenuItems::Entries(entries)
+                    if entries.iter().any(|entry| entry.children.is_some())
+            );
         let items = match &menu.items {
             panechord_markup::MenuItems::Binding(items) => binding(items, false)?,
             panechord_markup::MenuItems::Entries(entries) => {
-                let entries = entries.iter().map(|entry| {
-                    let id = &entry.id;
-                    let label = binding(&entry.label, false)?;
-                    let argument = binding(&entry.argument, false)?;
-                    let enabled = entry.enabled.as_ref().map(|value| binding(value, false)).transpose()?.unwrap_or_else(|| quote!(::panechord_runtime::Binding::constant(true)));
-                    let role = format_ident!("{}", format!("{:?}", entry.role));
-                    let shortcut = match &entry.shortcut {
-                        Some(value) => quote!(Some(::std::string::String::from(#value))),
-                        None => quote!(None),
-                    };
-                    Ok(quote!((#label).zip(&(#argument)).zip(&(#enabled)).map(|((label, argument), enabled)| ::panechord_runtime::MenuItem {
-                        id: ::std::string::String::from(#id), label, argument, shortcut: #shortcut,
-                        role: ::panechord_runtime::MenuRole::#role, enabled,
-                    })))
-                }).collect::<syn::Result<Vec<_>>>()?;
-                quote!(::panechord_runtime::Binding::sequence(vec![#(#entries),*]).distinct())
+                if hierarchical {
+                    let nodes = entries
+                        .iter()
+                        .map(menu_node)
+                        .collect::<syn::Result<Vec<_>>>()?;
+                    quote!(::panechord_runtime::Binding::sequence(vec![#(#nodes),*]).distinct())
+                } else {
+                    let leaves = entries
+                        .iter()
+                        .map(leaf_item)
+                        .collect::<syn::Result<Vec<_>>>()?;
+                    quote!(::panechord_runtime::Binding::sequence(vec![#(#leaves),*]).distinct())
+                }
+            }
+        };
+        // A hidden menu desugars to an empty title with empty content, which
+        // backends keep out of the menubar. Structure stays fully declarative.
+        let (title, items) = match &menu.visible {
+            None => (title, items),
+            Some(visible) => {
+                let visible = binding(visible, false)?;
+                (
+                    quote!((#title).zip(&(#visible)).map(|(title, visible)| if visible { title } else { ::std::string::String::new() })),
+                    quote!((#items).zip(&(#visible)).map(|(items, visible)| if visible { items } else { ::std::vec::Vec::new() })),
+                )
             }
         };
         let command = command(&menu.command)?;
-        let method = if menu.nested {
+        let method = if hierarchical {
             format_ident!("hierarchical_menu")
         } else {
             format_ident!("typed_menu")
@@ -85,6 +102,93 @@ pub fn generate(doc: &Document, backend: &Path, owned: bool) -> syn::Result<Toke
 
 fn error(message: impl std::fmt::Display) -> syn::Error {
     syn::Error::new(proc_macro2::Span::call_site(), message)
+}
+
+/// One static leaf entry: labels, arguments, enablement and shortcuts stay
+/// bound while id and native role are declarative.
+fn leaf_item(entry: &panechord_markup::MenuEntry) -> syn::Result<TokenStream> {
+    let id = &entry.id;
+    let label = binding(&entry.label, false)?;
+    let enabled = entry
+        .enabled
+        .as_ref()
+        .map(|value| binding(value, false))
+        .transpose()?
+        .unwrap_or_else(|| quote!(::panechord_runtime::Binding::constant(true)));
+    let Some(argument) = &entry.argument else {
+        return Err(error(format!("leaf entry `{id}` needs an argument")));
+    };
+    let argument = binding(argument, false)?;
+    let role = format_ident!("{}", format!("{:?}", entry.role));
+    let shortcut = match &entry.shortcut {
+        None => quote!(::panechord_runtime::Binding::constant(
+            ::std::option::Option::None::<::std::string::String>
+        )),
+        Some(panechord_markup::ShortcutSpec::Text(value)) => {
+            quote!(::panechord_runtime::Binding::constant(
+                ::std::option::Option::Some(::std::string::String::from(#value))
+            ))
+        }
+        Some(panechord_markup::ShortcutSpec::Bound(property)) => binding(property, false)?,
+    };
+    Ok(
+        quote!((#label).zip(&(#argument)).zip(&(#enabled)).zip(&(#shortcut)).map(|(((label, argument), enabled), shortcut)| ::panechord_runtime::MenuItem {
+            id: ::std::string::String::from(#id), label, argument, shortcut,
+            role: ::panechord_runtime::MenuRole::#role, enabled,
+        })),
+    )
+}
+
+/// One static menu entry: a leaf item or, with `children`, a submenu node.
+/// Structure (ids, roles, shortcuts, nesting) is declarative; labels,
+/// arguments, enablement and dynamic subtrees stay bound, DataTemplate-style.
+fn menu_node(entry: &panechord_markup::MenuEntry) -> syn::Result<TokenStream> {
+    let id = &entry.id;
+    match &entry.children {
+        None => {
+            let item = leaf_item(entry)?;
+            Ok(quote!((#item).map(::panechord_runtime::MenuNode::Item)))
+        }
+        Some(panechord_markup::MenuItems::Entries(children)) => {
+            let children = children
+                .iter()
+                .map(menu_node)
+                .collect::<syn::Result<Vec<_>>>()?;
+            let label = binding(&entry.label, false)?;
+            let enabled = enabled_binding(entry)?;
+            let children =
+                quote!(::panechord_runtime::Binding::sequence(vec![#(#children),*]).distinct());
+            Ok(submenu_node(id, label, enabled, children))
+        }
+        Some(panechord_markup::MenuItems::Binding(children)) => {
+            let label = binding(&entry.label, false)?;
+            let enabled = enabled_binding(entry)?;
+            let children = binding(children, false)?;
+            Ok(submenu_node(id, label, enabled, children))
+        }
+    }
+}
+
+fn enabled_binding(entry: &panechord_markup::MenuEntry) -> syn::Result<TokenStream> {
+    entry
+        .enabled
+        .as_ref()
+        .map(|value| binding(value, false))
+        .transpose()
+        .map(|enabled| {
+            enabled.unwrap_or_else(|| quote!(::panechord_runtime::Binding::constant(true)))
+        })
+}
+
+fn submenu_node(
+    id: &str,
+    label: TokenStream,
+    enabled: TokenStream,
+    children: TokenStream,
+) -> TokenStream {
+    quote!((#label).zip(&(#enabled)).zip(&(#children)).map(|((label, enabled), children)| ::panechord_runtime::MenuNode::Submenu {
+        id: ::std::string::String::from(#id), label, enabled, children,
+    }))
 }
 fn appearance(control: &Control, id: TokenStream) -> syn::Result<TokenStream> {
     let mut calls = Vec::new();
@@ -754,6 +858,20 @@ mod tests {
         assert!(code.contains("Binding :: sequence"));
         assert!(code.contains("MenuRole :: Quit"));
         assert!(code.contains("command_choose"));
+    }
+    #[test]
+    fn static_submenu_entries_emit_nodes_and_require_nested_menus() {
+        let yaml = "schema_version: 2\nroot:\n  type: Window\n  id: main\n  title: {literal: Main}\n  menus:\n    - id: file\n      title: {literal: File}\n      command: choose\n      nested: true\n      items:\n        - id: open\n          label: {bind: {path: open_label}}\n          argument: {bind: {path: open_arg}}\n        - id: states\n          label: {bind: {path: states_title}}\n          children:\n            - id: create\n              label: {bind: {path: create_label}}\n              argument: {bind: {path: create_arg}}\n            - id: slots\n              label: {literal: Slots}\n              children: {bind: {path: slot_nodes}}\n  content: {type: Label, id: content, text: {literal: Main}}";
+        let document = panechord_markup::parse(yaml, "yaml", "menu.yaml").unwrap();
+        let code = generate(&document, &syn::parse_quote!(backend), false)
+            .unwrap()
+            .to_string();
+        assert!(code.contains("MenuNode :: Submenu"), "{code}");
+        assert!(code.contains("hierarchical_menu"), "{code}");
+        assert!(code.contains("slot_nodes"), "{code}");
+        let flat = yaml.replace("nested: true", "nested: false");
+        let e = panechord_markup::parse(&flat, "yaml", "menu.yaml").unwrap_err();
+        assert!(e.message.contains("nested menus"), "{e}");
     }
     #[test]
     fn required_controls_emit_typed_backend_calls_and_nested_content() {
