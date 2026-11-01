@@ -400,3 +400,58 @@ fn control_diagnostics_locate_tab_modes_and_combined_spacing() {
             .contains("combined")
     );
 }
+
+#[test]
+fn static_menu_entries_support_nested_subtrees_with_bound_leaves() {
+    let menus = r#"  menus:
+    - id: file
+      title: {literal: File}
+      command: choose
+      nested: true
+      items:
+        - id: open
+          label: {bind: {path: open_label}}
+          argument: {bind: {path: open_arg}}
+          enabled: {bind: {path: ready}}
+          shortcut: Primary+O
+        - id: states
+          label: {bind: {path: states_title}}
+          children:
+            - id: create
+              label: {bind: {path: create_label}}
+              argument: {bind: {path: create_arg}}
+            - id: slots
+              label: {literal: Slots}
+              children: {bind: {path: slot_nodes}}
+"#;
+    let source = doc("type: Label\nid: label\ntext: {literal: hi}")
+        .replace("  content:", &format!("{menus}  content:"));
+    parse_yaml(&source).unwrap();
+    // Static subtrees require nested menus.
+    let e = parse_yaml(&source.replace("nested: true", "nested: false")).unwrap_err();
+    assert!(e.message.contains("nested menus"), "{e}");
+    // Submenu entries take no argument, role, or shortcut.
+    for entry in [
+        "          argument: {bind: {path: x}}\n",
+        "          role: Quit\n",
+        "          shortcut: Primary+Q\n",
+    ] {
+        let bad = source.replace(
+            "          children:\n",
+            &format!("{entry}          children:\n"),
+        );
+        let e = parse_yaml(&bad).unwrap_err();
+        assert!(
+            e.message.contains("takes no argument") || e.message.contains("unsupported"),
+            "{e}"
+        );
+    }
+    // Leaf entries need an argument.
+    let bad = source.replace("          argument: {bind: {path: open_arg}}\n", "");
+    let e = parse_yaml(&bad).unwrap_err();
+    assert!(e.message.contains("needs an argument"), "{e}");
+    // Ids stay unique across nesting levels.
+    let bad = source.replace("            - id: create\n", "            - id: open\n");
+    let e = parse_yaml(&bad).unwrap_err();
+    assert!(e.message.contains("duplicate"), "{e}");
+}

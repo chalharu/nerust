@@ -32,12 +32,45 @@ pub(crate) struct MenuModel {
     shortcuts: Vec<ShortcutBinding>,
     slots: Arc<[nerust_persistence::model::StateSlotSummary]>,
     active_slot: Option<u64>,
-    app_title: String,
+    // Static skeleton leaves: menu structure lives in ui/main.yaml, this
+    // model only supplies localized labels, enablement, dynamic subtrees,
+    // and the injected application-menu switch.
+    app_visible: bool,
+    available: bool,
+    loaded: bool,
+    pause_enabled: bool,
+    resume_enabled: bool,
+    load_active_enabled: bool,
+    slot_submenu_enabled: bool,
+    settings_shortcut: Option<String>,
+    quit_shortcut: Option<String>,
     file_title: String,
     emulation_title: String,
-    app: Vec<MenuNode<Intent>>,
-    file: Vec<MenuNode<Intent>>,
-    emulation: Vec<MenuNode<Intent>>,
+    about_label: String,
+    preferences_label: String,
+    quit_label: String,
+    open_label: String,
+    close_label: String,
+    settings_label: String,
+    pause_label: String,
+    resume_label: String,
+    reset_label: String,
+    states_title: String,
+    create_slot_label: String,
+    save_active_slot_label: String,
+    load_active_slot_label: String,
+    select_slot_title: String,
+    save_slot_title: String,
+    load_slot_title: String,
+    delete_slot_title: String,
+    debugger_label: String,
+    history_label: String,
+    ppu_label: String,
+    fullscreen_label: String,
+    select_slot_nodes: Vec<MenuNode<Intent>>,
+    save_slot_nodes: Vec<MenuNode<Intent>>,
+    load_slot_nodes: Vec<MenuNode<Intent>>,
+    delete_slot_nodes: Vec<MenuNode<Intent>>,
 }
 
 impl MenuModel {
@@ -57,62 +90,15 @@ impl MenuModel {
         let (slots, active_slot) = app.session().menu_slots();
         let available = !state.closed;
         let loaded = available && state.loaded;
-        let item = |id: &str, caption, intent, enabled, shortcut| {
-            MenuNode::Item(MenuItem {
-                id: id.into(),
-                label: text(language, caption).into(),
-                argument: intent,
-                shortcut,
-                role: MenuRole::Normal,
-                enabled,
-            })
+        let label = |key| text(language, key).to_owned();
+        let hinted = |key, action| {
+            nerust_gui_runtime::menu_labels::shortcut_hint(&label(key), &shortcuts, action)
         };
-        let mut file = vec![
-            item(
-                "open",
-                UiText::Open,
-                Intent::Open,
-                available,
-                Some("Primary+O".into()),
-            ),
-            item(
-                "close",
-                UiText::Close,
-                Intent::Session(SessionAction::Unload),
-                loaded,
-                None,
-            ),
-            item(
-                "settings",
-                UiText::Settings,
-                Intent::Settings,
-                available,
-                // macOS carries Primary+Comma on the app-menu Preferences entry;
-                // registering the same accelerator twice leaves routing ambiguous.
-                (!application_menu).then(|| "Primary+Comma".into()),
-            ),
-            item(
-                "quit",
-                UiText::Quit,
-                Intent::Quit,
-                available,
-                // macOS shows Quit with Primary+Q in the app menu; see above.
-                (!application_menu).then(|| "Primary+Q".into()),
-            ),
-        ];
-        if let MenuNode::Item(quit) = &mut file[3] {
-            quit.role = MenuRole::Quit;
-        }
-        let app = Self::app_menu(language, available, application_menu);
-        let hinted = |id: &str, caption, action, intent, enabled| {
-            let mut node = item(id, caption, intent, enabled, None);
-            if let MenuNode::Item(item) = &mut node {
-                item.label =
-                    nerust_gui_runtime::menu_labels::shortcut_hint(&item.label, &shortcuts, action);
-            }
-            node
-        };
-        let slot_menu = |id: &str, caption, action: fn(u64) -> SessionAction| {
+        // The application menu owns these accelerators where it exists;
+        // registering the same accelerator twice leaves routing ambiguous.
+        let settings_shortcut = (!application_menu).then(|| "Primary+Comma".into());
+        let quit_shortcut = (!application_menu).then(|| "Primary+Q".into());
+        let slot_nodes = |id: &str, action: fn(u64) -> SessionAction| {
             let mut children: Vec<_> = slots
                 .iter()
                 .map(|slot| {
@@ -127,175 +113,60 @@ impl MenuModel {
                 })
                 .collect();
             if children.is_empty() {
-                children.push(item(
-                    &format!("{id}_empty"),
-                    UiText::NoSaveSlots,
-                    Intent::Session(SessionAction::CreateSlot),
-                    false,
-                    None,
-                ));
+                children.push(MenuNode::Item(MenuItem {
+                    id: format!("{id}_empty"),
+                    label: label(UiText::NoSaveSlots),
+                    argument: Intent::Session(SessionAction::CreateSlot),
+                    shortcut: None,
+                    role: MenuRole::Normal,
+                    enabled: false,
+                }));
             }
-            MenuNode::Submenu {
-                id: id.into(),
-                label: text(language, caption).into(),
-                enabled: loaded,
-                children,
-            }
+            children
         };
-        let states = MenuNode::Submenu {
-            id: "save_states".into(),
-            label: text(language, UiText::SaveStates).into(),
-            enabled: loaded,
-            children: vec![
-                item(
-                    "create_slot",
-                    UiText::CreateSaveSlot,
-                    Intent::Session(SessionAction::CreateSlot),
-                    loaded,
-                    None,
-                ),
-                hinted(
-                    "save_active",
-                    UiText::SaveActiveSlot,
-                    ShortcutAction::SaveActiveSlot,
-                    Intent::Session(SessionAction::SaveState),
-                    loaded,
-                ),
-                hinted(
-                    "load_active",
-                    UiText::LoadActiveSlot,
-                    ShortcutAction::LoadActiveSlot,
-                    Intent::Session(SessionAction::LoadState),
-                    loaded && active_slot.is_some(),
-                ),
-                slot_menu(
-                    "select_slot",
-                    UiText::SelectActiveSlot,
-                    SessionAction::SelectSlot,
-                ),
-                slot_menu("save_slot", UiText::SaveSlot, SessionAction::SaveSlot),
-                slot_menu("load_slot", UiText::LoadSlot, SessionAction::LoadSlot),
-                slot_menu("delete_slot", UiText::DeleteSlot, SessionAction::DeleteSlot),
-            ],
-        };
-        let emulation = vec![
-            item(
-                "pause",
-                UiText::Pause,
-                Intent::Pause(true),
-                loaded && !state.user_paused,
-                None,
-            ),
-            item(
-                "resume",
-                UiText::Resume,
-                Intent::Pause(false),
-                loaded && state.user_paused,
-                None,
-            ),
-            hinted(
-                "reset",
-                UiText::Reset,
-                ShortcutAction::Reset,
-                Intent::Session(SessionAction::Reset),
-                loaded,
-            ),
-            states,
-            hinted(
-                "debugger",
-                UiText::OpenDebugger,
-                ShortcutAction::OpenDebugger,
-                Intent::Debugger,
-                loaded,
-            ),
-            item(
-                "history",
-                UiText::NotificationHistory,
-                Intent::History,
-                available,
-                None,
-            ),
-            item("ppu", UiText::PpuViewer, Intent::Ppu, loaded, None),
-            hinted(
-                "fullscreen",
-                UiText::FullscreenDefault,
-                ShortcutAction::ToggleFullscreen,
-                Intent::Fullscreen,
-                available,
-            ),
-        ];
         Self {
             state,
             language,
-            shortcuts,
-            slots,
+            shortcuts: shortcuts.clone(),
+            slots: slots.clone(),
             active_slot,
-            app_title: Self::app_title(),
-            file_title: text(language, UiText::File).into(),
-            emulation_title: text(language, UiText::Emulation).into(),
-            app,
-            file,
-            emulation,
+            app_visible: application_menu,
+            available,
+            loaded,
+            pause_enabled: loaded && !state.user_paused,
+            resume_enabled: loaded && state.user_paused,
+            load_active_enabled: loaded && active_slot.is_some(),
+            slot_submenu_enabled: loaded,
+            settings_shortcut,
+            quit_shortcut,
+            file_title: label(UiText::File),
+            emulation_title: label(UiText::Emulation),
+            about_label: label(UiText::About),
+            preferences_label: label(UiText::Preferences),
+            quit_label: label(UiText::Quit),
+            open_label: label(UiText::Open),
+            close_label: label(UiText::Close),
+            settings_label: label(UiText::Settings),
+            pause_label: label(UiText::Pause),
+            resume_label: label(UiText::Resume),
+            reset_label: hinted(UiText::Reset, ShortcutAction::Reset),
+            states_title: label(UiText::SaveStates),
+            create_slot_label: label(UiText::CreateSaveSlot),
+            save_active_slot_label: hinted(UiText::SaveActiveSlot, ShortcutAction::SaveActiveSlot),
+            load_active_slot_label: hinted(UiText::LoadActiveSlot, ShortcutAction::LoadActiveSlot),
+            select_slot_title: label(UiText::SelectActiveSlot),
+            save_slot_title: label(UiText::SaveSlot),
+            load_slot_title: label(UiText::LoadSlot),
+            delete_slot_title: label(UiText::DeleteSlot),
+            debugger_label: hinted(UiText::OpenDebugger, ShortcutAction::OpenDebugger),
+            history_label: label(UiText::NotificationHistory),
+            ppu_label: label(UiText::PpuViewer),
+            fullscreen_label: hinted(UiText::FullscreenDefault, ShortcutAction::ToggleFullscreen),
+            select_slot_nodes: slot_nodes("select_slot", SessionAction::SelectSlot),
+            save_slot_nodes: slot_nodes("save_slot", SessionAction::SaveSlot),
+            load_slot_nodes: slot_nodes("load_slot", SessionAction::LoadSlot),
+            delete_slot_nodes: slot_nodes("delete_slot", SessionAction::DeleteSlot),
         }
-    }
-
-    fn app_title() -> String {
-        "Nerust".into()
-    }
-
-    /// Explicit HIG application menu for macOS: AppKit treats the first
-    /// installed submenu as the application menu, so without this leading
-    /// entry the File menu is swallowed. About is a native predefined item
-    /// (the OS owns its panel, so `Intent::About` never dispatches);
-    /// Preferences and Quit reuse the existing intents. Single yaml for all
-    /// platforms: off macOS this stays empty and backends skip the vacancy.
-    fn app_menu(
-        language: AppLanguage,
-        available: bool,
-        application_menu: bool,
-    ) -> Vec<MenuNode<Intent>> {
-        if !application_menu {
-            return Vec::new();
-        }
-        let separator = |id: &str| {
-            MenuNode::Item(MenuItem {
-                id: id.into(),
-                label: String::new(),
-                // Inert: separators never dispatch; any intent fills the type.
-                argument: Intent::About,
-                shortcut: None,
-                role: MenuRole::Separator,
-                enabled: true,
-            })
-        };
-        vec![
-            MenuNode::Item(MenuItem {
-                id: "about".into(),
-                label: text(language, UiText::About).into(),
-                argument: Intent::About,
-                shortcut: None,
-                role: MenuRole::About,
-                enabled: available,
-            }),
-            separator("about_separator"),
-            MenuNode::Item(MenuItem {
-                id: "preferences".into(),
-                label: text(language, UiText::Preferences).into(),
-                argument: Intent::Settings,
-                shortcut: Some("Primary+Comma".into()),
-                role: MenuRole::Normal,
-                enabled: available,
-            }),
-            separator("preferences_separator"),
-            MenuNode::Item(MenuItem {
-                id: "quit".into(),
-                label: text(language, UiText::Quit).into(),
-                argument: Intent::Quit,
-                shortcut: Some("Primary+Q".into()),
-                role: MenuRole::Quit,
-                enabled: available,
-            }),
-        ]
     }
 }
 
@@ -321,12 +192,59 @@ pub(crate) fn screen(view: &View, parent: &Parent, id: &str, source: Binding<Opt
 #[derive(Clone)]
 struct Presentation {
     screen: Binding<Option<ImageFrame>>,
-    app_title: Binding<String>,
+    app_visible: Binding<bool>,
+    available: Binding<bool>,
+    loaded: Binding<bool>,
+    pause_enabled: Binding<bool>,
+    resume_enabled: Binding<bool>,
+    load_active_enabled: Binding<bool>,
+    slot_submenu_enabled: Binding<bool>,
+    settings_shortcut: Binding<Option<String>>,
+    quit_shortcut: Binding<Option<String>>,
     file_title: Binding<String>,
     emulation_title: Binding<String>,
-    app_items: Binding<Vec<MenuNode<Intent>>>,
-    file_items: Binding<Vec<MenuNode<Intent>>>,
-    emulation_items: Binding<Vec<MenuNode<Intent>>>,
+    about_label: Binding<String>,
+    preferences_label: Binding<String>,
+    quit_label: Binding<String>,
+    open_label: Binding<String>,
+    close_label: Binding<String>,
+    settings_label: Binding<String>,
+    pause_label: Binding<String>,
+    resume_label: Binding<String>,
+    reset_label: Binding<String>,
+    states_title: Binding<String>,
+    create_slot_label: Binding<String>,
+    save_active_slot_label: Binding<String>,
+    load_active_slot_label: Binding<String>,
+    select_slot_title: Binding<String>,
+    save_slot_title: Binding<String>,
+    load_slot_title: Binding<String>,
+    delete_slot_title: Binding<String>,
+    debugger_label: Binding<String>,
+    history_label: Binding<String>,
+    ppu_label: Binding<String>,
+    fullscreen_label: Binding<String>,
+    select_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
+    save_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
+    load_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
+    delete_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
+    about_arg: Binding<Intent>,
+    preferences_arg: Binding<Intent>,
+    quit_arg: Binding<Intent>,
+    open_arg: Binding<Intent>,
+    close_arg: Binding<Intent>,
+    settings_arg: Binding<Intent>,
+    pause_arg: Binding<Intent>,
+    resume_arg: Binding<Intent>,
+    reset_arg: Binding<Intent>,
+    create_slot_arg: Binding<Intent>,
+    save_active_slot_arg: Binding<Intent>,
+    load_active_slot_arg: Binding<Intent>,
+    debugger_arg: Binding<Intent>,
+    history_arg: Binding<Intent>,
+    ppu_arg: Binding<Intent>,
+    fullscreen_arg: Binding<Intent>,
+    inert_arg: Binding<Intent>,
     model: Store<Model>,
     actions: Actions,
 }
@@ -346,14 +264,66 @@ impl Presentation {
     }
 }
 pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actions) -> View {
+    fn constant<T: Clone + 'static>(value: T) -> Binding<T> {
+        Binding::constant(value)
+    }
     let bindings = Presentation {
         screen: model.bind(|model| model.screen.clone(), None),
-        app_title: menus.bind(|model| model.app_title.clone(), None),
+        app_visible: menus.bind(|model| model.app_visible, None),
+        available: menus.bind(|model| model.available, None),
+        loaded: menus.bind(|model| model.loaded, None),
+        pause_enabled: menus.bind(|model| model.pause_enabled, None),
+        resume_enabled: menus.bind(|model| model.resume_enabled, None),
+        load_active_enabled: menus.bind(|model| model.load_active_enabled, None),
+        slot_submenu_enabled: menus.bind(|model| model.slot_submenu_enabled, None),
+        settings_shortcut: menus.bind(|model| model.settings_shortcut.clone(), None),
+        quit_shortcut: menus.bind(|model| model.quit_shortcut.clone(), None),
         file_title: menus.bind(|model| model.file_title.clone(), None),
         emulation_title: menus.bind(|model| model.emulation_title.clone(), None),
-        app_items: menus.bind(|model| model.app.clone(), None),
-        file_items: menus.bind(|model| model.file.clone(), None),
-        emulation_items: menus.bind(|model| model.emulation.clone(), None),
+        about_label: menus.bind(|model| model.about_label.clone(), None),
+        preferences_label: menus.bind(|model| model.preferences_label.clone(), None),
+        quit_label: menus.bind(|model| model.quit_label.clone(), None),
+        open_label: menus.bind(|model| model.open_label.clone(), None),
+        close_label: menus.bind(|model| model.close_label.clone(), None),
+        settings_label: menus.bind(|model| model.settings_label.clone(), None),
+        pause_label: menus.bind(|model| model.pause_label.clone(), None),
+        resume_label: menus.bind(|model| model.resume_label.clone(), None),
+        reset_label: menus.bind(|model| model.reset_label.clone(), None),
+        states_title: menus.bind(|model| model.states_title.clone(), None),
+        create_slot_label: menus.bind(|model| model.create_slot_label.clone(), None),
+        save_active_slot_label: menus.bind(|model| model.save_active_slot_label.clone(), None),
+        load_active_slot_label: menus.bind(|model| model.load_active_slot_label.clone(), None),
+        select_slot_title: menus.bind(|model| model.select_slot_title.clone(), None),
+        save_slot_title: menus.bind(|model| model.save_slot_title.clone(), None),
+        load_slot_title: menus.bind(|model| model.load_slot_title.clone(), None),
+        delete_slot_title: menus.bind(|model| model.delete_slot_title.clone(), None),
+        debugger_label: menus.bind(|model| model.debugger_label.clone(), None),
+        history_label: menus.bind(|model| model.history_label.clone(), None),
+        ppu_label: menus.bind(|model| model.ppu_label.clone(), None),
+        fullscreen_label: menus.bind(|model| model.fullscreen_label.clone(), None),
+        select_slot_nodes: menus.bind(|model| model.select_slot_nodes.clone(), None),
+        save_slot_nodes: menus.bind(|model| model.save_slot_nodes.clone(), None),
+        load_slot_nodes: menus.bind(|model| model.load_slot_nodes.clone(), None),
+        delete_slot_nodes: menus.bind(|model| model.delete_slot_nodes.clone(), None),
+        about_arg: constant(Intent::About),
+        preferences_arg: constant(Intent::Settings),
+        quit_arg: constant(Intent::Quit),
+        open_arg: constant(Intent::Open),
+        close_arg: constant(Intent::Session(SessionAction::Unload)),
+        settings_arg: constant(Intent::Settings),
+        pause_arg: constant(Intent::Pause(true)),
+        resume_arg: constant(Intent::Pause(false)),
+        reset_arg: constant(Intent::Session(SessionAction::Reset)),
+        create_slot_arg: constant(Intent::Session(SessionAction::CreateSlot)),
+        save_active_slot_arg: constant(Intent::Session(SessionAction::SaveState)),
+        load_active_slot_arg: constant(Intent::Session(SessionAction::LoadState)),
+        debugger_arg: constant(Intent::Debugger),
+        history_arg: constant(Intent::History),
+        ppu_arg: constant(Intent::Ppu),
+        fullscreen_arg: constant(Intent::Fullscreen),
+        // Separators never dispatch; About is inert by construction (the
+        // native panel owns it), so it fills the type without a meaning.
+        inert_arg: constant(Intent::About),
         model,
         actions,
     };
@@ -365,45 +335,36 @@ mod tests {
     use super::*;
     use crate::session::test_fixture::loaded_adapter;
 
-    fn items_of(menu: &[MenuNode<Intent>]) -> Vec<&MenuItem<Intent>> {
-        menu.iter()
-            .filter_map(|node| match node {
-                MenuNode::Item(item) => Some(item),
-                MenuNode::Submenu { .. } => None,
-            })
-            .collect()
-    }
-
-    fn file_settings_shortcut(model: &MenuModel) -> Option<&str> {
-        items_of(&model.file)
-            .iter()
-            .find(|item| item.argument == Intent::Settings)
-            .expect("File carries a Settings entry")
-            .shortcut
-            .as_deref()
-    }
-
     #[test]
-    fn file_and_emulation_menus_keep_shape_on_all_platforms() {
+    fn skeleton_leaves_carry_localized_labels_and_gating() {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
         for application_menu in [false, true] {
             let model = MenuModel::new(&app, application_menu);
+            assert_eq!(model.app_visible, application_menu);
             assert_eq!(model.file_title, text(model.language, UiText::File));
             assert_eq!(
                 model.emulation_title,
                 text(model.language, UiText::Emulation)
             );
-            assert_eq!(model.file.len(), 4, "Open/Close/Settings/Quit");
-            // Loaded fixture: pause gated off (running), resume gated on... the
-            // adapter boots paused-debug? Only shape is pinned here, not gating.
-            assert!(!model.emulation.is_empty());
+            // Loaded fixture with slots: creation and per-slot traffic enabled.
+            assert!(model.available && model.loaded);
+            assert_eq!(model.open_label, text(model.language, UiText::Open));
+            assert_eq!(
+                model.debugger_label,
+                nerust_gui_runtime::menu_labels::shortcut_hint(
+                    text(model.language, UiText::OpenDebugger),
+                    &model.shortcuts,
+                    ShortcutAction::OpenDebugger,
+                )
+            );
+            assert_eq!(model.pause_label, text(model.language, UiText::Pause));
             assert!(model.matches(&app));
         }
     }
 
     #[test]
-    fn app_menu_content_follows_injected_runner_config() {
+    fn accelerator_ownership_follows_injected_runner_config() {
         // The backend resolves the flag at startup and injects it here, so
         // both branches run on any platform without a macOS host.
         for application_menu in [false, true] {
@@ -411,37 +372,41 @@ mod tests {
             let app = nerust_gui_application::Application::new(adapter);
             let model = MenuModel::new(&app, application_menu);
             if application_menu {
-                assert_eq!(model.app_title, "Nerust");
-                let items = items_of(&model.app);
-                assert_eq!(items.len(), 5, "About/separator/Preferences/separator/Quit");
-                assert_eq!(items[0].role, MenuRole::About);
-                assert_eq!(items[0].argument, Intent::About);
-                assert_eq!(items[1].role, MenuRole::Separator);
-                assert_eq!(items[2].argument, Intent::Settings);
-                assert_eq!(items[2].role, MenuRole::Normal);
-                assert_eq!(items[2].shortcut.as_deref(), Some("Primary+Comma"));
-                assert_eq!(items[3].role, MenuRole::Separator);
-                assert_eq!(items[4].argument, Intent::Quit);
-                assert_eq!(items[4].role, MenuRole::Quit);
-                assert_eq!(items[4].shortcut.as_deref(), Some("Primary+Q"));
-                // The app menu owns the accelerators: File must not duplicate them.
-                assert_eq!(file_settings_shortcut(&model), None);
-                let file = items_of(&model.file);
-                let quit = file
-                    .iter()
-                    .find(|item| item.argument == Intent::Quit)
-                    .expect("File keeps Quit");
-                assert_eq!(quit.shortcut, None);
+                assert_eq!(model.about_label, text(model.language, UiText::About));
+                assert_eq!(
+                    model.preferences_label,
+                    text(model.language, UiText::Preferences)
+                );
+                assert_eq!(model.settings_shortcut, None);
+                assert_eq!(model.quit_shortcut, None);
             } else {
-                assert!(model.app.is_empty(), "vacant without an application menu");
-                assert_eq!(file_settings_shortcut(&model), Some("Primary+Comma"));
-                let file = items_of(&model.file);
-                let quit = file
-                    .iter()
-                    .find(|item| item.argument == Intent::Quit)
-                    .expect("File keeps Quit");
-                assert_eq!(quit.shortcut.as_deref(), Some("Primary+Q"));
+                assert_eq!(model.settings_shortcut.as_deref(), Some("Primary+Comma"));
+                assert_eq!(model.quit_shortcut.as_deref(), Some("Primary+Q"));
             }
+        }
+    }
+
+    #[test]
+    fn slot_subtrees_track_slots_and_placeholders() {
+        use nerust_gui_application::SessionAction;
+        let (adapter, _dir) = loaded_adapter();
+        let app = nerust_gui_application::Application::new(adapter);
+        // Fresh fixture: no slots yet, so the subtrees carry the disabled
+        // placeholder with a create-slot fallback argument.
+        let model = MenuModel::new(&app, false);
+        assert!(model.slot_submenu_enabled, "submenus open when loaded");
+        for nodes in [
+            &model.select_slot_nodes,
+            &model.save_slot_nodes,
+            &model.load_slot_nodes,
+            &model.delete_slot_nodes,
+        ] {
+            assert_eq!(nodes.len(), 1);
+            let MenuNode::Item(item) = &nodes[0] else {
+                panic!("placeholder is a leaf");
+            };
+            assert!(!item.enabled);
+            assert_eq!(item.argument, Intent::Session(SessionAction::CreateSlot));
         }
     }
 }
