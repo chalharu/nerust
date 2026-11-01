@@ -46,7 +46,7 @@ pub fn run(
     }
     let application = Rc::new(RefCell::new(application));
     let renderer = Rc::new(RefCell::new(render::RenderAdapter::new(gpu_factory)));
-    panechord::run_host(move |host| {
+    panechord::Runner::builder().run(move |host, config| {
         let session = panechord::Session::new();
         host.attach(session.clone())?;
         let model = Store::new(
@@ -54,7 +54,11 @@ pub fn run(
             host.executor(),
         );
         let actions = Rc::new(RefCell::new(None));
-        let menus = Store::new(view::MenuModel::new(&application.borrow()), host.executor());
+        let application_menu = config.application_menu;
+        let menus = Store::new(
+            view::MenuModel::new(&application.borrow(), application_menu),
+            host.executor(),
+        );
         let view = view::build(model.clone(), menus.clone(), actions.clone());
         let app = application.clone();
         let render = renderer.clone();
@@ -569,7 +573,8 @@ pub fn run(
             while weak.upgrade().is_some() && !application.borrow().state().closed {
                 let changed_menus = {
                     let app = application.borrow();
-                    (!menus.snapshot().matches(&app)).then(|| view::MenuModel::new(&app))
+                    (!menus.snapshot().matches(&app))
+                        .then(|| view::MenuModel::new(&app, application_menu))
                 };
                 if let Some(changed) = changed_menus {
                     let _ = menus.update(move |model| *model = changed);
