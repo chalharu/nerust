@@ -17,14 +17,21 @@ pub(crate) struct AdaptiveHeight {
 
 impl AdaptiveHeight {
     pub fn element(build: std::rc::Rc<dyn Fn(bool) -> Element>) -> Element {
-        let child = build(false);
+        // Assume bounded until layout proves otherwise: size() reports the
+        // Fill intent so vertical stacks reserve remainder space for it,
+        // while layout() rebuilds Shrink under unbounded limits.
+        let child = build(true);
         Element::new(Self { build, child })
     }
 }
 
 impl Widget<Message, iced::Theme, Renderer> for AdaptiveHeight {
     fn size(&self) -> Size<Length> {
-        self.child.as_widget().size()
+        // Fill intent: vertical stacks reserve remainder space for tabs (a
+        // Fill tab body would otherwise claim the whole viewport and push
+        // footers out). layout() still collapses to content under
+        // unbounded limits, so dialogs keep their natural size.
+        Size::new(self.child.as_widget().size().width, Length::Fill)
     }
     fn tag(&self) -> widget::tree::Tag {
         self.child.as_widget().tag()
@@ -44,7 +51,11 @@ impl Widget<Message, iced::Theme, Renderer> for AdaptiveHeight {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.child = (self.build)(limits.min().height > 0.0);
+        // Bounded max height (windows, scroll viewports) means Fill children
+        // can resolve against it; min height is zero almost everywhere, so
+        // gating on min collapsed Fill-in-Shrink subtrees (scrollable tab
+        // bodies) to blank.
+        self.child = (self.build)(limits.max().height.is_finite());
         tree.diff(self.child.as_widget());
         self.child.as_widget_mut().layout(tree, renderer, limits)
     }
@@ -531,29 +542,46 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                 *node = child.as_widget_mut().layout(state, renderer, &child_limits);
             }
             if !horizontal && limits.max().height.is_finite() {
+                // Remainder distribution: Stretch-styled children split the
+                // leftover space, and so do Fill-height children (a Fill tab
+                // body would otherwise claim the whole viewport and push
+                // footers out). Both relayout at the exact share.
+                let stretches = |child: &Element, style: &Style| {
+                    style.placement.height.is_none()
+                        && (style.vertical_alignment == Some(Alignment::Stretch)
+                            || matches!(
+                                child.as_widget().size().height,
+                                Length::Fill | Length::FillPortion(_)
+                            ))
+                };
+                // Fixed space counts only non-claimants; Fill children are
+                // resized to the remainder, so including their full-max
+                // height would zero the share.
+                let fixed = nodes
+                    .iter()
+                    .zip(&self.children)
+                    .zip(&self.styles)
+                    .filter(|((node, child), style)| {
+                        node.size() != Size::ZERO && !stretches(child, style)
+                    })
+                    .map(|((node, _), style)| {
+                        node.size().height + finite(style.margin.top) + finite(style.margin.bottom)
+                    })
+                    .sum::<f32>();
                 let visible = nodes
                     .iter()
                     .filter(|node| node.size() != Size::ZERO)
                     .count();
-                let occupied = nodes
-                    .iter()
-                    .zip(&self.styles)
-                    .filter(|(node, _)| node.size() != Size::ZERO)
-                    .map(|(node, style)| {
-                        node.size().height + finite(style.margin.top) + finite(style.margin.bottom)
-                    })
-                    .sum::<f32>()
-                    + finite(gap) * visible.saturating_sub(1) as f32;
                 let count = nodes
                     .iter()
+                    .zip(&self.children)
                     .zip(&self.styles)
-                    .filter(|(node, style)| {
-                        node.size() != Size::ZERO
-                            && style.placement.height.is_none()
-                            && style.vertical_alignment == Some(Alignment::Stretch)
+                    .filter(|((node, child), style)| {
+                        node.size() != Size::ZERO && stretches(child, style)
                     })
                     .count();
-                let surplus = (limits.max().height - occupied).max(0.0) / count.max(1) as f32;
+                let gaps = finite(gap) * visible.saturating_sub(1) as f32;
+                let share = (limits.max().height - fixed - gaps).max(0.0) / count.max(1) as f32;
                 for (((child, state), style), node) in self
                     .children
                     .iter_mut()
@@ -561,13 +589,19 @@ impl Widget<Message, iced::Theme, Renderer> for Panel {
                     .zip(&self.styles)
                     .zip(&mut nodes)
                 {
-                    if node.size() == Size::ZERO
-                        || style.placement.height.is_some()
-                        || style.vertical_alignment != Some(Alignment::Stretch)
-                    {
+                    if node.size() == Size::ZERO || !stretches(child, style) {
                         continue;
                     }
-                    let height = node.size().height + surplus;
+                    // Fill children take exactly the share; content-sized
+                    // Stretch children grow by it.
+                    let height = if matches!(
+                        child.as_widget().size().height,
+                        Length::Fill | Length::FillPortion(_)
+                    ) {
+                        share
+                    } else {
+                        node.size().height + share
+                    };
                     let size = Size::new(node.size().width, height);
                     *node = child.as_widget_mut().layout(
                         state,

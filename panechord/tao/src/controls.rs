@@ -62,7 +62,7 @@ impl Tab {
                 .unwrap_or_else(|| widget::Space::new().into());
             let body: Element = widget::container(body)
                 .width(Length::Fill)
-                .height(if fixed_height && !vertical {
+                .height(if fixed_height {
                     Length::Fill
                 } else {
                     Length::Shrink

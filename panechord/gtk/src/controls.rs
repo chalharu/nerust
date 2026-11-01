@@ -607,8 +607,26 @@ impl View {
                     })
                     .collect();
                 measurements.replace(labels);
-                let labels: Vec<_> = choices.iter().map(|choice| choice.label.as_str()).collect();
-                combo.set_model(Some(&gtk::StringList::new(&labels)));
+                // Update the list in place: set_model on an open dropdown
+                // (e.g. picking a language switches labels while the popup
+                // is up) tears down the observed model mid-popup and aborts.
+                // Splicing through the list-model protocol is safe.
+                let labels: Vec<String> =
+                    choices.iter().map(|choice| choice.label.clone()).collect();
+                let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                match combo
+                    .model()
+                    .and_then(|model| model.downcast::<gtk::StringList>().ok())
+                {
+                    Some(list) => {
+                        let n = list.n_items();
+                        if n > 0 {
+                            list.splice(0, n, &[]);
+                        }
+                        list.splice(0, 0, &refs);
+                    }
+                    None => combo.set_model(Some(&gtk::StringList::new(&refs))),
+                }
             }
             let index = choices
                 .iter()
