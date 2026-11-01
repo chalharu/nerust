@@ -65,6 +65,14 @@ impl std::fmt::Display for WriteError {
 }
 impl std::error::Error for WriteError {}
 
+/// Drop a native→model write result deliberately. Rejections are routine, not
+/// failures: Closed arrives during teardown, ReadOnly/Capacity when the
+/// binding cannot take the value, and every call site rolls its widget back
+/// locally (re-setting control state). Conversion problems are reported by
+/// the converting widget itself, before the write is attempted.
+#[inline]
+pub fn ignore_write(_: Result<(), WriteError>) {}
+
 /// Live projection; `set` returns acceptance, not whether the value changed.
 #[derive(Clone)]
 pub struct Binding<T: Clone + 'static> {
@@ -817,6 +825,14 @@ impl<S: Clone + 'static> Store<S> {
     /// An owned Clone of the current state; binding reads only clone their projection.
     pub fn snapshot(&self) -> S {
         (*self.core.snapshots.get()).clone()
+    }
+    /// Borrow the current state without cloning it. For cheap per-tick
+    /// comparisons (e.g. change-gating a rebuild) where `snapshot()` would
+    /// clone every field just to compare. The guarded value is a consistent
+    /// snapshot: concurrent replacement swaps the shared pointer, never the
+    /// borrowed state.
+    pub fn with<R>(&self, read: impl FnOnce(&S) -> R) -> R {
+        read(&self.core.snapshots.get())
     }
     #[must_use = "check acceptance or explicitly discard it"]
     pub fn update(&self, update: impl FnOnce(&mut S) + 'static) -> bool {

@@ -1,6 +1,6 @@
 use nerust_gui_shell::{
     frame_composer::FrameComposer,
-    session::osd::{OsdManager, OsdSyncInput},
+    session::osd::{OsdChrome, OsdManager, OsdSyncInput},
 };
 use nerust_render_traits::{FrameBuffer, SurfaceSize, renderer::RenderPipeline};
 use nerust_render_traits::{
@@ -10,6 +10,22 @@ use nerust_render_traits::{
 use panechord::{ImageFrame, WindowSurface};
 use std::{cell::Cell, rc::Rc};
 
+/// Identity of the pixels the next capture would produce. Frame content rides
+/// the emu frame counter plus the media revision (load/unload/reset replace
+/// the buffer without ticking), OSD rows ride the manager generation, and the
+/// reserved strips ride the chrome. Profile, vsync, and viewport stay with
+/// the adapter's existing attach checks. When the whole key repeats, the
+/// capture returns `Ok(None)` and the caller keeps the previous screen:
+/// no re-render, no clone, no upload. Rendering (and presenting) still runs
+/// on every change, so expose/repaint behavior is untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScreenContentKey {
+    pub frame: u64,
+    pub media: u64,
+    pub osd: u64,
+    pub chrome: OsdChrome,
+}
+
 pub(crate) struct RenderAdapter {
     pipeline: Option<Box<dyn RenderPipeline>>,
     profile: Option<(VideoRenderProfile, bool)>,
@@ -18,6 +34,8 @@ pub(crate) struct RenderAdapter {
     viewport: Rc<Cell<SurfaceSize>>,
     logical_bounds: (f32, f32),
     composer: FrameComposer,
+    last_content: Option<ScreenContentKey>,
+    last_size: Option<SurfaceSize>,
 }
 
 impl RenderAdapter {
@@ -30,6 +48,8 @@ impl RenderAdapter {
             viewport: Rc::new(Cell::new(SurfaceSize::new(0, 0))),
             logical_bounds: (1.0, 1.0),
             composer: FrameComposer::new(),
+            last_content: None,
+            last_size: None,
         }
     }
 
@@ -63,6 +83,7 @@ impl RenderAdapter {
         vsync: bool,
         osd: &OsdManager,
         sync: OsdSyncInput,
+        content: ScreenContentKey,
     ) -> Result<Option<ImageFrame>, String> {
         let Some(window) = self.window.clone() else {
             return Ok(None);
@@ -74,6 +95,13 @@ impl RenderAdapter {
         let unchanged = self.profile.as_ref().is_some_and(|(known, known_vsync)| {
             *known_vsync == vsync && same_profile(known, profile)
         });
+        if unchanged
+            && self.last_content == Some(content)
+            && self.last_size == Some(size)
+            && self.pipeline.is_some()
+        {
+            return Ok(None);
+        }
         if !unchanged {
             self.detach_pipeline();
             let display = window
@@ -105,13 +133,19 @@ impl RenderAdapter {
         let Some(pipeline) = self.pipeline.as_mut() else {
             return Ok(None);
         };
-        self.composer
+        let image = self
+            .composer
             .render(pipeline.as_mut(), frame, size, osd, sync)?
             .map(|image| {
                 ImageFrame::new(image.width, image.height, image.pixels.into())
                     .map_err(str::to_owned)
             })
-            .transpose()
+            .transpose()?;
+        if image.is_some() {
+            self.last_content = Some(content);
+            self.last_size = Some(size);
+        }
+        Ok(image)
     }
 
     fn detach_pipeline(&mut self) {
@@ -120,6 +154,8 @@ impl RenderAdapter {
             pipeline.detach();
         }
         self.profile = None;
+        self.last_content = None;
+        self.last_size = None;
     }
 
     pub(crate) fn close(&mut self) {

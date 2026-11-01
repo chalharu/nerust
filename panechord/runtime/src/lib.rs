@@ -28,7 +28,7 @@ pub use session::{
 pub use shortcut::{Shortcut, ShortcutError, ShortcutTarget};
 pub use store::{
     Binding, Command, Executor, Limits, Policy, Store, StoreOwner, Subscription, WriteError,
-    validation,
+    ignore_write, validation,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -443,6 +443,13 @@ pub fn omitted_command_argument<T: OmittedCommandArgument>() -> Binding<T> {
     Binding::constant(T::omitted())
 }
 
+/// Backend menu contract (implemented per backend, same outcome everywhere):
+/// a menu whose snapshot is fully vacant (no label and no content) stays out
+/// of the menubar instead of rendering blank; a late attach inserts at
+/// install order, not at the end, so conditional menus keep their position
+/// across detach/reattach cycles; and a snapshot is validated and built
+/// completely before the live native menu is touched, with rollback to the
+/// previous snapshot on any native failure.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuNode<A = String> {
     Item(MenuItem<A>),
