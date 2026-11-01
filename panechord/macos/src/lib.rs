@@ -615,7 +615,7 @@ impl View {
                     let selection = panechord_runtime::TableSelection { row_key, column };
                     let valid = selection.validate(&data.borrow());
                     if valid.is_ok() {
-                        let _ = writer.try_set(Some(selection));
+                        panechord_runtime::ignore_write(writer.try_set(Some(selection)));
                     }
                 }
             }),

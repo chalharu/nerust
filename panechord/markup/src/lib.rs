@@ -522,9 +522,31 @@ fn lexical_yaml(source: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Recursive menu-entry validation shared by the document walk: ids stay
-/// unique across nesting levels, submenu entries carry children instead of an
-/// argument, and native roles/shortcuts stay on leaves only.
+/// Submenu shape shared by both children forms: children instead of an
+/// argument, and no native role or shortcut (those stay on leaves only).
+fn check_submenu(entry: &MenuEntry) -> Result<(), String> {
+    if entry.argument.is_some() {
+        return Err(format!("submenu entry `{}` takes no argument", entry.id));
+    }
+    if entry.role != MenuRole::Normal {
+        return Err(format!(
+            "native role on submenu entry `{}` is unsupported",
+            entry.id
+        ));
+    }
+    if entry.shortcut.is_some() {
+        return Err(format!(
+            "shortcut on submenu entry `{}` is unsupported",
+            entry.id
+        ));
+    }
+    Ok(())
+}
+
+/// Recursive menu-entry validation shared by the document walk: entry ids
+/// stay unique within the menu (backends namespace by menu), submenu entries
+/// carry children instead of an argument, and native roles/shortcuts stay on
+/// leaves only.
 fn validate_menu_entries(
     entries: &[MenuEntry],
     base: &str,
@@ -555,39 +577,11 @@ fn validate_menu_entries(
         }
         match &entry.children {
             Some(MenuItems::Entries(children)) => {
-                if entry.argument.is_some() {
-                    return Err(format!("submenu entry `{}` takes no argument", entry.id));
-                }
-                if entry.role != MenuRole::Normal {
-                    return Err(format!(
-                        "native role on submenu entry `{}` is unsupported",
-                        entry.id
-                    ));
-                }
-                if entry.shortcut.is_some() {
-                    return Err(format!(
-                        "shortcut on submenu entry `{}` is unsupported",
-                        entry.id
-                    ));
-                }
+                check_submenu(entry)?;
                 validate_menu_entries(children, &format!("{path}.children"), ids)?;
             }
             Some(MenuItems::Binding(children)) => {
-                if entry.argument.is_some() {
-                    return Err(format!("submenu entry `{}` takes no argument", entry.id));
-                }
-                if entry.role != MenuRole::Normal {
-                    return Err(format!(
-                        "native role on submenu entry `{}` is unsupported",
-                        entry.id
-                    ));
-                }
-                if entry.shortcut.is_some() {
-                    return Err(format!(
-                        "shortcut on submenu entry `{}` is unsupported",
-                        entry.id
-                    ));
-                }
+                check_submenu(entry)?;
                 one_way(children, &format!("{path}.children"))?;
             }
             None => {

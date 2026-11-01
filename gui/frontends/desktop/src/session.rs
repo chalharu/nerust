@@ -96,8 +96,11 @@ impl SessionAdapter {
         )
     }
 
-    pub(crate) fn key(code: &panechord::KeyCode) -> Option<nerust_input_traits::Key> {
-        use serde::Deserialize;
+    /// W3C code (`NumpadEnter`) to settings name (`numpad_enter`): matches the
+    /// `snake_case` serde vocabulary of [`nerust_input_traits::Key`]. Upstream
+    /// naming drift is absorbed one layer down: `KeyCode::from_name` aliases
+    /// (`MetaLeft` → `SuperLeft`) before this ever runs.
+    fn key_name(code: &panechord::KeyCode) -> String {
         let mut name = String::new();
         for (index, character) in code.as_str().chars().enumerate() {
             if index > 0 && character.is_ascii_uppercase() {
@@ -105,9 +108,14 @@ impl SessionAdapter {
             }
             name.push(character.to_ascii_lowercase());
         }
+        name
+    }
+
+    pub(crate) fn key(code: &panechord::KeyCode) -> Option<nerust_input_traits::Key> {
+        use serde::Deserialize;
         nerust_input_traits::Key::deserialize(serde::de::value::StrDeserializer::<
             serde::de::value::Error,
-        >::new(&name))
+        >::new(&Self::key_name(code)))
         .ok()
     }
 
@@ -527,5 +535,26 @@ mod tests {
             );
         }
         assert_eq!(SessionAdapter::key(&panechord::KeyCode::Unidentified), None);
+    }
+
+    #[test]
+    fn key_name_conversion_pins_camel_to_snake_rules() {
+        // The serde vocabulary is the contract; this pins the mechanical
+        // conversion (letter groups, digits, multi-capital acronyms) so a
+        // drift shows up here rather than as a silent unbound key.
+        for (code, expected) in [
+            ("KeyV", "key_v"),
+            ("F11", "f11"),
+            ("ArrowUp", "arrow_up"),
+            ("IntlYen", "intl_yen"),
+            ("NumpadEnter", "numpad_enter"),
+            ("Unidentified", "unidentified"),
+        ] {
+            assert_eq!(
+                SessionAdapter::key_name(&panechord::KeyCode::from_name(code)),
+                expected,
+                "{code}"
+            );
+        }
     }
 }
