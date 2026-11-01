@@ -5,9 +5,9 @@
 pub use panechord_runtime::Alignment;
 
 mod controls;
-mod table;
 #[cfg(target_os = "macos")]
 mod macos_menu;
+mod table;
 pub use gtk;
 
 use std::{
@@ -177,6 +177,9 @@ struct MenuState {
 struct Action {
     action: gio::SimpleAction,
     name: String,
+    // macOS global-menu mirror only (`macos_menu` is Apple-gated); other
+    // platforms drive accelerators through `gtk::Shortcut` triggers.
+    #[cfg(target_os = "macos")]
     shortcut: Option<String>,
 }
 
@@ -297,8 +300,7 @@ pub fn set_allows_automatic_window_tabbing(enabled: bool) {
 
 // Remembered main-window size (logical points) consumed once by the next
 // built window; falls back to the default when unset or invalid.
-static INITIAL_WINDOW_SIZE: std::sync::Mutex<Option<(i32, i32)>> =
-    std::sync::Mutex::new(None);
+static INITIAL_WINDOW_SIZE: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
 
 /// Stage the initial main-window size, in logical points. Consumed once by
 /// the next built window; call before `run_host` builds views.
@@ -1185,7 +1187,9 @@ impl View {
         let Some(menu_state) = self.0.menu_states.borrow().get(id).cloned() else {
             // Raced with view teardown (e.g. closing a window mid-update):
             // report instead of panicking on the stale subscription.
-            self.0.error.replace(Some(format!("menu removed during update: {id}")));
+            self.0
+                .error
+                .replace(Some(format!("menu removed during update: {id}")));
             return;
         };
         let old_ids: HashSet<_> = menu_state.actions.borrow().iter().cloned().collect();
@@ -1214,7 +1218,9 @@ impl View {
         }
         self.clear_menu(id);
         let Some(state) = self.0.menu_states.borrow().get(id).cloned() else {
-            self.0.error.replace(Some(format!("menu removed during update: {id}")));
+            self.0
+                .error
+                .replace(Some(format!("menu removed during update: {id}")));
             return;
         };
         let mut section = gio::Menu::new();
@@ -1248,13 +1254,13 @@ impl View {
             });
             self.signal(&format!("{id}/@actions"), &action, signal);
             self.0.group.add_action(&action);
-            let shortcut = item.shortcut.clone();
             self.0.actions.borrow_mut().insert(
                 item.id.clone(),
                 Action {
                     action,
                     name,
-                    shortcut,
+                    #[cfg(target_os = "macos")]
+                    shortcut: item.shortcut.clone(),
                 },
             );
             state.actions.borrow_mut().push(item.id);
