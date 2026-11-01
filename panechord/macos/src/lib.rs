@@ -6,14 +6,19 @@ mod input;
 
 use futures::future::LocalBoxFuture;
 use panechord_runtime::{
-    Binding, Command, Executor, Keyed, Layout, MenuItem, Session, Shortcut, Store, Style,
-    Subscription, UiHost, Viewport, WindowHooks,
+    Binding, Command, Executor, ImageFrame, Keyed, Layout, MenuItem, Session, Shortcut, Store,
+    Style, Subscription, UiHost, Viewport, WindowHooks, WindowSurface,
+};
+use raw_window_handle::{
+    AppKitDisplayHandle, AppKitWindowHandle, DisplayHandle, HandleError, HasDisplayHandle,
+    HasWindowHandle, RawDisplayHandle, RawWindowHandle, WindowHandle,
 };
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, VecDeque},
     ffi::c_void,
     panic::{AssertUnwindSafe, catch_unwind},
+    ptr::NonNull,
     rc::{Rc, Weak},
     sync::{
         Arc,
@@ -124,6 +129,10 @@ unsafe extern "C" {
         width: u32,
         height: u32,
     ) -> i32;
+    fn w3_surface_view(host: *mut c_void) -> *mut c_void;
+    fn w3_surface_size(host: *mut c_void, width: *mut f64, height: *mut f64);
+    fn w3_surface_scale(host: *mut c_void) -> f64;
+    fn w3_toggle_fullscreen(host: *mut c_void);
 }
 
 #[derive(Clone)]
@@ -131,6 +140,7 @@ pub struct Parent(String, Weak<Inner>);
 
 type Handler = Rc<dyn Fn(String)>;
 type SurfaceEventHandler = Rc<dyn Fn(&panechord_runtime::WindowEvent)>;
+type ViewportHook = Rc<dyn Fn(f32, f32)>;
 type Template<T> = Rc<dyn Fn(&View, &Parent, &str, Store<T>)>;
 type Refresh = Rc<dyn Fn(&View)>;
 
@@ -160,6 +170,8 @@ struct Inner {
     close_handlers: RefCell<Vec<Rc<dyn Fn()>>>,
     close_request: RefCell<Option<Rc<dyn Fn()>>>,
     surface_event: RefCell<Option<SurfaceEventHandler>>,
+    surface_viewport: RefCell<Option<ViewportHook>>,
+    surface_size: Cell<(f32, f32)>,
     quit_request: RefCell<Option<Rc<dyn Fn()>>>,
     requesting: Cell<bool>,
     closed: Cell<bool>,
@@ -217,6 +229,45 @@ impl WeakView {
     }
 }
 
+/// Render target backed by the AppKit window's content view. The pointer is
+/// owned by the Swift host, so the surface holds the `Inner` alive for as
+/// long as a renderer retains it.
+struct MacSurface {
+    inner: Rc<Inner>,
+    ns_view: NonNull<c_void>,
+}
+
+impl HasDisplayHandle for MacSurface {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        Ok(unsafe { DisplayHandle::borrow_raw(RawDisplayHandle::AppKit(AppKitDisplayHandle::new())) })
+    }
+}
+
+impl HasWindowHandle for MacSurface {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        Ok(unsafe {
+            WindowHandle::borrow_raw(RawWindowHandle::AppKit(AppKitWindowHandle::new(
+                self.ns_view,
+            )))
+        })
+    }
+}
+
+impl WindowSurface for MacSurface {
+    fn scale_factor(&self) -> f64 {
+        if self.inner.closed.get() {
+            return 1.0;
+        }
+        unsafe { w3_surface_scale(self.inner.native.get()) }
+    }
+
+    fn toggle_fullscreen(&self) {
+        if !self.inner.closed.get() {
+            unsafe { w3_toggle_fullscreen(self.inner.native.get()) };
+        }
+    }
+}
+
 unsafe extern "C" fn dispatch(
     context: *mut c_void,
     kind: i32,
@@ -262,6 +313,21 @@ unsafe extern "C" fn dispatch(
                 inner.shutdown();
             }
             inner.requesting.set(false);
+        } else if kind == 8 {
+            // Window content resize from `windowDidResize`: track the game
+            // bounds and notify the render viewport hook.
+            let mut dims = text.split(',');
+            if let (Some(width), Some(height)) = (dims.next(), dims.next())
+                && let (Ok(width), Ok(height)) =
+                    (width.parse::<f32>(), height.parse::<f32>())
+                && width > 0.0
+                && height > 0.0
+            {
+                inner.surface_size.set((width, height));
+                if let Some(hook) = inner.surface_viewport.borrow().clone() {
+                    hook(width, height);
+                }
+            }
         } else {
             let handler = if kind == 2 {
                 inner.viewport_handlers.borrow().get(id.as_ref()).cloned()
@@ -326,6 +392,8 @@ impl View {
             close_handlers: RefCell::new(Vec::new()),
             close_request: RefCell::new(None),
             surface_event: RefCell::new(None),
+            surface_viewport: RefCell::new(None),
+            surface_size: Cell::new((0.0, 0.0)),
             quit_request: RefCell::new(None),
             requesting: Cell::new(false),
             closed: Cell::new(false),
@@ -347,6 +415,94 @@ impl View {
         if !self.0.closed.get() {
             self.0.surface_event.replace(Some(callback));
         }
+    }
+    pub fn on_surface_ready(
+        &self,
+        callback: impl FnOnce(Rc<dyn WindowSurface>) -> Result<(), String> + 'static,
+    ) -> Result<(), String> {
+        if self.0.closed.get() {
+            return Err("view is closed".into());
+        }
+        let ns_view =
+            NonNull::new(unsafe { w3_surface_view(self.0.native.get()) }).ok_or_else(|| {
+                "native surface view unavailable".to_owned()
+            })?;
+        callback(Rc::new(MacSurface {
+            inner: Rc::clone(&self.0),
+            ns_view,
+        }))
+    }
+    pub fn on_surface_viewport(&self, callback: Rc<dyn Fn(f32, f32)>) {
+        self.0.surface_viewport.replace(Some(callback.clone()));
+        let mut size = [0.0f64; 2];
+        unsafe {
+            w3_surface_size(
+                self.0.native.get(),
+                size.as_mut_ptr(),
+                size.as_mut_ptr().add(1),
+            );
+        }
+        let size = (size[0] as f32, size[1] as f32);
+        if size.0 > 0.0 && size.1 > 0.0 {
+            self.0.surface_size.set(size);
+            callback(size.0, size.1);
+        }
+    }
+    pub fn request_quit(&self) {
+        if self.0.closed.get() || self.0.requesting.replace(true) {
+            return;
+        }
+        let _request = RequestFlag(&self.0.requesting);
+        let callback = self.0.quit_request.borrow().clone();
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(callback) = callback {
+                callback();
+            } else {
+                self.close();
+            }
+        })) {
+            self.0.error.replace(Some(panic_error(panic)));
+        }
+    }
+    /// Mounts a `PointerImage` node (kind 13) and mirrors the staged frame
+    /// into it, clearing on `None` like the GTK picture path.
+    pub fn surface(&self, parent: &Parent, id: &str, source: Binding<Option<ImageFrame>>) {
+        self.add(parent, id, 13, 0.0);
+        let key = id.to_owned();
+        self.bind(id, source, move |view, frame| {
+            if let Some(frame) = frame.as_ref() {
+                let pixels = frame.pixels();
+                let expected = (frame.width() as usize)
+                    .checked_mul(frame.height() as usize)
+                    .and_then(|count| count.checked_mul(4));
+                if Some(pixels.len()) != expected {
+                    return;
+                }
+                unsafe {
+                    w3_image(
+                        view.0.native.get(),
+                        key.as_ptr(),
+                        key.len(),
+                        pixels.as_ptr(),
+                        pixels.len(),
+                        frame.width(),
+                        frame.height(),
+                    );
+                }
+            } else {
+                unsafe {
+                    w3_image(
+                        view.0.native.get(),
+                        key.as_ptr(),
+                        key.len(),
+                        std::ptr::null(),
+                        0,
+                        0,
+                        0,
+                    );
+                }
+            }
+        });
     }
     pub fn downgrade(&self) -> WeakView {
         WeakView(Rc::downgrade(&self.0))
