@@ -31,7 +31,7 @@ use std::{
 
 use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_emu_thread::OperationError;
-use nerust_gui_runtime::debugger as debug_vm;
+use nerust_gui_runtime::debugger as debug_outcome;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
@@ -341,7 +341,7 @@ pub struct SessionHandle {
     audio_registry: Arc<AudioBackendRegistry>,
     /// Shell-owned two-phase memory write transaction (Phase B).
     /// `Arc`: async debug-drain flights share it across UI ticks.
-    debug_txn: Arc<Mutex<debug_vm::WriteTransaction>>,
+    debug_txn: Arc<Mutex<debug_outcome::WriteTransaction>>,
     notifications: notification::NotificationCenter,
     title_cache: title::TitleCache,
     history_view: session_query::HistoryView,
@@ -560,7 +560,7 @@ impl SessionHandle {
             settings,
             media: MediaDept::new(),
             audio_registry,
-            debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
+            debug_txn: Arc::new(Mutex::new(debug_outcome::WriteTransaction::Empty)),
             notifications: notification::NotificationCenter::new(),
             title_cache: title::TitleCache::new(),
             history_view: session_query::HistoryView::new(),

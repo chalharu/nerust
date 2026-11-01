@@ -8,6 +8,8 @@ rust-version.workspace = true
 proc-macro = true
 [dependencies]
 panechord-markup.workspace = true
+# Runtime validation reuse at expansion time only (viewport literal limits);
+# emitted code paths are rewritten via proc-macro-crate at the use site.
 panechord-runtime.workspace = true
 syn = { version = "2.0", features = ["full", "extra-traits", "visit-mut"] }
 quote = "1.0"
