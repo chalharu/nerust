@@ -351,6 +351,112 @@ impl Pane {
 }
 
 #[cfg(test)]
+mod operation_tests {
+    //! Live PPU coverage through a real `SessionAdapter` (NES core):
+    //! layout fetch, live generation tracking, media-change/unload clearing,
+    //! and relocalization. Image projection identity is pinned by the
+    //! projection tests above; these pin the pane/owner wiring headlessly.
+    use super::*;
+    use crate::session::test_fixture::loaded_adapter;
+    use nerust_gui_application::{SessionAction, SessionActionPort};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    struct TestExecutor;
+    impl Executor for TestExecutor {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("ppu flow must not dispatch async work");
+        }
+    }
+
+    fn drive(adapter: &Rc<RefCell<crate::session::SessionAdapter>>) -> Rc<Pane> {
+        let fetch_adapter = adapter.clone();
+        let fetch: Fetch = Rc::new(move |generation| {
+            fetch_adapter
+                .borrow()
+                .handle()
+                .debug_live_images_begin_since(generation)
+        });
+        let pane = Pane::new(AppLanguage::English, Rc::new(TestExecutor));
+        let revision = adapter.borrow().media_revision();
+        pane.connect(revision, fetch);
+        pane.start(adapter.borrow().ppu_layout_begin());
+        pane
+    }
+
+    /// Drive layout + live flights to completion with wall-clock budget.
+    fn settle(pane: &Pane, adapter: &Rc<RefCell<crate::session::SessionAdapter>>, loaded: bool) {
+        let revision = adapter.borrow().media_revision();
+        for _ in 0..500 {
+            pane.poll(AppLanguage::English, loaded, revision);
+            if pane.is_idle() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("ppu flights should settle");
+    }
+
+    #[test]
+    fn live_layout_settles_and_tracks_generation() {
+        let (adapter, _dir) = loaded_adapter();
+        let adapter = Rc::new(RefCell::new(adapter));
+        let pane = drive(&adapter);
+        settle(&pane, &adapter, true);
+        // Force the 100ms live cadence, then settle the live fetch.
+        pane.next_fetch
+            .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        settle(&pane, &adapter, true);
+        let generation = pane.generation.get();
+        assert!(
+            generation.is_some(),
+            "running NES core should serve PPU images"
+        );
+        assert!(!pane.model.snapshot().is_empty);
+    }
+
+    #[test]
+    fn media_change_and_unload_clear_stale_images() {
+        let (adapter, _dir) = loaded_adapter();
+        let adapter = Rc::new(RefCell::new(adapter));
+        let pane = drive(&adapter);
+        settle(&pane, &adapter, true);
+        pane.next_fetch
+            .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        settle(&pane, &adapter, true);
+        assert!(pane.generation.get().is_some());
+        adapter
+            .borrow_mut()
+            .execute(SessionAction::Unload)
+            .expect("unload succeeds");
+        pane.poll(
+            AppLanguage::English,
+            false,
+            adapter.borrow().media_revision(),
+        );
+        assert!(pane.model.snapshot().is_empty);
+        assert!(pane.generation.get().is_none());
+        assert!(pane.is_idle());
+    }
+
+    #[test]
+    fn language_switch_relocalizes_titles() {
+        let (adapter, _dir) = loaded_adapter();
+        let adapter = Rc::new(RefCell::new(adapter));
+        let pane = drive(&adapter);
+        settle(&pane, &adapter, true);
+        pane.poll(
+            AppLanguage::Japanese,
+            true,
+            adapter.borrow().media_revision(),
+        );
+        let model = pane.model.snapshot();
+        assert_eq!(model.title, text(AppLanguage::Japanese, UiText::PpuViewer));
+        assert_eq!(model.empty, text(AppLanguage::Japanese, UiText::NoImages));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nerust_gui_viewmodel::debugger::images::DebugImageRgba;
