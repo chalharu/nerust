@@ -29,6 +29,10 @@ impl SessionAdapter {
         self.media_revision
     }
 
+    pub(crate) fn handle(&self) -> &nerust_gui_shell::session::SessionHandle {
+        &self.session
+    }
+
     pub(crate) fn ppu_live_begin(
         &self,
         generation: Option<u64>,
