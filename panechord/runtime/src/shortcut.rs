@@ -139,6 +139,59 @@ impl Shortcut {
         }
         out
     }
+    /// AppKit key equivalent for `NSMenuItem`: `(modifierFlags, key)`.
+    /// Returns `None` for keys AppKit cannot express as an equivalent
+    /// (navigation/editing keys); those items still work, they just show no
+    /// shortcut. NSEventModifierFlags values: Shift 1<<17, Control 1<<18,
+    /// Option 1<<19, Command 1<<20.
+    pub fn to_appkit(&self) -> Option<(u64, String)> {
+        let mut flags = 0u64;
+        // Bits match FromStr: 1 Primary, 2 Ctrl, 4 Cmd, 8 Alt, 16 Shift.
+        // Primary resolves to Command on macOS (rejected mixed with Ctrl/Cmd
+        // at parse time), mirroring resolved().
+        if self.modifiers & 1 != 0 {
+            flags |= 1 << 20;
+        }
+        if self.modifiers & 2 != 0 {
+            flags |= 1 << 18;
+        }
+        if self.modifiers & 4 != 0 {
+            flags |= 1 << 20;
+        }
+        if self.modifiers & 8 != 0 {
+            flags |= 1 << 19;
+        }
+        if self.modifiers & 16 != 0 {
+            flags |= 1 << 17;
+        }
+        if self.modifiers & !31 != 0 {
+            return None;
+        }
+        let key = if self.key.len() == 1 {
+            self.key.to_ascii_lowercase()
+        } else if let Some(n) = self.key.strip_prefix('F').and_then(|n| n.parse::<u32>().ok())
+            && (1..=12).contains(&n)
+        {
+            // NSF1FunctionKey..NSF12FunctionKey (U+F704..U+F70F).
+            char::from_u32(0xF704 + n - 1)?.to_string()
+        } else {
+            match self.key.as_str() {
+                "Comma" => ",".into(),
+                "Enter" => "\r".into(),
+                "Tab" => "\t".into(),
+                "Space" => " ".into(),
+                "Escape" => "\u{1b}".into(),
+                "Backspace" => "\u{7f}".into(),
+                "Delete" => "\u{F728}".into(),
+                "Left" => "\u{F702}".into(),
+                "Right" => "\u{F703}".into(),
+                "Up" => "\u{F700}".into(),
+                "Down" => "\u{F701}".into(),
+                _ => return None,
+            }
+        };
+        Some((flags, key))
+    }
     pub fn to_muda_for(&self, target: ShortcutTarget) -> String {
         let mods = self.resolved(target);
         let mut parts = Vec::new();
@@ -194,6 +247,22 @@ mod tests {
         assert_eq!(shortcut.to_gtk_for(ShortcutTarget::Other), "<Control>comma");
         assert_eq!(shortcut.to_muda_for(ShortcutTarget::MacOS), "Cmd+Comma");
         assert_eq!(shortcut.to_muda_for(ShortcutTarget::Other), "Ctrl+Comma");
+    }
+    #[test]
+    fn appkit_equivalent_maps_primary_to_command() {
+        let shortcut = Shortcut::parse("Primary+O").unwrap();
+        assert_eq!(shortcut.to_appkit(), Some(((1 << 20), "o".into())));
+        let shortcut = Shortcut::parse("Primary+Shift+S").unwrap();
+        assert_eq!(
+            shortcut.to_appkit(),
+            Some(((1 << 20) | (1 << 17), "s".into()))
+        );
+        let shortcut = Shortcut::parse("Primary+Comma").unwrap();
+        assert_eq!(shortcut.to_appkit(), Some(((1 << 20), ",".into())));
+        let shortcut = Shortcut::parse("Primary+F5").unwrap();
+        assert_eq!(shortcut.to_appkit().map(|(flags, _)| flags), Some(1 << 20));
+        assert!(shortcut.to_appkit().is_some_and(|(_, key)| key.chars().count() == 1));
+        assert_eq!(Shortcut::parse("Primary+Home").unwrap().to_appkit(), None);
     }
     #[test]
     fn modifiers_are_normalized_without_implicit_shift() {

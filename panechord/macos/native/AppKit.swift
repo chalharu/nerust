@@ -298,6 +298,8 @@ final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
     var labels: [String] = []
     var enabled = true
     private var floorConstraint: NSLayoutConstraint?
+    private var exactHeight: NSLayoutConstraint?
+    private var topBodyHeight: NSLayoutConstraint?
     private lazy var bodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor)
     private lazy var verticalBodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor, constant: -128)
     private lazy var bodyHeight = body.heightAnchor.constraint(equalTo: heightAnchor)
@@ -356,6 +358,16 @@ final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
         rail.translatesAutoresizingMaskIntoConstraints = false
         rail.documentView = list
         list.widthAnchor.constraint(equalTo: rail.contentView.widthAnchor).isActive = true
+        // NOTE: no height tie between the list and the clip. A document
+        // height constraint against the enclosing clip (even advisory) made
+        // AppKit shrink the whole window via
+        // _changeWindowFrameFromConstraintsIfNecessary. The rail carries
+        // full-height sidebar material, so the content-sized table reads as
+        // a top-aligned source list like Finder/Settings.
+        // NSTabView reports no useful fitting height, so Top tab bodies
+        // would collapse to zero: pin the body to the selected page height
+        // instead (vertical tabs bind body to the Tabs height).
+        topBodyHeight = body.heightAnchor.constraint(equalToConstant: 0)
         setPosition("Top")
     }
     func setPosition(_ position: String) {
@@ -363,6 +375,7 @@ final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
         bodyWidth.isActive = false
         verticalBodyWidth.isActive = false
         bodyHeight.isActive = false
+        topBodyHeight?.isActive = false
         railWidth.isActive = false
         railHeight.isActive = false
         for view in arrangedSubviews { removeArrangedSubview(view); view.removeFromSuperview() }
@@ -375,22 +388,108 @@ final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
         bodyWidth.isActive = !vertical
         verticalBodyWidth.isActive = vertical
         bodyHeight.isActive = vertical
+        topBodyHeight?.isActive = !vertical
         railWidth.isActive = vertical
         railHeight.isActive = vertical
+        syncTopBodyHeight()
+    }
+    /// NSTabView has no intrinsic height: without this, Top tab bodies
+    /// collapse to zero and their pages never paint. Tracks the selected
+    /// page's fitting height (change-guarded, so layout converges).
+    func syncTopBodyHeight() {
+        guard let height = topBodyHeight, height.isActive,
+              let page = body.selectedTabViewItem?.view else { return }
+        let fitting = page.fittingSize.height
+        if fitting.isFinite, fitting >= 0, height.constant != fitting {
+            height.constant = fitting
+        }
     }
     override func layout() {
         super.layout()
-        // Nothing inside reports a filling height (scroll view and tab view
-        // have no intrinsic height), so pin the floor to the enclosing clip:
-        // short content stretches to fill the window, tall content still
-        // grows the document and scrolls. Installed lazily so reparented
-        // views pick up their current scroll view.
-        if floorConstraint == nil,
-           let clip = enclosingScrollView?.contentView
+        syncTopBodyHeight()
+    }
+
+    /// Size the Tabs to its content, stretched to fill the window when the
+    /// content is short (footers stay visible without scrolling) while tall
+    /// content still grows the document and scrolls. An inequality floor
+    /// alone cannot shrink an oversized Tabs back down (the solver never
+    /// volunteers a shrink), so short content takes an exact height and
+    /// tall content takes a floor. Returns whether anything changed.
+    @discardableResult
+    func updateFloor() -> Bool {
+        guard let clip = enclosingScrollView?.contentView, clip.bounds.height > 0 else { return false }
+        // The Tabs view sits inside a wrapper frame; the footer siblings
+        // (status line, OK/Cancel row) follow that frame in the root stack.
+        // Prefer laid-out frame heights (exact); fall back to fitting sizes
+        // before first layout. A safety margin keeps the footer fully
+        // visible against margin accounting drift (clipped buttons are far
+        // worse than a few points of dead space).
+        var footer: CGFloat = 40
+        if let frame = superview as? NSStackView,
+           let root = frame.superview as? NSStackView,
+           let index = root.arrangedSubviews.firstIndex(of: frame)
         {
-            floorConstraint = heightAnchor.constraint(greaterThanOrEqualTo: clip.heightAnchor)
-            floorConstraint?.isActive = true
+            for sibling in root.arrangedSubviews[(index + 1)...] {
+                footer += max(sibling.frame.height, max(0, sibling.fittingSize.height)) + root.spacing
+            }
         }
+        let fill = max(0, clip.bounds.height - footer)
+        // Content truth is the selected page's fitting: the NSTabView body
+        // reports no intrinsic height, and our own height constraints would
+        // pollute a whole-Tabs fitting read.
+        var content = body.selectedTabViewItem?.view?.fittingSize.height ?? -1
+        if content >= 0, orientation == .vertical {
+            content = max(content, list.fittingSize.height)
+        } else if content >= 0 {
+            content += header.fittingSize.height
+        }
+        guard content >= 0 else { return false }
+        if content >= fill {
+            // Tall content: floor only; the exact height must stay off or
+            // it fights the natural size.
+            if let exact = exactHeight, exact.isActive {
+                exact.isActive = false
+            }
+            if let floor = floorConstraint {
+                if floor.constant != -footer {
+                    floor.constant = -footer
+                    floor.isActive = true
+                    return true
+                }
+                if !floor.isActive {
+                    floor.isActive = true
+                    return true
+                }
+            } else {
+                let floor = heightAnchor.constraint(greaterThanOrEqualTo: clip.heightAnchor)
+                floor.constant = -footer
+                floor.isActive = true
+                floorConstraint = floor
+                return true
+            }
+        } else if let exact = exactHeight {
+            if let floor = floorConstraint, floor.isActive {
+                floor.isActive = false
+            }
+            if exact.constant != fill {
+                exact.constant = fill
+                exact.isActive = true
+                return true
+            }
+            if !exact.isActive {
+                exact.isActive = true
+                return true
+            }
+        } else {
+            if let floor = floorConstraint, floor.isActive {
+                floor.isActive = false
+            }
+            let exact = heightAnchor.constraint(equalToConstant: fill)
+            exact.isActive = true
+            exactHeight = exact
+            return true
+        }
+        return false
     }
     func rebuildHeader() {
         header.segmentCount = body.numberOfTabViewItems
@@ -399,6 +498,13 @@ final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
         }
         labels = body.tabViewItems.map { $0.label }
         list.reloadData()
+        // Pages can mount after the selection binding fired (dynamic
+        // TabItems with an initially empty selection): with nothing
+        // selected the tab view stays blank, so fall back to the first
+        // page like the other backends do.
+        if body.selectedTabViewItem == nil, body.numberOfTabViewItems > 0 {
+            body.selectTabViewItem(at: 0)
+        }
         refreshSelection()
     }
     func activatePage(_ index: Int) {
@@ -417,6 +523,7 @@ final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
         } else {
             list.deselectAll(nil)
         }
+        syncTopBodyHeight()
     }
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
@@ -508,15 +615,23 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     let root = DocumentStack()
     var nodes: [String: NSView] = [:]
     var parents: [String: String] = [:]
+    var floorRecheckPending = false
+    var lastFloorUpdate = 0.0
     var visibility: [String: Bool] = [:]
+    var hiddenIndex: [String: Int] = [:]
     var enablement: [String: Bool] = [:]
     var capabilities: [String: Bool] = [:]
     var frames: [String: NSStackView] = [:]
     var dimensions: [String: [NSLayoutConstraint]] = [:]
+    var spacers: [String: NSView] = [:]
     var contentWidths: [String: NSLayoutConstraint] = [:]
     var contentHeights: [String: NSLayoutConstraint] = [:]
     var menus: [String: NSMenu] = [:]
     var menuItems: [String: NSMenuItem] = [:]
+    /// Whether the view installed a real application menu (replacing the
+    /// Host stub). Hosts without one never touch the shared menubar, so a
+    /// secondary window keeps showing the main window's menus.
+    var ownsAppMenu = false
     var tabItems: [String: NSTabViewItem] = [:]
     var dialogs: [String: NSPanel] = [:]
     var readonlyTabs: Set<String> = []
@@ -605,8 +720,33 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     func windowDidBecomeKey(_ notification: Notification) {
         guard !closed else { return }
         ApplicationDelegate.shared.active = self
-        NSApp.mainMenu = bar
+        if ownsAppMenu { NSApp.mainMenu = bar }
+        // Reconcile tab floors now that the window is displayed and sibling
+        // fitting sizes are valid (in-flight layout passes can deadlock on
+        // pre-layout zeros, pushing footers below the fold).
+        updateFloors()
         emit("", "1", kind: 4)
+    }
+
+    /// Refresh every Tabs floor constant from current sibling sizes.
+    /// Change-guarded, so settled windows are untouched.
+    func updateFloors() {
+        var changed = false
+        for view in nodes.values {
+            guard let tabs = view as? Tabs else { continue }
+            changed = tabs.updateFloor() || changed
+        }
+        // Measurements during build/focus can precede layout (zeros); one
+        // deferred pass runs after layout with valid sizes. One-shot per
+        // change batch: settled state schedules nothing further.
+        if changed, !floorRecheckPending {
+            floorRecheckPending = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.closed else { return }
+                self.floorRecheckPending = false
+                self.updateFloors()
+            }
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -616,6 +756,8 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
 
     func windowDidResize(_ notification: Notification) {
         guard !closed else { return }
+        // The clip changed size: re-resolve tab floors to the new viewport.
+        updateFloors()
         emitSurfaceSize()
     }
 
@@ -656,6 +798,42 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
     }
     func tabView(_ tabView: NSTabView, shouldSelect tabViewItem: NSTabViewItem?) -> Bool {
         applying || !readonlyTabs.contains(tabView.identifier?.rawValue ?? "")
+    }
+    /// Collapse hidden views: NSStackView keeps hidden arranged subviews in
+    /// layout, leaving blank gaps (e.g. an unused input section). Detach
+    /// from stack containers and reinsert at the recorded index on show.
+    /// Tab pages keep plain isHidden (the tab view sizes to its selection).
+    func setVisible(_ id: String, _ visible: Bool) {
+        guard let frame = frames[id] else { return }
+        if tabItems[id] != nil || dialogs[id] != nil {
+            frame.isHidden = !visible
+            return
+        }
+        if visible {
+            if frame.superview == nil,
+               let parent = parents[id],
+               let container = stackContainer(forParent: parent)
+            {
+                let index = min(hiddenIndex.removeValue(forKey: id) ?? container.arrangedSubviews.count,
+                                container.arrangedSubviews.count)
+                container.insertArrangedSubview(frame, at: index)
+            }
+            frame.isHidden = false
+        } else {
+            guard let stack = frame.superview as? NSStackView,
+                  let index = stack.arrangedSubviews.firstIndex(of: frame) else {
+                frame.isHidden = true
+                return
+            }
+            hiddenIndex[id] = index
+            stack.removeArrangedSubview(frame)
+            frame.removeFromSuperview()
+        }
+    }
+    func stackContainer(forParent parent: String) -> NSStackView? {
+        (nodes[parent] as? Rows)?.body
+            ?? (nodes[parent] as? Scrolling)?.body
+            ?? nodes[parent] as? NSStackView
     }
     func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         if let id = tabView.identifier?.rawValue, let tabs = nodes[id] as? Tabs, tabViewItem != nil {
@@ -774,6 +952,13 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
             contentHeights.removeValue(forKey: id)
             parents.removeValue(forKey: id)
             visibility.removeValue(forKey: id)
+            hiddenIndex.removeValue(forKey: id)
+            if let spacer = spacers.removeValue(forKey: id) {
+                if let stack = spacer.superview as? NSStackView {
+                    stack.removeArrangedSubview(spacer)
+                }
+                spacer.removeFromSuperview()
+            }
             enablement.removeValue(forKey: id)
             capabilities.removeValue(forKey: id)
             if let node = nodes.removeValue(forKey: id) { focusable.removeAll { $0 === node } }
@@ -895,12 +1080,22 @@ public func render(_ pointer: UnsafeMutableRawPointer) {
 @_cdecl("w3_pump") @MainActor
 public func pump(_ milliseconds: Int32) {
     autoreleasepool {
-        if let event = NSApp.nextEvent(matching: .any,
-            until: Date(timeIntervalSinceNow: Double(milliseconds) / 1000),
-            inMode: .default, dequeue: true) { NSApp.sendEvent(event) }
         // Live resize (and menu/modal tracking) runs the runloop in the
         // event-tracking mode, where a `.default`-only pump sees nothing and
-        // the window appears frozen until mouse-up. Drain it without waiting.
+        // the window appears frozen until mouse-up. While any window
+        // live-resizes, drain tracking with the wait budget (default queues
+        // nothing then) so frames keep flowing; otherwise poll normally.
+        // until:nil returns immediately without waiting.
+        let live = NSApp.windows.contains { $0.inLiveResize }
+        if live {
+            if let event = NSApp.nextEvent(matching: .any,
+                until: nil, inMode: .default, dequeue: true) { NSApp.sendEvent(event) }
+            else if let event = NSApp.nextEvent(matching: .any,
+                until: Date(timeIntervalSinceNow: Double(milliseconds) / 1000),
+                inMode: .eventTracking, dequeue: true) { NSApp.sendEvent(event) }
+        } else if let event = NSApp.nextEvent(matching: .any,
+            until: Date(timeIntervalSinceNow: Double(milliseconds) / 1000),
+            inMode: .default, dequeue: true) { NSApp.sendEvent(event) }
         else if let event = NSApp.nextEvent(matching: .any,
             until: nil, inMode: .eventTracking, dequeue: true) { NSApp.sendEvent(event) }
         NSApp.updateWindows()
@@ -1052,7 +1247,7 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
         value.refreshEnablement()
     } else if property == 11 {
         value.visibility[id] = text == "1"
-        value.frames[id]?.isHidden = text != "1"
+        value.setVisible(id, text == "1")
         value.refreshEnablement()
     } else if property == 12 {
         value.enablement[id] = text == "1"
@@ -1082,7 +1277,12 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
         }
         if let tab = (value.nodes[id] as? Tabs)?.body {
             if let item = tab.tabViewItems.first(where: { ($0.identifier as? String) == text }) { tab.selectTabViewItem(item) }
-            else if text.isEmpty, tab.numberOfTabViewItems > 0 { tab.selectTabViewItem(at: 0) }
+            else if tab.numberOfTabViewItems > 0 {
+                // Stale or empty selection (dynamic pages mounted after the
+                // binding fired): fall back to the first page so the body
+                // never stays blank.
+                tab.selectTabViewItem(at: 0)
+            }
         }
     } else if property == 7, let panel = value.dialogs[id] {
         if text == "1", !panel.isVisible {
@@ -1103,6 +1303,14 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
         if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
         if field.stringValue != text { field.stringValue = text }
     } else if let button = value.nodes[id] as? NSButton { button.title = text }
+    // Content may have changed above: re-resolve tab floors, throttled
+    // (property sets stream at frame rate during play; floors only need to
+    // track structural changes).
+    let now = ProcessInfo.processInfo.systemUptime
+    if now - value.lastFloorUpdate > 0.1 {
+        value.lastFloorUpdate = now
+        value.updateFloors()
+    }
 }
 
 @_cdecl("w3_slider_value") @MainActor
@@ -1214,10 +1422,12 @@ public func style(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
     if let label = value.nodes[id] as? NSTextField, !label.isEditable {
         let size = NSFont.systemFontSize * textScale
         label.font = textRole == 3 ? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-            : textRole == 2 ? NSFont.boldSystemFont(ofSize: size * 1.2) : NSFont.systemFont(ofSize: size)
+            : textRole == 2 ? NSFont.boldSystemFont(ofSize: size * 1.2)
+            : textRole == 4 ? NSFont.systemFont(ofSize: size, weight: .semibold)
+            : NSFont.systemFont(ofSize: size)
         label.textColor = red >= 0 && green >= 0 && blue >= 0
             ? NSColor(srgbRed: Double(red) / 255, green: Double(green) / 255, blue: Double(blue) / 255, alpha: 1)
-            : NSColor.labelColor
+            : textRole == 4 ? NSColor.secondaryLabelColor : NSColor.labelColor
     }
     if let constraints = value.dimensions[id] { NSLayoutConstraint.deactivate(constraints) }
     value.contentWidths[id]?.isActive = false
@@ -1225,7 +1435,25 @@ public func style(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<U
     frame.edgeInsets = NSEdgeInsets(top: top, left: left, bottom: bottom, right: right)
     value.contentWidths[id]?.constant = -(left + right)
     value.contentHeights[id]?.constant = -(top + bottom)
-    frame.alignment = horizontal == 2 ? .centerX : horizontal == 3 ? .trailing : .leading
+    if frame.orientation == .vertical {
+        frame.alignment = horizontal == 2 ? .centerX : horizontal == 3 ? .trailing : .leading
+    } else if horizontal == 3 {
+        // End alignment on horizontal stacks means right-aligned children:
+        // alignment only selects the cross axis here, so a flexible leading
+        // spacer absorbs the slack under the default gravity distribution.
+        // (Vertical stacks use .trailing above.)
+        if value.spacers[id] == nil {
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+            spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            value.spacers[id] = spacer
+            frame.insertArrangedSubview(spacer, at: 0)
+        }
+    } else if let spacer = value.spacers.removeValue(forKey: id) {
+        frame.removeArrangedSubview(spacer)
+        spacer.removeFromSuperview()
+    }
     let stretchWidth = horizontal == 0 || horizontal == 4
     if let node = value.nodes[id], node !== frame {
         frame.removeView(node)
@@ -1364,6 +1592,7 @@ public func menu(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UI
             // menu keep the stub.
             value.bar.insertItem(parent, at: 0)
             value.bar.removeItem(stub)
+            value.ownsAppMenu = true
         } else {
             value.bar.addItem(parent)
         }

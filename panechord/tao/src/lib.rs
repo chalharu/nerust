@@ -147,30 +147,46 @@ impl Node {
                 )
             }
             Kind::Scroll(horizontal) => {
-                let body = layout::Panel::element(
-                    Layout::Stack {
-                        horizontal: false,
-                        gap: 0.0,
-                    },
-                    self.children
-                        .borrow()
-                        .iter()
-                        .map(|node| (node.key(), node.style.get(), node.element()))
-                        .collect(),
-                );
-                widget::scrollable(body)
-                    .direction(if *horizontal {
-                        widget::scrollable::Direction::Horizontal(
-                            widget::scrollable::Scrollbar::default(),
-                        )
-                    } else {
-                        widget::scrollable::Direction::Vertical(
-                            widget::scrollable::Scrollbar::default(),
-                        )
-                    })
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into()
+                // Window roots and dialogs offer unbounded height (the
+                // driver wraps the whole window in a scrollable); a Fill
+                // scrollable collapses to zero there. Size to content when
+                // unbounded so the outer scroll carries overflow, and fill
+                // (scrolling inside) when bounded.
+                let horizontal = *horizontal;
+                let kids: Vec<(String, Style, Rc<Node>)> = self
+                    .children
+                    .borrow()
+                    .iter()
+                    .map(|node| (node.key(), node.style.get(), node.clone()))
+                    .collect();
+                layout::AdaptiveHeight::element(Rc::new(move |bounded| {
+                    let body = layout::Panel::element(
+                        Layout::Stack {
+                            horizontal: false,
+                            gap: 0.0,
+                        },
+                        kids.iter()
+                            .map(|(key, style, node)| (key.clone(), *style, node.element()))
+                            .collect(),
+                    );
+                    widget::scrollable(body)
+                        .direction(if horizontal {
+                            widget::scrollable::Direction::Horizontal(
+                                widget::scrollable::Scrollbar::default(),
+                            )
+                        } else {
+                            widget::scrollable::Direction::Vertical(
+                                widget::scrollable::Scrollbar::default(),
+                            )
+                        })
+                        .width(Length::Fill)
+                        .height(if bounded {
+                            Length::Fill
+                        } else {
+                            Length::Shrink
+                        })
+                        .into()
+                }))
             }
             Kind::Leaf(factory) => factory(),
             Kind::Content | Kind::Page => layout::Panel::element(
@@ -664,6 +680,13 @@ impl View {
                             1.2,
                         ),
                         panechord_runtime::TextRole::Code => (iced::Font::MONOSPACE, 1.0),
+                        panechord_runtime::TextRole::Subtitle => (
+                            iced::Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Default::default()
+                            },
+                            1.0,
+                        ),
                     };
                     let width =
                         column
@@ -803,6 +826,13 @@ impl View {
                         1.2,
                     ),
                     panechord_runtime::TextRole::Code => (iced::Font::MONOSPACE, 1.0),
+                    panechord_runtime::TextRole::Subtitle => (
+                        iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        },
+                        1.0,
+                    ),
                 };
                 label = label.font(font).size(16.0 * factor * style.scale);
                 if let Some([red, green, blue]) = style.foreground {

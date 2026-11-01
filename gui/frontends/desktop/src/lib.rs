@@ -15,6 +15,8 @@ use nerust_gui_shell::context::FrontendContext;
 use nerust_gui_shell::session::KeyboardShortcut;
 use nerust_settings_core::model::input::ShortcutAction;
 use panechord::{Store, WindowEvent};
+#[cfg(target_os = "macos")]
+use panechord::RunnerBuilderExtMacOS;
 use std::{
     cell::{Cell, RefCell},
     path::PathBuf,

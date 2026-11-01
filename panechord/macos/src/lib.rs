@@ -729,6 +729,7 @@ impl View {
             Some(panechord_runtime::TextRole::Body) => 1,
             Some(panechord_runtime::TextRole::Heading) => 2,
             Some(panechord_runtime::TextRole::Code) => 3,
+            Some(panechord_runtime::TextRole::Subtitle) => 4,
         };
         let colour = text
             .foreground
@@ -770,7 +771,7 @@ impl View {
             if let Err(error) = data.validate() { view.report_error(error.into()); return; }
             let columns: Vec<_> = data.columns.iter().map(|column| serde_json::json!({
                 "title":column.title,"width":column.width,"scale":column.text.scale,
-                "role":match column.text.role { panechord_runtime::TextRole::Body => 0, panechord_runtime::TextRole::Heading => 1, panechord_runtime::TextRole::Code => 2 },
+                "role":match column.text.role { panechord_runtime::TextRole::Body => 0, panechord_runtime::TextRole::Heading => 1, panechord_runtime::TextRole::Code => 2, panechord_runtime::TextRole::Subtitle => 0 },
                 "foreground":column.text.foreground,"stretch":column.stretch,"hideEmpty":column.hide_empty,
                 "overflow":match column.overflow { panechord_runtime::TextOverflow::Clip => 0, panechord_runtime::TextOverflow::Wrap => 1, panechord_runtime::TextOverflow::EllipsizeMiddle => 2 },
             })).collect();

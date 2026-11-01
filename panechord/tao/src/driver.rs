@@ -291,6 +291,11 @@ struct Desktop {
     view: View,
     painter: Rc<RefCell<Painter>>,
     active: std::cell::Cell<bool>,
+    // Last applied window chrome: `set_visible(true)` re-keys the window on
+    // macOS (`make_key_and_order_front`), so reapplying it from unfocused or
+    // deadline paths steals focus into a ping-pong. Only transition.
+    shown: std::cell::Cell<bool>,
+    titled: RefCell<String>,
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
     area: gtk::DrawingArea,
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
@@ -460,6 +465,8 @@ impl Desktop {
                 view: view.clone(),
                 painter,
                 active: std::cell::Cell::new(false),
+                shown: std::cell::Cell::new(false),
+                titled: RefCell::new(String::new()),
                 area,
                 signals,
             })
@@ -482,6 +489,8 @@ impl Desktop {
                 view: view.clone(),
                 painter,
                 active: std::cell::Cell::new(false),
+                shown: std::cell::Cell::new(false),
+                titled: RefCell::new(String::new()),
                 compositor,
                 surface,
                 size: (size.width, size.height),
@@ -525,9 +534,19 @@ impl Desktop {
         }
     }
     fn refresh(&self) {
-        self.window.set_title(&self.view.title());
-        self.window
-            .set_visible(self.view.0.visible.get() && !self.view.0.closed.get());
+        // Transition-only chrome: reasserting visibility re-keys the window
+        // on macOS and bounces focus between windows; re-setting an
+        // unchanged title is wasted IPC on every event.
+        let title = self.view.title();
+        if self.titled.borrow().as_str() != title {
+            self.window.set_title(&title);
+            self.titled.replace(title);
+        }
+        let shown = self.view.0.visible.get() && !self.view.0.closed.get();
+        if self.shown.get() != shown {
+            self.window.set_visible(shown);
+            self.shown.set(shown);
+        }
         if let Some(cursor) = self.painter.borrow().ime_cursor {
             let offset = self.offset();
             self.window.set_ime_position(tao::dpi::LogicalPosition::new(

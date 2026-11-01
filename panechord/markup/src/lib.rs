@@ -140,6 +140,9 @@ pub enum TextRole {
     Body,
     Heading,
     Code,
+    /// Section subtitles (e.g. settings group headers): distinct from field
+    /// labels. Backends without secondary styling render it as body text.
+    Subtitle,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
