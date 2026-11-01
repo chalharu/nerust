@@ -11,9 +11,7 @@ python3 ../gui/frontends/check_frontend_policy.py
 
 cargo fmt -p panechord -p panechord-runtime -p panechord-markup -p panechord-macros \
     -p panechord-gtk -p panechord-tao -p panechord-macos -p panechord-demo \
-    -p panechord-settings -p panechord-library -p nerust_frontend_viewdefs -- --check
-cargo clippy --locked -p nerust_frontend_viewdefs --features panechord --all-targets -- -D warnings
-cargo test --locked -p nerust_frontend_viewdefs --features panechord
+    -p panechord-settings -p panechord-library -- --check
 cargo clippy --locked -p panechord -p panechord-runtime -p panechord-markup -p panechord-macros \
     -p panechord-macos -p panechord-settings -p panechord-library \
     --all-targets --no-default-features --features backend-macos -- -D warnings

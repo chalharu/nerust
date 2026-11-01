@@ -21,9 +21,7 @@ native_test() {
 
 cargo fmt -p panechord -p panechord-runtime -p panechord-markup -p panechord-macros \
     -p panechord-gtk -p panechord-tao -p panechord-macos -p panechord-demo \
-    -p panechord-settings -p panechord-library -p nerust_frontend_viewdefs -- --check
-cargo clippy --locked -p nerust_frontend_viewdefs --features panechord --all-targets -- -D warnings
-cargo test --locked -p nerust_frontend_viewdefs --features panechord
+    -p panechord-settings -p panechord-library -- --check
 cargo clippy --locked -p panechord -p panechord-runtime -p panechord-markup -p panechord-macros \
     -p panechord-gtk -p panechord-tao -p panechord-macos -p panechord-demo \
     -p panechord-settings -p panechord-library --all-targets -- -D warnings
