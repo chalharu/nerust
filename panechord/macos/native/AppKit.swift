@@ -504,7 +504,6 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
                           backing: .buffered, defer: false)
         super.init()
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 640, height: 420)
         window.delegate = self
         window.autorecalculatesKeyViewLoop = false
         window.center()
