@@ -157,6 +157,10 @@ pub enum UiText {
     CrashTitle,
     CrashBody,
     CrashDetails,
+    Latency,
+    Discard,
+    KeepEditing,
+    DiscardUnsavedChanges,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -387,6 +391,13 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::CrashDetails => (
             "Details were written to the log (stderr).",
             "詳細はログ（stderr）に記録されました。",
+        ),
+        UiText::Latency => ("Latency", "遅延"),
+        UiText::Discard => ("Discard", "破棄"),
+        UiText::KeepEditing => ("Keep Editing", "編集を続ける"),
+        UiText::DiscardUnsavedChanges => (
+            "Discard unsaved changes?",
+            "保存されていない変更を破棄しますか？",
         ),
     }
 }
@@ -648,6 +659,10 @@ mod tests {
             AreaStrip,
             CrashBody,
             CrashDetails,
+            Latency,
+            Discard,
+            KeepEditing,
+            DiscardUnsavedChanges,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());

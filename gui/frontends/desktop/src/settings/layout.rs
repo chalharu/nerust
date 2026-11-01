@@ -17,6 +17,8 @@ pub(super) struct ChoiceRow {
 pub(super) struct BindingRow {
     pub label: Binding<String>,
     pub value: Binding<String>,
+    pub change_label: Binding<String>,
+    pub clear_label: Binding<String>,
     pub capture: Command,
     pub clear: Command,
 }
@@ -104,6 +106,10 @@ fn binding_page(
     let capture = capture.clone();
     let clear = clear.clone();
     let executor = editor.executor.clone();
+    // Shared by every row: one language-following binding each, cloned
+    // into rows so Change/Clear localize with the dialog language.
+    let change_label = editor.tr(UiText::Change);
+    let clear_label = editor.tr(UiText::Clear);
     BindingPage {
         label: section
             .clone()
@@ -154,6 +160,8 @@ fn binding_page(
                                         }),
                                         capture: capture(row.target.clone()),
                                         clear: clear(row.target.clone()),
+                                        change_label: change_label.clone(),
+                                        clear_label: clear_label.clone(),
                                     },
                                     executor.clone(),
                                 ),
