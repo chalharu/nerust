@@ -223,6 +223,12 @@ struct Inner {
     menu_bar: OnceCell<muda::Menu>,
     menu_ids: RefCell<HashMap<muda::MenuId, String>>,
     menu_actions: RefCell<HashMap<String, menu::Action>>,
+    /// Install-order ledger of attached native submenus: a late attach
+    /// inserts at its install position instead of appending, so conditional
+    /// menus keep menubar order across detach/reattach cycles. The key is the
+    /// install sequence from `menu_order`.
+    menu_attached: RefCell<Vec<(usize, muda::Submenu)>>,
+    menu_order: Cell<usize>,
     subscriptions: RefCell<Vec<Subscription>>,
     on_close: RefCell<Vec<Rc<dyn Fn()>>>,
     on_close_request: RefCell<Option<Rc<dyn Fn()>>>,
@@ -292,6 +298,15 @@ impl Drop for Inner {
     }
 }
 
+/// Whether the menubar needs an explicit leading application menu: AppKit
+/// consumes the first installed submenu as the application menu, so without
+/// one the first application menu is swallowed on macOS. Views provide the
+/// items (About/Preferences/Quit) through the single shared template and
+/// leave the binding vacant elsewhere; backends keep vacant menus out.
+pub fn wants_application_menu() -> bool {
+    cfg!(target_os = "macos")
+}
+
 impl View {
     pub fn new(title: Binding<String>) -> Self {
         let view = Self(Rc::new_cyclic(|owner| Inner {
@@ -329,6 +344,8 @@ impl View {
             menu_bar: OnceCell::new(),
             menu_ids: RefCell::default(),
             menu_actions: RefCell::default(),
+            menu_attached: RefCell::default(),
+            menu_order: Cell::new(0),
             subscriptions: RefCell::default(),
             on_close: RefCell::default(),
             on_close_request: RefCell::default(),

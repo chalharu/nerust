@@ -41,13 +41,24 @@ pub fn run_host(
 #[cfg(feature = "gtk")]
 pub use panechord_gtk as gtk;
 #[cfg(feature = "gtk")]
+pub use panechord_gtk::wants_application_menu;
+#[cfg(feature = "gtk")]
 pub use panechord_gtk::{Parent, View, WeakView};
 #[cfg(feature = "macos")]
 pub use panechord_macos as macos;
 #[cfg(feature = "macos")]
+pub use panechord_macos::wants_application_menu;
+#[cfg(feature = "macos")]
 pub use panechord_macos::{Parent, View, WeakView};
+#[cfg(all(
+    feature = "native",
+    not(any(feature = "gtk", feature = "tao", feature = "macos"))
+))]
+pub use panechord_native::wants_application_menu;
 #[cfg(feature = "tao")]
 pub use panechord_tao as tao;
+#[cfg(feature = "tao")]
+pub use panechord_tao::wants_application_menu;
 #[cfg(feature = "tao")]
 pub use panechord_tao::{Parent, View, WeakView};
 

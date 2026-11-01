@@ -16,6 +16,7 @@ pub(crate) enum Intent {
     History,
     Debugger,
     Ppu,
+    About,
     Pause(bool),
     Session(SessionAction),
     Fullscreen,
@@ -31,8 +32,10 @@ pub(crate) struct MenuModel {
     shortcuts: Vec<ShortcutBinding>,
     slots: Arc<[nerust_persistence::model::StateSlotSummary]>,
     active_slot: Option<u64>,
+    app_title: String,
     file_title: String,
     emulation_title: String,
+    app: Vec<MenuNode<Intent>>,
     file: Vec<MenuNode<Intent>>,
     emulation: Vec<MenuNode<Intent>>,
 }
@@ -84,19 +87,23 @@ impl MenuModel {
                 UiText::Settings,
                 Intent::Settings,
                 available,
-                Some("Primary+Comma".into()),
+                // macOS carries Primary+Comma on the app-menu Preferences entry;
+                // registering the same accelerator twice leaves routing ambiguous.
+                (!panechord::wants_application_menu()).then(|| "Primary+Comma".into()),
             ),
             item(
                 "quit",
                 UiText::Quit,
                 Intent::Quit,
                 available,
-                Some("Primary+Q".into()),
+                // macOS shows Quit with Primary+Q in the app menu; see above.
+                (!panechord::wants_application_menu()).then(|| "Primary+Q".into()),
             ),
         ];
         if let MenuNode::Item(quit) = &mut file[3] {
             quit.role = MenuRole::Quit;
         }
+        let app = Self::app_menu(language, available);
         let hinted = |id: &str, caption, action, intent, enabled| {
             let mut node = item(id, caption, intent, enabled, None);
             if let MenuNode::Item(item) = &mut node {
@@ -223,11 +230,68 @@ impl MenuModel {
             shortcuts,
             slots,
             active_slot,
+            app_title: Self::app_title(),
             file_title: text(language, UiText::File).into(),
             emulation_title: text(language, UiText::Emulation).into(),
+            app,
             file,
             emulation,
         }
+    }
+
+    fn app_title() -> String {
+        "Nerust".into()
+    }
+
+    /// Explicit HIG application menu for macOS: AppKit treats the first
+    /// installed submenu as the application menu, so without this leading
+    /// entry the File menu is swallowed. About is a native predefined item
+    /// (the OS owns its panel, so `Intent::About` never dispatches);
+    /// Preferences and Quit reuse the existing intents. Single yaml for all
+    /// platforms: off macOS this stays empty and backends skip the vacancy.
+    fn app_menu(language: AppLanguage, available: bool) -> Vec<MenuNode<Intent>> {
+        if !panechord::wants_application_menu() {
+            return Vec::new();
+        }
+        let separator = |id: &str| {
+            MenuNode::Item(MenuItem {
+                id: id.into(),
+                label: String::new(),
+                // Inert: separators never dispatch; any intent fills the type.
+                argument: Intent::About,
+                shortcut: None,
+                role: MenuRole::Separator,
+                enabled: true,
+            })
+        };
+        vec![
+            MenuNode::Item(MenuItem {
+                id: "about".into(),
+                label: text(language, UiText::About).into(),
+                argument: Intent::About,
+                shortcut: None,
+                role: MenuRole::About,
+                enabled: available,
+            }),
+            separator("about_separator"),
+            MenuNode::Item(MenuItem {
+                id: "preferences".into(),
+                label: text(language, UiText::Preferences).into(),
+                argument: Intent::Settings,
+                shortcut: Some("Primary+Comma".into()),
+                role: MenuRole::Normal,
+                enabled: available,
+            }),
+            separator("preferences_separator"),
+            MenuNode::Item(MenuItem {
+                id: "quit".into(),
+                label: text(language, UiText::Quit).into(),
+                argument: Intent::Quit,
+                shortcut: Some("Primary+Q".into()),
+                role: MenuRole::Quit,
+                enabled: available,
+            }),
+        ]
     }
 }
 
@@ -253,8 +317,10 @@ pub(crate) fn screen(view: &View, parent: &Parent, id: &str, source: Binding<Opt
 #[derive(Clone)]
 struct Presentation {
     screen: Binding<Option<ImageFrame>>,
+    app_title: Binding<String>,
     file_title: Binding<String>,
     emulation_title: Binding<String>,
+    app_items: Binding<Vec<MenuNode<Intent>>>,
     file_items: Binding<Vec<MenuNode<Intent>>>,
     emulation_items: Binding<Vec<MenuNode<Intent>>>,
     model: Store<Model>,
@@ -278,12 +344,94 @@ impl Presentation {
 pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actions) -> View {
     let bindings = Presentation {
         screen: model.bind(|model| model.screen.clone(), None),
+        app_title: menus.bind(|model| model.app_title.clone(), None),
         file_title: menus.bind(|model| model.file_title.clone(), None),
         emulation_title: menus.bind(|model| model.emulation_title.clone(), None),
+        app_items: menus.bind(|model| model.app.clone(), None),
         file_items: menus.bind(|model| model.file.clone(), None),
         emulation_items: menus.bind(|model| model.emulation.clone(), None),
         model,
         actions,
     };
     panechord::view!("ui/main.yaml", bindings, panechord)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::test_fixture::loaded_adapter;
+
+    fn items_of(menu: &[MenuNode<Intent>]) -> Vec<&MenuItem<Intent>> {
+        menu.iter()
+            .filter_map(|node| match node {
+                MenuNode::Item(item) => Some(item),
+                MenuNode::Submenu { .. } => None,
+            })
+            .collect()
+    }
+
+    fn file_settings_shortcut(model: &MenuModel) -> Option<&str> {
+        items_of(&model.file)
+            .iter()
+            .find(|item| item.argument == Intent::Settings)
+            .expect("File carries a Settings entry")
+            .shortcut
+            .as_deref()
+    }
+
+    #[test]
+    fn file_and_emulation_menus_keep_shape_on_all_platforms() {
+        let (adapter, _dir) = loaded_adapter();
+        let app = nerust_gui_application::Application::new(adapter);
+        let model = MenuModel::new(&app);
+        assert_eq!(model.file_title, text(model.language, UiText::File));
+        assert_eq!(
+            model.emulation_title,
+            text(model.language, UiText::Emulation)
+        );
+        assert_eq!(model.file.len(), 4, "Open/Close/Settings/Quit");
+        // Loaded fixture: pause gated off (running), resume gated on... the
+        // adapter boots paused-debug? Only shape is pinned here, not gating.
+        assert!(!model.emulation.is_empty());
+        assert!(model.matches(&app));
+    }
+
+    #[test]
+    fn app_menu_is_vacant_off_macos_and_leads_on_macos() {
+        let (adapter, _dir) = loaded_adapter();
+        let app = nerust_gui_application::Application::new(adapter);
+        let model = MenuModel::new(&app);
+        if panechord::wants_application_menu() {
+            assert_eq!(model.app_title, "Nerust");
+            let items = items_of(&model.app);
+            assert_eq!(items.len(), 5, "About/separator/Preferences/separator/Quit");
+            assert_eq!(items[0].role, MenuRole::About);
+            assert_eq!(items[0].argument, Intent::About);
+            assert_eq!(items[1].role, MenuRole::Separator);
+            assert_eq!(items[2].argument, Intent::Settings);
+            assert_eq!(items[2].role, MenuRole::Normal);
+            assert_eq!(items[2].shortcut.as_deref(), Some("Primary+Comma"));
+            assert_eq!(items[3].role, MenuRole::Separator);
+            assert_eq!(items[4].argument, Intent::Quit);
+            assert_eq!(items[4].role, MenuRole::Quit);
+            assert_eq!(items[4].shortcut.as_deref(), Some("Primary+Q"));
+            // The app menu owns the accelerators: File must not duplicate them.
+            assert_eq!(file_settings_shortcut(&model), None);
+            let file = items_of(&model.file);
+            let quit = file
+                .iter()
+                .find(|item| item.argument == Intent::Quit)
+                .expect("File keeps Quit");
+            assert_eq!(quit.shortcut, None);
+        } else {
+            assert!(model.app.is_empty(), "no app menu off macOS");
+            assert_eq!(file_settings_shortcut(&model), Some("Primary+Comma"));
+            let file = items_of(&model.file);
+            let quit = file
+                .iter()
+                .find(|item| item.argument == Intent::Quit)
+                .expect("File keeps Quit");
+            assert_eq!(quit.shortcut.as_deref(), Some("Primary+Q"));
+        }
+    }
 }

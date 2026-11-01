@@ -261,7 +261,12 @@ impl View {
                 if let Some(state) = state {
                     let nested = menu(&view, &key, &tree);
                     state.menu.remove_all();
-                    state.menu.append_section(None, &nested);
+                    // An empty section link still occupies the menubar model:
+                    // only attach non-empty content so vacant menus stay out.
+                    if nested.n_items() > 0 {
+                        state.menu.append_section(None, &nested);
+                    }
+                    view.sync_menu_membership(&key);
                 }
             }
         }));
