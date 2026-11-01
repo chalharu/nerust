@@ -402,6 +402,86 @@ impl MediaPort for SessionAdapter {
 }
 
 #[cfg(test)]
+pub(crate) mod test_fixture {
+    //! Shared headless fixture: a real `SessionAdapter` (NES core) with an
+    //! isolated settings root and an in-test iNES ROM. Panes own the driving;
+    //! this module only builds the loaded adapter and cleans the temp dir.
+    use super::SessionAdapter;
+    use nerust_gui_application::MediaPort;
+    use nerust_gui_runtime::settings::{
+        HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
+    };
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    pub(crate) struct TempDir {
+        path: PathBuf,
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    pub(crate) fn test_ines() -> Vec<u8> {
+        let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0, 0];
+        data.resize(16 + 0x8000 + 0x2000, 0);
+        // Point the reset vector into PRG (0x8000): a zero reset leaves the
+        // program counter outside PRG, where disassembly is legitimately empty.
+        data[16 + 0x7FFC] = 0x00;
+        data[16 + 0x7FFD] = 0x80;
+        data
+    }
+
+    /// Loaded adapter plus its temp dir (drop cleans up). The core runs;
+    /// panes pause/step as their flow requires.
+    pub(crate) fn loaded_adapter() -> (SessionAdapter, TempDir) {
+        // Nanos alone can collide across parallel test threads in one
+        // process; the counter makes each fixture directory unique.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-desktop-ops-{}-{nonce}-{count}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir should create");
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+            Arc::new(nerust_nes_factory::NesFactory),
+        ]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::default());
+        let loader = registry
+            .create_loader(HashMap::new())
+            .expect("registered NES loader");
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let mut adapter = SessionAdapter::new(
+            registry,
+            audio,
+            loader,
+            capabilities,
+            Some(SettingsPaths::from_root(dir.join("settings"))),
+        )
+        .expect("adapter with temp settings root");
+        let rom = dir.join("test.nes");
+        std::fs::write(&rom, test_ines()).expect("fixture ROM should write");
+        adapter.load(&rom).expect("fixture ROM loads");
+        (adapter, TempDir { path: dir })
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nerust_gui_shell::session::osd::TickMetrics;
