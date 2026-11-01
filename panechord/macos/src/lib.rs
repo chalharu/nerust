@@ -301,14 +301,13 @@ fn within(id: &str, scope: &str) -> bool {
             .is_some_and(|tail| tail.starts_with('/'))
 }
 
-/// Whether the menubar needs an explicit leading application menu: AppKit
-/// consumes the first installed submenu as the application menu, so without
-/// one the first application menu is swallowed on macOS. Views provide the
-/// items (About/Preferences/Quit) through the single shared template and
-/// leave the binding vacant elsewhere; backends keep vacant menus out.
-/// Host-side AppKit parity for this backend is still unverified.
-pub fn wants_application_menu() -> bool {
-    true
+/// Backend-resolved run configuration for this host. The AppKit host consumes
+/// the first submenu as the application menu, like Tao on macOS; host-side
+/// parity is still unverified.
+pub fn runner_config() -> panechord_runtime::RunnerConfig {
+    panechord_runtime::RunnerConfig {
+        application_menu: true,
+    }
 }
 
 impl View {

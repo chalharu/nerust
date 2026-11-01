@@ -8,57 +8,16 @@ pub use panechord_runtime::*;
 ))]
 compile_error!("select exactly one Panechord native backend");
 
-#[cfg(any(
-    feature = "native",
-    feature = "gtk",
-    feature = "tao",
-    feature = "macos"
-))]
-pub fn run_host(
-    make: impl FnOnce(std::rc::Rc<dyn WindowHost<View>>) -> Result<(), String> + 'static,
-) -> Result<(), String> {
-    #[cfg(all(
-        feature = "native",
-        not(any(feature = "gtk", feature = "tao", feature = "macos"))
-    ))]
-    {
-        panechord_native::run_host(move |host| make(host))
-    }
-    #[cfg(feature = "tao")]
-    {
-        panechord_tao::run_host(move |host| make(host))
-    }
-    #[cfg(feature = "gtk")]
-    {
-        panechord_gtk::run_host(move |host| make(host))
-    }
-    #[cfg(feature = "macos")]
-    {
-        panechord_macos::run_host(move |host| make(host))
-    }
-}
-
 #[cfg(feature = "gtk")]
 pub use panechord_gtk as gtk;
-#[cfg(feature = "gtk")]
-pub use panechord_gtk::wants_application_menu;
 #[cfg(feature = "gtk")]
 pub use panechord_gtk::{Parent, View, WeakView};
 #[cfg(feature = "macos")]
 pub use panechord_macos as macos;
 #[cfg(feature = "macos")]
-pub use panechord_macos::wants_application_menu;
-#[cfg(feature = "macos")]
 pub use panechord_macos::{Parent, View, WeakView};
-#[cfg(all(
-    feature = "native",
-    not(any(feature = "gtk", feature = "tao", feature = "macos"))
-))]
-pub use panechord_native::wants_application_menu;
 #[cfg(feature = "tao")]
 pub use panechord_tao as tao;
-#[cfg(feature = "tao")]
-pub use panechord_tao::wants_application_menu;
 #[cfg(feature = "tao")]
 pub use panechord_tao::{Parent, View, WeakView};
 
@@ -67,3 +26,79 @@ pub use panechord_tao::{Parent, View, WeakView};
     not(any(feature = "gtk", feature = "tao", feature = "macos"))
 ))]
 pub use panechord_native::{Parent, View, WeakView};
+
+/// Startup builder: backend-resolved run configuration flows into the
+/// application instead of views querying backend capabilities, so every
+/// branch stays unit-testable on any platform.
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
+))]
+pub struct Runner;
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
+))]
+impl Runner {
+    pub fn builder() -> RunnerBuilder {
+        RunnerBuilder {}
+    }
+}
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
+))]
+pub struct RunnerBuilder {}
+#[cfg(any(
+    feature = "native",
+    feature = "gtk",
+    feature = "tao",
+    feature = "macos"
+))]
+impl RunnerBuilder {
+    pub fn run(
+        self,
+        make: impl FnOnce(std::rc::Rc<dyn WindowHost<View>>, &RunnerConfig) -> Result<(), String>
+        + 'static,
+    ) -> Result<(), String> {
+        #[cfg(all(
+            feature = "native",
+            not(any(feature = "gtk", feature = "tao", feature = "macos"))
+        ))]
+        {
+            let config = panechord_native::runner_config();
+            panechord_native::run_host(move |host| make(host, &config))
+        }
+        #[cfg(feature = "tao")]
+        {
+            let config = panechord_tao::runner_config();
+            panechord_tao::run_host(move |host| make(host, &config))
+        }
+        #[cfg(feature = "gtk")]
+        {
+            let config = panechord_gtk::runner_config();
+            panechord_gtk::run_host(move |host| make(host, &config))
+        }
+        #[cfg(feature = "macos")]
+        {
+            let config = panechord_macos::runner_config();
+            panechord_macos::run_host(move |host| make(host, &config))
+        }
+        #[cfg(not(any(
+            feature = "native",
+            feature = "gtk",
+            feature = "tao",
+            feature = "macos"
+        )))]
+        {
+            let _ = make;
+            Err("no Panechord native backend selected".into())
+        }
+    }
+}
