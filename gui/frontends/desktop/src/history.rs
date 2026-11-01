@@ -276,6 +276,70 @@ impl Presentation {
 }
 
 #[cfg(test)]
+mod history_operation_tests {
+    //! History revision gating and long-row behavior through a real
+    //! `SessionAdapter` (NES core). Row projection is pinned by the unit
+    //! tests above; these pin the snapshot/refresh wiring headlessly.
+    use super::*;
+    use crate::session::test_fixture::loaded_adapter;
+    use nerust_gui_application::{Application, SessionAction, SettingsPort};
+
+    struct TestExecutor;
+    impl Executor for TestExecutor {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("history flow must not dispatch async work");
+        }
+    }
+
+    #[test]
+    fn revision_gating_and_long_rows() {
+        let (adapter, _dir) = loaded_adapter();
+        let language = adapter.settings().shared.general.language;
+        let mut app = Application::new(adapter);
+        let pane = Pane::new(language, Rc::new(TestExecutor));
+        // Initial snapshot, then refresh caches the revision.
+        let (revision, language, lines) =
+            pane.snapshot(&app).expect("first snapshot is always due");
+        assert!(lines.is_empty(), "no events recorded yet");
+        pane.refresh(revision, language, &lines);
+        assert!(pane.snapshot(&app).is_none(), "cached revision is quiet");
+        // Slot traffic records events and bumps the revision.
+        assert!(
+            app.execute(SessionAction::CreateSlot)
+                .expect("slot creates")
+        );
+        let (revision, language, lines) = pane.snapshot(&app).expect("new revision is due");
+        pane.refresh(revision, language, &lines);
+        assert!(
+            pane.model
+                .snapshot()
+                .table
+                .rows
+                .iter()
+                .any(|row| row.cells.iter().any(|cell| cell.text.contains("Slot"))),
+            "slot traffic reaches the grid"
+        );
+        // Flood past the bounded log: the grid stays capped, newest last.
+        for _ in 0..60 {
+            assert!(
+                app.execute(SessionAction::CreateSlot)
+                    .expect("slot creates")
+            );
+        }
+        let (revision, language, lines) = pane.snapshot(&app).expect("flooded revision is due");
+        pane.refresh(revision, language, &lines);
+        let rows = &pane.model.snapshot().table.rows;
+        assert!(!rows.is_empty());
+        assert!(
+            rows.len() <= 50,
+            "bounded history caps long rows: {}",
+            rows.len()
+        );
+        assert!(pane.snapshot(&app).is_none(), "cache catches up");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nerust_gui_shell::session::notification::NotificationLevel;

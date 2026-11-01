@@ -564,4 +564,64 @@ mod tests {
         assert_eq!(checked_integer(0.0, 0.0, 100.0), Ok(0));
         assert_eq!(checked_integer(100.0, 0.0, 100.0), Ok(100));
     }
+
+    struct TestExecutor;
+    impl Executor for TestExecutor {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("settings validation must not dispatch async work");
+        }
+    }
+
+    /// System choice save/reopen through a real adapter: change a choice on
+    /// the live factories, finish to a snapshot, and reopen from that
+    /// snapshot. The RPA native review covers the same topology on glass;
+    /// this pins the editor/owner wiring headlessly.
+    #[test]
+    fn system_choice_save_and_reopen_round_trip() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        assert!(!editor.dirty());
+        assert!(editor.confirm_close(false));
+        let systems = editor.vm.systems();
+        assert!(!systems.is_empty(), "real registry exposes systems");
+        let (system, field, other) = systems
+            .iter()
+            .flat_map(|system| {
+                let view = system.view.get();
+                view.fields
+                    .into_iter()
+                    .filter_map(|field| {
+                        let id = field.id.clone();
+                        field
+                            .choices
+                            .iter()
+                            .find(|choice| choice.value != field.selected)
+                            .map(|choice| (system, id, choice.value.clone()))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .next()
+            .expect("a system choice has an alternative");
+        system.set_choice(&field, &other).expect("choice applies");
+        assert!(editor.dirty());
+        assert!(!editor.confirm_close(false));
+        let snapshot = editor.vm.finish().expect("choice is valid");
+        let reopened = Editor::new(snapshot, &adapter, Rc::new(TestExecutor))
+            .expect("reopen builds on real factories");
+        assert!(!reopened.dirty());
+        let selected = reopened.vm.systems().iter().find_map(|system| {
+            system
+                .view
+                .get()
+                .fields
+                .into_iter()
+                .find(|candidate| candidate.id == field)
+                .map(|candidate| candidate.selected)
+        });
+        assert_eq!(selected.as_ref(), Some(&other));
+        assert!(reopened.confirm_close(false));
+    }
 }

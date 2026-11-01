@@ -1419,81 +1419,22 @@ mod operation_tests {
     use super::*;
     use crate::session::SessionAdapter;
     use crate::view::Intent;
-    use nerust_gui_application::{MediaPort, SessionAction, SessionActionPort};
-    use nerust_gui_runtime::settings::{
-        HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
-    };
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use nerust_gui_application::{SessionAction, SessionActionPort};
 
     struct Fixture {
         adapter: Rc<RefCell<SessionAdapter>>,
-        dir: std::path::PathBuf,
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
-    }
-
-    fn test_ines() -> Vec<u8> {
-        let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0, 0];
-        data.resize(16 + 0x8000 + 0x2000, 0);
-        // Point the reset vector into PRG (0x8000): a zero reset leaves the
-        // program counter outside PRG, where disassembly is legitimately empty.
-        data[16 + 0x7FFC] = 0x00;
-        data[16 + 0x7FFD] = 0x80;
-        data
+        _dir: crate::session::test_fixture::TempDir,
     }
 
     fn fixture() -> Fixture {
-        // Nanos alone can collide across parallel test threads in one
-        // process; the counter makes each fixture directory unique.
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock before epoch")
-            .as_nanos();
-        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "nerust-debugger-ops-{}-{nonce}-{count}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp dir should create");
-        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
-            Arc::new(nerust_nes_factory::NesFactory),
-        ]));
-        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::default());
-        let loader = registry
-            .create_loader(HashMap::new())
-            .expect("registered NES loader");
-        let capabilities = HostBackendCapabilities {
-            window: HostWindowCapabilities {
-                remembers_window_size: true,
-                supports_fullscreen_default: true,
-                supports_scaling: true,
-            },
-            presentation: None,
-        };
-        let adapter = SessionAdapter::new(
-            registry,
-            audio,
-            loader,
-            capabilities,
-            Some(SettingsPaths::from_root(dir.join("settings"))),
-        )
-        .expect("adapter with temp settings root");
+        let (adapter, dir) = crate::session::test_fixture::loaded_adapter();
         let adapter = Rc::new(RefCell::new(adapter));
-        let rom = dir.join("test.nes");
-        std::fs::write(&rom, test_ines()).expect("fixture ROM should write");
-        adapter.borrow_mut().load(&rom).expect("fixture ROM loads");
         adapter.borrow().handle().debug_pause();
         adapter
             .borrow()
             .handle()
             .debug_step(nerust_core_traits::debugger::StepUnit::Instruction);
-        Fixture { adapter, dir }
+        Fixture { adapter, _dir: dir }
     }
 
     fn drive(adapter: &Rc<RefCell<SessionAdapter>>) -> Rc<Pane> {
@@ -1517,6 +1458,9 @@ mod operation_tests {
         pane
     }
 
+    /// Drive the flight to completion with wall-clock budget: the emu thread
+    /// needs real time to reply, so a tight poll loop would outrun it and hit
+    /// the 5s deadline as a false OutcomeUnknown.
     fn settle(pane: &Pane, adapter: &Rc<RefCell<SessionAdapter>>, loaded: bool) {
         let revision = adapter.borrow().media_revision();
         for _ in 0..500 {
@@ -1536,8 +1480,8 @@ mod operation_tests {
         panic!("layout flight should settle (status={status})");
     }
 
-    /// Settle until the display populates. Pause/resume are fire-and-forget,
-    /// so a snapshot taken mid-transition serves degenerates; a refresh
+    /// Settle until the display populates. Pause/step are fire-and-forget, so
+    /// a snapshot taken mid-transition serves degenerates; a refresh
     /// re-snapshots once the core settles, like the UI's own retry.
     fn settle_ready(pane: &Pane, adapter: &Rc<RefCell<SessionAdapter>>) {
         for _ in 0..10 {
