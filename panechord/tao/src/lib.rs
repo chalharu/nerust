@@ -298,13 +298,14 @@ impl Drop for Inner {
     }
 }
 
-/// Whether the menubar needs an explicit leading application menu: AppKit
-/// consumes the first installed submenu as the application menu, so without
-/// one the first application menu is swallowed on macOS. Views provide the
-/// items (About/Preferences/Quit) through the single shared template and
-/// leave the binding vacant elsewhere; backends keep vacant menus out.
-pub fn wants_application_menu() -> bool {
-    cfg!(target_os = "macos")
+/// Backend-resolved run configuration for this host. AppKit consumes the
+/// first installed submenu as the application menu, so on macOS the menubar
+/// needs an explicit leading application menu; elsewhere the binding stays
+/// vacant and backends keep it out of the menubar.
+pub fn runner_config() -> panechord_runtime::RunnerConfig {
+    panechord_runtime::RunnerConfig {
+        application_menu: cfg!(target_os = "macos"),
+    }
 }
 
 impl View {

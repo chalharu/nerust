@@ -9,7 +9,7 @@ mod window;
 pub use key::KeyCode;
 #[doc(hidden)]
 pub mod native_keys;
-pub use window::{WindowEvent, WindowHost, WindowSurface};
+pub use window::{RunnerConfig, WindowEvent, WindowHost, WindowSurface};
 mod blocking;
 mod controls;
 mod session;
