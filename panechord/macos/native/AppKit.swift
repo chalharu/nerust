@@ -301,6 +301,7 @@ final class Tabs: NSStackView {
     let verticalHeader = DocumentStack()
     let rail = NSScrollView()
     var enabled = true
+    private var floorConstraint: NSLayoutConstraint?
     private lazy var bodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor)
     private lazy var verticalBodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor, constant: -128)
     private lazy var bodyHeight = body.heightAnchor.constraint(equalTo: heightAnchor)
@@ -350,6 +351,20 @@ final class Tabs: NSStackView {
         bodyHeight.isActive = vertical
         railWidth.isActive = vertical
         railHeight.isActive = vertical
+    }
+    override func layout() {
+        super.layout()
+        // Nothing inside reports a filling height (scroll view and tab view
+        // have no intrinsic height), so pin the floor to the enclosing clip:
+        // short content stretches to fill the window, tall content still
+        // grows the document and scrolls. Installed lazily so reparented
+        // views pick up their current scroll view.
+        if floorConstraint == nil,
+           let clip = enclosingScrollView?.contentView
+        {
+            floorConstraint = heightAnchor.constraint(greaterThanOrEqualTo: clip.heightAnchor)
+            floorConstraint?.isActive = true
+        }
     }
     func rebuildHeader() {
         header.segmentCount = body.numberOfTabViewItems
@@ -795,6 +810,11 @@ public func surfaceScale(_ pointer: UnsafeMutableRawPointer) -> Double {
 @_cdecl("w3_toggle_fullscreen") @MainActor
 public func toggleFullscreen(_ pointer: UnsafeMutableRawPointer) {
     host(pointer).window.toggleFullScreen(nil)
+}
+
+@_cdecl("w3_set_automatic_window_tabbing") @MainActor
+public func setAutomaticWindowTabbing(_ enabled: Int32) {
+    NSWindow.allowsAutomaticWindowTabbing = enabled != 0
 }
 
 @_cdecl("w3_pick_file") @MainActor
