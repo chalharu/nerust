@@ -833,6 +833,13 @@ impl Pane {
         let _ = self.model.update(move |model| model.space = space);
     }
 
+    /// Test-only entry to an assistance action (register/memory/bookmark/nav).
+    /// Production reaches `execute` through the pane commands.
+    #[cfg(test)]
+    pub(crate) fn execute_for_test(&self, action: &str) {
+        self.execute(action);
+    }
+
     pub(crate) fn cancel(&self) {
         self.flight.borrow_mut().take();
         self.action.borrow_mut().take();
@@ -1400,5 +1407,517 @@ mod tests {
         {
             assert_eq!(table.validate(), Ok(()));
         }
+    }
+}
+
+#[cfg(test)]
+mod operation_tests {
+    //! Live-operation coverage through a real `SessionAdapter` (NES core):
+    //! register/memory writes, navigation, bookmarks, busy gating, pause
+    //! gating, and media unload. The RPA native review covers the same flows
+    //! on glass; these pin the pane/owner wiring headlessly.
+    use super::*;
+    use crate::session::SessionAdapter;
+    use crate::view::Intent;
+    use nerust_gui_application::{MediaPort, SessionAction, SessionActionPort};
+    use nerust_gui_runtime::settings::{
+        HostBackendCapabilities, HostWindowCapabilities, SettingsPaths,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    struct Fixture {
+        adapter: Rc<RefCell<SessionAdapter>>,
+        dir: std::path::PathBuf,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn test_ines() -> Vec<u8> {
+        let mut data = vec![0x4E, 0x45, 0x53, 0x1A, 2u8, 1, 0, 0];
+        data.resize(16 + 0x8000 + 0x2000, 0);
+        // Point the reset vector into PRG (0x8000): a zero reset leaves the
+        // program counter outside PRG, where disassembly is legitimately empty.
+        data[16 + 0x7FFC] = 0x00;
+        data[16 + 0x7FFD] = 0x80;
+        data
+    }
+
+    fn fixture() -> Fixture {
+        // Nanos alone can collide across parallel test threads in one
+        // process; the counter makes each fixture directory unique.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "nerust-debugger-ops-{}-{nonce}-{count}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir should create");
+        let registry = Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+            Arc::new(nerust_nes_factory::NesFactory),
+        ]));
+        let audio = Arc::new(nerust_core_traits::audio::AudioBackendRegistry::default());
+        let loader = registry
+            .create_loader(HashMap::new())
+            .expect("registered NES loader");
+        let capabilities = HostBackendCapabilities {
+            window: HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let adapter = SessionAdapter::new(
+            registry,
+            audio,
+            loader,
+            capabilities,
+            Some(SettingsPaths::from_root(dir.join("settings"))),
+        )
+        .expect("adapter with temp settings root");
+        let adapter = Rc::new(RefCell::new(adapter));
+        let rom = dir.join("test.nes");
+        std::fs::write(&rom, test_ines()).expect("fixture ROM should write");
+        adapter.borrow_mut().load(&rom).expect("fixture ROM loads");
+        adapter.borrow().handle().debug_pause();
+        adapter
+            .borrow()
+            .handle()
+            .debug_step(nerust_core_traits::debugger::StepUnit::Instruction);
+        Fixture { adapter, dir }
+    }
+
+    fn drive(adapter: &Rc<RefCell<SessionAdapter>>) -> Rc<Pane> {
+        let begin_adapter = adapter.clone();
+        let begin: Begin =
+            Rc::new(move |actions, input| begin_adapter.borrow().debug_begin(actions, input));
+        let spaces_adapter = adapter.clone();
+        let spaces_source = Rc::new(move || spaces_adapter.borrow().debug_spaces());
+        let pane = Pane::new(AppLanguage::English, Rc::new(TestExecutor));
+        let spaces = adapter.borrow().debug_spaces();
+        assert!(!spaces.is_empty(), "loaded NES exposes debug spaces");
+        pane.connect(
+            spaces,
+            begin,
+            Rc::new(|_: Intent| true),
+            adapter.borrow().media_revision(),
+            spaces_source,
+        );
+        let (space, flight) = adapter.borrow().debugger_layout_begin();
+        pane.start(space, flight);
+        pane
+    }
+
+    fn settle(pane: &Pane, adapter: &Rc<RefCell<SessionAdapter>>, loaded: bool) {
+        let revision = adapter.borrow().media_revision();
+        for _ in 0..500 {
+            pane.poll(AppLanguage::English, loaded, revision);
+            if pane.is_idle() {
+                let _ = pane.model.update(|_| {});
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let status = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .map(|operations| format!("{:?}", operations.display.status))
+            .unwrap_or_else(|| "no operations".into());
+        panic!("layout flight should settle (status={status})");
+    }
+
+    /// Settle until the display populates. Pause/resume are fire-and-forget,
+    /// so a snapshot taken mid-transition serves degenerates; a refresh
+    /// re-snapshots once the core settles, like the UI's own retry.
+    fn settle_ready(pane: &Pane, adapter: &Rc<RefCell<SessionAdapter>>) {
+        for _ in 0..10 {
+            settle(pane, adapter, true);
+            let ready = pane.operations.borrow().as_ref().is_some_and(|operations| {
+                !operations.display.regs.is_empty() && !operations.display.disasm_lines.is_empty()
+            });
+            if ready {
+                return;
+            }
+            if pane.model.snapshot().enabled {
+                pane.execute_for_test("refresh");
+            }
+        }
+        panic!("debugger display should populate");
+    }
+
+    struct TestExecutor;
+    impl Executor for TestExecutor {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("operation flow must not dispatch async work");
+        }
+    }
+
+    fn first_valid_memory(pane: &Pane) -> Option<(String, u32)> {
+        pane.model
+            .snapshot()
+            .memory_targets
+            .iter()
+            .find(|(_, (row, _))| row.valid > 0)
+            .map(|(key, (row, _))| (key.clone(), row.addr))
+    }
+
+    #[test]
+    fn register_write_round_trips_through_real_core() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        let (key, (name, _)) = pane
+            .model
+            .snapshot()
+            .register_targets
+            .iter()
+            .next()
+            .map(|(key, target)| (key.clone(), *target))
+            .expect("paused NES exposes registers");
+        assert!(pane.model.update(|model| {
+            model.register_left_selection = Some(TableSelection {
+                row_key: key,
+                column: 0,
+            });
+            model.register_value = "5".into();
+        }));
+        pane.execute_for_test("register_set");
+        settle(&pane, &fixture.adapter, true);
+        let operations = pane.operations.borrow();
+        let operations = operations.as_ref().expect("operations connected");
+        assert!(
+            operations.display.regs.contains(&(name, 5)),
+            "register {name} should read back 5"
+        );
+    }
+
+    #[test]
+    fn memory_stage_confirm_writes_and_readback_matches() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        let (key, addr) = first_valid_memory(&pane).expect("dump page has a valid byte");
+        assert!(pane.model.update(|model| {
+            model.memory_selection = Some(TableSelection {
+                row_key: key,
+                column: 1,
+            });
+            model.edit_value = "5A".into();
+        }));
+        pane.execute_for_test("write");
+        settle(&pane, &fixture.adapter, true);
+        let pending = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .and_then(|operations| operations.display.pending)
+            .expect("staged write is pending confirmation");
+        assert_eq!(pending.value, 0x5A);
+        pane.execute_for_test("confirm");
+        settle(&pane, &fixture.adapter, true);
+        assert!(
+            pane.operations
+                .borrow()
+                .as_ref()
+                .and_then(|operations| operations.display.pending)
+                .is_none()
+        );
+        let space = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .and_then(|operations| {
+                operations
+                    .spaces
+                    .get(operations.nav.space_idx())
+                    .map(|space| space.id)
+            })
+            .expect("space selected");
+        assert_eq!(
+            fixture
+                .adapter
+                .borrow()
+                .handle()
+                .debug_read_byte(space, addr),
+            Some(0x5A)
+        );
+    }
+
+    #[test]
+    fn invalid_address_reports_an_error_without_a_flight() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        assert!(pane.model.update(|model| {
+            model.memory_addr = "ZZZ".into();
+        }));
+        pane.execute_for_test("memory_go");
+        assert!(pane.is_idle(), "failed parse starts no flight");
+        assert_eq!(pane.model.snapshot().status, "Invalid hexadecimal address");
+    }
+
+    #[test]
+    fn readonly_space_refuses_a_write() {
+        let fixture = fixture();
+        let spaces = fixture.adapter.borrow().debug_spaces();
+        let Some(index) = spaces
+            .iter()
+            .position(|space| space.access != nerust_core_traits::debugger::SpaceAccess::ReadWrite)
+        else {
+            panic!("NES should expose a read-only space: {spaces:?}");
+        };
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        let start = *spaces[index].range.start();
+        pane.operations
+            .borrow_mut()
+            .as_mut()
+            .expect("operations")
+            .nav
+            .set_space(index, start);
+        // Navigate the dump onto that space so the targets resolve there.
+        assert!(pane.model.update(move |model| {
+            model.memory_addr = format!("{start:08X}");
+        }));
+        pane.execute_for_test("memory_go");
+        settle(&pane, &fixture.adapter, true);
+        let (key, _) = first_valid_memory(&pane).expect("read-only page has a valid byte");
+        assert!(pane.model.update(|model| {
+            model.memory_selection = Some(TableSelection {
+                row_key: key,
+                column: 1,
+            });
+            model.edit_value = "FF".into();
+        }));
+        pane.execute_for_test("write");
+        assert!(pane.is_idle(), "refused write starts no flight");
+        assert!(
+            pane.model.snapshot().status.contains("read-only"),
+            "unexpected status: {}",
+            pane.model.snapshot().status
+        );
+    }
+
+    #[test]
+    fn bookmark_add_go_remove_flow() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        let first = pane
+            .model
+            .snapshot()
+            .disassembly
+            .rows
+            .first()
+            .map(|row| row.key.clone())
+            .expect("paused NES disassembles");
+        assert!(pane.model.update(|model| {
+            model.disassembly_selection = Some(TableSelection {
+                row_key: first,
+                column: 0,
+            });
+            model.bookmark_label = "home".into();
+        }));
+        pane.execute_for_test("bookmark_add");
+        assert_eq!(pane.model.snapshot().bookmarks.rows.len(), 1);
+        assert!(pane.model.update(|model| {
+            model.bookmark_selection = Some(TableSelection {
+                row_key: "0".into(),
+                column: 0,
+            });
+        }));
+        pane.execute_for_test("bookmark_go");
+        settle(&pane, &fixture.adapter, true);
+        let addr = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .and_then(|operations| operations.bookmarks.get("0").map(|(_, _, addr)| *addr))
+            .expect("bookmark kept");
+        {
+            let borrowed = pane.operations.borrow();
+            let operations = borrowed.as_ref().expect("operations");
+            // Bookmark-go pins the disassembly; the memory page stays put.
+            assert_eq!(operations.nav.dis_addr(), Some(addr));
+            assert!(
+                operations
+                    .display
+                    .disasm_lines
+                    .iter()
+                    .any(|line| line.addr == addr),
+                "disassembly covers bookmark 0x{addr:08X}"
+            );
+        }
+        // The × column removes through the activation watch, like the real UI:
+        // setting the selection fires `bookmark_remove` synchronously.
+        assert!(pane.model.update(|model| {
+            model.bookmark_selection = Some(TableSelection {
+                row_key: "0".into(),
+                column: 1,
+            });
+        }));
+        assert!(pane.model.snapshot().bookmarks.rows.is_empty());
+    }
+
+    #[test]
+    fn page_back_and_follow_navigation() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        let base = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .expect("operations")
+            .nav
+            .mem_addr();
+        pane.execute_for_test("page_next");
+        settle(&pane, &fixture.adapter, true);
+        let paged = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .expect("operations")
+            .nav
+            .mem_addr();
+        assert_ne!(paged, base, "page moves the memory anchor");
+        assert!(pane.model.update(move |model| {
+            model.memory_addr = format!("{base:08X}");
+        }));
+        pane.execute_for_test("memory_go");
+        settle(&pane, &fixture.adapter, true);
+        // Disassembly Back undoes the disassembly pin; exercise it through
+        // an explicit pin so the undo stack is non-empty.
+        let pc = pane
+            .operations
+            .borrow()
+            .as_ref()
+            .and_then(|operations| {
+                operations
+                    .display
+                    .disasm_lines
+                    .iter()
+                    .find(|line| line.is_pc)
+                    .map(|line| line.addr)
+            })
+            .expect("paused NES has a program counter");
+        assert!(pane.model.update(move |model| {
+            model.disasm_addr = format!("{pc:08X}");
+        }));
+        pane.execute_for_test("disassembly_go");
+        settle(&pane, &fixture.adapter, true);
+        pane.execute_for_test("back");
+        settle(&pane, &fixture.adapter, true);
+        pane.execute_for_test("follow_pc");
+        settle(&pane, &fixture.adapter, true);
+        assert!(
+            pane.operations
+                .borrow()
+                .as_ref()
+                .expect("operations")
+                .nav
+                .follow_pc(),
+            "follow restores PC tracking"
+        );
+    }
+
+    #[test]
+    fn busy_flight_ignores_reentry_and_pause_gates_auto_refresh() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        pane.execute_for_test("refresh");
+        assert!(
+            !pane.model.snapshot().enabled,
+            "in-flight batch disables commands"
+        );
+        // Busy: a second action is dropped, never queued behind the flight.
+        pane.execute_for_test("step_frame");
+        settle(&pane, &fixture.adapter, true);
+        assert!(pane.model.snapshot().enabled);
+        // Paused cores never auto-refresh, even past the deadline.
+        pane.next_refresh
+            .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        pane.poll(
+            AppLanguage::English,
+            true,
+            fixture.adapter.borrow().media_revision(),
+        );
+        assert!(pane.is_idle(), "no automatic poll while paused");
+        // Running cores resume the 250ms live poll. Resume is fire-and-forget,
+        // so refresh until a snapshot observes the running core.
+        fixture.adapter.borrow().handle().debug_resume();
+        for _ in 0..10 {
+            if pane.model.snapshot().enabled {
+                pane.execute_for_test("refresh");
+            }
+            settle(&pane, &fixture.adapter, true);
+            let running = pane
+                .operations
+                .borrow()
+                .as_ref()
+                .is_some_and(|operations| !operations.display.paused);
+            if running {
+                break;
+            }
+            pane.next_refresh
+                .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        }
+        assert!(
+            !pane
+                .operations
+                .borrow()
+                .as_ref()
+                .expect("operations")
+                .display
+                .paused,
+            "running core reports running"
+        );
+    }
+
+    #[test]
+    fn media_unload_resets_and_disables() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        let first_disasm =
+            pane.model
+                .snapshot()
+                .disassembly
+                .rows
+                .first()
+                .map(|row| TableSelection {
+                    row_key: row.key.clone(),
+                    column: 0,
+                });
+        assert!(pane.model.update(|model| {
+            model.disassembly_selection = first_disasm;
+            model.bookmark_label = "temp".into();
+        }));
+        pane.execute_for_test("bookmark_add");
+        assert_eq!(pane.model.snapshot().bookmarks.rows.len(), 1);
+        fixture
+            .adapter
+            .borrow_mut()
+            .execute(SessionAction::Unload)
+            .expect("unload succeeds");
+        pane.poll(
+            AppLanguage::English,
+            false,
+            fixture.adapter.borrow().media_revision(),
+        );
+        assert!(!pane.model.snapshot().enabled);
+        assert!(pane.model.snapshot().bookmarks.rows.is_empty());
+        assert!(pane.is_idle());
     }
 }
