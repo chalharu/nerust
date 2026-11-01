@@ -789,6 +789,68 @@ fn native_grid_default_styles_and_scroll_preserve_allocation() {
     assert!(view.try_scroll(&view.root(), "closed", false).is_err());
 }
 
+/// Dialog footer contract: with no outer window scrollable, a tall page
+/// scrolls inside its own viewport while the footer button stays pinned
+/// in the window. Covers the tao-reported dialog bug on this backend.
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn bounded_window_root_pins_footer_while_tall_page_scrolls_inside() {
+    gtk::init().unwrap();
+    let host = GtkHost::attach();
+    let model = Store::new(0usize, host.executor());
+    let view = View::new(Binding::constant("Settings".into()));
+    let scroll = view.try_scroll(&view.root(), "fields", false).unwrap();
+    for index in 0..40 {
+        view.label(
+            &scroll,
+            &format!("row-{index}"),
+            Binding::constant(format!("row {index}")),
+        );
+    }
+    let command = model.command(
+        |_| true,
+        |store, ()| {
+            let _ = store.update(|count| *count += 1);
+        },
+        Binding::constant(()),
+    );
+    view.button(
+        &view.root(),
+        "apply",
+        Binding::constant("Apply".into()),
+        command,
+    );
+    view.native_window().set_default_size(400, 300);
+    view.present();
+    let ready = Rc::new(Cell::new(false));
+    let observed = ready.clone();
+    glib::timeout_add_local_once(Duration::from_millis(200), move || observed.set(true));
+    while !ready.get() {
+        glib::MainContext::default().iteration(true);
+    }
+    // The tall page scrolls inside its own viewport ...
+    let inner = view.widget::<gtk::ScrolledWindow>("fields").unwrap();
+    let adjustment = inner.vadjustment();
+    assert!(
+        adjustment.upper() > adjustment.page_size() + 1.0,
+        "tall page should overflow its viewport: upper={} page={}",
+        adjustment.upper(),
+        adjustment.page_size()
+    );
+    // ... while the footer stays pinned inside the window.
+    let button = view.widget::<gtk::Button>("apply").unwrap();
+    assert!(button.is_mapped(), "footer button must be visible");
+    let placed = button.allocation();
+    let root = view.widget::<gtk::Box>("__root").unwrap();
+    let bounds = root.allocation();
+    assert!(
+        placed.y() >= bounds.y()
+            && placed.y() + placed.height() <= bounds.y() + bounds.height() + 1,
+        "footer must remain in the window: button={placed:?} root={bounds:?}"
+    );
+    view.close();
+}
+
 #[test]
 #[ignore = "isolated Xvfb native contract"]
 fn native_menu_declaration_order_survives_rebuild() {
@@ -2161,7 +2223,21 @@ fn native_root_style() {
     let outer = view.native_window().child().unwrap();
     let canvas = root.parent().unwrap();
     assert!(canvas.is::<gtk::Box>());
-    assert!(canvas.parent().unwrap().is::<gtk::Viewport>());
+    // Bounded window root: the canvas docks straight into the window box.
+    // No outer scrollable may sit between them and scroll the footer away.
+    assert!(canvas.parent().is_some_and(|parent| parent == outer));
+    let mut ancestor = canvas.parent();
+    while let Some(widget) = ancestor {
+        assert!(
+            !widget.is::<gtk::ScrolledWindow>(),
+            "outer scrollable would scroll the footer away"
+        );
+        assert!(
+            !widget.is::<gtk::Viewport>(),
+            "outer viewport would scroll the footer away"
+        );
+        ancestor = widget.parent();
+    }
     assert_eq!(
         view.widget::<gtk::Box>("__root")
             .unwrap()
@@ -2202,7 +2278,7 @@ fn native_root_style() {
     assert_eq!((padding.bottom(), padding.left()), (8, 9));
     assert_eq!(root.parent().as_ref(), Some(&canvas));
     assert!(outer.first_child().unwrap().is::<gtk::PopoverMenuBar>());
-    assert!(outer.last_child().unwrap().is::<gtk::ScrolledWindow>());
+    assert_eq!(outer.last_child().as_ref(), Some(&canvas));
     assert_eq!(root.first_child(), root.last_child());
     assert_eq!(
         view.0.nodes.borrow()["child"].frame.parent().as_ref(),

@@ -361,14 +361,11 @@ impl View {
         let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
         canvas.set_vexpand(true);
         canvas.append(&root);
-        let scroll = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .hexpand(true)
-            .vexpand(true)
-            .child(&canvas)
-            .build();
-        outer.append(&scroll);
+        // Bounded window root, never an outer scrollable: inner `Scroll`
+        // nodes take the remainder and scroll internally, so dialog
+        // footers (OK/Cancel) stay pinned instead of scrolling away with
+        // the content. Same contract as the tao backend.
+        outer.append(&canvas);
         window.set_child(Some(&outer));
         root.set_widget_name("__root");
         let css = gtk::CssProvider::new();
