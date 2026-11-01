@@ -4,6 +4,14 @@ root:
   id: main
   title: {literal: "Nerust"}
   menus:
+    # macOS swallows the first installed submenu as the application menu, so an
+    # explicit app menu must lead. It carries items on macOS only; elsewhere the
+    # binding stays empty and backends keep the vacant menu out of the menubar.
+    - id: app
+      title: {bind: {path: app_title, source: External}}
+      command: choose
+      nested: true
+      items: {bind: {path: app_items, source: External}}
     - id: file
       title: {bind: {path: file_title, source: External}}
       command: choose

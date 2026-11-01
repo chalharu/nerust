@@ -164,6 +164,10 @@ struct MenuState {
     order: u64,
     menu: gio::Menu,
     title: RefCell<String>,
+    /// Membership cache: fully vacant menus (no label, no content) stay out
+    /// of the menubar. Content updates re-evaluate it so emptying (or
+    /// repopulating) the last content rebuilds the bar exactly on change.
+    vacant: Cell<bool>,
     actions: RefCell<Vec<String>>,
     shortcuts: RefCell<Vec<gtk::Shortcut>>,
 }
@@ -258,6 +262,15 @@ impl Drop for Inner {
         self.shutdown();
         self.window.destroy();
     }
+}
+
+/// Whether the menubar needs an explicit leading application menu: AppKit
+/// consumes the first installed submenu as the application menu, so without
+/// one the first application menu is swallowed on macOS. Views provide the
+/// items (About/Preferences/Quit) through the single shared template and
+/// leave the binding vacant elsewhere; backends keep vacant menus out.
+pub fn wants_application_menu() -> bool {
+    false
 }
 
 impl View {
@@ -980,6 +993,7 @@ impl View {
             order,
             menu: gio::Menu::new(),
             title: RefCell::new(String::new()),
+            vacant: Cell::new(true),
             actions: RefCell::new(Vec::new()),
             shortcuts: RefCell::new(Vec::new()),
         });
@@ -995,6 +1009,9 @@ impl View {
                 if let Some(inner) = weak.upgrade().filter(|inner| !inner.closed.get()) {
                     if let Some(state) = inner.menu_states.borrow().get(&menu_id) {
                         state.title.replace(title);
+                        state
+                            .vacant
+                            .set(state.title.borrow().is_empty() && state.menu.n_items() == 0);
                     }
                     View(inner).rebuild_menubar();
                 }
@@ -1012,6 +1029,23 @@ impl View {
         );
     }
 
+    /// Re-evaluate menubar membership after a content update: fully vacant
+    /// menus stay out, so emptying (or repopulating) the last content
+    /// rebuilds the bar exactly on membership change. Label refreshes of
+    /// attached menus ride the unconditional title-path rebuild instead.
+    pub(crate) fn sync_menu_membership(&self, id: &str) {
+        if self.0.closed.get() {
+            return;
+        }
+        let state = self.0.menu_states.borrow().get(id).cloned();
+        if let Some(state) = state {
+            let vacant = state.title.borrow().is_empty() && state.menu.n_items() == 0;
+            if state.vacant.replace(vacant) != vacant {
+                self.rebuild_menubar();
+            }
+        }
+    }
+
     fn rebuild_menubar(&self) {
         let mut menus: Vec<_> = self
             .0
@@ -1023,6 +1057,14 @@ impl View {
         menus.sort_by_key(|(_, state)| state.order);
         self.0.menus.remove_all();
         for (_, state) in menus {
+            // Fully vacant menus (no label and no content) never occupy the
+            // menubar: platform-conditional menus (e.g. the macOS application
+            // menu, vacant elsewhere) stay invisible off their platform
+            // instead of rendering blank. Titled menus still attach while
+            // their live-linked content fills in, preserving install order.
+            if state.title.borrow().is_empty() && state.menu.n_items() == 0 {
+                continue;
+            }
             self.0
                 .menus
                 .append_submenu(Some(&state.title.borrow()), &state.menu);
@@ -1148,6 +1190,7 @@ impl View {
         if section.n_items() > 0 {
             state.menu.append_section(None, &section);
         }
+        self.sync_menu_membership(id);
     }
 
     fn native_role(&self, role: &MenuRole) {

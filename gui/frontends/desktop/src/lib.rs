@@ -83,6 +83,11 @@ pub fn run(
                 return false;
             }
             match intent {
+                view::Intent::About => {
+                    // No About dialog: on macOS the native predefined item owns
+                    // its panel and never dispatches; automation is rejected.
+                    false
+                }
                 view::Intent::Ppu => {
                     if let Some(view) = ppu_window
                         .borrow()
