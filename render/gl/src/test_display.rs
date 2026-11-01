@@ -1,5 +1,9 @@
 //! Real-GL drive harness for unit tests. Without a usable display the callers
 //! skip gracefully so headless runs stay green.
+//!
+//! macOS always skips: CGL has no pbuffers (probed in `try_connect`), and a
+//! window-surface harness would need the main thread, which libtest keeps
+//! blocked. Linux/Xvfb (CI) and Windows run the real-context tests.
 
 use std::num::NonZeroU32;
 

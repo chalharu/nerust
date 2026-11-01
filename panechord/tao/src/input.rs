@@ -111,7 +111,7 @@ pub(super) fn convert(
                     location,
                     modifiers: *modifiers,
                     // Linux and macOS deliver ordinary text via ReceivedImeText too.
-                    text: if cfg!(any(target_os = "linux", target_os = "macos")) {
+                    text: if cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")) {
                         None
                     } else {
                         event

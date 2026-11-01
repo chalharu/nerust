@@ -332,7 +332,7 @@ fn actual_scan_caps_results_and_ignores_symlinks() {
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn non_utf8_names_keep_distinct_selection_keys() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};

@@ -1,5 +1,5 @@
 use crate::{GtkHost, Parent, View, gtk};
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
 use panechord_runtime::{
@@ -32,7 +32,7 @@ unsafe extern "C" {
     ) -> *mut std::ffi::c_void;
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
 unsafe extern "C" {
     fn gdk_x11_display_get_xdisplay(
         display: *mut gtk::gdk::ffi::GdkDisplay,
@@ -48,7 +48,7 @@ unsafe extern "C" {
 
 impl HasDisplayHandle for Surface {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
             use raw_window_handle::{RawDisplayHandle, WaylandDisplayHandle, XlibDisplayHandle};
             let display = gtk::prelude::WidgetExt::display(&self.window);
@@ -85,14 +85,14 @@ impl HasDisplayHandle for Surface {
             }
             Ok(DisplayHandle::windows())
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         Err(HandleError::NotSupported)
     }
 }
 
 impl HasWindowHandle for Surface {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
             use raw_window_handle::{RawWindowHandle, WaylandWindowHandle, XlibWindowHandle};
             let surface = self.window.surface().ok_or(HandleError::Unavailable)?;
@@ -154,7 +154,7 @@ impl HasWindowHandle for Surface {
                 ))
             })
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
         Err(HandleError::NotSupported)
     }
 }
@@ -186,7 +186,7 @@ fn key_code(_key: gtk::gdk::Key, hardware_code: u32) -> KeyCode {
     {
         panechord_runtime::native_keys::macos(hardware_code)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
     {
         hardware_code
             .checked_sub(8)
@@ -202,13 +202,13 @@ fn key_code(_key: gtk::gdk::Key, hardware_code: u32) -> KeyCode {
             )
         })
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
     {
         key_name(_key)
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly")))]
 fn key_name(key: gtk::gdk::Key) -> KeyCode {
     if let Some(character) = key.to_unicode() {
         if character.is_ascii_alphabetic() {
