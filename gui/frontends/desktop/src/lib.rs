@@ -1,4 +1,5 @@
 mod debugger;
+mod error;
 mod history;
 mod ppu;
 mod render;
@@ -8,7 +9,7 @@ mod view;
 
 pub use session::SessionAdapter;
 
-use nerust_gui_application::{Application, FramePort, PauseReason};
+use nerust_gui_application::{Application, FramePort, PauseLease, PauseReason};
 use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsPaths};
 use nerust_gui_shell::context::FrontendContext;
 use nerust_gui_shell::session::KeyboardShortcut;
@@ -73,6 +74,9 @@ pub fn run(
         let ppu_refresh = ppu_updates.clone();
         let settings_host = host.clone();
         let settings_session = session.clone();
+        let error_poll_host = settings_host.clone();
+        let error_poll_session = settings_session.clone();
+        let error_poll_executor = settings_host.executor();
         let dispatch_source = Rc::downgrade(&actions);
         actions.replace(Some(Rc::new(move |intent| {
             if app.borrow().state().closed {
@@ -114,7 +118,24 @@ pub fn run(
                         panechord::WindowHooks {
                             confirm: Rc::new(|| Box::pin(async { true })),
                             cancel: Rc::new(move || cancelled.cancel()),
-                            drain: Rc::new(|| Box::pin(async {})),
+                            drain: Rc::new({
+                                let pane = pane.clone();
+                                move || {
+                                    let pane = pane.clone();
+                                    Box::pin(async move {
+                                        // Wait for the in-flight layout fetch to settle.
+                                        // The frame loop keeps polling while the window
+                                        // is open; the shutdown timeout bounds this wait.
+                                        // Dropping here would leave an accepted debugger
+                                        // mutation without its outcome (see
+                                        // `DrainFlight::resolve_mutation_unknown`).
+                                        while !pane.is_idle() {
+                                            futures_timer::Delay::new(Duration::from_millis(5))
+                                                .await;
+                                        }
+                                    })
+                                }
+                            }),
                             close: Rc::new(move || {
                                 if let Some(view) = close.upgrade() {
                                     view.close();
@@ -188,7 +209,24 @@ pub fn run(
                         panechord::WindowHooks {
                             confirm: Rc::new(|| Box::pin(async { true })),
                             cancel: Rc::new(move || cancelled.cancel()),
-                            drain: Rc::new(|| Box::pin(async {})),
+                            drain: Rc::new({
+                                let pane = pane.clone();
+                                move || {
+                                    let pane = pane.clone();
+                                    Box::pin(async move {
+                                        // Wait for the in-flight batch to settle.
+                                        // The frame loop keeps polling while the window
+                                        // is open; the shutdown timeout bounds this wait.
+                                        // An accepted step/write without a reply must
+                                        // surface OutcomeUnknown, never retry (see
+                                        // `DrainFlight::resolve_mutation_unknown`).
+                                        while !pane.is_idle() {
+                                            futures_timer::Delay::new(Duration::from_millis(5))
+                                                .await;
+                                        }
+                                    })
+                                }
+                            }),
                             close: Rc::new(move || {
                                 if let Some(view) = close.upgrade() {
                                     view.close();
@@ -506,6 +544,22 @@ pub fn run(
             }));
         }));
         let weak = view.downgrade();
+        // Error-dialog coordinator (desktop owner of the Shell ModalQueue gate).
+        // The Shell pump (`advance_frame` -> `pump_osd` -> `pump_modal`) queues
+        // batches; this loop is the only taker, mirroring Android's
+        // `ErrorDialogController::poll_show`/`on_dismissed`. One error window at
+        // a time: the window's close runs the ACK (`modal_closed`) and releases
+        // the Modal pause lease (Application owns pause, like the settings and
+        // file-picker leases). A separate window keeps the main View's content
+        // (the Native screen surface) and Model untouched.
+        let error_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let error_lease: Rc<RefCell<Option<PauseLease>>> = Rc::new(RefCell::new(None));
+        let error_poll_window = error_window.clone();
+        let error_poll_lease = error_lease.clone();
+        let error_poll_app = application.clone();
+        // Projected binding: `snapshot()` would clone the screen image every
+        // tick; this only clones the notice text.
+        let error_poll_notice = model.bind(|model| model.notice.clone(), None);
         host.executor().spawn(Box::pin(async move {
             while weak.upgrade().is_some() && !application.borrow().state().closed {
                 let changed_menus = {
@@ -588,6 +642,125 @@ pub fn run(
                         }
                     }
                 });
+                // Error dialog: one window at a time. A live window owns its text;
+                // the close hook below ACKs the queue gate and releases pause.
+                // Batches already taken but unshowable (shutdown, build or
+                // registration failure) fall back to `notice` so no batch is
+                // lost with the gate left open.
+                let window_live = error_poll_window
+                    .borrow()
+                    .as_ref()
+                    .and_then(panechord::WeakView::upgrade)
+                    .is_some();
+                if !window_live && !error_poll_app.borrow().state().closed {
+                    let next = error_poll_app
+                        .borrow_mut()
+                        .session_mut()
+                        .take_modal_batch()
+                        .map(|batch| (batch, true))
+                        .or_else(|| error_poll_notice.get().map(|notice| (notice, false)));
+                    if let Some((detail, from_modal)) = next {
+                        let shown = detail.clone();
+                        let opened = (|| {
+                            let lease = error_poll_app
+                                .borrow_mut()
+                                .acquire_pause(PauseReason::Modal)?;
+                            error_poll_lease.borrow_mut().replace(lease);
+                            let language =
+                                error_poll_app.borrow().settings().shared.general.language;
+                            let pane = error::Pane::new(
+                                language,
+                                detail.clone(),
+                                error_poll_executor.clone(),
+                            );
+                            let open_view = match pane.build() {
+                                Ok(view) => view,
+                                Err(failure) => {
+                                    if from_modal {
+                                        error_poll_app.borrow_mut().session_mut().modal_closed();
+                                    }
+                                    if let Some(lease) = error_poll_lease.borrow_mut().take() {
+                                        error_poll_app.borrow_mut().release_pause(lease);
+                                    }
+                                    let _ = model.update(move |model| {
+                                        model.notice = Some(failure);
+                                    });
+                                    return None;
+                                }
+                            };
+                            let weak = open_view.downgrade();
+                            let close = weak.clone();
+                            let closed_app = error_poll_app.clone();
+                            let closed_lease = error_poll_lease.clone();
+                            let closed_window = error_poll_window.clone();
+                            if let Err(failure) = error_poll_host.register_view(
+                                &error_poll_session,
+                                "error",
+                                &open_view,
+                                panechord::WindowHooks {
+                                    confirm: Rc::new(|| Box::pin(async { true })),
+                                    cancel: Rc::new(|| {}),
+                                    // No in-flight work: the batch text is already
+                                    // taken, so shutdown drain returns at once.
+                                    drain: Rc::new(|| Box::pin(async {})),
+                                    close: Rc::new(move || {
+                                        if let Some(view) = close.upgrade() {
+                                            view.close();
+                                        }
+                                    }),
+                                },
+                            ) {
+                                open_view.close();
+                                if from_modal {
+                                    error_poll_app.borrow_mut().session_mut().modal_closed();
+                                }
+                                if let Some(lease) = error_poll_lease.borrow_mut().take() {
+                                    error_poll_app.borrow_mut().release_pause(lease);
+                                }
+                                let _ = model.update(move |model| {
+                                    model.notice = Some(failure);
+                                });
+                                return None;
+                            }
+                            open_view.on_close_request(Rc::new(move || {
+                                if let Some(view) = weak.upgrade() {
+                                    view.close();
+                                }
+                            }));
+                            open_view.on_close(Rc::new(move || {
+                                if from_modal {
+                                    closed_app.borrow_mut().session_mut().modal_closed();
+                                }
+                                if let Some(lease) = closed_lease.borrow_mut().take() {
+                                    closed_app.borrow_mut().release_pause(lease);
+                                }
+                                closed_window.replace(None);
+                            }));
+                            error_poll_window.replace(Some(open_view.downgrade()));
+                            if !from_modal {
+                                let _ = model.update(move |model| {
+                                    if model.notice.as_deref() == Some(&shown) {
+                                        model.notice = None;
+                                    }
+                                });
+                            }
+                            Some(())
+                        })();
+                        // Shutdown raced the take: the gate is already released
+                        // above and the text survives through `notice`.
+                        if opened.is_none() && error_poll_app.borrow().state().closed {
+                            if from_modal {
+                                error_poll_app.borrow_mut().session_mut().modal_closed();
+                            }
+                            if let Some(lease) = error_poll_lease.borrow_mut().take() {
+                                error_poll_app.borrow_mut().release_pause(lease);
+                            }
+                            let _ = model.update(move |model| {
+                                model.notice = Some(detail);
+                            });
+                        }
+                    }
+                }
                 futures_timer::Delay::new(Duration::from_millis(16)).await;
             }
         }));

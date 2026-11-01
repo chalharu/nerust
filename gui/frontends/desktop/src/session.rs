@@ -165,6 +165,17 @@ impl SessionAdapter {
         &self.osd
     }
 
+    /// Take the next modal batch for display. The Shell queue stays the only
+    /// queue gate; the desktop dialog coordinator only moves batches.
+    pub fn take_modal_batch(&mut self) -> Option<String> {
+        self.osd.take_modal_batch()
+    }
+
+    /// Ack the showing dialog. Releases the queue gate for the next batch.
+    pub fn modal_closed(&mut self) {
+        self.osd.modal_closed()
+    }
+
     pub fn metrics(&self) -> nerust_gui_shell::session::osd::TickMetrics {
         Self::display_metrics(self.session.tick_metrics(), self.held)
     }
