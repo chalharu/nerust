@@ -134,6 +134,7 @@ unsafe extern "C" {
     fn w3_surface_size(host: *mut c_void, width: *mut f64, height: *mut f64);
     fn w3_surface_scale(host: *mut c_void) -> f64;
     fn w3_toggle_fullscreen(host: *mut c_void);
+    fn w3_set_automatic_window_tabbing(enabled: i32);
     fn w3_pick_file(output: *mut u8, capacity: usize) -> i32;
 }
 
@@ -376,6 +377,15 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
     panechord_runtime::RunnerConfig {
         application_menu: true,
     }
+}
+
+/// Opt out of (or back into) AppKit automatic window tabbing, mirroring
+/// tao's Mac-only builder option. Must run on the main thread; it sets the
+/// `NSWindow` class default, so it applies to windows created after the call.
+/// Panechord apps opt out in `run_host` before building views so separate
+/// windows are never merged into the system tab bar.
+pub fn set_allows_automatic_window_tabbing(enabled: bool) {
+    unsafe { w3_set_automatic_window_tabbing(i32::from(enabled)) };
 }
 
 /// Native file picker. Must run on the AppKit main thread (the host executor
@@ -1480,6 +1490,9 @@ pub fn run(make: impl FnOnce(Rc<dyn Executor>) -> View + 'static) -> Result<(), 
 }
 
 pub fn run_host(make: impl FnOnce(Rc<MacHost>) -> Result<(), String>) -> Result<(), String> {
+    // Runs on the AppKit main thread: keep separate windows out of the
+    // system tab bar before any view creates its window.
+    set_allows_automatic_window_tabbing(false);
     let host = Rc::new(MacHost::default());
     make(host.clone())?;
     let executor = &host.executor;
