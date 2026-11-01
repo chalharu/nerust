@@ -82,6 +82,13 @@ impl Tab {
                         .into()
                 }
                 panechord_runtime::TabPosition::Left => widget::row![
+                    // Fixed header width: iced lays out declaratively, so an
+                    // equalized content-measured column (like the GTK
+                    // StackSidebar's natural width) is not expressible — Fill
+                    // buttons claim all available width, squeezing the body
+                    // out under shrink-wrapping. 120px fits the settings
+                    // titles in both languages; longer titles clip rather
+                    // than reflow, matching the pre-Parity behavior.
                     widget::scrollable(widget::column(buttons).spacing(8))
                         .width(120)
                         .height(Length::Shrink),

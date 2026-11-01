@@ -168,7 +168,9 @@ fn vertical_tabs_keep_headers_disjoint_and_page_identity_stable() {
             let frame = element.as_widget_mut().layout(
                 &mut tree,
                 &renderer,
-                &Limits::new(Size::new(width, 140.0), Size::new(width, 140.0)),
+                // Loose width minimum: a fixed minimum would force the
+                // shrink-wrapped sidebar column to the full window width.
+                &Limits::new(Size::new(0.0, 140.0), Size::new(width, 140.0)),
             );
             let children = frame.children()[0].children();
             assert_eq!(children.len(), 2);
@@ -177,9 +179,16 @@ fn vertical_tabs_keep_headers_disjoint_and_page_identity_stable() {
             assert!(!first.intersects(&second));
             assert!(first.x >= 0.0 && second.x + second.width <= width + 0.01);
             match position {
-                TabPosition::Left => assert!((first.width - 120.0).abs() < 0.01),
+                // Fixed 120px header column with the 12px gap before the
+                // filled body (see the width comment in controls.rs).
+                TabPosition::Left => {
+                    assert!((first.width - 120.0).abs() < 0.01);
+                    assert!((second.x - (first.x + first.width) - 12.0).abs() < 0.01);
+                    assert!((second.x + second.width - width).abs() < 0.01);
+                }
                 TabPosition::Right => {
                     assert!((second.width - 120.0).abs() < 0.01);
+                    assert!((second.x - (first.x + first.width) - 12.0).abs() < 0.01);
                     assert!((second.x + second.width - width).abs() < 0.01);
                 }
                 TabPosition::Top => assert!(first.y.abs() < 0.01),
