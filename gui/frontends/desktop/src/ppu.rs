@@ -113,6 +113,10 @@ impl Pane {
         self.fetch.borrow_mut().take();
     }
 
+    pub(crate) fn is_idle(&self) -> bool {
+        self.flight.borrow().is_none() && self.live.borrow().is_none()
+    }
+
     pub(crate) fn poll(&self, language: AppLanguage, loaded: bool, media_revision: u64) {
         if self.model.is_closed() {
             self.cancel();

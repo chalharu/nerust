@@ -126,6 +126,10 @@ impl<P: EmulationPort> Application<P> {
         &self.port
     }
 
+    pub fn session_mut(&mut self) -> &mut P {
+        &mut self.port
+    }
+
     pub fn holds(&self, reason: PauseReason) -> bool {
         self.holds & reason.bit() != 0 || self.leases.values().any(|held| *held == reason)
     }
