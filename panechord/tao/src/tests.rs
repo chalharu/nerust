@@ -1268,7 +1268,13 @@ fn linux_quit_shim_closes_owner_without_dispatch_or_ownership_cycle() {
     assert_eq!(closed.get(), 1);
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 #[test]
 #[ignore = "requires Xvfb/display and an isolated GTK3 process; run with --exact --ignored"]
 fn native_menu_append_failure_restores_accelerators_registry_and_quit() {
@@ -1278,7 +1284,13 @@ fn native_menu_append_failure_restores_accelerators_registry_and_quit() {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 fn native_menu_append_failure(hierarchical: bool) {
     use gtk::prelude::*;
     use panechord_runtime::{MenuItem, MenuNode, MenuRole};
