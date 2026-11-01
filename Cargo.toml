@@ -251,12 +251,17 @@ nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_timer = { path = "timer" }
 objc2 = { default-features = false, version = "=0.6.5" }
 objc2-app-kit = { default-features = false, features = [
+  "NSApplication",
+  "NSEvent",
+  "NSMenu",
+  "NSMenuItem",
   "NSResponder",
   "NSView",
   "NSWindow",
   "objc2-core-foundation",
   "objc2-quartz-core",
 ], version = "=0.3.2" }
+objc2-foundation = { default-features = false, features = ["NSString"], version = "=0.3.2" }
 objc2-quartz-core = { default-features = false, features = [
   "objc2-core-foundation",
 ], version = "=0.3.2" }

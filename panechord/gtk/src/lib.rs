@@ -6,6 +6,8 @@ pub use panechord_runtime::Alignment;
 
 mod controls;
 mod table;
+#[cfg(target_os = "macos")]
+mod macos_menu;
 pub use gtk;
 
 use std::{
@@ -175,6 +177,7 @@ struct MenuState {
 struct Action {
     action: gio::SimpleAction,
     name: String,
+    shortcut: Option<String>,
 }
 
 struct Inner {
@@ -265,11 +268,11 @@ impl Drop for Inner {
 }
 
 /// Backend-resolved run configuration for this host. GTK needs no application
-/// menu: the view leaves the binding vacant and vacant menus stay out of the
-/// menubar.
+/// menu, except on macOS where the global menubar consumes the first submenu
+/// as the application menu (mirrored from the in-window models).
 pub fn runner_config() -> panechord_runtime::RunnerConfig {
     panechord_runtime::RunnerConfig {
-        application_menu: false,
+        application_menu: cfg!(target_os = "macos"),
     }
 }
 
@@ -348,7 +351,13 @@ impl View {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.set_vexpand(true);
         let menus = gio::Menu::new();
-        outer.append(&gtk::PopoverMenuBar::from_model(Some(&menus)));
+        let bar = gtk::PopoverMenuBar::from_model(Some(&menus));
+        // macOS shows the mirrored system-global menu instead; the
+        // in-window bar would duplicate it. Menu logic still builds the
+        // gio models the global mirror reads from.
+        #[cfg(target_os = "macos")]
+        bar.set_visible(false);
+        outer.append(&bar);
         let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
         canvas.set_vexpand(true);
         canvas.append(&root);
@@ -1134,6 +1143,10 @@ impl View {
                 .menus
                 .append_submenu(Some(&state.title.borrow()), &state.menu);
         }
+        #[cfg(target_os = "macos")]
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            macos_menu::sync_global_menu(self, mtm);
+        }
     }
 
     fn clear_menu(&self, id: &str) {
@@ -1172,17 +1185,13 @@ impl View {
             })
             .collect();
         // Validate the entire snapshot (including shortcuts) before touching the old menu.
-        let old_ids: HashSet<_> = self
-            .0
-            .menu_states
-            .borrow()
-            .get(id)
-            .unwrap()
-            .actions
-            .borrow()
-            .iter()
-            .cloned()
-            .collect();
+        let Some(menu_state) = self.0.menu_states.borrow().get(id).cloned() else {
+            // Raced with view teardown (e.g. closing a window mid-update):
+            // report instead of panicking on the stale subscription.
+            self.0.error.replace(Some(format!("menu removed during update: {id}")));
+            return;
+        };
+        let old_ids: HashSet<_> = menu_state.actions.borrow().iter().cloned().collect();
         let mut keys = HashSet::new();
         let mut triggers = Vec::new();
         for item in &items {
@@ -1207,7 +1216,10 @@ impl View {
             triggers.push(trigger.flatten());
         }
         self.clear_menu(id);
-        let state = self.0.menu_states.borrow().get(id).cloned().unwrap();
+        let Some(state) = self.0.menu_states.borrow().get(id).cloned() else {
+            self.0.error.replace(Some(format!("menu removed during update: {id}")));
+            return;
+        };
         let mut section = gio::Menu::new();
         for (item, trigger) in items.into_iter().zip(triggers) {
             if item.role == MenuRole::Separator {
@@ -1239,10 +1251,15 @@ impl View {
             });
             self.signal(&format!("{id}/@actions"), &action, signal);
             self.0.group.add_action(&action);
-            self.0
-                .actions
-                .borrow_mut()
-                .insert(item.id.clone(), Action { action, name });
+            let shortcut = item.shortcut.clone();
+            self.0.actions.borrow_mut().insert(
+                item.id.clone(),
+                Action {
+                    action,
+                    name,
+                    shortcut,
+                },
+            );
             state.actions.borrow_mut().push(item.id);
             section.append(Some(&item.label), Some(&detailed));
             if let Some(trigger) = trigger {
@@ -1256,6 +1273,10 @@ impl View {
             state.menu.append_section(None, &section);
         }
         self.sync_menu_membership(id);
+        #[cfg(target_os = "macos")]
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            macos_menu::sync_global_menu(self, mtm);
+        }
     }
 
     fn native_role(&self, role: &MenuRole) {

@@ -36,6 +36,9 @@ pub(super) fn apply_text_style(label: &gtk::Label, text: Option<panechord_runtim
             label.add_css_class("monospace");
             attributes.insert(gtk::pango::AttrString::new_family("monospace"));
         }
+        panechord_runtime::TextRole::Subtitle => {
+            attributes.insert(gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Bold));
+        }
     }
     attributes.insert(gtk::pango::AttrFloat::new_scale(f64::from(text.scale)));
     if let Some([red, green, blue]) = text.foreground {

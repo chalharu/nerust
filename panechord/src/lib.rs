@@ -61,6 +61,31 @@ pub struct RunnerBuilder {
     automatic_window_tabbing: Option<bool>,
     initial_window_size: Option<(u32, u32)>,
 }
+/// macOS-only builder options, mirroring tao's `WindowBuilderExtMacOS`.
+/// Available only on Apple targets; other platforms have no window tabbing.
+#[cfg(all(
+    target_os = "macos",
+    any(feature = "native", feature = "gtk", feature = "tao", feature = "macos")
+))]
+pub trait RunnerBuilderExtMacOS: Sized {
+    /// Opt out of (or back into) AppKit automatic window tabbing. Takes
+    /// effect for windows created after `run`. When unset, each backend
+    /// keeps its default (the AppKit host opts out; tao/gtk keep the
+    /// system default).
+    fn allows_automatic_window_tabbing(self, enabled: bool) -> Self;
+}
+
+#[cfg(all(
+    target_os = "macos",
+    any(feature = "native", feature = "gtk", feature = "tao", feature = "macos")
+))]
+impl RunnerBuilderExtMacOS for RunnerBuilder {
+    fn allows_automatic_window_tabbing(mut self, enabled: bool) -> Self {
+        self.automatic_window_tabbing = Some(enabled);
+        self
+    }
+}
+
 #[cfg(any(
     feature = "native",
     feature = "gtk",
@@ -68,15 +93,6 @@ pub struct RunnerBuilder {
     feature = "macos"
 ))]
 impl RunnerBuilder {
-    /// Opt out of (or back into) AppKit automatic window tabbing. Takes
-    /// effect on macOS for windows created after `run`; elsewhere it is a
-    /// no-op. When unset, each backend keeps its default (the AppKit host
-    /// opts out; tao/gtk keep the system default).
-    pub fn allows_automatic_window_tabbing(mut self, enabled: bool) -> Self {
-        self.automatic_window_tabbing = Some(enabled);
-        self
-    }
-
     /// Restore the remembered main-window size (logical points) for the
     /// first window `run` builds. Out-of-range values keep the default.
     pub fn initial_window_size(mut self, width: u32, height: u32) -> Self {
