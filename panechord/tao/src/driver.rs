@@ -289,7 +289,7 @@ impl Desktop {
                 .default_vbox()
                 .ok_or("Tao GTK3 window has no default vbox")?;
             view.0
-                .menus
+                .menus()
                 .init_for_gtk_window(window.gtk_window(), Some(vbox))
                 .map_err(|e| e.to_string())?;
             let area = gtk::DrawingArea::new();
@@ -428,7 +428,7 @@ impl Desktop {
             #[cfg(target_os = "windows")]
             {
                 use tao::platform::windows::WindowExtWindows;
-                unsafe { view.0.menus.init_for_hwnd(window.hwnd() as isize) }
+                unsafe { view.0.menus().init_for_hwnd(window.hwnd() as isize) }
                     .map_err(|e| e.to_string())?;
             }
             let mut compositor =
@@ -466,7 +466,7 @@ impl Desktop {
     fn activate(&self) {
         self.active.set(true);
         #[cfg(target_os = "macos")]
-        self.view.0.menus.init_for_nsapp();
+        self.view.0.menus().init_for_nsapp();
     }
     fn offset(&self) -> iced::Point {
         #[cfg(target_os = "linux")]
@@ -570,13 +570,13 @@ impl Drop for Desktop {
             for (widget, signal) in self.signals.drain(..) {
                 widget.disconnect(signal);
             }
-            if let Err(error) = super::menu::clear_accelerators(&self.view.0.menus.items()) {
+            if let Err(error) = super::menu::clear_accelerators(&self.view.0.menus().items()) {
                 self.view.0.report(error);
             }
             let _ = self
                 .view
                 .0
-                .menus
+                .menus()
                 .remove_for_gtk_window(self.window.gtk_window());
             unsafe {
                 self.area.destroy();
@@ -589,13 +589,13 @@ impl Drop for Desktop {
                 let _ = self
                     .view
                     .0
-                    .menus
+                    .menus()
                     .remove_for_hwnd(self.window.hwnd() as isize);
             }
         }
         #[cfg(target_os = "macos")]
         if self.active.get() {
-            self.view.0.menus.remove_for_nsapp();
+            self.view.0.menus().remove_for_nsapp();
         }
     }
 }
@@ -619,7 +619,7 @@ pub(super) fn run(
                     return false;
                 };
                 // Query each time: dynamic menu snapshots may replace the HACCEL.
-                let accelerator = inner.menus.haccel();
+                let accelerator = inner.menus().haccel();
                 if message.is_null() || accelerator == 0 {
                     return false;
                 }

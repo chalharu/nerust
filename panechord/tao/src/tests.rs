@@ -21,7 +21,6 @@ fn unloaded_surface_stays_finite_inside_scrollable_root() {
 
 use super::*;
 
-#[cfg(target_os = "linux")]
 #[test]
 fn dynamic_tabs_keep_identity_across_reorder_and_model_replacement() {
     let harness = Harness::new();
@@ -59,7 +58,6 @@ fn dynamic_tabs_keep_identity_across_reorder_and_model_replacement() {
     view.close();
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn horizontal_tabs_reserve_height_before_stack_footer() {
     use iced::{
@@ -125,7 +123,6 @@ fn horizontal_tabs_reserve_height_before_stack_footer() {
     view.close();
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn vertical_tabs_keep_headers_disjoint_and_page_identity_stable() {
     use iced::{
@@ -205,7 +202,6 @@ fn vertical_tabs_keep_headers_disjoint_and_page_identity_stable() {
     view.close();
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn combo_rejects_unknown_source_selection_and_accepts_recovery() {
     let harness = Harness::new();
@@ -231,14 +227,16 @@ fn combo_rejects_unknown_source_selection_and_accepts_recovery() {
     assert!(view.select("combo", "linear").is_err());
 }
 
-#[cfg(target_os = "linux")]
+// Helpers for the menu-building settings layout test above; same gate.
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Default)]
 struct LayoutDraft {
     name: String,
     volume: String,
     scale: String,
 }
-#[cfg(target_os = "linux")]
+// Helpers for the menu-building settings layout test above; same gate.
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Default)]
 struct LayoutProjection {
     error: String,
@@ -247,7 +245,8 @@ struct LayoutProjection {
     warning: String,
     menu_items: Vec<panechord_runtime::MenuItem>,
 }
-#[cfg(target_os = "linux")]
+// Helpers for the menu-building settings layout test above; same gate.
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Default)]
 struct SettingsLayout {
     draft: LayoutDraft,
@@ -255,7 +254,8 @@ struct SettingsLayout {
     stay: bool,
     leave: bool,
 }
-#[cfg(target_os = "linux")]
+// Helpers for the menu-building settings layout test above; same gate.
+#[cfg(not(target_os = "macos"))]
 #[panechord_macros::commands]
 impl SettingsLayout {
     #[command]
@@ -272,7 +272,11 @@ impl SettingsLayout {
     fn choose(&mut self, _value: String) {}
 }
 
-#[cfg(target_os = "linux")]
+// Expands a yaml with a `menus:` section, which builds native menus:
+// AppKit requires the main thread, which libtest cannot provide
+// (see README). Runs on Linux/Windows; macOS coverage comes from the
+// native review harness.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn settings_yaml_layout_keeps_buttons_filled_and_controls_disjoint() {
     use iced::{
@@ -363,7 +367,6 @@ fn settings_yaml_layout_keeps_buttons_filled_and_controls_disjoint() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
 fn style_late_close_and_viewport_writeback_contract() {
     let harness = Harness::new();
     let view = View::new(Binding::constant("contracts".into()));
@@ -542,6 +545,10 @@ fn close_ready_subscription_is_kept_without_a_view_model_cycle() {
     assert!(weak.upgrade().is_none());
 }
 
+// Builds native menus: AppKit requires the main thread, which libtest
+// cannot provide (see README). Runs on Linux/Windows where muda allows any
+// thread; macOS coverage comes from the native review harness.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn quit_role_requests_close_without_dispatching_or_recursing() {
     use panechord_runtime::{MenuItem, MenuRole};
@@ -1053,6 +1060,10 @@ fn real_iced_wheel_event_reports_offset_and_virtualizes_the_visible_rows() {
     assert!(view.text("rows/0/label").is_none());
 }
 
+// Builds native menus: AppKit requires the main thread, which libtest
+// cannot provide (see README). Runs on Linux/Windows where muda allows any
+// thread; macOS coverage comes from the native review harness.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     use panechord_runtime::{MenuItem, MenuRole};
@@ -1080,7 +1091,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     );
     view.activate_menu("save").unwrap();
     assert_eq!(*received.borrow(), ["first"]);
-    let submenu = view.0.menus.items()[0].as_submenu().unwrap().clone();
+    let submenu = view.0.menus().items()[0].as_submenu().unwrap().clone();
     let old_native = submenu.items()[0].id().clone();
     let _ = state.update(|s| {
         s.0 = "Changed".into();
@@ -1129,7 +1140,10 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
     assert!(view.activate_menu("save").is_err());
 }
 
-#[cfg(target_os = "linux")]
+// Builds native menus: AppKit requires the main thread, which libtest
+// cannot provide (see README). The accelerator/ownership logic runs on
+// Linux/Windows; macOS coverage comes from the native review harness.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn linux_quit_shim_closes_owner_without_dispatch_or_ownership_cycle() {
     use panechord_runtime::{MenuItem, MenuRole};
@@ -1151,7 +1165,7 @@ fn linux_quit_shim_closes_owner_without_dispatch_or_ownership_cycle() {
         }]),
         Rc::new(|_| panic!("Quit is not an application command alias")),
     );
-    let item = view.0.menus.items()[0].as_submenu().unwrap().items()[0].clone();
+    let item = view.0.menus().items()[0].as_submenu().unwrap().items()[0].clone();
     assert!(item.as_menuitem().is_some());
     let action = view.0.menu_actions.borrow()["file/quit"].clone();
     let id = view.0.menu_ids.borrow()[item.id()].clone();
@@ -1235,13 +1249,13 @@ fn native_menu_append_failure(hierarchical: bool) {
     let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
     window.add(&vbox);
     view.0
-        .menus
+        .menus()
         .init_for_gtk_window(&window, Some(&vbox))
         .unwrap();
     window.show_all();
     let bar = view
         .0
-        .menus
+        .menus()
         .clone()
         .gtk_menubar_for_gtk_window(&window)
         .unwrap();
@@ -1253,7 +1267,7 @@ fn native_menu_append_failure(hierarchical: bool) {
         .unwrap()
         .downcast::<gtk::Menu>()
         .unwrap();
-    let submenu = view.0.menus.items()[0].as_submenu().unwrap().clone();
+    let submenu = view.0.menus().items()[0].as_submenu().unwrap().clone();
     let current_menu = || {
         if hierarchical {
             menu.children()[0]
@@ -1343,8 +1357,8 @@ fn native_menu_append_failure(hierarchical: bool) {
     deliver();
     assert!(closed.get());
     assert_eq!(*received.borrow(), ["old argument", "old argument"]);
-    menu::clear_accelerators(&view.0.menus.items()).unwrap();
-    view.0.menus.remove_for_gtk_window(&window).unwrap();
+    menu::clear_accelerators(&view.0.menus().items()).unwrap();
+    view.0.menus().remove_for_gtk_window(&window).unwrap();
     unsafe {
         window.destroy();
     }
