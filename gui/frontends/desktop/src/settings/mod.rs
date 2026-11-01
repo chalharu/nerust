@@ -409,6 +409,21 @@ impl Editor {
                 area_mode_choices,
                 set_status_area_mode
             ),
+            // Same vertical edge: the transient area mode governs the edge
+            // (see `OsdChrome::reserved_rows`), so the status picker must
+            // not accept a divergent mode. The combo is disabled and a
+            // follow note shows instead — same contract as the old Tao
+            // note and the GTK insensitive picker before the YAML move.
+            status_area_enabled: self.binding(
+                self.vm.notifications.view.clone(),
+                |value| !value.position.same_edge(value.status_position),
+                None,
+            ),
+            status_area_follows: self.binding(
+                self.vm.notifications.view.clone(),
+                |value| value.position.same_edge(value.status_position),
+                None,
+            ),
             cancel,
             accept,
             discard,
@@ -533,6 +548,8 @@ struct Presentation {
     status_position: ChoiceBinding,
     area: ChoiceBinding,
     status_area: ChoiceBinding,
+    status_area_enabled: Binding<bool>,
+    status_area_follows: Binding<bool>,
     cancel: Command,
     accept: Command,
     discard: Command,
@@ -623,5 +640,45 @@ mod tests {
         });
         assert_eq!(selected.as_ref(), Some(&other));
         assert!(reopened.confirm_close(false));
+    }
+
+    /// Same-edge gating for the status area picker: when notification and
+    /// status share one horizontal band, the transient area mode governs
+    /// the edge (`OsdChrome::reserved_rows`), so the status picker must
+    /// disable and the follow note must show. Split edges re-enable it.
+    #[test]
+    fn status_area_picker_disables_on_same_edge() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        use nerust_settings_core::model::local::NotificationPosition;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let notifications = editor.vm.notifications.clone();
+        let follows = editor.binding(
+            notifications.view.clone(),
+            |value| value.position.same_edge(value.status_position),
+            None,
+        );
+        let enabled = editor.binding(
+            notifications.view.clone(),
+            |value| !value.position.same_edge(value.status_position),
+            None,
+        );
+        // Default: BottomLeft vs TopLeft — split edges, picker live.
+        assert!(!follows.get());
+        assert!(enabled.get());
+        // Same band: BottomLeft vs BottomRight — picker disabled, note shown.
+        notifications
+            .set_status_position(NotificationPosition::BottomRight)
+            .expect("position applies");
+        assert!(follows.get());
+        assert!(!enabled.get());
+        // Back to split: TopRight vs BottomRight — picker live again.
+        notifications
+            .set_status_position(NotificationPosition::TopRight)
+            .expect("position applies");
+        assert!(!follows.get());
+        assert!(enabled.get());
     }
 }

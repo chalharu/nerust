@@ -212,7 +212,8 @@ root:
                       - {type: Label, id: status_display_label, style: {text: {role: Subtitle, scale: 1.0}}, text: {literal: Status display}}
                       - {type: CheckBox, id: status_enabled, text: {literal: Enabled}, checked: {bind: {path: status_enabled, source: External, mode: TwoWay}}}
                       - {type: Combo, id: status_position, items: {bind: {path: status_position.items, source: External}}, selected: {bind: {path: status_position.selected, source: External, mode: TwoWay}}}
-                      - {type: Combo, id: status_area, items: {bind: {path: status_area.items, source: External}}, selected: {bind: {path: status_area.selected, source: External, mode: TwoWay}}}
+                      - {type: Combo, id: status_area, enabled: {bind: {path: status_area_enabled, source: External}}, items: {bind: {path: status_area.items, source: External}}, selected: {bind: {path: status_area.selected, source: External, mode: TwoWay}}}
+                      - {type: Label, id: status_area_follows, visible: {bind: {path: status_area_follows, source: External}}, text: {literal: Follows notification area (same edge)}}
           - id: system
             title: {literal: System}
             content:
