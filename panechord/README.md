@@ -21,7 +21,7 @@ ROM読み込み、Settingsの適用・保存、pause所有権、補助窓の世�
 実NESセッションで読み込み・Settings変更・Settings窓のpause保持／解除を回帰検証する。
 `gui/frontends/check_frontend_policy.py`で共通UI層のnerust非依存と、
 runtime/shell/viewmodelからPanechordへの逆依存禁止を検査する。
-これは状態境界の接続であり、実フレーム描画、既定frontendの切り替え、旧`gui/wakui*`の削除は未実施。
+これは状態境界の接続であり、起動・既定frontendの切り替え、旧`gui/wakui*`の削除は実施済み。
 新しいTao event loopを既存frontendのevent loop内部で起動しない。
 
 ## まず動かす
