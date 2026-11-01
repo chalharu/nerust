@@ -135,6 +135,7 @@ unsafe extern "C" {
     fn w3_surface_scale(host: *mut c_void) -> f64;
     fn w3_toggle_fullscreen(host: *mut c_void);
     fn w3_set_automatic_window_tabbing(enabled: i32);
+    fn w3_set_initial_window_size(width: f64, height: f64);
     fn w3_pick_file(output: *mut u8, capacity: usize) -> i32;
 }
 
@@ -386,6 +387,13 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
 /// windows are never merged into the system tab bar.
 pub fn set_allows_automatic_window_tabbing(enabled: bool) {
     unsafe { w3_set_automatic_window_tabbing(i32::from(enabled)) };
+}
+
+/// Stage the initial main-window content size, in logical points. Consumed
+/// once by the next built window; call on the main thread before `run_host`
+/// builds views. Out-of-range values keep the default.
+pub fn set_initial_window_size(width: u32, height: u32) {
+    unsafe { w3_set_initial_window_size(f64::from(width), f64::from(height)) };
 }
 
 /// Native file picker. Must run on the AppKit main thread (the host executor
