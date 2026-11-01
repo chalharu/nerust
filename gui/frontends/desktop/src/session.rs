@@ -29,6 +29,14 @@ impl SessionAdapter {
         self.media_revision
     }
 
+    /// Narrow settings write: remembers the main window size for the next
+    /// launch. Called at exit; failures only skip the restore.
+    pub fn remember_window_size(&mut self, width: u32, height: u32) -> Result<(), String> {
+        self.session
+            .update_window_size(width, height)
+            .map_err(|error| error.to_string())
+    }
+
     /// Test-only access to the shell handle (pause/resume/reads).
     /// Production reaches the session through the typed port traits.
     #[cfg(test)]

@@ -64,7 +64,25 @@ pub fn run(
     }
     let application = Rc::new(RefCell::new(application));
     let renderer = Rc::new(RefCell::new(render::RenderAdapter::new(gpu_factory)));
-    panechord::Runner::builder().run(move |host, config| {
+    // Restore the size persisted at the previous exit; backends consume it
+    // once for the first (main) window they build.
+    let remembered_size = application
+        .borrow()
+        .settings()
+        .app_state
+        .window_size("main");
+    let mut runner = panechord::Runner::builder();
+    // Separate windows (main + settings/debugger/history) must never merge
+    // into the system tab bar: backends apply this to windows created after
+    // the call, so it flows through the runner before any view is built.
+    #[cfg(target_os = "macos")]
+    {
+        runner = runner.allows_automatic_window_tabbing(false);
+    }
+    if let Some(size) = remembered_size {
+        runner = runner.initial_window_size(size.width, size.height);
+    }
+    runner.run(move |host, config| {
         let session = panechord::Session::new();
         host.attach(session.clone())?;
         let model = Store::new(
@@ -454,8 +472,15 @@ pub fn run(
             Ok(())
         })?;
         let render = renderer.clone();
+        // Last known main-window content size (logical points) for the
+        // exit-time settings write; updated on every viewport change.
+        let last_surface_size = Rc::new(Cell::new(None::<(u32, u32)>));
+        let track_surface_size = last_surface_size.clone();
         view.on_surface_viewport(Rc::new(move |width, height| {
             render.borrow_mut().set_logical_bounds(width, height);
+            if width > 0.0 && height > 0.0 {
+                track_surface_size.set(Some((width.round() as u32, height.round() as u32)));
+            }
         }));
         let app = application.clone();
         let render = renderer.clone();
@@ -512,7 +537,16 @@ pub fn run(
         let app = application.clone();
         let output = model.clone();
         let closed_menus = menus.clone();
+        let closed_surface_size = last_surface_size.clone();
         view.on_close(Rc::new(move || {
+            // Exit-time persist: remember the main window size for the next
+            // launch before tearing down the session that owns settings.
+            if let Some((width, height)) = closed_surface_size.get() {
+                let _ = app
+                    .borrow_mut()
+                    .session_mut()
+                    .remember_window_size(width, height);
+            }
             render.borrow_mut().close();
             app.borrow_mut().close();
             output.close();

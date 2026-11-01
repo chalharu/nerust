@@ -58,6 +58,40 @@ impl Proxy {
 // muda's process-global OnceLock handler cannot be cleared with None.
 static MENU_PROXY: Mutex<Option<Proxy>> = Mutex::new(None);
 static MENU_INIT: Once = Once::new();
+
+// Automatic window tabbing is a process-wide AppKit default (tao exposes it
+// per builder via `WindowBuilderExtMacOS`, but `Desktop::open` builds the
+// window internally). The flag defaults to tao's default (on); Panechord apps
+// opt out before `run_host` so separate windows never merge into tabs.
+static ALLOW_AUTOMATIC_WINDOW_TABBING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Opt out of (or back into) AppKit automatic window tabbing. Takes effect
+/// for windows created after the call; off macOS it only records the flag.
+pub(crate) fn set_allows_automatic_window_tabbing(enabled: bool) {
+    ALLOW_AUTOMATIC_WINDOW_TABBING.store(enabled, std::sync::atomic::Ordering::SeqCst);
+}
+
+// Remembered main-window size (logical points) consumed once by the next
+// built window; falls back to the default when unset or invalid.
+static INITIAL_WINDOW_SIZE: std::sync::Mutex<Option<(f64, f64)>> =
+    std::sync::Mutex::new(None);
+
+/// Stage the initial main-window size, in logical points. Consumed once by
+/// the next built window; call before `run_host` builds views.
+pub(crate) fn set_initial_window_size(width: u32, height: u32) {
+    if width >= 100 && height >= 100 && width <= 8192 && height <= 8192 {
+        *INITIAL_WINDOW_SIZE.lock().unwrap() = Some((f64::from(width), f64::from(height)));
+    }
+}
+
+fn take_initial_window_size() -> (f64, f64) {
+    INITIAL_WINDOW_SIZE
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap_or((660.0, 520.0))
+}
 struct MenuBridge;
 impl Drop for MenuBridge {
     fn drop(&mut self) {
@@ -274,14 +308,22 @@ impl Desktop {
         view: &View,
         proxy: Proxy,
     ) -> Result<Self, String> {
-        let window = Arc::new(
-            WindowBuilder::new()
-                .with_title(view.title())
-                .with_visible(false)
-                .with_inner_size(tao::dpi::LogicalSize::new(660.0, 520.0))
-                .build(target)
-                .map_err(|e| e.to_string())?,
-        );
+        let (initial_width, initial_height) = take_initial_window_size();
+        let mut builder = WindowBuilder::new()
+            .with_title(view.title())
+            .with_visible(false)
+            .with_inner_size(tao::dpi::LogicalSize::new(
+                initial_width,
+                initial_height,
+            ));
+        #[cfg(target_os = "macos")]
+        {
+            use tao::platform::macos::WindowBuilderExtMacOS;
+            builder = builder.with_automatic_window_tabbing(
+                ALLOW_AUTOMATIC_WINDOW_TABBING.load(std::sync::atomic::Ordering::SeqCst),
+            );
+        }
+        let window = Arc::new(builder.build(target).map_err(|e| e.to_string())?);
         let painter = Rc::new(RefCell::new(Painter::new(window.clone(), view)));
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))]
         {
