@@ -123,6 +123,85 @@ fn horizontal_tabs_reserve_height_before_stack_footer() {
     view.close();
 }
 
+/// Tall settings page under a bounded window: the footer must stay pinned
+/// while the page scrolls internally. The driver used to wrap the whole
+/// window in a scrollable, which offered unbounded height and pushed the
+/// footer out of view; the bounded root keeps it in the viewport.
+#[test]
+fn bounded_window_root_pins_footer_while_tall_page_scrolls_inside() {
+    use iced::{
+        Size,
+        advanced::{layout::Limits, widget::Tree},
+    };
+    let harness = Harness::new();
+    let model = harness.store(String::from("input"));
+    let view = View::new(Binding::constant("Settings".into()));
+    let tab = view.tab(
+        &view.root(),
+        "tabs",
+        model.bind(Clone::clone, Some(|state, value| *state = value)),
+    );
+    let page = view.tab_page(&tab, "input", Binding::constant("Input".into()), "input");
+    let scroll = view
+        .try_scroll(&page, "fields", false)
+        .expect("scroll mounts under the tall page");
+    for index in 0..40 {
+        view.label(
+            &scroll,
+            &format!("row_{index}"),
+            Binding::constant(format!("row {index}")),
+        );
+    }
+    view.finish_tab(&tab).unwrap();
+    view.label(
+        &view.root(),
+        "status",
+        Binding::constant("Unsaved changes".into()),
+    );
+    view.button(
+        &view.root(),
+        "apply",
+        Binding::constant("Apply".into()),
+        model.command(|_| true, |_, ()| {}, Binding::constant(())),
+    );
+    let renderer = iced_tiny_skia::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
+    let limits = Limits::new(Size::ZERO, Size::new(660.0, 520.0));
+    // Old driver shape, kept as the regression witness: the whole window
+    // inside a scrollable offers unbounded height, so the tall page sizes
+    // to content and pushes the footer out of the viewport.
+    let mut outer: Element = iced::widget::scrollable(view.root().0.element())
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
+        .into();
+    let mut tree = Tree::new(outer.as_widget());
+    let frame = outer.as_widget_mut().layout(&mut tree, &renderer, &limits);
+    let scrolled = frame.children()[0].children()[0].children();
+    let scrolled_apply = scrolled[2].bounds();
+    assert!(
+        scrolled_apply.y + scrolled_apply.height > 520.0,
+        "witness must show the footer pushed out: {scrolled_apply:?}"
+    );
+    // Bounded root (what the driver builds now): the tab body takes the
+    // remainder, the page scrolls inside it, and the footer stays visible.
+    let mut element = view.root().0.element();
+    let mut tree = Tree::new(element.as_widget());
+    let frame = element
+        .as_widget_mut()
+        .layout(&mut tree, &renderer, &limits);
+    let children = frame.children()[0].children();
+    let tabs = children[0].bounds();
+    let apply = children[2].bounds();
+    assert!(
+        apply.y >= tabs.y + tabs.height,
+        "footer overlaps tab body: {tabs:?} {apply:?}"
+    );
+    assert!(
+        apply.y + apply.height <= 520.0,
+        "footer must remain in the viewport: {apply:?}"
+    );
+    view.close();
+}
+
 #[test]
 fn vertical_tabs_keep_headers_disjoint_and_page_identity_stable() {
     use iced::{

@@ -190,17 +190,20 @@ impl Painter {
             self.deadline = None;
         }
         let root = &view.0.root.0;
-        let content = iced::widget::scrollable(super::layout::Panel::element(
+        // Bounded window root, never an outer scrollable: inner `Scroll`
+        // nodes fill the remainder and scroll internally, so dialog
+        // footers (OK/Cancel) stay pinned instead of scrolling away with
+        // the content. An outer scrollable would offer unbounded height,
+        // defeating the remainder distribution in `layout::Panel`.
+        let content = super::layout::Panel::element(
             panechord_runtime::Layout::Stack {
                 horizontal: false,
                 gap: 0.0,
             },
             vec![(root.key(), root.style.get(), root.element())],
-        ))
-        .width(iced::Length::Fill)
-        .height(iced::Length::Fill);
+        );
         let mut ui = UserInterface::build(
-            view.scene(content.into()),
+            view.scene(content),
             bounds,
             std::mem::take(&mut self.cache),
             &mut self.renderer,
@@ -314,6 +317,9 @@ impl Desktop {
         proxy: Proxy,
     ) -> Result<Self, String> {
         let (initial_width, initial_height) = take_initial_window_size();
+        // `mut` is only consumed by the macOS tabbing hook below; silence
+        // the Linux unused-mut lint without touching that path.
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut builder = WindowBuilder::new()
             .with_title(view.title())
             .with_visible(false)
