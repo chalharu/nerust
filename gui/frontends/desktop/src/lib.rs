@@ -22,6 +22,24 @@ use std::{
     time::Duration,
 };
 
+/// Window-close drain shared by panes: spin the frame-loop poll until the
+/// in-flight operation settles. The shutdown timeout bounds the wait;
+/// dropping here would leave an accepted mutation without its outcome (see
+/// `DrainFlight::resolve_mutation_unknown`, which surfaces OutcomeUnknown
+/// instead of retrying).
+fn settle_flight(
+    is_idle: Rc<dyn Fn() -> bool>,
+) -> Rc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'static>>> {
+    Rc::new(move || {
+        let is_idle = is_idle.clone();
+        Box::pin(async move {
+            while !is_idle() {
+                futures_timer::Delay::new(Duration::from_millis(5)).await;
+            }
+        })
+    })
+}
+
 pub fn run(
     context: FrontendContext,
     capabilities: HostBackendCapabilities,
@@ -127,23 +145,9 @@ pub fn run(
                         panechord::WindowHooks {
                             confirm: Rc::new(|| Box::pin(async { true })),
                             cancel: Rc::new(move || cancelled.cancel()),
-                            drain: Rc::new({
+                            drain: settle_flight({
                                 let pane = pane.clone();
-                                move || {
-                                    let pane = pane.clone();
-                                    Box::pin(async move {
-                                        // Wait for the in-flight layout fetch to settle.
-                                        // The frame loop keeps polling while the window
-                                        // is open; the shutdown timeout bounds this wait.
-                                        // Dropping here would leave an accepted debugger
-                                        // mutation without its outcome (see
-                                        // `DrainFlight::resolve_mutation_unknown`).
-                                        while !pane.is_idle() {
-                                            futures_timer::Delay::new(Duration::from_millis(5))
-                                                .await;
-                                        }
-                                    })
-                                }
+                                Rc::new(move || pane.is_idle())
                             }),
                             close: Rc::new(move || {
                                 if let Some(view) = close.upgrade() {
@@ -218,23 +222,9 @@ pub fn run(
                         panechord::WindowHooks {
                             confirm: Rc::new(|| Box::pin(async { true })),
                             cancel: Rc::new(move || cancelled.cancel()),
-                            drain: Rc::new({
+                            drain: settle_flight({
                                 let pane = pane.clone();
-                                move || {
-                                    let pane = pane.clone();
-                                    Box::pin(async move {
-                                        // Wait for the in-flight batch to settle.
-                                        // The frame loop keeps polling while the window
-                                        // is open; the shutdown timeout bounds this wait.
-                                        // An accepted step/write without a reply must
-                                        // surface OutcomeUnknown, never retry (see
-                                        // `DrainFlight::resolve_mutation_unknown`).
-                                        while !pane.is_idle() {
-                                            futures_timer::Delay::new(Duration::from_millis(5))
-                                                .await;
-                                        }
-                                    })
-                                }
+                                Rc::new(move || pane.is_idle())
                             }),
                             close: Rc::new(move || {
                                 if let Some(view) = close.upgrade() {
@@ -573,7 +563,7 @@ pub fn run(
             while weak.upgrade().is_some() && !application.borrow().state().closed {
                 let changed_menus = {
                     let app = application.borrow();
-                    (!menus.snapshot().matches(&app))
+                    (!menus.with(|model| model.matches(&app)))
                         .then(|| view::MenuModel::new(&app, application_menu))
                 };
                 if let Some(changed) = changed_menus {
@@ -587,9 +577,16 @@ pub fn run(
                     let image =
                         if let (Some(profile), Some(frame)) = (profile, app.session().frame()) {
                             let session = app.session();
-                            let sync = nerust_gui_shell::session::osd::OsdSyncInput {
-                                tick: session.metrics(),
+                            let metrics = session.metrics();
+                            let content = crate::render::ScreenContentKey {
+                                frame: metrics.frame_counter,
+                                media: app.session().media_revision(),
+                                osd: session.osd_state().generation(),
                                 chrome: session.chrome(),
+                            };
+                            let sync = nerust_gui_shell::session::osd::OsdSyncInput {
+                                tick: metrics,
+                                chrome: content.chrome,
                                 language: app.settings().shared.general.language,
                                 now: std::time::Instant::now(),
                                 width: 0,
@@ -603,6 +600,7 @@ pub fn run(
                                 vsync,
                                 session.osd_state(),
                                 sync,
+                                content,
                             )
                         } else {
                             Ok(None)
@@ -634,24 +632,36 @@ pub fn run(
                     drop(app);
                     pane.poll(language, loaded, revision);
                 }
-                let _ = model.update(move |model| {
-                    model.state = state;
-                    match image {
-                        Ok(image) => {
-                            if !state.loaded {
-                                model.screen = None;
-                            } else {
-                                if let Some(image) = image {
+                // Skip the whole update (and its full-state clone) when neither
+                // the app state nor the screen changed: the capture above
+                // already reports unchanged pixels as `Ok(None)`, so a quiet
+                // frame touches nothing.
+                let touch = match &image {
+                    Err(_) => true,
+                    Ok(image) => model.with(|model| {
+                        model.state != state
+                            || image.is_some()
+                            || (!state.loaded && model.screen.is_some())
+                    }),
+                };
+                if touch {
+                    let _ = model.update(move |model| {
+                        model.state = state;
+                        match image {
+                            Ok(image) => {
+                                if !state.loaded {
+                                    model.screen = None;
+                                } else if let Some(image) = image {
                                     model.screen = Some(image);
                                 }
                             }
+                            Err(error) => {
+                                model.screen = None;
+                                model.notice = Some(error);
+                            }
                         }
-                        Err(error) => {
-                            model.screen = None;
-                            model.notice = Some(error);
-                        }
-                    }
-                });
+                    });
+                }
                 // Error dialog: one window at a time. A live window owns its text;
                 // the close hook below ACKs the queue gate and releases pause.
                 // Batches already taken but unshowable (shutdown, build or
