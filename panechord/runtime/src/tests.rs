@@ -2391,3 +2391,27 @@ fn window_can_unmount_inside_its_own_confirmation_hook() {
     );
     assert!(log.borrow().is_empty());
 }
+
+#[test]
+fn store_borrows_without_cloning_for_tick_comparisons() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Counted(&'static str);
+    impl Clone for Counted {
+        fn clone(&self) -> Self {
+            CLONES.fetch_add(1, Ordering::SeqCst);
+            Counted(self.0)
+        }
+    }
+    static CLONES: AtomicUsize = AtomicUsize::new(0);
+    let store = Store::new(Counted("state"), Rc::new(Inline::default()));
+    let before = CLONES.load(Ordering::SeqCst);
+    // Borrowed comparison and projection: no snapshot clone either way.
+    assert!(store.with(|state| state.0 == "state"));
+    assert_eq!(store.with(|state| state.0.len()), 5);
+    assert_eq!(CLONES.load(Ordering::SeqCst), before);
+    // A replaced snapshot is visible to the next borrow, consistently.
+    // (`update` itself clones once for read-modify-write; borrows add none.)
+    assert!(store.update(|state| *state = Counted("next")));
+    assert!(store.with(|state| state.0 == "next"));
+    assert_eq!(CLONES.load(Ordering::SeqCst), before + 1);
+}
