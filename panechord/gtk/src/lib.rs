@@ -273,6 +273,46 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
     }
 }
 
+/// Opt out of (or back into) AppKit automatic window tabbing. Takes effect
+/// for windows created after the call, so invoke it before `run_host`.
+/// Off macOS this is a no-op. Panechord apps opt out so separate windows
+/// are never merged into the system tab bar.
+pub fn set_allows_automatic_window_tabbing(enabled: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::NSWindow;
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSWindow::setAllowsAutomaticWindowTabbing(enabled, mtm);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = enabled;
+    }
+}
+
+// Remembered main-window size (logical points) consumed once by the next
+// built window; falls back to the default when unset or invalid.
+static INITIAL_WINDOW_SIZE: std::sync::Mutex<Option<(i32, i32)>> =
+    std::sync::Mutex::new(None);
+
+/// Stage the initial main-window size, in logical points. Consumed once by
+/// the next built window; call before `run_host` builds views.
+pub fn set_initial_window_size(width: u32, height: u32) {
+    if (100..=8192).contains(&width) && (100..=8192).contains(&height) {
+        *INITIAL_WINDOW_SIZE.lock().unwrap() = Some((width as i32, height as i32));
+    }
+}
+
+fn take_initial_window_size() -> (i32, i32) {
+    INITIAL_WINDOW_SIZE
+        .lock()
+        .unwrap()
+        .take()
+        .unwrap_or((660, 520))
+}
+
 /// Native file picker. `GtkFileChooserNative` must run on the GTK thread;
 /// the host executor polls here, and the response signal resolves the wait.
 pub async fn pick_file() -> Option<std::path::PathBuf> {
@@ -299,9 +339,10 @@ pub async fn pick_file() -> Option<std::path::PathBuf> {
 
 impl View {
     pub fn new(title: Binding<String>) -> Self {
+        let (initial_width, initial_height) = take_initial_window_size();
         let window = gtk::Window::builder()
-            .default_width(660)
-            .default_height(520)
+            .default_width(initial_width)
+            .default_height(initial_height)
             .build();
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);

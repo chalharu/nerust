@@ -79,6 +79,7 @@ final class TableControl: NSScrollView, NSTableViewDataSource, NSTableViewDelega
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: 480, height: 264))
         hasVerticalScroller = true
+        scrollerStyle = .overlay
         autohidesScrollers = true
         drawsBackground = false
         documentView = table
@@ -244,7 +245,8 @@ final class Scrolling: NSScrollView {
         super.init(frame: .zero)
         hasHorizontalScroller = horizontal
         hasVerticalScroller = !horizontal
-        autohidesScrollers = false
+        scrollerStyle = .overlay
+        autohidesScrollers = true
         drawsBackground = false
         body.orientation = .vertical
         body.alignment = .leading
@@ -288,18 +290,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-final class TabButton: NSButton {
-    weak var tabs: Tabs?
-    var page = 0
-    @objc func selectPage(_ sender: Any?) { tabs?.body.selectTabViewItem(at: page) }
-}
-
-@MainActor
-final class Tabs: NSStackView {
+final class Tabs: NSStackView, NSTableViewDataSource, NSTableViewDelegate {
     let header = NSSegmentedControl()
     let body = NSTabView()
-    let verticalHeader = DocumentStack()
+    let list = NSTableView()
     let rail = NSScrollView()
+    var labels: [String] = []
     var enabled = true
     private var floorConstraint: NSLayoutConstraint?
     private lazy var bodyWidth = body.widthAnchor.constraint(equalTo: widthAnchor)
@@ -321,15 +317,45 @@ final class Tabs: NSStackView {
         addArrangedSubview(header)
         addArrangedSubview(body)
         body.translatesAutoresizingMaskIntoConstraints = false
-        verticalHeader.orientation = .vertical
-        verticalHeader.alignment = .leading
-        verticalHeader.spacing = 8
-        verticalHeader.translatesAutoresizingMaskIntoConstraints = false
+        // HIG sidebar: a source-list table on sidebar material with overlay
+        // scrollers, like Settings/Finder navigation. No icons exist in the
+        // page model, so rows are labels only at the sidebar text size.
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
+        column.resizingMask = .autoresizingMask
+        list.addTableColumn(column)
+        list.headerView = nil
+        list.dataSource = self
+        list.delegate = self
+        list.backgroundColor = .clear
+        list.selectionHighlightStyle = .sourceList
+        list.allowsEmptySelection = false
+        list.allowsColumnReordering = false
+        list.allowsColumnResizing = false
+        list.focusRingType = .none
+        list.gridStyleMask = []
+        list.rowHeight = 28
+        list.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        list.translatesAutoresizingMaskIntoConstraints = false
+        let sidebar = NSVisualEffectView()
+        sidebar.material = .sidebar
+        sidebar.blendingMode = .behindWindow
+        sidebar.state = .active
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        rail.addSubview(sidebar, positioned: .below, relativeTo: rail.contentView)
+        NSLayoutConstraint.activate([
+            sidebar.leadingAnchor.constraint(equalTo: rail.leadingAnchor),
+            sidebar.trailingAnchor.constraint(equalTo: rail.trailingAnchor),
+            sidebar.topAnchor.constraint(equalTo: rail.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: rail.bottomAnchor),
+        ])
         rail.drawsBackground = false
+        rail.contentView.drawsBackground = false
+        rail.scrollerStyle = .overlay
+        rail.autohidesScrollers = true
         rail.hasVerticalScroller = true
         rail.translatesAutoresizingMaskIntoConstraints = false
-        rail.documentView = verticalHeader
-        verticalHeader.widthAnchor.constraint(equalTo: rail.contentView.widthAnchor).isActive = true
+        rail.documentView = list
+        list.widthAnchor.constraint(equalTo: rail.contentView.widthAnchor).isActive = true
         setPosition("Top")
     }
     func setPosition(_ position: String) {
@@ -368,43 +394,53 @@ final class Tabs: NSStackView {
     }
     func rebuildHeader() {
         header.segmentCount = body.numberOfTabViewItems
-        for view in verticalHeader.arrangedSubviews { verticalHeader.removeArrangedSubview(view); view.removeFromSuperview() }
         for (index, item) in body.tabViewItems.enumerated() {
             header.setLabel(item.label, forSegment: index)
-            let button = TabButton(title: item.label, target: nil, action: nil)
-            button.tabs = self
-            button.page = index
-            button.target = button
-            button.action = #selector(TabButton.selectPage(_:))
-            button.setButtonType(.pushOnPushOff)
-            button.bezelStyle = .rounded
-            button.cell?.alignment = .left
-            button.cell?.wraps = true
-            button.isEnabled = enabled
-            verticalHeader.addArrangedSubview(button)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalTo: verticalHeader.widthAnchor).isActive = true
         }
+        labels = body.tabViewItems.map { $0.label }
+        list.reloadData()
         refreshSelection()
-        verticalHeader.setFrameSize(NSSize(width: 120, height: verticalHeader.fittingSize.height))
     }
     func activatePage(_ index: Int) {
-        if orientation == .horizontal, let button = verticalHeader.arrangedSubviews[index] as? NSButton {
-            button.performClick(nil)
-        } else { body.selectTabViewItem(at: index) }
+        guard index >= 0, index < body.numberOfTabViewItems else { return }
+        body.selectTabViewItem(at: index)
         refreshSelection()
     }
     func refreshSelection() {
         let selected = body.selectedTabViewItem.map { body.indexOfTabViewItem($0) } ?? -1
         header.selectedSegment = selected
-        for (index, view) in verticalHeader.arrangedSubviews.enumerated() {
-            (view as? NSButton)?.state = index == selected ? .on : .off
+        if selected >= 0, selected < labels.count {
+            if list.selectedRow != selected {
+                list.selectRowIndexes(IndexSet(integer: selected), byExtendingSelection: false)
+            }
+            list.scrollRowToVisible(selected)
+        } else {
+            list.deselectAll(nil)
         }
     }
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
         header.isEnabled = enabled
-        for view in verticalHeader.arrangedSubviews { (view as? NSButton)?.isEnabled = enabled }
+        list.reloadData()
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { labels.count }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard let id = tableColumn?.identifier else { return nil }
+        let field = (tableView.makeView(withIdentifier: id, owner: self) as? NSTextField)
+            ?? NSTextField(labelWithString: "")
+        field.identifier = id
+        field.stringValue = labels[row]
+        field.font = .systemFont(ofSize: 13)
+        return field
+    }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { enabled }
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let row = list.selectedRow
+        guard enabled, row >= 0, row < body.numberOfTabViewItems else { return }
+        body.selectTabViewItem(at: row)
+        // Reconcile when the tab refuses (readonly): the body still holds
+        // the previous page, so reselect its row.
+        refreshSelection()
     }
     required init?(coder: NSCoder) { fatalError("coder construction unsupported") }
 }
@@ -499,7 +535,9 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
 
     override init() {
         precondition(Thread.isMainThread)
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 660),
+        let initial = pendingInitialSize ?? NSSize(width: 760, height: 660)
+        pendingInitialSize = nil
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: initial.width, height: initial.height),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         super.init()
@@ -510,6 +548,14 @@ final class Host: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTabViewDele
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        // Overlay scrollers never reserve layout space (a legacy scroller
+        // appearing over an exact-fit game view would shrink the clip and
+        // feed a layout loop), and exact-fit content must not bounce: the
+        // outer document never scrolls spuriously while inner scrollers
+        // (tables, tab rails) keep their own behavior.
+        scroll.scrollerStyle = .overlay
+        scroll.verticalScrollElasticity = .none
+        scroll.horizontalScrollElasticity = .none
         window.contentView = scroll
         root.orientation = .vertical
         root.alignment = .leading
@@ -816,6 +862,13 @@ public func setAutomaticWindowTabbing(_ enabled: Int32) {
     NSWindow.allowsAutomaticWindowTabbing = enabled != 0
 }
 
+private var pendingInitialSize: NSSize?
+@_cdecl("w3_set_initial_window_size") @MainActor
+public func setInitialWindowSize(_ width: Double, _ height: Double) {
+    guard width >= 100, height >= 100, width <= 8192, height <= 8192 else { return }
+    pendingInitialSize = NSSize(width: width, height: height)
+}
+
 @_cdecl("w3_pick_file") @MainActor
 public func pickFile(_ output: UnsafeMutablePointer<UInt8>?, _ capacity: Int) -> Int {
     let panel = NSOpenPanel()
@@ -845,6 +898,11 @@ public func pump(_ milliseconds: Int32) {
         if let event = NSApp.nextEvent(matching: .any,
             until: Date(timeIntervalSinceNow: Double(milliseconds) / 1000),
             inMode: .default, dequeue: true) { NSApp.sendEvent(event) }
+        // Live resize (and menu/modal tracking) runs the runloop in the
+        // event-tracking mode, where a `.default`-only pump sees nothing and
+        // the window appears frozen until mouse-up. Drain it without waiting.
+        else if let event = NSApp.nextEvent(matching: .any,
+            until: nil, inMode: .eventTracking, dequeue: true) { NSApp.sendEvent(event) }
         NSApp.updateWindows()
     }
 }

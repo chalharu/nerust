@@ -320,7 +320,11 @@ pub fn osd_font_px(client_height: u32, ui_scale: f32) -> u32 {
     if client_height == 0 {
         return 0;
     }
-    (f64::from(client_height) * 0.022 * f64::from(ui_scale))
+    // Minimum canvas the overlay scales against: below it the font holds at
+    // the 480px size instead of shrinking with the window (2x the NES 240p
+    // canvas, the smallest surface the overlay stays legible on).
+    const MIN_OSD_CLIENT_HEIGHT: u32 = 480;
+    (f64::from(client_height.max(MIN_OSD_CLIENT_HEIGHT)) * 0.022 * f64::from(ui_scale))
         .ceil()
         .max(6.0) as u32
 }
@@ -790,6 +794,10 @@ mod tests {
     fn font_and_error_helpers_cover_edges() {
         assert_eq!(osd_font_px(0, 1.0), 0);
         assert_eq!(osd_font_px(720, 1.0), 16);
+        // Below the minimum canvas the font holds instead of shrinking.
+        assert_eq!(osd_font_px(480, 1.0), 11);
+        assert_eq!(osd_font_px(240, 1.0), 11);
+        assert_eq!(osd_font_px(100, 1.0), 11);
         let err = RendererError::not_attached("attach");
         assert!(err.to_string().contains("attach"));
         assert_eq!(err.kind(), RendererErrorKind::NotAttached);

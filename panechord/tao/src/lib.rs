@@ -308,6 +308,21 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
     }
 }
 
+/// Opt out of (or back into) AppKit automatic window tabbing, mirroring
+/// tao's Mac-only builder option. The choice takes effect for windows
+/// created after the call, so invoke it before `run_host`. Off Apple
+/// platforms this is a no-op. Panechord apps opt out so separate windows
+/// are never merged into the system tab bar.
+pub fn set_allows_automatic_window_tabbing(enabled: bool) {
+    driver::set_allows_automatic_window_tabbing(enabled);
+}
+
+/// Stage the initial main-window size, in logical points. Consumed once by
+/// the next built window; call before `run_host` builds views.
+pub fn set_initial_window_size(width: u32, height: u32) {
+    driver::set_initial_window_size(width, height);
+}
+
 /// Native file picker. rfd drives the portal subprocess on Linux (never the
 /// GTK main loop) and the native panel on macOS/Windows, so this is safe to
 /// await from any executor thread.
