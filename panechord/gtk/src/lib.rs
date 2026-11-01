@@ -273,6 +273,30 @@ pub fn runner_config() -> panechord_runtime::RunnerConfig {
     }
 }
 
+/// Native file picker. `GtkFileChooserNative` must run on the GTK thread;
+/// the host executor polls here, and the response signal resolves the wait.
+pub async fn pick_file() -> Option<std::path::PathBuf> {
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    let sender = std::cell::RefCell::new(Some(sender));
+    let dialog = gtk::FileChooserNative::builder()
+        .title("Open")
+        .action(gtk::FileChooserAction::Open)
+        .modal(true)
+        .build();
+    dialog.connect_response(move |dialog, response| {
+        if let Some(sender) = sender.borrow_mut().take() {
+            let path = (response == gtk::ResponseType::Accept)
+                .then(|| dialog.file())
+                .flatten()
+                .and_then(|file| file.path());
+            let _ = sender.send(path);
+        }
+        dialog.destroy();
+    });
+    dialog.show();
+    receiver.await.ok().flatten()
+}
+
 impl View {
     pub fn new(title: Binding<String>) -> Self {
         let window = gtk::Window::builder()
