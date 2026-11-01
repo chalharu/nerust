@@ -15,7 +15,7 @@ use panechord_runtime::{
     Binding, Command, Executor, Keyed, Layout, Store, Style, Subscription, Viewport,
 };
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, RefCell},
     collections::{HashMap, HashSet},
     panic::{AssertUnwindSafe, catch_unwind},
     rc::{Rc, Weak},
@@ -220,7 +220,7 @@ struct Inner {
     frames: Cell<usize>,
     menu_nodes: RefCell<Vec<Rc<Node>>>,
     template_scopes: RefCell<Vec<Weak<Node>>>,
-    menus: muda::Menu,
+    menu_bar: OnceCell<muda::Menu>,
     menu_ids: RefCell<HashMap<muda::MenuId, String>>,
     menu_actions: RefCell<HashMap<String, menu::Action>>,
     subscriptions: RefCell<Vec<Subscription>>,
@@ -238,6 +238,14 @@ struct Inner {
     scroll: RefCell<HashMap<String, f32>>,
 }
 impl Inner {
+    /// Native menu bar, created on first use. `muda::Menu::new` requires the
+    /// main thread on macOS, so `View::new` stays thread-neutral and only menu
+    /// building (which runs on the UI thread via `run_host`) initializes it.
+    /// Tests that never build menus run on any thread; menu tests still need
+    /// the main thread (see README).
+    fn menus(&self) -> &muda::Menu {
+        self.menu_bar.get_or_init(muda::Menu::new)
+    }
     fn refresh(&self) {
         if let Some(f) = self.invalidate.borrow().clone() {
             f();
@@ -318,7 +326,7 @@ impl View {
             frames: Cell::new(0),
             menu_nodes: RefCell::default(),
             template_scopes: RefCell::default(),
-            menus: muda::Menu::new(),
+            menu_bar: OnceCell::new(),
             menu_ids: RefCell::default(),
             menu_actions: RefCell::default(),
             subscriptions: RefCell::default(),
