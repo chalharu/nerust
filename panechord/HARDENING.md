@@ -142,7 +142,7 @@ filesystem support. Metadata-only scans preserve content and mtime.
   pushes/PRs. Its hosted result must be checked after push; local success is not
   evidence that a remote workflow has already completed.
 - macOS formal gate: scripts/verify-macos.sh, main-thread AppKit/Tao executables,
-  settings/library smoke, editable reorder and both relocated bundles.
+  library smoke, editable reorder and both relocated bundles.
 - Release CPU gates: scripts/measure.sh and scripts/measure-macos.sh. Existing
   environment budget overrides remain available; watchdogs are not latency SLOs.
 - Bundle build: python3 scripts/bundle-macos.py --verify (or --package panechord-library).

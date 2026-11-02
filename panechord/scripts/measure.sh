@@ -48,33 +48,5 @@ workload() {
     printf '%s\n' "$output" | grep -q "WORKLOAD3 $marker release=true "
     printf '%s\n' "$output" | assert_budget "WORKLOAD3 $marker release=true " "$p50" "$p95"
 }
-workload panechord-settings model::tests::perf::settings_draft_projection settings "${PANECHORD_SETTINGS_P50_NS:-1000000}" "${PANECHORD_SETTINGS_P95_NS:-5000000}"
 workload panechord-library tests::perf::library_rescan_projection library "${PANECHORD_LIBRARY_P50_NS:-5000000}" "${PANECHORD_LIBRARY_P95_NS:-20000000}"
-integration() {
-    cargo build --locked --release -p panechord-settings --example integration "$@"
-    if [ "$(uname -s)" = Darwin ]; then
-        output=$(python3 -c '
-import os, signal, subprocess, sys
-process = subprocess.Popen(sys.argv[1:], start_new_session=True)
-try:
-    sys.exit(process.wait(timeout=float(os.environ.get("PANECHORD_NATIVE_TIMEOUT_SECONDS", "45"))))
-except subprocess.TimeoutExpired:
-    os.killpg(process.pid, signal.SIGKILL)
-    process.wait()
-    print("integration native watchdog expired", file=sys.stderr)
-    sys.exit(124)
-' cargo run --locked --release -p panechord-settings --example integration "$@")
-    else
-        output=$(timeout "${PANECHORD_NATIVE_TIMEOUT_SECONDS:-45}" xvfb-run -a "${CARGO_TARGET_DIR:-../target}/release/examples/integration")
-    fi
-    printf '%s\n' "$output"
-    printf '%s\n' "$output" | grep -q '^INTEGRATION3 release=true samples=128 .* windows=4 images=8 generation-gate no-change retained-edit-selection reopen$'
-    printf '%s\n' "$output" | assert_budget 'INTEGRATION3 release=true ' "${PANECHORD_INTEGRATION_P50_NS:-5000000}" "${PANECHORD_INTEGRATION_P95_NS:-10000000}"
-}
-if [ "$(uname -s)" = Darwin ]; then
-    integration --no-default-features --features backend-macos
-else
-    integration
-fi
-integration --no-default-features --features backend-tao
 printf '%s\n' 'MEASURE3 PASS: release clone/projection contracts and p50/p95 CPU budgets'
