@@ -1215,7 +1215,12 @@ public func set(_ pointer: UnsafeMutableRawPointer, _ idBytes: UnsafePointer<UIn
     let value = host(pointer)
     let id = string(idBytes, idCount)
     let text = string(textBytes, textCount)
-    if property == 18, let table = value.nodes[id] as? TableControl {
+    if property == 19, let button = value.nodes[id] as? NSButton {
+        // Destructive emphasis for dialog footers (macOS 11+, the minimum
+        // deployment target): renders the accept button with the system
+        // destructive style instead of leaving it unmarked.
+        button.hasDestructiveAction = text == "1"
+    } else if property == 18, let table = value.nodes[id] as? TableControl {
         table.selectionPresent = true
         table.selectionEnabled = text == "1"
         table.table.reloadData()
