@@ -226,7 +226,7 @@ root:
       - {type: Label, id: status, text: {bind: {path: status, source: External}}}
       - type: DialogFooter
         id: actions
-        accept_text: {bind: {path: labels.ok, source: External}}
+        accept_text: {bind: {path: labels.save, source: External}}
         accept_command: accept
         cancel_text: {bind: {path: labels.cancel, source: External}}
         cancel_command: cancel
