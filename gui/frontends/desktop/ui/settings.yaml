@@ -224,25 +224,22 @@ root:
               title: {bind: {path: label}}
               item_template: system_page
       - {type: Label, id: status, text: {bind: {path: status, source: External}}}
-      - type: StackLayout
+      - type: DialogFooter
         id: actions
-        orientation: Horizontal
-        style: {horizontal_alignment: End}
-        margin: {top: 12}
-        gap: 12
-        children:
-          - {type: Button, id: cancel, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: labels.cancel, source: External}}, command: cancel}
-          - {type: Button, id: accept, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: labels.ok, source: External}}, command: accept}
+        accept_text: {bind: {path: labels.ok, source: External}}
+        accept_command: accept
+        cancel_text: {bind: {path: labels.cancel, source: External}}
+        cancel_command: cancel
       - type: StackLayout
         id: confirmation
         gap: 8
         visible: {bind: {path: confirmation, source: External}}
         children:
           - {type: Label, id: confirm_label, text: {bind: {path: labels.confirm, source: External}}}
-          - type: StackLayout
+          - type: DialogFooter
             id: confirm_actions
-            orientation: Horizontal
-            gap: 8
-            children:
-              - {type: Button, id: discard, text: {bind: {path: labels.discard, source: External}}, command: discard}
-              - {type: Button, id: keep, text: {bind: {path: labels.keep, source: External}}, command: keep}
+            destructive: true
+            accept_text: {bind: {path: labels.discard, source: External}}
+            accept_command: discard
+            cancel_text: {bind: {path: labels.keep, source: External}}
+            cancel_command: keep

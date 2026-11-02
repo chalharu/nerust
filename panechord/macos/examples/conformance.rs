@@ -291,7 +291,7 @@ fn main() -> Result<(), String> {
                 shortcut: None,
                 role: MenuRole::Normal,
                 enabled: true,
-visible: true,
+                visible: true,
             }]),
             Rc::new(move |argument| {
                 output.set(argument);
@@ -308,7 +308,7 @@ visible: true,
             shortcut: None,
             role: MenuRole::Normal,
             enabled: true,
-visible: true,
+            visible: true,
         };
         let transaction = Store::new(vec![valid_menu.clone()], executor.clone());
         let arguments = Rc::new(RefCell::new(Vec::new()));
@@ -414,7 +414,7 @@ visible: true,
                         shortcut: Some("Primary+S".into()),
                         role: MenuRole::Normal,
                         enabled: *enabled,
-visible: true,
+                        visible: true,
                     }]
                 },
                 None,

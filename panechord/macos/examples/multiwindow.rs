@@ -56,7 +56,7 @@ mod native {
                 shortcut: Some("Primary+U".into()),
                 role: panechord_runtime::MenuRole::Normal,
                 enabled: true,
-visible: true,
+                visible: true,
             }]),
             Rc::new(move |value| {
                 let _ = writer.update(move |state| *state = value);

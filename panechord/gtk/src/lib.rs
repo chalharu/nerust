@@ -871,6 +871,53 @@ impl View {
         self.signal(id, &button, signal);
     }
 
+    /// Dialog footer: the framework-level OK/Cancel control. Order follows
+    /// the GNOME HIG (cancel first, affirmative second); the dialog owner
+    /// keeps Return/Escape so capture sessions hold precedence.
+    pub fn dialog_footer(
+        &self,
+        parent: &Parent,
+        id: &str,
+        footer: panechord_runtime::DialogFooter,
+    ) {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.set_halign(gtk::Align::End);
+        let cancel = gtk::Button::new();
+        let accept = gtk::Button::new();
+        row.append(&cancel);
+        row.append(&accept);
+        self.mount_native(parent, id, &row);
+        let parts = [
+            ("cancel", &cancel, &footer.cancel),
+            ("accept", &accept, &footer.accept),
+        ];
+        for (sub, button, part) in parts {
+            let key = format!("{id}/{sub}");
+            self.bind_native(&key, part.text.clone(), button, |button, text| {
+                button.set_label(&text)
+            });
+            self.bind_native(
+                &key,
+                part.command.enabled.clone(),
+                button,
+                |button, enabled| button.set_sensitive(enabled),
+            );
+            let command = part.command.clone();
+            let signal = button.connect_clicked(move |_| {
+                let _ = command.invoke();
+            });
+            self.signal(&key, button, signal);
+        }
+        if footer.destructive {
+            accept.add_css_class("destructive-action");
+        } else {
+            // Visual default marking only (no native default-widget grab:
+            // Return/Escape stay with the dialog owner so capture sessions
+            // keep precedence over footer keys).
+            accept.add_css_class("suggested-action");
+        }
+    }
+
     pub fn meter(&self, parent: &Parent, id: &str, value: Binding<f64>) {
         let meter = gtk::ProgressBar::new();
         self.mount_native(parent, id, &meter);

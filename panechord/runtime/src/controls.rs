@@ -1,5 +1,7 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
+use super::{Binding, Command};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TabPosition {
     #[default]
@@ -273,6 +275,27 @@ pub struct SliderRange {
     pub min: f64,
     pub max: f64,
     pub step: f64,
+}
+
+/// One side of a dialog footer: a bound caption plus its command.
+/// Enablement rides the command, exactly like `Button`.
+#[derive(Clone)]
+pub struct FooterButton {
+    pub text: Binding<String>,
+    pub command: Command,
+}
+
+/// Dialog footer: the framework-level OK/Cancel control. The backend owns
+/// the visual order (cancel first on GNOME/macOS, accept first on Windows)
+/// and the default/destructive emphasis; key handling (Return/Escape) stays
+/// with the dialog owner so capture sessions keep precedence over footer
+/// keys. `destructive` marks a destructive accept (for example Discard):
+/// backends emphasize it accordingly and do not mark it default.
+#[derive(Clone)]
+pub struct DialogFooter {
+    pub accept: FooterButton,
+    pub cancel: FooterButton,
+    pub destructive: bool,
 }
 impl SliderRange {
     pub fn validate(self) -> Result<Self, &'static str> {

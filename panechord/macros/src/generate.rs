@@ -621,6 +621,39 @@ fn control_inner(
                 .unwrap_or_else(|| quote!(::panechord_runtime::omitted_command_argument()));
             quote!(__panechord_view.button(&__panechord_parent,&__id,#text,#model.#name(#argument));)
         }
+        Control::DialogFooter {
+            accept_text,
+            accept_command,
+            accept_argument,
+            cancel_text,
+            cancel_command,
+            cancel_argument,
+            destructive,
+            ..
+        } => {
+            let accept_text = binding(accept_text, false)?;
+            let accept_name = command(accept_command)?;
+            let accept_model = command_model(accept_command);
+            let accept_argument = accept_argument
+                .as_ref()
+                .map(|p| binding(p, false))
+                .transpose()?
+                .unwrap_or_else(|| quote!(::panechord_runtime::omitted_command_argument()));
+            let cancel_text = binding(cancel_text, false)?;
+            let cancel_name = command(cancel_command)?;
+            let cancel_model = command_model(cancel_command);
+            let cancel_argument = cancel_argument
+                .as_ref()
+                .map(|p| binding(p, false))
+                .transpose()?
+                .unwrap_or_else(|| quote!(::panechord_runtime::omitted_command_argument()));
+            let destructive = *destructive;
+            quote!(__panechord_view.dialog_footer(&__panechord_parent,&__id,::panechord_runtime::DialogFooter {
+                accept: ::panechord_runtime::FooterButton { text: #accept_text, command: #accept_model.#accept_name(#accept_argument) },
+                cancel: ::panechord_runtime::FooterButton { text: #cancel_text, command: #cancel_model.#cancel_name(#cancel_argument) },
+                destructive: #destructive,
+            });)
+        }
         Control::Native { factory, value, .. } => {
             let factory = path(factory)?;
             let value = binding(value, true)?;
