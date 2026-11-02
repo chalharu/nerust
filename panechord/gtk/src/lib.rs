@@ -276,6 +276,7 @@ impl Drop for Inner {
 pub fn runner_config() -> panechord_runtime::RunnerConfig {
     panechord_runtime::RunnerConfig {
         application_menu: cfg!(target_os = "macos"),
+        menu_quit_in_file: !cfg!(target_os = "macos"),
     }
 }
 
@@ -1176,8 +1177,12 @@ impl View {
         items: Vec<MenuItem<A>>,
         dispatch: Rc<dyn Fn(A) -> bool>,
     ) {
+        // Invisible leaves stay out entirely: no action, no shortcut, no row.
+        // The subscription re-fires when visibility flips, so this is the
+        // only membership gate needed.
         let items: Vec<_> = items
             .into_iter()
+            .filter(|item| item.visible)
             .map(|mut item| {
                 item.id = format!("{id}/{}", item.id);
                 item

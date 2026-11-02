@@ -115,6 +115,12 @@ fn leaf_item(entry: &panechord_markup::MenuEntry) -> syn::Result<TokenStream> {
         .map(|value| binding(value, false))
         .transpose()?
         .unwrap_or_else(|| quote!(::panechord_runtime::Binding::constant(true)));
+    let visible = entry
+        .visible
+        .as_ref()
+        .map(|value| binding(value, false))
+        .transpose()?
+        .unwrap_or_else(|| quote!(::panechord_runtime::Binding::constant(true)));
     let Some(argument) = &entry.argument else {
         return Err(error(format!("leaf entry `{id}` needs an argument")));
     };
@@ -132,9 +138,9 @@ fn leaf_item(entry: &panechord_markup::MenuEntry) -> syn::Result<TokenStream> {
         Some(panechord_markup::ShortcutSpec::Bound(property)) => binding(property, false)?,
     };
     Ok(
-        quote!((#label).zip(&(#argument)).zip(&(#enabled)).zip(&(#shortcut)).map(|(((label, argument), enabled), shortcut)| ::panechord_runtime::MenuItem {
+        quote!((#label).zip(&(#argument)).zip(&(#enabled)).zip(&(#shortcut)).zip(&(#visible)).map(|((((label, argument), enabled), shortcut), visible)| ::panechord_runtime::MenuItem {
             id: ::std::string::String::from(#id), label, argument, shortcut,
-            role: ::panechord_runtime::MenuRole::#role, enabled,
+            role: ::panechord_runtime::MenuRole::#role, enabled, visible,
         })),
     )
 }

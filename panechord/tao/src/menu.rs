@@ -1,6 +1,6 @@
 use super::*;
 use muda::{IsMenuItem, PredefinedMenuItem, accelerator::Accelerator};
-use panechord_runtime::{MenuItem, MenuNode, MenuRole, Shortcut};
+use panechord_runtime::{MenuItem, MenuNode, MenuRole, Shortcut, visible_tree};
 
 #[derive(Clone)]
 pub(super) struct Action {
@@ -226,6 +226,10 @@ impl View {
             let Some(inner) = weak.upgrade().filter(|i| !i.closed.get()) else {
                 return;
             };
+            // Membership first: invisible leaves leave the tree before
+            // flattening, so the flat action walk and the hierarchy zip stay
+            // aligned. Validation above still saw the full snapshot.
+            let tree = visible_tree(&tree);
             let values = match panechord_runtime::flatten_menu(&tree) {
                 Ok(values) => values,
                 Err(error) => {
@@ -254,6 +258,7 @@ impl View {
                     shortcut: item.shortcut,
                     role: item.role,
                     enabled: item.enabled,
+                    visible: item.visible,
                 };
                 let key = format!("{menu_id}/{}", item.id);
                 if item.role == MenuRole::Normal || quit_shim(&item.role) {

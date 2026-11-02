@@ -263,7 +263,7 @@ fn main() -> Result<(), String> {
                     argument: "native argument".into(),
                     shortcut: Some("Primary+S".into()),
                     role: MenuRole::Normal,
-                    enabled: true,
+                    enabled: true, visible: true,
                 },
                 MenuItem {
                     id: "about".into(),
@@ -271,7 +271,7 @@ fn main() -> Result<(), String> {
                     argument: String::new(),
                     shortcut: None,
                     role: MenuRole::About,
-                    enabled: true,
+                    enabled: true, visible: true,
                 },
                 MenuItem {
                     id: "quit".into(),
@@ -279,7 +279,7 @@ fn main() -> Result<(), String> {
                     argument: "must not dispatch".into(),
                     shortcut: Some("Primary+Q".into()),
                     role: MenuRole::Quit,
-                    enabled: true,
+                    enabled: true, visible: true,
                 },
             ]),
             Rc::new(move |arg| {

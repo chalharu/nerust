@@ -210,6 +210,11 @@ pub struct MenuEntry {
     #[serde(default)]
     pub role: MenuRole,
     pub enabled: Option<Property>,
+    /// Leaf-only render-time membership, bound like `enabled`. Invisible
+    /// leaves stay out of the native menu (releasing their shortcut) while
+    /// validation still applies. Submenu entries reject it: their membership
+    /// rides content/vacancy instead.
+    pub visible: Option<Property>,
     /// Submenu children: a static list or a bound dynamic subtree (for
     /// example a DataTemplate-style list like save slots). Present only on
     /// submenu entries, which must set `nested: true` on the menu.
@@ -543,6 +548,12 @@ fn check_submenu(entry: &MenuEntry) -> Result<(), String> {
             entry.id
         ));
     }
+    if entry.visible.is_some() {
+        return Err(format!(
+            "visible on submenu entry `{}` is unsupported",
+            entry.id
+        ));
+    }
     Ok(())
 }
 
@@ -569,6 +580,9 @@ fn validate_menu_entries(
         one_way(&entry.label, &format!("{path}.label"))?;
         if let Some(enabled) = &entry.enabled {
             one_way(enabled, &format!("{path}.enabled"))?;
+        }
+        if let Some(visible) = &entry.visible {
+            one_way(visible, &format!("{path}.visible"))?;
         }
         if let Some(shortcut) = &entry.shortcut
             && let ShortcutSpec::Bound(property) = shortcut

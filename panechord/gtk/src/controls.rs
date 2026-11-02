@@ -235,6 +235,9 @@ impl View {
                 for node in tree {
                     match node {
                         panechord_runtime::MenuNode::Item(item) => {
+                            if !item.visible {
+                                continue;
+                            }
                             if item.role == MenuRole::Separator {
                                 if section.n_items() > 0 {
                                     result.append_section(None, &section);

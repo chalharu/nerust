@@ -92,9 +92,9 @@ pub fn run(
             host.executor(),
         );
         let actions = Rc::new(RefCell::new(None));
-        let application_menu = config.application_menu;
+        let config = *config;
         let menus = Store::new(
-            view::MenuModel::new(&application.borrow(), application_menu),
+            view::MenuModel::new(&application.borrow(), &config),
             host.executor(),
         );
         let view = view::build(model.clone(), menus.clone(), actions.clone());
@@ -596,11 +596,14 @@ pub fn run(
         // tick; this only clones the notice text.
         let error_poll_notice = model.bind(|model| model.notice.clone(), None);
         host.executor().spawn(Box::pin(async move {
+            // Backend-resolved once per process: the same data the first
+            // MenuModel was built from, reused for every menu refresh.
+            let app_menu_config = config;
             while weak.upgrade().is_some() && !application.borrow().state().closed {
                 let changed_menus = {
                     let app = application.borrow();
                     (!menus.with(|model| model.matches(&app)))
-                        .then(|| view::MenuModel::new(&app, application_menu))
+                        .then(|| view::MenuModel::new(&app, &app_menu_config))
                 };
                 if let Some(changed) = changed_menus {
                     let _ = menus.update(move |model| *model = changed);
@@ -709,12 +712,20 @@ pub fn run(
                     .and_then(panechord::WeakView::upgrade)
                     .is_some();
                 if !window_live && !error_poll_app.borrow().state().closed {
+                    // Borrow-gated: `get()` clones the notice String, so only
+                    // project it when a notice is actually pending.
                     let next = error_poll_app
                         .borrow_mut()
                         .session_mut()
                         .take_modal_batch()
                         .map(|batch| (batch, true))
-                        .or_else(|| error_poll_notice.get().map(|notice| (notice, false)));
+                        .or_else(|| {
+                            model
+                                .with(|model| model.notice.is_some())
+                                .then(|| error_poll_notice.get())
+                                .flatten()
+                                .map(|notice| (notice, false))
+                        });
                     if let Some((detail, from_modal)) = next {
                         let shown = detail.clone();
                         let opened = (|| {

@@ -429,6 +429,10 @@ pub struct MenuItem<A = String> {
     pub shortcut: Option<String>,
     pub role: MenuRole,
     pub enabled: bool,
+    /// Render-time membership: invisible leaves stay out of the native menu
+    /// (and release their shortcut) while validation still applies to them.
+    /// Only leaves gate; submenu membership rides content/vacancy.
+    pub visible: bool,
 }
 
 #[diagnostic::on_unimplemented(
@@ -462,6 +466,32 @@ pub enum MenuNode<A = String> {
         enabled: bool,
         children: Vec<MenuNode<A>>,
     },
+}
+
+/// Render-time menu membership: drop invisible leaves before flattening so
+/// flat action walks and hierarchy zips stay aligned. Fully hidden submenus
+/// drop with their children; validation runs on the unfiltered snapshot.
+pub fn visible_tree<A: Clone>(nodes: &[MenuNode<A>]) -> Vec<MenuNode<A>> {
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            MenuNode::Item(item) => item.visible.then(|| MenuNode::Item(item.clone())),
+            MenuNode::Submenu {
+                id,
+                label,
+                enabled,
+                children,
+            } => {
+                let children = visible_tree(children);
+                (!children.is_empty()).then(|| MenuNode::Submenu {
+                    id: id.clone(),
+                    label: label.clone(),
+                    enabled: *enabled,
+                    children,
+                })
+            }
+        })
+        .collect()
 }
 
 pub fn flatten_menu<A: Clone>(nodes: &[MenuNode<A>]) -> Result<Vec<MenuItem<A>>, String> {

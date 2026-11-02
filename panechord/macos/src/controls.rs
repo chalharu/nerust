@@ -166,9 +166,9 @@ impl View {
         let key = id.to_owned();
         let render = Rc::new(move |tree: Vec<panechord_runtime::MenuNode<A>>| {
             fn json<A>(tree: &[panechord_runtime::MenuNode<A>]) -> Vec<serde_json::Value> {
-                tree.iter().map(|node| match node {
-                    panechord_runtime::MenuNode::Item(item) => serde_json::json!({"id": item.id, "separator": item.role == MenuRole::Separator}),
-                    panechord_runtime::MenuNode::Submenu { label, enabled, children, .. } => serde_json::json!({"label": label, "enabled": enabled, "children": json(children)}),
+                tree.iter().filter_map(|node| match node {
+                    panechord_runtime::MenuNode::Item(item) => item.visible.then(|| serde_json::json!({"id": item.id, "separator": item.role == MenuRole::Separator})),
+                    panechord_runtime::MenuNode::Submenu { label, enabled, children, .. } => Some(serde_json::json!({"label": label, "enabled": enabled, "children": json(children)})),
                 }).collect()
             }
             if let Some(view) = weak.upgrade() {
