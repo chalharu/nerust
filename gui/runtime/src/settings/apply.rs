@@ -217,13 +217,12 @@ fn system_live_settings_changed(
 mod tests {
     use std::fs;
 
-    use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
     use nerust_settings_core::model::{
         app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
         shared::StoragePolicy,
     };
 
-    use crate::test::{DummyOtherSystemId, DummySystemId};
+    use crate::test::{DummyOtherSystemId, DummySystemId, DummySystemSettings};
 
     #[test]
     fn custom_storage_requires_valid_saf_uri_or_nonempty_native_path() {
@@ -318,13 +317,13 @@ mod tests {
                         after.local.audio.muted = !before.local.audio.muted;
                     }
                     if visual {
-                        let nes = after
+                        let dummy = after
                             .shared
                             .systems
                             .get_mut(&DummySystemId as &dyn nerust_core_traits::identity::SystemId)
-                            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+                            .and_then(|s| s.downcast_mut::<DummySystemSettings>())
                             .unwrap();
-                        nes.video.filter = NesVideoFilter::NtscRgb;
+                        dummy.visual = 1;
                     }
                     let plan =
                         derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
@@ -358,13 +357,13 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let nes = after
+        let dummy = after
             .shared
             .systems
             .get_mut(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+            .and_then(|s| s.downcast_mut::<DummySystemSettings>())
             .unwrap();
-        nes.video.filter = NesVideoFilter::NtscRgb;
+        dummy.visual = 1;
 
         let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
@@ -379,13 +378,13 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let nes = after
+        let dummy = after
             .shared
             .systems
             .get_mut(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+            .and_then(|s| s.downcast_mut::<DummySystemSettings>())
             .unwrap();
-        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
+        dummy.non_visual = 1;
 
         let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
@@ -452,8 +451,10 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let mut inactive = nerust_nes_settings::NesSettings::default();
-        inactive.video.filter = NesVideoFilter::NtscRgb;
+        let inactive = DummySystemSettings {
+            visual: 1,
+            ..Default::default()
+        };
         after
             .shared
             .systems
