@@ -248,7 +248,7 @@ are removed on success and retained on panic; compiled targets remain cached.
 
 ## YAML Diagnostics
 
-`sh scripts/check-yaml.sh check -p panechord-settings --no-default-features --features backend-macos`
+`sh scripts/check-yaml.sh check -p panechord-library --no-default-features --features backend-macos`
 enables the Python 3 rustc wrapper. `--message-format=json` also exposes YAML
 primary spans to diagnostic consumers. Each node expansion carries parser-derived
 file/line/column, including template-local IDs. The wrapper preserves original

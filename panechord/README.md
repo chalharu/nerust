@@ -29,13 +29,10 @@ runtime/shell/viewmodelからPanechordへの逆依存禁止を検査する。
 Rust 1.95以上、GTK4開発環境（Tao/LinuxはGTK3）が必要。
 このディレクトリで実行する。本体workspaceのlockfileとtargetを使用する。
 macOSの主backendとしてAppKit版を追加した。GTKをインストールせず、
-`--no-default-features --features backend-macos`で設定・一覧を実行できる。
+`--no-default-features --features backend-macos`で一覧を実行できる。
 起動環境、native入力の検証範囲、未実施の手動ゲートは[macos/README.md](macos/README.md)。
 
 ```sh
-cargo run --locked -p panechord-settings
-cargo run --locked -p panechord-settings -- --config /path/to/settings.json
-cargo run --locked -p panechord-settings --no-default-features --features backend-tao
 cargo run --locked -p panechord-library -- --folder /path/to/roms
 cargo run --locked -p panechord-library --no-default-features --features backend-tao -- --folder /path/to/roms
 cargo run --locked -p panechord-demo --example minimal
@@ -44,12 +41,8 @@ cargo run --locked -p panechord-demo --no-default-features --features backend-ta
 ```
 
 最小例は`demo/examples/minimal.rs`と`demo/ui/minimal.yaml`。
-nerustで必要なCheckBox/Radio/Slider/Combo/Image/Tab/Dialogも3 backendに追加した。
-操作probeは`cargo run --locked -p panechord-settings --example controls`。
+操作probeは`cargo run --locked -p panechord-demo --example controls`。
 対話画面は`PANECHORD_CONTROLS_REVIEW=1`を付け、backend-tao/backend-macosも同じfeature指定で選ぶ。
-Linuxの実画面撮影は`python3 scripts/review-settings-layout.py --controls`で再実行できる。
-設定画面の外部RPAは`python3 scripts/review-settings-layout.py`。
-`PANECHORD_LAYOUT_REVIEW_OUTPUT`でPNG・保存JSON・RPA結果の保存先を指定できる。
 macOSは`python3 scripts/bundle-macos.py --verify`でAppKitの配布Appを生成し、
 `swift scripts/review-settings-macos.swift BINARY OUTPUT BACKEND`で外部Quartz入力・画面OCR・保存JSONを検証する。
 `BINARY`にはAppKitのbundle内実行ファイル、またはTao実行ファイルを渡す。
@@ -74,22 +67,13 @@ YAMLだけの変更で再コンパイルされることも実際の子Cargo試�
 | 終了要求 | 両backendのWM close/Quitを`request_close`へ。強制`close`とは別契約 |
 | native所有権 | `WeakView`を公開。close-ready購読から強参照循環なしで終了 |
 | 共通UI | `Primary+S/Q`等の共通shortcut、Grid等幅列・明示placement、Flexの限定的契約 |
-| 実用画面 | 名前・音量・倍率、保存・取消、破損設定の拒否、未保存終了確認、保存中の再編集 |
 | 過負荷回復 | scoped `Store::watch`で派生状態・effect開始を通常FIFOへ配送。容量1でも保存成功／task拒否から復帰 |
-| 第2実用画面 | フォルダー・filterの非同期走査、安定keyの仮想化一覧、古い結果の除外、エラー復帰 |
+| 実用画面 | フォルダー・filterの非同期走査、安定keyの仮想化一覧、古い結果の除外、エラー復帰 |
 
 構文と生成規則は`macros/README.md`、解析制限とschemaは`markup/`、
 所有権・上限・終了契約は`runtime/README.md`、native差は`gtk/README.md`・`tao/README.md`を参照。
 
-## 実用設定画面と回帰gallery
-
-入口は[settings/README.md](settings/README.md)。既定保存先は作業ディレクトリの
-`panechord-settings.json`。起動時は読み込みのみで、存在しなければ既定値を表示する。
-壊れた既存JSONは起動を拒否し、自動上書きしない。
-通常の終了は「保存して終了／破棄して終了／編集を続ける」の画面内確認へ接続する。
-保存中の終了要求は完了を待ち、新しい編集があれば再確認する。
-設定入力の検証は同期式。非同期保存・失敗・受付拒否・再編集の状態機械を試験する。
-APIキーや`.env`は不要。
+## 回帰gallery
 
 `demo/ui/gallery.yaml`は、全LayoutとTemplate、1000件の項目Modelを使用する。
 表示する行だけをmountし、画面外へ出てもModelの編集状態は保持する。

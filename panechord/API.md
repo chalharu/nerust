@@ -3,7 +3,7 @@
 Panechord belongs to the nerust workspace. Earlier prototypes have been removed.
 No application build.rs is required.
 Inherited crate names keep the `panechord-` prefix; this workspace contains the third
-revision, and the practical applications are `panechord-settings` and `panechord-library`.
+revision, and the practical application is `panechord-library`.
 
 ## Runtime API shared with codegen/backends
 

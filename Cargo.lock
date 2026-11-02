@@ -4683,6 +4683,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "panechord-gtk",
+ "panechord-macos",
  "panechord-macros",
  "panechord-runtime",
  "panechord-tao",
@@ -4758,21 +4759,6 @@ dependencies = [
  "futures",
  "futures-timer",
  "raw-window-handle",
-]
-
-[[package]]
-name = "panechord-settings"
-version = "0.1.0-dev"
-dependencies = [
- "futures",
- "futures-timer",
- "panechord-gtk",
- "panechord-macos",
- "panechord-macros",
- "panechord-runtime",
- "panechord-tao",
- "serde",
- "serde_json",
 ]
 
 [[package]]

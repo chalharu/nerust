@@ -40,7 +40,6 @@ members = [
   "panechord/tao",
   "panechord/macos",
   "panechord/demo",
-  "panechord/settings",
   "panechord/library",
   "render/filters",
   "render/gl",

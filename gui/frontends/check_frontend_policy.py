@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 FRAMEWORKS = {"panechord": ROOT / "panechord"} | {
     f"panechord-{name}": ROOT / "panechord" / name
-    for name in ("runtime", "markup", "macros", "native", "gtk", "tao", "macos", "demo", "settings", "library")
+    for name in ("runtime", "markup", "macros", "native", "gtk", "tao", "macos", "demo", "library")
 }
 
 

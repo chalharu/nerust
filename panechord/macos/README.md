@@ -11,8 +11,6 @@ macOSの対話デスクトップ、Rust 1.95以上、Xcode Command Line Toolsの
 
 ```sh
 env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES \
-  cargo run --locked -p panechord-settings --no-default-features --features backend-macos
-env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES \
   cargo run --locked -p panechord-library --no-default-features --features backend-macos -- --folder /path/to/roms
 sh scripts/verify-macos.sh
 sh scripts/measure-macos.sh

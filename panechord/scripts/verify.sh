@@ -21,12 +21,11 @@ native_test() {
 
 cargo fmt -p panechord -p panechord-runtime -p panechord-markup -p panechord-macros \
     -p panechord-gtk -p panechord-tao -p panechord-macos -p panechord-demo \
-    -p panechord-settings -p panechord-library -- --check
+    -p panechord-library -- --check
 cargo clippy --locked -p panechord -p panechord-runtime -p panechord-markup -p panechord-macros \
     -p panechord-gtk -p panechord-tao -p panechord-macos -p panechord-demo \
-    -p panechord-settings -p panechord-library --all-targets -- -D warnings
+    -p panechord-library --all-targets -- -D warnings
 cargo clippy --locked -p panechord-demo --all-targets --no-default-features --features backend-tao -- -D warnings
-cargo clippy --locked -p panechord-settings --all-targets --no-default-features --features backend-tao -- -D warnings
 cargo clippy --locked -p panechord-library --all-targets --no-default-features --features backend-tao -- -D warnings
 cargo test --locked -p panechord-runtime -p panechord-markup -p panechord-macros
 output=$(cargo run --locked -p panechord-runtime --example scaling)
@@ -35,12 +34,10 @@ printf '%s\n' "$output" | grep -q '^SCALING3 PASS: read clones=0, update clones=
 cargo test --locked -p panechord-tao --lib
 cargo test --locked -p panechord-gtk --lib --no-run
 native_test -p panechord-gtk --lib tests::native_style_late_close_contract -- --exact --ignored --test-threads=1
-cargo test --locked -p panechord-settings
-cargo test --locked -p panechord-settings --no-default-features --features backend-tao
 cargo test --locked -p panechord-library
 cargo test --locked -p panechord-library --no-default-features --features backend-tao
 for backend in gtk tao; do
-    output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p panechord-settings --no-default-features --features "backend-$backend" --example controls)
+    output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p panechord-demo --no-default-features --features "backend-$backend" --example controls)
     printf '%s\n' "$output"
     printf '%s\n' "$output" | grep -q '^CONTROLS3 PASS checkbox readonly radio slider combo image tab dialog$'
     printf '%s\n' "$output" | grep -q '^CONTRACT3 PASS slider closed capacity conversion readonly hidden disabled normalized-display$'
@@ -48,10 +45,6 @@ for backend in gtk tao; do
     printf '%s\n' "$output" | grep -q '^DIALOG3 PASS readonly hidden-parent close-reopen$'
     printf '%s\n' "$output" | grep -q '^TABS3 PASS top bottom left right selection retained$'
 done
-native_test -p panechord-settings \
-    native_tests::native_generated_shared_windows_survive_peer_close -- --exact --ignored --test-threads=1
-native_test -p panechord-settings \
-    native_tests::native_settings_layout_is_disjoint_and_scrolls_when_short -- --exact --ignored --test-threads=1
 for name in native_contract native_executor_completion native_invalid_keyed_snapshots \
     native_root_style native_menu_namespaces native_coordinated_multiwindow_close \
     native_coordinated_close_timeout native_coordinated_close_cancel \
@@ -93,16 +86,6 @@ cargo build --locked -p panechord-tao --example multiwindow
 output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p panechord-tao --example multiwindow)
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q '^TAO3 PASS multiwindow drawn shared-store primary-close reopen foreign-and-closed-rejected veto-drain-close recoverable-auxiliary-error-isolated$'
-settings_smoke() {
-    output=$(timeout "$native_timeout" xvfb-run -a cargo run --locked -p panechord-settings "$@" -- --smoke)
-    printf '%s\n' "$output"
-    printf '%s\n' "$output" | grep -q '^SETTINGS3 PASS entries readonly invalid-retention save-gating cancel-no-write$'
-    printf '%s\n' "$output" | grep -q '^SETTINGS3 PASS async-save wm-close-veto menu-quit-veto keep-editing cancel-close$'
-    printf '%s\n' "$output" | grep -q '^SETTINGS3 PASS busy-exit-waits newer-invalid-edit-reprompts$'
-    printf '%s\n' "$output" | grep -q '^SETTINGS3 PASS final-save-exit saved-json verified model-closed$'
-}
-settings_smoke
-settings_smoke --no-default-features --features backend-tao
 library_smoke() {
     backend=$1
     shift
@@ -113,4 +96,4 @@ library_smoke() {
 }
 library_smoke gtk
 library_smoke tao --no-default-features --features backend-tao
-printf '%s\n' 'VERIFY3 PASS: inherited regressions, scoped reactions, Self arguments, Linux input and settings/library GTK/Tao'
+printf '%s\n' 'VERIFY3 PASS: inherited regressions, scoped reactions, Self arguments, Linux input and library GTK/Tao'

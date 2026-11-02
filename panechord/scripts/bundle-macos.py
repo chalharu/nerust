@@ -12,7 +12,7 @@ import tempfile
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--package", choices=["panechord-settings", "panechord-library"], default="panechord-settings")
+    parser.add_argument("--package", choices=["panechord-library"], default="panechord-library")
     parser.add_argument("--profile", choices=["dev", "release"], default="dev")
     parser.add_argument("--verify", action="store_true")
     args = parser.parse_args()
