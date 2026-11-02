@@ -320,6 +320,7 @@ impl Drop for Inner {
 pub fn runner_config() -> panechord_runtime::RunnerConfig {
     panechord_runtime::RunnerConfig {
         application_menu: cfg!(target_os = "macos"),
+        menu_quit_in_file: !cfg!(target_os = "macos"),
     }
 }
 

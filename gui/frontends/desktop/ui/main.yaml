@@ -69,6 +69,7 @@ root:
           label: {bind: {path: quit_label, source: External}}
           argument: {bind: {path: quit_arg, source: External}}
           enabled: {bind: {path: available, source: External}}
+          visible: {bind: {path: quit_in_file, source: External}}
           role: Quit
           shortcut: {bind: {path: quit_shortcut, source: External}}
     - id: emulation

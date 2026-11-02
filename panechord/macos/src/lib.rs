@@ -378,6 +378,7 @@ fn within(id: &str, scope: &str) -> bool {
 pub fn runner_config() -> panechord_runtime::RunnerConfig {
     panechord_runtime::RunnerConfig {
         application_menu: true,
+        menu_quit_in_file: false,
     }
 }
 
@@ -1098,6 +1099,11 @@ impl View {
             let mut native = Vec::new();
             let mut handlers: Vec<(String, Handler)> = Vec::new();
             for item in source.get() {
+                // Invisible leaves stay out of the native menu and release
+                // their shortcut; validation still applies to every leaf.
+                if !item.visible {
+                    continue;
+                }
                 if !panechord_runtime::valid_item_key(&item.id) || !seen.insert(item.id.clone()) {
                     view.0
                         .menu_errors

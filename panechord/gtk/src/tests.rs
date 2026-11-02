@@ -2224,6 +2224,7 @@ fn menu_item(id: &str, role: MenuRole, shortcut: Option<&str>) -> MenuItem {
         shortcut: shortcut.map(Into::into),
         role,
         enabled: true,
+visible: true,
     }
 }
 

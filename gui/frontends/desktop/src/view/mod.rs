@@ -37,6 +37,7 @@ pub(crate) struct MenuModel {
     // and the injected application-menu switch.
     app_visible: bool,
     file_visible: bool,
+    quit_in_file: bool,
     available: bool,
     loaded: bool,
     pause_enabled: bool,
@@ -84,7 +85,8 @@ impl MenuModel {
             && Arc::ptr_eq(&self.slots, &slots)
     }
 
-    pub(crate) fn new(app: &Application<crate::SessionAdapter>, application_menu: bool) -> Self {
+    pub(crate) fn new(app: &Application<crate::SessionAdapter>, config: &panechord::RunnerConfig) -> Self {
+        let application_menu = config.application_menu;
         let state = app.state();
         let language = app.settings().shared.general.language;
         let shortcuts = app.settings().shared.input.shortcuts.keyboard.clone();
@@ -109,7 +111,7 @@ impl MenuModel {
                         argument: Intent::Session(action(slot.slot_id)),
                         shortcut: None,
                         role: MenuRole::Normal,
-                        enabled: loaded,
+                        enabled: loaded, visible: true,
                     })
                 })
                 .collect();
@@ -120,7 +122,7 @@ impl MenuModel {
                     argument: Intent::Session(SessionAction::CreateSlot),
                     shortcut: None,
                     role: MenuRole::Normal,
-                    enabled: false,
+                    enabled: false, visible: true,
                 }));
             }
             children
@@ -133,6 +135,7 @@ impl MenuModel {
             active_slot,
             app_visible: application_menu,
             file_visible: !application_menu,
+            quit_in_file: config.menu_quit_in_file,
             available,
             loaded,
             pause_enabled: loaded && !state.user_paused,
@@ -196,6 +199,7 @@ struct Presentation {
     screen: Binding<Option<ImageFrame>>,
     app_visible: Binding<bool>,
     file_visible: Binding<bool>,
+    quit_in_file: Binding<bool>,
     available: Binding<bool>,
     loaded: Binding<bool>,
     pause_enabled: Binding<bool>,
@@ -274,6 +278,7 @@ pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actio
         screen: model.bind(|model| model.screen.clone(), None),
         app_visible: menus.bind(|model| model.app_visible, None),
         file_visible: menus.bind(|model| model.file_visible, None),
+        quit_in_file: menus.bind(|model| model.quit_in_file, None),
         available: menus.bind(|model| model.available, None),
         loaded: menus.bind(|model| model.loaded, None),
         pause_enabled: menus.bind(|model| model.pause_enabled, None),
@@ -343,8 +348,12 @@ mod tests {
     fn skeleton_leaves_carry_localized_labels_and_gating() {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
-        for application_menu in [false, true] {
-            let model = MenuModel::new(&app, application_menu);
+        for config in [
+            panechord::RunnerConfig { application_menu: false, menu_quit_in_file: true },
+            panechord::RunnerConfig { application_menu: true, menu_quit_in_file: false },
+        ] {
+            let application_menu = config.application_menu;
+            let model = MenuModel::new(&app, &config);
             assert_eq!(model.app_visible, application_menu);
             assert_eq!(model.file_visible, !application_menu);
             assert_eq!(model.file_title, text(model.language, UiText::File));
@@ -372,10 +381,14 @@ mod tests {
     fn accelerator_ownership_follows_injected_runner_config() {
         // The backend resolves the flag at startup and injects it here, so
         // both branches run on any platform without a macOS host.
-        for application_menu in [false, true] {
+        for config in [
+            panechord::RunnerConfig { application_menu: false, menu_quit_in_file: true },
+            panechord::RunnerConfig { application_menu: true, menu_quit_in_file: false },
+        ] {
+            let application_menu = config.application_menu;
             let (adapter, _dir) = loaded_adapter();
             let app = nerust_gui_application::Application::new(adapter);
-            let model = MenuModel::new(&app, application_menu);
+            let model = MenuModel::new(&app, &config);
             if application_menu {
                 assert_eq!(model.about_label, text(model.language, UiText::About));
                 assert_eq!(
@@ -388,6 +401,10 @@ mod tests {
                 assert_eq!(model.settings_shortcut.as_deref(), Some("Primary+Comma"));
                 assert_eq!(model.quit_shortcut.as_deref(), Some("Primary+Q"));
             }
+            // Quit membership follows the injected convention on both
+            // branches: a headerbar-style host clears it (Quit leaves the
+            // File menu) while menubar hosts keep it.
+            assert_eq!(model.quit_in_file, config.menu_quit_in_file);
         }
     }
 
@@ -398,7 +415,10 @@ mod tests {
         let app = nerust_gui_application::Application::new(adapter);
         // Fresh fixture: no slots yet, so the subtrees carry the disabled
         // placeholder with a create-slot fallback argument.
-        let model = MenuModel::new(&app, false);
+        let model = MenuModel::new(
+            &app,
+            &panechord::RunnerConfig { application_menu: false, menu_quit_in_file: true },
+        );
         assert!(model.slot_submenu_enabled, "submenus open when loaded");
         for nodes in [
             &model.select_slot_nodes,
