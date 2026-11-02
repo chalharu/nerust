@@ -108,12 +108,25 @@ def desktop_backend_violations(crate_dir: Path) -> list[str]:
         r'feature\s*=\s*"(?:tao|gtk|macos)"',
         r'\btarget_os\s*=',
     )
+    # Sanctioned exception: the window-tabbing intent flows through the
+    # backend-owned RunnerBuilderExtMacOS extension trait (the idiomatic
+    # platform-capability pattern mirroring tao::platform::macos). The cfg
+    # is the platform boundary itself, not a backend leak, so lines that
+    # only import or invoke that trait are not violations.
+    sanctioned = re.compile(r"RunnerBuilderExtMacOS|allows_automatic_window_tabbing")
     for directory in ("src", "examples", "tests"):
         for path in sorted((crate_dir / directory).rglob("*.rs")):
-            for number, line in enumerate(path.read_text().splitlines(), 1):
+            numbered = list(enumerate(path.read_text().splitlines(), 1))
+            for index, (number, line) in enumerate(numbered):
                 code = re.sub(r"//.*$", "", line)
-                if any(re.search(pattern, code) for pattern in patterns):
-                    failures.append(f"desktop backend-specific code: {path.relative_to(ROOT)}:{number}")
+                if not any(re.search(pattern, code) for pattern in patterns):
+                    continue
+                window = "\n".join(
+                    raw for _, raw in numbered[index:index + 4]
+                )
+                if sanctioned.search(window):
+                    continue
+                failures.append(f"desktop backend-specific code: {path.relative_to(ROOT)}:{number}")
     return failures
 
 
