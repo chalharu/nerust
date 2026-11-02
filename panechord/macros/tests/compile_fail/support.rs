@@ -32,7 +32,7 @@ pub fn model() -> Store<Model> {
         Model {
             name: "model text".into(),
             flag: true,
-            items: vec![panechord_runtime::MenuItem { id: "integer".into(), label: "Integer".into(), argument: 42, shortcut: None, role: panechord_runtime::MenuRole::Normal, enabled: true }],
+            items: vec![panechord_runtime::MenuItem { id: "integer".into(), label: "Integer".into(), argument: 42, shortcut: None, role: panechord_runtime::MenuRole::Normal, enabled: true, visible: true }],
         },
         Rc::new(NoTasks),
     )

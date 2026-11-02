@@ -78,6 +78,7 @@ impl Settings {
                     shortcut: None,
                     role: MenuRole::Separator,
                     enabled: true,
+visible: true,
                 },
                 MenuItem {
                     id: "about".into(),
@@ -86,6 +87,7 @@ impl Settings {
                     shortcut: None,
                     role: MenuRole::About,
                     enabled: true,
+visible: true,
                 },
             ],
             workers,
@@ -114,6 +116,7 @@ fn menu_item(id: &str, label: &str, argument: &str, shortcut: Option<String>) ->
         shortcut,
         role: MenuRole::Normal,
         enabled: true,
+visible: true,
     }
 }
 

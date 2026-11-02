@@ -149,9 +149,21 @@ impl Pane {
     }
 
     pub(crate) fn needs_refresh(&self, revision: u64, language: AppLanguage) -> bool {
-        !self.model.is_closed()
-            && self.revision.borrow().as_ref()
-                != Some(&(revision, language, self.filter.snapshot()))
+        if self.model.is_closed() {
+            return false;
+        }
+        let stored = self.revision.borrow();
+        match stored.as_ref() {
+            Some((stored_revision, stored_language, _))
+                if (*stored_revision, *stored_language) != (revision, language) =>
+            {
+                true
+            }
+            // Same revision: only a filter change refreshes, so the filter
+            // projection (`snapshot()` clones a String) runs here alone.
+            Some((_, _, stored_filter)) => *stored_filter != self.filter.snapshot(),
+            None => true,
+        }
     }
 
     pub(crate) fn snapshot(
