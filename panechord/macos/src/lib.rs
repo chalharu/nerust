@@ -909,11 +909,17 @@ impl View {
         self.style(id, style);
         self.button(&row, &format!("{id}/cancel"), cancel.text, cancel.command);
         self.button(&row, &format!("{id}/accept"), accept.text, accept.command);
-        // The bridge exposes no default/destructive emphasis channel (`set`
-        // and `style` cover text, enablement, geometry and text roles only),
-        // so neither button is marked default; a destructive accept stays
-        // unmarked by construction and must not read as default.
-        let _destructive = destructive;
+        // Destructive emphasis travels on property channel 19
+        // (`NSButton.hasDestructiveAction` in the AppKit bridge): a
+        // destructive accept renders with the system destructive style,
+        // a normal one stays unmarked rather than reading as default.
+        // No default-widget grab here: Return/Escape stay with the dialog
+        // owner per the runtime contract.
+        self.set(
+            &format!("{id}/accept"),
+            if destructive { "1" } else { "0" },
+            19,
+        );
     }
 
     pub fn items<T: Clone + 'static>(
