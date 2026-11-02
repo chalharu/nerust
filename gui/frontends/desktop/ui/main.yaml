@@ -72,6 +72,39 @@ root:
           visible: {bind: {path: quit_in_file, source: External}}
           role: Quit
           shortcut: {bind: {path: quit_shortcut, source: External}}
+    - id: states
+      title: {bind: {path: states_title, source: External}}
+      command: choose
+      nested: true
+      items:
+        - id: create_slot
+          label: {bind: {path: create_slot_label, source: External}}
+          argument: {bind: {path: create_slot_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: save_active_slot
+          label: {bind: {path: save_active_slot_label, source: External}}
+          argument: {bind: {path: save_active_slot_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: load_active_slot
+          label: {bind: {path: load_active_slot_label, source: External}}
+          argument: {bind: {path: load_active_slot_arg, source: External}}
+          enabled: {bind: {path: load_active_enabled, source: External}}
+        - id: select_slot
+          label: {bind: {path: select_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: select_slot_nodes, source: External}}
+        - id: save_slot
+          label: {bind: {path: save_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: save_slot_nodes, source: External}}
+        - id: load_slot
+          label: {bind: {path: load_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: load_slot_nodes, source: External}}
+        - id: delete_slot
+          label: {bind: {path: delete_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: delete_slot_nodes, source: External}}
     - id: emulation
       title: {bind: {path: emulation_title, source: External}}
       command: choose
@@ -89,38 +122,6 @@ root:
           label: {bind: {path: reset_label, source: External}}
           argument: {bind: {path: reset_arg, source: External}}
           enabled: {bind: {path: loaded, source: External}}
-        - id: states
-          label: {bind: {path: states_title, source: External}}
-          enabled: {bind: {path: loaded, source: External}}
-          children:
-            - id: create_slot
-              label: {bind: {path: create_slot_label, source: External}}
-              argument: {bind: {path: create_slot_arg, source: External}}
-              enabled: {bind: {path: loaded, source: External}}
-            - id: save_active_slot
-              label: {bind: {path: save_active_slot_label, source: External}}
-              argument: {bind: {path: save_active_slot_arg, source: External}}
-              enabled: {bind: {path: loaded, source: External}}
-            - id: load_active_slot
-              label: {bind: {path: load_active_slot_label, source: External}}
-              argument: {bind: {path: load_active_slot_arg, source: External}}
-              enabled: {bind: {path: load_active_enabled, source: External}}
-            - id: select_slot
-              label: {bind: {path: select_slot_title, source: External}}
-              enabled: {bind: {path: slot_submenu_enabled, source: External}}
-              children: {bind: {path: select_slot_nodes, source: External}}
-            - id: save_slot
-              label: {bind: {path: save_slot_title, source: External}}
-              enabled: {bind: {path: slot_submenu_enabled, source: External}}
-              children: {bind: {path: save_slot_nodes, source: External}}
-            - id: load_slot
-              label: {bind: {path: load_slot_title, source: External}}
-              enabled: {bind: {path: slot_submenu_enabled, source: External}}
-              children: {bind: {path: load_slot_nodes, source: External}}
-            - id: delete_slot
-              label: {bind: {path: delete_slot_title, source: External}}
-              enabled: {bind: {path: slot_submenu_enabled, source: External}}
-              children: {bind: {path: delete_slot_nodes, source: External}}
         - id: debugger
           label: {bind: {path: debugger_label, source: External}}
           argument: {bind: {path: debugger_arg, source: External}}
