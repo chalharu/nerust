@@ -838,32 +838,29 @@ mod tests {
         let (adapter, _dir) = loaded_adapter();
         let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
             .expect("editor builds on real factories");
+        // Drive the production presentation bindings, not local
+        // re-implementations: these are the exact bindings the YAML footer
+        // consumes, so breaking the wiring fails the test.
+        let view_slot = Rc::new(RefCell::new(None));
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let commands = editor.commands(&apply, Rc::new(|| {}), &view_slot);
+        let presentation = editor.presentation(commands);
         let notifications = editor.vm.notifications.clone();
-        let follows = editor.binding(
-            notifications.view.clone(),
-            |value| value.position.same_edge(value.status_position),
-            None,
-        );
-        let enabled = editor.binding(
-            notifications.view.clone(),
-            |value| !value.position.same_edge(value.status_position),
-            None,
-        );
         // Default: BottomLeft vs TopLeft — split edges, picker live.
-        assert!(!follows.get());
-        assert!(enabled.get());
+        assert!(!presentation.status_area_follows.get());
+        assert!(presentation.status_area_enabled.get());
         // Same band: BottomLeft vs BottomRight — picker disabled, note shown.
         notifications
             .set_status_position(NotificationPosition::BottomRight)
             .expect("position applies");
-        assert!(follows.get());
-        assert!(!enabled.get());
+        assert!(presentation.status_area_follows.get());
+        assert!(!presentation.status_area_enabled.get());
         // Back to split: TopRight vs BottomRight — picker live again.
         notifications
             .set_status_position(NotificationPosition::TopRight)
             .expect("position applies");
-        assert!(!follows.get());
-        assert!(enabled.get());
+        assert!(!presentation.status_area_follows.get());
+        assert!(presentation.status_area_enabled.get());
     }
 
     /// Settings captions follow the draft language live: switching to
