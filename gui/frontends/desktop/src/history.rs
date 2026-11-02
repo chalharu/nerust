@@ -159,9 +159,9 @@ impl Pane {
             {
                 true
             }
-            // Same revision: only a filter change refreshes, so the filter
-            // projection (`snapshot()` clones a String) runs here alone.
-            Some((_, _, stored_filter)) => *stored_filter != self.filter.snapshot(),
+            // Same revision: only a filter change refreshes. The borrow
+            // gate avoids the `snapshot()` String clone on quiet ticks.
+            Some((_, _, stored_filter)) => self.filter.with(|current| *stored_filter != *current),
             None => true,
         }
     }

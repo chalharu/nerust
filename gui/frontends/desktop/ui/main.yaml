@@ -89,6 +89,10 @@ root:
           label: {bind: {path: load_active_slot_label, source: External}}
           argument: {bind: {path: load_active_slot_arg, source: External}}
           enabled: {bind: {path: load_active_enabled, source: External}}
+        - id: states_separator
+          label: {literal: ""}
+          argument: {bind: {path: inert_arg, source: External}}
+          role: Separator
         - id: select_slot
           label: {bind: {path: select_slot_title, source: External}}
           enabled: {bind: {path: slot_submenu_enabled, source: External}}
