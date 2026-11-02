@@ -876,6 +876,46 @@ impl View {
         );
     }
 
+    /// Dialog footer: the framework-level OK/Cancel control. Builds one
+    /// end-aligned horizontal row (gap 12) with Cancel first, per the Apple
+    /// HIG, and binds both buttons exactly like `button` (caption plus
+    /// command enablement; clicks invoke the commands). Sub-ids
+    /// (`{id}/accept`, `{id}/cancel`) keep handlers and bindings scoped so
+    /// footer teardown stays within `remove`. No key wiring: Return/Escape
+    /// stay with the dialog owner per the runtime contract.
+    pub fn dialog_footer(
+        &self,
+        parent: &Parent,
+        id: &str,
+        footer: panechord_runtime::DialogFooter,
+    ) {
+        let panechord_runtime::DialogFooter {
+            accept,
+            cancel,
+            destructive,
+        } = footer;
+        let row = self.layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: true,
+                gap: 12.0,
+            },
+        );
+        let style = Style {
+            horizontal_alignment: Some(panechord_runtime::Alignment::End),
+            ..Style::default()
+        };
+        self.style(id, style);
+        self.button(&row, &format!("{id}/cancel"), cancel.text, cancel.command);
+        self.button(&row, &format!("{id}/accept"), accept.text, accept.command);
+        // The bridge exposes no default/destructive emphasis channel (`set`
+        // and `style` cover text, enablement, geometry and text roles only),
+        // so neither button is marked default; a destructive accept stays
+        // unmarked by construction and must not read as default.
+        let _destructive = destructive;
+    }
+
     pub fn items<T: Clone + 'static>(
         &self,
         parent: &Parent,
@@ -1642,5 +1682,112 @@ mod tests {
         captured.borrow().as_ref().unwrap().wake_by_ref();
         assert!(executor.has_ready());
         assert_eq!(executor.turn(), 1);
+    }
+
+    #[test]
+    fn dialog_footer_binds_captions_enablement_and_dispatch() {
+        // Native AppKit contract: this file is cfg'd out off macOS, so this
+        // test only builds and runs on macOS (needs the AppKit host).
+        let host = MacHost::default();
+        let executor = host.executor();
+        let view = View::new(Binding::constant("Footer".into()));
+        let accepted = panechord_runtime::Store::new(0usize, executor.clone());
+        let cancelled = panechord_runtime::Store::new(0usize, executor.clone());
+        let gate = panechord_runtime::Store::new(true, executor.clone());
+        let accept_text = panechord_runtime::Store::new("Save".to_owned(), executor.clone());
+        let cancel_text = panechord_runtime::Store::new("Cancel".to_owned(), executor.clone());
+        let accept_command = {
+            let gate = gate.clone();
+            accepted.command(
+                move |_| gate.snapshot(),
+                |store, ()| {
+                    let _ = store.update(|count| *count += 1);
+                },
+                Binding::constant(()),
+            )
+        };
+        let cancel_command = cancelled.command(
+            |_| true,
+            |store, ()| {
+                let _ = store.update(|count| *count += 1);
+            },
+            Binding::constant(()),
+        );
+        view.dialog_footer(
+            &view.root(),
+            "footer",
+            panechord_runtime::DialogFooter {
+                accept: panechord_runtime::FooterButton {
+                    text: accept_text.bind(Clone::clone, None),
+                    command: accept_command,
+                },
+                cancel: panechord_runtime::FooterButton {
+                    text: cancel_text.bind(Clone::clone, None),
+                    command: cancel_command,
+                },
+                destructive: false,
+            },
+        );
+        // Both captions are live bindings on scoped sub-ids.
+        assert_eq!(view.text("footer/accept").as_deref(), Some("Save"));
+        assert_eq!(view.text("footer/cancel").as_deref(), Some("Cancel"));
+        // Clicks dispatch to their own commands.
+        view.click("footer/accept").unwrap();
+        view.click("footer/cancel").unwrap();
+        assert_eq!(accepted.snapshot(), 1);
+        assert_eq!(cancelled.snapshot(), 1);
+        // Caption updates flow through.
+        assert!(accept_text.update(|text| *text = "Apply".into()));
+        assert!(cancel_text.update(|text| *text = "Close".into()));
+        assert_eq!(view.text("footer/accept").as_deref(), Some("Apply"));
+        assert_eq!(view.text("footer/cancel").as_deref(), Some("Close"));
+        // Enablement rides the command, like `button`: a disabled accept
+        // rejects native clicks and its count stays put.
+        assert!(gate.update(|flag| *flag = false));
+        assert!(view.click("footer/accept").is_err());
+        assert_eq!(accepted.snapshot(), 1);
+        // The cancel side is unaffected by the accept gate.
+        view.click("footer/cancel").unwrap();
+        assert_eq!(cancelled.snapshot(), 2);
+        assert!(gate.update(|flag| *flag = true));
+        view.click("footer/accept").unwrap();
+        assert_eq!(accepted.snapshot(), 2);
+        // Destructive builds the same row without marking a default; its
+        // accept still routes to its own command.
+        let flagged = panechord_runtime::Store::new(0usize, executor.clone());
+        let destructive_command = flagged.command(
+            |_| true,
+            |store, ()| {
+                let _ = store.update(|count| *count += 1);
+            },
+            Binding::constant(()),
+        );
+        view.dialog_footer(
+            &view.root(),
+            "destructive",
+            panechord_runtime::DialogFooter {
+                accept: panechord_runtime::FooterButton {
+                    text: Binding::constant("Discard".into()),
+                    command: destructive_command,
+                },
+                cancel: panechord_runtime::FooterButton {
+                    text: Binding::constant("Keep".into()),
+                    command: cancelled.command(
+                        |_| true,
+                        |store, ()| {
+                            let _ = store.update(|count| *count += 1);
+                        },
+                        Binding::constant(()),
+                    ),
+                },
+                destructive: true,
+            },
+        );
+        assert_eq!(view.text("destructive/accept").as_deref(), Some("Discard"));
+        assert_eq!(view.text("destructive/cancel").as_deref(), Some("Keep"));
+        view.click("destructive/accept").unwrap();
+        assert_eq!(flagged.snapshot(), 1);
+        assert_eq!(cancelled.snapshot(), 2);
+        view.close();
     }
 }

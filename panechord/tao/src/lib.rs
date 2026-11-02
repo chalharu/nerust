@@ -892,6 +892,73 @@ impl View {
             .into()
         })));
     }
+    /// Dialog footer: the framework-level OK/Cancel control. Two buttons in
+    /// one end-aligned horizontal row with gap 12: accept-first on Windows,
+    /// cancel-first elsewhere (GNOME/macOS order). No key wiring:
+    /// Return/Escape stay with the dialog owner so capture sessions keep
+    /// precedence over footer keys. The non-destructive accept uses the
+    /// codebase's `primary` emphasis (see tab headers); a destructive accept
+    /// uses `danger` instead and is never marked default.
+    pub fn dialog_footer(
+        &self,
+        parent: &Parent,
+        id: &str,
+        footer: panechord_runtime::DialogFooter,
+    ) {
+        let row = self.layout(
+            parent,
+            id,
+            Layout::Stack {
+                horizontal: true,
+                gap: 12.0,
+            },
+        );
+        // Right-align the row inside the surrounding vertical dialog column.
+        row.0.style.set(Style {
+            horizontal_alignment: Some(panechord_runtime::Alignment::End),
+            ..Style::default()
+        });
+        let order = if std::env::consts::OS == "windows" {
+            [("accept", &footer.accept), ("cancel", &footer.cancel)]
+        } else {
+            [("cancel", &footer.cancel), ("accept", &footer.accept)]
+        };
+        for (sub, part) in order {
+            let child = format!("{id}/{sub}");
+            let node = self.add(&row, &child, Kind::Content);
+            let value = self.bound_text(&node, part.text.clone());
+            let enabled = Rc::new(Cell::new(part.command.enabled.get()));
+            let out = enabled.clone();
+            self.bind(&node, part.command.enabled.clone(), move |v| out.set(v));
+            node.handler
+                .replace(Some(Handler::Button(part.command.clone())));
+            let key = node.id.clone();
+            let is_accept = sub == "accept";
+            let destructive = footer.destructive;
+            node.kind.replace(Kind::Leaf(Rc::new(move || {
+                let label = widget::text(value.borrow().clone())
+                    .align_x(iced::alignment::Horizontal::Center)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+                let mut button = widget::button(label)
+                    .on_press_maybe(enabled.get().then(|| Message::Click(key.clone())));
+                if is_accept {
+                    button = button.style(if destructive {
+                        widget::button::danger
+                    } else {
+                        widget::button::primary
+                    });
+                }
+                button.into()
+            })));
+            // Keep natural button widths so the end-aligned row hugs the
+            // trailing edge instead of stretching across the dialog.
+            node.style.set(Style {
+                horizontal_alignment: Some(panechord_runtime::Alignment::Start),
+                ..Style::default()
+            });
+        }
+        self.0.refresh();
+    }
     /// Genuine extension point for application-defined iced/advanced widgets.
     /// `subscriptions` are owned by this mount and dropped when its row is evicted.
     pub fn mount(

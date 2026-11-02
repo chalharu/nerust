@@ -180,7 +180,7 @@ fn main() -> Result<(), String> {
                                 shortcut: Some("Ctrl+S".into()),
                                 role: panechord_runtime::MenuRole::Normal,
                                 enabled: true,
-visible: true,
+                                visible: true,
                             },
                         )],
                     }],

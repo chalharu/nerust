@@ -401,7 +401,7 @@ fn settings_yaml_layout_keeps_buttons_filled_and_controls_disjoint() {
     }
     let harness = Harness::new();
     let model = harness.store(SettingsLayout::default());
-    let view = panechord_macros::view!("../settings/ui/settings.yaml", model, crate);
+    let view = panechord_macros::view!("ui/layout-fixture.yaml", model, crate);
     let renderer = iced_tiny_skia::Renderer::new(iced::Font::default(), iced::Pixels(16.0));
     for (state, message) in [
         ("initial", ""),
@@ -651,6 +651,7 @@ fn quit_role_requests_close_without_dispatching_or_recursing() {
             shortcut: None,
             role: MenuRole::Quit,
             enabled: true,
+            visible: true,
         }]),
         Rc::new(|_| panic!("Quit must not dispatch")),
     );
@@ -1163,6 +1164,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
         shortcut: Some("Ctrl+KeyS".into()),
         role: MenuRole::Normal,
         enabled: true,
+        visible: true,
     };
     let state = h.store(("File".to_owned(), vec![save.clone()]));
     let received = Rc::new(RefCell::new(Vec::new()));
@@ -1216,6 +1218,7 @@ fn dynamic_menu_snapshots_replace_arguments_enabled_hotkeys_and_native_items() {
             shortcut: None,
             role: MenuRole::About,
             enabled: true,
+            visible: true,
         }];
     });
     h.pump();
@@ -1250,6 +1253,7 @@ fn linux_quit_shim_closes_owner_without_dispatch_or_ownership_cycle() {
             shortcut: None,
             role: MenuRole::Quit,
             enabled: true,
+            visible: true,
         }]),
         Rc::new(|_| panic!("Quit is not an application command alias")),
     );
@@ -1302,6 +1306,7 @@ fn native_menu_append_failure(hierarchical: bool) {
         shortcut: Some("Ctrl+KeyS".into()),
         role: MenuRole::Normal,
         enabled: true,
+        visible: true,
     };
     let quit = MenuItem {
         id: "quit".into(),
@@ -1310,6 +1315,7 @@ fn native_menu_append_failure(hierarchical: bool) {
         shortcut: None,
         role: MenuRole::Quit,
         enabled: true,
+        visible: true,
     };
     let original = vec![save, quit];
     let state = h.store(("File".to_owned(), original.clone()));
@@ -1479,6 +1485,7 @@ fn vacant_menus_attach_only_while_populated_and_keep_install_order() {
             shortcut: None,
             role: MenuRole::Normal,
             enabled: true,
+            visible: true,
         })
     }
     fn titles(view: &View) -> Vec<String> {
@@ -1522,5 +1529,163 @@ fn vacant_menus_attach_only_while_populated_and_keep_install_order() {
     assert!(app.update(|items| *items = vec![leaf("about")]));
     h.pump();
     assert_eq!(titles(&view), ["App", "File"]);
+    view.close();
+}
+
+#[test]
+fn dialog_footer_mounts_ordered_buttons_with_bound_labels_and_commands() {
+    let h = Harness::new();
+    let accept_text = h.store("Save".to_owned());
+    let cancel_text = h.store("Cancel".to_owned());
+    let accept_on = h.store(true);
+    let cancel_on = h.store(true);
+    let accept_calls = Rc::new(Cell::new(0usize));
+    let cancel_calls = Rc::new(Cell::new(0usize));
+    let accept_out = accept_calls.clone();
+    let cancel_out = cancel_calls.clone();
+    let accept_cmd = accept_on.command(
+        |on| *on,
+        move |_, ()| {
+            accept_out.set(accept_out.get() + 1);
+        },
+        Binding::constant(()),
+    );
+    let cancel_cmd = cancel_on.command(
+        |on| *on,
+        move |_, ()| {
+            cancel_out.set(cancel_out.get() + 1);
+        },
+        Binding::constant(()),
+    );
+    let view = View::new(Binding::constant("footer".into()));
+    view.dialog_footer(
+        &view.root(),
+        "footer",
+        panechord_runtime::DialogFooter {
+            accept: panechord_runtime::FooterButton {
+                text: accept_text.bind(Clone::clone, None),
+                command: accept_cmd,
+            },
+            cancel: panechord_runtime::FooterButton {
+                text: cancel_text.bind(Clone::clone, None),
+                command: cancel_cmd,
+            },
+            destructive: false,
+        },
+    );
+    let footer = view.find("footer").expect("footer mounts");
+    match &*footer.kind.borrow() {
+        Kind::Panel(Layout::Stack { horizontal, gap }) => {
+            assert!(horizontal, "footer must be a horizontal row");
+            assert!(
+                (*gap - 12.0).abs() < 0.001,
+                "footer gap must be 12, got {gap}"
+            );
+        }
+        _ => panic!("footer must be a horizontal Stack panel"),
+    }
+    assert_eq!(
+        footer.style.get().horizontal_alignment,
+        Some(panechord_runtime::Alignment::End),
+        "footer row must be end-aligned"
+    );
+    let ids: Vec<String> = footer
+        .children
+        .borrow()
+        .iter()
+        .map(|node| node.id.clone())
+        .collect();
+    let expected = if std::env::consts::OS == "windows" {
+        vec!["footer/accept".to_owned(), "footer/cancel".to_owned()]
+    } else {
+        vec!["footer/cancel".to_owned(), "footer/accept".to_owned()]
+    };
+    assert_eq!(ids, expected, "platform button order");
+    assert_eq!(view.text("footer/accept").as_deref(), Some("Save"));
+    assert_eq!(view.text("footer/cancel").as_deref(), Some("Cancel"));
+    assert!(accept_text.update(|text| *text = "Apply".to_owned()));
+    assert!(cancel_text.update(|text| *text = "Close".to_owned()));
+    h.pump();
+    assert_eq!(view.text("footer/accept").as_deref(), Some("Apply"));
+    assert_eq!(view.text("footer/cancel").as_deref(), Some("Close"));
+    view.click("footer/accept").unwrap();
+    view.click("footer/cancel").unwrap();
+    h.pump();
+    assert_eq!(accept_calls.get(), 1);
+    assert_eq!(cancel_calls.get(), 1);
+    view.close();
+}
+
+#[test]
+fn dialog_footer_enabled_binding_toggles_sensitivity() {
+    let h = Harness::new();
+    let accept_on = h.store(true);
+    let cancel_on = h.store(true);
+    let accept_calls = Rc::new(Cell::new(0usize));
+    let cancel_calls = Rc::new(Cell::new(0usize));
+    let accept_out = accept_calls.clone();
+    let cancel_out = cancel_calls.clone();
+    let accept_cmd = accept_on.command(
+        |on| *on,
+        move |_, ()| {
+            accept_out.set(accept_out.get() + 1);
+        },
+        Binding::constant(()),
+    );
+    let cancel_cmd = cancel_on.command(
+        |on| *on,
+        move |_, ()| {
+            cancel_out.set(cancel_out.get() + 1);
+        },
+        Binding::constant(()),
+    );
+    let view = View::new(Binding::constant("footer".into()));
+    view.dialog_footer(
+        &view.root(),
+        "footer",
+        panechord_runtime::DialogFooter {
+            accept: panechord_runtime::FooterButton {
+                text: Binding::constant("Discard".into()),
+                command: accept_cmd,
+            },
+            cancel: panechord_runtime::FooterButton {
+                text: Binding::constant("Keep editing".into()),
+                command: cancel_cmd,
+            },
+            destructive: true,
+        },
+    );
+    // Destructive accept still mounts in platform order and dispatches.
+    let footer = view.find("footer").expect("footer mounts");
+    let ids: Vec<String> = footer
+        .children
+        .borrow()
+        .iter()
+        .map(|node| node.id.clone())
+        .collect();
+    let expected = if std::env::consts::OS == "windows" {
+        vec!["footer/accept".to_owned(), "footer/cancel".to_owned()]
+    } else {
+        vec!["footer/cancel".to_owned(), "footer/accept".to_owned()]
+    };
+    assert_eq!(ids, expected);
+    view.click("footer/accept").unwrap();
+    h.pump();
+    assert_eq!(accept_calls.get(), 1);
+    assert!(accept_on.update(|on| *on = false));
+    h.pump();
+    assert!(view.click("footer/accept").is_err());
+    h.pump();
+    assert_eq!(accept_calls.get(), 1);
+    assert!(accept_on.update(|on| *on = true));
+    h.pump();
+    view.click("footer/accept").unwrap();
+    h.pump();
+    assert_eq!(accept_calls.get(), 2);
+    assert!(cancel_on.update(|on| *on = false));
+    h.pump();
+    assert!(view.click("footer/cancel").is_err());
+    h.pump();
+    assert_eq!(cancel_calls.get(), 0);
     view.close();
 }

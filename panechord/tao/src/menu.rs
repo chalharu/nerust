@@ -515,6 +515,7 @@ mod tests {
             shortcut: Some("Ctrl+KeyS".into()),
             role: MenuRole::Normal,
             enabled: true,
+            visible: true,
         };
         assert!(validate(std::slice::from_ref(&item)).is_ok());
         assert!(validate(&[item.clone(), item.clone()]).is_err());
@@ -612,6 +613,7 @@ mod tests {
                 shortcut: None,
                 role: role.clone(),
                 enabled: true,
+                visible: true,
             };
             assert!(validate(&[item.clone()]).is_ok());
             item.enabled = false;

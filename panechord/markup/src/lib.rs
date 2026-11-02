@@ -309,6 +309,7 @@ controls! {
     Separator { #[serde(default)] orientation: Orientation, },
     TextBox { text: Property, placeholder: Option<Property>, validation: Option<Validation>, },
     Button { text: Property, command: String, argument: Option<Property>, },
+    DialogFooter { accept_text: Property, accept_command: String, accept_argument: Option<Property>, cancel_text: Property, cancel_command: String, cancel_argument: Option<Property>, #[serde(default)] destructive: bool, },
     Native { factory: String, value: Property, },
     CheckBox { text: Property, checked: Property, },
     Radio { text: Property, selected: Property, value: String, },
@@ -737,6 +738,22 @@ impl Document {
                 read_only(text, "text")?;
                 if let Some(argument) = argument {
                     read_only(argument, "argument")?;
+                }
+            }
+            Control::DialogFooter {
+                accept_text,
+                accept_argument,
+                cancel_text,
+                cancel_argument,
+                ..
+            } => {
+                read_only(accept_text, "accept_text")?;
+                if let Some(argument) = accept_argument {
+                    read_only(argument, "accept_argument")?;
+                }
+                read_only(cancel_text, "cancel_text")?;
+                if let Some(argument) = cancel_argument {
+                    read_only(argument, "cancel_argument")?;
                 }
             }
             Control::Image { source, .. } | Control::Table { source, .. } => {

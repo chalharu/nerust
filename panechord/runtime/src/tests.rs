@@ -87,7 +87,8 @@ fn nested_menu_validates_complete_tree_and_inherits_enablement() {
         argument: 7_u64,
         shortcut: Some("Ctrl+S".into()),
         role: MenuRole::Normal,
-        enabled: true, visible: true,
+        enabled: true,
+        visible: true,
     };
     let tree = vec![MenuNode::Submenu {
         id: "states".into(),

@@ -455,3 +455,46 @@ fn static_menu_entries_support_nested_subtrees_with_bound_leaves() {
     let e = parse_yaml(&bad).unwrap_err();
     assert!(e.message.contains("duplicate"), "{e}");
 }
+
+#[test]
+fn dialog_footer_and_leaf_visible_are_validated() {
+    let footer = r#"    - type: DialogFooter
+      id: actions
+      accept_text: {bind: {path: ok}}
+      accept_command: accept
+      cancel_text: {bind: {path: cancel}}
+      cancel_command: cancel
+      destructive: true
+"#;
+    let source = doc("type: StackLayout\nid: content\nchildren:\n")
+        .replace("    children:\n", &format!("    children:\n{footer}"));
+    parse_yaml(&source).unwrap();
+    // Leaf visibility binds like enablement.
+    let menus = r#"  menus:
+    - id: file
+      title: {literal: File}
+      command: choose
+      items:
+        - id: quit
+          label: {literal: Quit}
+          argument: {literal: quit}
+          visible: {bind: {path: quit_in_file}}
+"#;
+    let source = doc("type: Label\nid: label\ntext: {literal: hi}")
+        .replace("  content:", &format!("{menus}  content:"));
+    parse_yaml(&source).unwrap();
+    // TwoWay has no meaning for a read-only membership flag.
+    let bad = source.replace(
+        "visible: {bind: {path: quit_in_file}}",
+        "visible: {bind: {path: quit_in_file, mode: TwoWay}}",
+    );
+    let e = parse_yaml(&bad).unwrap_err();
+    assert!(e.message.contains("TwoWay"), "{e}");
+    // Submenu entries reject visible: their membership rides content.
+    let bad = source.replace(
+        "          argument: {literal: quit}\n",
+        "          argument: {literal: quit}\n          visible: {bind: {path: quit_in_file}}\n          children:\n            - id: deep\n              label: {literal: Deep}\n              argument: {literal: deep}\n",
+    );
+    let e = parse_yaml(&bad).unwrap_err();
+    assert!(e.message.contains("visible"), "{e}");
+}

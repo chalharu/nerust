@@ -2224,7 +2224,7 @@ fn menu_item(id: &str, role: MenuRole, shortcut: Option<&str>) -> MenuItem {
         shortcut: shortcut.map(Into::into),
         role,
         enabled: true,
-visible: true,
+        visible: true,
     }
 }
 
@@ -3130,4 +3130,161 @@ fn native_contract() {
     })
     .unwrap();
     assert!(ran.get());
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_dialog_footer_orders_cancel_first_and_dispatches() {
+    gtk::init().unwrap();
+    let host = GtkHost::attach();
+    let model = Store::new(0i32, host.executor());
+    let accept = model.command(
+        |_| true,
+        |store, ()| {
+            let _ = store.update(|count| *count += 1);
+        },
+        Binding::constant(()),
+    );
+    let cancel = model.command(
+        |_| true,
+        |store, ()| {
+            let _ = store.update(|count| *count -= 1);
+        },
+        Binding::constant(()),
+    );
+    let view = View::new(Binding::constant("Footer".into()));
+    view.dialog_footer(
+        &view.root(),
+        "actions",
+        panechord_runtime::DialogFooter {
+            accept: panechord_runtime::FooterButton {
+                text: Binding::constant("Save".into()),
+                command: accept,
+            },
+            cancel: panechord_runtime::FooterButton {
+                text: Binding::constant("Cancel".into()),
+                command: cancel,
+            },
+            destructive: false,
+        },
+    );
+    view.native_window().set_default_size(400, 100);
+    view.present();
+    let ready = Rc::new(Cell::new(false));
+    let observed = ready.clone();
+    glib::timeout_add_local_once(Duration::from_millis(200), move || observed.set(true));
+    while !ready.get() {
+        glib::MainContext::default().iteration(true);
+    }
+    // GNOME order: cancel first, affirmative second.
+    let row = view.widget::<gtk::Box>("actions").unwrap();
+    let first = row.first_child().and_downcast::<gtk::Button>().unwrap();
+    assert_eq!(first.label().as_deref(), Some("Cancel"));
+    let second = first.next_sibling().and_downcast::<gtk::Button>().unwrap();
+    assert_eq!(second.label().as_deref(), Some("Save"));
+    // The non-destructive accept is the visual default.
+    assert!(second.css_classes().iter().any(|c| c == "suggested-action"));
+    assert!(
+        !second
+            .css_classes()
+            .iter()
+            .any(|c| c == "destructive-action")
+    );
+    first.emit_clicked();
+    assert_eq!(model.snapshot(), -1);
+    second.emit_clicked();
+    assert_eq!(model.snapshot(), 0);
+    view.close();
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_dialog_footer_marks_destructive_without_default() {
+    gtk::init().unwrap();
+    let host = GtkHost::attach();
+    let model = Store::new(0u32, host.executor());
+    let noop = || model.command(|_| true, |_, ()| {}, Binding::constant(()));
+    let view = View::new(Binding::constant("Destructive".into()));
+    view.dialog_footer(
+        &view.root(),
+        "confirm",
+        panechord_runtime::DialogFooter {
+            accept: panechord_runtime::FooterButton {
+                text: Binding::constant("Discard".into()),
+                command: noop(),
+            },
+            cancel: panechord_runtime::FooterButton {
+                text: Binding::constant("Keep editing".into()),
+                command: noop(),
+            },
+            destructive: true,
+        },
+    );
+    view.native_window().set_default_size(400, 100);
+    view.present();
+    let ready = Rc::new(Cell::new(false));
+    let observed = ready.clone();
+    glib::timeout_add_local_once(Duration::from_millis(200), move || observed.set(true));
+    while !ready.get() {
+        glib::MainContext::default().iteration(true);
+    }
+    let row = view.widget::<gtk::Box>("confirm").unwrap();
+    let accept = row
+        .first_child()
+        .and_then(|first| first.next_sibling())
+        .and_downcast::<gtk::Button>()
+        .unwrap();
+    assert_eq!(accept.label().as_deref(), Some("Discard"));
+    assert!(
+        accept
+            .css_classes()
+            .iter()
+            .any(|c| c == "destructive-action")
+    );
+    assert!(!accept.css_classes().iter().any(|c| c == "suggested-action"));
+    view.close();
+}
+
+#[test]
+#[ignore = "isolated Xvfb native contract"]
+fn native_menu_invisible_leaf_stays_out_and_releases_shortcut() {
+    gtk::init().unwrap();
+    let view = View::new(Binding::constant("Menus".into()));
+    let items = Store::new(
+        vec![
+            MenuItem {
+                id: "quit".into(),
+                label: "Quit".into(),
+                argument: "quit".into(),
+                shortcut: Some("Primary+Q".into()),
+                role: MenuRole::Quit,
+                enabled: true,
+                visible: false,
+            },
+            menu_item("open", MenuRole::Normal, Some("Primary+O")),
+        ],
+        GtkHost::attach().executor(),
+    );
+    view.typed_menu(
+        "file",
+        Binding::constant("File".into()),
+        items.bind(Clone::clone, None),
+        Rc::new(|_| true),
+    );
+    // The hidden Quit releases its shortcut instead of conflicting with the
+    // application menu owner.
+    let has = |id: &str| view.0.actions.borrow().contains_key(&format!("file/{id}"));
+    assert!(has("open"));
+    assert!(!has("quit"));
+    let state = view.0.menu_states.borrow().get("file").unwrap().clone();
+    assert_eq!(state.shortcuts.borrow().len(), 1);
+    assert!(view.activate_menu("file/open").is_ok());
+    assert!(view.activate_menu("file/quit").is_err());
+    // Flipping visibility re-attaches the leaf with its shortcut.
+    assert!(items.update(|items| items[0].visible = true));
+    assert!(has("quit"));
+    let state = view.0.menu_states.borrow().get("file").unwrap().clone();
+    assert_eq!(state.shortcuts.borrow().len(), 2);
+    assert!(view.activate_menu("file/quit").is_ok());
+    view.close();
 }
