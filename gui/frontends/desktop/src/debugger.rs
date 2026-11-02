@@ -1059,7 +1059,9 @@ impl Pane {
         let refresh = self.flight.borrow().is_none()
             && Instant::now() >= self.next_refresh.get()
             && self.operations.borrow().as_ref().is_some_and(|operations| {
-                (!operations.display.paused || self.model.snapshot().language != language)
+                // Borrow-gate on the single field: a full snapshot would clone
+                // the whole debugger Model (tables included) every 16 ms tick.
+                (!operations.display.paused || self.model.with(|model| model.language) != language)
                     && !matches!(
                         operations.display.status,
                         nerust_gui_viewmodel::debugger::StatusMessage::OutcomeUnknown
