@@ -18,8 +18,8 @@ mod store;
 
 pub use blocking::{BlockingPool, TaskError};
 pub use controls::{
-    Choice, ImageFrame, SliderRange, TabPosition, Table, TableCell, TableColumn, TableRow,
-    TableSelection, TextOverflow, validate_choices,
+    Choice, DialogFooter, FooterButton, ImageFrame, SliderRange, TabPosition, Table, TableCell,
+    TableColumn, TableRow, TableSelection, TextOverflow, validate_choices,
 };
 pub use session::{
     Session, ShutdownCoordinator, ShutdownFailure, ShutdownOutcome, ShutdownPhase, UiHost,

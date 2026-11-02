@@ -528,11 +528,12 @@ impl Editor {
     pub(crate) fn build(self: &Rc<Self>, apply: Apply, quit: Rc<dyn Fn()>) -> Result<View, String> {
         let view_slot = Rc::new(RefCell::new(None::<WeakView>));
         let commands = self.commands(&apply, quit, &view_slot);
+        let keys = commands.clone();
         let bindings = self.presentation(commands);
         let view = panechord::try_view!("ui/settings.yaml", bindings, panechord)?;
         let editor = self.clone();
         view.on_surface_event(Rc::new(move |event| {
-            if editor.closed.get() || editor.vm.capture.view.get().target.is_none() {
+            if editor.closed.get() {
                 return;
             }
             if let panechord::WindowEvent::KeyboardInput {
@@ -542,14 +543,40 @@ impl Editor {
                 synthetic: false,
             } = event
             {
-                if key.as_str() == "Escape" {
-                    editor.vm.capture.cancel_capture();
-                } else if let Some(key) = crate::SessionAdapter::key(key) {
-                    editor.vm.capture.apply_captured_key(key);
-                } else {
+                // Capture sessions own the keyboard: Escape aborts the capture
+                // and any other key becomes the candidate binding.
+                if editor.vm.capture.view.get().target.is_some() {
+                    if key.as_str() == "Escape" {
+                        editor.vm.capture.cancel_capture();
+                    } else if let Some(key) = crate::SessionAdapter::key(key) {
+                        editor.vm.capture.apply_captured_key(key);
+                    } else {
+                        return;
+                    }
+                    editor.validation_status();
                     return;
                 }
-                editor.validation_status();
+                // Framework footers own the visual order; the dialog owner
+                // owns the keys. Confirmation keeps the safe choice on both
+                // Escape and Return; `invoke` no-ops while disabled.
+                let confirming = editor.close_prompt.with(|prompt| {
+                    matches!(prompt, ExitChoice::ConfirmLocal | ExitChoice::ConfirmGlobal)
+                });
+                if key.as_str() == "Escape" {
+                    let _ = if confirming {
+                        keys.keep.invoke()
+                    } else {
+                        keys.cancel.invoke()
+                    };
+                    editor.validation_status();
+                } else if key.as_str() == "Enter" || key.as_str() == "NumpadEnter" {
+                    let _ = if confirming {
+                        keys.keep.invoke()
+                    } else {
+                        keys.accept.invoke()
+                    };
+                    editor.validation_status();
+                }
             }
         }));
         view_slot.replace(Some(view.downgrade()));
@@ -565,6 +592,9 @@ struct ChoiceBinding {
 
 /// Footer and input-row commands assembled by `Editor::commands`.
 /// Kept at module scope (items are not allowed inside `impl` blocks).
+/// Cloned into the surface key handler so Return/Escape honor the same
+/// commands as the footer buttons, with capture sessions first.
+#[derive(Clone)]
 struct Commands {
     cancel: Command,
     accept: Command,

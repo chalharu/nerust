@@ -85,7 +85,10 @@ impl MenuModel {
             && Arc::ptr_eq(&self.slots, &slots)
     }
 
-    pub(crate) fn new(app: &Application<crate::SessionAdapter>, config: &panechord::RunnerConfig) -> Self {
+    pub(crate) fn new(
+        app: &Application<crate::SessionAdapter>,
+        config: &panechord::RunnerConfig,
+    ) -> Self {
         let application_menu = config.application_menu;
         let state = app.state();
         let language = app.settings().shared.general.language;
@@ -111,7 +114,8 @@ impl MenuModel {
                         argument: Intent::Session(action(slot.slot_id)),
                         shortcut: None,
                         role: MenuRole::Normal,
-                        enabled: loaded, visible: true,
+                        enabled: loaded,
+                        visible: true,
                     })
                 })
                 .collect();
@@ -122,7 +126,8 @@ impl MenuModel {
                     argument: Intent::Session(SessionAction::CreateSlot),
                     shortcut: None,
                     role: MenuRole::Normal,
-                    enabled: false, visible: true,
+                    enabled: false,
+                    visible: true,
                 }));
             }
             children
@@ -349,8 +354,14 @@ mod tests {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
         for config in [
-            panechord::RunnerConfig { application_menu: false, menu_quit_in_file: true },
-            panechord::RunnerConfig { application_menu: true, menu_quit_in_file: false },
+            panechord::RunnerConfig {
+                application_menu: false,
+                menu_quit_in_file: true,
+            },
+            panechord::RunnerConfig {
+                application_menu: true,
+                menu_quit_in_file: false,
+            },
         ] {
             let application_menu = config.application_menu;
             let model = MenuModel::new(&app, &config);
@@ -382,8 +393,14 @@ mod tests {
         // The backend resolves the flag at startup and injects it here, so
         // both branches run on any platform without a macOS host.
         for config in [
-            panechord::RunnerConfig { application_menu: false, menu_quit_in_file: true },
-            panechord::RunnerConfig { application_menu: true, menu_quit_in_file: false },
+            panechord::RunnerConfig {
+                application_menu: false,
+                menu_quit_in_file: true,
+            },
+            panechord::RunnerConfig {
+                application_menu: true,
+                menu_quit_in_file: false,
+            },
         ] {
             let application_menu = config.application_menu;
             let (adapter, _dir) = loaded_adapter();
@@ -417,7 +434,10 @@ mod tests {
         // placeholder with a create-slot fallback argument.
         let model = MenuModel::new(
             &app,
-            &panechord::RunnerConfig { application_menu: false, menu_quit_in_file: true },
+            &panechord::RunnerConfig {
+                application_menu: false,
+                menu_quit_in_file: true,
+            },
         );
         assert!(model.slot_submenu_enabled, "submenus open when loaded");
         for nodes in [

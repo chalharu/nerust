@@ -408,7 +408,8 @@ fn command_arguments_gates_static_actions_and_menu_are_live() {
             argument: "payload".into(),
             shortcut: Some("Ctrl+C".into()),
             role: MenuRole::Copy,
-            enabled: true, visible: true,
+            enabled: true,
+            visible: true,
         })
     });
     let item = view.0.borrow().menus["actions"].get().remove(0);
