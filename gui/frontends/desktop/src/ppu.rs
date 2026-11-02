@@ -135,7 +135,9 @@ impl Pane {
             self.generation.set(None);
         }
         if !loaded {
-            if !self.model.snapshot().is_empty {
+            // Read through `with`: `snapshot()` would clone the whole PPU
+            // Model (image vec included) every 16 ms tick.
+            if self.model.with(|model| !model.is_empty) {
                 self.flight.borrow_mut().take();
                 self.live.borrow_mut().take();
                 self.generation.set(None);
