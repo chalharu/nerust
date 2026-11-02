@@ -296,7 +296,6 @@ mod tests {
     use std::{collections::HashMap, fs};
 
     use nerust_input_traits::Key;
-    use nerust_nes_settings::NesVideoFilter;
     use nerust_settings_core::model::{
         app_state::{DesktopAppState, RememberedWindowSize},
         input::{
@@ -393,13 +392,13 @@ mod tests {
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.general.language = AppLanguage::Japanese;
         snapshot.local.audio.muted = true;
-        let nes = snapshot
+        let dummy = snapshot
             .shared
             .systems
             .get_mut(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+            .and_then(|s| s.downcast_mut::<crate::test::DummySystemSettings>())
             .unwrap();
-        nes.video.filter = NesVideoFilter::NtscRgb;
+        dummy.visual = 1;
         manager.save_snapshot(snapshot.clone()).unwrap();
 
         let reloaded = SettingsManager::load_with_paths(
@@ -622,13 +621,13 @@ mod tests {
         .unwrap();
 
         let mut snap = manager.snapshot().unwrap();
-        let nes_settings = snap
+        let dummy = snap
             .shared
             .systems
             .get_mut(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+            .and_then(|s| s.downcast_mut::<crate::test::DummySystemSettings>())
             .unwrap();
-        nes_settings.video.filter = NesVideoFilter::NtscRgb;
+        dummy.visual = 1;
         manager.save_snapshot(snap.clone()).unwrap();
         drop(manager);
 

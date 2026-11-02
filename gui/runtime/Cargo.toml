@@ -20,4 +20,4 @@ serde-value.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-nerust_nes_settings.workspace = true
+typetag.workspace = true
