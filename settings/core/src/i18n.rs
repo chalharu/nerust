@@ -63,6 +63,7 @@ pub enum UiText {
     NtscRgb,
     FitToWindow,
     Ok,
+    Save,
     Cancel,
     ConflictDetected,
     CapturePrompt,
@@ -296,6 +297,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::NtscRgb => ("NTSC RGB", "NTSC RGB"),
         UiText::FitToWindow => ("Fit to window", "ウィンドウに合わせる"),
         UiText::Ok => ("OK", "OK"),
+        UiText::Save => ("Save", "保存"),
         UiText::Cancel => ("Cancel", "キャンセル"),
         UiText::ConflictDetected => (
             "Conflicting bindings must be resolved before saving.",
@@ -707,6 +709,7 @@ mod tests {
             Discard,
             KeepEditing,
             DiscardUnsavedChanges,
+            Save,
             On,
             Off,
             Always,

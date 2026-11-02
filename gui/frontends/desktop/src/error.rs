@@ -43,26 +43,49 @@ impl Pane {
     pub(crate) fn build(self: &Rc<Self>) -> Result<View, String> {
         let close_view = Rc::new(RefCell::new(None::<panechord::WeakView>));
         let close = close_view.clone();
+        let dismiss = self.model.command(
+            |_| true,
+            move |_, ()| {
+                if let Some(view) = close
+                    .borrow()
+                    .as_ref()
+                    .and_then(panechord::WeakView::upgrade)
+                {
+                    view.close();
+                }
+            },
+            Binding::constant(()),
+        );
         let bindings = Presentation {
             title: self.model.bind(|model| model.title.clone(), None),
             text: self.model.bind(|model| model.text.clone(), None),
             ok: self.model.bind(|model| model.ok.clone(), None),
-            dismiss: self.model.command(
-                |_| true,
-                move |_, ()| {
-                    if let Some(view) = close
-                        .borrow()
-                        .as_ref()
-                        .and_then(panechord::WeakView::upgrade)
-                    {
-                        view.close();
-                    }
-                },
-                Binding::constant(()),
-            ),
+            dismiss: dismiss.clone(),
         };
         let view = panechord::try_view!("ui/error.yaml", bindings, panechord)?;
         close_view.replace(Some(view.downgrade()));
+        // Single-button alert: both Escape and Return dismiss, per the
+        // GNOME/Apple/Windows single-button convention (`invoke` no-ops
+        // while disabled; the button is always enabled here).
+        let dismiss_key = dismiss.clone();
+        let pane_key = self.clone();
+        view.on_surface_event(Rc::new(move |event| {
+            if pane_key.model.is_closed() {
+                return;
+            }
+            if let panechord::WindowEvent::KeyboardInput {
+                key,
+                pressed: true,
+                repeat: false,
+                synthetic: false,
+            } = event
+                && (key.as_str() == "Escape"
+                    || key.as_str() == "Enter"
+                    || key.as_str() == "NumpadEnter")
+            {
+                let _ = dismiss_key.invoke();
+            }
+        }));
         let pane = self.clone();
         view.on_close(Rc::new(move || {
             pane.model.close();
