@@ -4,14 +4,14 @@ use std::{collections::HashMap, env};
 
 #[cfg(test)]
 use nerust_core_traits::identity::SystemIdentity;
-#[cfg(test)]
-use nerust_nes_settings::NesSettings;
 use nerust_settings_core::model::local::HostBackendLocalSettings;
 #[cfg(test)]
 use nerust_settings_core::model::shared::DesktopSharedSettings;
 
 #[cfg(test)]
 use crate::test::DummySystemId;
+#[cfg(test)]
+use crate::test::DummySystemSettings;
 
 pub mod apply;
 pub mod manager;
@@ -250,7 +250,8 @@ pub(crate) fn test_shared_defaults() -> DesktopSharedSettings {
     DesktopSharedSettings {
         systems: HashMap::from([(
             Box::new(DummySystemId) as Box<_>,
-            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+            Box::new(DummySystemSettings::default())
+                as Box<dyn nerust_settings_traits::SystemSettings>,
         )]),
         ..Default::default()
     }
