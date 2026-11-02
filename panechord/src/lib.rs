@@ -69,32 +69,19 @@ pub struct RunnerBuilder {
     automatic_window_tabbing: Option<bool>,
     initial_window_size: Option<(u32, u32)>,
 }
-/// Window-tabbing builder option, mirroring tao's `WindowBuilderExtMacOS`.
-/// Portable across targets so frontend crates stay backend-neutral (the
-/// frontend policy gate forbids `target_os` in desktop code); off macOS
-/// every backend treats the stored flag as a no-op.
+/// Whether the backend may merge separate windows into the platform's
+/// automatic window-tab bar. This is a portable intent, not a macOS API:
+/// only platforms that merge windows into tabs (macOS AppKit) honor it;
+/// everywhere else it is a recorded no-op, so frontend crates stay free
+/// of `target_os` branches. When unset, each backend keeps its default.
 #[cfg(any(
     feature = "native",
     feature = "gtk",
     feature = "tao",
     feature = "macos"
 ))]
-pub trait RunnerBuilderExtMacOS: Sized {
-    /// Opt out of (or back into) AppKit automatic window tabbing. Takes
-    /// effect for windows created after `run`. When unset, each backend
-    /// keeps its default (the AppKit host opts out; tao/gtk keep the
-    /// system default).
-    fn allows_automatic_window_tabbing(self, enabled: bool) -> Self;
-}
-
-#[cfg(any(
-    feature = "native",
-    feature = "gtk",
-    feature = "tao",
-    feature = "macos"
-))]
-impl RunnerBuilderExtMacOS for RunnerBuilder {
-    fn allows_automatic_window_tabbing(mut self, enabled: bool) -> Self {
+impl RunnerBuilder {
+    pub fn automatic_window_tabbing(mut self, enabled: bool) -> Self {
         self.automatic_window_tabbing = Some(enabled);
         self
     }
@@ -119,68 +106,43 @@ impl RunnerBuilder {
         make: impl FnOnce(std::rc::Rc<dyn WindowHost<View>>, &RunnerConfig) -> Result<(), String>
         + 'static,
     ) -> Result<(), String> {
+        // One dispatch shape for every backend: each exposes `runner_config`,
+        // `run_host` and the pre-build option setters. A new builder option
+        // only touches this macro; a new backend only adds one arm below.
+        macro_rules! run_with_backend {
+            ($backend:ident) => {{
+                let config = $backend::runner_config();
+                let tabbing = self.automatic_window_tabbing;
+                let size = self.initial_window_size;
+                $backend::run_host(move |host| {
+                    if let Some(enabled) = tabbing {
+                        $backend::set_allows_automatic_window_tabbing(enabled);
+                    }
+                    if let Some((width, height)) = size {
+                        $backend::set_initial_window_size(width, height);
+                    }
+                    make(host, &config)
+                })
+            }};
+        }
         #[cfg(all(
             feature = "native",
             not(any(feature = "gtk", feature = "tao", feature = "macos"))
         ))]
         {
-            let config = panechord_native::runner_config();
-            let tabbing = self.automatic_window_tabbing;
-            let size = self.initial_window_size;
-            panechord_native::run_host(move |host| {
-                if let Some(enabled) = tabbing {
-                    panechord_native::set_allows_automatic_window_tabbing(enabled);
-                }
-                if let Some((width, height)) = size {
-                    panechord_native::set_initial_window_size(width, height);
-                }
-                make(host, &config)
-            })
+            run_with_backend!(panechord_native)
         }
         #[cfg(feature = "tao")]
         {
-            let config = panechord_tao::runner_config();
-            let tabbing = self.automatic_window_tabbing;
-            let size = self.initial_window_size;
-            panechord_tao::run_host(move |host| {
-                if let Some(enabled) = tabbing {
-                    panechord_tao::set_allows_automatic_window_tabbing(enabled);
-                }
-                if let Some((width, height)) = size {
-                    panechord_tao::set_initial_window_size(width, height);
-                }
-                make(host, &config)
-            })
+            run_with_backend!(panechord_tao)
         }
         #[cfg(feature = "gtk")]
         {
-            let config = panechord_gtk::runner_config();
-            let tabbing = self.automatic_window_tabbing;
-            let size = self.initial_window_size;
-            panechord_gtk::run_host(move |host| {
-                if let Some(enabled) = tabbing {
-                    panechord_gtk::set_allows_automatic_window_tabbing(enabled);
-                }
-                if let Some((width, height)) = size {
-                    panechord_gtk::set_initial_window_size(width, height);
-                }
-                make(host, &config)
-            })
+            run_with_backend!(panechord_gtk)
         }
         #[cfg(feature = "macos")]
         {
-            let config = panechord_macos::runner_config();
-            let tabbing = self.automatic_window_tabbing;
-            let size = self.initial_window_size;
-            panechord_macos::run_host(move |host| {
-                if let Some(enabled) = tabbing {
-                    panechord_macos::set_allows_automatic_window_tabbing(enabled);
-                }
-                if let Some((width, height)) = size {
-                    panechord_macos::set_initial_window_size(width, height);
-                }
-                make(host, &config)
-            })
+            run_with_backend!(panechord_macos)
         }
         #[cfg(not(any(
             feature = "native",
