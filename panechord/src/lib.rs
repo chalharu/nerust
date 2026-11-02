@@ -69,19 +69,39 @@ pub struct RunnerBuilder {
     automatic_window_tabbing: Option<bool>,
     initial_window_size: Option<(u32, u32)>,
 }
-/// Whether the backend may merge separate windows into the platform's
-/// automatic window-tab bar. This is a portable intent, not a macOS API:
-/// only platforms that merge windows into tabs (macOS AppKit) honor it;
-/// everywhere else it is a recorded no-op, so frontend crates stay free
-/// of `target_os` branches. When unset, each backend keeps its default.
-#[cfg(any(
-    feature = "native",
-    feature = "gtk",
-    feature = "tao",
-    feature = "macos"
+/// macOS-only builder options, mirroring tao's `WindowBuilderExtMacOS`.
+/// Available only on Apple targets; other platforms have no window tabbing.
+/// Frontend crates call this behind `#[cfg(target_os = "macos")]` (see the
+/// sanctioned exception in check_frontend_policy.py): the cfg is the
+/// platform boundary itself, not a backend leak.
+#[cfg(all(
+    target_os = "macos",
+    any(
+        feature = "native",
+        feature = "gtk",
+        feature = "tao",
+        feature = "macos"
+    )
 ))]
-impl RunnerBuilder {
-    pub fn automatic_window_tabbing(mut self, enabled: bool) -> Self {
+pub trait RunnerBuilderExtMacOS: Sized {
+    /// Opt out of (or back into) AppKit automatic window tabbing. Takes
+    /// effect for windows created after `run`. When unset, each backend
+    /// keeps its default (the AppKit host opts out; tao/gtk keep the
+    /// system default).
+    fn allows_automatic_window_tabbing(self, enabled: bool) -> Self;
+}
+
+#[cfg(all(
+    target_os = "macos",
+    any(
+        feature = "native",
+        feature = "gtk",
+        feature = "tao",
+        feature = "macos"
+    )
+))]
+impl RunnerBuilderExtMacOS for RunnerBuilder {
+    fn allows_automatic_window_tabbing(mut self, enabled: bool) -> Self {
         self.automatic_window_tabbing = Some(enabled);
         self
     }
