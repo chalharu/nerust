@@ -980,7 +980,11 @@ impl Pane {
             });
         }
         if !loaded {
-            let _ = self.model.update(|model| model.enabled = false);
+            // Gate on the current value: an unconditional update would clone
+            // the whole debugger Model (tables included) every 16 ms tick.
+            if self.model.with(|model| model.enabled) {
+                let _ = self.model.update(|model| model.enabled = false);
+            }
             return;
         }
         if reset {

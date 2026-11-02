@@ -219,49 +219,14 @@ impl Editor {
         let _ = self.status.update(move |status| *status = message);
         result
     }
-    pub(crate) fn build(self: &Rc<Self>, apply: Apply, quit: Rc<dyn Fn()>) -> Result<View, String> {
-        macro_rules! field {
-            ($section:ident, $field:ident, $setter:ident) => {{
-                let vm = self.vm.$section.clone();
-                self.binding(
-                    vm.view.clone(),
-                    |value| value.$field.clone(),
-                    Some(Rc::new(move |value| vm.$setter(value))),
-                )
-            }};
-        }
-        macro_rules! choices {
-            ($section:ident, $field:ident, $choices:ident, $setter:ident) => {{
-                choice(
-                    self.binding(
-                        self.vm.$section.view.clone(),
-                        |value| value.$choices.clone(),
-                        None,
-                    ),
-                    field!($section, $field, $setter),
-                )
-            }};
-        }
-        let vm = self.vm.general.clone();
-        let directory = self.binding(
-            vm.view.clone(),
-            |value| value.storage_directory.clone(),
-            Some(Rc::new(move |value: String| {
-                vm.set_storage_directory(if value.is_empty() {
-                    None
-                } else {
-                    Some(value.into())
-                })
-            })),
-        );
-        let volume = field!(audio, volume_percent, set_volume).convert(f64::from, |value| {
-            checked_integer(value, 0.0, 100.0).map(|value| value as u8)
-        });
-        let latency = field!(audio, latency_ms, set_latency).convert(f64::from, |value| {
-            checked_integer(value, 10.0, 200.0).map(|value| value as u16)
-        });
-        let language = self.language();
-        let view_slot = Rc::new(RefCell::new(None::<WeakView>));
+    /// Footer and input-row commands, split from `build` so command
+    /// wiring evolves apart from binding assembly (see `Commands`).
+    fn commands(
+        self: &Rc<Self>,
+        apply: &Apply,
+        quit: Rc<dyn Fn()>,
+        view_slot: &Rc<RefCell<Option<WeakView>>>,
+    ) -> Commands {
         let commit = apply.clone();
         let exit = self.exit.clone();
         let close = view_slot.clone();
@@ -354,7 +319,69 @@ impl Editor {
                 Binding::constant(()),
             )
         });
-        let bindings = Presentation {
+        Commands {
+            cancel,
+            accept,
+            discard,
+            keep,
+            capture,
+            clear,
+        }
+    }
+
+    /// All dialog bindings, split from `build`; `try_view!` consumes
+    /// the result directly.
+    fn presentation(self: &Rc<Self>, commands: Commands) -> Presentation {
+        macro_rules! field {
+            ($section:ident, $field:ident, $setter:ident) => {{
+                let vm = self.vm.$section.clone();
+                self.binding(
+                    vm.view.clone(),
+                    |value| value.$field.clone(),
+                    Some(Rc::new(move |value| vm.$setter(value))),
+                )
+            }};
+        }
+        macro_rules! choices {
+            ($section:ident, $field:ident, $choices:ident, $setter:ident) => {{
+                choice(
+                    self.binding(
+                        self.vm.$section.view.clone(),
+                        |value| value.$choices.clone(),
+                        None,
+                    ),
+                    field!($section, $field, $setter),
+                )
+            }};
+        }
+        let vm = self.vm.general.clone();
+        let directory = self.binding(
+            vm.view.clone(),
+            |value| value.storage_directory.clone(),
+            Some(Rc::new(move |value: String| {
+                vm.set_storage_directory(if value.is_empty() {
+                    None
+                } else {
+                    Some(value.into())
+                })
+            })),
+        );
+        let volume = field!(audio, volume_percent, set_volume).convert(f64::from, |value| {
+            checked_integer(value, 0.0, 100.0).map(|value| value as u8)
+        });
+        let latency = field!(audio, latency_ms, set_latency).convert(f64::from, |value| {
+            checked_integer(value, 10.0, 200.0).map(|value| value as u16)
+        });
+        let language = self.language();
+        let Commands {
+            cancel,
+            accept,
+            discard,
+            keep,
+            capture,
+            clear,
+        } = commands;
+        Presentation {
             input_pages: Binding::constant(layout::inputs(self, capture, clear)),
             system_pages: Binding::constant(layout::systems(self)),
             input_selection: self
@@ -495,7 +522,13 @@ impl Editor {
             accept,
             discard,
             keep,
-        };
+        }
+    }
+
+    pub(crate) fn build(self: &Rc<Self>, apply: Apply, quit: Rc<dyn Fn()>) -> Result<View, String> {
+        let view_slot = Rc::new(RefCell::new(None::<WeakView>));
+        let commands = self.commands(&apply, quit, &view_slot);
+        let bindings = self.presentation(commands);
         let view = panechord::try_view!("ui/settings.yaml", bindings, panechord)?;
         let editor = self.clone();
         view.on_surface_event(Rc::new(move |event| {
@@ -528,6 +561,17 @@ impl Editor {
 struct ChoiceBinding {
     items: Binding<Vec<Choice>>,
     selected: Binding<String>,
+}
+
+/// Footer and input-row commands assembled by `Editor::commands`.
+/// Kept at module scope (items are not allowed inside `impl` blocks).
+struct Commands {
+    cancel: Command,
+    accept: Command,
+    discard: Command,
+    keep: Command,
+    capture: layout::Capture,
+    clear: layout::Capture,
 }
 
 /// Static YAML captions as language-following bindings. Literals never
