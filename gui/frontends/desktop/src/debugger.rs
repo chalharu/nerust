@@ -1561,6 +1561,19 @@ mod operation_tests {
         );
         let (space, flight) = adapter.borrow().debugger_layout_begin();
         pane.start(space, flight);
+        // Pin disassembly to PRG start: the loader resumes on load, so the
+        // live program counter is racy until the fixture pause lands (under
+        // load the core can run whole frames in between and wander out of
+        // mapped PRG). Follow-PC would then anchor every snapshot on an
+        // unmapped address and no refresh could ever populate. PRG start is
+        // always mapped for the fixture ROM; tests that exercise follow-PC
+        // re-enable it explicitly.
+        pane.operations
+            .borrow_mut()
+            .as_mut()
+            .expect("operations connected")
+            .nav
+            .navigate(0, 0x8000);
         pane
     }
 
@@ -1589,6 +1602,9 @@ mod operation_tests {
     /// Settle until the display populates. Pause/step are fire-and-forget, so
     /// a snapshot taken mid-transition serves degenerates; a refresh
     /// re-snapshots once the core settles, like the UI's own retry.
+    /// Rounds wait briefly between attempts: back-to-back refreshes can
+    /// otherwise burn through while the emu thread is still catching up,
+    /// and an unloaded machine must not turn that into a false failure.
     fn settle_ready(pane: &Pane, adapter: &Rc<RefCell<SessionAdapter>>) {
         for _ in 0..10 {
             settle(pane, adapter, true);
@@ -1601,6 +1617,7 @@ mod operation_tests {
             if pane.model.snapshot().enabled {
                 pane.execute_for_test("refresh");
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("debugger display should populate");
     }
@@ -1847,8 +1864,12 @@ mod operation_tests {
         pane.execute_for_test("memory_go");
         settle(&pane, &fixture.adapter, true);
         // Disassembly Back undoes the disassembly pin; exercise it through
-        // an explicit pin so the undo stack is non-empty.
-        let pc = pane
+        // an explicit pin so the undo stack is non-empty. Pin the first
+        // line of the deterministic PRG page, not the PC marker: the live
+        // PC is racy after load (the loader resumes before the fixture
+        // pause lands), so hunting is_pc would inherit that race while any
+        // mapped line exercises pin/back/follow identically.
+        let anchor = pane
             .operations
             .borrow()
             .as_ref()
@@ -1856,13 +1877,12 @@ mod operation_tests {
                 operations
                     .display
                     .disasm_lines
-                    .iter()
-                    .find(|line| line.is_pc)
+                    .first()
                     .map(|line| line.addr)
             })
-            .expect("paused NES has a program counter");
+            .expect("pinned page disassembles");
         assert!(pane.model.update(move |model| {
-            model.disasm_addr = format!("{pc:08X}");
+            model.disasm_addr = format!("{anchor:08X}");
         }));
         pane.execute_for_test("disassembly_go");
         settle(&pane, &fixture.adapter, true);
