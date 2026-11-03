@@ -62,7 +62,7 @@ impl Pane {
             ok: self.model.bind(|model| model.ok.clone(), None),
             dismiss: dismiss.clone(),
         };
-        let view = panechord::try_view!("ui/error.yaml", bindings, panechord)?;
+        let view = panechord::try_view!("ui/error.yaml", bindings, panechord::backend)?;
         close_view.replace(Some(view.downgrade()));
         // Single-button alert: both Escape and Return dismiss, per the
         // GNOME/Apple/Windows single-button convention (`invoke` no-ops

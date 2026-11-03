@@ -182,6 +182,8 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Fetch panechord submodule
+        run: git submodule update --init panechord
       - name: Update Cargo.toml version
         env:
           VERSION: ${{ needs.prepare-context.outputs.version }}
@@ -254,6 +256,8 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Fetch panechord submodule
+        run: git submodule update --init panechord
       - name: Update Cargo.toml version
         env:
           VERSION: ${{ needs.prepare-context.outputs.version }}
@@ -326,6 +330,8 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Fetch panechord submodule
+        run: git submodule update --init panechord
       - name: Update Cargo.toml version
         env:
           VERSION: ${{ needs.prepare-context.outputs.version }}
@@ -390,6 +396,8 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-context.outputs.checkout_ref }}
+      - name: Fetch panechord submodule
+        run: git submodule update --init panechord
       - name: Update Cargo.toml version
         env:
           VERSION: ${{ needs.prepare-context.outputs.version }}

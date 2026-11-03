@@ -530,7 +530,7 @@ impl Editor {
         let commands = self.commands(&apply, quit, &view_slot);
         let keys = commands.clone();
         let bindings = self.presentation(commands);
-        let view = panechord::try_view!("ui/settings.yaml", bindings, panechord)?;
+        let view = panechord::try_view!("ui/settings.yaml", bindings, panechord::backend)?;
         let editor = self.clone();
         view.on_surface_event(Rc::new(move |event| {
             if editor.closed.get() {

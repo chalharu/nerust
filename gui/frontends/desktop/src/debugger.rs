@@ -1129,7 +1129,7 @@ impl Pane {
             model: self.model.clone(),
             action: self.action.clone(),
         };
-        let view = panechord::try_view!("ui/debugger.yaml", bindings, panechord)?;
+        let view = panechord::try_view!("ui/debugger.yaml", bindings, panechord::backend)?;
         let pane = self.clone();
         view.on_close(Rc::new(move || {
             pane.cancel();
