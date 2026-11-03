@@ -4670,20 +4670,6 @@ name = "panechord"
 version = "0.1.0-dev"
 dependencies = [
  "panechord-gtk",
- "panechord-macos",
- "panechord-macros",
- "panechord-runtime",
- "panechord-tao",
-]
-
-[[package]]
-name = "panechord-demo"
-version = "0.1.0-dev"
-dependencies = [
- "futures",
- "futures-timer",
- "panechord-gtk",
- "panechord-macos",
  "panechord-macros",
  "panechord-runtime",
  "panechord-tao",
@@ -4704,24 +4690,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "panechord-library"
-version = "0.1.0-dev"
-dependencies = [
- "futures",
- "futures-timer",
- "panechord-gtk",
- "panechord-macos",
- "panechord-macros",
- "panechord-runtime",
- "panechord-tao",
-]
-
-[[package]]
 name = "panechord-macos"
 version = "0.1.0-dev"
 dependencies = [
  "futures",
- "futures-timer",
  "panechord-runtime",
  "serde_json",
 ]
@@ -4730,14 +4702,13 @@ dependencies = [
 name = "panechord-macros"
 version = "0.1.0-dev"
 dependencies = [
- "futures",
  "panechord-markup",
  "panechord-runtime",
  "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "serde_json",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -4771,7 +4742,6 @@ dependencies = [
  "iced_tiny_skia",
  "iced_winit",
  "muda",
- "panechord-macros",
  "panechord-runtime",
  "raw-window-handle",
  "rfd",

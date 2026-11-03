@@ -3,6 +3,10 @@ name: Panechord
 on:
   push:
     paths:
+      # The submodule pointer itself (`panechord`): content changes inside
+      # the submodule never appear in superproject diffs, so the gitlink
+      # path must be listed alongside the content glob.
+      - "panechord"
       - "panechord/**"
       - "gui/frontends/desktop/**"
       - "gui/frontends/check_frontend_policy.py"
@@ -11,6 +15,7 @@ on:
       - "Cargo.lock"
   pull_request:
     paths:
+      - "panechord"
       - "panechord/**"
       - "gui/frontends/desktop/**"
       - "gui/frontends/check_frontend_policy.py"
@@ -35,5 +40,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Fetch panechord submodule
+        run: git submodule update --init panechord
       - name: Native regressions and release CPU budgets
         run: sh panechord/scripts/verify-docker.sh

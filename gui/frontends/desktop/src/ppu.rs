@@ -339,7 +339,7 @@ impl Pane {
     }
 
     pub(crate) fn build(self: &Rc<Self>) -> Result<View, String> {
-        let view = panechord::try_view!("ui/ppu.yaml", self.model, panechord)?;
+        let view = panechord::try_view!("ui/ppu.yaml", self.model, panechord::backend)?;
         let pane = self.clone();
         view.on_close(Rc::new(move || {
             pane.cancel();

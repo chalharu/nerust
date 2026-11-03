@@ -254,7 +254,7 @@ impl Pane {
             clear,
             close,
         };
-        let view = panechord::try_view!("ui/history.yaml", bindings, panechord)?;
+        let view = panechord::try_view!("ui/history.yaml", bindings, panechord::backend)?;
         close_view.replace(Some(view.downgrade()));
         let pane = self.clone();
         view.on_close(Rc::new(move || {

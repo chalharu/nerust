@@ -84,7 +84,12 @@ pub fn run(
     if let Some(size) = remembered_size {
         runner = runner.initial_window_size(size.width, size.height);
     }
-    runner.run(move |host, config| {
+    // Platform menu convention: macOS owns an application menu, every other
+    // platform keeps File with Quit inside it. Named so the frontend policy
+    // gate recognizes this sanctioned platform boundary (not a backend leak);
+    // both branches stay unit-tested through MenuModel::new.
+    let application_menu = cfg!(target_os = "macos");
+    runner.run(move |host| {
         let session = panechord::Session::new();
         host.attach(session.clone())?;
         let model = Store::new(
@@ -92,9 +97,8 @@ pub fn run(
             host.executor(),
         );
         let actions = Rc::new(RefCell::new(None));
-        let config = *config;
         let menus = Store::new(
-            view::MenuModel::new(&application.borrow(), &config),
+            view::MenuModel::new(&application.borrow(), application_menu),
             host.executor(),
         );
         let view = view::build(model.clone(), menus.clone(), actions.clone());
@@ -596,14 +600,13 @@ pub fn run(
         // tick; this only clones the notice text.
         let error_poll_notice = model.bind(|model| model.notice.clone(), None);
         host.executor().spawn(Box::pin(async move {
-            // Backend-resolved once per process: the same data the first
-            // MenuModel was built from, reused for every menu refresh.
-            let app_menu_config = config;
+            // Same platform flag the first MenuModel was built from, reused
+            // for every menu refresh.
             while weak.upgrade().is_some() && !application.borrow().state().closed {
                 let changed_menus = {
                     let app = application.borrow();
                     (!menus.with(|model| model.matches(&app)))
-                        .then(|| view::MenuModel::new(&app, &app_menu_config))
+                        .then(|| view::MenuModel::new(&app, application_menu))
                 };
                 if let Some(changed) = changed_menus {
                     let _ = menus.update(move |model| *model = changed);

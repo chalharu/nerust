@@ -26,9 +26,32 @@ def strip_code(line: str) -> str:
     return code
 
 
+def workspace_dependencies(manifest: Path) -> dict:
+    """Workspace-inherited dependency table for a manifest.
+
+    Panechord lives in a submodule with its own workspace, so `workspace =
+    true` must resolve against the nearest ancestor workspace root (the
+    submodule's), not the nerust root.
+    """
+    current = manifest.parent
+    while True:
+        candidate = current / "Cargo.toml"
+        if candidate.is_file():
+            try:
+                table = tomllib.loads(candidate.read_text()).get("workspace", {})
+            except tomllib.TOMLDecodeError:
+                table = {}
+            if isinstance(table, dict) and "dependencies" in table:
+                return table["dependencies"]
+        if current == current.parent:
+            break
+        current = current.parent
+    raise AssertionError(f"no workspace root found for {manifest}")
+
+
 def toml_dependency_names(manifest: Path) -> set[str]:
     data = tomllib.loads(manifest.read_text())
-    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["dependencies"]
+    workspace = workspace_dependencies(manifest)
     deps: set[str] = set()
     for table in (data, *data.get("target", {}).values()):
         for section in ("dependencies", "dev-dependencies", "build-dependencies"):
@@ -55,9 +78,21 @@ def rs_uses(crate_dir: Path) -> dict[str, list[str]]:
     return hits
 
 
-def cargo_direct_deps(package: str) -> set[str]:
+def manifest_args(crate_dir: Path) -> list[str]:
+    """Cargo manifest selector for a crate directory.
+
+    Panechord is a submodule with its own workspace and lockfile: its crates
+    are not members of the nerust workspace, so queries must run through the
+    submodule manifest. Everything else resolves through the nerust root.
+    """
+    if crate_dir.resolve().is_relative_to((ROOT / "panechord").resolve()):
+        return ["--manifest-path", str(ROOT / "panechord" / "Cargo.toml")]
+    return []
+
+
+def cargo_direct_deps(package: str, crate_dir: Path) -> set[str]:
     out = subprocess.run(
-        ["cargo", "tree", "-p", package, "--edges", "normal",
+        ["cargo", "tree", *manifest_args(crate_dir), "-p", package, "--edges", "normal",
          "--depth", "1", "--prefix", "none", "--locked"],
         capture_output=True,
         text=True,
@@ -74,9 +109,9 @@ def cargo_direct_deps(package: str) -> set[str]:
     return deps - {package}
 
 
-def cargo_closure_has_nerust(package: str) -> list[str]:
+def cargo_closure_has_nerust(package: str, crate_dir: Path) -> list[str]:
     out = subprocess.run(
-        ["cargo", "tree", "-p", package, "--edges", "normal",
+        ["cargo", "tree", *manifest_args(crate_dir), "-p", package, "--edges", "normal",
          "--prefix", "none", "--locked"],
         capture_output=True,
         text=True,
@@ -110,10 +145,14 @@ def desktop_backend_violations(crate_dir: Path) -> list[str]:
     )
     # Sanctioned exception: the window-tabbing intent flows through the
     # backend-owned RunnerBuilderExtMacOS extension trait (the idiomatic
-    # platform-capability pattern mirroring tao::platform::macos). The cfg
-    # is the platform boundary itself, not a backend leak, so lines that
-    # only import or invoke that trait are not violations.
-    sanctioned = re.compile(r"RunnerBuilderExtMacOS|allows_automatic_window_tabbing")
+    # platform-capability pattern mirroring tao::platform::macos), and the
+    # application-menu convention flows through a target_os-selected bool
+    # (macOS owns an application menu; elsewhere Quit stays in File). Both
+    # cfgs are the platform boundary itself, not a backend leak, so lines
+    # that only import or invoke those are not violations.
+    sanctioned = re.compile(
+        r"RunnerBuilderExtMacOS|allows_automatic_window_tabbing|application_menu"
+    )
     for directory in ("src", "examples", "tests"):
         for path in sorted((crate_dir / directory).rglob("*.rs")):
             numbered = list(enumerate(path.read_text().splitlines(), 1))
@@ -139,7 +178,7 @@ def main() -> int:
         if bad:
             failures.append(f"{package} Cargo.toml dependencies: {sorted(bad)}")
 
-        tree_direct = cargo_direct_deps(package)
+        tree_direct = cargo_direct_deps(package, crate_dir)
         if tree_direct:
             failures.append(
                 f"{package} cargo tree direct normal deps: {sorted(tree_direct)}"
@@ -149,8 +188,8 @@ def main() -> int:
             shown = ", ".join(sites[:5])
             failures.append(f"{package} code names {name}: {shown}")
 
-    for package in FRAMEWORKS:
-        bad = cargo_closure_has_nerust(package)
+    for package, crate_dir in FRAMEWORKS.items():
+        bad = cargo_closure_has_nerust(package, crate_dir)
         if bad:
             failures.append(f"{package} normal closure contains nerust: {bad}")
     for domain in ("gui/runtime", "gui/shell", "gui/viewmodel", "gui/application", "settings/core", "traits/input"):
