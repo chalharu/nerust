@@ -1,9 +1,0 @@
-schema_version: 2
-root:
-  type: Window
-  id: main
-  title: {literal: Lifecycle}
-  content:
-    type: TextBox
-    id: name
-    text: {bind: {path: name, mode: TwoWay}}
