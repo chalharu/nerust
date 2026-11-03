@@ -11,9 +11,9 @@ version.workspace = true
 
 [dependencies]
 nerust_core_traits.workspace = true
-nerust_system_traits.workspace = true
 nerust_input_traits.workspace = true
 nerust_settings_traits.workspace = true
+nerust_system_traits.workspace = true
 serde = { features = ["derive", "std"], workspace = true }
 
 [dev-dependencies]
