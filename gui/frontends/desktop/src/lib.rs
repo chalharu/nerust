@@ -88,7 +88,6 @@ pub fn run(
     // platform keeps File with Quit inside it. Named so the frontend policy
     // gate recognizes this sanctioned platform boundary (not a backend leak);
     // both branches stay unit-tested through MenuModel::new.
-    let application_menu = cfg!(target_os = "macos");
     runner.run(move |host| {
         let session = panechord::Session::new();
         host.attach(session.clone())?;
@@ -97,10 +96,7 @@ pub fn run(
             host.executor(),
         );
         let actions = Rc::new(RefCell::new(None));
-        let menus = Store::new(
-            view::MenuModel::new(&application.borrow(), application_menu),
-            host.executor(),
-        );
+        let menus = Store::new(view::MenuModel::new(&application.borrow()), host.executor());
         let view = view::build(model.clone(), menus.clone(), actions.clone());
         let app = application.clone();
         let render = renderer.clone();
@@ -605,8 +601,7 @@ pub fn run(
             while weak.upgrade().is_some() && !application.borrow().state().closed {
                 let changed_menus = {
                     let app = application.borrow();
-                    (!menus.with(|model| model.matches(&app)))
-                        .then(|| view::MenuModel::new(&app, application_menu))
+                    (!menus.with(|model| model.matches(&app))).then(|| view::MenuModel::new(&app))
                 };
                 if let Some(changed) = changed_menus {
                     let _ = menus.update(move |model| *model = changed);

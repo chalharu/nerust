@@ -4,52 +4,10 @@ root:
   id: main
   title: {literal: "Nerust"}
   menus:
-    # Explicit HIG application menu for hosts that need one (AppKit consumes
-    # the first submenu). Gated by injected runner config; elsewhere it
-    # desugars to an empty title with empty content and stays out of the bar.
-    - id: app
-      title: {literal: "Nerust"}
-      command: choose
-      nested: true
-      visible: {bind: {path: app_visible, source: External}}
-      items:
-        - id: about
-          label: {bind: {path: about_label, source: External}}
-          argument: {bind: {path: about_arg, source: External}}
-          role: About
-        - id: about_separator
-          label: {literal: ""}
-          argument: {bind: {path: inert_arg, source: External}}
-          role: Separator
-        - id: preferences
-          label: {bind: {path: preferences_label, source: External}}
-          argument: {bind: {path: preferences_arg, source: External}}
-          enabled: {bind: {path: available, source: External}}
-          shortcut: Primary+Comma
-        - id: preferences_separator
-          label: {literal: ""}
-          argument: {bind: {path: inert_arg, source: External}}
-          role: Separator
-        - id: open
-          label: {bind: {path: open_label, source: External}}
-          argument: {bind: {path: open_arg, source: External}}
-          enabled: {bind: {path: available, source: External}}
-          shortcut: Primary+O
-        - id: close
-          label: {bind: {path: close_label, source: External}}
-          argument: {bind: {path: close_arg, source: External}}
-          enabled: {bind: {path: loaded, source: External}}
-        - id: quit
-          label: {bind: {path: quit_label, source: External}}
-          argument: {bind: {path: quit_arg, source: External}}
-          enabled: {bind: {path: available, source: External}}
-          role: Quit
-          shortcut: Primary+Q
     - id: file
       title: {bind: {path: file_title, source: External}}
       command: choose
       nested: true
-      visible: {bind: {path: file_visible, source: External}}
       items:
         - id: open
           label: {bind: {path: open_label, source: External}}
@@ -69,7 +27,6 @@ root:
           label: {bind: {path: quit_label, source: External}}
           argument: {bind: {path: quit_arg, source: External}}
           enabled: {bind: {path: available, source: External}}
-          visible: {bind: {path: quit_in_file, source: External}}
           role: Quit
           shortcut: {bind: {path: quit_shortcut, source: External}}
     - id: states
