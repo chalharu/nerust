@@ -17,7 +17,7 @@ templates:
       gap: 8
       children:
         - {type: Label, id: label, style: {vertical_alignment: Center, placement: {width: 160}}, text: {bind: {path: label, source: External}}}
-        - {type: Label, id: value, style: {vertical_alignment: Center}, text: {bind: {path: value, source: External}}}
+        - {type: Label, id: value, style: {horizontal_alignment: Stretch, vertical_alignment: Center}, text: {bind: {path: value, source: External}}}
         - {type: Button, id: change, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: change_label, source: External}}, command: capture}
         - {type: Button, id: clear, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: clear_label, source: External}}, command: clear}
   binding_page:

@@ -314,28 +314,41 @@ pub struct ViewInsets {
     pub left: u32,
 }
 
-/// Base OSD font size from the client height. The 6px floor keeps tiny
-/// surfaces legible on both sides.
-pub fn osd_font_px(client_height: u32, ui_scale: f32) -> u32 {
+/// Base OSD font size from the client height (physical pixels). The 6px floor
+/// keeps tiny surfaces legible on both sides. `density` is physical pixels
+/// per logical pixel (the window scale factor); the minimum canvas the
+/// overlay scales against is 480 *logical* pixels, so HiDPI surfaces hold the
+/// 480-logical size instead of shrinking with the window. `ui_scale` is the
+/// frontend's aesthetic raster scale (1.0 desktop, 0.5 Android) and multiplies
+/// on top of density.
+pub fn osd_font_px(client_height: u32, density: f32, ui_scale: f32) -> u32 {
     if client_height == 0 {
         return 0;
     }
+    let density = if density.is_finite() && density > 0.0 {
+        density
+    } else {
+        1.0
+    };
     // Minimum canvas the overlay scales against: below it the font holds at
-    // the 480px size instead of shrinking with the window (2x the NES 240p
-    // canvas, the smallest surface the overlay stays legible on).
-    const MIN_OSD_CLIENT_HEIGHT: u32 = 480;
-    (f64::from(client_height.max(MIN_OSD_CLIENT_HEIGHT)) * 0.022 * f64::from(ui_scale))
+    // the 480-logical-px size instead of shrinking with the window (2x the
+    // NES 240p canvas, the smallest surface the overlay stays legible on).
+    // The client height is physical pixels, so the floor scales with density
+    // while the 2.2% ratio above it is density-independent.
+    let floor = (480.0 * density).round().max(1.0) as u32;
+    (f64::from(client_height.max(floor)) * 0.022 * f64::from(ui_scale))
         .ceil()
         .max(6.0) as u32
 }
 
 /// Strip reservation for `rows` of OSD pills. Rounds up where the rasterizer
 /// truncates (`font_px * 16 / 10`), so the reservation always covers the layer.
-pub fn strip_pixels(client_height: u32, rows: u32, ui_scale: f32) -> u32 {
+/// `density`/`ui_scale` match [`osd_font_px`].
+pub fn strip_pixels(client_height: u32, rows: u32, density: f32, ui_scale: f32) -> u32 {
     if rows == 0 || client_height == 0 {
         return 0;
     }
-    let font_px = osd_font_px(client_height, ui_scale);
+    let font_px = osd_font_px(client_height, density, ui_scale);
     let row = (font_px * 16).div_ceil(10) + (4.0 * ui_scale).round() as u32;
     let margin = (8.0 * ui_scale).round() as u32;
     let gap = (4.0 * ui_scale).round() as u32;
@@ -511,17 +524,29 @@ mod tests {
 
     #[test]
     fn strip_pixels_matches_raster_floor_at_scale_one() {
-        assert_eq!(strip_pixels(1000, 1, 1.0), 48);
-        assert_eq!(strip_pixels(1000, 2, 1.0), 92);
-        assert_eq!(strip_pixels(0, 1, 1.0), 0);
-        assert_eq!(strip_pixels(1000, 0, 1.0), 0);
+        assert_eq!(strip_pixels(1000, 1, 1.0, 1.0), 48);
+        assert_eq!(strip_pixels(1000, 2, 1.0, 1.0), 92);
+        assert_eq!(strip_pixels(0, 1, 1.0, 1.0), 0);
+        assert_eq!(strip_pixels(1000, 0, 1.0, 1.0), 0);
     }
 
     #[test]
     fn strip_pixels_halves_with_ui_scale() {
         // 640px surface at 0.5: font 8px, rows stay covered.
-        assert_eq!(osd_font_px(640, 0.5), 8);
-        assert_eq!(strip_pixels(640, 1, 0.5), 19);
+        assert_eq!(osd_font_px(640, 1.0, 0.5), 8);
+        assert_eq!(strip_pixels(640, 1, 1.0, 0.5), 19);
+    }
+
+    #[test]
+    fn osd_floor_is_logical_pixels() {
+        // Density 2: the 480 floor means 480 logical (960 physical), so a
+        // 300-logical-pt window (600 physical) holds the 480-logical size
+        // (22 physical px) instead of shrinking to the 600-physical size.
+        assert_eq!(osd_font_px(600, 2.0, 1.0), 22);
+        assert_eq!(osd_font_px(600, 1.0, 1.0), 14);
+        // Non-finite density falls back to 1.0 (old behavior).
+        assert_eq!(osd_font_px(600, f32::NAN, 1.0), 14);
+        assert_eq!(osd_font_px(100, 2.0, 1.0), 22);
     }
 
     #[test]
@@ -792,12 +817,12 @@ mod tests {
 
     #[test]
     fn font_and_error_helpers_cover_edges() {
-        assert_eq!(osd_font_px(0, 1.0), 0);
-        assert_eq!(osd_font_px(720, 1.0), 16);
+        assert_eq!(osd_font_px(0, 1.0, 1.0), 0);
+        assert_eq!(osd_font_px(720, 1.0, 1.0), 16);
         // Below the minimum canvas the font holds instead of shrinking.
-        assert_eq!(osd_font_px(480, 1.0), 11);
-        assert_eq!(osd_font_px(240, 1.0), 11);
-        assert_eq!(osd_font_px(100, 1.0), 11);
+        assert_eq!(osd_font_px(480, 1.0, 1.0), 11);
+        assert_eq!(osd_font_px(240, 1.0, 1.0), 11);
+        assert_eq!(osd_font_px(100, 1.0, 1.0), 11);
         let err = RendererError::not_attached("attach");
         assert!(err.to_string().contains("attach"));
         assert_eq!(err.kind(), RendererErrorKind::NotAttached);

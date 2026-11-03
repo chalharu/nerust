@@ -64,6 +64,13 @@ impl RenderAdapter {
         }
     }
 
+    /// Physical pixels per logical pixel for the OSD density floor.
+    pub(crate) fn density(&self) -> f32 {
+        self.window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor() as f32)
+    }
+
     pub(crate) fn set_logical_bounds(&mut self, width: f32, height: f32) {
         self.logical_bounds = (width, height);
         let scale = self
@@ -246,6 +253,7 @@ mod tests {
             height: 1,
             ui_scale: 1.0,
             safe_insets: ViewInsets::default(),
+            density: 1.0,
         }
     }
 

@@ -630,6 +630,7 @@ pub fn run(
                                 height: 0,
                                 ui_scale: 1.0,
                                 safe_insets: nerust_gui_shell::session::osd::ViewInsets::default(),
+                                density: renderer.borrow().density(),
                             };
                             renderer.borrow_mut().capture(
                                 frame,

@@ -23,5 +23,5 @@ root:
             style: {vertical_alignment: Center}
             children:
               - {type: Label, id: count, style: {horizontal_alignment: End}, text: {bind: {path: count, source: External}}}
-      - {type: Table, id: table, style: {vertical_alignment: Stretch, placement: {height: 300}}, source: {bind: {path: table, source: External}}}
+      - {type: Table, id: table, style: {vertical_alignment: Stretch}, source: {bind: {path: table, source: External}}}
       - {type: Button, id: close, style: {horizontal_alignment: End, vertical_alignment: End}, text: {bind: {path: close_label, source: External}}, command: close}
