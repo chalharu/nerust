@@ -85,11 +85,12 @@ impl MenuModel {
             && Arc::ptr_eq(&self.slots, &slots)
     }
 
-    pub(crate) fn new(
-        app: &Application<crate::SessionAdapter>,
-        config: &panechord::RunnerConfig,
-    ) -> Self {
-        let application_menu = config.application_menu;
+    pub(crate) fn new(app: &Application<crate::SessionAdapter>, application_menu: bool) -> Self {
+        // Quit lives in the File menu unless the platform owns an application
+        // menu for it. The backend used to inject both flags (`RunnerConfig`);
+        // current panechord leaves the policy to the app: macOS gets the
+        // application menu, every other platform keeps File + Quit in File.
+        let quit_in_file = !application_menu;
         let state = app.state();
         let language = app.settings().shared.general.language;
         let shortcuts = app.settings().shared.input.shortcuts.keyboard.clone();
@@ -140,7 +141,7 @@ impl MenuModel {
             active_slot,
             app_visible: application_menu,
             file_visible: !application_menu,
-            quit_in_file: config.menu_quit_in_file,
+            quit_in_file,
             available,
             loaded,
             pause_enabled: loaded && !state.user_paused,
@@ -341,7 +342,7 @@ pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actio
         model,
         actions,
     };
-    panechord::view!("ui/main.yaml", bindings, panechord)
+    panechord::view!("ui/main.yaml", bindings, panechord::backend)
 }
 
 #[cfg(test)]
@@ -353,18 +354,8 @@ mod tests {
     fn skeleton_leaves_carry_localized_labels_and_gating() {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
-        for config in [
-            panechord::RunnerConfig {
-                application_menu: false,
-                menu_quit_in_file: true,
-            },
-            panechord::RunnerConfig {
-                application_menu: true,
-                menu_quit_in_file: false,
-            },
-        ] {
-            let application_menu = config.application_menu;
-            let model = MenuModel::new(&app, &config);
+        for application_menu in [false, true] {
+            let model = MenuModel::new(&app, application_menu);
             assert_eq!(model.app_visible, application_menu);
             assert_eq!(model.file_visible, !application_menu);
             assert_eq!(model.file_title, text(model.language, UiText::File));
@@ -389,23 +380,13 @@ mod tests {
     }
 
     #[test]
-    fn accelerator_ownership_follows_injected_runner_config() {
-        // The backend resolves the flag at startup and injects it here, so
-        // both branches run on any platform without a macOS host.
-        for config in [
-            panechord::RunnerConfig {
-                application_menu: false,
-                menu_quit_in_file: true,
-            },
-            panechord::RunnerConfig {
-                application_menu: true,
-                menu_quit_in_file: false,
-            },
-        ] {
-            let application_menu = config.application_menu;
+    fn accelerator_ownership_follows_application_menu_flag() {
+        // The app resolves the flag at startup from the platform, so both
+        // branches run on any platform without a macOS host.
+        for application_menu in [false, true] {
             let (adapter, _dir) = loaded_adapter();
             let app = nerust_gui_application::Application::new(adapter);
-            let model = MenuModel::new(&app, &config);
+            let model = MenuModel::new(&app, application_menu);
             if application_menu {
                 assert_eq!(model.about_label, text(model.language, UiText::About));
                 assert_eq!(
@@ -418,10 +399,9 @@ mod tests {
                 assert_eq!(model.settings_shortcut.as_deref(), Some("Primary+Comma"));
                 assert_eq!(model.quit_shortcut.as_deref(), Some("Primary+Q"));
             }
-            // Quit membership follows the injected convention on both
-            // branches: a headerbar-style host clears it (Quit leaves the
-            // File menu) while menubar hosts keep it.
-            assert_eq!(model.quit_in_file, config.menu_quit_in_file);
+            // Quit membership follows the platform convention on both
+            // branches: without an application menu Quit stays in File.
+            assert_eq!(model.quit_in_file, !application_menu);
         }
     }
 
@@ -432,13 +412,7 @@ mod tests {
         let app = nerust_gui_application::Application::new(adapter);
         // Fresh fixture: no slots yet, so the subtrees carry the disabled
         // placeholder with a create-slot fallback argument.
-        let model = MenuModel::new(
-            &app,
-            &panechord::RunnerConfig {
-                application_menu: false,
-                menu_quit_in_file: true,
-            },
-        );
+        let model = MenuModel::new(&app, false);
         assert!(model.slot_submenu_enabled, "submenus open when loaded");
         for nodes in [
             &model.select_slot_nodes,
