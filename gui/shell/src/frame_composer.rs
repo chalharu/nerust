@@ -38,12 +38,19 @@ impl FrameComposer {
         }
         sync.width = size.width;
         sync.height = size.height;
+        self.raster.set_density(sync.density);
         let (top, bottom) = sync.chrome.reserved_rows();
         pipeline.set_reserved_strip(nerust_render_traits::ReservedStrip {
-            top: nerust_render_traits::renderer::strip_pixels(size.height, top, sync.ui_scale),
+            top: nerust_render_traits::renderer::strip_pixels(
+                size.height,
+                top,
+                sync.density,
+                sync.ui_scale,
+            ),
             bottom: nerust_render_traits::renderer::strip_pixels(
                 size.height,
                 bottom,
+                sync.density,
                 sync.ui_scale,
             ),
         });
