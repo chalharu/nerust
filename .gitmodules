@@ -7,3 +7,6 @@
 [submodule "roms/gbc/mattcurrie_mealybug-tearoom-tests/repo/mgblib"]
 	path = roms/gbc/mattcurrie_mealybug-tearoom-tests/repo/mgblib
 	url = https://github.com/mattcurrie/mgblib
+[submodule "panechord"]
+	path = panechord
+	url = https://github.com/chalharu/panechord
