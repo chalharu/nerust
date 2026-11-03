@@ -44,12 +44,18 @@ fn project(
 }
 
 fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowView>) -> Table {
+    // Explicit widths on the bounded columns: tao sizes header and body rows
+    // independently, so Shrink columns never line up across the rule. Fixed
+    // widths pin header and body to the same tracks on every backend (gtk
+    // SizeGroups and macOS NSTableColumns honor them too); only the message
+    // column stretches. Datetime is always 19 chars of 5/6-scale monospace.
+    let widths = [Some(160.0), Some(80.0), Some(150.0), None];
     let columns = headers
         .into_iter()
         .enumerate()
         .map(|(index, title)| TableColumn {
             title,
-            width: None,
+            width: widths[index],
             text: if index == 0 || index == 2 {
                 TextStyle {
                     role: TextRole::Code,
