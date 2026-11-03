@@ -32,12 +32,6 @@ pub(crate) struct MenuModel {
     shortcuts: Vec<ShortcutBinding>,
     slots: Arc<[nerust_persistence::model::StateSlotSummary]>,
     active_slot: Option<u64>,
-    // Static skeleton leaves: menu structure lives in ui/main.yaml, this
-    // model only supplies localized labels, enablement, dynamic subtrees,
-    // and the injected application-menu switch.
-    app_visible: bool,
-    file_visible: bool,
-    quit_in_file: bool,
     available: bool,
     loaded: bool,
     pause_enabled: bool,
@@ -48,8 +42,6 @@ pub(crate) struct MenuModel {
     quit_shortcut: Option<String>,
     file_title: String,
     emulation_title: String,
-    about_label: String,
-    preferences_label: String,
     quit_label: String,
     open_label: String,
     close_label: String,
@@ -85,12 +77,7 @@ impl MenuModel {
             && Arc::ptr_eq(&self.slots, &slots)
     }
 
-    pub(crate) fn new(app: &Application<crate::SessionAdapter>, application_menu: bool) -> Self {
-        // Quit lives in the File menu unless the platform owns an application
-        // menu for it. The backend used to inject both flags (`RunnerConfig`);
-        // current panechord leaves the policy to the app: macOS gets the
-        // application menu, every other platform keeps File + Quit in File.
-        let quit_in_file = !application_menu;
+    pub(crate) fn new(app: &Application<crate::SessionAdapter>) -> Self {
         let state = app.state();
         let language = app.settings().shared.general.language;
         let shortcuts = app.settings().shared.input.shortcuts.keyboard.clone();
@@ -103,8 +90,8 @@ impl MenuModel {
         };
         // The application menu owns these accelerators where it exists;
         // registering the same accelerator twice leaves routing ambiguous.
-        let settings_shortcut = (!application_menu).then(|| "Primary+Comma".into());
-        let quit_shortcut = (!application_menu).then(|| "Primary+Q".into());
+        let settings_shortcut = Some("Primary+Comma".to_string());
+        let quit_shortcut = Some("Primary+Q".to_string());
         let slot_nodes = |id: &str, action: fn(u64) -> SessionAction| {
             let mut children: Vec<_> = slots
                 .iter()
@@ -139,9 +126,6 @@ impl MenuModel {
             shortcuts: shortcuts.clone(),
             slots: slots.clone(),
             active_slot,
-            app_visible: application_menu,
-            file_visible: !application_menu,
-            quit_in_file,
             available,
             loaded,
             pause_enabled: loaded && !state.user_paused,
@@ -152,8 +136,6 @@ impl MenuModel {
             quit_shortcut,
             file_title: label(UiText::File),
             emulation_title: label(UiText::Emulation),
-            about_label: label(UiText::About),
-            preferences_label: label(UiText::Preferences),
             quit_label: label(UiText::Quit),
             open_label: label(UiText::Open),
             close_label: label(UiText::Close),
@@ -203,9 +185,6 @@ pub(crate) fn screen(view: &View, parent: &Parent, id: &str, source: Binding<Opt
 #[derive(Clone)]
 struct Presentation {
     screen: Binding<Option<ImageFrame>>,
-    app_visible: Binding<bool>,
-    file_visible: Binding<bool>,
-    quit_in_file: Binding<bool>,
     available: Binding<bool>,
     loaded: Binding<bool>,
     pause_enabled: Binding<bool>,
@@ -216,8 +195,6 @@ struct Presentation {
     quit_shortcut: Binding<Option<String>>,
     file_title: Binding<String>,
     emulation_title: Binding<String>,
-    about_label: Binding<String>,
-    preferences_label: Binding<String>,
     quit_label: Binding<String>,
     open_label: Binding<String>,
     close_label: Binding<String>,
@@ -241,8 +218,6 @@ struct Presentation {
     save_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
     load_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
     delete_slot_nodes: Binding<Vec<MenuNode<Intent>>>,
-    about_arg: Binding<Intent>,
-    preferences_arg: Binding<Intent>,
     quit_arg: Binding<Intent>,
     open_arg: Binding<Intent>,
     close_arg: Binding<Intent>,
@@ -282,9 +257,6 @@ pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actio
     }
     let bindings = Presentation {
         screen: model.bind(|model| model.screen.clone(), None),
-        app_visible: menus.bind(|model| model.app_visible, None),
-        file_visible: menus.bind(|model| model.file_visible, None),
-        quit_in_file: menus.bind(|model| model.quit_in_file, None),
         available: menus.bind(|model| model.available, None),
         loaded: menus.bind(|model| model.loaded, None),
         pause_enabled: menus.bind(|model| model.pause_enabled, None),
@@ -295,8 +267,6 @@ pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actio
         quit_shortcut: menus.bind(|model| model.quit_shortcut.clone(), None),
         file_title: menus.bind(|model| model.file_title.clone(), None),
         emulation_title: menus.bind(|model| model.emulation_title.clone(), None),
-        about_label: menus.bind(|model| model.about_label.clone(), None),
-        preferences_label: menus.bind(|model| model.preferences_label.clone(), None),
         quit_label: menus.bind(|model| model.quit_label.clone(), None),
         open_label: menus.bind(|model| model.open_label.clone(), None),
         close_label: menus.bind(|model| model.close_label.clone(), None),
@@ -320,8 +290,6 @@ pub(crate) fn build(model: Store<Model>, menus: Store<MenuModel>, actions: Actio
         save_slot_nodes: menus.bind(|model| model.save_slot_nodes.clone(), None),
         load_slot_nodes: menus.bind(|model| model.load_slot_nodes.clone(), None),
         delete_slot_nodes: menus.bind(|model| model.delete_slot_nodes.clone(), None),
-        about_arg: constant(Intent::About),
-        preferences_arg: constant(Intent::Settings),
         quit_arg: constant(Intent::Quit),
         open_arg: constant(Intent::Open),
         close_arg: constant(Intent::Session(SessionAction::Unload)),
@@ -354,55 +322,36 @@ mod tests {
     fn skeleton_leaves_carry_localized_labels_and_gating() {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
-        for application_menu in [false, true] {
-            let model = MenuModel::new(&app, application_menu);
-            assert_eq!(model.app_visible, application_menu);
-            assert_eq!(model.file_visible, !application_menu);
-            assert_eq!(model.file_title, text(model.language, UiText::File));
-            assert_eq!(
-                model.emulation_title,
-                text(model.language, UiText::Emulation)
-            );
-            // Loaded fixture with slots: creation and per-slot traffic enabled.
-            assert!(model.available && model.loaded);
-            assert_eq!(model.open_label, text(model.language, UiText::Open));
-            assert_eq!(
-                model.debugger_label,
-                nerust_gui_runtime::menu_labels::shortcut_hint(
-                    text(model.language, UiText::OpenDebugger),
-                    &model.shortcuts,
-                    ShortcutAction::OpenDebugger,
-                )
-            );
-            assert_eq!(model.pause_label, text(model.language, UiText::Pause));
-            assert!(model.matches(&app));
-        }
+        let model = MenuModel::new(&app);
+        assert_eq!(model.file_title, text(model.language, UiText::File));
+        assert_eq!(
+            model.emulation_title,
+            text(model.language, UiText::Emulation)
+        );
+        // Loaded fixture with slots: creation and per-slot traffic enabled.
+        assert!(model.available && model.loaded);
+        assert_eq!(model.open_label, text(model.language, UiText::Open));
+        assert_eq!(
+            model.debugger_label,
+            nerust_gui_runtime::menu_labels::shortcut_hint(
+                text(model.language, UiText::OpenDebugger),
+                &model.shortcuts,
+                ShortcutAction::OpenDebugger,
+            )
+        );
+        assert_eq!(model.pause_label, text(model.language, UiText::Pause));
+        assert!(model.matches(&app));
     }
 
     #[test]
     fn accelerator_ownership_follows_application_menu_flag() {
         // The app resolves the flag at startup from the platform, so both
         // branches run on any platform without a macOS host.
-        for application_menu in [false, true] {
-            let (adapter, _dir) = loaded_adapter();
-            let app = nerust_gui_application::Application::new(adapter);
-            let model = MenuModel::new(&app, application_menu);
-            if application_menu {
-                assert_eq!(model.about_label, text(model.language, UiText::About));
-                assert_eq!(
-                    model.preferences_label,
-                    text(model.language, UiText::Preferences)
-                );
-                assert_eq!(model.settings_shortcut, None);
-                assert_eq!(model.quit_shortcut, None);
-            } else {
-                assert_eq!(model.settings_shortcut.as_deref(), Some("Primary+Comma"));
-                assert_eq!(model.quit_shortcut.as_deref(), Some("Primary+Q"));
-            }
-            // Quit membership follows the platform convention on both
-            // branches: without an application menu Quit stays in File.
-            assert_eq!(model.quit_in_file, !application_menu);
-        }
+        let (adapter, _dir) = loaded_adapter();
+        let app = nerust_gui_application::Application::new(adapter);
+        let model = MenuModel::new(&app);
+        assert_eq!(model.settings_shortcut.as_deref(), Some("Primary+Comma"));
+        assert_eq!(model.quit_shortcut.as_deref(), Some("Primary+Q"));
     }
 
     #[test]
@@ -412,7 +361,7 @@ mod tests {
         let app = nerust_gui_application::Application::new(adapter);
         // Fresh fixture: no slots yet, so the subtrees carry the disabled
         // placeholder with a create-slot fallback argument.
-        let model = MenuModel::new(&app, false);
+        let model = MenuModel::new(&app);
         assert!(model.slot_submenu_enabled, "submenus open when loaded");
         for nodes in [
             &model.select_slot_nodes,

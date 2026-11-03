@@ -140,13 +140,6 @@ version = "0.1.0-dev"
 [workspace.dependencies]
 futures = { version = "=0.3.34" }
 panechord = { path = "panechord" }
-panechord-native = { path = "panechord/native" }
-panechord-runtime = { path = "panechord/runtime" }
-panechord-markup = { path = "panechord/markup" }
-panechord-macros = { path = "panechord/macros" }
-panechord-gtk = { path = "panechord/gtk" }
-panechord-tao = { path = "panechord/tao" }
-panechord-macos = { path = "panechord/macos" }
 image = { version = "=0.25.10", default-features = false, features = [
   "png",
   "jpeg",
@@ -165,29 +158,9 @@ dyn-hash = { version = "=1.0.0" }
 flume = { version = "=0.12.0" }
 futures-timer = { version = "=3.0" }
 glob = { version = "=0.3.4" }
-gdk = { package = "gdk4", version = "=0.11.5" }
-gdk-macos = { package = "gdk4-macos", version = "=0.11.5" }
-gdk-win32 = { package = "gdk4-win32", version = "=0.11.5" }
-gdk4-wayland-sys = { version = "=0.11.5" }
-gdk4-x11-sys = { version = "=0.11.5" }
-gio = { version = "=0.22.10" }
 gl = { default-features = false, version = "=0.14.0" }
 glutin = { version = "=0.32.3" }
-gtk = { package = "gtk4", version = "=0.11.5" }
 hound = { version = "=3.5.1" }
-iced = { default-features = false, features = [
-  "thread-pool",
-  "tiny-skia",
-  "wayland",
-  "x11",
-  # PPU viewer pattern images (`iced::widget::image`).
-  "image",
-  # Debugger heavy lists (`iced::widget::lazy`): keystrokes reuse the
-  # cached dump/disasm/regs subtrees instead of rebuilding ~600 widgets.
-  "lazy",
-], version = "=0.14.0" }
-iced_tiny_skia = { version = "=0.14.1" }
-iced_winit = { version = "=0.14.1" }
 jni = { version = "=0.22.4" }
 inventory = { version = "=0.3.25" }
 log = { default-features = false, version = "=0.4.35" }
@@ -239,34 +212,10 @@ nerust_sound_cubeb = { path = "sound/cubeb" }
 nerust_sound_filter = { path = "sound/filter" }
 nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_timer = { path = "timer" }
-objc2 = { default-features = false, version = "=0.6.5" }
-objc2-app-kit = { default-features = false, features = [
-  "NSApplication",
-  "NSEvent",
-  "NSMenu",
-  "NSMenuItem",
-  "NSResponder",
-  "NSView",
-  "NSWindow",
-  "objc2-core-foundation",
-  "objc2-quartz-core",
-], version = "=0.3.2" }
-objc2-foundation = { default-features = false, features = ["NSString"], version = "=0.3.2" }
-objc2-quartz-core = { default-features = false, features = [
-  "objc2-core-foundation",
-], version = "=0.3.2" }
 open = { version = "=5.4.5" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
-# NOTE: do NOT enable rfd `gtk3` here (verified twice). Its backend
-# serves dialogs from its own thread: called from tao's GTK main loop
-# it deadlocked (no window, frozen loop), and with the call moved to a
-# worker thread it instead aborts the process when the icon theme is
-# broken (`Gtk:ERROR` loading the dialog icon — always fatal). The
-# default portal backend shells out to zenity: no dialog where zenity
-# is absent, but the app stays alive. Robust fix is an in-app dialog.
-rfd = { version = "=0.17.2" }
 rmp-serde = { version = "=1.3.1" }
 serde = { default-features = false, version = "=1.0.229" }
 smallvec = { version = "=1.16.4" }
@@ -279,7 +228,6 @@ sha2 = { version = "=0.11.1" }
 simple_logger = { version = "=5.2.0" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }
-tao = { version = "=0.37.2" }
 thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }
