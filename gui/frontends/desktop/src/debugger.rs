@@ -680,9 +680,14 @@ impl Pane {
             AssistAction::Refresh => {}
             AssistAction::Pause => {
                 (operations.dispatch)(crate::view::Intent::Pause(!operations.display.paused));
+                // A pause re-anchors on the live program counter: the Refresh
+                // below then snapshots the newest PC instead of a stale pin,
+                // so the display always follows the pause point.
+                operations.nav.follow();
             }
             AssistAction::StepFrame | AssistAction::StepInstruction => {
                 (operations.dispatch)(crate::view::Intent::Pause(true));
+                operations.nav.follow();
                 actions = vec![if action == AssistAction::StepFrame {
                     DebugAction::StepFrame
                 } else {
@@ -1951,6 +1956,55 @@ mod operation_tests {
                 .follow_pc(),
             "follow restores PC tracking"
         );
+    }
+
+    /// Pause and step re-anchor on the live program counter: a pause must
+    /// refresh the display at the newest PC instead of a stale pin, even
+    /// after the user navigated the disassembly elsewhere.
+    #[test]
+    fn pause_and_step_restore_pc_tracking() {
+        let fixture = fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        // drive() pins PRG start, so follow-PC is off: navigate elsewhere
+        // to prove Pause re-anchors rather than keeping the pin.
+        assert!(
+            !pane
+                .operations
+                .borrow()
+                .as_ref()
+                .expect("operations")
+                .nav
+                .follow_pc()
+        );
+        pane.execute_for_test("pause");
+        assert!(
+            pane.operations
+                .borrow()
+                .as_ref()
+                .expect("operations")
+                .nav
+                .follow_pc(),
+            "pause re-anchors on the live program counter"
+        );
+        settle(&pane, &fixture.adapter, true);
+        assert!(pane.is_idle(), "pause refresh settles");
+        assert!(
+            pane.model.snapshot().enabled,
+            "pause refresh re-enables commands"
+        );
+        pane.execute_for_test("step_instruction");
+        assert!(
+            pane.operations
+                .borrow()
+                .as_ref()
+                .expect("operations")
+                .nav
+                .follow_pc(),
+            "step keeps tracking the program counter"
+        );
+        settle(&pane, &fixture.adapter, true);
+        assert!(pane.is_idle(), "step settles");
     }
 
     #[test]
