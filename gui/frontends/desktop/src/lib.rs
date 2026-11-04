@@ -235,6 +235,12 @@ pub fn run(
                     let weak = view.downgrade();
                     let close = weak.clone();
                     let cancelled = pane.clone();
+                    // Aux windows open at the backend default (660x520 on
+                    // tao) unless a size is staged: the debugger needs its
+                    // full width or rows overflow their columns. GTK grows
+                    // to content regardless and Swift honors the frame, so
+                    // one staged size serves every backend.
+                    panechord::set_initial_window_size(1100, 946);
                     if let Err(error) = settings_host.register_view(
                         &settings_session,
                         "debugger",
