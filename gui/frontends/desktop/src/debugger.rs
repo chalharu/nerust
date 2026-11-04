@@ -8,14 +8,7 @@ use panechord::{Binding, Command, Executor, Store, View};
 use panechord::{
     Table, TableCell, TableColumn, TableRow, TableSelection, TextOverflow, TextRole, TextStyle,
 };
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    ops::Deref,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, collections::BTreeMap, ops::Deref, rc::Rc, sync::Arc};
 
 type MemoryTargets = BTreeMap<String, (nerust_core_traits::debugger::HexRow, bool)>;
 type RegisterTargets = BTreeMap<String, (&'static str, u64)>;
@@ -294,7 +287,6 @@ struct Captions {
     write: String,
     confirm: String,
     cancel: String,
-    refresh: String,
 }
 impl Captions {
     fn new(language: AppLanguage, paused: bool) -> Self {
@@ -335,7 +327,6 @@ impl Captions {
             write: label(UiText::Write),
             confirm: label(UiText::Confirm),
             cancel: label(UiText::Cancel),
-            refresh: label(UiText::Refresh),
         }
     }
 }
@@ -382,8 +373,6 @@ struct Model {
 pub(crate) struct Pane {
     model: Store<Model>,
     flight: RefCell<Option<nerust_gui_shell::debug::DrainFlight>>,
-    automatic: Cell<bool>,
-    next_refresh: Cell<Instant>,
     selection: RefCell<Option<panechord::Subscription>>,
     operations: RefCell<Option<Operations>>,
     action: Rc<RefCell<Option<Action>>>,
@@ -392,10 +381,10 @@ pub(crate) struct Pane {
 /// Assistance command names. yaml `command:` values and test drivers route
 /// through strings; parsed once here so both the enablement gate and the
 /// batch builder match on the enum. A new command fails to compile until
-/// both are updated.
+/// both are updated. `Refresh` has no button: step/pause/nav batches
+/// re-snapshot on their own, and a running core is never polled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssistAction {
-    Poll,
     Refresh,
     Pause,
     StepFrame,
@@ -428,7 +417,6 @@ enum AssistAction {
 impl AssistAction {
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
-            "poll" => Self::Poll,
             "refresh" => Self::Refresh,
             "pause" => Self::Pause,
             "step_frame" => Self::StepFrame,
@@ -508,8 +496,6 @@ impl Pane {
                 executor,
             ),
             flight: RefCell::new(None),
-            automatic: Cell::new(false),
-            next_refresh: Cell::new(Instant::now()),
             selection: RefCell::new(None),
             operations: RefCell::new(None),
             action: Rc::new(RefCell::new(None)),
@@ -691,7 +677,6 @@ impl Pane {
             .map_or(0, |line| line.addr);
         let mut actions = vec![DebugAction::Refresh];
         match action {
-            AssistAction::Poll => actions.clear(),
             AssistAction::Refresh => {}
             AssistAction::Pause => {
                 (operations.dispatch)(crate::view::Intent::Pause(!operations.display.paused));
@@ -966,7 +951,6 @@ impl Pane {
         };
         if reset {
             self.flight.borrow_mut().take();
-            self.automatic.set(false);
             self.refresh(&DisplayCache::default(), language);
             let _ = self.model.update(|model| {
                 model.bookmarks = code_table([]);
@@ -1002,9 +986,6 @@ impl Pane {
             }
         };
         if let Some(output) = output {
-            let automatic = self.automatic.replace(false);
-            self.next_refresh
-                .set(Instant::now() + Duration::from_millis(250));
             self.refresh(&output.display, language);
             if let Some(operations) = self.operations.borrow_mut().as_mut() {
                 operations.display = output.display;
@@ -1039,10 +1020,8 @@ impl Pane {
                     .unwrap_or_else(|| text(language, UiText::FreezeNone).to_owned());
                 let pin = operations.nav.dis_addr();
                 let _ = self.model.update(move |model| {
-                    if !automatic {
-                        model.memory_addr = memory_addr;
-                        model.disasm_addr = disasm_addr;
-                    }
+                    model.memory_addr = memory_addr;
+                    model.disasm_addr = disasm_addr;
                     model.back = back;
                     model.space = space;
                     model.watch = watch;
@@ -1055,21 +1034,6 @@ impl Pane {
             }
             let connected = self.operations.borrow().is_some();
             let _ = self.model.update(move |model| model.enabled = connected);
-        }
-        let refresh = self.flight.borrow().is_none()
-            && Instant::now() >= self.next_refresh.get()
-            && self.operations.borrow().as_ref().is_some_and(|operations| {
-                // Borrow-gate on the single field: a full snapshot would clone
-                // the whole debugger Model (tables included) every 16 ms tick.
-                (!operations.display.paused || self.model.with(|model| model.language) != language)
-                    && !matches!(
-                        operations.display.status,
-                        nerust_gui_viewmodel::debugger::StatusMessage::OutcomeUnknown
-                    )
-            });
-        if refresh {
-            self.automatic.set(true);
-            self.execute("poll");
         }
     }
 
@@ -1543,6 +1507,29 @@ mod operation_tests {
         Fixture { adapter, _dir: dir }
     }
 
+    /// Loaded adapter left running: mirrors opening the debugger on a live
+    /// core, where the layout flight itself must pause before snapshotting.
+    fn running_fixture() -> Fixture {
+        let (adapter, dir) = crate::session::test_fixture::loaded_adapter();
+        Fixture {
+            adapter: Rc::new(RefCell::new(adapter)),
+            _dir: dir,
+        }
+    }
+
+    /// iNES with `JMP $8000` at PRG start: the disassembly exposes a
+    /// structured jump target for the arrow-column navigation path.
+    fn jmp_fixture() -> Fixture {
+        let mut image = crate::session::test_fixture::test_ines();
+        image[16] = 0x4C;
+        image[17] = 0x00;
+        image[18] = 0x80;
+        let (adapter, dir) = crate::session::test_fixture::loaded_adapter_with_rom(image);
+        let adapter = Rc::new(RefCell::new(adapter));
+        adapter.borrow().handle().debug_pause();
+        Fixture { adapter, _dir: dir }
+    }
+
     fn drive(adapter: &Rc<RefCell<SessionAdapter>>) -> Rc<Pane> {
         let begin_adapter = adapter.clone();
         let begin: Begin =
@@ -1636,6 +1623,71 @@ mod operation_tests {
             .iter()
             .find(|(_, (row, _))| row.valid > 0)
             .map(|(key, (row, _))| (key.clone(), row.addr))
+    }
+
+    #[test]
+    fn open_while_running_pauses_and_populates() {
+        // No fixture pause/step: the layout flight must pause the live core
+        // itself, or the inspect refuses and the pane opens empty.
+        let fixture = running_fixture();
+        let pane = drive(&fixture.adapter);
+        // The first flight follows the live PC, which may sit outside
+        // mapped PRG; retry like the UI until the pinned page populates.
+        settle_ready(&pane, &fixture.adapter);
+        let operations = pane.operations.borrow();
+        let operations = operations.as_ref().expect("operations connected");
+        assert!(
+            !operations.display.regs.is_empty(),
+            "opening snapshot exposes registers"
+        );
+        assert!(
+            !operations.display.disasm_lines.is_empty(),
+            "opening snapshot exposes disassembly"
+        );
+        assert!(
+            operations.display.paused,
+            "opening the debugger pauses the core"
+        );
+    }
+
+    #[test]
+    fn disassembly_arrow_navigates_to_jump_destination() {
+        let fixture = jmp_fixture();
+        let pane = drive(&fixture.adapter);
+        settle_ready(&pane, &fixture.adapter);
+        // The arrow cell carries the structured target: column 1 selects
+        // the destination, not the instruction address.
+        let operations = pane.operations.borrow();
+        let jmp = operations
+            .as_ref()
+            .expect("operations connected")
+            .display
+            .disasm_lines
+            .iter()
+            .find(|line| line.addr == 0x8000)
+            .expect("JMP $8000 disassembles at PRG start");
+        assert_eq!(jmp.target, Some(0x8000));
+        drop(operations);
+        // Setting the arrow cell fires the activation watch, like a real
+        // click: the pane navigates and re-snapshots without manual refresh.
+        assert!(pane.model.update(|model| {
+            model.disassembly_selection = Some(TableSelection {
+                row_key: "00008000".into(),
+                column: 1,
+            });
+        }));
+        settle(&pane, &fixture.adapter, true);
+        let operations = pane.operations.borrow();
+        let operations = operations.as_ref().expect("operations connected");
+        assert_eq!(operations.nav.dis_addr(), Some(0x8000));
+        assert!(
+            operations
+                .display
+                .disasm_lines
+                .iter()
+                .any(|line| line.addr == 0x8000 && line.target == Some(0x8000)),
+            "disassembly follows the jump destination"
+        );
     }
 
     #[test]
@@ -1902,7 +1954,7 @@ mod operation_tests {
     }
 
     #[test]
-    fn busy_flight_ignores_reentry_and_pause_gates_auto_refresh() {
+    fn busy_flight_ignores_reentry_and_running_never_polls() {
         let fixture = fixture();
         let pane = drive(&fixture.adapter);
         settle_ready(&pane, &fixture.adapter);
@@ -1915,33 +1967,15 @@ mod operation_tests {
         pane.execute_for_test("step_frame");
         settle(&pane, &fixture.adapter, true);
         assert!(pane.model.snapshot().enabled);
-        // Paused cores never auto-refresh, even past the deadline.
-        pane.next_refresh
-            .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
-        pane.poll(
-            AppLanguage::English,
-            true,
-            fixture.adapter.borrow().media_revision(),
-        );
-        assert!(pane.is_idle(), "no automatic poll while paused");
-        // Running cores resume the 250ms live poll. Resume is fire-and-forget,
-        // so refresh until a snapshot observes the running core.
-        fixture.adapter.borrow().handle().debug_resume();
-        for _ in 0..10 {
-            if pane.model.snapshot().enabled {
-                pane.execute_for_test("refresh");
-            }
-            settle(&pane, &fixture.adapter, true);
-            let running = pane
-                .operations
-                .borrow()
-                .as_ref()
-                .is_some_and(|operations| !operations.display.paused);
-            if running {
-                break;
-            }
-            pane.next_refresh
-                .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        // Paused cores never auto-refresh: polling stays idle and the
+        // populated display survives untouched.
+        for _ in 0..5 {
+            pane.poll(
+                AppLanguage::English,
+                true,
+                fixture.adapter.borrow().media_revision(),
+            );
+            assert!(pane.is_idle(), "no automatic poll while paused");
         }
         assert!(
             !pane
@@ -1950,8 +1984,32 @@ mod operation_tests {
                 .as_ref()
                 .expect("operations")
                 .display
-                .paused,
-            "running core reports running"
+                .regs
+                .is_empty(),
+            "paused display keeps its registers without refresh traffic"
+        );
+        // Running cores are never polled either: no flight starts, so the
+        // last paused snapshot stays on screen instead of being blanked by
+        // a refused inspect.
+        fixture.adapter.borrow().handle().debug_resume();
+        for _ in 0..5 {
+            pane.poll(
+                AppLanguage::English,
+                true,
+                fixture.adapter.borrow().media_revision(),
+            );
+            assert!(pane.is_idle(), "no automatic poll while running");
+        }
+        assert!(
+            !pane
+                .operations
+                .borrow()
+                .as_ref()
+                .expect("operations")
+                .display
+                .regs
+                .is_empty(),
+            "running display is not blanked by poll traffic"
         );
     }
 

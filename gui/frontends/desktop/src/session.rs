@@ -72,17 +72,19 @@ impl SessionAdapter {
     }
 
     pub(crate) fn debugger_layout_begin(&self) -> (String, nerust_gui_shell::debug::DrainFlight) {
-        self.debug_layout_begin(false)
+        self.debug_layout_begin(false, true)
     }
 
     pub(crate) fn ppu_layout_begin(&self) -> nerust_gui_shell::debug::DrainFlight {
-        self.debug_layout_begin(true).1
+        self.debug_layout_begin(true, false).1
     }
 
     fn debug_layout_begin(
         &self,
         need_images: bool,
+        pause_first: bool,
     ) -> (String, nerust_gui_shell::debug::DrainFlight) {
+        use nerust_gui_shell::debug::DebugAction;
         let spaces = self.session.debug_spaces();
         let space = spaces.first();
         let input = nerust_gui_shell::debug::DebugDrainInput {
@@ -95,12 +97,20 @@ impl SessionAdapter {
             prev_dump_rows: &[],
             need_images,
         };
+        // The debugger opens paused (master/GTK parity): a running core
+        // refuses the inspect, so a bare Refresh would serve degenerates
+        // until the user finds the button. The PPU keeps its running
+        // live-follow, so it never pauses here.
+        let actions = if pause_first {
+            vec![DebugAction::Pause, DebugAction::Refresh]
+        } else {
+            vec![DebugAction::Refresh]
+        };
         (
             space
                 .map(|space| space.name.to_string())
                 .unwrap_or_default(),
-            self.session
-                .debug_drain_begin(&[nerust_gui_shell::debug::DebugAction::Refresh], &input),
+            self.session.debug_drain_begin(&actions, &input),
         )
     }
 
@@ -454,6 +464,12 @@ pub(crate) mod test_fixture {
     /// Loaded adapter plus its temp dir (drop cleans up). The core runs;
     /// panes pause/step as their flow requires.
     pub(crate) fn loaded_adapter() -> (SessionAdapter, TempDir) {
+        loaded_adapter_with_rom(test_ines())
+    }
+
+    /// Loaded adapter for a caller-supplied iNES image (jump targets,
+    /// bank layouts, and other byte-level shapes the shared ROM lacks).
+    pub(crate) fn loaded_adapter_with_rom(image: Vec<u8>) -> (SessionAdapter, TempDir) {
         // Nanos alone can collide across parallel test threads in one
         // process; the counter makes each fixture directory unique.
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -491,7 +507,7 @@ pub(crate) mod test_fixture {
         )
         .expect("adapter with temp settings root");
         let rom = dir.join("test.nes");
-        std::fs::write(&rom, test_ines()).expect("fixture ROM should write");
+        std::fs::write(&rom, image).expect("fixture ROM should write");
         adapter.load(&rom).expect("fixture ROM loads");
         (adapter, TempDir { path: dir })
     }

@@ -141,9 +141,3 @@ root:
               - {type: Label, id: confirmation_text, style: {vertical_alignment: Center}, text: {bind: {path: confirmation}}}
               - {type: Button, id: confirm, style: {horizontal_alignment: Start}, text: {bind: {path: captions.confirm}}, command: action, argument: {literal: confirm}}
               - {type: Button, id: cancel, style: {horizontal_alignment: Start}, text: {bind: {path: captions.cancel}}, command: action, argument: {literal: cancel}}
-          - type: StackLayout
-            id: footer
-            orientation: Horizontal
-            gap: 12
-            children:
-              - {type: Button, id: refresh, text: {bind: {path: captions.refresh}}, command: action, argument: {literal: refresh}}
