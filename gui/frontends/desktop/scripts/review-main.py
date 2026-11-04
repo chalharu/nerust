@@ -280,7 +280,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             return None
                                         visible = [node for node in layout.descendants(frame) if layout.visible_in_frame(node, frame)]
                                         labels = {layout.normalized(node.name) for node in visible}
-                                        expected = ["Registers", "Watch", "Freeze", "Bookmarks", "Memory", "Space", "Page", "Refresh"]
+                                        expected = ["Registers", "Watch", "Freeze", "Bookmarks", "Memory", "Space", "Page"]
                                         if not all(layout.normalized(label) in labels for label in expected):
                                             return None
                                         if sum("0x" in node.name for node in visible if node.getRoleName() == "label") < 3:
@@ -309,10 +309,13 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             raise RuntimeError(f"Debugger alignment controls are missing: {alignment}")
                                         execute("import", "-window", native, str(image))
                                         tree_file.write_text(json.dumps(layout.tree(frame), indent=2) + "\n")
-                                        footer = next(node for node in visible if node.getRoleName() == "push button" and node.name == "Refresh")
-                                        outer, rectangle = layout.bounds(frame), layout.bounds(footer)
-                                        if rectangle["y"] + rectangle["height"] > outer["y"] + outer["height"] - 12:
-                                            raise RuntimeError(f"Debugger footer margin is insufficient: frame={outer}, refresh={rectangle}")
+                                        buttons = [node for node in visible if node.getRoleName() == "push button"]
+                                        if any(node.name == "Refresh" for node in buttons):
+                                            raise RuntimeError("Debugger Refresh button should not exist")
+                                        bottom = max(layout.bounds(node)["y"] + layout.bounds(node)["height"] for node in buttons)
+                                        outer = layout.bounds(frame)
+                                        if bottom > outer["y"] + outer["height"] - 12:
+                                            raise RuntimeError(f"Debugger bottom margin is insufficient: frame={outer}, bottom={bottom}")
                                         width, height = map(int, execute("identify", "-format", "%w %h", str(image)).split())
                                         if width != 1100 or (height != 946 and not (debugger_bindings and height <= 1150)):
                                             raise RuntimeError(f"Debugger size drifted: {width}x{height}")
