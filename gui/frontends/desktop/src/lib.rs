@@ -165,7 +165,7 @@ pub fn run(
                     let weak = view.downgrade();
                     let close = weak.clone();
                     let cancelled = pane.clone();
-                    if let Err(error) = settings_host.register_view(
+                    if let Err(error) = settings_host.register_view_with_hooks(
                         &settings_session,
                         "ppu",
                         &view,
@@ -248,7 +248,7 @@ pub fn run(
                     // to content regardless and Swift honors the frame, so
                     // one staged size serves every backend.
                     panechord::set_initial_window_size(1100, 946);
-                    if let Err(error) = settings_host.register_view(
+                    if let Err(error) = settings_host.register_view_with_hooks(
                         &settings_session,
                         "debugger",
                         &view,
@@ -330,7 +330,7 @@ pub fn run(
                     };
                     let weak = view.downgrade();
                     let close = weak.clone();
-                    if let Err(error) = settings_host.register_view(
+                    if let Err(error) = settings_host.register_view_with_hooks(
                         &settings_session,
                         "history",
                         &view,
@@ -415,7 +415,7 @@ pub fn run(
                     let close = weak.clone();
                     let confirm = editor.clone();
                     let cancel = editor.clone();
-                    if let Err(error) = settings_host.register_view(
+                    if let Err(error) = settings_host.register_view_with_hooks(
                         &settings_session,
                         "settings",
                         &view,
@@ -591,7 +591,7 @@ pub fn run(
             closed_menus.close();
         }));
         let weak = view.downgrade();
-        host.register_view(
+        host.register_view_with_hooks(
             &session,
             "main",
             &view,
@@ -795,7 +795,7 @@ pub fn run(
                             let closed_app = error_poll_app.clone();
                             let closed_lease = error_poll_lease.clone();
                             let closed_window = error_poll_window.clone();
-                            if let Err(failure) = error_poll_host.register_view(
+                            if let Err(failure) = error_poll_host.register_view_with_hooks(
                                 &error_poll_session,
                                 "error",
                                 &open_view,
