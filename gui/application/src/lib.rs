@@ -376,6 +376,31 @@ mod tests {
         assert_eq!(flushes.get(), 1);
     }
 
+    /// Debugger pause ownership: opening takes a hold so Main-window
+    /// activation cannot resume behind the debugger, and Resume releases
+    /// the hold first so reconcile can actually resume.
+    #[test]
+    fn debugger_hold_survives_focus_switch_and_resume_releases_it() {
+        let mut app = Application::new(Probe {
+            paused: false,
+            held: false,
+            flushes: Rc::default(),
+        });
+        // Debugger opens on a running core: its drain pauses the core and
+        // the frontend takes arbitration ownership.
+        app.session_mut().pause();
+        let lease = app.acquire_pause(PauseReason::Debugger).unwrap();
+        assert!(app.state().paused);
+        // Main-window activation only clears Focus: the hold keeps pause.
+        app.set_pause(PauseReason::Focus, false);
+        assert!(app.state().paused);
+        // Resume drops debugger ownership first, then clears User: without
+        // the release, reconcile would no-op against the held core.
+        app.release_pause(lease);
+        app.set_pause(PauseReason::User, false);
+        assert!(!app.state().paused);
+    }
+
     #[test]
     fn old_window_release_does_not_resume_a_new_window_or_user_pause() {
         let mut app = Application::new(Probe {
