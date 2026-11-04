@@ -380,6 +380,35 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 targets = [layout.bounds(node) for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name == "\u2192" and layout.visible_in_frame(node, frame)]
                                 if not targets:
                                     raise RuntimeError("NES fixture did not expose a visible disassembly target")
+                                def debugger_nodes():
+                                    try:
+                                        window = layout.window(process.pid, "Debugger")
+                                        return list(layout.descendants(window)) if window is not None else []
+                                    except Exception:
+                                        return []
+                                # Jump-target navigation: clicking the first
+                                # visible arrow must push the Back stack.
+                                def jump_target():
+                                    try:
+                                        frame = layout.window(process.pid, "Debugger")
+                                        if frame is None:
+                                            return None
+                                        back = next((node.name for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name.startswith("Back (")), None)
+                                        arrow = next((node for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name == "\u2192" and layout.visible_in_frame(node, frame)), None)
+                                        if back is None or arrow is None:
+                                            return None
+                                        return (back, arrow)
+                                    except Exception:
+                                        return None
+                                back_before, arrow = wait(jump_target)
+                                count_before = int("".join(character for character in back_before if character.isdigit()))
+                                action = arrow.queryAction()
+                                index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
+                                if not action.doAction(index):
+                                    raise RuntimeError("Disassembly target navigation was rejected")
+                                wait(lambda: any(node.getRoleName() == "push button" and node.name == f"Back ({count_before + 1})" for node in debugger_nodes()))
+                                debugger_snapshot(native, "debugger-jump")
+                                records[-1]["scope"] = "disassembly jump-target navigation pushes the Back stack"
                                 rectangles = [layout.bounds(cell) for cell in cells]
                                 gaps = [right["x"] - left["x"] - left["width"] for left, right in zip(rectangles, rectangles[1:])]
                                 if gaps != [36] * 16:
@@ -440,7 +469,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     edit_row("Selected", "5A")
                                     click_text("Write 0x", prefix=True)
                                     wait_debug_text("5A")
-                                    wait(lambda: any(node.getRoleName() == "push button" and node.name == "Confirm" for node in layout.descendants(layout.window(process.pid, "Debugger"))))
+                                    wait(lambda: any(node.getRoleName() == "push button" and node.name == "Confirm" for node in debugger_nodes()))
                                     debugger_snapshot(native, "debugger-write-staged")
                                     click_text("Confirm")
                                     wait(lambda: (cells := memory_cells()) and cells[2].name == "5A")
@@ -449,7 +478,21 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     click_text("Write 0x", prefix=True)
                                     wait_debug_text("6B")
                                     click_text("Cancel")
-                                    wait(lambda: not any(node.getRoleName() == "push button" and node.name == "Confirm" and layout.visible_in_frame(node, layout.window(process.pid, "Debugger")) for node in layout.descendants(layout.window(process.pid, "Debugger"))))
+                                    def confirm_gone():
+                                        try:
+                                            window = layout.window(process.pid, "Debugger")
+                                            if window is None:
+                                                return False
+                                            return not any(
+                                                node.getRoleName() == "push button"
+                                                and node.name == "Confirm"
+                                                and layout.visible_in_frame(node, window)
+                                                for node in layout.descendants(window)
+                                            )
+                                        except Exception:
+                                            return False
+
+                                    wait(confirm_gone)
                                     if memory_cells()[2].name != "5A":
                                         raise RuntimeError("Cancelled debugger write mutated memory")
                                     debugger_snapshot(native, "debugger-write-cancelled")
