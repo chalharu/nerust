@@ -104,11 +104,11 @@ pub fn run(
         let executor = host.executor();
         let weak_view = view.downgrade();
         let picker_active = Rc::new(Cell::new(false));
-        let settings_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
-        let history_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let settings_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
+        let history_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let history_updates = Rc::new(RefCell::new(None::<Rc<history::Pane>>));
         let history_refresh = history_updates.clone();
-        let debugger_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let debugger_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let debugger_updates = Rc::new(RefCell::new(None::<Rc<debugger::Pane>>));
         let debugger_refresh = debugger_updates.clone();
         // Debugger-owned pause hold: the drain flight pauses the core, but
@@ -118,7 +118,7 @@ pub fn run(
         let debugger_lease = Rc::new(RefCell::new(None::<PauseLease>));
         let debugger_pause = debugger_lease.clone();
         let debugger_release = debugger_lease.clone();
-        let ppu_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let ppu_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let ppu_updates = Rc::new(RefCell::new(None::<Rc<ppu::Pane>>));
         let ppu_refresh = ppu_updates.clone();
         let settings_host = host.clone();
@@ -141,7 +141,7 @@ pub fn run(
                     if let Some(view) = ppu_window
                         .borrow()
                         .as_ref()
-                        .and_then(panechord::WeakView::upgrade)
+                        .and_then(panechord::backend::WeakView::upgrade)
                     {
                         view.present();
                         return true;
@@ -208,7 +208,7 @@ pub fn run(
                     if let Some(view) = debugger_window
                         .borrow()
                         .as_ref()
-                        .and_then(panechord::WeakView::upgrade)
+                        .and_then(panechord::backend::WeakView::upgrade)
                     {
                         view.present();
                         return true;
@@ -247,7 +247,7 @@ pub fn run(
                     // full width or rows overflow their columns. GTK grows
                     // to content regardless and Swift honors the frame, so
                     // one staged size serves every backend.
-                    panechord::set_initial_window_size(1100, 946);
+                    panechord::backend::set_initial_window_size(1100, 946);
                     if let Err(error) = settings_host.register_view_with_hooks(
                         &settings_session,
                         "debugger",
@@ -305,7 +305,7 @@ pub fn run(
                     if let Some(view) = history_window
                         .borrow()
                         .as_ref()
-                        .and_then(panechord::WeakView::upgrade)
+                        .and_then(panechord::backend::WeakView::upgrade)
                     {
                         view.present();
                         return true;
@@ -457,7 +457,7 @@ pub fn run(
                     let picker = picker_active.clone();
                     let weak_view = weak_view.clone();
                     executor.spawn(Box::pin(async move {
-                        let selected = panechord::pick_file().await;
+                        let selected = panechord::backend::pick_file().await;
                         picker.set(false);
                         let mut app = app.borrow_mut();
                         let error = if weak_view.upgrade().is_some() {
@@ -623,7 +623,7 @@ pub fn run(
         // the Modal pause lease (Application owns pause, like the settings and
         // file-picker leases). A separate window keeps the main View's content
         // (the Native screen surface) and Model untouched.
-        let error_window = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let error_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let error_lease: Rc<RefCell<Option<PauseLease>>> = Rc::new(RefCell::new(None));
         let error_poll_window = error_window.clone();
         let error_poll_lease = error_lease.clone();
@@ -744,7 +744,7 @@ pub fn run(
                 let window_live = error_poll_window
                     .borrow()
                     .as_ref()
-                    .and_then(panechord::WeakView::upgrade)
+                    .and_then(panechord::backend::WeakView::upgrade)
                     .is_some();
                 if !window_live && !error_poll_app.borrow().state().closed {
                     // Borrow-gated: `get()` clones the notice String, so only

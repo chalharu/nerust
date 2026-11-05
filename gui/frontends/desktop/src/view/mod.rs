@@ -6,7 +6,8 @@ use nerust_settings_core::{
         language::AppLanguage,
     },
 };
-use panechord::{Binding, Command, ImageFrame, MenuItem, MenuNode, MenuRole, Parent, Store, View};
+use panechord::{Binding, Command, ImageFrame, MenuItem, MenuNode, MenuRole, Store};
+use panechord::backend::{Parent, View};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
