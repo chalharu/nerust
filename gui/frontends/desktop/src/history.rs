@@ -7,8 +7,9 @@ use nerust_settings_core::{
 };
 use panechord::{
     Binding, Choice, Command, Executor, Store, Table, TableCell, TableColumn, TableRow,
-    TextOverflow, TextRole, TextStyle, View,
+    TextOverflow, TextRole, TextStyle,
 };
+use panechord::backend::View;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Clone)]
@@ -225,7 +226,7 @@ impl Pane {
     }
 
     pub(crate) fn build(self: &Rc<Self>, clear: Rc<dyn Fn()>) -> Result<View, String> {
-        let close_view = Rc::new(RefCell::new(None::<panechord::WeakView>));
+        let close_view = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let close = close_view.clone();
         let close = self.model.command(
             |_| true,
@@ -233,7 +234,7 @@ impl Pane {
                 if let Some(view) = close
                     .borrow()
                     .as_ref()
-                    .and_then(panechord::WeakView::upgrade)
+                    .and_then(panechord::backend::WeakView::upgrade)
                 {
                     view.close();
                 }
