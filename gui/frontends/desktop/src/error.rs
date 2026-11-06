@@ -8,8 +8,8 @@ use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
-use panechord::{Binding, Command, Executor, Store};
 use panechord::backend::View;
+use panechord::{Binding, Command, Executor, Store};
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone)]

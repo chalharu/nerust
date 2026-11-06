@@ -5,11 +5,11 @@ use nerust_settings_core::{
     i18n::{UiText, history_count, text as ui_text},
     model::language::AppLanguage,
 };
+use panechord::backend::View;
 use panechord::{
     Binding, Choice, Command, Executor, Store, Table, TableCell, TableColumn, TableRow,
     TextOverflow, TextRole, TextStyle,
 };
-use panechord::backend::View;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Clone)]

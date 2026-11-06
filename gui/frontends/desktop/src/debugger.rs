@@ -4,8 +4,8 @@ use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
-use panechord::{Binding, Command, Executor, Store};
 use panechord::backend::View;
+use panechord::{Binding, Command, Executor, Store};
 use panechord::{
     Table, TableCell, TableColumn, TableRow, TableSelection, TextOverflow, TextRole, TextStyle,
 };
