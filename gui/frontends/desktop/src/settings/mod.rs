@@ -14,8 +14,8 @@ use nerust_settings_core::{
     i18n::{UiText, text as ui_text},
     model::language::AppLanguage,
 };
-use panechord::{Binding, Choice, Command, Executor, Store, Subscription};
 use panechord::backend::{View, WeakView};
+use panechord::{Binding, Choice, Command, Executor, Store, Subscription};
 use std::{
     cell::{Cell, RefCell},
     path::Path,
