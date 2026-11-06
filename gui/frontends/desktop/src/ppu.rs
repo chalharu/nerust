@@ -6,8 +6,8 @@ use nerust_settings_core::{
     i18n::{UiText, text},
     model::language::AppLanguage,
 };
-use panechord::{Executor, ImageFrame, Keyed, PointerPosition, Store, Subscription};
 use panechord::backend::View;
+use panechord::{Executor, ImageFrame, Keyed, PointerPosition, Store, Subscription};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
