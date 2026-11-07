@@ -72,17 +72,16 @@ impl SessionAdapter {
     }
 
     pub(crate) fn debugger_layout_begin(&self) -> (String, nerust_gui_shell::debug::DrainFlight) {
-        self.debug_layout_begin(true, false)
+        self.debug_layout_begin(false)
     }
 
     pub(crate) fn ppu_layout_begin(&self) -> nerust_gui_shell::debug::DrainFlight {
-        self.debug_layout_begin(true, false).1
+        self.debug_layout_begin(true).1
     }
 
     fn debug_layout_begin(
         &self,
         need_images: bool,
-        pause_first: bool,
     ) -> (String, nerust_gui_shell::debug::DrainFlight) {
         use nerust_gui_shell::debug::DebugAction;
         let spaces = self.session.debug_spaces();
@@ -100,8 +99,8 @@ impl SessionAdapter {
         // The debugger owns no pause: opening never pauses, and closing
         // never resumes. A running core serves a Running degenerate until
         // an external pause (Focus, menu, shortcut) lands, at which point
-        // the pane re-snapshots on the pause edge.
-        let _ = pause_first;
+        // the pane re-snapshots on the pause edge. Images stay with the
+        // PPU viewer: CHR decode is skipped here, not just unused.
         let actions = vec![DebugAction::Refresh];
         (
             space

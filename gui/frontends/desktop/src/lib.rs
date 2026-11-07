@@ -229,6 +229,14 @@ pub fn run(
                         app.borrow().session().media_revision(),
                         Rc::new(move || spaces.borrow().session().debug_spaces()),
                     );
+                    // Aux windows open at the backend default (660x520 on
+                    // tao) unless a size is staged: the debugger needs its
+                    // full width or rows overflow their columns. GTK grows
+                    // to content regardless and Swift honors the frame, so
+                    // one staged size serves every backend. Stage before
+                    // build: the Host is created by build and consumes the
+                    // pending size at construction.
+                    panechord::backend::set_initial_window_size(1100, 946);
                     let view = match pane.build() {
                         Ok(view) => view,
                         Err(error) => {
@@ -239,12 +247,6 @@ pub fn run(
                     let weak = view.downgrade();
                     let close = weak.clone();
                     let cancelled = pane.clone();
-                    // Aux windows open at the backend default (660x520 on
-                    // tao) unless a size is staged: the debugger needs its
-                    // full width or rows overflow their columns. GTK grows
-                    // to content regardless and Swift honors the frame, so
-                    // one staged size serves every backend.
-                    panechord::backend::set_initial_window_size(1100, 946);
                     if let Err(error) = settings_host.register_view_with_hooks(
                         &settings_session,
                         "debugger",
