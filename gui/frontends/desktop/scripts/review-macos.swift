@@ -59,9 +59,11 @@ func review() throws {
     defer { if process.isRunning { process.terminate(); process.waitUntilExit() } }
     let application = AXUIElementCreateApplication(process.processIdentifier)
     let events = CGEventSource(stateID: .combinedSessionState)
-    // Screen capture tool override for non-standard layouts; the system
-    // default stays when unset.
-    let screenCapturePath = ProcessInfo.processInfo.environment["SCREENCAPTURE_PATH"] ?? "/usr/sbin/screencapture"
+    // Screen capture tool from the environment: review drivers set
+    // SCREENCAPTURE_PATH so no host-specific path lives in the script.
+    guard let screenCapturePath = ProcessInfo.processInfo.environment["SCREENCAPTURE_PATH"] else {
+        throw Failure.message("SCREENCAPTURE_PATH environment variable is not set")
+    }
     var records = [[String: Any]]()
 
     func key(_ code: CGKeyCode, pressed: Bool) {
