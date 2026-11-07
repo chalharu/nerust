@@ -5,16 +5,14 @@ Native backend selection belongs to Panechord, not the desktop adapter.
 Inner layers depend on neither the UI framework nor the removed Wakui stack.
 """
 
+import json
 import re
 import subprocess
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-FRAMEWORKS = {"panechord": ROOT / "panechord"} | {
-    f"panechord-{name}": ROOT / "panechord" / name
-    for name in ("runtime", "markup", "macros", "native", "gtk", "tao", "macos", "demo", "library")
-}
+MANIFEST_FILENAME = "Cargo.toml"
 
 
 def strip_code(line: str) -> str:
@@ -24,16 +22,46 @@ def strip_code(line: str) -> str:
     return code
 
 
+def framework_dirs() -> dict[str, Path]:
+    """Panechord package directories from the locked dependency graph.
+
+    Panechord is a git dependency, so sources live in the cargo git
+    checkout cache rather than a local submodule; resolve them through
+    cargo metadata instead of a fixed path.
+    """
+    out = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--offline"],
+        capture_output=True,
+        text=True,
+        check=False,  # returncode is inspected below with a tailored error
+        cwd=ROOT,
+    )
+    if out.returncode != 0:
+        print(out.stderr[-2000:])
+        raise SystemExit("cargo metadata failed for panechord resolution")
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        raise SystemExit("cargo metadata returned invalid JSON")
+    dirs = {}
+    for package in data.get("packages", []):
+        if "chalharu/panechord" in (package.get("source") or ""):
+            dirs[package["name"]] = Path(package["manifest_path"]).parent
+    if not dirs:
+        raise SystemExit("no panechord packages in cargo metadata")
+    return dirs
+
+
 def workspace_dependencies(manifest: Path) -> dict:
     """Workspace-inherited dependency table for a manifest.
 
-    Panechord lives in a submodule with its own workspace, so `workspace =
-    true` must resolve against the nearest ancestor workspace root (the
-    submodule's), not the nerust root.
+    `workspace = true` resolves against the nearest ancestor workspace
+    root (panechord's own workspace for git-checkout manifests), not the
+    nerust root.
     """
     current = manifest.parent
     while True:
-        candidate = current / "Cargo.toml"
+        candidate = current / MANIFEST_FILENAME
         if candidate.is_file():
             try:
                 table = tomllib.loads(candidate.read_text()).get("workspace", {})
@@ -76,21 +104,9 @@ def rs_uses(crate_dir: Path) -> dict[str, list[str]]:
     return hits
 
 
-def manifest_args(crate_dir: Path) -> list[str]:
-    """Cargo manifest selector for a crate directory.
-
-    Panechord is a submodule with its own workspace and lockfile: its crates
-    are not members of the nerust workspace, so queries must run through the
-    submodule manifest. Everything else resolves through the nerust root.
-    """
-    if crate_dir.resolve().is_relative_to((ROOT / "panechord").resolve()):
-        return ["--manifest-path", str(ROOT / "panechord" / "Cargo.toml")]
-    return []
-
-
-def cargo_direct_deps(package: str, crate_dir: Path) -> set[str]:
+def cargo_direct_deps(package: str) -> set[str]:
     out = subprocess.run(
-        ["cargo", "tree", *manifest_args(crate_dir), "-p", package, "--edges", "normal",
+        ["cargo", "tree", "-p", package, "--edges", "normal",
          "--depth", "1", "--prefix", "none", "--locked"],
         capture_output=True,
         text=True,
@@ -108,9 +124,9 @@ def cargo_direct_deps(package: str, crate_dir: Path) -> set[str]:
     return deps - {package}
 
 
-def cargo_closure_has_nerust(package: str, crate_dir: Path) -> list[str]:
+def cargo_closure_has_nerust(package: str) -> list[str]:
     out = subprocess.run(
-        ["cargo", "tree", *manifest_args(crate_dir), "-p", package, "--edges", "normal",
+        ["cargo", "tree", "-p", package, "--edges", "normal",
          "--prefix", "none", "--locked"],
         capture_output=True,
         text=True,
@@ -134,7 +150,7 @@ def desktop_backend_violations(crate_dir: Path) -> list[str]:
         "gtk4", "gtk", "gdk4", "tao", "muda", "iced", "objc", "objc2",
         "panechord-gtk", "panechord-tao", "panechord-macos", "panechord-native",
     }
-    dependencies = toml_dependency_names(crate_dir / "Cargo.toml") & forbidden
+    dependencies = toml_dependency_names(crate_dir / MANIFEST_FILENAME) & forbidden
     if dependencies:
         failures.append(f"desktop native backend dependencies: {sorted(dependencies)}")
     patterns = (
@@ -169,16 +185,15 @@ def desktop_backend_violations(crate_dir: Path) -> list[str]:
     return failures
 
 
-def main() -> int:
+def framework_failures(frameworks: dict[str, Path]) -> list[str]:
+    """Manifest, tree and source checks for external framework packages."""
     failures: list[str] = []
-    failures.extend(desktop_backend_violations(ROOT / "gui/frontends/desktop"))
-
-    for package, crate_dir in FRAMEWORKS.items():
-        bad = toml_nerust_deps(crate_dir / "Cargo.toml")
+    for package, crate_dir in frameworks.items():
+        bad = toml_nerust_deps(crate_dir / MANIFEST_FILENAME)
         if bad:
             failures.append(f"{package} Cargo.toml dependencies: {sorted(bad)}")
 
-        tree_direct = cargo_direct_deps(package, crate_dir)
+        tree_direct = cargo_direct_deps(package)
         if tree_direct:
             failures.append(
                 f"{package} cargo tree direct normal deps: {sorted(tree_direct)}"
@@ -188,14 +203,28 @@ def main() -> int:
             shown = ", ".join(sites[:5])
             failures.append(f"{package} code names {name}: {shown}")
 
-    for package, crate_dir in FRAMEWORKS.items():
-        bad = cargo_closure_has_nerust(package, crate_dir)
+    for package in frameworks:
+        bad = cargo_closure_has_nerust(package)
         if bad:
             failures.append(f"{package} normal closure contains nerust: {bad}")
+    return failures
+
+
+def inner_domain_failures() -> list[str]:
+    """Inner layers must not depend on a UI framework."""
+    failures: list[str] = []
     for domain in ("gui/runtime", "gui/shell", "gui/viewmodel", "gui/application", "settings/core", "traits/input"):
-        bad = sorted(name for name in toml_dependency_names(ROOT / domain / "Cargo.toml") if name.startswith(("panechord", "wakui")))
+        bad = sorted(name for name in toml_dependency_names(ROOT / domain / MANIFEST_FILENAME) if name.startswith(("panechord", "wakui")))
         if bad:
             failures.append(f"inner domain {domain} depends on a UI framework: {bad}")
+    return failures
+
+
+def main() -> int:
+    failures: list[str] = []
+    failures.extend(desktop_backend_violations(ROOT / "gui/frontends/desktop"))
+    failures.extend(framework_failures(framework_dirs()))
+    failures.extend(inner_domain_failures())
 
     if failures:
         print("flavor policy gate FAILED:")

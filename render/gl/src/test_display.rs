@@ -84,7 +84,7 @@ impl TestDisplay {
         None
     }
 
-    /// Platform display handle mirroring [`crate::renderer::GlFactory`]:
+    /// Platform display handle mirroring [`crate::display::create_display`]:
     /// exactly one arm compiles per platform. The X11 arm needs `DISPLAY`;
     /// Wayland-only hosts without XWayland skip (`None`).
     fn test_display_handle() -> Option<RawDisplayHandle> {
@@ -145,7 +145,7 @@ impl TestDisplay {
 
     fn try_connect() -> Option<Self> {
         let handle = Self::test_display_handle()?;
-        let display = crate::renderer::GlFactory::create_display(handle)
+        let display = crate::display::create_display(handle)
             .map_err(|error| eprintln!("GL test display initialization failed: {error:?}"))
             .ok()?;
         let template = ConfigTemplateBuilder::new()
