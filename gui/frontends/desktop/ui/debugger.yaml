@@ -18,7 +18,7 @@ root:
         children:
           - type: StackLayout
             id: left
-            style: {vertical_alignment: Stretch}
+            style: {horizontal_alignment: Stretch, vertical_alignment: Stretch}
             gap: 12
             children:
               - {type: Label, id: title, text: {bind: {path: captions.title}}}
@@ -40,7 +40,7 @@ root:
                   - {type: TextBox, id: disassembly_addr, text: {bind: {path: disasm_addr, mode: TwoWay}}, placeholder: {bind: {path: captions.addr}}}
                   - {type: Button, id: disassembly_go, style: {horizontal_alignment: Start}, text: {bind: {path: captions.go}}, command: action, argument: {literal: disassembly_go}}
                   - {type: Button, id: back, style: {horizontal_alignment: Start}, text: {bind: {path: back}}, command: action, argument: {literal: back}}
-              - {type: Table, id: disassembly, style: {vertical_alignment: Stretch, placement: {height: 260}}, source: {bind: {path: disassembly}}, selection: {bind: {path: disassembly_selection, mode: TwoWay}}}
+              - {type: Table, id: disassembly, style_binding: {bind: {path: disassembly_style}}, source: {bind: {path: disassembly}}, selection: {bind: {path: disassembly_selection, mode: TwoWay}}}
           - type: Scroll
             id: state_scroll
             style: {horizontal_alignment: Start, vertical_alignment: Stretch, placement: {width: 340}}
