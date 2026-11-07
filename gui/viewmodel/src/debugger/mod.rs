@@ -18,7 +18,7 @@ mod tests;
 
 pub use format::{
     EMPTY_PANELS_TEXT, disasm_marker, format_cell, format_disasm_line, format_panels,
-    format_register, panels_visible,
+    format_register, format_register_sized, panels_visible, register_hex_digits,
 };
 pub use images::{
     DebugImageRgba, PPU_HOVER_HINT, rgba_image, scale2x_nearest, tile_hover_geometry,

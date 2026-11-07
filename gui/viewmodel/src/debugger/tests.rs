@@ -344,6 +344,19 @@ fn format_register_orders_value() {
 }
 
 #[test]
+fn register_width_follows_snapshot_range() {
+    // 16-bit systems keep the historic 4 digits; a single 32-bit value
+    // (GBA program counter, stack pointer) widens the whole snapshot to
+    // 8 so columns align and leading zeros survive.
+    assert_eq!(register_hex_digits(&[("a", 1), ("pc", 0x8000)]), 4);
+    assert_eq!(register_hex_digits(&[]), 4);
+    assert_eq!(register_hex_digits(&[("r0", 1), ("r15", 0x08000148)]), 8);
+    assert_eq!(format_register_sized("r1", 0x6001000, 8), "r1: 0x06001000");
+    assert_eq!(format_register_sized("r0", 1, 8), "r0: 0x00000001");
+    assert_eq!(format_register_sized("a", 1, 4), "a: 0x0001");
+}
+
+#[test]
 fn space_key_resolves_display_keys_without_fabrication() {
     use nerust_core_traits::debugger::{SpaceAccess, SpaceId, SpaceInfo, SpaceTable};
     static ENTRIES: [SpaceInfo; 1] = [SpaceInfo {
