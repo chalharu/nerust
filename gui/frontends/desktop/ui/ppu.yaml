@@ -7,7 +7,11 @@ templates:
       gap: 12
       children:
         - {type: Label, id: title, text: {bind: {path: label}}}
-        - {type: Image, id: image, style_binding: {bind: {path: style}}, source: {bind: {path: source}}, pointer: {bind: {path: pointer, mode: TwoWay}}}
+        - type: Image
+          id: image
+          style_binding: {bind: {path: style}}
+          source: {bind: {path: source}}
+          pointer: {bind: {path: pointer, mode: TwoWay}}
 root:
   type: Window
   id: ppu_window
@@ -29,5 +33,9 @@ root:
           gap: 12
           children:
             - {type: Repeat, id: pictures, items: {bind: {path: images}}, gap: 12, item_template: image}
-            - {type: Label, id: panels, visible: {bind: {path: has_panels}}, style: {text: {role: Code}}, text: {bind: {path: panels}}}
+            - type: Label
+              id: panels
+              visible: {bind: {path: has_panels}}
+              style: {text: {role: Code}}
+              text: {bind: {path: panels}}
             - {type: Label, id: empty, visible: {bind: {path: is_empty}}, text: {bind: {path: empty}}}

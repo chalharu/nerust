@@ -7,8 +7,16 @@ templates:
       orientation: Horizontal
       gap: 12
       children:
-        - {type: Label, id: label, style: {vertical_alignment: Center, placement: {width: 192}}, text: {bind: {path: label, source: External}}}
-        - {type: Combo, id: choice, style: {horizontal_alignment: Start, vertical_alignment: Center}, enabled: {bind: {path: enabled, source: External}}, items: {bind: {path: choices, source: External}}, selected: {bind: {path: selected, source: External, mode: TwoWay}}}
+        - type: Label
+          id: label
+          style: {vertical_alignment: Center, placement: {width: 192}}
+          text: {bind: {path: label, source: External}}
+        - type: Combo
+          id: choice
+          style: {horizontal_alignment: Start, vertical_alignment: Center}
+          enabled: {bind: {path: enabled, source: External}}
+          items: {bind: {path: choices, source: External}}
+          selected: {bind: {path: selected, source: External, mode: TwoWay}}
   binding_row:
     root:
       type: StackLayout
@@ -16,10 +24,24 @@ templates:
       orientation: Horizontal
       gap: 8
       children:
-        - {type: Label, id: label, style: {vertical_alignment: Center, placement: {width: 160}}, text: {bind: {path: label, source: External}}}
-        - {type: Label, id: value, style: {horizontal_alignment: Stretch, vertical_alignment: Center}, text: {bind: {path: value, source: External}}}
-        - {type: Button, id: change, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: change_label, source: External}}, command: capture}
-        - {type: Button, id: clear, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: clear_label, source: External}}, command: clear}
+        - type: Label
+          id: label
+          style: {vertical_alignment: Center, placement: {width: 160}}
+          text: {bind: {path: label, source: External}}
+        - type: Label
+          id: value
+          style: {horizontal_alignment: Stretch, vertical_alignment: Center}
+          text: {bind: {path: value, source: External}}
+        - type: Button
+          id: change
+          style: {horizontal_alignment: Start, vertical_alignment: Center}
+          text: {bind: {path: change_label, source: External}}
+          command: capture
+        - type: Button
+          id: clear
+          style: {horizontal_alignment: Start, vertical_alignment: Center}
+          text: {bind: {path: clear_label, source: External}}
+          command: clear
   binding_page:
     root:
       type: Repeat
@@ -88,15 +110,29 @@ root:
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: language_label, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: labels.language, source: External}}}
-                    - {type: Combo, id: language, style: {horizontal_alignment: Start, vertical_alignment: Center}, items: {bind: {path: language.items, source: External}}, selected: {bind: {path: language.selected, source: External, mode: TwoWay}}}
+                    - type: Label
+                      id: language_label
+                      style: {horizontal_alignment: Start, vertical_alignment: Center}
+                      text: {bind: {path: labels.language, source: External}}
+                    - type: Combo
+                      id: language
+                      style: {horizontal_alignment: Start, vertical_alignment: Center}
+                      items: {bind: {path: language.items, source: External}}
+                      selected: {bind: {path: language.selected, source: External, mode: TwoWay}}
                 - type: StackLayout
                   id: storage_row
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: storage_label, style: {horizontal_alignment: Start, vertical_alignment: Center}, text: {bind: {path: labels.storage_policy, source: External}}}
-                    - {type: Combo, id: storage, style: {horizontal_alignment: Start, vertical_alignment: Center}, items: {bind: {path: storage.items, source: External}}, selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}}
+                    - type: Label
+                      id: storage_label
+                      style: {horizontal_alignment: Start, vertical_alignment: Center}
+                      text: {bind: {path: labels.storage_policy, source: External}}
+                    - type: Combo
+                      id: storage
+                      style: {horizontal_alignment: Start, vertical_alignment: Center}
+                      items: {bind: {path: storage.items, source: External}}
+                      selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}
                 - type: TextBox
                   id: storage_directory
                   visible: {bind: {path: directory_visible, source: External}}
@@ -120,15 +156,27 @@ root:
               id: video_fields
               gap: 12
               children:
-                - {type: CheckBox, id: fullscreen, text: {bind: {path: labels.fullscreen, source: External}}, checked: {bind: {path: fullscreen, source: External, mode: TwoWay}}}
-                - {type: CheckBox, id: vsync, text: {bind: {path: labels.vsync, source: External}}, checked: {bind: {path: vsync, source: External, mode: TwoWay}}}
+                - type: CheckBox
+                  id: fullscreen
+                  text: {bind: {path: labels.fullscreen, source: External}}
+                  checked: {bind: {path: fullscreen, source: External, mode: TwoWay}}
+                - type: CheckBox
+                  id: vsync
+                  text: {bind: {path: labels.vsync, source: External}}
+                  checked: {bind: {path: vsync, source: External, mode: TwoWay}}
                 - type: StackLayout
                   id: scaling_row
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: scaling_label, style: {placement: {width: 120}}, text: {bind: {path: labels.scaling, source: External}}}
-                    - {type: Combo, id: scaling, items: {bind: {path: scaling.items, source: External}}, selected: {bind: {path: scaling.selected, source: External, mode: TwoWay}}}
+                    - type: Label
+                      id: scaling_label
+                      style: {placement: {width: 120}}
+                      text: {bind: {path: labels.scaling, source: External}}
+                    - type: Combo
+                      id: scaling
+                      items: {bind: {path: scaling.items, source: External}}
+                      selected: {bind: {path: scaling.selected, source: External, mode: TwoWay}}
           - id: audio
             title: {bind: {path: labels.tab_audio, source: External}}
             content:
@@ -136,28 +184,53 @@ root:
               id: audio_fields
               gap: 12
               children:
-                - {type: CheckBox, id: mute, text: {bind: {path: labels.mute, source: External}}, checked: {bind: {path: muted, source: External, mode: TwoWay}}}
+                - type: CheckBox
+                  id: mute
+                  text: {bind: {path: labels.mute, source: External}}
+                  checked: {bind: {path: muted, source: External, mode: TwoWay}}
                 - type: StackLayout
                   id: volume_row
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: volume_label, style: {placement: {width: 120}}, text: {bind: {path: volume_label, source: External}}}
-                    - {type: Slider, id: volume, value: {bind: {path: volume, source: External, mode: TwoWay}}, min: 0, max: 100, step: 1}
+                    - type: Label
+                      id: volume_label
+                      style: {placement: {width: 120}}
+                      text: {bind: {path: volume_label, source: External}}
+                    - type: Slider
+                      id: volume
+                      value: {bind: {path: volume, source: External, mode: TwoWay}}
+                      min: 0
+                      max: 100
+                      step: 1
                 - type: StackLayout
                   id: rate_row
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: rate_label, style: {placement: {width: 120}}, text: {bind: {path: labels.sample_rate, source: External}}}
-                    - {type: Combo, id: sample_rate, items: {bind: {path: sample_rate.items, source: External}}, selected: {bind: {path: sample_rate.selected, source: External, mode: TwoWay}}}
+                    - type: Label
+                      id: rate_label
+                      style: {placement: {width: 120}}
+                      text: {bind: {path: labels.sample_rate, source: External}}
+                    - type: Combo
+                      id: sample_rate
+                      items: {bind: {path: sample_rate.items, source: External}}
+                      selected: {bind: {path: sample_rate.selected, source: External, mode: TwoWay}}
                 - type: StackLayout
                   id: latency_row
                   orientation: Horizontal
                   gap: 12
                   children:
-                    - {type: Label, id: latency_label, style: {placement: {width: 120}}, text: {bind: {path: latency_label, source: External}}}
-                    - {type: Slider, id: latency, value: {bind: {path: latency, source: External, mode: TwoWay}}, min: 10, max: 200, step: 1}
+                    - type: Label
+                      id: latency_label
+                      style: {placement: {width: 120}}
+                      text: {bind: {path: latency_label, source: External}}
+                    - type: Slider
+                      id: latency
+                      value: {bind: {path: latency, source: External, mode: TwoWay}}
+                      min: 10
+                      max: 200
+                      step: 1
           - id: notifications
             title: {bind: {path: labels.tab_notifications, source: External}}
             content:
@@ -173,47 +246,112 @@ root:
                     id: information
                     gap: 8
                     children:
-                      - {type: Label, id: info_label, style: {text: {role: Subtitle, scale: 1.0}}, text: {bind: {path: labels.info, source: External}}}
-                      - {type: CheckBox, id: info_enabled, text: {bind: {path: labels.info_enabled, source: External}}, checked: {bind: {path: info_enabled, source: External, mode: TwoWay}}}
-                      - {type: Label, id: info_duration_label, text: {bind: {path: labels.info_duration, source: External}}}
-                      - {type: TextBox, id: info_duration, text: {bind: {path: info_duration, source: External, mode: TwoWay}}}
+                      - type: Label
+                        id: info_label
+                        style: {text: {role: Subtitle, scale: 1.0}}
+                        text: {bind: {path: labels.info, source: External}}
+                      - type: CheckBox
+                        id: info_enabled
+                        text: {bind: {path: labels.info_enabled, source: External}}
+                        checked: {bind: {path: info_enabled, source: External, mode: TwoWay}}
+                      - type: Label
+                        id: info_duration_label
+                        text: {bind: {path: labels.info_duration, source: External}}
+                      - type: TextBox
+                        id: info_duration
+                        text: {bind: {path: info_duration, source: External, mode: TwoWay}}
                       - {type: Label, id: info_color_label, text: {bind: {path: labels.info_color, source: External}}}
-                      - {type: Combo, id: info_color, items: {bind: {path: info_color.items, source: External}}, selected: {bind: {path: info_color.selected, source: External, mode: TwoWay}}}
+                      - type: Combo
+                        id: info_color
+                        items: {bind: {path: info_color.items, source: External}}
+                        selected: {bind: {path: info_color.selected, source: External, mode: TwoWay}}
                   - type: StackLayout
                     id: warning
                     gap: 8
                     children:
-                      - {type: Label, id: warning_label, style: {text: {role: Subtitle, scale: 1.0}}, text: {bind: {path: labels.warning, source: External}}}
-                      - {type: CheckBox, id: warning_enabled, text: {bind: {path: labels.warning_enabled, source: External}}, checked: {bind: {path: warning_enabled, source: External, mode: TwoWay}}}
-                      - {type: Label, id: warning_duration_label, text: {bind: {path: labels.warning_duration, source: External}}}
-                      - {type: TextBox, id: warning_duration, text: {bind: {path: warning_duration, source: External, mode: TwoWay}}}
-                      - {type: Label, id: warning_color_label, text: {bind: {path: labels.warning_color, source: External}}}
-                      - {type: Combo, id: warning_color, items: {bind: {path: warning_color.items, source: External}}, selected: {bind: {path: warning_color.selected, source: External, mode: TwoWay}}}
+                      - type: Label
+                        id: warning_label
+                        style: {text: {role: Subtitle, scale: 1.0}}
+                        text: {bind: {path: labels.warning, source: External}}
+                      - type: CheckBox
+                        id: warning_enabled
+                        text: {bind: {path: labels.warning_enabled, source: External}}
+                        checked: {bind: {path: warning_enabled, source: External, mode: TwoWay}}
+                      - type: Label
+                        id: warning_duration_label
+                        text: {bind: {path: labels.warning_duration, source: External}}
+                      - type: TextBox
+                        id: warning_duration
+                        text: {bind: {path: warning_duration, source: External, mode: TwoWay}}
+                      - type: Label
+                        id: warning_color_label
+                        text: {bind: {path: labels.warning_color, source: External}}
+                      - type: Combo
+                        id: warning_color
+                        items: {bind: {path: warning_color.items, source: External}}
+                        selected: {bind: {path: warning_color.selected, source: External, mode: TwoWay}}
                   - type: StackLayout
                     id: error
                     gap: 8
                     children:
-                      - {type: Label, id: error_label, style: {text: {role: Subtitle, scale: 1.0}}, text: {bind: {path: labels.error, source: External}}}
-                      - {type: CheckBox, id: error_enabled, text: {bind: {path: labels.error_enabled, source: External}}, checked: {bind: {path: error_enabled, source: External, mode: TwoWay}}}
-                      - {type: CheckBox, id: error_modal, text: {bind: {path: labels.error_modal, source: External}}, checked: {bind: {path: error_modal, source: External, mode: TwoWay}}}
+                      - type: Label
+                        id: error_label
+                        style: {text: {role: Subtitle, scale: 1.0}}
+                        text: {bind: {path: labels.error, source: External}}
+                      - type: CheckBox
+                        id: error_enabled
+                        text: {bind: {path: labels.error_enabled, source: External}}
+                        checked: {bind: {path: error_enabled, source: External, mode: TwoWay}}
+                      - type: CheckBox
+                        id: error_modal
+                        text: {bind: {path: labels.error_modal, source: External}}
+                        checked: {bind: {path: error_modal, source: External, mode: TwoWay}}
                       - {type: Label, id: error_color_label, text: {bind: {path: labels.error_color, source: External}}}
-                      - {type: Combo, id: error_color, items: {bind: {path: error_color.items, source: External}}, selected: {bind: {path: error_color.selected, source: External, mode: TwoWay}}}
+                      - type: Combo
+                        id: error_color
+                        items: {bind: {path: error_color.items, source: External}}
+                        selected: {bind: {path: error_color.selected, source: External, mode: TwoWay}}
                   - type: StackLayout
                     id: notification_display
                     gap: 8
                     children:
-                      - {type: Label, id: position_label, style: {text: {role: Subtitle, scale: 1.0}}, text: {bind: {path: labels.display_section, source: External}}}
-                      - {type: Combo, id: position, items: {bind: {path: position.items, source: External}}, selected: {bind: {path: position.selected, source: External, mode: TwoWay}}}
-                      - {type: Combo, id: area, items: {bind: {path: area.items, source: External}}, selected: {bind: {path: area.selected, source: External, mode: TwoWay}}}
+                      - type: Label
+                        id: position_label
+                        style: {text: {role: Subtitle, scale: 1.0}}
+                        text: {bind: {path: labels.display_section, source: External}}
+                      - type: Combo
+                        id: position
+                        items: {bind: {path: position.items, source: External}}
+                        selected: {bind: {path: position.selected, source: External, mode: TwoWay}}
+                      - type: Combo
+                        id: area
+                        items: {bind: {path: area.items, source: External}}
+                        selected: {bind: {path: area.selected, source: External, mode: TwoWay}}
                   - type: StackLayout
                     id: status_display
                     gap: 8
                     children:
-                      - {type: Label, id: status_display_label, style: {text: {role: Subtitle, scale: 1.0}}, text: {bind: {path: labels.status_section, source: External}}}
-                      - {type: CheckBox, id: status_enabled, text: {bind: {path: labels.status_enabled, source: External}}, checked: {bind: {path: status_enabled, source: External, mode: TwoWay}}}
-                      - {type: Combo, id: status_position, items: {bind: {path: status_position.items, source: External}}, selected: {bind: {path: status_position.selected, source: External, mode: TwoWay}}}
-                      - {type: Combo, id: status_area, enabled: {bind: {path: status_area_enabled, source: External}}, items: {bind: {path: status_area.items, source: External}}, selected: {bind: {path: status_area.selected, source: External, mode: TwoWay}}}
-                      - {type: Label, id: status_area_follows, visible: {bind: {path: status_area_follows, source: External}}, text: {bind: {path: labels.follow_note, source: External}}}
+                      - type: Label
+                        id: status_display_label
+                        style: {text: {role: Subtitle, scale: 1.0}}
+                        text: {bind: {path: labels.status_section, source: External}}
+                      - type: CheckBox
+                        id: status_enabled
+                        text: {bind: {path: labels.status_enabled, source: External}}
+                        checked: {bind: {path: status_enabled, source: External, mode: TwoWay}}
+                      - type: Combo
+                        id: status_position
+                        items: {bind: {path: status_position.items, source: External}}
+                        selected: {bind: {path: status_position.selected, source: External, mode: TwoWay}}
+                      - type: Combo
+                        id: status_area
+                        enabled: {bind: {path: status_area_enabled, source: External}}
+                        items: {bind: {path: status_area.items, source: External}}
+                        selected: {bind: {path: status_area.selected, source: External, mode: TwoWay}}
+                      - type: Label
+                        id: status_area_follows
+                        visible: {bind: {path: status_area_follows, source: External}}
+                        text: {bind: {path: labels.follow_note, source: External}}
           - id: system
             title: {bind: {path: labels.tab_system, source: External}}
             content:
