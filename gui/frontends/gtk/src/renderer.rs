@@ -1,4 +1,6 @@
-use std::rc::Rc;
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+
+use nerust_frontend_host::osd::OsdUpdate;
 
 use nerust_render_traits::{
     FrameBuffer, RenderedImage, SurfaceSize, VideoRenderProfile,
@@ -14,6 +16,8 @@ pub(crate) struct GtkRenderer {
     /// instead of `renderer.is_some()`.
     attached: bool,
     output_generation: u64,
+    osd_delivering: bool,
+    osd_updates: VecDeque<(u64, OsdUpdate)>,
 }
 
 impl GtkRenderer {
@@ -23,6 +27,8 @@ impl GtkRenderer {
             renderer: None,
             attached: false,
             output_generation: 0,
+            osd_delivering: false,
+            osd_updates: VecDeque::new(),
         }
     }
 
@@ -32,6 +38,54 @@ impl GtkRenderer {
 
     pub(crate) fn output_generation(&self) -> u64 {
         self.output_generation
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_test_backend(&mut self, backend: Box<dyn RenderPipeline>) {
+        self.renderer = Some(backend);
+        self.attached = true;
+        self.output_generation = self.output_generation.wrapping_add(1);
+    }
+
+    /// Keep the native backend outside RefCell while setters synchronously reenter.
+    /// Nested turns enqueue owned differences rather than losing their updates.
+    pub(crate) fn apply_osd(shared: &Rc<RefCell<Self>>, update: OsdUpdate) {
+        {
+            let mut renderer = shared.borrow_mut();
+            let generation = renderer.output_generation;
+            renderer.osd_updates.push_back((generation, update));
+            if renderer.osd_delivering {
+                return;
+            }
+            renderer.osd_delivering = true;
+        }
+        loop {
+            let next = {
+                let mut renderer = shared.borrow_mut();
+                let Some((generation, update)) = renderer.osd_updates.pop_front() else {
+                    renderer.osd_delivering = false;
+                    return;
+                };
+                if generation != renderer.output_generation {
+                    continue;
+                }
+                (generation, update, renderer.renderer.take())
+            };
+            let (generation, update, mut backend) = next;
+            if let Some(backend) = backend.as_mut() {
+                update.apply(backend.as_mut());
+            }
+            // A reentrant attach may have installed a newer destination.
+            let mut renderer = shared.borrow_mut();
+            if renderer.output_generation == generation
+                && renderer.attached
+                && renderer.renderer.is_none()
+            {
+                renderer.renderer = backend.take();
+            }
+            drop(renderer);
+            drop(backend);
+        }
     }
 
     /// Ensure a pipeline exists and its (unused) surface is attached. The
@@ -87,6 +141,18 @@ impl GtkRenderer {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_reserved_strip(strip);
         }
+    }
+}
+
+impl nerust_render_traits::renderer::OsdSink for GtkRenderer {
+    fn set_osd_layer(&mut self, layer: Option<nerust_render_traits::renderer::OsdLayer>) {
+        GtkRenderer::set_osd_layer(self, layer);
+    }
+}
+
+impl nerust_render_traits::renderer::StripSink for GtkRenderer {
+    fn set_reserved_strip(&mut self, strip: nerust_render_traits::ReservedStrip) {
+        GtkRenderer::set_reserved_strip(self, strip);
     }
 }
 

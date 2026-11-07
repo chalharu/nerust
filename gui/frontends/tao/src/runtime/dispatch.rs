@@ -6,7 +6,7 @@ use tao::{event::WindowEvent, event_loop::ControlFlow};
 use crate::ports::WindowOpener;
 
 use super::WindowRuntime;
-use crate::aux::focus::{AuxKind, FocusEffect, FocusEvent};
+use crate::aux::focus::{AuxKind, FocusEvent};
 
 impl WindowRuntime {
     pub(super) fn on_main_event(
@@ -25,14 +25,12 @@ impl WindowRuntime {
             WindowEvent::Focused(true) => {
                 // Focus truth plus resume only; chrome sync and drains
                 // stay deferred to the tick burst (one pass, one capture).
-                if self.host.focus_event(FocusEvent::Main(true)) == Some(FocusEffect::Resume) {
-                    self.host.release_focus_pause();
-                }
+                self.host.on_focus_event(FocusEvent::Main(true));
                 self.host.request_redraw();
             }
             WindowEvent::Focused(false) => {
                 // Deferred: the pause lands at MainEventsCleared only if focus truly left.
-                let _ = self.host.focus_event(FocusEvent::Main(false));
+                self.host.on_focus_event(FocusEvent::Main(false));
                 self.host.clear_keys();
             }
             WindowEvent::Resized(_) => {
@@ -40,7 +38,7 @@ impl WindowRuntime {
                 self.host.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                self.host.on_keyboard_input(event);
+                self.host.on_keyboard_input(event, opener);
                 self.pump_debug_open_request(opener);
             }
             _ => (),
@@ -72,7 +70,9 @@ impl WindowRuntime {
     pub(super) fn on_settings_event(&mut self, event: WindowEvent) {
         // External destroy: run the normal close path (pending apply still commits).
         if matches!(event, WindowEvent::Destroyed) {
-            if self.host.settings_open() && self.host.close_settings_and_maybe_rebuild() {
+            if let Some(id) = self.host.aux.route_id(AuxKind::Settings)
+                && self.host.finish_widget_window(id, true)
+            {
                 self.recreate_renderer();
             }
             return;
@@ -84,7 +84,11 @@ impl WindowRuntime {
             return;
         };
         // Coalesced present: the pump above already requested a redraw.
-        if outcome.close && self.host.close_settings_and_maybe_rebuild() {
+        if outcome.close
+            && self
+                .host
+                .finish_widget_window(outcome.id.expect("routed generation"), true)
+        {
             self.recreate_renderer();
         }
     }
@@ -93,7 +97,10 @@ impl WindowRuntime {
     /// host focus port, which resumes on `Resume` and reports arrival.
     fn drive_focus(&mut self, kind: AuxKind, event: &WindowEvent) -> bool {
         match event {
-            WindowEvent::Focused(focused) => self.host.drive_aux_focus(kind, *focused),
+            WindowEvent::Focused(focused) => {
+                self.host.on_focus_event(FocusEvent::Aux(kind, *focused));
+                *focused
+            }
             _ => false,
         }
     }
@@ -148,21 +155,22 @@ impl WindowRuntime {
         if let Some(detail) = outcome.error {
             self.host.report_host_error(detail);
         }
-        if outcome.cleared {
-            self.host.clear_history();
+        if matches!(kind, AuxKind::Settings | AuxKind::History) {
+            if (outcome.close || outcome.submitted)
+                && let Some(id) = outcome.id
+                && self.host.finish_widget_window(id, outcome.close)
+            {
+                self.recreate_renderer();
+            }
+            return;
         }
         if !outcome.close {
             return;
         }
         match kind {
-            AuxKind::Settings => {
-                if self.host.close_settings_and_maybe_rebuild() {
-                    self.recreate_renderer();
-                }
-            }
             AuxKind::Debug => self.host.drop_debug_window(),
             AuxKind::Ppu => self.host.drop_ppu_window(),
-            AuxKind::History => self.host.drop_history_window(),
+            AuxKind::Settings | AuxKind::History => unreachable!(),
         }
     }
 
@@ -213,6 +221,7 @@ mod tests {
         let menu = support.menu.clone();
         let runtime = WindowRuntime {
             event_loop: None,
+            event_sink: None,
             host: support.host,
             renderer: None,
             surface_xid: None,
@@ -327,7 +336,10 @@ mod tests {
         let opener = FakeOpener::failing("no display");
         // Menu Quit returns the exit intent only: renderer and host teardown wait.
         assert_eq!(
-            runtime.host.on_menu_command(MenuCommand::Quit, &opener),
+            runtime.host.on_menu_command(
+                MenuCommand::Native(nerust_frontend_host::commands::NativeRole::Quit),
+                &opener
+            ),
             HostAction::Exit
         );
         assert!(runtime.renderer.is_some());

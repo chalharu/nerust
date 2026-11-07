@@ -6,8 +6,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use gtk::{gdk, glib, prelude::*};
 use nerust_core_traits::debugger::DebugPanel;
+use nerust_frontend_host::window::{PpuContents, Window as HostWindow, WindowVisitor};
+use nerust_gui_viewmodel::debugger::tile_hover_text;
 use nerust_gui_viewmodel::debugger::{DebugImageRgba, format_panels, scale2x_nearest};
-use nerust_settings_core::i18n::{UiText, text, tile_hover};
+use nerust_settings_core::i18n::{UiText, text};
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::State;
@@ -28,7 +30,49 @@ pub(crate) struct PpuWindowCore {
 }
 
 impl PpuWindowCore {
-    pub(crate) fn open(
+    /// The debugger retains lifetime ownership; the common grouped contents
+    /// select construction without decomposing probe controls or textures.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_window(
+        model: &HostWindow,
+        app: &gtk::Application,
+        main: &gtk::ApplicationWindow,
+        state: Rc<RefCell<State>>,
+        images: Vec<DebugImageRgba>,
+        images_gen: u64,
+        panels: Vec<DebugPanel>,
+        language: AppLanguage,
+    ) -> Option<PpuWindow> {
+        struct Builder<F> {
+            title: String,
+            build: Option<F>,
+            result: Option<PpuWindow>,
+        }
+        impl<F: FnOnce(&str) -> PpuWindow> WindowVisitor for Builder<F> {
+            fn begin_window(&mut self, model: &HostWindow) {
+                self.title.clone_from(&model.title);
+            }
+            fn visit_ppu(&mut self, _contents: &PpuContents) {
+                if let Some(build) = self.build.take() {
+                    self.result = Some(build(&self.title));
+                }
+            }
+        }
+        let mut builder = Builder {
+            title: String::new(),
+            build: Some(|title: &str| {
+                Self::open_group(
+                    app, main, state, images, images_gen, panels, language, title,
+                )
+            }),
+            result: None,
+        };
+        model.visit(&mut builder);
+        builder.result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_group(
         app: &gtk::Application,
         // Independent toplevel like the tao twin (see the debugger):
         // true dialogs stay transient, tool windows do not.
@@ -38,10 +82,11 @@ impl PpuWindowCore {
         images_gen: u64,
         panels: Vec<DebugPanel>,
         language: AppLanguage,
+        title: &str,
     ) -> PpuWindow {
         let window = gtk::ApplicationWindow::builder()
             .application(app)
-            .title(text(language, UiText::PpuViewer))
+            .title(title)
             .default_width(560)
             .default_height(620)
             .build();
@@ -149,23 +194,7 @@ impl PpuWindowCore {
     }
 }
 
-/// Tile hover line: 2x display scale, 8x8 tiles, byte offset of the
-/// tile start (+16 per tile). Same geometry as the tao viewer.
-fn tile_hover_text(
-    language: AppLanguage,
-    label: &str,
-    width: u32,
-    height: u32,
-    x: f64,
-    y: f64,
-) -> String {
-    let sx = (x / 2.0).floor().clamp(0.0, width as f64 - 1.0) as u32;
-    let sy = (y / 2.0).floor().clamp(0.0, height as f64 - 1.0) as u32;
-    let cols = (width / 8).max(1);
-    let idx = (sy / 8) * cols + (sx / 8);
-    tile_hover(language, label, idx, sx, sy, idx * 16)
-}
-
+/// Tile hover line shared via viewmodel (`tile_hover_text`).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,7 +202,14 @@ mod tests {
     #[test]
     fn tile_hover_matches_tao_geometry() {
         assert_eq!(
-            tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
+            nerust_gui_viewmodel::debugger::tile_hover_text(
+                AppLanguage::English,
+                "Pattern left",
+                128,
+                128,
+                88.0,
+                26.0
+            ),
             "Pattern left tile #21 (px 44,13, +0x0150)"
         );
     }

@@ -1,33 +1,51 @@
 //! Session presentation sync: menu, title, and fullscreen state.
 use super::HostState;
-use super::chrome::MenuSig;
-use super::derive_native_fullscreen_sync;
-use super::frame::FrameCtx;
+use crate::menu::TAO_MENU_CAPABILITIES;
+use nerust_frontend_host::frame::FrameCtx;
 use nerust_gui_shell::session::osd::TickMetrics;
-use nerust_gui_shell::session::{SessionError, access::SettingsResult};
+use nerust_gui_shell::session::{
+    SessionError,
+    access::{SessionControl, SettingsResult},
+};
 use std::time::Instant;
+
+use nerust_frontend_host::{
+    application::{MenuSig, MenubarUpdate},
+    menu::Menubar,
+    window::{Window, WindowVisitor},
+};
+
+struct MainPresentation<'a> {
+    native: Option<&'a tao::window::Window>,
+    menu: Option<(&'a mut dyn crate::menu::MenuSink, MenuSig)>,
+}
+
+impl WindowVisitor for MainPresentation<'_> {
+    fn begin_window(&mut self, window: &Window) {
+        if let Some(native) = self.native {
+            native.set_title(&window.title);
+        }
+    }
+
+    fn visit_menu(&mut self, menu: &Menubar) {
+        if let Some((sink, signature)) = self.menu.as_mut() {
+            sink.update(MenubarUpdate {
+                signature: signature.clone(),
+                menubar: menu.clone(),
+            });
+        }
+    }
+}
 
 impl HostState {
     pub(crate) fn sync_fullscreen_default_from_window(&mut self) {
         let Some(is_fullscreen) = self.windows.with_usable(|w| w.fullscreen().is_some()) else {
             return;
         };
-        let sync = derive_native_fullscreen_sync(
-            self.windows.pending_fullscreen_sync(),
-            is_fullscreen,
-            self.session
-                .settings_snapshot()
-                .local
-                .video
-                .window
-                .fullscreen_default,
-        );
-        self.windows
-            .set_pending_fullscreen_sync(sync.pending_target);
-        if !sync.persist_setting {
+        if !self.core.observe_fullscreen(is_fullscreen) {
             return;
         }
-        match self.session.set_fullscreen_default(is_fullscreen) {
+        match self.core.set_fullscreen_default(is_fullscreen) {
             Ok(plan) if plan.fullscreen_default_changed => {
                 let ctx = self.frame_ctx();
                 self.sync_chrome(&ctx, true);
@@ -40,59 +58,33 @@ impl HostState {
 
     /// Menu sync using scalar state and immutable snapshot identities only.
     pub(crate) fn sync_menu_state(&mut self, ctx: &FrameCtx) {
-        use super::chrome::ChromeScalars;
         let settings_open = self.settings_open();
-        let language = ctx.settings().shared.general.language;
-        let active_slot = self.session.active_slot_id();
-        let scalars = ChromeScalars {
-            loaded: ctx.tick().loaded,
-            paused: ctx.tick().paused,
-            settings_open,
-            language,
-            active_slot,
-        };
-        if self.chrome.cheap_same(&scalars) && self.chrome.menu_same(ctx.slots(), ctx.shortcuts()) {
+        let Some(update) = self
+            .core
+            .menubar_update(ctx, settings_open, TAO_MENU_CAPABILITIES)
+        else {
             return;
-        }
-        let sig = MenuSig {
-            loaded: scalars.loaded,
-            paused: scalars.paused,
-            settings_open,
-            language,
-            active_slot,
-            slots: std::sync::Arc::clone(ctx.slots()),
-            shortcuts: std::sync::Arc::clone(ctx.shortcuts()),
         };
-        self.app_menu.update(crate::menu::MenuSync {
-            loaded: sig.loaded,
-            paused: sig.paused,
-            slots: &sig.slots,
-            active_slot: sig.active_slot,
-            settings_open: sig.settings_open,
-            language: sig.language,
-            shortcuts: &sig.shortcuts,
+        let window = self.core.main_window().clone();
+        window.visit(&mut MainPresentation {
+            native: None,
+            menu: Some((self.app_menu.as_mut(), update.signature)),
         });
-        self.chrome.push_menu(sig);
-    }
-
-    fn push_title(&mut self, title: &str) {
-        if let Some(window) = self.windows.live() {
-            window.set_title(title);
-        }
     }
 
     /// Title-only gate over the cached session title: one format per change.
     pub(crate) fn refresh_window_title(&mut self, tick: &TickMetrics) {
-        let title = self.cached_title(tick);
-        if self.chrome.title_same(&title) {
-            return;
+        if self.core.title_update(tick).is_some() {
+            let window = self.core.main_window().clone();
+            window.visit(&mut MainPresentation {
+                native: self.windows.live().map(AsRef::as_ref),
+                menu: None,
+            });
         }
-        self.chrome.push_title(title.clone());
-        self.push_title(&title);
     }
 
     pub(super) fn maybe_refresh_window_title(&mut self, ctx: &FrameCtx, now: Instant) {
-        if self.shell.should_refresh_title(now) {
+        if self.core.title_refresh_due(now) {
             self.refresh_window_title(&ctx.tick());
         }
     }
@@ -138,22 +130,13 @@ impl HostState {
     }
 
     pub(super) fn sync_fullscreen_from_settings(&mut self) {
-        let fullscreen = self
-            .session
-            .settings_snapshot()
-            .local
-            .video
-            .window
-            .fullscreen_default;
         let is_fullscreen = self
             .windows
             .live()
             .is_some_and(|window| window.fullscreen().is_some());
-        if is_fullscreen == fullscreen {
-            self.windows.set_pending_fullscreen_sync(None);
+        let Some(fullscreen) = self.core.fullscreen_request(is_fullscreen) else {
             return;
-        }
-        self.windows.set_pending_fullscreen_sync(Some(fullscreen));
+        };
         if let Some(window) = self.windows.live() {
             window.set_fullscreen(fullscreen.then_some(tao::window::Fullscreen::Borderless(None)));
         }
@@ -163,15 +146,11 @@ impl HostState {
         &mut self,
         fullscreen: bool,
     ) -> Result<SettingsResult, SessionError> {
-        let plan = self.session.set_fullscreen_default(fullscreen)?;
+        let plan = self.core.set_fullscreen_default(fullscreen)?;
         self.sync_fullscreen_from_settings();
         let ctx = self.frame_ctx();
         self.sync_chrome(&ctx, true);
-        Ok(SettingsResult {
-            renderer_needs_rebuild: plan.renderer_rebuild_required || plan.window_settings_changed,
-            fullscreen_default_changed: plan.fullscreen_default_changed,
-            scaling_changed: false,
-        })
+        Ok(plan)
     }
 }
 
@@ -198,11 +177,11 @@ mod tests {
         let mut host = support.host;
         let ctx = host.frame_ctx();
         let title = host.cached_title(&ctx.tick());
-        assert!(!host.chrome.title_same(&title));
+        assert!(!host.title_same(&title));
         host.refresh_window_title(&ctx.tick());
-        assert!(host.chrome.title_same(&title));
+        assert!(host.title_same(&title));
         host.refresh_window_title(&ctx.tick());
-        assert!(host.chrome.title_same(&title));
+        assert!(host.title_same(&title));
     }
 
     #[test]
@@ -213,7 +192,7 @@ mod tests {
         host.sync_chrome(&ctx, true);
         assert_eq!(support.menu.updates().len(), 1);
         let title = host.cached_title(&ctx.tick());
-        assert!(host.chrome.title_same(&title));
+        assert!(host.title_same(&title));
     }
 
     #[test]
@@ -221,10 +200,10 @@ mod tests {
         let support = TestHost::new();
         let mut host = support.host;
         host.sync_fullscreen_from_settings();
-        assert!(host.windows.pending_fullscreen_sync().is_none());
+        assert!(host.pending_fullscreen().is_none());
         host.sync_fullscreen_default_from_window();
         host.toggle_fullscreen();
-        assert!(host.windows.pending_fullscreen_sync().is_none());
+        assert!(host.pending_fullscreen().is_none());
     }
 
     #[test]
@@ -245,6 +224,6 @@ mod tests {
         // refresh stays gated until the interval elapses.
         host.maybe_refresh_window_title(&ctx, now);
         let title = host.cached_title(&ctx.tick());
-        assert!(!host.chrome.title_same(&title));
+        assert!(!host.title_same(&title));
     }
 }

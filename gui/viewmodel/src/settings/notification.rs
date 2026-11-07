@@ -1,8 +1,9 @@
 use super::{
-    dto::NotificationView,
+    dto::{ChoiceView, NotificationView},
     editor::{SettingsEditor, ViewModelError},
     property::ReadOnlyObservableProperty,
 };
+use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationColor, NotificationPosition,
 };
@@ -128,10 +129,33 @@ impl NotificationSettingsViewModel {
 
 fn project_view(state: &super::EditorState) -> NotificationView {
     let n = &state.draft.local.notifications;
+    let lang = state.draft.shared.general.language;
     NotificationView {
         info_enabled: n.info_enabled,
         info_duration_ms: n.info_duration_ms,
         info_color: n.info_color,
+        color_choices: vec![
+            ChoiceView {
+                value: NotificationColor::White,
+                label: ui_text(lang, UiText::ColorWhite).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Yellow,
+                label: ui_text(lang, UiText::ColorYellow).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Red,
+                label: ui_text(lang, UiText::ColorRed).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Green,
+                label: ui_text(lang, UiText::ColorGreen).to_string(),
+            },
+            ChoiceView {
+                value: NotificationColor::Cyan,
+                label: ui_text(lang, UiText::ColorCyan).to_string(),
+            },
+        ],
         warning_enabled: n.warning_enabled,
         warning_duration_ms: n.warning_duration_ms,
         warning_color: n.warning_color,
@@ -141,8 +165,36 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         status_enabled: n.status_enabled,
         position: n.position,
         status_position: n.status_position,
+        position_choices: vec![
+            ChoiceView {
+                value: NotificationPosition::TopLeft,
+                label: ui_text(lang, UiText::PosTopLeft).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::TopRight,
+                label: ui_text(lang, UiText::PosTopRight).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::BottomLeft,
+                label: ui_text(lang, UiText::PosBottomLeft).to_string(),
+            },
+            ChoiceView {
+                value: NotificationPosition::BottomRight,
+                label: ui_text(lang, UiText::PosBottomRight).to_string(),
+            },
+        ],
         area_mode: n.area_mode,
         status_area_mode: n.status_area_mode,
+        area_mode_choices: vec![
+            ChoiceView {
+                value: NotificationAreaMode::Overlay,
+                label: ui_text(lang, UiText::AreaOverlay).to_string(),
+            },
+            ChoiceView {
+                value: NotificationAreaMode::Strip,
+                label: ui_text(lang, UiText::AreaStrip).to_string(),
+            },
+        ],
     }
 }
 
@@ -213,5 +265,32 @@ mod tests {
         assert_eq!(view.warning_duration_ms, 3_000);
         assert!(!view.error_modal);
         assert_eq!(view.position, NotificationPosition::TopRight);
+    }
+}
+
+#[cfg(test)]
+mod choices_tests {
+    use crate::settings::test_support::test_vm;
+
+    #[test]
+    fn notification_choices_cover_all_variants_once() {
+        let vm = test_vm();
+        let view = vm.notifications.view.get();
+        assert_eq!(view.color_choices.len(), 5);
+        assert_eq!(view.position_choices.len(), 4);
+        assert_eq!(view.area_mode_choices.len(), 2);
+        // Order is the toolbar contract: index selection depends on it.
+        assert_eq!(
+            view.color_choices[0].value,
+            nerust_settings_core::model::local::NotificationColor::White
+        );
+        assert_eq!(
+            view.position_choices[0].value,
+            nerust_settings_core::model::local::NotificationPosition::TopLeft
+        );
+        assert_eq!(
+            view.area_mode_choices[0].value,
+            nerust_settings_core::model::local::NotificationAreaMode::Overlay
+        );
     }
 }

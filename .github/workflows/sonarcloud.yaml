@@ -131,6 +131,11 @@ jobs:
           mkdir -p coverage target/llvm-cov-target
           cargo llvm-cov nextest --no-report --workspace --exclude nerust_rom_test \
             --features tao,wgpu
+          # Display-requiring tests are #[ignore]d by default and run only
+          # here, under Xvfb. Scoped to the tao frontend package so
+          # unrelated ignores (optional ROMs, probe helpers) stay skipped.
+          xvfb-run cargo llvm-cov nextest --no-report -p nerust_tao --lib \
+            --run-ignored only
           cargo llvm-cov report \
             --no-default-ignore-filename-regex \
             --lcov --output-path coverage/raw.info
@@ -185,6 +190,12 @@ jobs:
           xvfb-run cargo llvm-cov nextest --no-report --workspace \
             --exclude nerust_rom_test --exclude nerust_gbc_core \
             --exclude nerust_nes_core --no-default-features --features gtk,opengl,nes
+          # Display-requiring tests are #[ignore]d by default and run only
+          # here, under Xvfb (nextest isolates each test in its own process).
+          # Scoped to the gtk frontend package so unrelated ignores
+          # (optional ROMs, probe helpers) stay skipped.
+          xvfb-run cargo llvm-cov nextest --no-report -p nerust_gtk --lib \
+            --run-ignored only
           cargo llvm-cov report \
             --no-default-ignore-filename-regex \
             --lcov --output-path coverage/raw.info
