@@ -86,7 +86,6 @@ fn selected_memory(
 pub(crate) struct Projection {
     pub(crate) disassembly: Table,
     pub(crate) registers: [Table; 2],
-    disassembly_style: panechord::Style,
     memory: Table,
     memory_addr: String,
     memory_targets: Arc<MemoryTargets>,
@@ -130,26 +129,6 @@ fn code_table(rows: impl IntoIterator<Item = (String, String)>) -> Table {
     }
 }
 
-/// Explicit width for one register table: the longest `name: 0x…` line
-/// in monospace points plus padding, clamped so two tables plus the row
-/// gap fit the fixed state column on every backend.
-fn register_table_width(regs: &[(&'static str, u64)], digits: usize) -> f32 {
-    let longest = regs
-        .iter()
-        .map(|&(name, _)| name.len() + digits + 4)
-        .max()
-        .unwrap_or(0);
-    ((longest as f32) * 8.5 + 16.0).clamp(96.0, 200.0)
-}
-
-/// Explicit width for the disassembly table: the widest row in monospace
-/// points plus the arrow column and gaps, clamped to the panes budget.
-/// The table must never size below its content: macOS sizes scroll views
-/// from their frames, and a narrower frame clips the tail operands.
-fn disassembly_table_width(longest: usize) -> f32 {
-    ((longest as f32) * 8.5 + 56.0).clamp(200.0, 700.0)
-}
-
 pub(crate) fn project(display: &DisplayCache) -> Projection {
     let midpoint = display.regs.len().div_ceil(2);
     let digits = register_hex_digits(&display.regs);
@@ -174,12 +153,6 @@ pub(crate) fn project(display: &DisplayCache) -> Projection {
         )
     }));
     let mut columns = disassembly.columns.to_vec();
-    let longest = disassembly
-        .rows
-        .iter()
-        .map(|row| row.cells.first().map_or(0, |cell| cell.text.len()))
-        .max()
-        .unwrap_or(0);
     columns.push(TableColumn {
         title: String::new(),
         width: Some(40.0),
@@ -206,16 +179,6 @@ pub(crate) fn project(display: &DisplayCache) -> Projection {
     Projection {
         registers,
         disassembly,
-        disassembly_style: panechord::Style {
-            horizontal_alignment: None,
-            vertical_alignment: Some(panechord::Alignment::Stretch),
-            placement: panechord::Placement {
-                width: Some(disassembly_table_width(longest)),
-                height: Some(260.0),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
         pc: display
             .disasm_lines
             .iter()
@@ -296,11 +259,6 @@ pub(crate) fn project(display: &DisplayCache) -> Projection {
         register_style: panechord::Style {
             placement: panechord::Placement {
                 height: Some((midpoint as f32 * 38.0).clamp(1.0, 4096.0)),
-                // Explicit width next to the fixed 340pt state column: two
-                // tables share one row, and an ambiguous split collapses one
-                // of them to zero (GBA showed only the left table). Monospace
-                // estimate from the longest line; stable per width class.
-                width: Some(register_table_width(&display.regs, digits)),
                 ..Default::default()
             },
             ..Default::default()
@@ -393,7 +351,6 @@ struct Model {
     registers_left: Table,
     registers_right: Table,
     register_style: panechord::Style,
-    disassembly_style: panechord::Style,
     registers_visible: bool,
     memory: Table,
     bookmarks: Table,
@@ -519,7 +476,6 @@ impl Pane {
                     bookmarks: code_table([]),
                     bookmark_selection: None,
                     register_style: projection.register_style,
-                    disassembly_style: projection.disassembly_style,
                     registers_visible: projection.registers_visible,
                     status: label(UiText::NoCore),
                     back: format!("{} (0)", text(language, UiText::Back)),
@@ -1159,7 +1115,6 @@ impl Pane {
                 model.register_right_selection = None;
             }
             model.register_style = projection.register_style;
-            model.disassembly_style = projection.disassembly_style;
             model.registers_visible = projection.registers_visible;
             model.memory = projection.memory;
             if model
@@ -1508,9 +1463,9 @@ mod tests {
     #[test]
     fn projection_sizes_tables_for_wide_snapshots() {
         // GBA-shaped snapshot: 32-bit values widen the register format to
-        // 8 digits, the register tables gain an explicit width so the row
-        // never collapses one of them, and the disassembly table is wide
-        // enough for its longest line.
+        // 8 digits. Table widths stay backend-owned: macOS sizes table
+        // frames from live column spans (intrinsic content size), so the
+        // projection carries no explicit widths.
         let display = DisplayCache {
             regs: vec![("cpsr", 0x6000001F), ("r15", 0x08000148)],
             disasm_lines: vec![nerust_core_traits::debugger::DisasmLine {
@@ -1528,11 +1483,7 @@ mod tests {
             projection.registers[0].rows[0].cells[0].text,
             "cpsr: 0x6000001F"
         );
-        let width = projection.register_style.placement.width.unwrap();
-        assert!(width >= 150.0, "wide registers need room: {width}");
-        assert!(2.0 * width + 16.0 <= 340.0, "both tables fit the column");
-        let disassembly = projection.disassembly_style.placement.width.unwrap();
-        assert!(disassembly >= 500.0, "longest line must fit: {disassembly}");
+        assert!(projection.register_style.placement.width.is_none());
     }
 
     #[test]
