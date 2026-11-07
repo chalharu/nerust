@@ -164,6 +164,7 @@ image = { default-features = false, features = [
   "png",
 ], version = "=0.25.10" }
 inventory = { version = "=0.3.25" }
+jni = { version = "=0.22.4" }
 log = { default-features = false, version = "=0.4.35" }
 muda = { default-features = false, features = ["gtk3"], version = "=0.21.2" }
 nerust_android = { path = "gui/frontends/android" }
@@ -225,7 +226,6 @@ serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.154" }
 sha2 = { version = "=0.11.1" }
 simple_logger = { version = "=5.2.0" }
-smallvec = { version = "=1.16.3" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }
 thiserror = { version = "=2.0.21" }
