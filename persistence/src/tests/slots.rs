@@ -23,6 +23,53 @@ fn slot_id_allocation_is_monotonic_across_deletions() {
 }
 
 #[test]
+fn slot_numbering_restarts_after_deleting_last_slot() {
+    let dir = prepare_test_dir("slot-id-restart-empty");
+
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
+    write_state_slot(&dir, 1, b"a", &test_identity(), None).unwrap();
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 2);
+    write_state_slot(&dir, 2, b"b", &test_identity(), None).unwrap();
+
+    // Deleting one of several keeps the monotonic counter (no id reuse
+    // while slots remain).
+    delete_state_slot(&state_slot_path(&dir, 1)).unwrap();
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 3);
+
+    // Deleting the last remaining slot restarts at 1: an empty list
+    // must not surprise with a stale number on the next save.
+    delete_state_slot(&state_slot_path(&dir, 2)).unwrap();
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
+    let summary = write_state_slot(&dir, 1, b"c", &test_identity(), None).unwrap();
+    assert_eq!(summary.slot_id, 1);
+    assert!(state_slot_path(&dir, 1).is_file());
+}
+
+#[test]
+fn delete_missing_slot_never_resets_counter() {
+    let dir = prepare_test_dir("slot-id-delete-missing");
+
+    // Burn id 1 without writing (e.g. a failed save): the reservation
+    // must survive so a concurrent writer cannot collide.
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
+    // Deleting a slot that was never there changes nothing.
+    delete_state_slot(&state_slot_path(&dir, 9)).unwrap();
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 2);
+}
+
+#[test]
+fn autosave_delete_never_resets_slot_counter() {
+    let dir = prepare_test_dir("slot-id-autosave-delete");
+
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 1);
+    write_autosave_state_slot(&dir, b"autosave", &test_identity(), None).unwrap();
+    delete_state_slot(&autosave_state_slot_path(&dir)).unwrap();
+    // The burned reservation persists: only deleting a real numbered
+    // slot restarts numbering.
+    assert_eq!(allocate_next_slot_id(&dir).unwrap(), 2);
+}
+
+#[test]
 fn slot_id_allocation_persists_without_writing_slot_files() {
     let dir = prepare_test_dir("slot-id-counter");
 
