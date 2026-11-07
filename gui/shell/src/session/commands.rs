@@ -1,22 +1,8 @@
 pub use crate::session::error::SlotOpFailure;
 
-/// Data-driven command vocabulary: every per-command answer lives on this trait.
-/// The executor matches once; [`SessionCommand`] is the sole implementor.
-pub trait SessionCmd {
-    /// Stable command name for logs and failure messages.
-    fn cmd_name(&self) -> &'static str;
-    /// Slot carried for failure messages: explicit-slot commands use their own id.
-    /// Active-slot commands resolve to `active`; the rest report `None`.
-    fn slot_affinity(&self, active: Option<u64>) -> Option<u64>;
-    /// Success notification for an executed command. `None` means silence.
-    /// Slot failures map to Warning/Error by reason; transport errors become generic Error.
-    fn success_notification(
-        &self,
-        outcome: &SessionCommandOutcome,
-        active_slot: Option<u64>,
-    ) -> Option<crate::session::notification::Message>;
-}
-
+/// Session verbs shared by shell execution and view definitions. Owned here
+/// (execution owner), not by the framework: frontends transport opaque
+/// activations and never name these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionCommand {
     Pause,
@@ -32,6 +18,23 @@ pub enum SessionCommand {
     DeleteSlot(u64),
     SelectNextSlot,
     SelectPreviousSlot,
+}
+
+/// Data-driven command vocabulary: every per-command answer lives on this trait.
+/// The executor matches once; [`SessionCommand`] is the sole implementor.
+pub trait SessionCmd {
+    /// Stable command name for logs and failure messages.
+    fn cmd_name(&self) -> &'static str;
+    /// Slot carried for failure messages: explicit-slot commands use their own id.
+    /// Active-slot commands resolve to `active`; the rest report `None`.
+    fn slot_affinity(&self, active: Option<u64>) -> Option<u64>;
+    /// Success notification for an executed command. `None` means silence.
+    /// Slot failures map to Warning/Error by reason; transport errors become generic Error.
+    fn success_notification(
+        &self,
+        outcome: &SessionCommandOutcome,
+        active_slot: Option<u64>,
+    ) -> Option<crate::session::notification::Message>;
 }
 
 impl SessionCmd for SessionCommand {

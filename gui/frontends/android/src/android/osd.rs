@@ -129,6 +129,7 @@ pub(super) struct OsdSyncCtx<'a> {
     pub renderer: &'a mut dyn RenderPipeline,
     pub size: SurfaceSize,
     pub insets: ViewInsets,
+    pub density: f32,
     pub now: Instant,
 }
 
@@ -212,12 +213,16 @@ impl AndroidOsd {
 
     /// Reserved edge strips in physical pixels. Static per settings
     /// (not per frame) so the renderer never churns surfaces.
-    pub(super) fn reserved_strip(settings: &NotificationSettings, client_h: u32) -> ReservedStrip {
+    pub(super) fn reserved_strip(
+        settings: &NotificationSettings,
+        client_h: u32,
+        density: f32,
+    ) -> ReservedStrip {
         let (top_rows, bottom_rows) =
             nerust_gui_shell::session::osd::OsdChrome::from(settings).reserved_rows();
         ReservedStrip {
-            top: strip_pixels(client_h, top_rows, OSD_UI_SCALE),
-            bottom: strip_pixels(client_h, bottom_rows, OSD_UI_SCALE),
+            top: strip_pixels(client_h, top_rows, density, OSD_UI_SCALE),
+            bottom: strip_pixels(client_h, bottom_rows, density, OSD_UI_SCALE),
         }
     }
 
@@ -273,13 +278,15 @@ impl AndroidOsd {
             renderer,
             size,
             insets,
+            density,
             now,
         } = ctx;
-        let strip = Self::reserved_strip(settings, size.height);
+        let strip = Self::reserved_strip(settings, size.height, density);
         if strip != self.state.last_strip {
             self.state.last_strip = strip;
             renderer.set_reserved_strip(strip);
         }
+        self.state.raster.set_density(density);
         let decision = self.state.presenter.sync(
             &self.state.manager,
             OsdSyncInput {
@@ -291,6 +298,7 @@ impl AndroidOsd {
                 height: size.height,
                 ui_scale: OSD_UI_SCALE,
                 safe_insets: insets,
+                density,
             },
         );
         match decision {

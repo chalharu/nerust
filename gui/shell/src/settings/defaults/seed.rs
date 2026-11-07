@@ -48,7 +48,7 @@ pub fn default_app_state() -> DesktopAppState {
 
 #[cfg(test)]
 mod tests {
-    use nerust_keyboard::Key;
+    use nerust_input_traits::Key;
     use nerust_settings_core::model::input::ShortcutAction;
 
     use super::default_shared_settings;

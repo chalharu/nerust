@@ -2,6 +2,8 @@
 use std::sync::Arc;
 
 use super::settings_model::AndroidSettings;
+use nerust_settings_core::i18n::{UiText, text as ui_text};
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::{
     local::{
         NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
@@ -86,13 +88,57 @@ const STATUS_AREA_MODE_KEY: &str = "status.area_mode";
 
 struct Binding {
     key: &'static str,
-    label: &'static str,
+    label: UiText,
     range: Option<RangeSpec>,
-    choices: Vec<String>,
+    choices: ChoiceSource,
     read: fn(&AndroidSettings) -> usize,
     write: fn(&mut AndroidSettings, usize) -> Option<()>,
     /// Missing keys abort decoding, except rows hidden by the same-edge rule.
     required: bool,
+}
+
+/// How a binding's display choices localize. Machine identity (read/write
+/// positions) stays language-independent; only these captions ride `language`.
+#[derive(Clone, Copy)]
+enum ChoiceSource {
+    /// Ranged int: no choices, Kotlin expands `min..=max` with `unit`.
+    Ranged,
+    /// Boolean pair in `[false, true]` order.
+    OnOff,
+    /// Four corners in [`CORNERS`] order.
+    Corners,
+    /// Numeric sample rates with a ` Hz` suffix; identical in both languages.
+    SampleRates,
+    /// Fixed per-variant captions resolved through [`UiText`].
+    Fixed(&'static [UiText]),
+}
+
+/// Display choices for one binding in the requested language.
+fn resolve_choices(source: ChoiceSource, language: AppLanguage) -> Vec<String> {
+    match source {
+        ChoiceSource::Ranged => Vec::new(),
+        ChoiceSource::OnOff => [UiText::Off, UiText::On]
+            .iter()
+            .map(|key| ui_text(language, *key).to_string())
+            .collect(),
+        ChoiceSource::Corners => [
+            UiText::PosBottomLeft,
+            UiText::PosBottomRight,
+            UiText::PosTopLeft,
+            UiText::PosTopRight,
+        ]
+        .iter()
+        .map(|key| ui_text(language, *key).to_string())
+        .collect(),
+        ChoiceSource::SampleRates => SAMPLE_RATE_CHOICES
+            .iter()
+            .map(|rate| format!("{rate} Hz"))
+            .collect(),
+        ChoiceSource::Fixed(keys) => keys
+            .iter()
+            .map(|key| ui_text(language, *key).to_string())
+            .collect(),
+    }
 }
 
 /// Static descriptors: literals plus fn pointers, built once.
@@ -104,32 +150,47 @@ fn bindings() -> &'static [Binding] {
 
 fn build_bindings() -> Vec<Binding> {
     macro_rules! choice {
-        ($field:ident, $key:literal, $label:literal, [$($value:expr => $text:literal),+ $(,)?]) => {
+        ($field:ident, $key:literal, $label:ident, [$($value:expr => $text:ident),+ $(,)?]) => {
             Binding {
-                key: $key, label: $label, range: None, required: true,
-                choices: vec![$($text.into()),+],
+                key: $key, label: UiText::$label, range: None, required: true,
+                choices: ChoiceSource::Fixed(&[$(UiText::$text),+]),
                 read: |s| [$($value),+].iter().position(|v| *v == s.$field).unwrap_or_default(),
                 write: |s, index| { s.$field = *[$($value),+].get(index)?; Some(()) },
             }
         };
     }
     macro_rules! toggle {
-        ($field:ident, $key:literal, $label:literal) => {
-            choice!($field, $key, $label, [false => "Off", true => "On"])
+        ($field:ident, $key:literal, $label:ident) => {
+            Binding {
+                key: $key,
+                label: UiText::$label,
+                range: None,
+                required: true,
+                choices: ChoiceSource::OnOff,
+                read: |s| usize::from(s.$field),
+                write: |s, index| {
+                    s.$field = match index {
+                        0 => false,
+                        1 => true,
+                        _ => return None,
+                    };
+                    Some(())
+                },
+            }
         };
     }
     macro_rules! range {
-        ($field:ident, $key:literal, $label:literal, $min:expr, $max:expr, $unit:literal) => {
+        ($field:ident, $key:literal, $label:ident, $min:expr, $max:expr, $unit:literal) => {
             Binding {
                 key: $key,
-                label: $label,
+                label: UiText::$label,
                 required: true,
                 range: Some(RangeSpec {
                     min: i64::from($min),
                     max: i64::from($max),
                     unit: $unit,
                 }),
-                choices: Vec::new(),
+                choices: ChoiceSource::Ranged,
                 read: |s| {
                     (i64::from(s.$field).clamp(i64::from($min), i64::from($max)) - i64::from($min))
                         as usize
@@ -146,15 +207,15 @@ fn build_bindings() -> Vec<Binding> {
         };
     }
     macro_rules! position {
-        ($field:ident, $key:literal, $label:literal) => {
+        ($field:ident, $key:literal, $label:ident) => {
             Binding {
                 key: $key,
-                label: $label,
+                label: UiText::$label,
                 range: None,
                 required: true,
-                choices: ["Bottom Left", "Bottom Right", "Top Left", "Top Right"]
-                    .map(str::to_string)
-                    .to_vec(),
+                // Corner order must stay `CORNERS` order; captions resolve
+                // through `ChoiceSource::Corners` per language in `defs`.
+                choices: ChoiceSource::Corners,
                 read: |s| corner_index(s.$field),
                 write: |s, index| {
                     s.$field = *CORNERS.get(index)?;
@@ -164,11 +225,11 @@ fn build_bindings() -> Vec<Binding> {
         };
     }
     let mut bindings = vec![
-        toggle!(audio_muted, "audio_muted", "Mute"),
+        toggle!(audio_muted, "audio_muted", Mute),
         range!(
             master_volume_percent,
             "master_volume",
-            "Volume",
+            MasterVolume,
             VOLUME_MIN,
             VOLUME_MAX,
             "%"
@@ -176,20 +237,17 @@ fn build_bindings() -> Vec<Binding> {
         range!(
             latency_ms,
             "latency_ms",
-            "Audio Latency (ms)",
+            AudioLatency,
             LATENCY_MIN,
             LATENCY_MAX,
             " ms"
         ),
         Binding {
             key: "sample_rate",
-            label: "Sample Rate (Hz)",
+            label: UiText::SampleRate,
             range: None,
             required: true,
-            choices: SAMPLE_RATE_CHOICES
-                .iter()
-                .map(|rate| format!("{rate} Hz"))
-                .collect(),
+            choices: ChoiceSource::SampleRates,
             read: |s| {
                 SAMPLE_RATE_CHOICES
                     .iter()
@@ -201,14 +259,14 @@ fn build_bindings() -> Vec<Binding> {
                 Some(())
             },
         },
-        toggle!(vsync, "vsync", "VSync"),
-        choice!(screen_orientation, "screen.orientation", "Screen Orientation", [ScreenOrientation::Auto => "Auto Rotate", ScreenOrientation::Portrait => "Portrait", ScreenOrientation::Landscape => "Landscape"]),
-        choice!(storage_policy, "storage.policy", "Save Location", [StoragePolicy::Sidecar => "Next to ROM", StoragePolicy::AppSharedData => "App Storage", StoragePolicy::CustomDirectory => "Custom Directory"]),
-        choice!(overlay_visibility, "controls.overlay.visibility", "Touch Overlay", [TouchOverlayVisibility::Always => "Always", TouchOverlayVisibility::Auto => "Auto", TouchOverlayVisibility::Hidden => "Hidden"]),
+        toggle!(vsync, "vsync", Vsync),
+        choice!(screen_orientation, "screen.orientation", ScreenOrientation, [ScreenOrientation::Auto => AutoRotate, ScreenOrientation::Portrait => Portrait, ScreenOrientation::Landscape => Landscape]),
+        choice!(storage_policy, "storage.policy", SaveStoragePolicy, [StoragePolicy::Sidecar => Sidecar, StoragePolicy::AppSharedData => AppSharedData, StoragePolicy::CustomDirectory => CustomDirectory]),
+        choice!(overlay_visibility, "controls.overlay.visibility", TouchOverlay, [TouchOverlayVisibility::Always => Always, TouchOverlayVisibility::Auto => Auto, TouchOverlayVisibility::Hidden => Hidden]),
         range!(
             overlay_opacity_percent,
             "controls.overlay.opacity",
-            "Overlay Opacity",
+            OverlayOpacity,
             0,
             100,
             "%"
@@ -216,7 +274,7 @@ fn build_bindings() -> Vec<Binding> {
         range!(
             overlay_scale_percent,
             "controls.overlay.scale",
-            "Overlay Scale",
+            OverlayScale,
             OVERLAY_SCALE_MIN,
             OVERLAY_SCALE_MAX,
             "%"
@@ -224,59 +282,51 @@ fn build_bindings() -> Vec<Binding> {
         range!(
             overlay_vertical_offset_percent,
             "controls.overlay.vertical_offset",
-            "Overlay Vertical Position",
+            OverlayVerticalOffset,
             OVERLAY_OFFSET_MIN,
             OVERLAY_OFFSET_MAX,
             "%"
         ),
-        toggle!(
-            overlay_haptics,
-            "controls.overlay.haptics",
-            "Overlay Haptics"
-        ),
-        toggle!(
-            motion_enabled,
-            "controls.cartridge.motion",
-            "Cartridge Motion Sensor"
-        ),
-        toggle!(
-            rumble_enabled,
-            "controls.cartridge.rumble",
-            "Cartridge Rumble"
-        ),
+        toggle!(overlay_haptics, "controls.overlay.haptics", OverlayHaptics),
+        toggle!(motion_enabled, "controls.cartridge.motion", CartridgeMotion),
+        toggle!(rumble_enabled, "controls.cartridge.rumble", CartridgeRumble),
         range!(
             rumble_strength_percent,
             "controls.cartridge.rumble_strength",
-            "Rumble Strength",
+            RumbleStrength,
             0,
             100,
             "%"
         ),
-        choice!(rumble_target, "controls.cartridge.rumble_target", "Rumble Target", [RumbleTarget::Auto => "Auto", RumbleTarget::Handset => "Handset", RumbleTarget::Controller => "Controller"]),
+        choice!(rumble_target, "controls.cartridge.rumble_target", RumbleTarget, [RumbleTarget::Auto => Auto, RumbleTarget::Handset => Handset, RumbleTarget::Controller => Controller]),
         toggle!(
             notifications_info_enabled,
             "notifications.info",
-            "Info Notifications"
+            NotificationInfo
         ),
         toggle!(
             notifications_warning_enabled,
             "notifications.warning",
-            "Warning Notifications"
+            NotificationWarning
         ),
         toggle!(
             notifications_error_enabled,
             "notifications.error",
-            "Error Notifications"
+            NotificationError
         ),
         position!(
             notifications_position,
             "notifications.position",
-            "Notification Position"
+            NotificationPosition
         ),
-        choice!(notifications_area_mode, "notifications.area_mode", "Notification Area", [NotificationAreaMode::Overlay => "Overlay", NotificationAreaMode::Strip => "Strip"]),
-        toggle!(status_enabled, "status.enabled", "Status Display"),
-        position!(status_position, "status.position", "Status Position"),
-        choice!(status_area_mode, "status.area_mode", "Status Area", [NotificationAreaMode::Overlay => "Overlay", NotificationAreaMode::Strip => "Strip"]),
+        choice!(notifications_area_mode, "notifications.area_mode", NotificationAreaMode, [NotificationAreaMode::Overlay => AreaOverlay, NotificationAreaMode::Strip => AreaStrip]),
+        toggle!(status_enabled, "status.enabled", NotificationStatus),
+        position!(
+            status_position,
+            "status.position",
+            NotificationStatusPosition
+        ),
+        choice!(status_area_mode, "status.area_mode", NotificationStatusAreaMode, [NotificationAreaMode::Overlay => AreaOverlay, NotificationAreaMode::Strip => AreaStrip]),
     ];
     for binding in &mut bindings {
         if binding.key == STATUS_AREA_MODE_KEY {
@@ -298,13 +348,14 @@ pub(super) fn project_status_area_visible(
 }
 
 pub(super) fn defs(current: &AndroidSettings) -> Vec<SettingDef> {
+    let language = current.language;
     let mut defs: Vec<_> = bindings()
         .iter()
         .map(|binding| SettingDef {
             key: binding.key.into(),
-            label: binding.label.into(),
+            label: ui_text(language, binding.label).into(),
             current: (binding.read)(current),
-            choices: binding.choices.clone(),
+            choices: resolve_choices(binding.choices, language),
             range: binding.range,
             visible: binding.key != STATUS_AREA_MODE_KEY
                 || current.notifications_position.is_top() != current.status_position.is_top(),

@@ -11,6 +11,7 @@ use nerust_system_traits::factory::{
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::factory::{apply_settings_choice, resolve_label, settings_view};
+use nerust_settings_core::model::language::AppLanguage;
 
 use nerust_settings_core::model::{
     local::{
@@ -28,6 +29,7 @@ pub(super) use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 /// Derived from [`SettingsSnapshot`] on the way in; applied back on the way out.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct AndroidSettings {
+    pub language: AppLanguage,
     pub audio_muted: bool,
     pub master_volume_percent: u8,
     pub latency_ms: u16,
@@ -110,6 +112,7 @@ impl AndroidSettings {
             .collect();
 
         Self {
+            language,
             audio_muted: snapshot.local.audio.muted,
             master_volume_percent: snapshot.local.audio.master_volume_percent,
             latency_ms: snapshot.local.audio.latency_ms,

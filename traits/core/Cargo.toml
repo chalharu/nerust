@@ -11,8 +11,8 @@ downcast-rs.workspace = true
 dyn-clone.workspace = true
 dyn-eq.workspace = true
 dyn-hash.workspace = true
-log.workspace = true
 inventory.workspace = true
+log.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits = { default-features = false, workspace = true }
 serde.workspace = true

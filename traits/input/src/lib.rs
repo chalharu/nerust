@@ -4,6 +4,7 @@
 mod devices;
 mod events;
 mod ids;
+mod key;
 mod profile;
 mod topology;
 
@@ -17,6 +18,7 @@ pub use events::{
 pub use ids::{
     AnalogControlId, AttachmentId, ControlId, DeviceKindId, DigitalControlId, PortId, ProfileId,
 };
+pub use key::Key;
 pub use profile::{
     AbstractKey, BufferFactory, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
     InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,

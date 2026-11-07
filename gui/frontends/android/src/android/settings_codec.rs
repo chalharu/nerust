@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_settings_core::model::language::AppLanguage;
 #[cfg(test)]
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationPosition, RumbleTarget, ScreenOrientation,
@@ -37,7 +38,11 @@ impl AndroidSettings {
     }
 
     /// Locked payload builder: `begin_request` already holds the bridge state.
-    pub(super) fn dialog_payload_from_defs(request_id: u64, defs: &[SettingDef]) -> String {
+    pub(super) fn dialog_payload_from_defs(
+        request_id: u64,
+        defs: &[SettingDef],
+        language: AppLanguage,
+    ) -> String {
         let mut sections: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
         for def in defs {
             let section = if def.key.starts_with("system.") {
@@ -80,7 +85,7 @@ impl AndroidSettings {
             .map(|(id, fields)| {
                 serde_json::json!({
                     "id": id,
-                    "label": crate::settings_sections::section_label(&id),
+                    "label": crate::settings_sections::section_label(&id, language),
                     "fields": fields,
                 })
             })
@@ -598,10 +603,10 @@ mod tests {
                 .range
                 .unwrap()
         };
-        assert_eq!(at("screen.orientation"), "Auto Rotate\tPortrait\tLandscape");
+        assert_eq!(at("screen.orientation"), "Auto rotate\tPortrait\tLandscape");
         assert_eq!(
             at("storage.policy"),
-            "Next to ROM\tApp Storage\tCustom Directory"
+            "Sidecar\tApp shared data\tCustom directory"
         );
         assert_eq!(at("controls.overlay.visibility"), "Always\tAuto\tHidden");
         assert_eq!(
@@ -650,8 +655,10 @@ mod tests {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
         let defs = android.setting_defs();
-        let payload: serde_json::Value =
-            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(42, &defs)).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(
+            &AndroidSettings::dialog_payload_from_defs(42, &defs, android.language),
+        )
+        .unwrap();
 
         assert_eq!(payload["schemaVersion"], SETTINGS_SCHEMA_VERSION);
         assert_eq!(payload["requestId"], 42);
@@ -680,13 +687,13 @@ mod tests {
             .iter()
             .find(|field| field["key"] == "storage.policy")
             .unwrap();
-        assert_eq!(storage["options"][0], "Next to ROM");
-        assert_eq!(storage["options"][1], "App Storage");
+        assert_eq!(storage["options"][0], "Sidecar");
+        assert_eq!(storage["options"][1], "App shared data");
         let orientation = fields
             .iter()
             .find(|field| field["key"] == "screen.orientation")
             .unwrap();
-        assert_eq!(orientation["options"][0], "Auto Rotate");
+        assert_eq!(orientation["options"][0], "Auto rotate");
         assert_eq!(orientation["options"][1], "Portrait");
         assert_eq!(orientation["options"][2], "Landscape");
         assert!(
@@ -713,8 +720,10 @@ mod tests {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
         let defs = android.setting_defs();
-        let doc: serde_json::Value =
-            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(1, &defs)).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(
+            &AndroidSettings::dialog_payload_from_defs(1, &defs, android.language),
+        )
+        .unwrap();
         let fields: Vec<&serde_json::Value> = doc["sections"]
             .as_array()
             .unwrap()
@@ -732,9 +741,10 @@ mod tests {
         let mut same_edge = android;
         same_edge.status_position = NotificationPosition::BottomRight;
         let same_defs = same_edge.setting_defs();
-        let doc: serde_json::Value =
-            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(2, &same_defs))
-                .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(
+            &AndroidSettings::dialog_payload_from_defs(2, &same_defs, same_edge.language),
+        )
+        .unwrap();
         let area = doc["sections"]
             .as_array()
             .unwrap()
@@ -803,8 +813,10 @@ mod tests {
         let registry = registry();
         let android = android_settings(&default_snapshot(), &registry);
         let defs = android.setting_defs();
-        let doc: serde_json::Value =
-            serde_json::from_str(&AndroidSettings::dialog_payload_from_defs(7, &defs)).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(
+            &AndroidSettings::dialog_payload_from_defs(7, &defs, android.language),
+        )
+        .unwrap();
         let sections = doc["sections"].as_array().unwrap();
         let ids: Vec<&str> = sections
             .iter()
@@ -813,7 +825,10 @@ mod tests {
         assert_eq!(ids, SETTINGS_SECTION_IDS);
         for section in sections {
             let id = section["id"].as_str().unwrap();
-            assert_eq!(section["label"].as_str().unwrap(), section_label(id));
+            assert_eq!(
+                section["label"].as_str().unwrap(),
+                section_label(id, android.language)
+            );
         }
         let fields: Vec<&serde_json::Value> = sections
             .iter()
@@ -833,6 +848,57 @@ mod tests {
             .unwrap();
         assert_eq!(muted["kind"], "choice");
         assert!(muted.get("min").is_none());
+    }
+
+    #[test]
+    fn japanese_language_localizes_labels_choices_and_sections() {
+        // Every dialog caption rides the snapshot language: switching to
+        // Japanese must re-render labels, choices and section headers.
+        use nerust_settings_core::model::language::AppLanguage;
+        let registry = registry();
+        let mut snapshot = default_snapshot();
+        snapshot.shared.general.language = AppLanguage::Japanese;
+        let android = android_settings(&snapshot, &registry);
+        let defs = android.setting_defs();
+        let at = |key: &str| {
+            defs.iter()
+                .find(|def| def.key == key)
+                .unwrap()
+                .choices
+                .join("\t")
+        };
+        let label = |key: &str| {
+            defs.iter()
+                .find(|def| def.key == key)
+                .unwrap()
+                .label
+                .clone()
+        };
+        assert_eq!(label("audio_muted"), "ミュート");
+        assert_eq!(label("master_volume"), "主音量");
+        assert_eq!(label("screen.orientation"), "画面の向き");
+        assert_eq!(at("screen.orientation"), "自動回転\t縦向き\t横向き");
+        assert_eq!(at("audio_muted"), "オフ\tオン");
+        assert_eq!(label("storage.policy"), "保存先ポリシー");
+        assert_eq!(
+            at("controls.cartridge.rumble_target"),
+            "自動\t本体\tコントローラー"
+        );
+        let doc: serde_json::Value = serde_json::from_str(
+            &AndroidSettings::dialog_payload_from_defs(9, &defs, android.language),
+        )
+        .unwrap();
+        let sections = doc["sections"].as_array().unwrap();
+        let audio = sections
+            .iter()
+            .find(|section| section["id"] == "audio")
+            .unwrap();
+        assert_eq!(audio["label"], "音声");
+        let controls = sections
+            .iter()
+            .find(|section| section["id"] == "controls")
+            .unwrap();
+        assert_eq!(controls["label"], "操作");
     }
 
     #[test]

@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
+use nerust_input_traits::Key;
 use nerust_input_traits::UnifiedFieldMap;
-use nerust_keyboard::Key;
 use nerust_settings_core::model::input::KeyboardBinding;
 
 /// One skipped duplicate binding, reported for the caller to log.

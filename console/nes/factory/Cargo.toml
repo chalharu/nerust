@@ -7,11 +7,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-log.workspace = true
 clap.workspace = true
-nerust_core_traits.workspace = true
-nerust_system_traits.workspace = true
+log.workspace = true
 nerust_console_input.workspace = true
+nerust_core_traits.workspace = true
 nerust_input_traits.workspace = true
 nerust_nes_core.workspace = true
 nerust_nes_device.workspace = true
@@ -19,3 +18,4 @@ nerust_nes_settings.workspace = true
 nerust_render_filters.workspace = true
 nerust_render_traits.workspace = true
 nerust_settings_traits.workspace = true
+nerust_system_traits.workspace = true

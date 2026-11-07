@@ -395,6 +395,27 @@ mod tests {
     }
 
     #[test]
+    fn gba_images_decode_written_tile_and_palette() {
+        // PPU-viewer path proof with a tile-mode payload: the jsmolka
+        // ppu ROMs run in bitmap modes, so their charblocks are
+        // legitimately blank (black backdrop). Written tile bytes and
+        // palette entries must survive the bulk decode.
+        let mut system = live_system();
+        // 8-bit writes to VRAM replicate as a halfword on the bus, so
+        // seed the tile with one 16-bit store: bytes 0x21, 0x43 give
+        // pixels 1, 2, 3, 4.
+        system.bus.write16(0x0600_0000, 0x4321);
+        system.bus.write16(0x0500_0002, 0x7FFF);
+        system.bus.write16(0x0500_0004, 0x001F);
+        let debugger = GbaDebugger::new(&system);
+        let images = debugger.images();
+        assert_eq!(&images[0].pixels[0..4], &[1, 2, 3, 4]);
+        assert_eq!(images[0].palette[1], rgb555_to_rgb888(0x7FFF));
+        assert_eq!(images[0].palette[2], rgb555_to_rgb888(0x001F));
+        assert!(images[1].pixels.iter().all(|&p| p == 0));
+    }
+
+    #[test]
     fn gba_disassemble_shape_and_tail() {
         let system = live_system();
         let debugger = GbaDebugger::new(&system);

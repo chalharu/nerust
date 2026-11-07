@@ -17,9 +17,9 @@ nerust_rom_test.workspace = true
 
 [features]
 default = []
-nes = ["nerust_rom_test/nes"]
-gbc = ["nerust_rom_test/gbc"]
 gba = ["nerust_rom_test/gba"]
+gbc = ["nerust_rom_test/gbc"]
+nes = ["nerust_rom_test/nes"]
 
 [[bin]]
 name = "rom_tool"

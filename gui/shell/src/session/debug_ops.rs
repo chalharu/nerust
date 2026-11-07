@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use nerust_gui_runtime::debugger as debug_vm;
+use nerust_gui_runtime::debugger as debug_outcome;
 
 use super::{SessionHandle, osd::TickMetrics};
 use crate::debug::{CoreFailure, ImageNeed, TrafficKind};
@@ -55,6 +55,19 @@ impl SessionHandle {
             self.drain_ctx().core,
             ImageNeed::from_flag(need_images),
             crate::debug::DEBUG_DRAIN_TIMEOUT,
+        )
+        .with_epoch(Arc::clone(&self.emu.debug_epoch))
+    }
+
+    pub fn debug_live_images_begin_since(
+        &self,
+        known_generation: Option<u64>,
+    ) -> crate::debug::LiveImagesFlight {
+        crate::debug::LiveImagesFlight::begin_since(
+            self.drain_ctx().core,
+            ImageNeed::Fetch,
+            crate::debug::DEBUG_DRAIN_TIMEOUT,
+            known_generation,
         )
         .with_epoch(Arc::clone(&self.emu.debug_epoch))
     }
@@ -114,12 +127,12 @@ impl SessionHandle {
         dis_addr: Option<u32>,
         need_images: ImageNeed,
         watch: Option<u32>,
-    ) -> debug_vm::DebugSnapshot {
+    ) -> debug_outcome::DebugSnapshot {
         use crate::debug::{assemble_snapshot_parts, fold_watch_byte};
         use nerust_core_traits::debugger::{
             DEBUG_DISASM_ROWS, DEBUG_DUMP_PAGE_ROWS, InspectRequest, SnapshotRequest,
         };
-        let mut snapshot = debug_vm::DebugSnapshot::default();
+        let mut snapshot = debug_outcome::DebugSnapshot::default();
         let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return snapshot,
@@ -158,7 +171,7 @@ impl SessionHandle {
             (0, std::sync::Arc::new(Vec::new()))
         };
         snapshot.images_gen = images_gen;
-        snapshot.images = images.iter().map(debug_vm::rgba_image).collect();
+        snapshot.images = images.iter().map(debug_outcome::rgba_image).collect();
         // Watch folded into the page read when it lands on it;
         // off-page watches still fall back to a single-byte inspect.
         snapshot.watch = watch.and_then(|addr| fold_watch_byte(&snapshot.dump_rows, addr));
@@ -209,13 +222,17 @@ impl SessionHandle {
     }
 
     /// Single-register write for the register viewer.
-    pub fn debug_write_register(&self, name: &'static str, value: u64) -> debug_vm::StatusMessage {
+    pub fn debug_write_register(
+        &self,
+        name: &'static str,
+        value: u64,
+    ) -> debug_outcome::StatusMessage {
         let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return CoreFailure::no_core().thread_status(),
         };
         match core.write_register(name, value) {
-            Ok(Ok(())) => debug_vm::StatusMessage::RegisterWrote { name, value },
+            Ok(Ok(())) => debug_outcome::StatusMessage::RegisterWrote { name, value },
             Ok(Err(error)) => CoreFailure::from(error).register_status(),
             Err(error) => CoreFailure::from(error).thread_status(),
         }
@@ -240,17 +257,17 @@ impl SessionHandle {
 
     /// Confirm-row data, if fully staged. The frontend renders the
     /// wording; the session only reports the staged values.
-    pub fn debug_pending_text(&self) -> Option<debug_vm::PendingWrite> {
+    pub fn debug_pending_text(&self) -> Option<debug_outcome::PendingWrite> {
         self.with_txn(|txn| txn.pending())
     }
 
     /// Commit the staged write, consuming the transaction.
-    pub fn debug_commit_write(&self) -> debug_vm::StatusMessage {
+    pub fn debug_commit_write(&self) -> debug_outcome::StatusMessage {
         use nerust_core_traits::debugger::MemoryWrite;
         let staged = self.with_txn(|txn| txn.take_commit());
         let (space, addr, value) = match staged {
             Some(staged) => staged,
-            None => return debug_vm::StatusMessage::NothingToWrite,
+            None => return debug_outcome::StatusMessage::NothingToWrite,
         };
         let core = match self.emu.require_live().ok() {
             Some(core) => core,
@@ -262,7 +279,7 @@ impl SessionHandle {
             width: 1,
             value,
         }) {
-            Ok(Ok(())) => debug_vm::StatusMessage::WroteMemory { addr, value },
+            Ok(Ok(())) => debug_outcome::StatusMessage::WroteMemory { addr, value },
             Ok(Err(error)) => CoreFailure::from(error).write_status(),
             Err(error) => CoreFailure::from(error).thread_status(),
         }
@@ -282,10 +299,10 @@ impl SessionHandle {
     }
 
     /// Pause for debugger control.
-    pub fn debug_pause(&self) -> debug_vm::StatusMessage {
+    pub fn debug_pause(&self) -> debug_outcome::StatusMessage {
         match self.emu.require_live().ok() {
             Some(core) => match core.pause() {
-                Ok(()) => debug_vm::StatusMessage::Paused,
+                Ok(()) => debug_outcome::StatusMessage::Paused,
                 Err(error) => CoreFailure::from(error).pause_status(true),
             },
             None => CoreFailure::no_core().thread_status(),
@@ -293,13 +310,13 @@ impl SessionHandle {
     }
 
     /// Resume for debugger control.
-    pub fn debug_resume(&self) -> debug_vm::StatusMessage {
+    pub fn debug_resume(&self) -> debug_outcome::StatusMessage {
         if self.execution_held && self.emu.require_live().is_ok() {
-            return debug_vm::StatusMessage::Paused;
+            return debug_outcome::StatusMessage::Paused;
         }
         match self.emu.require_live().ok() {
             Some(core) => match core.resume() {
-                Ok(()) => debug_vm::StatusMessage::Resume,
+                Ok(()) => debug_outcome::StatusMessage::Resume,
                 Err(error) => CoreFailure::from(error).pause_status(false),
             },
             None => CoreFailure::no_core().thread_status(),
@@ -311,13 +328,13 @@ impl SessionHandle {
     pub fn debug_step(
         &self,
         unit: nerust_core_traits::debugger::StepUnit,
-    ) -> debug_vm::StatusMessage {
+    ) -> debug_outcome::StatusMessage {
         let core = match self.emu.require_live().ok() {
             Some(core) => core,
             None => return CoreFailure::no_core().thread_status(),
         };
         match core.step(unit) {
-            Ok(Ok(count)) => debug_vm::StatusMessage::Stepped(count),
+            Ok(Ok(count)) => debug_outcome::StatusMessage::Stepped(count),
             Ok(Err(error)) => CoreFailure::from(error).step_status(),
             Err(error) => CoreFailure::from(error).thread_status(),
         }
@@ -436,23 +453,23 @@ mod debug_ops_cov_tests {
         assert!(!session.debug_write_byte(SpaceId(0), 0, 1));
         assert!(matches!(
             session.debug_write_register("a", 1),
-            debug_vm::StatusMessage::NoCore
+            debug_outcome::StatusMessage::NoCore
         ));
         assert_eq!(session.debug_pending_text(), None);
         assert!(matches!(
             session.debug_commit_write(),
-            debug_vm::StatusMessage::NothingToWrite
+            debug_outcome::StatusMessage::NothingToWrite
         ));
         session.debug_clear_write();
         session.debug_note_traffic(TrafficKind::StateChanging);
         session.debug_note_traffic(TrafficKind::Transactional);
         assert!(matches!(
             session.debug_pause(),
-            debug_vm::StatusMessage::NoCore
+            debug_outcome::StatusMessage::NoCore
         ));
         assert!(matches!(
             session.debug_resume(),
-            debug_vm::StatusMessage::NoCore
+            debug_outcome::StatusMessage::NoCore
         ));
     }
 
@@ -477,7 +494,7 @@ mod debug_ops_cov_tests {
         assert_eq!(session.debug_spaces().len(), 1);
         assert!(matches!(
             session.debug_pause(),
-            debug_vm::StatusMessage::Paused
+            debug_outcome::StatusMessage::Paused
         ));
         assert!(session.debug_read_byte(SpaceId(0), 0).is_some());
         assert!(session.debug_write_byte(SpaceId(0), 0x10, 0xAB));

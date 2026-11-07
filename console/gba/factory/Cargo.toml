@@ -1,24 +1,24 @@
 [package]
-name = "nerust_gba_factory"
 description = "GBA factory integration"
 edition.workspace = true
 license.workspace = true
+name = "nerust_gba_factory"
 rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
-log.workspace = true
 clap.workspace = true
+log.workspace = true
+nerust_console_input.workspace = true
 nerust_core_traits.workspace = true
-nerust_system_traits.workspace = true
-strum.workspace = true
 nerust_gba_core.workspace = true
 nerust_gba_device.workspace = true
 nerust_gba_settings.workspace = true
-nerust_console_input.workspace = true
 nerust_input_traits.workspace = true
 nerust_render_traits.workspace = true
 nerust_settings_traits.workspace = true
+nerust_system_traits.workspace = true
+strum.workspace = true
 
 [features]
 # Test-harness log sink (mgba suite ROMs). Off by default; the

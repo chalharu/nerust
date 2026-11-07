@@ -1,0 +1,19 @@
+schema_version: 2
+root:
+  type: Window
+  id: error_window
+  title: {bind: {path: title, source: External}}
+  content:
+    type: StackLayout
+    id: content
+    margin: {top: 16, right: 16, bottom: 16, left: 16}
+    gap: 12
+    children:
+      - type: Label
+        id: error_text
+        text: {bind: {path: text, source: External}}
+      - type: Button
+        id: error_ok
+        style: {horizontal_alignment: End}
+        text: {bind: {path: ok, source: External}}
+        command: dismiss

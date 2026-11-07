@@ -18,5 +18,5 @@ zerocopy.workspace = true
 [dev-dependencies]
 nerust_render_filters.workspace = true
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))'.dev-dependencies]
 x11-dl = "=2.21.0"

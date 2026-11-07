@@ -217,13 +217,12 @@ fn system_live_settings_changed(
 mod tests {
     use std::fs;
 
-    use nerust_nes_settings::{Mmc3IrqVariant, NesVideoFilter};
     use nerust_settings_core::model::{
         app_state::DesktopAppState, language::AppLanguage, local::ScalingMode,
         shared::StoragePolicy,
     };
 
-    use crate::test::{DummyOtherSystemId, DummySystemId};
+    use crate::test::{DummyOtherSystemId, DummySystemId, DummySystemSettings};
 
     #[test]
     fn custom_storage_requires_valid_saf_uri_or_nonempty_native_path() {
@@ -240,8 +239,8 @@ mod tests {
 
     use super::{
         super::{
-            SettingsApplyPlan, SettingsSnapshot, gtk_caps, tao_caps, test_local_defaults,
-            test_root, test_shared_defaults,
+            SettingsApplyPlan, SettingsSnapshot, no_vsync_caps, test_local_defaults, test_root,
+            test_shared_defaults, vsync_caps,
         },
         derive_apply_plan, validate_shared_settings,
     };
@@ -258,7 +257,7 @@ mod tests {
         after.local.video.window.scaling = ScalingMode::X3;
         after.local.audio.latency_ms = 90;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert_eq!(
             plan,
@@ -290,7 +289,7 @@ mod tests {
         let mut after = before.clone();
         after.local.audio.master_volume_percent = 10;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.visual_changed);
         assert!(!plan.audio_backend_changed);
@@ -318,16 +317,16 @@ mod tests {
                         after.local.audio.muted = !before.local.audio.muted;
                     }
                     if visual {
-                        let nes = after
+                        let dummy = after
                             .shared
                             .systems
                             .get_mut(&DummySystemId as &dyn nerust_core_traits::identity::SystemId)
-                            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+                            .and_then(|s| s.downcast_mut::<DummySystemSettings>())
                             .unwrap();
-                        nes.video.filter = NesVideoFilter::NtscRgb;
+                        dummy.visual = 1;
                     }
                     let plan =
-                        derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+                        derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
                     assert_eq!(plan.audio_backend_changed, audio);
                     assert_eq!(plan.visual_changed, visual);
                     assert_eq!(plan.audio_volume_changed, volume);
@@ -358,15 +357,15 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let nes = after
+        let dummy = after
             .shared
             .systems
             .get_mut(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+            .and_then(|s| s.downcast_mut::<DummySystemSettings>())
             .unwrap();
-        nes.video.filter = NesVideoFilter::NtscRgb;
+        dummy.visual = 1;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.visual_changed);
     }
@@ -379,21 +378,21 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let nes = after
+        let dummy = after
             .shared
             .systems
             .get_mut(&(Box::new(DummySystemId) as Box<_>))
-            .and_then(|s| s.downcast_mut::<nerust_nes_settings::NesSettings>())
+            .and_then(|s| s.downcast_mut::<DummySystemSettings>())
             .unwrap();
-        nes.core.mmc3_irq_variant = Some(Mmc3IrqVariant::Sharp);
+        dummy.non_visual = 1;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.visual_changed);
     }
 
     #[test]
-    fn gtk_opengl_ignores_backend_presentation_changes() {
+    fn backend_without_vsync_ignores_presentation_changes() {
         let before = SettingsSnapshot {
             shared: test_shared_defaults(),
             local: test_local_defaults(),
@@ -402,7 +401,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&gtk_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&no_vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.vsync_changed);
         assert!(!plan.backend_presentation_changed);
@@ -410,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn tao_wgpu_rebuilds_renderer_for_vsync_changes() {
+    fn backend_with_vsync_rebuilds_renderer_for_vsync_changes() {
         let before = SettingsSnapshot {
             shared: test_shared_defaults(),
             local: test_local_defaults(),
@@ -419,7 +418,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.presentation.vsync = !after.local.video.presentation.vsync;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.vsync_changed);
         assert!(plan.backend_presentation_changed);
@@ -436,7 +435,7 @@ mod tests {
         let mut after = before.clone();
         after.local.video.window.fullscreen_default = !after.local.video.window.fullscreen_default;
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(plan.fullscreen_default_changed);
         assert!(plan.window_settings_changed);
@@ -452,14 +451,16 @@ mod tests {
             app_state: DesktopAppState::default(),
         };
         let mut after = before.clone();
-        let mut inactive = nerust_nes_settings::NesSettings::default();
-        inactive.video.filter = NesVideoFilter::NtscRgb;
+        let inactive = DummySystemSettings {
+            visual: 1,
+            ..Default::default()
+        };
         after
             .shared
             .systems
             .insert(Box::new(DummyOtherSystemId) as Box<_>, Box::new(inactive));
 
-        let plan = derive_apply_plan(&tao_caps(), &before, &after, Some(&DummySystemId));
+        let plan = derive_apply_plan(&vsync_caps(), &before, &after, Some(&DummySystemId));
 
         assert!(!plan.visual_changed);
         assert!(!plan.renderer_rebuild_required);

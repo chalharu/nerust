@@ -1,4 +1,4 @@
-use nerust_keyboard::Key;
+use nerust_input_traits::Key;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
@@ -82,7 +82,7 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
 
 #[cfg(test)]
 mod tests {
-    use nerust_keyboard::Key;
+    use nerust_input_traits::Key;
     use nerust_settings_core::model::input::ShortcutAction;
 
     use super::CaptureTarget;

@@ -32,11 +32,11 @@ fn create_factory() -> Box<dyn PipelineFactory> {
 }
 
 fn create_audio_registry() -> AudioBackendRegistry {
-    #[cfg_attr(not(any(feature = "gtk", feature = "tao")), allow(unused_mut))]
+    #[cfg_attr(not(any(feature = "cpal", feature = "cubeb")), allow(unused_mut))]
     let mut reg = AudioBackendRegistry::new();
-    #[cfg(any(feature = "gtk", feature = "tao"))]
+    #[cfg(feature = "cpal")]
     reg.register(0, Box::new(nerust_sound_cpal::CpalFactory));
-    #[cfg(any(feature = "gtk", feature = "tao"))]
+    #[cfg(feature = "cubeb")]
     reg.register(1, Box::new(nerust_sound_cubeb::CubebFactory));
     reg
 }
@@ -132,18 +132,51 @@ pub fn run() -> i32 {
         audio_registry,
     };
 
-    #[cfg(all(feature = "gtk", not(clippy)))]
-    return nerust_gtk::run(ctx, options);
-    #[cfg(all(feature = "tao", not(clippy)))]
-    return nerust_tao::run(ctx, options);
-    #[cfg(not(any(feature = "gtk", feature = "tao", clippy)))]
-    compile_error!("No frontend selected. Enable feature 'gtk' or 'tao'.");
-    #[cfg(clippy)]
-    {
-        let _ = ctx;
-        let _ = options;
-        0
+    run_desktop(ctx, options.rom_path)
+}
+
+fn run_desktop(context: FrontendContext, rom: Option<PathBuf>) -> i32 {
+    use nerust_gui_runtime::settings::{
+        BackendPresentationCapabilities, HostBackendCapabilities, HostWindowCapabilities,
+        SettingsPaths,
+    };
+    let capabilities = HostBackendCapabilities {
+        window: HostWindowCapabilities {
+            remembers_window_size: true,
+            supports_fullscreen_default: true,
+            supports_scaling: true,
+        },
+        presentation: Some(BackendPresentationCapabilities {
+            supports_vsync: context.gpu_factory.supports_vsync(),
+        }),
+    };
+    let settings = std::env::var_os("NERUST_SETTINGS_ROOT")
+        .map(|root| SettingsPaths::from_root(PathBuf::from(root)));
+    match nerust_crash_guard::run_guarded_with(
+        || nerust_desktop::run(context, capabilities, settings, rom),
+        nerust_crash_guard::default_sink,
+        nerust_crash_guard::capture_backtrace,
+    ) {
+        nerust_crash_guard::GuardOutcome::Completed(Ok(())) => 0,
+        nerust_crash_guard::GuardOutcome::Completed(Err(error)) => {
+            eprintln!("failed to run desktop frontend: {error}");
+            1
+        }
+        nerust_crash_guard::GuardOutcome::Crashed(report) => {
+            eprintln!("{}: {}", crash_title(), crash_dialog_text(report.message()));
+            101
+        }
     }
+}
+
+/// Crash dialog copy: inline literals, never the catalog.
+fn crash_title() -> &'static str {
+    "nerust"
+}
+
+/// Always English: crash copy must not depend on the settings stack.
+fn crash_dialog_text(message: &str) -> String {
+    format!("The application crashed: {message}\n\nDetails were written to the log (stderr).")
 }
 
 #[cfg(test)]
@@ -378,6 +411,39 @@ mod tests {
         assert_eq!(
             registry.detect(&gba_media).unwrap().unwrap().system_id(),
             gba_id
+        );
+    }
+
+    #[test]
+    fn crash_dialog_points_at_stderr_in_english() {
+        use nerust_settings_core::{
+            i18n::{UiText, text},
+            model::language::AppLanguage,
+        };
+        let dialog = super::crash_dialog_text("boom");
+        assert!(dialog.contains("boom"), "{dialog}");
+        assert!(dialog.contains("The application crashed"), "{dialog}");
+        assert!(dialog.contains("stderr"), "{dialog}");
+        assert_eq!(super::crash_title(), "nerust");
+        assert_eq!(
+            text(AppLanguage::English, UiText::CrashTitle),
+            super::crash_title()
+        );
+    }
+
+    #[test]
+    fn crash_dialog_is_english_without_language_input() {
+        use nerust_settings_core::{
+            i18n::{UiText, text},
+            model::language::AppLanguage,
+        };
+        // No language param: the settings stack may have just died.
+        let dialog = super::crash_dialog_text("boom");
+        assert!(!dialog.contains("クラッシュ"), "{dialog}");
+        assert!(dialog.contains("stderr"), "{dialog}");
+        assert_eq!(
+            text(AppLanguage::Japanese, UiText::CrashTitle),
+            super::crash_title()
         );
     }
 }

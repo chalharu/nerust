@@ -1,8 +1,8 @@
 [package]
-name = "nerust_gba_device"
 description = "GBA device definitions"
 edition.workspace = true
 license.workspace = true
+name = "nerust_gba_device"
 rust-version.workspace = true
 version.workspace = true
 

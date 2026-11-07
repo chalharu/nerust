@@ -16,7 +16,37 @@ pub fn panels_visible(panels: &str) -> bool {
 /// kept. The `0x` canon is cross-system: `$` is NES-only nostalgia
 /// and this debugger serves NES, GBC, and GBA alike.
 pub fn format_register(name: &'static str, value: u64) -> String {
-    format!("{name}: 0x{value:04X}")
+    format_register_sized(name, value, 4)
+}
+
+/// Format one kernel register line with an explicit hex width.
+/// Wide snapshots (GBA) pad to 8 so columns stay aligned and leading
+/// zeros survive; 16-bit systems keep the historic 4.
+pub fn format_register_sized(name: &'static str, value: u64, digits: usize) -> String {
+    format!("{name}: 0x{value:0digits$X}", digits = digits.max(1))
+}
+
+/// Hex width for a register snapshot: 4 while every value fits in 16
+/// bits (NES/GBC), 8 once any value needs 32 bits (GBA). Per-snapshot
+/// so columns align; stable in practice because the program counter
+/// always occupies the wide range on 32-bit systems.
+pub fn register_hex_digits(regs: &[(&'static str, u64)]) -> usize {
+    if regs.iter().any(|&(_, value)| value > 0xFFFF) {
+        8
+    } else {
+        4
+    }
+}
+
+/// Format a dump row address with selection and change markers.
+pub fn format_dump_address(addr: u32, selected: bool, changed: bool) -> String {
+    let marker = match (selected, changed) {
+        (true, true) => ">*",
+        (true, false) => "> ",
+        (false, true) => " *",
+        (false, false) => "  ",
+    };
+    format!("{marker}0x{addr:08X}:")
 }
 
 /// Format one cell by its column kind.
@@ -53,6 +83,14 @@ pub fn format_panels(panels: &[DebugPanel]) -> String {
         }
     }
     out
+}
+
+/// Disassembly marker column: pinned-but-not-PC shows `@`,
+/// everything else is blank. The PC row already carries its `>`
+/// mark inside `format_disasm_line`, so marking it again here
+/// would double-mark (`> @`).
+pub fn disasm_marker(is_pc: bool, is_pinned: bool) -> &'static str {
+    if !is_pc && is_pinned { "@ " } else { "  " }
 }
 
 /// Format one disassembly row (`>0xaddr: bytes  text`) for line

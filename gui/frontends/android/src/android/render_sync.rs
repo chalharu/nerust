@@ -252,6 +252,7 @@ impl RenderSync {
             renderer: renderer.as_mut(),
             size: window_size,
             insets,
+            density: scale_factor,
             now,
         });
         match renderer.render(fb) {
