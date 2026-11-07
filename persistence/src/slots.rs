@@ -306,10 +306,66 @@ pub(crate) fn loaded_state_slot_from_archive(
 }
 
 pub fn delete_state_slot(path: &Path) -> Result<(), PersistenceError> {
+    let existed = path.is_file();
     match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // Deleting the last numbered slot restarts numbering at 1: an empty
+    // list with a stale counter shows a surprising Slot N on the next
+    // save. Crash safety is kept: allocation floors at max(existing)+1,
+    // so dropping the counter can never overwrite a surviving file, and
+    // a missing file (double delete, foreign cleanup) never resets.
+    if existed && is_numbered_state_file(path) {
+        reset_counter_if_no_slots_remain(path.parent());
+    }
+    Ok(())
+}
+
+/// Numbered slot archives only: sidecars (`.autosave_slot`), the counter
+/// itself, and reservations never qualify.
+fn is_numbered_state_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("state")
+        && path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| stem.parse::<u64>().is_ok())
+}
+
+/// Drop the allocation counter once no slot archives remain. Pending
+/// fallback reservations veto the reset: an in-flight allocator may
+/// still publish its id, and the max scan keeps it collision-free.
+fn reset_counter_if_no_slots_remain(states_dir: Option<&Path>) {
+    let Some(dir) = states_dir else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut has_slot = false;
+    let mut has_reserve = false;
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if is_numbered_state_file(&entry_path) {
+            has_slot = true;
+            break;
+        }
+        if entry_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(".slot_reserve."))
+        {
+            has_reserve = true;
+        }
+    }
+    if !has_slot
+        && !has_reserve
+        && let Err(error) = fs::remove_file(dir.join(NEXT_SLOT_ID_ENTRY))
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::debug!(
+            "delete_state_slot: counter reset failed for {}: {error}",
+            dir.display()
+        );
     }
 }
 
