@@ -33,6 +33,10 @@ struct Operations {
     next_bookmark: u64,
     media_revision: u64,
     spaces_source: Rc<dyn Fn() -> Vec<nerust_core_traits::debugger::SpaceInfo>>,
+    /// Last tick pause seen by `poll`: resume never refreshes (the last
+    /// paused snapshot stays on screen), but it re-arms the pause edge so
+    /// the next pause re-snapshots with PC follow.
+    last_paused: bool,
 }
 
 fn register_key(name: &str) -> String {
@@ -262,7 +266,6 @@ pub(crate) fn project(display: &DisplayCache) -> Projection {
 #[derive(Clone)]
 struct Captions {
     title: String,
-    pause: String,
     step_frame: String,
     step_instruction: String,
     ppu: String,
@@ -290,15 +293,10 @@ struct Captions {
     cancel: String,
 }
 impl Captions {
-    fn new(language: AppLanguage, paused: bool) -> Self {
+    fn new(language: AppLanguage) -> Self {
         let label = |key| text(language, key).to_owned();
         Self {
             title: label(UiText::Debugger),
-            pause: label(if paused {
-                UiText::Resume
-            } else {
-                UiText::Pause
-            }),
             step_frame: label(UiText::StepFrame),
             step_instruction: label(UiText::StepInstr),
             ppu: label(UiText::PpuViewer),
@@ -382,12 +380,11 @@ pub(crate) struct Pane {
 /// Assistance command names. yaml `command:` values and test drivers route
 /// through strings; parsed once here so both the enablement gate and the
 /// batch builder match on the enum. A new command fails to compile until
-/// both are updated. `Refresh` has no button: step/pause/nav batches
+/// both are updated. `Refresh` has no button: step/nav batches
 /// re-snapshot on their own, and a running core is never polled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AssistAction {
     Refresh,
-    Pause,
     StepFrame,
     StepInstruction,
     Ppu,
@@ -419,7 +416,6 @@ impl AssistAction {
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "refresh" => Self::Refresh,
-            "pause" => Self::Pause,
             "step_frame" => Self::StepFrame,
             "step_instruction" => Self::StepInstruction,
             "ppu" => Self::Ppu,
@@ -464,7 +460,7 @@ impl Pane {
                     memory_marked: None,
                     register_targets: projection.register_targets,
                     register_marked: None,
-                    captions: Captions::new(language, false),
+                    captions: Captions::new(language),
                     disassembly: projection.disassembly,
                     disassembly_selection: projection.pc,
                     register_left_selection: None,
@@ -607,6 +603,7 @@ impl Pane {
             next_bookmark: 0,
             media_revision,
             spaces_source,
+            last_paused: false,
         }));
         let weak = Rc::downgrade(self);
         self.action.replace(Some(Rc::new(move |action| {
@@ -679,13 +676,6 @@ impl Pane {
         let mut actions = vec![DebugAction::Refresh];
         match action {
             AssistAction::Refresh => {}
-            AssistAction::Pause => {
-                (operations.dispatch)(crate::view::Intent::Pause(!operations.display.paused));
-                // A pause re-anchors on the live program counter: the Refresh
-                // below then snapshots the newest PC instead of a stale pin,
-                // so the display always follows the pause point.
-                operations.nav.follow();
-            }
             AssistAction::StepFrame | AssistAction::StepInstruction => {
                 (operations.dispatch)(crate::view::Intent::Pause(true));
                 operations.nav.follow();
@@ -927,7 +917,13 @@ impl Pane {
         self.flight.borrow().is_none()
     }
 
-    pub(crate) fn poll(&self, language: AppLanguage, loaded: bool, media_revision: u64) {
+    pub(crate) fn poll(
+        &self,
+        language: AppLanguage,
+        loaded: bool,
+        media_revision: u64,
+        paused: bool,
+    ) {
         if self.model.is_closed() {
             self.cancel();
             return;
@@ -994,7 +990,12 @@ impl Pane {
         if let Some(output) = output {
             self.refresh(&output.display, language);
             if let Some(operations) = self.operations.borrow_mut().as_mut() {
+                let paused_snapshot = output.display.paused;
                 operations.display = output.display;
+                // Sync the edge tracker with the snapshot just served: the
+                // initial flight lands on the current pause state without
+                // firing a spurious edge (and unpinning a test/probe anchor).
+                operations.last_paused = paused_snapshot;
                 let memory_addr = operations.nav.mem_input().to_owned();
                 let disasm_addr = operations.nav.dis_input().to_owned();
                 let back = format!(
@@ -1041,13 +1042,43 @@ impl Pane {
             let connected = self.operations.borrow().is_some();
             let _ = self.model.update(move |model| model.enabled = connected);
         }
+        // External pause while the window is open re-snapshots: the
+        // debugger owns no pause itself (no Pause button, no lease, no
+        // auto-pause on open), so it mirrors the core. A fresh pause
+        // re-anchors on the live program counter for PC follow. Resume
+        // never refreshes, so the last paused snapshot stays on screen;
+        // it only re-arms the edge. An empty display also retries while
+        // paused (a Refresh raced the pause and served degenerates).
+        let fire = if loaded && self.flight.borrow().is_none() {
+            if let Some(operations) = self.operations.borrow_mut().as_mut() {
+                let edge = paused && !operations.last_paused;
+                let empty = paused && operations.display.regs.is_empty();
+                if edge || empty {
+                    if edge {
+                        operations.nav.follow();
+                    }
+                    operations.last_paused = paused;
+                    true
+                } else {
+                    operations.last_paused = paused;
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if fire {
+            self.execute("refresh");
+        }
     }
 
     pub(crate) fn refresh(&self, display: &DisplayCache, language: AppLanguage) {
         let projection = project(display);
         let [registers_left, registers_right] = projection.registers;
         let status = display.status.render(language);
-        let captions = Captions::new(language, display.paused);
+        let captions = Captions::new(language);
         let pending = display.pending.is_some();
         let confirmation = display
             .pending
@@ -1167,7 +1198,6 @@ impl Presentation {
                         | AssistAction::Freeze
                         | AssistAction::EditFreeze => model.memory_selection.is_some(),
                         AssistAction::Refresh
-                        | AssistAction::Pause
                         | AssistAction::StepFrame
                         | AssistAction::StepInstruction
                         | AssistAction::Ppu
@@ -1364,11 +1394,9 @@ mod tests {
     }
 
     #[test]
-    fn captions_follow_pause_and_language_without_domain_actions() {
-        assert_eq!(Captions::new(AppLanguage::English, true).pause, "Resume");
-        assert_eq!(Captions::new(AppLanguage::English, false).pause, "Pause");
+    fn captions_follow_language_without_domain_actions() {
         assert!(
-            Captions::new(AppLanguage::English, true)
+            Captions::new(AppLanguage::English)
                 .disassembly
                 .contains(text(AppLanguage::English, UiText::FollowPcTag))
         );
@@ -1513,27 +1541,34 @@ mod operation_tests {
         Fixture { adapter, _dir: dir }
     }
 
-    /// Loaded adapter left running: mirrors opening the debugger on a live
-    /// core, where the layout flight itself must pause before snapshotting.
-    fn running_fixture() -> Fixture {
-        let (adapter, dir) = crate::session::test_fixture::loaded_adapter();
-        Fixture {
-            adapter: Rc::new(RefCell::new(adapter)),
-            _dir: dir,
-        }
-    }
-
     /// iNES with `JMP $8000` at PRG start: the disassembly exposes a
     /// structured jump target for the arrow-column navigation path.
-    fn jmp_fixture() -> Fixture {
+    /// Self-looping, so a running core stays at mapped PRG (pausing later
+    /// still lands on a decodable anchor for PC follow).
+    fn jmp_image() -> Vec<u8> {
         let mut image = crate::session::test_fixture::test_ines();
         image[16] = 0x4C;
         image[17] = 0x00;
         image[18] = 0x80;
-        let (adapter, dir) = crate::session::test_fixture::loaded_adapter_with_rom(image);
+        image
+    }
+
+    fn jmp_fixture() -> Fixture {
+        let (adapter, dir) = crate::session::test_fixture::loaded_adapter_with_rom(jmp_image());
         let adapter = Rc::new(RefCell::new(adapter));
         adapter.borrow().handle().debug_pause();
         Fixture { adapter, _dir: dir }
+    }
+
+    /// Loaded self-looping adapter left running: mirrors opening the
+    /// debugger on a live core. The debugger owns no pause, so opening
+    /// serves Running; an external pause then populates via the edge.
+    fn running_fixture() -> Fixture {
+        let (adapter, dir) = crate::session::test_fixture::loaded_adapter_with_rom(jmp_image());
+        Fixture {
+            adapter: Rc::new(RefCell::new(adapter)),
+            _dir: dir,
+        }
     }
 
     fn drive(adapter: &Rc<RefCell<SessionAdapter>>) -> Rc<Pane> {
@@ -1576,7 +1611,8 @@ mod operation_tests {
     fn settle(pane: &Pane, adapter: &Rc<RefCell<SessionAdapter>>, loaded: bool) {
         let revision = adapter.borrow().media_revision();
         for _ in 0..500 {
-            pane.poll(AppLanguage::English, loaded, revision);
+            let paused = adapter.borrow().handle().tick_metrics().paused;
+            pane.poll(AppLanguage::English, loaded, revision, paused);
             if pane.is_idle() {
                 let _ = pane.model.update(|_| {});
                 return;
@@ -1632,28 +1668,38 @@ mod operation_tests {
     }
 
     #[test]
-    fn open_while_running_pauses_and_populates() {
-        // No fixture pause/step: the layout flight must pause the live core
-        // itself, or the inspect refuses and the pane opens empty.
+    fn open_while_running_shows_running_then_pause_populates() {
+        // No fixture pause/step: the layout flight must not pause the live
+        // core itself. Opening serves a Running degenerate; an external
+        // pause then populates through the pane's pause-edge refresh.
         let fixture = running_fixture();
         let pane = drive(&fixture.adapter);
+        settle(&pane, &fixture.adapter, true);
+        assert!(
+            !pane
+                .operations
+                .borrow()
+                .as_ref()
+                .expect("operations connected")
+                .display
+                .paused,
+            "opening the debugger leaves a running core running"
+        );
+        fixture.adapter.borrow().handle().debug_pause();
         // The first flight follows the live PC, which may sit outside
-        // mapped PRG; retry like the UI until the pinned page populates.
+        // mapped PRG; retry like the UI until the page populates.
         settle_ready(&pane, &fixture.adapter);
         let operations = pane.operations.borrow();
         let operations = operations.as_ref().expect("operations connected");
         assert!(
             !operations.display.regs.is_empty(),
-            "opening snapshot exposes registers"
+            "pause-edge snapshot exposes registers"
         );
         assert!(
             !operations.display.disasm_lines.is_empty(),
-            "opening snapshot exposes disassembly"
+            "pause-edge snapshot exposes disassembly"
         );
-        assert!(
-            operations.display.paused,
-            "opening the debugger pauses the core"
-        );
+        assert!(operations.display.paused, "paused core snapshots paused");
     }
 
     #[test]
@@ -1959,16 +2005,16 @@ mod operation_tests {
         );
     }
 
-    /// Pause and step re-anchor on the live program counter: a pause must
-    /// refresh the display at the newest PC instead of a stale pin, even
-    /// after the user navigated the disassembly elsewhere.
+    /// External pause and step re-anchor on the live program counter: a
+    /// pause must refresh the display at the newest PC instead of a stale
+    /// pin, even after the user navigated the disassembly elsewhere.
     #[test]
     fn pause_and_step_restore_pc_tracking() {
         let fixture = fixture();
         let pane = drive(&fixture.adapter);
         settle_ready(&pane, &fixture.adapter);
         // drive() pins PRG start, so follow-PC is off: navigate elsewhere
-        // to prove Pause re-anchors rather than keeping the pin.
+        // to prove the pause edge re-anchors rather than keeping the pin.
         assert!(
             !pane
                 .operations
@@ -1978,7 +2024,10 @@ mod operation_tests {
                 .nav
                 .follow_pc()
         );
-        pane.execute_for_test("pause");
+        fixture.adapter.borrow().handle().debug_resume();
+        settle(&pane, &fixture.adapter, true);
+        fixture.adapter.borrow().handle().debug_pause();
+        settle(&pane, &fixture.adapter, true);
         assert!(
             pane.operations
                 .borrow()
@@ -1986,9 +2035,14 @@ mod operation_tests {
                 .expect("operations")
                 .nav
                 .follow_pc(),
-            "pause re-anchors on the live program counter"
+            "pause edge re-anchors on the live program counter"
         );
-        settle(&pane, &fixture.adapter, true);
+        settle_ready(&pane, &fixture.adapter);
+        assert!(pane.is_idle(), "pause refresh settles");
+        assert!(
+            pane.model.snapshot().enabled,
+            "pause refresh re-enables commands"
+        );
         assert!(pane.is_idle(), "pause refresh settles");
         assert!(
             pane.model.snapshot().enabled,
@@ -2029,6 +2083,7 @@ mod operation_tests {
                 AppLanguage::English,
                 true,
                 fixture.adapter.borrow().media_revision(),
+                true,
             );
             assert!(pane.is_idle(), "no automatic poll while paused");
         }
@@ -2043,17 +2098,18 @@ mod operation_tests {
                 .is_empty(),
             "paused display keeps its registers without refresh traffic"
         );
-        // Running cores are never polled either: no flight starts, so the
-        // last paused snapshot stays on screen instead of being blanked by
-        // a refused inspect.
+        // Resume never refreshes either: the last paused snapshot stays
+        // on screen instead of being blanked by a refused inspect, and
+        // the pause edge re-arms for the next pause.
         fixture.adapter.borrow().handle().debug_resume();
         for _ in 0..5 {
             pane.poll(
                 AppLanguage::English,
                 true,
                 fixture.adapter.borrow().media_revision(),
+                false,
             );
-            assert!(pane.is_idle(), "no automatic poll while running");
+            assert!(pane.is_idle(), "no automatic poll on resume");
         }
         assert!(
             !pane
@@ -2098,6 +2154,7 @@ mod operation_tests {
             AppLanguage::English,
             false,
             fixture.adapter.borrow().media_revision(),
+            false,
         );
         assert!(!pane.model.snapshot().enabled);
         assert!(pane.model.snapshot().bookmarks.rows.is_empty());
