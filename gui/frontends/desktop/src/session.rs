@@ -72,7 +72,7 @@ impl SessionAdapter {
     }
 
     pub(crate) fn debugger_layout_begin(&self) -> (String, nerust_gui_shell::debug::DrainFlight) {
-        self.debug_layout_begin(false, true)
+        self.debug_layout_begin(true, false)
     }
 
     pub(crate) fn ppu_layout_begin(&self) -> nerust_gui_shell::debug::DrainFlight {
@@ -97,15 +97,12 @@ impl SessionAdapter {
             prev_dump_rows: &[],
             need_images,
         };
-        // The debugger opens paused (master/GTK parity): a running core
-        // refuses the inspect, so a bare Refresh would serve degenerates
-        // until the user finds the button. The PPU keeps its running
-        // live-follow, so it never pauses here.
-        let actions = if pause_first {
-            vec![DebugAction::Pause, DebugAction::Refresh]
-        } else {
-            vec![DebugAction::Refresh]
-        };
+        // The debugger owns no pause: opening never pauses, and closing
+        // never resumes. A running core serves a Running degenerate until
+        // an external pause (Focus, menu, shortcut) lands, at which point
+        // the pane re-snapshots on the pause edge.
+        let _ = pause_first;
+        let actions = vec![DebugAction::Refresh];
         (
             space
                 .map(|space| space.name.to_string())

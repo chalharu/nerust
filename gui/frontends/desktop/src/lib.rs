@@ -111,13 +111,10 @@ pub fn run(
         let debugger_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let debugger_updates = Rc::new(RefCell::new(None::<Rc<debugger::Pane>>));
         let debugger_refresh = debugger_updates.clone();
-        // Debugger-owned pause hold: the drain flight pauses the core, but
-        // Application arbitration (Focus/User) would otherwise resume behind
-        // the debugger's back on every Main-window activation. The hold keeps
-        // the session paused until Resume or debugger close releases it.
-        let debugger_lease = Rc::new(RefCell::new(None::<PauseLease>));
-        let debugger_pause = debugger_lease.clone();
-        let debugger_release = debugger_lease.clone();
+        // Debugger/PPU/history panes poll below; aux windows own no
+        // pause. Focus and the menu/shortcut User pause are the only
+        // owners: opening the debugger defocuses Main (Focus pause),
+        // returning clears it, and the pane mirrors both edges.
         let ppu_window = Rc::new(RefCell::new(None::<panechord::backend::WeakView>));
         let ppu_updates = Rc::new(RefCell::new(None::<Rc<ppu::Pane>>));
         let ppu_refresh = ppu_updates.clone();
@@ -277,25 +274,11 @@ pub fn run(
                     }));
                     let closed_window = debugger_window.clone();
                     let closed_pane = debugger_updates.clone();
-                    let closed_lease = debugger_release.clone();
-                    let closed_app = app.clone();
                     view.on_close(Rc::new(move || {
                         closed_window.replace(None);
                         closed_pane.replace(None);
-                        // Closing drops debugger ownership: an explicit User
-                        // pause (Pause button/menu) still holds, otherwise the
-                        // core resumes like before the debugger opened.
-                        if let Some(lease) = closed_lease.borrow_mut().take() {
-                            closed_app.borrow_mut().release_pause(lease);
-                        }
                     }));
                     let (space, flight) = app.borrow().session().debugger_layout_begin();
-                    // Own the pause at the arbitration layer too: without this,
-                    // clearing Focus on Main activation resumes a core the
-                    // debugger still shows as paused.
-                    if let Some(lease) = app.borrow_mut().acquire_pause(PauseReason::Debugger) {
-                        debugger_pause.borrow_mut().replace(lease);
-                    }
                     pane.start(space, flight);
                     debugger_window.replace(Some(view.downgrade()));
                     debugger_updates.replace(Some(pane));
@@ -474,15 +457,6 @@ pub fn run(
                     true
                 }
                 view::Intent::Pause(paused) => {
-                    // Resume wins over every User-level hold, including the
-                    // debugger's: releasing first lets reconcile actually
-                    // resume instead of no-op'ing against a held core
-                    // (then the pane's own Refresh flight flips its label).
-                    // Focus/Settings/Modal leases are transient system holds
-                    // and are never cleared by a Resume.
-                    if !paused && let Some(lease) = debugger_lease.borrow_mut().take() {
-                        app.borrow_mut().release_pause(lease);
-                    }
                     app.borrow_mut().set_pause(PauseReason::User, paused);
                     true
                 }
@@ -694,8 +668,9 @@ pub fn run(
                     let language = app.settings().shared.general.language;
                     let loaded = app.state().loaded;
                     let revision = app.session().media_revision();
+                    let paused = app.state().paused;
                     drop(app);
-                    pane.poll(language, loaded, revision);
+                    pane.poll(language, loaded, revision, paused);
                 }
                 let pane = ppu_refresh.borrow().clone();
                 if let Some(pane) = pane {

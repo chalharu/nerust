@@ -27,7 +27,6 @@ root:
                 orientation: Horizontal
                 gap: 12
                 children:
-                  - {type: Button, id: pause, style: {horizontal_alignment: Start}, text: {bind: {path: captions.pause}}, command: action, argument: {literal: pause}}
                   - {type: Button, id: step_frame, style: {horizontal_alignment: Start}, text: {bind: {path: captions.step_frame}}, command: action, argument: {literal: step_frame}}
                   - {type: Button, id: step_instruction, style: {horizontal_alignment: Start}, text: {bind: {path: captions.step_instruction}}, command: action, argument: {literal: step_instruction}}
                   - {type: Button, id: ppu, style: {horizontal_alignment: Start}, text: {bind: {path: captions.ppu}}, command: action, argument: {literal: ppu}}
