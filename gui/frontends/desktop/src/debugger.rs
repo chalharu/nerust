@@ -1716,6 +1716,21 @@ mod operation_tests {
         Fixture { adapter, _dir: dir }
     }
 
+    /// Paused-then-stepped self-looping fixture: the program counter never
+    /// leaves mapped PRG, so pause-edge PC follow always serves populated
+    /// disassembly. A free-running game ROM can pause on an unmapped
+    /// address and freeze the anchor on empty disassembly.
+    fn jmp_stepped_fixture() -> Fixture {
+        let (adapter, dir) = crate::session::test_fixture::loaded_adapter_with_rom(jmp_image());
+        let adapter = Rc::new(RefCell::new(adapter));
+        adapter.borrow().handle().debug_pause();
+        adapter
+            .borrow()
+            .handle()
+            .debug_step(nerust_core_traits::debugger::StepUnit::Instruction);
+        Fixture { adapter, _dir: dir }
+    }
+
     /// Loaded self-looping adapter left running: mirrors opening the
     /// debugger on a live core. The debugger owns no pause, so opening
     /// serves Running; an external pause then populates via the edge.
@@ -1804,7 +1819,17 @@ mod operation_tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        panic!("debugger display should populate");
+        panic!(
+            "debugger display should populate (regs={}, disasm={})",
+            pane.operations
+                .borrow()
+                .as_ref()
+                .map_or(0, |operations| operations.display.regs.len()),
+            pane.operations
+                .borrow()
+                .as_ref()
+                .map_or(0, |operations| operations.display.disasm_lines.len())
+        );
     }
 
     struct TestExecutor;
@@ -2177,7 +2202,9 @@ mod operation_tests {
     /// pin, even after the user navigated the disassembly elsewhere.
     #[test]
     fn pause_and_step_restore_pc_tracking() {
-        let fixture = fixture();
+        // Self-looping ROM: the counter never leaves mapped PRG, so the
+        // pause-edge anchor always serves populated disassembly.
+        let fixture = jmp_stepped_fixture();
         let pane = drive(&fixture.adapter);
         settle_ready(&pane, &fixture.adapter);
         // drive() pins PRG start, so follow-PC is off: navigate elsewhere
