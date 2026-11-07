@@ -13,6 +13,7 @@ USER 0
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     clang \
     cmake \
+    git \
     gnupg \
     libasound2-dev \
     libcubeb-dev \
