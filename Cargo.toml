@@ -218,13 +218,13 @@ pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
 rmp-serde = { version = "=1.3.1" }
 serde = { default-features = false, version = "=1.0.229" }
-smallvec = { version = "=1.16.4" }
 serde-saphyr = { version = "=2.0.0" }
 serde-value = { version = "=0.7.0" }
 serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.154" }
 sha2 = { version = "=0.11.1" }
 simple_logger = { version = "=5.2.0" }
+smallvec = { version = "=1.16.4" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }
 thiserror = { version = "=2.0.21" }

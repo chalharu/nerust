@@ -1,3 +1,4 @@
+mod display;
 mod error;
 mod frame_textures;
 pub(crate) mod frame_view;

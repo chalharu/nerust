@@ -641,58 +641,33 @@ impl Pane {
         }
     }
 
-    fn begin_action(
-        &self,
+    /// Step batches pause the core first, then follow the live counter.
+    fn step_actions(
         action: AssistAction,
+        operations: &mut Operations,
+    ) -> Vec<nerust_gui_shell::debug::DebugAction> {
+        use nerust_gui_shell::debug::DebugAction;
+        (operations.dispatch)(crate::view::Intent::Pause(true));
+        operations.nav.follow();
+        vec![if action == AssistAction::StepFrame {
+            DebugAction::StepFrame
+        } else {
+            DebugAction::StepInstr
+        }]
+    }
+
+    /// Navigation arms keep the refresh batch unless the memory page moves.
+    /// `None` keeps the initial refresh; `Some` replaces it with a memory
+    /// navigation batch.
+    fn navigate_actions(
+        action: AssistAction,
+        operations: &mut Operations,
         model: &Model,
-    ) -> Result<Option<nerust_gui_shell::debug::DrainFlight>, String> {
+        current: u32,
+    ) -> Result<Option<Vec<nerust_gui_shell::debug::DebugAction>>, String> {
         use nerust_gui_shell::debug::DebugAction;
         use nerust_gui_viewmodel::debugger::parse_hex_addr;
-        let mut operations = self.operations.borrow_mut();
-        let Some(operations) = operations.as_mut() else {
-            return Ok(None);
-        };
-        let memory = || {
-            model
-                .memory_selection
-                .as_ref()
-                .and_then(|selection| selected_memory(selection, &model.memory_targets))
-                .ok_or_else(|| text(model.language, UiText::SelectDumpRow).to_owned())
-        };
-        let register = model
-            .register_marked
-            .as_ref()
-            .and_then(|selection| model.register_targets.get(&selection.row_key))
-            .map(|(name, _)| *name);
-        let hex = |input: &str| {
-            let input = input.trim();
-            let input = input
-                .strip_prefix("0x")
-                .or_else(|| input.strip_prefix('$'))
-                .unwrap_or(input);
-            u64::from_str_radix(input, 16).map_err(|_| "Invalid hexadecimal value".to_owned())
-        };
-        let current = operations
-            .display
-            .disasm_lines
-            .first()
-            .map_or(0, |line| line.addr);
-        let mut actions = vec![DebugAction::Refresh];
         match action {
-            AssistAction::Refresh => {}
-            AssistAction::StepFrame | AssistAction::StepInstruction => {
-                (operations.dispatch)(crate::view::Intent::Pause(true));
-                operations.nav.follow();
-                actions = vec![if action == AssistAction::StepFrame {
-                    DebugAction::StepFrame
-                } else {
-                    DebugAction::StepInstr
-                }];
-            }
-            AssistAction::Ppu => {
-                (operations.dispatch)(crate::view::Intent::Ppu);
-                return Ok(None);
-            }
             AssistAction::FollowPc => operations.nav.follow(),
             AssistAction::Back => {
                 operations.nav.go_back();
@@ -735,7 +710,7 @@ impl Pane {
                     operations.watch = None;
                     operations.freeze = None;
                     operations.display.dump_rows.clear();
-                    actions = vec![DebugAction::MemNav];
+                    return Ok(Some(vec![DebugAction::MemNav]));
                 }
             }
             AssistAction::PagePrevious | AssistAction::PageNext => {
@@ -747,15 +722,34 @@ impl Pane {
                     } else {
                         delta
                     });
-                actions = vec![DebugAction::MemNav];
+                return Ok(Some(vec![DebugAction::MemNav]));
             }
             AssistAction::MemoryGo => {
                 let addr = parse_hex_addr(&model.memory_addr)
                     .ok_or_else(|| "Invalid hexadecimal address".to_owned())?;
                 operations.nav.go_mem(addr);
-                actions = vec![DebugAction::MemNav];
+                return Ok(Some(vec![DebugAction::MemNav]));
             }
-            AssistAction::Watch | AssistAction::EditWatch => operations.watch = Some(memory()?.0),
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    /// Watch/freeze/register/write staging. `None` keeps the initial
+    /// refresh; `Some` replaces it with the staged batch.
+    fn stage_actions(
+        action: AssistAction,
+        operations: &mut Operations,
+        model: &Model,
+        memory: &dyn Fn() -> Result<(u32, Option<u8>), String>,
+        register: Option<&'static str>,
+        hex: &dyn Fn(&str) -> Result<u64, String>,
+    ) -> Result<Option<Vec<nerust_gui_shell::debug::DebugAction>>, String> {
+        use nerust_gui_shell::debug::DebugAction;
+        match action {
+            AssistAction::Watch | AssistAction::EditWatch => {
+                operations.watch = Some(memory()?.0);
+            }
             AssistAction::WatchClear => operations.watch = None,
             AssistAction::Freeze | AssistAction::EditFreeze => {
                 let (addr, old) = memory()?;
@@ -782,7 +776,9 @@ impl Pane {
                 if register.is_none() {
                     return Err(text(model.language, UiText::PickRegister).to_owned());
                 }
-                actions = vec![DebugAction::RegisterWrite(hex(&model.register_value)?)];
+                return Ok(Some(vec![DebugAction::RegisterWrite(hex(
+                    &model.register_value
+                )?)]));
             }
             AssistAction::Write => {
                 let (addr, old) = memory()?;
@@ -802,80 +798,189 @@ impl Pane {
                 if value > u64::from(u8::MAX) {
                     return Err("Value must fit in one byte".into());
                 }
-                actions = vec![DebugAction::SelectRow(addr), DebugAction::EditStage(value)];
+                return Ok(Some(vec![
+                    DebugAction::SelectRow(addr),
+                    DebugAction::EditStage(value),
+                ]));
             }
             AssistAction::Confirm => {
                 if !model.pending {
                     return Ok(None);
                 }
-                actions = vec![DebugAction::WriteConfirm];
+                return Ok(Some(vec![DebugAction::WriteConfirm]));
             }
-            AssistAction::Cancel => actions = vec![DebugAction::EditCancel],
-            AssistAction::BookmarkAdd => {
-                let addr = model
-                    .disassembly_selection
-                    .as_ref()
-                    .and_then(|selected| {
-                        operations
-                            .display
-                            .disasm_lines
-                            .iter()
-                            .find(|line| format!("{:08X}", line.addr) == selected.row_key)
-                    })
-                    .map_or(current, |line| line.addr);
-                if operations.bookmarks.len() >= 256 {
-                    return Err("Bookmark limit reached".into());
+            AssistAction::Cancel => return Ok(Some(vec![DebugAction::EditCancel])),
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    /// Bookmark creation exits without a flight after refreshing the table.
+    fn add_bookmark(
+        &self,
+        operations: &mut Operations,
+        model: &Model,
+        current: u32,
+    ) -> Result<(), String> {
+        let addr = model
+            .disassembly_selection
+            .as_ref()
+            .and_then(|selected| {
+                operations
+                    .display
+                    .disasm_lines
+                    .iter()
+                    .find(|line| format!("{:08X}", line.addr) == selected.row_key)
+            })
+            .map_or(current, |line| line.addr);
+        if operations.bookmarks.len() >= 256 {
+            return Err("Bookmark limit reached".into());
+        }
+        let label = if model.bookmark_label.trim().is_empty() {
+            format!("0x{addr:08X}")
+        } else {
+            model.bookmark_label.trim().to_owned()
+        };
+        let space = operations
+            .spaces
+            .get(operations.nav.space_idx())
+            .ok_or_else(|| "No address space is available".to_owned())?
+            .id;
+        let key = operations.next_bookmark.to_string();
+        operations.next_bookmark = operations
+            .next_bookmark
+            .checked_add(1)
+            .ok_or_else(|| "Bookmark identity limit reached".to_owned())?;
+        operations.bookmarks.insert(key, (label, space, addr));
+        let table = bookmark_table(&operations.bookmarks);
+        let _ = self.model.update(move |model| model.bookmarks = table);
+        Ok(())
+    }
+
+    /// Bookmark navigation continues with a memory batch; removal exits
+    /// without a flight. `None` exits; `Some` replaces the batch.
+    fn apply_bookmark(
+        &self,
+        action: AssistAction,
+        operations: &mut Operations,
+        model: &Model,
+        current: u32,
+    ) -> Result<Option<Vec<nerust_gui_shell::debug::DebugAction>>, String> {
+        use nerust_gui_shell::debug::DebugAction;
+        let selected = model
+            .bookmark_selection
+            .as_ref()
+            .ok_or_else(|| "Select a bookmark".to_owned())?;
+        let (_, space, addr) = operations
+            .bookmarks
+            .get(&selected.row_key)
+            .ok_or_else(|| "Bookmark is no longer available".to_owned())?;
+        let (space, addr) = (*space, *addr);
+        if action == AssistAction::BookmarkRemove {
+            operations.bookmarks.remove(&selected.row_key);
+            let table = bookmark_table(&operations.bookmarks);
+            let _ = self.model.update(move |model| {
+                model.bookmarks = table;
+                model.bookmark_selection = None;
+            });
+            return Ok(None);
+        }
+        let index = operations
+            .spaces
+            .iter()
+            .position(|candidate| candidate.id == space)
+            .ok_or_else(|| "Bookmark address space is no longer available".to_owned())?;
+        operations.nav.set_space(index, addr);
+        operations.nav.navigate(current, addr);
+        operations.watch = None;
+        operations.freeze = None;
+        let _ = self.model.update(|model| model.bookmark_selection = None);
+        Ok(Some(vec![DebugAction::MemNav]))
+    }
+
+    fn begin_action(
+        &self,
+        action: AssistAction,
+        model: &Model,
+    ) -> Result<Option<nerust_gui_shell::debug::DrainFlight>, String> {
+        use nerust_gui_shell::debug::DebugAction;
+        let mut operations = self.operations.borrow_mut();
+        let Some(operations) = operations.as_mut() else {
+            return Ok(None);
+        };
+        let memory = || {
+            model
+                .memory_selection
+                .as_ref()
+                .and_then(|selection| selected_memory(selection, &model.memory_targets))
+                .ok_or_else(|| text(model.language, UiText::SelectDumpRow).to_owned())
+        };
+        let register = model
+            .register_marked
+            .as_ref()
+            .and_then(|selection| model.register_targets.get(&selection.row_key))
+            .map(|(name, _)| *name);
+        let hex = |input: &str| {
+            let input = input.trim();
+            let input = input
+                .strip_prefix("0x")
+                .or_else(|| input.strip_prefix('$'))
+                .unwrap_or(input);
+            u64::from_str_radix(input, 16).map_err(|_| "Invalid hexadecimal value".to_owned())
+        };
+        let current = operations
+            .display
+            .disasm_lines
+            .first()
+            .map_or(0, |line| line.addr);
+        let mut actions = vec![DebugAction::Refresh];
+        match action {
+            AssistAction::Refresh => {}
+            AssistAction::StepFrame | AssistAction::StepInstruction => {
+                actions = Self::step_actions(action, operations);
+            }
+            AssistAction::Ppu => {
+                (operations.dispatch)(crate::view::Intent::Ppu);
+                return Ok(None);
+            }
+            AssistAction::FollowPc
+            | AssistAction::Back
+            | AssistAction::DisassemblyGo
+            | AssistAction::DisassemblyTarget
+            | AssistAction::SpacePrevious
+            | AssistAction::SpaceNext
+            | AssistAction::PagePrevious
+            | AssistAction::PageNext
+            | AssistAction::MemoryGo => {
+                if let Some(staged) = Self::navigate_actions(action, operations, model, current)? {
+                    actions = staged;
                 }
-                let label = if model.bookmark_label.trim().is_empty() {
-                    format!("0x{addr:08X}")
-                } else {
-                    model.bookmark_label.trim().to_owned()
-                };
-                let space = operations
-                    .spaces
-                    .get(operations.nav.space_idx())
-                    .ok_or_else(|| "No address space is available".to_owned())?
-                    .id;
-                let key = operations.next_bookmark.to_string();
-                operations.next_bookmark = operations
-                    .next_bookmark
-                    .checked_add(1)
-                    .ok_or_else(|| "Bookmark identity limit reached".to_owned())?;
-                operations.bookmarks.insert(key, (label, space, addr));
-                let table = bookmark_table(&operations.bookmarks);
-                let _ = self.model.update(move |model| model.bookmarks = table);
+            }
+            AssistAction::Watch
+            | AssistAction::EditWatch
+            | AssistAction::WatchClear
+            | AssistAction::Freeze
+            | AssistAction::EditFreeze
+            | AssistAction::FreezeClear
+            | AssistAction::RegisterSet
+            | AssistAction::Write
+            | AssistAction::Confirm
+            | AssistAction::Cancel => {
+                if let Some(staged) =
+                    Self::stage_actions(action, operations, model, &memory, register, &hex)?
+                {
+                    actions = staged;
+                }
+            }
+            AssistAction::BookmarkAdd => {
+                self.add_bookmark(operations, model, current)?;
                 return Ok(None);
             }
             AssistAction::BookmarkGo | AssistAction::BookmarkRemove => {
-                let selected = model
-                    .bookmark_selection
-                    .as_ref()
-                    .ok_or_else(|| "Select a bookmark".to_owned())?;
-                let (_, space, addr) = operations
-                    .bookmarks
-                    .get(&selected.row_key)
-                    .ok_or_else(|| "Bookmark is no longer available".to_owned())?;
-                let (space, addr) = (*space, *addr);
-                if action == AssistAction::BookmarkRemove {
-                    operations.bookmarks.remove(&selected.row_key);
-                    let table = bookmark_table(&operations.bookmarks);
-                    let _ = self.model.update(move |model| {
-                        model.bookmarks = table;
-                        model.bookmark_selection = None;
-                    });
+                let Some(staged) = self.apply_bookmark(action, operations, model, current)? else {
                     return Ok(None);
-                }
-                let index = operations
-                    .spaces
-                    .iter()
-                    .position(|candidate| candidate.id == space)
-                    .ok_or_else(|| "Bookmark address space is no longer available".to_owned())?;
-                operations.nav.set_space(index, addr);
-                operations.nav.navigate(current, addr);
-                operations.watch = None;
-                operations.freeze = None;
-                let _ = self.model.update(|model| model.bookmark_selection = None);
-                actions = vec![DebugAction::MemNav];
+                };
+                actions = staged;
             }
         }
         {
@@ -921,17 +1026,9 @@ impl Pane {
         self.flight.borrow().is_none()
     }
 
-    pub(crate) fn poll(
-        &self,
-        language: AppLanguage,
-        loaded: bool,
-        media_revision: u64,
-        paused: bool,
-    ) {
-        if self.model.is_closed() {
-            self.cancel();
-            return;
-        }
+    /// Media change resets navigation, selections and the flight, then
+    /// re-enables the pane for the fresh snapshot below.
+    fn reset_for_new_media(&self, media_revision: u64, language: AppLanguage) -> bool {
         let reset = {
             let mut operations = self.operations.borrow_mut();
             if let Some(operations) = operations.as_mut() {
@@ -969,90 +1066,79 @@ impl Pane {
                 model.enabled = false;
             });
         }
-        if !loaded {
-            // Gate on the current value: an unconditional update would clone
-            // the whole debugger Model (tables included) every 16 ms tick.
-            if self.model.with(|model| model.enabled) {
-                let _ = self.model.update(|model| model.enabled = false);
-            }
-            return;
-        }
-        if reset {
-            let _ = self.model.update(|model| model.enabled = true);
-            self.execute("refresh");
-        }
-        let output = {
-            let mut flight = self.flight.borrow_mut();
-            match flight.as_mut().map(|flight| flight.poll()) {
-                Some(nerust_gui_shell::debug::DrainPoll::Done(output)) => {
-                    flight.take();
-                    Some(*output)
+        reset
+    }
+
+    /// Project a served snapshot into the model: display text, addresses,
+    /// watch/freeze captions, and the enablement gate.
+    fn apply_output(
+        &self,
+        output: nerust_gui_shell::debug::DebugDrainOutput,
+        language: AppLanguage,
+    ) {
+        self.refresh(&output.display, language);
+        if let Some(operations) = self.operations.borrow_mut().as_mut() {
+            let paused_snapshot = output.display.paused;
+            operations.display = output.display;
+            // Sync the edge tracker with the snapshot just served: the
+            // initial flight lands on the current pause state without
+            // firing a spurious edge (and unpinning a test/probe anchor).
+            operations.last_paused = paused_snapshot;
+            let memory_addr = operations.nav.mem_input().to_owned();
+            let disasm_addr = operations.nav.dis_input().to_owned();
+            let back = format!(
+                "{} ({})",
+                text(language, UiText::Back),
+                operations.nav.back_len()
+            );
+            let space = operations
+                .spaces
+                .get(operations.nav.space_idx())
+                .map(|space| space.name.to_owned())
+                .unwrap_or_default();
+            let watch = operations
+                .watch
+                .map(|addr| {
+                    format!(
+                        "0x{addr:08X}: {}",
+                        operations
+                            .display
+                            .watch_value
+                            .map(|value| format!("{value:02X}"))
+                            .unwrap_or_else(|| "??".into())
+                    )
+                })
+                .unwrap_or_else(|| text(language, UiText::WatchNone).to_owned());
+            let freeze = operations
+                .freeze
+                .map(|(addr, value)| format!("0x{addr:08X} = {value:02X}"))
+                .unwrap_or_else(|| text(language, UiText::FreezeNone).to_owned());
+            let pin = operations.nav.dis_addr();
+            let _ = self.model.update(move |model| {
+                model.memory_addr = memory_addr;
+                model.disasm_addr = disasm_addr;
+                model.back = back;
+                model.space = space;
+                model.watch = watch;
+                model.freeze = freeze;
+                if let Some(addr) = pin {
+                    model.captions.disassembly =
+                        format!("{} (0x{addr:08X})", text(language, UiText::Disassembly));
                 }
-                _ => None,
-            }
-        };
-        if let Some(output) = output {
-            self.refresh(&output.display, language);
-            if let Some(operations) = self.operations.borrow_mut().as_mut() {
-                let paused_snapshot = output.display.paused;
-                operations.display = output.display;
-                // Sync the edge tracker with the snapshot just served: the
-                // initial flight lands on the current pause state without
-                // firing a spurious edge (and unpinning a test/probe anchor).
-                operations.last_paused = paused_snapshot;
-                let memory_addr = operations.nav.mem_input().to_owned();
-                let disasm_addr = operations.nav.dis_input().to_owned();
-                let back = format!(
-                    "{} ({})",
-                    text(language, UiText::Back),
-                    operations.nav.back_len()
-                );
-                let space = operations
-                    .spaces
-                    .get(operations.nav.space_idx())
-                    .map(|space| space.name.to_owned())
-                    .unwrap_or_default();
-                let watch = operations
-                    .watch
-                    .map(|addr| {
-                        format!(
-                            "0x{addr:08X}: {}",
-                            operations
-                                .display
-                                .watch_value
-                                .map(|value| format!("{value:02X}"))
-                                .unwrap_or_else(|| "??".into())
-                        )
-                    })
-                    .unwrap_or_else(|| text(language, UiText::WatchNone).to_owned());
-                let freeze = operations
-                    .freeze
-                    .map(|(addr, value)| format!("0x{addr:08X} = {value:02X}"))
-                    .unwrap_or_else(|| text(language, UiText::FreezeNone).to_owned());
-                let pin = operations.nav.dis_addr();
-                let _ = self.model.update(move |model| {
-                    model.memory_addr = memory_addr;
-                    model.disasm_addr = disasm_addr;
-                    model.back = back;
-                    model.space = space;
-                    model.watch = watch;
-                    model.freeze = freeze;
-                    if let Some(addr) = pin {
-                        model.captions.disassembly =
-                            format!("{} (0x{addr:08X})", text(language, UiText::Disassembly));
-                    }
-                });
-            }
-            let connected = self.operations.borrow().is_some();
-            let _ = self.model.update(move |model| model.enabled = connected);
+            });
         }
-        // External pause while the window is open re-snapshots: the
-        // debugger owns no pause itself (no Pause button, no lease, no
-        // auto-pause on open), so it mirrors the core. A fresh pause
-        // re-anchors on the live program counter for PC follow. Resume
-        // never refreshes, so the last paused snapshot stays on screen;
-        // it only re-arms the edge. An empty display also retries while
-        // paused (a Refresh raced the pause and served degenerates).
+        let connected = self.operations.borrow().is_some();
+        let _ = self.model.update(move |model| model.enabled = connected);
+    }
+
+    /// External pause while the window is open re-snapshots: the debugger
+    /// owns no pause itself (no Pause button, no lease, no auto-pause on
+    /// open), so it mirrors the core. A fresh pause re-anchors on the live
+    /// program counter for PC follow. Resume never refreshes, so the last
+    /// paused snapshot stays on screen; it only re-arms the edge. An empty
+    /// display also retries while paused (a Refresh raced the pause and
+    /// served degenerates).
+    fn mirror_pause_edge(&self, loaded: bool, paused: bool) {
         let fire = if loaded && self.flight.borrow().is_none() {
             if let Some(operations) = self.operations.borrow_mut().as_mut() {
                 let edge = paused && !operations.last_paused;
@@ -1076,6 +1162,46 @@ impl Pane {
         if fire {
             self.execute("refresh");
         }
+    }
+
+    pub(crate) fn poll(
+        &self,
+        language: AppLanguage,
+        loaded: bool,
+        media_revision: u64,
+        paused: bool,
+    ) {
+        if self.model.is_closed() {
+            self.cancel();
+            return;
+        }
+        let reset = self.reset_for_new_media(media_revision, language);
+        if !loaded {
+            // Gate on the current value: an unconditional update would clone
+            // the whole debugger Model (tables included) every 16 ms tick.
+            if self.model.with(|model| model.enabled) {
+                let _ = self.model.update(|model| model.enabled = false);
+            }
+            return;
+        }
+        if reset {
+            let _ = self.model.update(|model| model.enabled = true);
+            self.execute("refresh");
+        }
+        let output = {
+            let mut flight = self.flight.borrow_mut();
+            match flight.as_mut().map(|flight| flight.poll()) {
+                Some(nerust_gui_shell::debug::DrainPoll::Done(output)) => {
+                    flight.take();
+                    Some(*output)
+                }
+                _ => None,
+            }
+        };
+        if let Some(output) = output {
+            self.apply_output(output, language);
+        }
+        self.mirror_pause_edge(loaded, paused);
     }
 
     pub(crate) fn refresh(&self, display: &DisplayCache, language: AppLanguage) {
@@ -1737,6 +1863,17 @@ mod operation_tests {
         let fixture = jmp_fixture();
         let pane = drive(&fixture.adapter);
         settle_ready(&pane, &fixture.adapter);
+        // Pin the anchor deterministically: the pause edge may have
+        // re-anchored via PC follow before the first snapshot served, so
+        // re-navigate to PRG start and re-snapshot before asserting.
+        pane.operations
+            .borrow_mut()
+            .as_mut()
+            .expect("operations connected")
+            .nav
+            .navigate(0, 0x8000);
+        pane.execute_for_test("refresh");
+        settle(&pane, &fixture.adapter, true);
         // The arrow cell carries the structured target: column 1 selects
         // the destination, not the instruction address.
         let operations = pane.operations.borrow();

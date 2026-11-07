@@ -6,7 +6,7 @@ use glutin::{
         ContextApi, ContextAttributesBuilder, NotCurrentGlContext as _,
         PossiblyCurrentGlContext as _, Version,
     },
-    display::{Display, DisplayApiPreference, GlDisplay as _},
+    display::{Display, GlDisplay as _},
     surface::{GlSurface as _, SurfaceAttributesBuilder, SwapInterval, WindowSurface},
 };
 use nerust_render_traits::{
@@ -18,6 +18,7 @@ use nerust_render_traits::{
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+use crate::display::create_display;
 use crate::frame_view::FrameView;
 use crate::layout::{FrameError, FrameLayout};
 use crate::{error::ViewError, osd_view::OsdOutcome};
@@ -676,48 +677,12 @@ fn upload_frame(
 pub struct GlFactory;
 
 impl GlFactory {
-    pub(crate) fn create_display(dh: RawDisplayHandle) -> Result<Display, glutin::error::Error> {
-        // Single cfg-selected expression: exactly one arm compiles per
-        // platform, so no dead Glx/Wgl/Egl shadow survives.
-        #[cfg(target_os = "macos")]
-        let preference = DisplayApiPreference::Cgl;
-        #[cfg(all(target_os = "windows", not(target_family = "wasm")))]
-        let preference = DisplayApiPreference::EglThenWgl(None);
-        #[cfg(target_os = "android")]
-        let preference = DisplayApiPreference::Egl;
-        #[cfg(all(
-            unix,
-            not(target_os = "macos"),
-            not(target_os = "android"),
-            not(target_family = "wasm"),
-            not(target_os = "ios")
-        ))]
-        let preference = DisplayApiPreference::EglThenGlx(Box::new(|_reg| {}));
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "windows",
-            target_os = "android",
-            all(
-                unix,
-                not(target_os = "macos"),
-                not(target_os = "android"),
-                not(target_family = "wasm"),
-                not(target_os = "ios")
-            )
-        )))]
-        let preference = DisplayApiPreference::Egl;
-
-        unsafe { glutin::display::Display::new(dh, preference) }
-    }
-}
-
-impl GlFactory {
     /// Shared construction for the narrow factory.
     fn build(
         config: &RendererConfig,
         display_handle: RawDisplayHandle,
     ) -> Result<GlRenderer, RendererError> {
-        let display = Self::create_display(display_handle)
+        let display = create_display(display_handle)
             .map_err(|e| RendererError::attach("gl", "display", Box::new(e)))?;
         let template = ConfigTemplateBuilder::new().with_alpha_size(8).build();
         let gl_config = unsafe {

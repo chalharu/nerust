@@ -35,10 +35,14 @@ def window(process_id, title):
 
 
 def bounds(accessible):
+    # Probe AT-SPI extents; missing method or stale object both mean
+    # "no geometry available" for this poll round.
     try:
         rectangle = accessible.queryComponent().getExtents(pyatspi.WINDOW_COORDS)
         return {"x": rectangle.x, "y": rectangle.y, "width": rectangle.width, "height": rectangle.height}
-    except (NotImplementedError, RuntimeError):
+    except NotImplementedError:
+        return None
+    except RuntimeError:
         return None
 
 
@@ -61,6 +65,37 @@ def visible_in_frame(accessible, frame):
     return True
 
 
+def _action_names(accessible):
+    # List AT-SPI actions; unimplemented or stale objects expose none.
+    try:
+        action = accessible.queryAction()
+        return [action.getName(index) for index in range(action.nActions)]
+    except NotImplementedError:
+        return []
+    except RuntimeError:
+        return []
+
+
+def _text_payload(accessible, node):
+    # Attach plain text where supported; missing APIs leave node bare.
+    try:
+        text = accessible.queryText()
+    except NotImplementedError:
+        return
+    except RuntimeError:
+        return
+    node["text"] = text.getText(0, text.characterCount)
+    if not text.characterCount:
+        return
+    try:
+        attributes, start, end = text.getAttributeRun(0, True)
+    except NotImplementedError:
+        return
+    except RuntimeError:
+        return
+    node["text_attribute_run"] = {"attributes": attributes, "start": start, "end": end}
+
+
 def tree(accessible, parent_bounds=None):
     node = {"name": accessible.name, "role": accessible.getRoleName(), "showing": accessible.getState().contains(pyatspi.STATE_SHOWING), "bounds": bounds(accessible)}
     if parent_bounds is None:
@@ -69,22 +104,8 @@ def tree(accessible, parent_bounds=None):
     rectangle = node["bounds"]
     if rectangle is not None and parent_bounds is not None:
         node["parent_allocation_insets"] = {"left": rectangle["x"] - parent_bounds["x"], "top": rectangle["y"] - parent_bounds["y"], "right": parent_bounds["x"] + parent_bounds["width"] - rectangle["x"] - rectangle["width"], "bottom": parent_bounds["y"] + parent_bounds["height"] - rectangle["y"] - rectangle["height"]}
-    try:
-        action = accessible.queryAction()
-        node["actions"] = [action.getName(index) for index in range(action.nActions)]
-    except (NotImplementedError, RuntimeError):
-        node["actions"] = []
-    try:
-        text = accessible.queryText()
-        node["text"] = text.getText(0, text.characterCount)
-        if text.characterCount:
-            try:
-                attributes, start, end = text.getAttributeRun(0, True)
-                node["text_attribute_run"] = {"attributes": attributes, "start": start, "end": end}
-            except (NotImplementedError, RuntimeError):
-                pass
-    except (NotImplementedError, RuntimeError):
-        pass
+    node["actions"] = _action_names(accessible)
+    _text_payload(accessible, node)
     node["children"] = [tree(accessible.getChildAtIndex(index), rectangle) for index in range(accessible.childCount) if accessible.getChildAtIndex(index) is not None]
     for previous, current in zip(node["children"], node["children"][1:]):
         before, after = previous["bounds"], current["bounds"]
@@ -93,18 +114,26 @@ def tree(accessible, parent_bounds=None):
     return node
 
 
+def _try_select_child(target):
+    # Attempt one AT-SPI selection step; missing/stale APIs yield None
+    # so the caller can walk up to the parent container instead.
+    try:
+        selection = target.parent.querySelection()
+        return bool(selection.selectChild(target.getIndexInParent()))
+    except NotImplementedError:
+        return None
+    except RuntimeError:
+        return None
+
+
 def select_page(frame, page):
     for accessible in descendants(frame):
         if normalized(accessible.name) != normalized(page) or not in_frame(accessible, frame):
             continue
         target = accessible
         for _ in range(3):
-            try:
-                selection = target.parent.querySelection()
-                if selection.selectChild(target.getIndexInParent()):
-                    return True
-            except (NotImplementedError, RuntimeError):
-                pass
+            if _try_select_child(target):
+                return True
             target = target.parent
             if target is None or target == frame:
                 break

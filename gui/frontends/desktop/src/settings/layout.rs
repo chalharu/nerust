@@ -1,7 +1,10 @@
-use super::*;
+use super::{Editor, choice};
 use nerust_gui_viewmodel::settings::dto::{BindingSectionView, BindingValueView};
-use nerust_settings_core::editor::CaptureTarget;
-use panechord::{Keyed, Viewport};
+#[cfg(test)]
+use nerust_gui_viewmodel::settings::dto::{ChoiceView, choice_position};
+use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
+use panechord::{Binding, Choice, Command, Keyed, Store, Viewport};
+use std::{cell::RefCell, rc::Rc};
 
 pub(super) type Capture = Rc<dyn Fn(CaptureTarget) -> Command>;
 
