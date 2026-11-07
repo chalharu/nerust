@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs::{self, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -326,10 +327,10 @@ pub fn delete_state_slot(path: &Path) -> Result<(), PersistenceError> {
 /// Numbered slot archives only: sidecars (`.autosave_slot`), the counter
 /// itself, and reservations never qualify.
 fn is_numbered_state_file(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("state")
+    path.extension().and_then(OsStr::to_str) == Some("state")
         && path
             .file_stem()
-            .and_then(|stem| stem.to_str())
+            .and_then(OsStr::to_str)
             .is_some_and(|stem| stem.parse::<u64>().is_ok())
 }
 
@@ -351,7 +352,7 @@ fn reset_counter_if_no_slots_remain(states_dir: Option<&Path>) {
         }
         if entry_path
             .file_name()
-            .and_then(|name| name.to_str())
+            .and_then(OsStr::to_str)
             .is_some_and(|name| name.starts_with(".slot_reserve."))
         {
             has_reserve = true;
@@ -380,7 +381,7 @@ fn scan_state_slots_matching(
     for entry in fs::read_dir(states_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("state") {
+        if path.extension().and_then(OsStr::to_str) != Some("state") {
             continue;
         }
         if let Ok(Some(summary)) = read_state_summary(&path, identity) {
@@ -398,12 +399,12 @@ fn existing_slot_id_max(states_dir: &Path) -> Result<u64, PersistenceError> {
     let mut max_id = 0;
     for entry in fs::read_dir(states_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("state") {
+        if path.extension().and_then(OsStr::to_str) != Some("state") {
             continue;
         }
         if let Some(slot_id) = path
             .file_stem()
-            .and_then(|stem| stem.to_str())
+            .and_then(OsStr::to_str)
             .and_then(|stem| stem.parse::<u64>().ok())
         {
             max_id = max_id.max(slot_id);

@@ -59,6 +59,9 @@ func review() throws {
     defer { if process.isRunning { process.terminate(); process.waitUntilExit() } }
     let application = AXUIElementCreateApplication(process.processIdentifier)
     let events = CGEventSource(stateID: .combinedSessionState)
+    // Screen capture tool override for non-standard layouts; the system
+    // default stays when unset.
+    let screenCapturePath = ProcessInfo.processInfo.environment["SCREENCAPTURE_PATH"] ?? "/usr/sbin/screencapture"
     var records = [[String: Any]]()
 
     func key(_ code: CGKeyCode, pressed: Bool) {
@@ -112,7 +115,7 @@ func review() throws {
             try require(process.isRunning, "application exited; see application.log")
             guard let (id, bounds) = window() else { return false }
             let camera = Process()
-            camera.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            camera.executableURL = URL(fileURLWithPath: screenCapturePath)
             camera.arguments = ["-x", "-o", "-l", String(id), destination.path]
             try camera.run()
             camera.waitUntilExit()
