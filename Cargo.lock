@@ -4201,6 +4201,7 @@ dependencies = [
 [[package]]
 name = "panechord"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "panechord-gtk",
  "panechord-macros",
@@ -4212,6 +4213,7 @@ dependencies = [
 [[package]]
 name = "panechord-gtk"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "futures",
  "gtk4",
@@ -4226,6 +4228,7 @@ dependencies = [
 [[package]]
 name = "panechord-macos"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "futures",
  "objc2 0.6.5",
@@ -4237,6 +4240,7 @@ dependencies = [
 [[package]]
 name = "panechord-macros"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "panechord-markup",
  "panechord-runtime",
@@ -4250,6 +4254,7 @@ dependencies = [
 [[package]]
 name = "panechord-markup"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "panechord-runtime",
  "schemars",
@@ -4262,6 +4267,7 @@ dependencies = [
 [[package]]
 name = "panechord-native"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "panechord-gtk",
  "panechord-macos",
@@ -4271,6 +4277,7 @@ dependencies = [
 [[package]]
 name = "panechord-runtime"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4280,6 +4287,7 @@ dependencies = [
 [[package]]
 name = "panechord-tao"
 version = "0.1.0-dev"
+source = "git+https://github.com/chalharu/panechord?rev=4796e4a272b7c172b831787cbded336ce575f1ae#4796e4a272b7c172b831787cbded336ce575f1ae"
 dependencies = [
  "futures",
  "gtk",
