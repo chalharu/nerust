@@ -30,7 +30,7 @@ def framework_dirs() -> dict[str, Path]:
     cargo metadata instead of a fixed path.
     """
     out = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--offline"],
+        ["cargo", "metadata", "--format-version", "1"],
         capture_output=True,
         text=True,
         check=False,  # returncode is inspected below with a tailored error
