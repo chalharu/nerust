@@ -20,6 +20,7 @@ _CREATE_SAVE_SLOT = "Create Save Slot"
 _SELECT_ACTIVE_SLOT = "Select Active Slot"
 _SLOT_2 = "Slot 2"
 _SLOT_1 = "Slot 1"
+_PPU_VIEWER = "PPU Viewer"
 
 
 def execute(*arguments):
@@ -130,6 +131,22 @@ def _probe_click_action(target):
     return None
 
 
+def _probe_text_row(state, app, node, rectangle):
+    # Climb at most three levels for a clickable action, else fall back to
+    # a screen coordinate for push buttons, combos, menu items and page tabs.
+    target = node
+    for _ in range(3):
+        probed = _probe_click_action(target)
+        if probed is not None:
+            return probed
+        target = target.parent
+        if target is None or target == app:
+            break
+    if node.getRoleName() in {_PUSH_BUTTON, "combo box", "menu item", "page tab"}:
+        return lambda rectangle=rectangle: execute("xdotool", "mousemove", str(rectangle["x"] + rectangle["width"] // 2), str(rectangle["y"] + rectangle["height"] // 2), "click", "1")
+    return None
+
+
 def _locate_text_action(state, app, text, prefix):
     # Find one clickable AT-SPI node or a screen fallback coordinate.
     for node in state.layout.descendants(app):
@@ -139,16 +156,9 @@ def _locate_text_action(state, app, text, prefix):
         rectangle = state.layout.bounds(node)
         if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0 or rectangle["x"] < 0:
             continue
-        target = node
-        for _ in range(3):
-            probed = _probe_click_action(target)
-            if probed is not None:
-                return probed
-            target = target.parent
-            if target is None or target == app:
-                break
-        if node.getRoleName() in {_PUSH_BUTTON, "combo box", "menu item", "page tab"}:
-            return lambda rectangle=rectangle: execute("xdotool", "mousemove", str(rectangle["x"] + rectangle["width"] // 2), str(rectangle["y"] + rectangle["height"] // 2), "click", "1")
+        probed = _probe_text_row(state, app, node, rectangle)
+        if probed is not None:
+            return probed
     return None
 
 
@@ -340,6 +350,21 @@ def _check_debugger_labels(state, visible):
     return sum("0x" in node.name for node in visible if node.getRoleName() == "label") >= 3
 
 
+def _skip_alignment_label(label_name):
+    # Labels the alignment probe owns: navigation, watch/freeze captions,
+    # register prompts, dump prompts, disassembly rows and addresses.
+    return label_name not in {"space", "page", "watchnone", "freezenone", "pickaregister", "selectadumprow"} and not label_name.startswith(("disassembly", "selected", "set", "0x"))
+
+
+def _find_button_row(state, frame, row):
+    # Climb to the nearest ancestor row that owns a push button.
+    while row is not None and row != frame:
+        if any(child.getRoleName() == _PUSH_BUTTON for child in state.layout.descendants(row)):
+            return row
+        row = row.parent
+    return None
+
+
 def _collect_debugger_alignment(state, frame, visible):
     # Verify each probed row keeps its label vertically centered.
     alignment = []
@@ -347,14 +372,10 @@ def _collect_debugger_alignment(state, frame, visible):
         if node.getRoleName() != "label" or node.parent.getRoleName() == _PUSH_BUTTON:
             continue
         label_name = state.layout.normalized(node.name)
-        if label_name not in {"space", "page", "watchnone", "freezenone", "pickaregister", "selectadumprow"} and not label_name.startswith(("disassembly", "selected", "set", "0x")):
+        if _skip_alignment_label(label_name):
             continue
-        row = node.parent
-        while row is not None and row != frame:
-            if any(child.getRoleName() == _PUSH_BUTTON for child in state.layout.descendants(row)):
-                break
-            row = row.parent
-        if row is None or row == frame:
+        row = _find_button_row(state, frame, node.parent)
+        if row is None:
             raise RuntimeError(f"Debugger horizontal row is missing: {node.name}")
         label_bounds, row_bounds = state.layout.bounds(node), state.layout.bounds(row)
         label_center = label_bounds["y"] + label_bounds["height"] / 2
@@ -466,7 +487,7 @@ def _memory_cells(state):
 def _check_memory_insets(state, cells):
     body, row = state.layout.bounds(cells[0].parent), state.layout.bounds(cells[0].parent.parent)
     row_insets = {"left": body["x"] - row["x"], "top": body["y"] - row["y"], "right": row["x"] + row["width"] - body["x"] - body["width"], "bottom": row["y"] + row["height"] - body["y"] - body["height"]}
-    if row_insets != {"left": 2, "top": 2, "right": 2, "bottom": 2}:
+    if any(row_insets[side] != 2 for side in ("left", "top", "right", "bottom")):
         raise RuntimeError(f"Memory row content insets drifted: {row_insets}")
     return row_insets
 
@@ -493,7 +514,7 @@ def _probe_jump_target(state):
         return None
 
 
-def _run_debugger_jump(state, native, cells, row_insets):
+def _run_debugger_jump(state, native, cells):
     frame = state.layout.window(state.process.pid, "Debugger")
     targets = [state.layout.bounds(node) for node in state.layout.descendants(frame) if node.getRoleName() == _PUSH_BUTTON and node.name == "\u2192" and state.layout.visible_in_frame(node, frame)]
     if not targets:
@@ -641,7 +662,7 @@ def _run_debugger_review(state, window):
     _run_debugger_registers(state, native)
     cells = wait(lambda state=state: _memory_cells(state))
     row_insets = _check_memory_insets(state, cells)
-    rectangles, gaps, targets = _run_debugger_jump(state, native, cells, row_insets)
+    rectangles, gaps, targets = _run_debugger_jump(state, native, cells)
     for column in [1, 2]:
         _select_memory_column(state, native, column, rectangles, gaps, row_insets, targets)
     if state.debugger_bindings:
@@ -660,7 +681,7 @@ def _find_ppu_window(process):
 def _open_ppu(state):
     execute("xdotool", "windowfocus", "--sync", state.window)
     _click_text(state, "Emulation")
-    _click_text(state, "PPU Viewer", prefix=True)
+    _click_text(state, _PPU_VIEWER, prefix=True)
     native = wait(lambda process=state.process: _find_ppu_window(process))
     execute("xdotool", "windowfocus", "--sync", native)
     execute("xdotool", "windowsize", "--sync", native, "560", "620")
@@ -668,7 +689,7 @@ def _open_ppu(state):
 
 
 def _ppu_images(state):
-    frame = state.layout.window(state.process.pid, "PPU Viewer")
+    frame = state.layout.window(state.process.pid, _PPU_VIEWER)
     if frame is None:
         return None
     images = [node for node in state.layout.descendants(frame) if node.getRoleName() == "image" and state.layout.visible_in_frame(node, frame)]
@@ -692,7 +713,7 @@ def _check_ppu_geometry(state, frame, name, rectangles):
 
 def _take_ppu_snapshot(state, native, name):
     wait(lambda state=state: _ppu_images(state))
-    frame = state.layout.window(state.process.pid, "PPU Viewer")
+    frame = state.layout.window(state.process.pid, _PPU_VIEWER)
     image = state.output / f"{name}.png"
     tree_file = state.output / f"{name}.atspi.json"
     execute("import", "-window", native, str(image))
@@ -707,7 +728,7 @@ def _take_ppu_snapshot(state, native, name):
 
 
 def _close_ppu(state):
-    action = state.layout.window(state.process.pid, "PPU Viewer").queryAction()
+    action = state.layout.window(state.process.pid, _PPU_VIEWER).queryAction()
     close_index = next(index for index in range(action.nActions) if action.getName(index) == "window.close")
     if not action.doAction(close_index):
         raise RuntimeError("PPU native close request was rejected")
@@ -718,12 +739,12 @@ def _run_ppu_review(state):
     native = _open_ppu(state)
     _take_ppu_snapshot(state, native, "ppu-initial")
     picture = state.layout.bounds(wait(lambda state=state: _ppu_images(state))[0])
-    outer = state.layout.bounds(state.layout.window(state.process.pid, "PPU Viewer"))
+    outer = state.layout.bounds(state.layout.window(state.process.pid, _PPU_VIEWER))
     execute("xdotool", "mousemove", "--window", native, str(picture["x"] - outer["x"] + 20), str(picture["y"] - outer["y"] + 20))
-    wait(lambda: any("0x" in node.name for node in state.layout.descendants(state.layout.window(state.process.pid, "PPU Viewer")) if node.getRoleName() == "label"))
+    wait(lambda: any("0x" in node.name for node in state.layout.descendants(state.layout.window(state.process.pid, _PPU_VIEWER)) if node.getRoleName() == "label"))
     _take_ppu_snapshot(state, native, "ppu-hover")
     execute("xdotool", "mousemove", "--window", native, "500", "500", "click", "--repeat", "12", "--delay", "50", "5")
-    wait(lambda: any("== PPU flags ==" in node.name and state.layout.visible_in_frame(node, state.layout.window(state.process.pid, "PPU Viewer")) for node in state.layout.descendants(state.layout.window(state.process.pid, "PPU Viewer")) if node.getRoleName() == "label"))
+    wait(lambda: any("== PPU flags ==" in node.name and state.layout.visible_in_frame(node, state.layout.window(state.process.pid, _PPU_VIEWER)) for node in state.layout.descendants(state.layout.window(state.process.pid, _PPU_VIEWER)) if node.getRoleName() == "label"))
     _take_ppu_snapshot(state, native, "ppu-panels")
     _close_ppu(state)
     native = _open_ppu(state)
@@ -802,6 +823,18 @@ def _click_page(state, settings_window, page):
     wait(locate)
 
 
+def _find_setting_click(state, root, command):
+    # Scan one settings row for a clickable action.
+    for node in state.layout.descendants(root):
+        if node.getRoleName() != _PUSH_BUTTON or node.name != command:
+            continue
+        action = node.queryAction()
+        for index in range(action.nActions):
+            if action.getName(index) in {"click", "press", "activate", "button.activate"}:
+                return lambda action=action, index=index: action.doAction(index)
+    return None
+
+
 def _click_setting(state, settings_window, command, row_label=None):
     def locate(settings_window=settings_window):
         frame = _settings_frame(state, settings_window)
@@ -810,14 +843,7 @@ def _click_setting(state, settings_window, command, row_label=None):
         root = _setting_row_root(state, frame, row_label)
         if root is None:
             return None
-        for node in state.layout.descendants(root):
-            if node.getRoleName() != _PUSH_BUTTON or node.name != command:
-                continue
-            action = node.queryAction()
-            for index in range(action.nActions):
-                if action.getName(index) in {"click", "press", "activate", "button.activate"}:
-                    return lambda action=action, index=index: action.doAction(index)
-        return None
+        return _find_setting_click(state, root, command)
 
     if wait(locate)() is False:
         raise RuntimeError(f"Settings action was rejected: {row_label}/{command}")
@@ -989,7 +1015,7 @@ def _dump_failure_diagnostics(state, mode):
         print(f"VIEW DIAGNOSTIC UNAVAILABLE: {diagnostic_error}", flush=True)
 
 
-def _run_mode(mode, arguments, binary, rom, output, records, settings, environment, flags):
+def _run_mode(mode, arguments, binary, output, records, settings, environment, flags):
     settings_review, history_review, debugger_review = flags["settings"], flags["history"], flags["debugger"]
     ppu_review, menu_review = flags["ppu"], flags["menu"]
     with (output / f"{mode}.log").open("w") as log:
@@ -1034,7 +1060,7 @@ def capture(binary, original, destination, settings_review=False, history_review
         root, rom, settings = _prepare_workspace(original, temporary)
         environment = _session_environment(root, accessibility)
         for mode, arguments in [("empty", []), ("rom", [str(rom)])]:
-            shutdown_exit_codes[mode] = _run_mode(mode, arguments, binary, rom, output, records, settings, environment, flags)
+            shutdown_exit_codes[mode] = _run_mode(mode, arguments, binary, output, records, settings, environment, flags)
     (output / "evidence.json").write_text(json.dumps({"os": execute("uname", "-a"),
         "source_revision": os.environ.get("NERUST_SOURCE_REVISION"),
         "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
