@@ -133,6 +133,29 @@ def _probe_select(target):
         return None
 
 
+def _probe_accessible_click(frame, accessible, origin, sidebar):
+    # Validate geometry, then climb at most three levels for a click or
+    # sidebar selection action.
+    rectangle = bounds(accessible)
+    if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0:
+        return None
+    if sidebar and rectangle["x"] - origin["x"] >= 200:
+        return None
+    target = accessible
+    for _ in range(3):
+        probed = _probe_click(target)
+        if probed is not None:
+            return probed
+        if sidebar and target.parent is not None:
+            selected = _probe_select(target)
+            if selected is not None:
+                return selected
+        target = target.parent
+        if target is None or target == frame:
+            break
+    return None
+
+
 def _locate_clickable(process, window, text, sidebar):
     frame = _accessible_frame(process, window)
     if frame is None:
@@ -141,23 +164,9 @@ def _locate_clickable(process, window, text, sidebar):
     for accessible in descendants(frame):
         if normalized(accessible.name) != normalized(text) or not in_frame(accessible, frame):
             continue
-        rectangle = bounds(accessible)
-        if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0:
-            continue
-        if sidebar and rectangle["x"] - origin["x"] >= 200:
-            continue
-        target = accessible
-        for _ in range(3):
-            probed = _probe_click(target)
-            if probed is not None:
-                return probed
-            if sidebar and target.parent is not None:
-                selected = _probe_select(target)
-                if selected is not None:
-                    return selected
-            target = target.parent
-            if target is None or target == frame:
-                break
+        probed = _probe_accessible_click(frame, accessible, origin, sidebar)
+        if probed is not None:
+            return probed
     return None
 
 
