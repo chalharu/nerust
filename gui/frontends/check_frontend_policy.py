@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Frontend dependency gate.
 
 Panechord manifests, dependency closures and Rust sources stay framework-only.
@@ -8,7 +7,6 @@ Inner layers depend on neither the UI framework nor the removed Wakui stack.
 
 import re
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
@@ -96,6 +94,7 @@ def cargo_direct_deps(package: str, crate_dir: Path) -> set[str]:
          "--depth", "1", "--prefix", "none", "--locked"],
         capture_output=True,
         text=True,
+        check=False,  # returncode is inspected below with a tailored error
         cwd=ROOT,
     )
     if out.returncode != 0:
@@ -115,6 +114,7 @@ def cargo_closure_has_nerust(package: str, crate_dir: Path) -> list[str]:
          "--prefix", "none", "--locked"],
         capture_output=True,
         text=True,
+        check=False,  # returncode is inspected below with a tailored error
         cwd=ROOT,
     )
     if out.returncode != 0:

@@ -1,14 +1,15 @@
-#!/usr/bin/env python3
 import hashlib
+import itertools
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
+
 import yaml
 
 
@@ -50,10 +51,10 @@ def capture(binary, original, destination, settings_review=False, history_review
             with (output / f"{mode}.log").open("w") as log:
                 process = subprocess.Popen([binary, *arguments], env=environment, stdout=log, stderr=log)
                 try:
-                    def find_window():
+                    def find_window(mode=mode, process=process):
                         if process.poll() is not None:
                             raise RuntimeError(f"{mode}: application exited; inspect log")
-                        result = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid)], capture_output=True, text=True)
+                        result = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid)], capture_output=True, text=True, check=False)
                         return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
                     window = wait(find_window)
@@ -61,10 +62,10 @@ def capture(binary, original, destination, settings_review=False, history_review
                     execute("xdotool", "windowfocus", "--sync", window)
                     execute("xdotool", "windowsize", "--sync", window, "660", "520")
 
-                    def snapshot(name, expected=None, blank=False):
+                    def snapshot(name, expected=None, blank=False, process=process, window=window):
                         image = output / f"{name}.png"
 
-                        def inspect():
+                        def inspect(window=window, process=process):
                             execute("import", "-window", window, str(image))
                             text = execute("tesseract", str(image), "stdout", "--psm", "11")
                             menu_pixels = subprocess.check_output(["convert", str(image), "-crop", "400x24+0+0", "-resize", "300%", "png:-"])
@@ -99,8 +100,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                         execute("xdotool", "key", "space")
                         snapshot("paused", expected="Paus")
                         if history_review or debugger_review or ppu_review or menu_review:
-                            def click_text(text, prefix=False):
-                                def locate():
+                            def click_text(text, prefix=False, process=process):
+                                def locate(process=process):
                                     app = layout.application(process.pid)
                                     if app is None:
                                         return None
@@ -136,8 +137,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     click_text("Emulation")
                                     click_text("Save States")
 
-                                def menu_snapshot(name, expected, absent=(), active=None):
-                                    def inspect():
+                                def menu_snapshot(name, expected, absent=(), active=None, process=process):
+                                    def inspect(process=process):
                                         app = layout.application(process.pid)
                                         if app is None:
                                             return None
@@ -190,11 +191,11 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 menu_snapshot("menu-deleted", ["Slot 1"], ["Slot 2"], active=1)
                                 execute("xdotool", "key", "Escape", "Escape", "Escape")
 
-                            def find_history():
-                                result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Notification History$"], capture_output=True, text=True)
+                            def find_history(process=process):
+                                result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Notification History$"], capture_output=True, text=True, check=False)
                                 return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
-                            def open_history():
+                            def open_history(window=window):
                                 execute("xdotool", "windowfocus", "--sync", window)
                                 click_text("Emulation")
                                 click_text("Notification History", prefix=True)
@@ -203,9 +204,9 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 execute("xdotool", "windowsize", "--sync", native, "592", "428")
                                 return native
 
-                            def history_snapshot(native, name, expected, absent=()):
+                            def history_snapshot(native, name, expected, absent=(), process=process):
                                 image = output / f"{name}.png"
-                                def inspect():
+                                def inspect(process=process):
                                     if process.poll() is not None:
                                         raise RuntimeError("application exited during History review")
                                     frame = layout.window(process.pid, execute("xdotool", "getwindowname", native))
@@ -255,11 +256,11 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 native = open_history()
                                 history_snapshot(native, "history-reopened", ["All", "No notifications", "Close"])
                             if debugger_review:
-                                def find_debugger():
-                                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Debugger$"], capture_output=True, text=True)
+                                def find_debugger(process=process):
+                                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^Debugger$"], capture_output=True, text=True, check=False)
                                     return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
-                                def open_debugger(shortcut=False):
+                                def open_debugger(window, shortcut=False):
                                     execute("xdotool", "windowfocus", "--sync", window)
                                     if shortcut:
                                         execute("xdotool", "key", "F4")
@@ -271,10 +272,10 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     execute("xdotool", "windowsize", "--sync", native, "1100", "946")
                                     return native
 
-                                def debugger_snapshot(native, name):
+                                def debugger_snapshot(native, name, process=process):
                                     image = output / f"{name}.png"
                                     tree_file = output / f"{name}.atspi.json"
-                                    def inspect():
+                                    def inspect(process=process):
                                         frame = layout.window(process.pid, "Debugger")
                                         if frame is None:
                                             return None
@@ -332,11 +333,11 @@ def capture(binary, original, destination, settings_review=False, history_review
                                         raise
                                     print(f"VIEW CAPTURE {name}", flush=True)
 
-                                native = open_debugger(shortcut=debugger_bindings)
+                                native = open_debugger(window, shortcut=debugger_bindings)
                                 debugger_snapshot(native, "debugger-initial")
                                 import pyatspi
 
-                                def register_cells():
+                                def register_cells(process=process):
                                     frame = layout.window(process.pid, "Debugger")
                                     if frame is None:
                                         return None
@@ -351,7 +352,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
                                     if not action.doAction(index):
                                         raise RuntimeError("Register selection was rejected")
-                                    wait(lambda: (cells := register_cells()) and cells[selected_index].getState().contains(pyatspi.STATE_PRESSED))
+                                    wait(lambda selected_index=selected_index: (cells := register_cells()) and cells[selected_index].getState().contains(pyatspi.STATE_PRESSED))
                                     if any(cell.getState().contains(pyatspi.STATE_PRESSED) for index, cell in enumerate(register_cells()) if index != selected_index):
                                         raise RuntimeError("Previous register selection remained active")
                                     frame = layout.window(process.pid, "Debugger")
@@ -361,7 +362,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     records[-1]["measured"] = {"register_accessible_content": [layout.bounds(cell) for cell in register_cells()], "selected_register": register_name}
                                     records[-1]["scope"] = "exclusive presentation register selection and layout; domain mutation bindings not tested"
 
-                                def memory_cells():
+                                def memory_cells(process=process):
                                     frame = layout.window(process.pid, "Debugger")
                                     if frame is None:
                                         return None
@@ -380,7 +381,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 targets = [layout.bounds(node) for node in layout.descendants(frame) if node.getRoleName() == "push button" and node.name == "\u2192" and layout.visible_in_frame(node, frame)]
                                 if not targets:
                                     raise RuntimeError("NES fixture did not expose a visible disassembly target")
-                                def debugger_nodes():
+                                def debugger_nodes(process=process):
                                     try:
                                         window = layout.window(process.pid, "Debugger")
                                         return list(layout.descendants(window)) if window is not None else []
@@ -388,7 +389,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                         return []
                                 # Jump-target navigation: clicking the first
                                 # visible arrow must push the Back stack.
-                                def jump_target():
+                                def jump_target(process=process):
                                     try:
                                         frame = layout.window(process.pid, "Debugger")
                                         if frame is None:
@@ -406,11 +407,11 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
                                 if not action.doAction(index):
                                     raise RuntimeError("Disassembly target navigation was rejected")
-                                wait(lambda: any(node.getRoleName() == "push button" and node.name == f"Back ({count_before + 1})" for node in debugger_nodes()))
+                                wait(lambda count_before=count_before: any(node.getRoleName() == "push button" and node.name == f"Back ({count_before + 1})" for node in debugger_nodes()))
                                 debugger_snapshot(native, "debugger-jump")
                                 records[-1]["scope"] = "disassembly jump-target navigation pushes the Back stack"
                                 rectangles = [layout.bounds(cell) for cell in cells]
-                                gaps = [right["x"] - left["x"] - left["width"] for left, right in zip(rectangles, rectangles[1:])]
+                                gaps = [right["x"] - left["x"] - left["width"] for left, right in itertools.pairwise(rectangles)]
                                 if gaps != [36] * 16:
                                     raise RuntimeError(f"Memory accessible content gaps drifted: {gaps}")
                                 for column in [1, 2]:
@@ -419,7 +420,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     index = next(index for index in range(action.nActions) if action.getName(index) in {"click", "activate"})
                                     if not action.doAction(index):
                                         raise RuntimeError("Memory cell selection was rejected")
-                                    wait(lambda: (cells := memory_cells()) and cells[column].getState().contains(pyatspi.STATE_PRESSED))
+                                    wait(lambda column=column: (cells := memory_cells()) and cells[column].getState().contains(pyatspi.STATE_PRESSED))
                                     if any(cell.getState().contains(pyatspi.STATE_PRESSED) for index, cell in enumerate(memory_cells()) if index != column):
                                         raise RuntimeError("Previous memory cell selection remained active")
                                     debugger_snapshot(native, f"debugger-byte-{column}")
@@ -428,7 +429,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 if debugger_bindings:
                                     from gi.repository import GLib
 
-                                    def debug_labels():
+                                    def debug_labels(process=process):
                                         if process.poll() is not None:
                                             raise RuntimeError(f"Debugger operation exited the process: {process.returncode}; inspect rom.log")
                                         try:
@@ -442,8 +443,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     def wait_debug_text(text):
                                         return wait(lambda: any(text.casefold() in node.name.casefold() for node in debug_labels()))
 
-                                    def edit_row(label_prefix, value):
-                                        def locate():
+                                    def edit_row(label_prefix, value, process=process):
+                                        def locate(process=process):
                                             frame = layout.window(process.pid, "Debugger")
                                             if frame is None:
                                                 return None
@@ -478,7 +479,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     click_text("Write 0x", prefix=True)
                                     wait_debug_text("6B")
                                     click_text("Cancel")
-                                    def confirm_gone():
+                                    def confirm_gone(process=process):
                                         try:
                                             window = layout.window(process.pid, "Debugger")
                                             if window is None:
@@ -511,14 +512,14 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 if not action.doAction(index):
                                     raise RuntimeError("Debugger native close request was rejected")
                                 wait(lambda: find_debugger() is None)
-                                native = open_debugger()
+                                native = open_debugger(window)
                                 debugger_snapshot(native, "debugger-reopened")
                             if ppu_review:
-                                def find_ppu():
-                                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^PPU Viewer$"], capture_output=True, text=True)
+                                def find_ppu(process=process):
+                                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^PPU Viewer$"], capture_output=True, text=True, check=False)
                                     return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
-                                def open_ppu():
+                                def open_ppu(window=window):
                                     execute("xdotool", "windowfocus", "--sync", window)
                                     click_text("Emulation")
                                     click_text("PPU Viewer", prefix=True)
@@ -527,7 +528,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                     execute("xdotool", "windowsize", "--sync", native, "560", "620")
                                     return native
 
-                                def ppu_frame():
+                                def ppu_frame(process=process):
                                     return layout.window(process.pid, "PPU Viewer")
 
                                 def ppu_images():
@@ -587,20 +588,20 @@ def capture(binary, original, destination, settings_review=False, history_review
                         if settings_review:
                             execute("xdotool", "key", "ctrl+comma")
 
-                            def find_settings():
-                                result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^nerust Settings$"], capture_output=True, text=True)
+                            def find_settings(process=process):
+                                result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", "^nerust Settings$"], capture_output=True, text=True, check=False)
                                 return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
                             settings_window = wait(find_settings)
                             execute("xdotool", "windowfocus", "--sync", settings_window)
                             execute("xdotool", "windowsize", "--sync", settings_window, "900", "560")
 
-                            def settings_frame():
+                            def settings_frame(process=process, settings_window=settings_window):
                                 return layout.window(process.pid, execute("xdotool", "getwindowname", settings_window))
 
-                            def settings_snapshot(page, expected):
+                            def settings_snapshot(page, expected, process=process, settings_window=settings_window):
                                 image = output / f"settings-{page.lower()}.png"
-                                def inspect():
+                                def inspect(process=process, settings_window=settings_window):
                                     if process.poll() is not None:
                                         raise RuntimeError("application exited during Settings capture")
                                     frame = settings_frame()
@@ -664,8 +665,8 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 if command == "Change":
                                     wait(lambda: any("Press a key" in node.name and layout.visible_in_frame(node, settings_frame()) for node in layout.descendants(settings_frame())))
 
-                            def change_setting_choice(row_label, steps=0, last=False):
-                                def locate():
+                            def change_setting_choice(row_label, steps=0, last=False, process=process, settings_window=settings_window):
+                                def locate(process=process, settings_window=settings_window):
                                     frame = settings_frame()
                                     if frame is None:
                                         return None
@@ -677,7 +678,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                             combo = next((node for node in layout.descendants(root) if node.getRoleName() == "combo box" and layout.visible_in_frame(node, frame)), None)
                                             if combo is not None:
                                                 rectangle, outer = layout.bounds(combo), layout.bounds(frame)
-                                                return lambda rectangle=rectangle, outer=outer: execute("xdotool", "mousemove", "--window", settings_window,
+                                                return lambda rectangle=rectangle, outer=outer, settings_window=settings_window: execute("xdotool", "mousemove", "--window", settings_window,
                                                     str(rectangle["x"] - outer["x"] + rectangle["width"] // 2),
                                                     str(rectangle["y"] - outer["y"] + rectangle["height"] // 2), "click", "1")
                                             root = root.parent
@@ -685,7 +686,7 @@ def capture(binary, original, destination, settings_review=False, history_review
                                 if wait(locate)() is False:
                                     raise RuntimeError(f"Settings choice rejected: {row_label}")
                                 try:
-                                    wait(lambda: any(node.getRoleName() in {"list box", "list"} and layout.bounds(node) is not None and layout.bounds(node)["width"] > 0 for node in layout.descendants(layout.application(process.pid))))
+                                    wait(lambda process=process: any(node.getRoleName() in {"list box", "list"} and layout.bounds(node) is not None and layout.bounds(node)["width"] > 0 for node in layout.descendants(layout.application(process.pid))))
                                 except Exception:
                                     app = layout.application(process.pid)
                                     (output / "settings-choice-timeout.atspi.json").write_text(json.dumps(layout.tree(app), indent=2) + "\n")

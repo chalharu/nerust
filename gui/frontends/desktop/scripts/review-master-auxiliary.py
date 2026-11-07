@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 import atspi_layout
 from atspi_layout import bounds, descendants, in_frame, normalized, tree
@@ -49,7 +48,7 @@ def review(binary, original, destination):
                 def find_window(pattern):
                     if process.poll() is not None:
                         raise RuntimeError("master exited; inspect application.log")
-                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", pattern], capture_output=True, text=True)
+                    result = subprocess.run(["xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), "--name", pattern], capture_output=True, text=True, check=False)
                     return result.stdout.splitlines()[0] if result.returncode == 0 and result.stdout.strip() else None
 
                 def focus(window):
