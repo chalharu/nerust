@@ -33,6 +33,3 @@ serde.workspace = true
 [dev-dependencies]
 nerust_nes_factory.workspace = true
 nerust_render_softbuffer.workspace = true
-
-[[example]]
-name = "view-review"
