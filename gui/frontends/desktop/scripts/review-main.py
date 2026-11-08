@@ -131,7 +131,7 @@ def _probe_click_action(target):
     return None
 
 
-def _probe_text_row(state, app, node, rectangle):
+def _probe_text_row(app, node, rectangle):
     # Climb at most three levels for a clickable action, else fall back to
     # a screen coordinate for push buttons, combos, menu items and page tabs.
     target = node
@@ -156,7 +156,7 @@ def _locate_text_action(state, app, text, prefix):
         rectangle = state.layout.bounds(node)
         if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0 or rectangle["x"] < 0:
             continue
-        probed = _probe_text_row(state, app, node, rectangle)
+        probed = _probe_text_row(app, node, rectangle)
         if probed is not None:
             return probed
     return None
