@@ -577,4 +577,281 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn window_size_write_restores_on_next_launch() {
+        // Narrow settings write: the exit-time size restores verbatim.
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        adapter
+            .remember_window_size(800, 600)
+            .expect("size persists");
+        assert_eq!(
+            adapter.settings().app_state.window_size("main"),
+            Some(
+                nerust_settings_core::model::app_state::RememberedWindowSize {
+                    width: 800,
+                    height: 600,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn adapter_boots_without_explicit_settings_paths() {
+        // Default-paths branch: no fixture root, core stays unloaded.
+        use std::collections::HashMap;
+        let registry = std::sync::Arc::new(nerust_gui_shell::registry::SystemRegistry::new(vec![
+            std::sync::Arc::new(nerust_nes_factory::NesFactory),
+        ]));
+        let audio = std::sync::Arc::new(nerust_core_traits::audio::AudioBackendRegistry::default());
+        let loader = registry
+            .create_loader(HashMap::new())
+            .expect("registered NES loader");
+        let capabilities = nerust_gui_runtime::settings::HostBackendCapabilities {
+            window: nerust_gui_runtime::settings::HostWindowCapabilities {
+                remembers_window_size: true,
+                supports_fullscreen_default: true,
+                supports_scaling: true,
+            },
+            presentation: None,
+        };
+        let adapter = SessionAdapter::new(registry, audio, loader, capabilities, None)
+            .expect("default paths boot");
+        assert!(!adapter.loaded());
+        assert!(!adapter.paused());
+        assert_eq!(adapter.frame_counter(), 0);
+    }
+
+    #[test]
+    fn session_action_maps_shortcuts_and_defers_chrome_keys() {
+        // Mapped actions reach the shell; chrome keys stay frontend-owned.
+        use nerust_settings_core::model::input::ShortcutAction;
+        for (action, expected) in [
+            (ShortcutAction::Reset, Some(SessionAction::Reset)),
+            (
+                ShortcutAction::SaveActiveSlot,
+                Some(SessionAction::SaveState),
+            ),
+            (
+                ShortcutAction::LoadActiveSlot,
+                Some(SessionAction::LoadState),
+            ),
+            (
+                ShortcutAction::SelectNextSlot,
+                Some(SessionAction::NextSlot),
+            ),
+            (
+                ShortcutAction::SelectPreviousSlot,
+                Some(SessionAction::PreviousSlot),
+            ),
+            (ShortcutAction::TogglePause, None),
+            (ShortcutAction::ToggleFullscreen, None),
+            (ShortcutAction::OpenDebugger, None),
+        ] {
+            assert_eq!(SessionAdapter::session_action(action), expected);
+        }
+    }
+
+    #[test]
+    fn lifecycle_pause_resume_flush_keep_loaded_media() {
+        // Pause/resume/flush ride the shell command path, media stays put.
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        assert!(adapter.loaded());
+        adapter.set_execution_held(true);
+        adapter.pause();
+        assert!(adapter.loaded());
+        adapter.resume();
+        assert!(adapter.loaded());
+        adapter.set_execution_held(false);
+        adapter.flush();
+        assert!(adapter.loaded());
+    }
+
+    #[test]
+    fn metrics_fold_hold_into_pause_display() {
+        // Adapter-local hold forces the paused display without worker timing.
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        let tick = adapter.handle().tick_metrics();
+        adapter.set_execution_held(true);
+        assert!(adapter.metrics().paused);
+        adapter.set_execution_held(false);
+        assert_eq!(adapter.metrics().paused, tick.paused);
+    }
+
+    #[test]
+    fn keyboard_repeat_suppression_and_controller_gating() {
+        // Repeats collapse; the ungated path clears input after routing.
+        use nerust_gui_application::KeyboardPort;
+        use nerust_input_traits::Key;
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        let first = adapter.key_event(Key::KeyV, true, true);
+        assert_eq!(adapter.key_event(Key::KeyV, true, true), None);
+        adapter.key_event(Key::KeyV, false, true);
+        assert_eq!(adapter.key_event(Key::KeyV, true, true), first);
+        adapter.clear_input();
+        assert_eq!(adapter.key_event(Key::KeyV, true, false), first);
+    }
+
+    #[test]
+    fn frame_port_advances_and_serves_live_buffer() {
+        // Advance pumps OSD; the live buffer and counters stay observable.
+        use nerust_gui_application::FramePort;
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        assert!(adapter.frame().is_some());
+        let counter = adapter.frame_counter();
+        adapter.advance_frame();
+        assert!(adapter.frame().is_some());
+        assert_eq!(adapter.handle().tick_metrics().frame_counter, counter);
+    }
+
+    #[test]
+    fn loaded_core_exposes_profile_factories_and_chrome() {
+        // Read-only probes ride the live core without pausing or pumping.
+        let (adapter, _dir) = test_fixture::loaded_adapter();
+        assert!(adapter.render_profile().is_some());
+        assert_eq!(adapter.factories().len(), 1);
+        assert_eq!(adapter.osd_state().generation(), 0);
+        let rates = adapter.supported_sample_rates();
+        assert_eq!(rates, adapter.supported_sample_rates());
+        assert!(rates.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(
+            adapter.chrome(),
+            nerust_gui_shell::session::osd::OsdChrome::from(
+                &adapter.settings().local.notifications
+            )
+        );
+    }
+
+    #[test]
+    fn modal_queue_reports_empty_by_default() {
+        // Fresh adapter: no batch queued, ack closes nothing.
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        assert_eq!(adapter.take_modal_batch(), None);
+        adapter.modal_closed();
+        assert_eq!(adapter.take_modal_batch(), None);
+    }
+
+    #[test]
+    fn history_port_clears_recorded_traffic() {
+        // Slot traffic bumps the revision; clearing drains the lines.
+        use nerust_gui_application::{HistoryPort, SessionActionPort};
+        use nerust_gui_shell::session::session_query::HistoryView;
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        let language = adapter.settings().shared.general.language;
+        let mut cache = HistoryView::new();
+        assert!(adapter.history_lines(&mut cache, language).is_empty());
+        let revision = adapter.history_revision();
+        assert!(
+            adapter
+                .execute(SessionAction::CreateSlot)
+                .expect("slot creates")
+        );
+        assert!(adapter.history_revision() > revision);
+        assert!(!adapter.history_lines(&mut cache, language).is_empty());
+        adapter.clear_history();
+        assert!(adapter.history_lines(&mut cache, language).is_empty());
+    }
+
+    #[test]
+    fn debug_probes_serve_live_core_without_pausing() {
+        // Layout/live/begin probes run against the running core unpaused.
+        use nerust_gui_shell::debug::{DebugAction, DebugDrainInput};
+        let (adapter, _dir) = test_fixture::loaded_adapter();
+        let spaces = adapter.debug_spaces();
+        let input = DebugDrainInput {
+            space: None,
+            mem_addr: 0,
+            dis_addr: None,
+            watch: None,
+            reg_target: None,
+            freeze: None,
+            prev_dump_rows: &[],
+            need_images: false,
+        };
+        let mut flight = adapter.debug_begin(&[DebugAction::Refresh], &input);
+        let _ = flight.poll();
+        let (name, _layout) = adapter.debugger_layout_begin();
+        assert_eq!(
+            name,
+            spaces
+                .first()
+                .map(|space| space.name.to_string())
+                .unwrap_or_default()
+        );
+        let _images = adapter.ppu_layout_begin();
+        let mut live = adapter.ppu_live_begin(Some(adapter.media_revision()));
+        let _ = live.poll();
+    }
+
+    #[test]
+    fn settings_round_trip_reapplies_snapshot() {
+        // Settings port clones the live snapshot and absorbs it back.
+        use nerust_gui_application::SettingsPort;
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        let snapshot = adapter.settings().clone();
+        adapter.apply_settings(snapshot).expect("settings reapply");
+    }
+
+    #[test]
+    fn media_reload_bumps_revision_and_rejects_missing_rom() {
+        // Held reload skips the resume edge; missing files map to strings.
+        use nerust_gui_application::MediaPort;
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        let before = adapter.media_revision();
+        let rom = std::env::temp_dir().join(format!(
+            "nerust-desktop-reload-{}-{}.nes",
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::write(&rom, test_fixture::test_ines()).expect("reload ROM writes");
+        adapter.set_execution_held(true);
+        adapter.load(&rom).expect("held reload succeeds");
+        adapter.set_execution_held(false);
+        assert_eq!(adapter.media_revision(), before + 1);
+        assert!(adapter.loaded());
+        std::fs::remove_file(&rom).ok();
+        assert!(
+            adapter
+                .load(std::path::Path::new("/nonexistent/rom.nes"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn slot_guards_and_commands_route_through_shell() {
+        // Unknown slot ids short-circuit; every command maps to the shell.
+        use nerust_gui_application::SessionActionPort;
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        for action in [
+            SessionAction::SelectSlot(999_999),
+            SessionAction::SaveSlot(999_999),
+            SessionAction::LoadSlot(999_999),
+            SessionAction::DeleteSlot(999_999),
+        ] {
+            assert_eq!(adapter.execute(action), Ok(false));
+        }
+        assert!(
+            adapter
+                .execute(SessionAction::CreateSlot)
+                .expect("slot creates")
+        );
+        let (slots, _) = adapter.menu_slots();
+        let id = slots.first().expect("slot recorded").slot_id;
+        assert!(adapter.execute(SessionAction::SelectSlot(id)).is_ok());
+        assert!(adapter.execute(SessionAction::SaveSlot(id)).is_ok());
+        assert!(adapter.execute(SessionAction::LoadSlot(id)).is_ok());
+        assert!(adapter.execute(SessionAction::NextSlot).is_ok());
+        assert!(adapter.execute(SessionAction::PreviousSlot).is_ok());
+        assert!(adapter.execute(SessionAction::SaveState).is_ok());
+        assert!(adapter.execute(SessionAction::LoadState).is_ok());
+        assert!(adapter.execute(SessionAction::DeleteSlot(id)).is_ok());
+        assert!(adapter.execute(SessionAction::Reset).expect("reset runs"));
+        assert!(adapter.execute(SessionAction::Unload).expect("unload runs"));
+        // Unload drops media, not the core: unloaded reads false while the
+        // live buffer and profile stay attached.
+        assert!(!adapter.loaded());
+        assert!(adapter.frame().is_some());
+        assert!(adapter.render_profile().is_some());
+    }
 }

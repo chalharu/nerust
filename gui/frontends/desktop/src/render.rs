@@ -351,4 +351,177 @@ mod tests {
         renderer.set_logical_bounds(0.0, 0.0);
         assert_eq!(renderer.viewport.get(), SurfaceSize::new(0, 0));
     }
+
+    struct FakeWindow {
+        display: raw_window_handle::RawDisplayHandle,
+        window: raw_window_handle::RawWindowHandle,
+        scale: f64,
+        fullscreen_calls: Cell<u32>,
+    }
+
+    impl FakeWindow {
+        fn sized(scale: f64) -> Rc<Self> {
+            Rc::new(Self {
+                display: raw_window_handle::RawDisplayHandle::Xlib(
+                    raw_window_handle::XlibDisplayHandle::new(None, 0),
+                ),
+                window: raw_window_handle::RawWindowHandle::Xlib(
+                    raw_window_handle::XlibWindowHandle::new(1),
+                ),
+                scale,
+                fullscreen_calls: Cell::new(0),
+            })
+        }
+    }
+
+    impl raw_window_handle::HasDisplayHandle for FakeWindow {
+        fn display_handle(
+            &self,
+        ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+            // Test-only fake: the stored handles are valid for the test body.
+            Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(self.display) })
+        }
+    }
+
+    impl raw_window_handle::HasWindowHandle for FakeWindow {
+        fn window_handle(
+            &self,
+        ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+            // Test-only fake: the stored handles are valid for the test body.
+            Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(self.window) })
+        }
+    }
+
+    impl WindowSurface for FakeWindow {
+        fn scale_factor(&self) -> f64 {
+            self.scale
+        }
+        fn toggle_fullscreen(&self) {
+            self.fullscreen_calls.set(self.fullscreen_calls.get() + 1);
+        }
+    }
+
+    fn headless_profile() -> VideoRenderProfile {
+        VideoRenderProfile {
+            source_logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            logical_size: LogicalSize {
+                width: 256,
+                height: 240,
+            },
+            physical_size: PhysicalSize {
+                width: 256.0,
+                height: 240.0,
+            },
+            frame_format: VideoFrameFormat::Rgba,
+            ntsc_packed_rgba8: None,
+        }
+    }
+
+    fn headless_content() -> ScreenContentKey {
+        ScreenContentKey {
+            frame: 1,
+            media: 1,
+            osd: 1,
+            chrome: OsdChrome::from(&NotificationSettings::default()),
+        }
+    }
+
+    fn headless_frame() -> FrameBuffer {
+        let mut frame = FrameBuffer::with_capacity(256, 240, PixelFormat::Rgba);
+        frame.resize(256, 240);
+        frame
+    }
+
+    #[test]
+    fn detached_adapter_reports_unit_density_and_ignores_fullscreen() {
+        // No window attached: density floors at 1.0, toggle is a no-op.
+        let adapter = RenderAdapter::new(Rc::new(nerust_render_softbuffer::SoftbufferFactory));
+        assert_eq!(adapter.density(), 1.0);
+        adapter.toggle_fullscreen();
+        // Raw handles borrow without a display: attach stays backend-only.
+        use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+        let window = FakeWindow::sized(1.0);
+        assert!(window.display_handle().is_ok());
+        assert!(window.window_handle().is_ok());
+    }
+
+    #[test]
+    fn window_scale_drives_density_and_viewport_rounding() {
+        // Attached scale feeds density and logical-to-physical rounding.
+        let mut adapter = RenderAdapter::new(Rc::new(nerust_render_softbuffer::SoftbufferFactory));
+        let window = FakeWindow::sized(2.0);
+        adapter.set_window(window.clone());
+        assert_eq!(adapter.density(), 2.0);
+        adapter.set_logical_bounds(320.5, 240.5);
+        assert_eq!(adapter.viewport.get(), SurfaceSize::new(641, 481));
+        adapter.toggle_fullscreen();
+        assert_eq!(window.fullscreen_calls.get(), 1);
+        // Replacing the window detaches the old one without touching pixels.
+        adapter.set_window(FakeWindow::sized(1.0));
+        assert_eq!(adapter.density(), 1.0);
+        adapter.close();
+        assert_eq!(adapter.viewport.get(), SurfaceSize::new(0, 0));
+        assert_eq!(adapter.density(), 1.0);
+    }
+
+    #[test]
+    fn capture_without_window_or_size_returns_no_image() {
+        // Headless-safe early outs: no surface, or a zero-sized viewport.
+        let mut adapter = RenderAdapter::new(Rc::new(nerust_render_softbuffer::SoftbufferFactory));
+        let frame = headless_frame();
+        let profile = headless_profile();
+        let osd = OsdManager::new();
+        let content = headless_content();
+        let sync = sync_input(Instant::now(), false);
+        assert!(
+            adapter
+                .capture(&frame, &profile, false, &osd, sync, content)
+                .expect("headless capture")
+                .is_none()
+        );
+        adapter.set_window(FakeWindow::sized(1.0));
+        let sync = sync_input(Instant::now(), false);
+        assert!(
+            adapter
+                .capture(&frame, &profile, false, &osd, sync, content)
+                .expect("zero-size capture")
+                .is_none()
+        );
+        adapter.close();
+        let sync = sync_input(Instant::now(), false);
+        assert!(
+            adapter
+                .capture(&frame, &profile, false, &osd, sync, content)
+                .expect("closed capture")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn same_profile_detects_any_field_change() {
+        // Cache key: every profile field participates in the comparison.
+        let base = headless_profile();
+        assert!(same_profile(&base, &base));
+        let mut changed = base.clone();
+        changed.source_logical_size.width += 1;
+        assert!(!same_profile(&base, &changed));
+        let mut changed = base.clone();
+        changed.logical_size.height += 1;
+        assert!(!same_profile(&base, &changed));
+        let mut changed = base.clone();
+        changed.physical_size.width += 1.0;
+        assert!(!same_profile(&base, &changed));
+        let mut changed = base.clone();
+        changed.physical_size.height += 1.0;
+        assert!(!same_profile(&base, &changed));
+        let mut changed = base.clone();
+        changed.frame_format = VideoFrameFormat::Palette;
+        assert!(!same_profile(&base, &changed));
+        let mut changed = base.clone();
+        changed.ntsc_packed_rgba8 = Some(vec![0u8].into());
+        assert!(!same_profile(&base, &changed));
+    }
 }

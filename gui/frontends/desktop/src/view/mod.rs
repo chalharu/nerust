@@ -378,4 +378,181 @@ mod tests {
             assert_eq!(item.argument, Intent::Session(SessionAction::CreateSlot));
         }
     }
+
+    #[test]
+    fn slot_subtrees_list_live_slots_when_present() {
+        // Non-empty slot set: each subtree maps one leaf per slot.
+        use nerust_gui_application::SessionAction;
+        let (adapter, _dir) = loaded_adapter();
+        let mut app = nerust_gui_application::Application::new(adapter);
+        assert!(
+            app.execute(SessionAction::CreateSlot)
+                .expect("slot creates")
+        );
+        let model = MenuModel::new(&app);
+        let (slots, active) = app.session().menu_slots();
+        assert!(!slots.is_empty());
+        for (nodes, prefix, action) in [
+            (
+                &model.select_slot_nodes,
+                "select_slot",
+                SessionAction::SelectSlot as fn(u64) -> SessionAction,
+            ),
+            (
+                &model.save_slot_nodes,
+                "save_slot",
+                SessionAction::SaveSlot as fn(u64) -> SessionAction,
+            ),
+            (
+                &model.load_slot_nodes,
+                "load_slot",
+                SessionAction::LoadSlot as fn(u64) -> SessionAction,
+            ),
+            (
+                &model.delete_slot_nodes,
+                "delete_slot",
+                SessionAction::DeleteSlot as fn(u64) -> SessionAction,
+            ),
+        ] {
+            assert_eq!(nodes.len(), slots.len());
+            for (node, slot) in nodes.iter().zip(slots.iter()) {
+                let MenuNode::Item(item) = node else {
+                    panic!("live slot is a leaf");
+                };
+                assert_eq!(item.id, format!("{prefix}_{}", slot.slot_id));
+                assert_eq!(
+                    item.label,
+                    nerust_gui_runtime::slots::slot_label(slot, active)
+                );
+                assert_eq!(item.argument, Intent::Session(action(slot.slot_id)));
+                assert!(item.enabled);
+                assert!(item.visible);
+            }
+        }
+        assert!(model.load_active_enabled);
+        assert!(model.matches(&app));
+    }
+
+    #[test]
+    fn model_constructor_starts_blank() {
+        // Content-free start: no screen, no notice, state carried through.
+        let state = nerust_gui_application::ApplicationState {
+            loaded: true,
+            paused: false,
+            user_paused: false,
+            closed: false,
+        };
+        let model = Model::new(state);
+        assert_eq!(model.state, state);
+        assert!(model.screen.is_none());
+        assert!(model.notice.is_none());
+    }
+
+    #[test]
+    fn command_choose_routes_intent_through_installed_dispatch() {
+        // Pure dispatch helper: installed actions receive the typed intent.
+        struct TestExecutor;
+        impl panechord::Executor for TestExecutor {
+            fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+                panic!("menu dispatch must not spawn async work");
+            }
+        }
+        fn presentation(state_closed: bool, actions: Actions) -> Presentation {
+            let state = nerust_gui_application::ApplicationState {
+                loaded: true,
+                paused: false,
+                user_paused: false,
+                closed: state_closed,
+            };
+            Presentation {
+                screen: Binding::constant(None),
+                available: Binding::constant(true),
+                loaded: Binding::constant(true),
+                pause_enabled: Binding::constant(true),
+                resume_enabled: Binding::constant(false),
+                load_active_enabled: Binding::constant(false),
+                slot_submenu_enabled: Binding::constant(false),
+                settings_shortcut: Binding::constant(None),
+                quit_shortcut: Binding::constant(None),
+                file_title: Binding::constant(String::new()),
+                emulation_title: Binding::constant(String::new()),
+                quit_label: Binding::constant(String::new()),
+                open_label: Binding::constant(String::new()),
+                close_label: Binding::constant(String::new()),
+                settings_label: Binding::constant(String::new()),
+                pause_label: Binding::constant(String::new()),
+                resume_label: Binding::constant(String::new()),
+                reset_label: Binding::constant(String::new()),
+                states_title: Binding::constant(String::new()),
+                create_slot_label: Binding::constant(String::new()),
+                save_active_slot_label: Binding::constant(String::new()),
+                load_active_slot_label: Binding::constant(String::new()),
+                select_slot_title: Binding::constant(String::new()),
+                save_slot_title: Binding::constant(String::new()),
+                load_slot_title: Binding::constant(String::new()),
+                delete_slot_title: Binding::constant(String::new()),
+                debugger_label: Binding::constant(String::new()),
+                history_label: Binding::constant(String::new()),
+                ppu_label: Binding::constant(String::new()),
+                fullscreen_label: Binding::constant(String::new()),
+                select_slot_nodes: Binding::constant(Vec::new()),
+                save_slot_nodes: Binding::constant(Vec::new()),
+                load_slot_nodes: Binding::constant(Vec::new()),
+                delete_slot_nodes: Binding::constant(Vec::new()),
+                quit_arg: Binding::constant(Intent::Quit),
+                open_arg: Binding::constant(Intent::Open),
+                close_arg: Binding::constant(Intent::Session(
+                    nerust_gui_application::SessionAction::Unload,
+                )),
+                settings_arg: Binding::constant(Intent::Settings),
+                pause_arg: Binding::constant(Intent::Pause(true)),
+                resume_arg: Binding::constant(Intent::Pause(false)),
+                reset_arg: Binding::constant(Intent::Session(
+                    nerust_gui_application::SessionAction::Reset,
+                )),
+                create_slot_arg: Binding::constant(Intent::Session(
+                    nerust_gui_application::SessionAction::CreateSlot,
+                )),
+                save_active_slot_arg: Binding::constant(Intent::Session(
+                    nerust_gui_application::SessionAction::SaveState,
+                )),
+                load_active_slot_arg: Binding::constant(Intent::Session(
+                    nerust_gui_application::SessionAction::LoadState,
+                )),
+                debugger_arg: Binding::constant(Intent::Debugger),
+                history_arg: Binding::constant(Intent::History),
+                ppu_arg: Binding::constant(Intent::Ppu),
+                fullscreen_arg: Binding::constant(Intent::Fullscreen),
+                inert_arg: Binding::constant(Intent::About),
+                model: Store::new(Model::new(state), std::rc::Rc::new(TestExecutor)),
+                actions,
+            }
+        }
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let capture = seen.clone();
+        let actions: Actions = std::rc::Rc::new(std::cell::RefCell::new(Some(std::rc::Rc::new(
+            move |intent| {
+                capture.borrow_mut().push(intent);
+                true
+            },
+        )
+            as Dispatch)));
+        let live = presentation(false, actions);
+        let command = live.command_choose(Binding::constant(Intent::Pause(true)));
+        assert!(command.invoke());
+        assert_eq!(*seen.borrow(), vec![Intent::Pause(true)]);
+        // Missing dispatch skips silently; a closed model rejects the tap.
+        let quiet = presentation(false, std::rc::Rc::new(std::cell::RefCell::new(None)));
+        assert!(
+            quiet
+                .command_choose(Binding::constant(Intent::Quit))
+                .invoke()
+        );
+        let shut = presentation(true, std::rc::Rc::new(std::cell::RefCell::new(None)));
+        assert!(
+            !shut
+                .command_choose(Binding::constant(Intent::Quit))
+                .invoke()
+        );
+    }
 }
