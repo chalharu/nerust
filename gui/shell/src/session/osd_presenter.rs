@@ -235,6 +235,9 @@ pub struct OsdSyncInput {
     /// Raster scale and safe insets: the fingerprint must see them or re-render is suppressed.
     pub ui_scale: f32,
     pub safe_insets: ViewInsets,
+    /// Physical pixels per logical pixel for the 480-logical OSD floor.
+    /// Part of the raster fingerprint like `ui_scale`.
+    pub density: f32,
 }
 
 /// Per-frame layer decision. `Clear` is only emitted while a layer
@@ -275,7 +278,7 @@ pub struct OsdPresenter {
     /// Last layer geometry; the status tuple exists only while enabled.
     /// A position flip with status off needs its own fingerprint or the Skip gate sticks.
     last_chrome: Option<OsdChrome>,
-    last_raster: Option<(ViewInsets, u32)>,
+    last_raster: Option<(ViewInsets, u32, u32)>,
     active: bool,
 }
 
@@ -351,10 +354,11 @@ impl OsdPresenter {
         chrome: OsdChrome,
         safe_insets: ViewInsets,
         ui_scale: f32,
+        density: f32,
         width: u32,
         height: u32,
     ) -> bool {
-        let raster = (safe_insets, ui_scale.to_bits());
+        let raster = (safe_insets, ui_scale.to_bits(), density.to_bits());
         let changed = self.last_chrome != Some(chrome)
             || self.last_raster != Some(raster)
             || self.last_size != Some((width, height));
@@ -376,6 +380,7 @@ impl OsdPresenter {
             height,
             ui_scale,
             safe_insets,
+            density,
         } = input;
         // Recorded only after the size decision, so a zero-size bump is never swallowed.
         let changed = state.generation() != self.last_seen;
@@ -391,10 +396,17 @@ impl OsdPresenter {
         // Non-finite scales never reach the fingerprint: NaN would defeat `to_bits` equality.
         debug_assert!(ui_scale.is_finite(), "non-finite OSD scale");
         let ui_scale = if ui_scale.is_finite() { ui_scale } else { 1.0 };
+        debug_assert!(density.is_finite(), "non-finite OSD density");
+        let density = if density.is_finite() && density > 0.0 {
+            density
+        } else {
+            1.0
+        };
         // Content decision first: generation plus status only.
         let status_changed = self.sync_status(&tick, &chrome, language, now);
         // Geometry only invalidates the cached plan; it never formats or boxes.
-        let geometry_changed = self.sync_geometry(chrome, safe_insets, ui_scale, width, height);
+        let geometry_changed =
+            self.sync_geometry(chrome, safe_insets, ui_scale, density, width, height);
         if !changed && !status_changed && !geometry_changed {
             return OsdSync::Skip;
         }
@@ -508,6 +520,7 @@ mod tests {
             height,
             ui_scale,
             safe_insets,
+            density: 1.0,
         }
     }
 

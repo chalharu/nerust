@@ -1,0 +1,35 @@
+[package]
+authors.workspace = true
+description = "Panechord desktop frontend and native adapters"
+edition.workspace = true
+license.workspace = true
+name = "nerust_desktop"
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["native"]
+gtk = ["panechord/gtk"]
+native = ["panechord/native"]
+tao = ["panechord/tao"]
+
+[dependencies]
+futures-timer.workspace = true
+log.workspace = true
+nerust_core_traits.workspace = true
+nerust_gui_application.workspace = true
+nerust_gui_runtime.workspace = true
+nerust_gui_shell.workspace = true
+nerust_gui_viewmodel.workspace = true
+nerust_input_traits.workspace = true
+nerust_persistence.workspace = true
+nerust_render_traits = { features = ["renderer"], workspace = true }
+nerust_settings_core.workspace = true
+nerust_system_traits.workspace = true
+panechord.workspace = true
+raw-window-handle.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+nerust_nes_factory.workspace = true
+nerust_render_softbuffer.workspace = true

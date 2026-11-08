@@ -1,8 +1,8 @@
 [package]
-name = "nerust_gba_settings"
 description = "GBA-specific settings types"
 edition.workspace = true
 license.workspace = true
+name = "nerust_gba_settings"
 rust-version.workspace = true
 version.workspace = true
 

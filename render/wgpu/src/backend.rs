@@ -324,10 +324,21 @@ impl nerust_render_traits::renderer::PipelineFactory for WgpuFactory {
     ) -> Result<Box<dyn nerust_render_traits::renderer::RenderPipeline>, RendererError> {
         Ok(Box::new(Self::build(config)?))
     }
+
+    /// Present-mode selection honors vsync; a live toggle must rebuild.
+    fn supports_vsync(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn factory_honors_vsync_for_live_toggle_rebuilds() {
+        use nerust_render_traits::renderer::PipelineFactory;
+        assert!(super::WgpuFactory.supports_vsync());
+    }
+
     #[test]
     fn surface_loss_requests_host_recovery_and_success_clears_error() {
         use crate::renderer::RenderOutcome;
@@ -359,7 +370,13 @@ mod tests {
         assert!(renderer.last_render_error.is_none());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     #[test]
     fn render_image_returns_rgba_without_presenting() {
         use nerust_render_traits::{
@@ -392,7 +409,13 @@ mod tests {
         assert_eq!(&image.pixels[..4], &[255, 0, 0, 255]);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     #[test]
     fn device_attach_rebuild_preserves_profile_strips_vsync_and_osd() {
         use nerust_render_traits::{

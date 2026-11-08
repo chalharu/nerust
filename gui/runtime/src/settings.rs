@@ -4,14 +4,14 @@ use std::{collections::HashMap, env};
 
 #[cfg(test)]
 use nerust_core_traits::identity::SystemIdentity;
-#[cfg(test)]
-use nerust_nes_settings::NesSettings;
 use nerust_settings_core::model::local::HostBackendLocalSettings;
 #[cfg(test)]
 use nerust_settings_core::model::shared::DesktopSharedSettings;
 
 #[cfg(test)]
 use crate::test::DummySystemId;
+#[cfg(test)]
+use crate::test::DummySystemSettings;
 
 pub mod apply;
 pub mod manager;
@@ -210,8 +210,10 @@ fn value_at_path_mut<'a>(
 /// Runtime apply policy, kept outside the pure settings model.
 pub use apply::{LiveStrategy, SettingsApplyPlan};
 
+/// Test fixture: capabilities of a render backend that honors vsync
+/// (live toggles rebuild the renderer).
 #[cfg(test)]
-pub(crate) fn tao_caps() -> HostBackendCapabilities {
+pub(crate) fn vsync_caps() -> HostBackendCapabilities {
     HostBackendCapabilities {
         window: HostWindowCapabilities {
             remembers_window_size: true,
@@ -224,8 +226,10 @@ pub(crate) fn tao_caps() -> HostBackendCapabilities {
     }
 }
 
+/// Test fixture: capabilities of a render backend without vsync control
+/// (live toggles are ignored until the next attach).
 #[cfg(test)]
-pub(crate) fn gtk_caps() -> HostBackendCapabilities {
+pub(crate) fn no_vsync_caps() -> HostBackendCapabilities {
     HostBackendCapabilities {
         window: HostWindowCapabilities {
             remembers_window_size: false,
@@ -246,7 +250,8 @@ pub(crate) fn test_shared_defaults() -> DesktopSharedSettings {
     DesktopSharedSettings {
         systems: HashMap::from([(
             Box::new(DummySystemId) as Box<_>,
-            Box::new(NesSettings::default()) as Box<dyn nerust_settings_traits::SystemSettings>,
+            Box::new(DummySystemSettings::default())
+                as Box<dyn nerust_settings_traits::SystemSettings>,
         )]),
         ..Default::default()
     }

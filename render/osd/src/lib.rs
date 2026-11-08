@@ -85,6 +85,9 @@ pub struct OsdRaster {
     sans_name: String,
     has_fonts: bool,
     ui_scale: f32,
+    /// Physical pixels per logical pixel: only the 480-logical floor scales
+    /// with it (the 2.2% ratio is density-independent, the input is physical).
+    density: f32,
     safe_insets: ViewInsets,
     /// Flat shape cache keyed by (text, size); the stored epoch orders eviction.
     shape_cache: HashMap<ShapeKey, (Arc<ShapedSpan>, u64)>,
@@ -119,6 +122,7 @@ impl OsdRaster {
             sans_name,
             has_fonts,
             ui_scale: 1.0,
+            density: 1.0,
             safe_insets: ViewInsets::default(),
             shape_cache: HashMap::new(),
             cache_clock: 0,
@@ -131,6 +135,18 @@ impl OsdRaster {
     /// the desktop-verified size). Frontends on dense screens shrink.
     pub fn set_ui_scale(&mut self, scale: f32) {
         self.ui_scale = scale.clamp(0.25, 4.0);
+    }
+
+    /// Physical pixels per logical pixel for the 480-logical floor (1.0
+    /// keeps the legacy physical floor). Frontends pass the window scale
+    /// factor so HiDPI surfaces hold the logical minimum instead of
+    /// shrinking with the window.
+    pub fn set_density(&mut self, density: f32) {
+        self.density = if density.is_finite() && density > 0.0 {
+            density.clamp(0.25, 8.0)
+        } else {
+            1.0
+        };
     }
 
     /// Extra edge padding for rounded corners, notches, or gesture bars.
@@ -157,7 +173,7 @@ impl OsdRaster {
         if surface_w == 0 || surface_h == 0 || !self.has_fonts() {
             return None;
         }
-        let font_px = osd_font_px(surface_h, self.ui_scale);
+        let font_px = osd_font_px(surface_h, self.density, self.ui_scale);
         let boxes = self.layout(content, font_px, surface_w, surface_h)?;
         let (min_x, min_y, max_x, max_y) =
             boxes

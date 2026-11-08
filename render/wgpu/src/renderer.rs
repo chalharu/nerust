@@ -115,7 +115,16 @@ impl RenderPipeline {
         self.reserved = strip;
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        )
+    ))]
     pub(crate) fn reserved_strip(&self) -> nerust_render_traits::ReservedStrip {
         self.reserved
     }

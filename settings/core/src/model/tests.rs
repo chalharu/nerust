@@ -1,4 +1,4 @@
-use nerust_keyboard::Key;
+use nerust_input_traits::Key;
 
 use crate::model::{
     app_state::{DESKTOP_APP_STATE_SCHEMA_VERSION, DesktopAppState, RememberedWindowSize},

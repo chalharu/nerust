@@ -231,7 +231,139 @@ fn present_modes_honor_vsync_and_supported_fallbacks() {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Headless GPU check, no window: adapter without a surface, device,
+/// WGSL-to-backend compile of the real shader bundle, and a texture
+/// write/read roundtrip. Runs on macOS (Metal) too; skips gracefully
+/// where no adapter exists so headless CI stays green.
+#[test]
+fn headless_device_compiles_shaders_and_roundtrips_texture() {
+    let instance = crate::surface::default_instance();
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    })) {
+        Ok(adapter) => adapter,
+        Err(err) => {
+            assert!(
+                std::env::var_os("NERUST_REQUIRE_GPU_TESTS").is_none(),
+                "GPU tests require an adapter: {err:?}"
+            );
+            eprintln!("SKIP headless wgpu: no adapter ({err:?})");
+            return;
+        }
+    };
+    let (device, queue) =
+        match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("nerust_headless_test_device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        })) {
+            Ok(pair) => pair,
+            Err(err) => {
+                assert!(
+                    std::env::var_os("NERUST_REQUIRE_GPU_TESTS").is_none(),
+                    "GPU tests require a device: {err:?}"
+                );
+                eprintln!("SKIP headless wgpu: no device ({err:?})");
+                return;
+            }
+        };
+    // The production WGSL bundle must compile on this backend (Metal on macOS).
+    let _shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("nerust_headless_test_shader"),
+        source: wgpu::ShaderSource::Wgsl(composed_shader_source().into()),
+    });
+    // Queue/submission roundtrip: 4x4 red texture, 256-byte pitch staging.
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("nerust_headless_test_texture"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[255u8, 0, 0, 255].repeat(16),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(16),
+            rows_per_image: Some(4),
+        },
+        wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+    );
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("nerust_headless_test_staging"),
+        size: 256 * 4,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("nerust_headless_test_encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &staging,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(4),
+            },
+        },
+        wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(Some(encoder.finish()));
+    let (sender, receiver) = std::sync::mpsc::channel();
+    staging
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    receiver.recv().unwrap().unwrap();
+    {
+        let mapped = staging.slice(..).get_mapped_range().unwrap();
+        assert_eq!(&mapped[0..4], &[255, 0, 0, 255]);
+        assert_eq!(&mapped[256..260], &[255, 0, 0, 255]);
+    }
+    staging.unmap();
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 #[test]
 fn device_osd_resize_recreates_texture_and_invalid_layers_clear_visibility() {
     use nerust_render_traits::renderer::OsdLayer;

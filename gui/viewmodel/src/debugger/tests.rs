@@ -47,6 +47,45 @@ fn ppu_hover_hint_is_canonical() {
 }
 
 #[test]
+fn tile_hover_text_matches_viewers() {
+    use nerust_settings_core::model::language::AppLanguage;
+    assert_eq!(
+        tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
+        "Pattern left tile #21 (px 44,13, +0x0150)"
+    );
+    let clamped = tile_hover_text(
+        AppLanguage::Japanese,
+        "Pattern right",
+        128,
+        128,
+        500.0,
+        500.0,
+    );
+    assert!(clamped.starts_with("Pattern right タイル #255 "));
+}
+
+#[test]
+fn disasm_marker_never_double_marks_pc() {
+    let pc = DisasmLine {
+        addr: 0xC293,
+        bytes: [0x60, 0, 0, 0],
+        len: 1,
+        text: "RTS".to_string(),
+        is_pc: true,
+        target: None,
+    };
+    let composed = format!(
+        "{}{}",
+        disasm_marker(pc.is_pc, true),
+        format_disasm_line(&pc)
+    );
+    assert!(composed.starts_with("  >0x"), "got {composed:?}");
+    assert_eq!(disasm_marker(false, true), "@ ");
+    assert_eq!(disasm_marker(false, false), "  ");
+    assert_eq!(disasm_marker(true, false), "  ");
+}
+
+#[test]
 fn scale2x_doubles_each_pixel() {
     // 2x1 red/green becomes 4x2 blocks.
     let rgba = vec![255, 0, 0, 0xFF, 0, 255, 0, 0xFF];
@@ -302,6 +341,19 @@ fn display_cache_covers_all_sections() {
 fn format_register_orders_value() {
     assert_eq!(format_register("b", 2), "b: 0x0002");
     assert_eq!(format_register("a", 1), "a: 0x0001");
+}
+
+#[test]
+fn register_width_follows_snapshot_range() {
+    // 16-bit systems keep the historic 4 digits; a single 32-bit value
+    // (GBA program counter, stack pointer) widens the whole snapshot to
+    // 8 so columns align and leading zeros survive.
+    assert_eq!(register_hex_digits(&[("a", 1), ("pc", 0x8000)]), 4);
+    assert_eq!(register_hex_digits(&[]), 4);
+    assert_eq!(register_hex_digits(&[("r0", 1), ("r15", 0x08000148)]), 8);
+    assert_eq!(format_register_sized("r1", 0x6001000, 8), "r1: 0x06001000");
+    assert_eq!(format_register_sized("r0", 1, 8), "r0: 0x00000001");
+    assert_eq!(format_register_sized("a", 1, 4), "a: 0x0001");
 }
 
 #[test]

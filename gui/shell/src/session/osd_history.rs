@@ -275,3 +275,210 @@ mod history_cov_tests {
         assert!(t2.ends_with(":00:01") || t2.len() == 8);
     }
 }
+
+/// History severity filter: this level and above. Info shows all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HistoryFilter {
+    #[default]
+    All,
+    Info,
+    Warning,
+    Error,
+}
+
+impl HistoryFilter {
+    /// Threshold severity: this level and above. Info shows all
+    /// (no lower level exists).
+    pub fn minimum(self) -> u8 {
+        match self {
+            HistoryFilter::All | HistoryFilter::Info => 0,
+            HistoryFilter::Warning => 1,
+            HistoryFilter::Error => 2,
+        }
+    }
+
+    /// Stable combo id shared by every frontend.
+    pub fn id(self) -> &'static str {
+        match self {
+            HistoryFilter::All => "all",
+            HistoryFilter::Info => "info",
+            HistoryFilter::Warning => "warning",
+            HistoryFilter::Error => "error",
+        }
+    }
+
+    /// Localized dropdown label. Levels reuse the settings table;
+    /// only "All" needs its own key.
+    pub fn label(
+        self,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> &'static str {
+        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        match self {
+            HistoryFilter::All => ui_text(language, UiText::HistoryFilterAll),
+            HistoryFilter::Info => ui_text(language, UiText::NotificationInfo),
+            HistoryFilter::Warning => ui_text(language, UiText::NotificationWarning),
+            HistoryFilter::Error => ui_text(language, UiText::Error),
+        }
+    }
+
+    /// Inverse of [`HistoryFilter::label`]: localized strings mapped back.
+    pub fn from_label(
+        label: &str,
+        language: nerust_settings_core::model::language::AppLanguage,
+    ) -> Option<HistoryFilter> {
+        [
+            HistoryFilter::All,
+            HistoryFilter::Info,
+            HistoryFilter::Warning,
+            HistoryFilter::Error,
+        ]
+        .into_iter()
+        .find(|filter| filter.label(language) == label)
+    }
+
+    /// Inverse of [`HistoryFilter::id`]: combo ids mapped back.
+    /// Unknown ids show all rather than hiding everything.
+    pub fn from_id(id: Option<&str>) -> HistoryFilter {
+        match id {
+            Some("warning") => HistoryFilter::Warning,
+            Some("error") => HistoryFilter::Error,
+            Some("info") => HistoryFilter::Info,
+            _ => HistoryFilter::All,
+        }
+    }
+
+    /// All filters in toolbar order.
+    pub fn all() -> [HistoryFilter; 4] {
+        [
+            HistoryFilter::All,
+            HistoryFilter::Info,
+            HistoryFilter::Warning,
+            HistoryFilter::Error,
+        ]
+    }
+}
+
+/// Grid level colour shared by every frontend: muted grey, amber, red.
+pub fn level_rgb(level: NotificationLevel) -> (u8, u8, u8) {
+    match level {
+        NotificationLevel::Info => (70, 70, 70),
+        NotificationLevel::Warning => (170, 110, 0),
+        NotificationLevel::Error => (190, 30, 30),
+    }
+}
+
+/// Short module for the grid: last two segments keep the informative tail.
+pub fn short_module(module: &str) -> &str {
+    let mut parts = module.rsplit("::");
+    let (last, prev) = (parts.next(), parts.next());
+    match (prev, last) {
+        (Some(prev), Some(last)) => {
+            let cut = module.len() - prev.len() - last.len() - 2;
+            &module[cut..]
+        }
+        _ => module,
+    }
+}
+
+/// Display-ready history row: colour, shortened module and level text
+/// resolved once in shell so gtk/tao render the same values. Only the
+/// widget construction (pango span vs iced colour) stays per frontend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRowView {
+    pub datetime: String,
+    pub level: &'static str,
+    pub rgb: (u8, u8, u8),
+    pub module: String,
+    /// `HistoryLine.text` already carries the `×N` merge suffix.
+    pub message: String,
+}
+
+/// Single-row projection for the history grid.
+pub fn history_row_view(line: &HistoryLine, language: AppLanguage) -> HistoryRowView {
+    HistoryRowView {
+        datetime: line.datetime.clone(),
+        level: level_label(line.level, language),
+        rgb: level_rgb(line.level),
+        module: short_module(line.module).to_string(),
+        message: line.text.clone(),
+    }
+}
+
+/// Threshold-filtered history: this level and above. Shared so the gtk
+/// dialog and the tao panel cannot disagree on visibility.
+pub fn visible_history(lines: &[HistoryLine], filter: HistoryFilter) -> Vec<&HistoryLine> {
+    let minimum = filter.minimum();
+    lines
+        .iter()
+        .filter(|line| line.level.severity() >= minimum)
+        .collect()
+}
+
+#[cfg(test)]
+mod filter_rule_tests {
+    use super::*;
+    use nerust_settings_core::model::language::AppLanguage;
+
+    #[test]
+    fn filter_thresholds_match_levels_and_above() {
+        assert_eq!(HistoryFilter::All.minimum(), 0);
+        assert_eq!(HistoryFilter::Info.minimum(), 0);
+        assert_eq!(HistoryFilter::Warning.minimum(), 1);
+        assert_eq!(HistoryFilter::Error.minimum(), 2);
+    }
+
+    #[test]
+    fn filter_ids_and_labels_round_trip() {
+        for filter in HistoryFilter::all() {
+            assert_eq!(HistoryFilter::from_id(Some(filter.id())), filter);
+        }
+        assert_eq!(HistoryFilter::from_id(None), HistoryFilter::All);
+        assert_eq!(HistoryFilter::from_id(Some("bogus")), HistoryFilter::All);
+        for language in [AppLanguage::English, AppLanguage::Japanese] {
+            for filter in HistoryFilter::all() {
+                assert_eq!(
+                    HistoryFilter::from_label(filter.label(language), language),
+                    Some(filter)
+                );
+            }
+        }
+        assert_eq!(HistoryFilter::from_label("???", AppLanguage::English), None);
+    }
+
+    #[test]
+    fn row_view_projects_display_columns() {
+        let line = HistoryLine {
+            datetime: "2026-01-01 00:00:00".to_string(),
+            level: NotificationLevel::Warning,
+            module: "nerust_gui_shell::session::notification",
+            text: "hello".to_string(),
+            count: 1,
+        };
+        let row = history_row_view(&line, AppLanguage::English);
+        assert_eq!(row.rgb, (170, 110, 0));
+        assert_eq!(row.module, "session::notification");
+        assert_eq!(row.message, "hello");
+        let lines = vec![line];
+        assert_eq!(visible_history(&lines, HistoryFilter::Warning).len(), 1);
+        assert_eq!(visible_history(&lines, HistoryFilter::Error).len(), 0);
+    }
+
+    #[test]
+    fn level_colours_are_muted_grey_amber_red() {
+        assert_eq!(level_rgb(NotificationLevel::Info), (70, 70, 70));
+        assert_eq!(level_rgb(NotificationLevel::Warning), (170, 110, 0));
+        assert_eq!(level_rgb(NotificationLevel::Error), (190, 30, 30));
+    }
+
+    #[test]
+    fn short_module_keeps_the_tail() {
+        assert_eq!(
+            short_module("nerust_gui_shell::session::notification"),
+            "session::notification"
+        );
+        assert_eq!(short_module("crate::module"), "crate::module");
+        assert_eq!(short_module("single"), "single");
+        assert_eq!(short_module(""), "");
+    }
+}
