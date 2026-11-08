@@ -14,8 +14,3 @@ nerust_render_ntsc.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }
 raw-window-handle.workspace = true
 thiserror.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { default-features = false, features = ["NSView", "NSWindow", "objc2-quartz-core"], version = "0.3" }
-objc2-quartz-core = { default-features = false, features = ["CALayer", "objc2-core-foundation"], version = "0.3" }
