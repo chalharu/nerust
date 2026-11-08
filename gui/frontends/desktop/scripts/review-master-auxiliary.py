@@ -133,13 +133,17 @@ def _probe_select(target):
         return None
 
 
+def _has_clickable_geometry(rectangle, origin, sidebar):
+    # Positive-area targets inside the sidebar column when required.
+    if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0:
+        return False
+    return not sidebar or rectangle["x"] - origin["x"] < 200
+
+
 def _probe_accessible_click(frame, accessible, origin, sidebar):
     # Validate geometry, then climb at most three levels for a click or
     # sidebar selection action.
-    rectangle = bounds(accessible)
-    if rectangle is None or rectangle["width"] <= 0 or rectangle["height"] <= 0:
-        return None
-    if sidebar and rectangle["x"] - origin["x"] >= 200:
+    if not _has_clickable_geometry(bounds(accessible), origin, sidebar):
         return None
     target = accessible
     for _ in range(3):
