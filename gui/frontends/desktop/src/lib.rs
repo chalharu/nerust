@@ -958,21 +958,3 @@ pub fn run(
         Ok(())
     })
 }
-
-pub fn review(context: FrontendContext, rom: Option<PathBuf>) -> Result<(), String> {
-    let paths = std::env::var_os("NERUST_SETTINGS_ROOT")
-        .map(|root| SettingsPaths::from_root(PathBuf::from(root)));
-    run(
-        context,
-        HostBackendCapabilities {
-            window: nerust_gui_runtime::settings::HostWindowCapabilities {
-                remembers_window_size: true,
-                supports_fullscreen_default: true,
-                supports_scaling: true,
-            },
-            presentation: None,
-        },
-        paths,
-        rom,
-    )
-}
