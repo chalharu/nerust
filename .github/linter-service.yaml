@@ -2,6 +2,12 @@ global:
   exclude_paths:
     - "roms/**"
 linters:
+  cargo-clippy:
+    apt_packages:
+      - libasound2-dev
+      - libcubeb-dev
+      - libepoxy-dev
+      - libgtk-4-dev
   cargo-coupling:
     min_grade: C
   cargo-symbol-length:
