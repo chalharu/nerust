@@ -2355,3 +2355,614 @@ mod operation_tests {
         assert!(pane.is_idle());
     }
 }
+
+#[cfg(test)]
+mod debugger_headless_tests {
+    //! Deterministic helpers: parse, nav/stage errors, bookmarks,
+    //! gating and command enablement. No flights, threads or sleeps.
+    use super::*;
+    use nerust_core_traits::debugger::{SpaceAccess, SpaceId, SpaceInfo};
+
+    struct NoDispatch;
+    impl Executor for NoDispatch {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("debugger headless must not dispatch");
+        }
+    }
+
+    fn spaces_rw_ro() -> Vec<SpaceInfo> {
+        vec![
+            SpaceInfo {
+                id: SpaceId(0),
+                key: "ram",
+                name: "RAM",
+                address_bits: 16,
+                range: 0x0000..=0x00FF,
+                access: SpaceAccess::ReadWrite,
+            },
+            SpaceInfo {
+                id: SpaceId(1),
+                key: "rom",
+                name: "ROM",
+                address_bits: 16,
+                range: 0x8000..=0x80FF,
+                access: SpaceAccess::ReadOnly,
+            },
+        ]
+    }
+
+    fn panic_begin() -> Begin {
+        Rc::new(|_, _| panic!("headless must not start a flight"))
+    }
+
+    fn operations(spaces: Vec<SpaceInfo>) -> Operations {
+        let start = spaces.first().map_or(0, |space| *space.range.start());
+        let count = spaces.len();
+        Operations {
+            begin: panic_begin(),
+            spaces,
+            nav: NavState::new(count, start),
+            display: DisplayCache::default(),
+            dispatch: Rc::new(|_: crate::view::Intent| true),
+            watch: None,
+            freeze: None,
+            bookmarks: BTreeMap::new(),
+            next_bookmark: 0,
+            media_revision: 0,
+            spaces_source: Rc::new(Vec::new),
+            last_paused: false,
+        }
+    }
+
+    fn connected() -> Rc<Pane> {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        let spaces = spaces_rw_ro();
+        pane.connect(
+            spaces,
+            panic_begin(),
+            Rc::new(|_: crate::view::Intent| true),
+            0,
+            Rc::new(Vec::new),
+        );
+        assert!(pane.model.update(|model| model.enabled = true));
+        pane
+    }
+
+    fn dump_display() -> DisplayCache {
+        DisplayCache {
+            dump_rows: vec![nerust_core_traits::debugger::HexRow {
+                addr: 0x10,
+                valid: 2,
+                bytes: [0xAB; 16],
+            }],
+            disasm_lines: vec![nerust_core_traits::debugger::DisasmLine {
+                addr: 0x10,
+                bytes: [0; 4],
+                len: 1,
+                text: "NOP".into(),
+                is_pc: true,
+                target: Some(0x20),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn assist_parse_round_trips_every_command() {
+        for name in [
+            "refresh",
+            "step_frame",
+            "step_instruction",
+            "ppu",
+            "follow_pc",
+            "back",
+            "disassembly_go",
+            "disassembly_target",
+            "space_previous",
+            "space_next",
+            "page_previous",
+            "page_next",
+            "memory_go",
+            "watch",
+            "edit_watch",
+            "watch_clear",
+            "freeze",
+            "edit_freeze",
+            "freeze_clear",
+            "register_set",
+            "write",
+            "cancel",
+            "confirm",
+            "bookmark_add",
+            "bookmark_go",
+            "bookmark_remove",
+        ] {
+            assert!(AssistAction::parse(name).is_some(), "{name}");
+        }
+        assert!(AssistAction::parse("bogus").is_none());
+        assert!(AssistAction::parse("").is_none());
+    }
+
+    #[test]
+    fn unknown_action_and_missing_operations_exit_quietly() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        assert!(pane.model.update(|model| model.enabled = true));
+        pane.execute_for_test("bogus");
+        assert!(pane.is_idle());
+        assert_eq!(
+            pane.model.snapshot().status,
+            text(AppLanguage::English, UiText::NoCore)
+        );
+        pane.execute_for_test("refresh");
+        assert!(pane.is_idle(), "no operations means no flight");
+    }
+
+    #[test]
+    fn step_actions_follow_and_select_unit() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        let mut ops = operations(spaces_rw_ro());
+        let _ = pane;
+        let frame = Pane::step_actions(AssistAction::StepFrame, &mut ops);
+        assert_eq!(frame.len(), 1);
+        assert!(ops.nav.follow_pc());
+        let mut ops = operations(spaces_rw_ro());
+        let instr = Pane::step_actions(AssistAction::StepInstruction, &mut ops);
+        assert_eq!(instr.len(), 1);
+        assert!(ops.nav.follow_pc());
+        assert_ne!(format!("{frame:?}"), format!("{instr:?}"));
+    }
+
+    #[test]
+    fn navigate_rejects_bad_input_without_flight() {
+        let pane = connected();
+        let mut model = pane.model.snapshot();
+        model.disasm_addr = "ZZZ".into();
+        model.memory_addr = "ZZZ".into();
+        let mut ops = operations(spaces_rw_ro());
+        assert!(Pane::navigate_actions(AssistAction::DisassemblyGo, &mut ops, &model, 0).is_err());
+        assert!(Pane::navigate_actions(AssistAction::MemoryGo, &mut ops, &model, 0).is_err());
+        assert!(
+            Pane::navigate_actions(AssistAction::DisassemblyTarget, &mut ops, &model, 0).is_err()
+        );
+        model.disasm_addr = "10".into();
+        assert!(Pane::navigate_actions(AssistAction::DisassemblyGo, &mut ops, &model, 0).is_ok());
+        assert!(Pane::navigate_actions(AssistAction::PageNext, &mut ops, &model, 0).is_ok());
+        assert!(Pane::navigate_actions(AssistAction::PagePrevious, &mut ops, &model, 0).is_ok());
+        assert!(Pane::navigate_actions(AssistAction::SpaceNext, &mut ops, &model, 0).is_ok());
+        assert!(Pane::navigate_actions(AssistAction::SpacePrevious, &mut ops, &model, 0).is_ok());
+        assert!(Pane::navigate_actions(AssistAction::FollowPc, &mut ops, &model, 0).is_ok());
+        assert!(Pane::navigate_actions(AssistAction::Back, &mut ops, &model, 0).is_ok());
+        let mut empty = operations(Vec::new());
+        assert!(Pane::navigate_actions(AssistAction::SpaceNext, &mut empty, &model, 0).is_ok());
+    }
+
+    #[test]
+    fn navigate_target_uses_structured_selection() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh(&dump_display(), AppLanguage::English);
+        let mut model = pane.model.snapshot();
+        model.disassembly_selection = Some(TableSelection {
+            row_key: "00000010".into(),
+            column: 1,
+        });
+        let mut ops = operations(spaces_rw_ro());
+        ops.display = dump_display();
+        assert!(
+            Pane::navigate_actions(AssistAction::DisassemblyTarget, &mut ops, &model, 0).is_ok()
+        );
+        assert_eq!(ops.nav.dis_addr(), Some(0x20));
+        model.disassembly_selection = Some(TableSelection {
+            row_key: "00000010".into(),
+            column: 0,
+        });
+        assert!(
+            Pane::navigate_actions(AssistAction::DisassemblyTarget, &mut ops, &model, 0).is_ok()
+        );
+        assert_eq!(ops.nav.dis_addr(), Some(0x10));
+        model.disassembly_selection = Some(TableSelection {
+            row_key: "dead".into(),
+            column: 0,
+        });
+        assert!(
+            Pane::navigate_actions(AssistAction::DisassemblyTarget, &mut ops, &model, 0).is_err()
+        );
+    }
+
+    #[test]
+    fn stage_rejects_missing_selection_and_readonly() {
+        let pane = connected();
+        pane.refresh(&dump_display(), AppLanguage::English);
+        assert!(pane.model.update(|model| {
+            model.memory_selection = None;
+            model.freeze_value = "FF".into();
+            model.edit_value = "FF".into();
+            model.register_value = "1".into();
+        }));
+        pane.execute_for_test("watch");
+        assert_eq!(
+            pane.model.snapshot().status,
+            text(AppLanguage::English, UiText::SelectDumpRow)
+        );
+        assert!(pane.is_idle());
+        pane.execute_for_test("register_set");
+        assert_eq!(
+            pane.model.snapshot().status,
+            text(AppLanguage::English, UiText::PickRegister)
+        );
+        assert!(pane.is_idle());
+        let missing: Option<&'static str> = None;
+        let hex = |input: &str| u64::from_str_radix(input.trim(), 16).map_err(|_| "hex".to_owned());
+        let memory = || Err::<(u32, Option<u8>), String>("nope".into());
+        let model = pane.model.snapshot();
+        let mut ops = operations(spaces_rw_ro());
+        assert!(
+            Pane::stage_actions(
+                AssistAction::Watch,
+                &mut ops,
+                &model,
+                &memory,
+                missing,
+                &hex
+            )
+            .is_err()
+        );
+        assert!(
+            Pane::stage_actions(
+                AssistAction::Cancel,
+                &mut ops,
+                &model,
+                &memory,
+                missing,
+                &hex
+            )
+            .is_ok()
+        );
+        assert!(
+            Pane::stage_actions(
+                AssistAction::Write,
+                &mut ops,
+                &model,
+                &memory,
+                missing,
+                &hex
+            )
+            .is_err()
+        );
+        assert!(
+            Pane::stage_actions(
+                AssistAction::Confirm,
+                &mut ops,
+                &model,
+                &memory,
+                missing,
+                &hex
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn write_rejects_unavailable_byte_readonly_and_range() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh(&dump_display(), AppLanguage::English);
+        let targets = pane.model.snapshot().memory_targets;
+        let key = targets.keys().next().cloned().expect("dump targets");
+        let memory_unavailable = || Ok::<(u32, Option<u8>), String>((0x10, None));
+        let memory_ok = || Ok::<(u32, Option<u8>), String>((0x10, Some(0xAB)));
+        let hex = |input: &str| u64::from_str_radix(input.trim(), 16).map_err(|_| "hex".to_owned());
+        let mut model = pane.model.snapshot();
+        model.edit_value = "FF".into();
+        let mut ro = operations(spaces_rw_ro());
+        ro.nav.set_space(1, 0x8000);
+        assert!(
+            Pane::stage_actions(
+                AssistAction::Write,
+                &mut ro,
+                &model,
+                &memory_unavailable,
+                None,
+                &hex
+            )
+            .is_err()
+        );
+        assert!(
+            Pane::stage_actions(AssistAction::Write, &mut ro, &model, &memory_ok, None, &hex)
+                .unwrap_err()
+                .contains("read-only")
+        );
+        let mut rw = operations(spaces_rw_ro());
+        model.edit_value = "1FF".into();
+        assert!(
+            Pane::stage_actions(AssistAction::Write, &mut rw, &model, &memory_ok, None, &hex)
+                .unwrap_err()
+                .contains("one byte")
+        );
+        let _ = key;
+    }
+
+    #[test]
+    fn freeze_paths_cover_empty_edit_and_readonly() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh(&dump_display(), AppLanguage::English);
+        let mut model = pane.model.snapshot();
+        model.freeze_value = String::new();
+        let memory = || Ok::<(u32, Option<u8>), String>((0x10, Some(0xAB)));
+        let hex = |input: &str| u64::from_str_radix(input.trim(), 16).map_err(|_| "hex".to_owned());
+        let mut rw = operations(spaces_rw_ro());
+        assert!(
+            Pane::stage_actions(
+                AssistAction::EditFreeze,
+                &mut rw,
+                &model,
+                &memory,
+                None,
+                &hex
+            )
+            .is_ok()
+        );
+        assert_eq!(rw.freeze, Some((0x10, 0xAB)));
+        let mut ro = operations(spaces_rw_ro());
+        ro.nav.set_space(1, 0x8000);
+        model.freeze_value = "01".into();
+        assert!(
+            Pane::stage_actions(AssistAction::Freeze, &mut ro, &model, &memory, None, &hex)
+                .unwrap_err()
+                .contains("read-only")
+        );
+        assert!(
+            Pane::stage_actions(
+                AssistAction::FreezeClear,
+                &mut ro,
+                &model,
+                &memory,
+                None,
+                &hex
+            )
+            .is_ok()
+        );
+        assert!(ro.freeze.is_none());
+        assert!(
+            Pane::stage_actions(
+                AssistAction::WatchClear,
+                &mut ro,
+                &model,
+                &memory,
+                None,
+                &hex
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn bookmarks_add_remove_and_missing_space() {
+        let pane = connected();
+        pane.refresh(&dump_display(), AppLanguage::English);
+        let mut ops = operations(spaces_rw_ro());
+        ops.display = dump_display();
+        let mut model = pane.model.snapshot();
+        model.bookmark_label = String::new();
+        pane.add_bookmark(&mut ops, &model, 0x10)
+            .expect("default label");
+        assert_eq!(ops.bookmarks.len(), 1);
+        assert!(
+            ops.bookmarks
+                .values()
+                .next()
+                .is_some_and(|(label, _, _)| label == "0x00000010")
+        );
+        model.bookmark_label = "home".into();
+        model.disassembly_selection = Some(TableSelection {
+            row_key: "00000010".into(),
+            column: 0,
+        });
+        pane.add_bookmark(&mut ops, &model, 0).expect("named");
+        assert_eq!(ops.bookmarks.len(), 2);
+        ops.bookmarks.clear();
+        for index in 0..256 {
+            ops.bookmarks
+                .insert(index.to_string(), ("b".into(), SpaceId(0), index as u32));
+        }
+        ops.next_bookmark = 256;
+        assert!(pane.add_bookmark(&mut ops, &model, 0).is_err());
+        let mut ops = operations(spaces_rw_ro());
+        ops.display = dump_display();
+        ops.bookmarks
+            .insert("gone".into(), ("g".into(), SpaceId(99), 0x10));
+        model.bookmark_selection = Some(TableSelection {
+            row_key: "gone".into(),
+            column: 0,
+        });
+        assert!(
+            pane.apply_bookmark(AssistAction::BookmarkGo, &mut ops, &model, 0)
+                .is_err()
+        );
+        model.bookmark_selection = None;
+        assert!(
+            pane.apply_bookmark(AssistAction::BookmarkGo, &mut ops, &model, 0)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn bookmark_remove_clears_selection_without_flight() {
+        let pane = connected();
+        pane.refresh(&dump_display(), AppLanguage::English);
+        let mut ops = operations(spaces_rw_ro());
+        ops.display = dump_display();
+        let mut model = pane.model.snapshot();
+        model.bookmark_label = "home".into();
+        pane.add_bookmark(&mut ops, &model, 0x10).expect("add");
+        model.bookmark_selection = Some(TableSelection {
+            row_key: "0".into(),
+            column: 0,
+        });
+        assert!(
+            pane.apply_bookmark(AssistAction::BookmarkRemove, &mut ops, &model, 0)
+                .is_ok()
+        );
+        assert!(ops.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn execute_gates_disabled_busy_and_reports_errors() {
+        let pane = connected();
+        assert!(pane.model.update(|model| model.enabled = false));
+        pane.execute_for_test("bogus");
+        assert!(pane.is_idle());
+        assert!(pane.model.update(|model| {
+            model.enabled = true;
+            model.memory_addr = "ZZZ".into();
+        }));
+        pane.execute_for_test("memory_go");
+        assert!(pane.is_idle());
+        assert_eq!(pane.model.snapshot().status, "Invalid hexadecimal address");
+    }
+
+    #[test]
+    fn ppu_intent_dispatches_without_flight() {
+        use std::cell::Cell;
+        let fired = Rc::new(Cell::new(false));
+        let probe = fired.clone();
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.connect(
+            spaces_rw_ro(),
+            panic_begin(),
+            Rc::new(move |intent: crate::view::Intent| {
+                if intent == crate::view::Intent::Ppu {
+                    probe.set(true);
+                }
+                true
+            }),
+            0,
+            Rc::new(Vec::new),
+        );
+        assert!(pane.model.update(|model| model.enabled = true));
+        pane.execute_for_test("ppu");
+        assert!(fired.get());
+        assert!(pane.is_idle());
+    }
+
+    #[test]
+    fn action_closure_routes_through_weak_upgrade() {
+        let pane = connected();
+        let action = pane.action.borrow().clone().expect("action connected");
+        action("bogus".into());
+        assert!(pane.is_idle());
+    }
+
+    #[test]
+    fn start_cancel_poll_cover_closed_and_unloaded() {
+        let (adapter, _dir) = crate::session::test_fixture::loaded_adapter();
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        let (space, flight) = adapter.debugger_layout_begin();
+        pane.start(space, flight);
+        assert!(!pane.is_idle());
+        pane.cancel();
+        assert!(pane.is_idle());
+        assert!(pane.operations.borrow().is_none());
+        assert!(pane.is_idle());
+        pane.model.close();
+        pane.poll(AppLanguage::English, true, 0, false);
+        assert!(pane.is_idle());
+        let live = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        live.poll(AppLanguage::English, false, 0, false);
+        assert!(!live.model.snapshot().enabled);
+    }
+
+    #[test]
+    fn refresh_prunes_stale_selections_and_reprojects() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh(&dump_display(), AppLanguage::English);
+        assert!(pane.model.update(|model| {
+            model.register_left_selection = Some(TableSelection {
+                row_key: "nope".into(),
+                column: 0,
+            });
+            model.register_right_selection = Some(TableSelection {
+                row_key: "nope".into(),
+                column: 0,
+            });
+            model.memory_selection = Some(TableSelection {
+                row_key: "nope".into(),
+                column: 0,
+            });
+            model.register_value = "AB".into();
+        }));
+        pane.refresh(&DisplayCache::default(), AppLanguage::Japanese);
+        let model = pane.model.snapshot();
+        assert!(model.register_left_selection.is_none());
+        assert!(model.register_right_selection.is_none());
+        assert!(model.memory_selection.is_none());
+        assert_eq!(model.register_value, "AB");
+        assert_eq!(model.memory_addr, NavState::new(0, 0).mem_input());
+    }
+
+    #[test]
+    fn projection_covers_empty_regs_and_missing_pc() {
+        let projection = project(&DisplayCache::default());
+        assert!(!projection.registers_visible);
+        assert!(projection.pc.is_none());
+        assert_eq!(projection.register_style.placement.height, Some(1.0));
+        assert!(bookmark_table(&BTreeMap::new()).rows.is_empty());
+        let display = DisplayCache {
+            regs: vec![("a", 1)],
+            ..Default::default()
+        };
+        assert!(project(&display).registers_visible);
+        assert_eq!(register_key("a/b"), "612F62");
+        assert!(
+            selected_memory(
+                &TableSelection {
+                    row_key: "missing".into(),
+                    column: 0
+                },
+                &BTreeMap::new(),
+            )
+            .is_none()
+        );
+        assert_eq!(
+            Captions::new(AppLanguage::Japanese).title,
+            text(AppLanguage::Japanese, UiText::Debugger)
+        );
+    }
+
+    #[test]
+    fn presentation_gates_match_model_state() {
+        let pane = connected();
+        pane.refresh(&dump_display(), AppLanguage::English);
+        let presentation = Presentation {
+            model: pane.model.clone(),
+            action: pane.action.clone(),
+        };
+        let enabled = |name: &str| {
+            presentation
+                .command_action(Binding::constant(name.into()))
+                .enabled
+                .get()
+        };
+        assert!(!enabled("bogus"));
+        assert!(enabled("refresh"));
+        assert!(!enabled("confirm"));
+        assert!(pane.model.update(|model| {
+            model.pending = true;
+            model.memory_selection = Some(TableSelection {
+                row_key: "x".into(),
+                column: 0,
+            });
+        }));
+        assert!(enabled("confirm"));
+        assert!(enabled("cancel"));
+        assert!(enabled("write"));
+        assert!(!enabled("register_set"));
+        assert!(pane.model.update(|model| {
+            model.register_marked = Some(TableSelection {
+                row_key: "k".into(),
+                column: 0,
+            });
+        }));
+        assert!(enabled("register_set"));
+        assert!(pane.model.update(|model| model.enabled = false));
+        assert!(!enabled("refresh"));
+    }
+}

@@ -528,3 +528,166 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod ppu_headless_tests {
+    //! Closed/cancel, poll-gating and projection-budget paths.
+    use super::*;
+    use crate::session::test_fixture::loaded_adapter;
+    use nerust_gui_viewmodel::debugger::images::DebugImageRgba;
+
+    struct NoDispatch;
+    impl Executor for NoDispatch {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("ppu headless must not dispatch");
+        }
+    }
+
+    fn image(label: &str, width: u32, height: u32, value: u8) -> DebugImageRgba {
+        DebugImageRgba {
+            label: label.into(),
+            width,
+            height,
+            rgba: [value, 0, 0, 255].repeat((width as usize) * (height as usize)),
+        }
+    }
+
+    #[test]
+    fn start_on_closed_pane_drops_flight() {
+        let (adapter, _dir) = loaded_adapter();
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.model.close();
+        pane.start(adapter.ppu_layout_begin());
+        assert!(pane.is_idle());
+    }
+
+    #[test]
+    fn cancel_clears_flights_and_fetch() {
+        let (adapter, _dir) = loaded_adapter();
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.start(adapter.ppu_layout_begin());
+        let fetch_adapter = adapter;
+        pane.connect(
+            1,
+            Rc::new(move |_| fetch_adapter.handle().debug_live_images_begin_since(None)),
+        );
+        pane.cancel();
+        assert!(pane.is_idle());
+        pane.next_fetch
+            .set(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        pane.poll(AppLanguage::English, true, 1);
+        assert!(pane.is_idle(), "cancelled fetch never restarts");
+    }
+
+    #[test]
+    fn poll_on_closed_pane_cancels() {
+        let (adapter, _dir) = loaded_adapter();
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.start(adapter.ppu_layout_begin());
+        pane.model.close();
+        pane.poll(AppLanguage::English, true, 0);
+        assert!(pane.is_idle());
+    }
+
+    #[test]
+    fn poll_relocalizes_and_clears_on_unload() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.poll(AppLanguage::Japanese, true, 1);
+        let model = pane.model.snapshot();
+        assert_eq!(model.title, text(AppLanguage::Japanese, UiText::PpuViewer));
+        pane.poll(AppLanguage::English, true, 2);
+        assert_eq!(
+            pane.model.snapshot().title,
+            text(AppLanguage::English, UiText::PpuViewer)
+        );
+        assert!(pane.generation.get().is_none());
+        pane.refresh_images(vec![image("a", 1, 1, 1)], 1);
+        assert!(!pane.model.snapshot().is_empty);
+        pane.poll(AppLanguage::English, false, 2);
+        assert!(pane.model.snapshot().is_empty);
+        assert!(pane.is_idle());
+        pane.poll(AppLanguage::English, false, 2);
+        assert!(pane.model.snapshot().is_empty);
+    }
+
+    #[test]
+    fn refresh_images_skips_overflow_budget_and_decode() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh_images(
+            vec![
+                DebugImageRgba {
+                    label: "overflow".into(),
+                    width: u32::MAX,
+                    height: u32::MAX,
+                    rgba: vec![],
+                },
+                DebugImageRgba {
+                    label: "budget".into(),
+                    width: 4000,
+                    height: 4000,
+                    rgba: vec![],
+                },
+                DebugImageRgba {
+                    label: "decode".into(),
+                    width: 2,
+                    height: 2,
+                    rgba: vec![],
+                },
+                image("good", 1, 1, 9),
+            ],
+            11,
+        );
+        let model = pane.model.snapshot();
+        assert_eq!(model.images.len(), 1);
+        assert_eq!(model.images[0].model.snapshot().label, "good");
+        pane.refresh_images(vec![image("other", 1, 1, 3)], 11);
+        assert_eq!(
+            pane.model.snapshot().images[0].model.snapshot().label,
+            "good"
+        );
+    }
+
+    #[test]
+    fn hover_resets_when_pointer_leaves_image() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh_images(vec![image("pattern", 1, 1, 1)], 1);
+        let row = pane.model.snapshot().images[0].clone();
+        let _ = row
+            .model
+            .update(|image| image.pointer = Some(PointerPosition { x: 0.0, y: 0.0 }));
+        assert_ne!(pane.model.snapshot().hover, PPU_HOVER_HINT);
+        let _ = row.model.update(|image| image.pointer = None);
+        assert_eq!(pane.model.snapshot().hover, PPU_HOVER_HINT);
+        assert!(pane.model.snapshot().hovered.is_none());
+        pane.refresh_images(Vec::new(), 2);
+        assert!(pane.model.snapshot().is_empty);
+    }
+
+    #[test]
+    fn scaling_rejects_dimension_overflow() {
+        assert!(
+            scaled_image(DebugImageRgba {
+                label: "width".into(),
+                width: u32::MAX,
+                height: 1,
+                rgba: vec![],
+            })
+            .is_err()
+        );
+        assert!(
+            scaled_image(DebugImageRgba {
+                label: "budget".into(),
+                width: 5000,
+                height: 5000,
+                rgba: vec![],
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "ppu headless")]
+    fn executor_rejects_async_work() {
+        NoDispatch.spawn(Box::pin(async {}));
+    }
+}
