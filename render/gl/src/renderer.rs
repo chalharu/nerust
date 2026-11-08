@@ -193,6 +193,9 @@ impl GlRenderer {
             self.context_detach();
         }
         self.size = size;
+        // Toolkit views need layer-scale alignment before glutin binds
+        // the drawable (see `normalize_window`); elsewhere a no-op.
+        crate::display::normalize_window(wh);
         let nc = unsafe {
             self.display
                 .create_context(

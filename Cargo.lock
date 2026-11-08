@@ -3441,6 +3441,9 @@ dependencies = [
  "nerust_glwrap",
  "nerust_render_ntsc",
  "nerust_render_traits",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-quartz-core 0.3.2",
  "raw-window-handle",
  "thiserror 2.0.21",
 ]
