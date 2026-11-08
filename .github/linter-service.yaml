@@ -4,6 +4,7 @@ global:
 linters:
   cargo-clippy:
     apt_packages:
+      - cmake
       - libasound2-dev
       - libcubeb-dev
       - libepoxy-dev
