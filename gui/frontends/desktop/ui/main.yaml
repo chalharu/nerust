@@ -1,0 +1,106 @@
+schema_version: 2
+root:
+  type: Window
+  id: main
+  title: {literal: "Nerust"}
+  menus:
+    - id: file
+      title: {bind: {path: file_title, source: External}}
+      command: choose
+      nested: true
+      items:
+        - id: open
+          label: {bind: {path: open_label, source: External}}
+          argument: {bind: {path: open_arg, source: External}}
+          enabled: {bind: {path: available, source: External}}
+          shortcut: Primary+O
+        - id: close
+          label: {bind: {path: close_label, source: External}}
+          argument: {bind: {path: close_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: settings
+          label: {bind: {path: settings_label, source: External}}
+          argument: {bind: {path: settings_arg, source: External}}
+          enabled: {bind: {path: available, source: External}}
+          shortcut: {bind: {path: settings_shortcut, source: External}}
+        - id: quit
+          label: {bind: {path: quit_label, source: External}}
+          argument: {bind: {path: quit_arg, source: External}}
+          enabled: {bind: {path: available, source: External}}
+          role: Quit
+          shortcut: {bind: {path: quit_shortcut, source: External}}
+    - id: states
+      title: {bind: {path: states_title, source: External}}
+      command: choose
+      nested: true
+      items:
+        - id: create_slot
+          label: {bind: {path: create_slot_label, source: External}}
+          argument: {bind: {path: create_slot_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: save_active_slot
+          label: {bind: {path: save_active_slot_label, source: External}}
+          argument: {bind: {path: save_active_slot_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: load_active_slot
+          label: {bind: {path: load_active_slot_label, source: External}}
+          argument: {bind: {path: load_active_slot_arg, source: External}}
+          enabled: {bind: {path: load_active_enabled, source: External}}
+        - id: states_separator
+          label: {literal: ""}
+          argument: {bind: {path: inert_arg, source: External}}
+          role: Separator
+        - id: select_slot
+          label: {bind: {path: select_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: select_slot_nodes, source: External}}
+        - id: save_slot
+          label: {bind: {path: save_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: save_slot_nodes, source: External}}
+        - id: load_slot
+          label: {bind: {path: load_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: load_slot_nodes, source: External}}
+        - id: delete_slot
+          label: {bind: {path: delete_slot_title, source: External}}
+          enabled: {bind: {path: slot_submenu_enabled, source: External}}
+          children: {bind: {path: delete_slot_nodes, source: External}}
+    - id: emulation
+      title: {bind: {path: emulation_title, source: External}}
+      command: choose
+      nested: true
+      items:
+        - id: pause
+          label: {bind: {path: pause_label, source: External}}
+          argument: {bind: {path: pause_arg, source: External}}
+          enabled: {bind: {path: pause_enabled, source: External}}
+        - id: resume
+          label: {bind: {path: resume_label, source: External}}
+          argument: {bind: {path: resume_arg, source: External}}
+          enabled: {bind: {path: resume_enabled, source: External}}
+        - id: reset
+          label: {bind: {path: reset_label, source: External}}
+          argument: {bind: {path: reset_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: debugger
+          label: {bind: {path: debugger_label, source: External}}
+          argument: {bind: {path: debugger_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: history
+          label: {bind: {path: history_label, source: External}}
+          argument: {bind: {path: history_arg, source: External}}
+          enabled: {bind: {path: available, source: External}}
+        - id: ppu
+          label: {bind: {path: ppu_label, source: External}}
+          argument: {bind: {path: ppu_arg, source: External}}
+          enabled: {bind: {path: loaded, source: External}}
+        - id: fullscreen
+          label: {bind: {path: fullscreen_label, source: External}}
+          argument: {bind: {path: fullscreen_arg, source: External}}
+          enabled: {bind: {path: available, source: External}}
+  content:
+    type: Native
+    id: screen
+    factory: crate::view::screen
+    value: {bind: {path: screen, source: External}}

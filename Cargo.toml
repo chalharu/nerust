@@ -1,9 +1,9 @@
 [workspace]
 default-members = [
   ".",
-  "console/nes/core",
-  "console/gbc/core",
   "console/gba/core",
+  "console/gbc/core",
+  "console/nes/core",
 ]
 members = [
   "console/gba/core",
@@ -20,18 +20,17 @@ members = [
   "console/nes/device",
   "console/nes/factory",
   "console/nes/settings",
+  "crash-guard",
+  "gui/application",
   "gui/emu-thread",
   "gui/frontends/android",
-  "gui/frontends/gtk",
-  "gui/frontends/kernel",
+  "gui/frontends/desktop",
+  "gui/frontends/headless",
   "gui/frontends/rom_tool",
-  "gui/frontends/tao",
   "gui/run-options",
   "gui/runtime",
   "gui/shell",
   "gui/viewmodel",
-  "crash-guard",
-  "keyboard",
   "persistence",
   "render/filters",
   "render/gl",
@@ -41,9 +40,8 @@ members = [
   "render/softbuffer",
   "render/traits",
   "render/wgpu",
-  "gui/frontends/headless",
-  "settings/core",
   "serialize",
+  "settings/core",
   "sound/cpal",
   "sound/cubeb",
   "sound/filter",
@@ -71,12 +69,12 @@ version.workspace = true
 clap.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
-nerust_system_traits.workspace = true
-nerust_gtk = { optional = true, workspace = true }
+nerust_crash_guard.workspace = true
+nerust_desktop = { default-features = false, workspace = true }
+nerust_gba_factory = { optional = true, workspace = true }
+nerust_gbc_factory = { optional = true, workspace = true }
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
-nerust_gbc_factory = { optional = true, workspace = true }
-nerust_gba_factory = { optional = true, workspace = true }
 nerust_nes_factory = { optional = true, workspace = true }
 nerust_render_gl = { optional = true, workspace = true }
 nerust_render_softbuffer = { optional = true, workspace = true }
@@ -85,21 +83,25 @@ nerust_render_wgpu = { optional = true, workspace = true }
 nerust_run_options.workspace = true
 nerust_sound_cpal = { optional = true, workspace = true }
 nerust_sound_cubeb = { optional = true, workspace = true }
-nerust_tao = { optional = true, workspace = true }
+nerust_system_traits.workspace = true
 simple_logger.workspace = true
 
 [dev-dependencies]
 nerust_gba_core.workspace = true
+nerust_settings_core.workspace = true
 
 [features]
-default = ["nes", "gbc", "gba", "wgpu"]
-gbc = ["nerust_gbc_factory"]
+cpal = ["nerust_sound_cpal"]
+cubeb = ["nerust_sound_cubeb"]
+default = ["cpal", "cubeb", "desktop-native", "gba", "gbc", "nes", "wgpu"]
+desktop-native = ["nerust_desktop/native"]
 gba = ["nerust_gba_factory"]
-gtk = ["nerust_gtk", "nerust_sound_cpal", "nerust_sound_cubeb"]
+gbc = ["nerust_gbc_factory"]
+gtk = ["nerust_desktop/gtk"]
 nes = ["nerust_nes_factory"]
 opengl = ["nerust_render_gl"]
 softbuffer = ["nerust_render_softbuffer"]
-tao = ["nerust_sound_cpal", "nerust_sound_cubeb", "nerust_tao"]
+tao = ["nerust_desktop/tao"]
 wgpu = ["nerust_render_wgpu"]
 
 [profile.dev]
@@ -135,13 +137,12 @@ rust-version = "1.95"
 version = "0.1.0-dev"
 
 [workspace.dependencies]
-image = { version = "=0.25.10", default-features = false, features = [
-  "png",
-  "jpeg",
-] }
+ab_glyph = { version = "=0.2.32" }
 android_logger = { version = "=0.15.1" }
+base64 = { version = "=0.23.1" }
 bitflags = { features = ["serde"], version = "=2.13.2" }
 clap = { features = ["derive"], version = "=4.6.7" }
+cosmic-text = { version = "=0.19.0" }
 cpal = { version = "=0.18.2" }
 crc = { version = "=3.4.0" }
 cubeb = { version = "=0.38.0" }
@@ -151,38 +152,25 @@ dyn-clone = { version = "=1.0.20" }
 dyn-eq = { version = "=0.1.3" }
 dyn-hash = { version = "=1.0.0" }
 flume = { version = "=0.12.0" }
-glob = { version = "=0.3.4" }
-gdk = { package = "gdk4", version = "=0.11.5" }
-gdk-macos = { package = "gdk4-macos", version = "=0.11.5" }
-gdk-win32 = { package = "gdk4-win32", version = "=0.11.5" }
-gdk4-wayland-sys = { version = "=0.11.5" }
-gdk4-x11-sys = { version = "=0.11.5" }
-gio = { version = "=0.22.10" }
+futures = { version = "=0.3.34" }
+futures-timer = { version = "=3.0" }
 gl = { default-features = false, version = "=0.14.0" }
+glob = { version = "=0.3.4" }
 glutin = { version = "=0.32.3" }
-gtk = { package = "gtk4", version = "=0.11.5" }
 hound = { version = "=3.5.1" }
-iced = { default-features = false, features = [
-  "thread-pool",
-  "tiny-skia",
-  "wayland",
-  "x11",
-  # PPU viewer pattern images (`iced::widget::image`).
-  "image",
-  # Debugger heavy lists (`iced::widget::lazy`): keystrokes reuse the
-  # cached dump/disasm/regs subtrees instead of rebuilding ~600 widgets.
-  "lazy",
-], version = "=0.14.0" }
-iced_tiny_skia = { version = "=0.14.1" }
-iced_winit = { version = "=0.14.1" }
-jni = { version = "=0.22.4" }
+image = { default-features = false, features = [
+  "jpeg",
+  "png",
+], version = "=0.25.10" }
 inventory = { version = "=0.3.25" }
+jni = { version = "=0.22.4" }
 log = { default-features = false, version = "=0.4.35" }
 muda = { default-features = false, features = ["gtk3"], version = "=0.21.2" }
 nerust_android = { path = "gui/frontends/android" }
-nerust_core_traits = { path = "traits/core" }
-nerust_system_traits = { path = "traits/system" }
 nerust_console_input = { path = "console/input" }
+nerust_core_traits = { path = "traits/core" }
+nerust_crash_guard = { path = "crash-guard" }
+nerust_desktop = { path = "gui/frontends/desktop" }
 nerust_emu_thread = { path = "gui/emu-thread" }
 nerust_gba_core = { path = "console/gba/core" }
 nerust_gba_device = { path = "console/gba/device" }
@@ -193,13 +181,11 @@ nerust_gbc_device = { path = "console/gbc/device" }
 nerust_gbc_factory = { path = "console/gbc/factory" }
 nerust_gbc_settings = { path = "console/gbc/settings" }
 nerust_glwrap = { path = "render/glwrap" }
-nerust_gtk = { path = "gui/frontends/gtk" }
+nerust_gui_application = { path = "gui/application" }
 nerust_gui_runtime = { path = "gui/runtime" }
 nerust_gui_shell = { path = "gui/shell" }
-nerust_frontend_kernel = { path = "gui/frontends/kernel" }
 nerust_gui_viewmodel = { path = "gui/viewmodel" }
 nerust_input_traits = { path = "traits/input" }
-nerust_keyboard = { default-features = false, path = "keyboard" }
 nerust_nes_controller = { path = "console/nes/controller" }
 nerust_nes_core = { path = "console/nes/core" }
 nerust_nes_device = { path = "console/nes/device" }
@@ -210,13 +196,10 @@ nerust_render_filters = { path = "render/filters" }
 nerust_render_gl = { path = "render/gl" }
 nerust_render_ntsc = { path = "render/ntsc" }
 nerust_render_osd = { path = "render/osd" }
-ab_glyph = { version = "=0.2.32" }
-cosmic-text = { version = "=0.19.0" }
 nerust_render_softbuffer = { path = "render/softbuffer" }
 nerust_render_traits = { default-features = false, path = "render/traits" }
 nerust_render_wgpu = { path = "render/wgpu" }
 nerust_rom_test = { path = "gui/frontends/headless" }
-nerust_crash_guard = { path = "crash-guard" }
 nerust_rom_tool = { path = "gui/frontends/rom_tool" }
 nerust_run_options = { path = "gui/run-options" }
 nerust_serialize = { path = "serialize" }
@@ -226,44 +209,24 @@ nerust_sound_cpal = { path = "sound/cpal" }
 nerust_sound_cubeb = { path = "sound/cubeb" }
 nerust_sound_filter = { path = "sound/filter" }
 nerust_sound_spectrum = { path = "sound/spectrum" }
-nerust_tao = { path = "gui/frontends/tao" }
+nerust_system_traits = { path = "traits/system" }
 nerust_timer = { path = "timer" }
-objc2 = { default-features = false, version = "=0.6.5" }
-objc2-app-kit = { default-features = false, features = [
-  "NSResponder",
-  "NSView",
-  "NSWindow",
-  "objc2-core-foundation",
-  "objc2-quartz-core",
-], version = "=0.3.2" }
-objc2-quartz-core = { default-features = false, features = [
-  "objc2-core-foundation",
-], version = "=0.3.2" }
 open = { version = "=5.4.5" }
+panechord = { git = "https://github.com/chalharu/panechord", rev = "a8b21dd5cca4be1175a4f660a5203d185d539c47" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
-# NOTE: do NOT enable rfd `gtk3` here (verified twice). Its backend
-# serves dialogs from its own thread: called from tao's GTK main loop
-# it deadlocked (no window, frozen loop), and with the call moved to a
-# worker thread it instead aborts the process when the icon theme is
-# broken (`Gtk:ERROR` loading the dialog icon — always fatal). The
-# default portal backend shells out to zenity: no dialog where zenity
-# is absent, but the app stays alive. Robust fix is an in-app dialog.
-rfd = { version = "=0.17.2" }
 rmp-serde = { version = "=1.3.1" }
 serde = { default-features = false, version = "=1.0.229" }
-smallvec = { version = "=1.16.4" }
 serde-saphyr = { version = "=2.0.0" }
 serde-value = { version = "=0.7.0" }
 serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.154" }
-base64 = { version = "=0.23.1" }
 sha2 = { version = "=0.11.1" }
 simple_logger = { version = "=5.2.0" }
+smallvec = { version = "=1.16.4" }
 softbuffer = { version = "=0.4.8" }
 strum = { features = ["derive"], version = "=0.28.0" }
-tao = { version = "=0.37.2" }
 thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }

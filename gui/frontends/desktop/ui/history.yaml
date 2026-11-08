@@ -1,0 +1,45 @@
+schema_version: 2
+root:
+  type: Window
+  id: history_window
+  title: {bind: {path: title, source: External}}
+  content:
+    type: StackLayout
+    id: content
+    style: {vertical_alignment: Stretch}
+    padding: 16
+    gap: 12
+    children:
+      - type: StackLayout
+        id: toolbar
+        orientation: Horizontal
+        gap: 12
+        children:
+          - type: Label
+            id: level_label
+            style: {vertical_alignment: Center, placement: {width: 50}}
+            text: {bind: {path: level_label, source: External}}
+          - type: Combo
+            id: filter
+            style: {vertical_alignment: Center, placement: {width: 110}}
+            items: {bind: {path: choices, source: External}}
+            selected: {bind: {path: selected, source: External, mode: TwoWay}}
+          - type: Button
+            id: clear
+            style: {vertical_alignment: Center, placement: {width: 130}}
+            text: {bind: {path: clear_label, source: External}}
+            command: clear
+          - type: StackLayout
+            id: count_area
+            style: {vertical_alignment: Center}
+            children:
+              - type: Label
+                id: count
+                style: {horizontal_alignment: End}
+                text: {bind: {path: count, source: External}}
+      - {type: Table, id: table, style: {vertical_alignment: Stretch}, source: {bind: {path: table, source: External}}}
+      - type: Button
+        id: close
+        style: {horizontal_alignment: End, vertical_alignment: End}
+        text: {bind: {path: close_label, source: External}}
+        command: close

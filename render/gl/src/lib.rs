@@ -1,3 +1,4 @@
+mod display;
 mod error;
 mod frame_textures;
 pub(crate) mod frame_view;
@@ -11,10 +12,10 @@ pub mod upload;
 mod vec2d;
 mod vertex_data;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod test_display;
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod regression_tests;
 
 mod renderer;

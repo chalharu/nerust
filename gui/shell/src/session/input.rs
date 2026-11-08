@@ -1,6 +1,6 @@
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
+use nerust_input_traits::Key;
 use nerust_input_traits::{AbstractKey, ControlId, DigitalInputEvent, InputValue};
-use nerust_keyboard::Key;
 use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::{

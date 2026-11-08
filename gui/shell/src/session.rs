@@ -31,13 +31,13 @@ use std::{
 
 use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_emu_thread::OperationError;
-use nerust_gui_runtime::debugger as debug_vm;
+use nerust_gui_runtime::debugger as debug_outcome;
 use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
+use nerust_input_traits::Key;
 use nerust_input_traits::{InputAssignments, UnifiedFieldMap};
-use nerust_keyboard::Key;
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
@@ -120,7 +120,7 @@ pub enum KeyboardShortcut {
 struct InputDept {
     current_assignments: InputAssignments,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
-    key_field_map: HashMap<nerust_keyboard::Key, usize>,
+    key_field_map: HashMap<nerust_input_traits::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
     topology_epoch: u64,
     /// Last served overlay, keyed by caller revision and topology epoch.
@@ -341,7 +341,7 @@ pub struct SessionHandle {
     audio_registry: Arc<AudioBackendRegistry>,
     /// Shell-owned two-phase memory write transaction (Phase B).
     /// `Arc`: async debug-drain flights share it across UI ticks.
-    debug_txn: Arc<Mutex<debug_vm::WriteTransaction>>,
+    debug_txn: Arc<Mutex<debug_outcome::WriteTransaction>>,
     notifications: notification::NotificationCenter,
     title_cache: title::TitleCache,
     history_view: session_query::HistoryView,
@@ -359,7 +359,7 @@ struct PreSwitchState {
     system_id: Option<Box<dyn SystemId>>,
     display_name: Option<&'static str>,
     assignments: InputAssignments,
-    pressed: std::collections::HashSet<nerust_keyboard::Key>,
+    pressed: std::collections::HashSet<nerust_input_traits::Key>,
     persistence: persistence::PersistSnapshot,
     /// Whether the stashed runtime ran: frozen so no battery update slips past the flush.
     /// Rollback resumes it.
@@ -560,7 +560,7 @@ impl SessionHandle {
             settings,
             media: MediaDept::new(),
             audio_registry,
-            debug_txn: Arc::new(Mutex::new(debug_vm::WriteTransaction::Empty)),
+            debug_txn: Arc::new(Mutex::new(debug_outcome::WriteTransaction::Empty)),
             notifications: notification::NotificationCenter::new(),
             title_cache: title::TitleCache::new(),
             history_view: session_query::HistoryView::new(),
@@ -641,6 +641,17 @@ impl SessionHandle {
 
     pub fn settings_snapshot(&self) -> &SettingsSnapshot {
         &self.settings.snapshot
+    }
+
+    /// Factories backing this session. Composition-root injection reads
+    /// these through the host so native frontends never name the registry.
+    pub fn system_registry(&self) -> &Arc<SystemRegistry> {
+        &self.registry
+    }
+
+    /// Audio backends backing this session, exposed for the same reason.
+    pub fn audio_registry(&self) -> &Arc<AudioBackendRegistry> {
+        &self.audio_registry
     }
 
     /// Immutable settings identity changes only after a successful update.

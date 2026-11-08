@@ -1,5 +1,9 @@
-//! Real-GL drive harness for unit tests. Without `DISPLAY` the callers
+//! Real-GL drive harness for unit tests. Without a usable display the callers
 //! skip gracefully so headless runs stay green.
+//!
+//! macOS always skips: CGL has no pbuffers (probed in `try_connect`), and a
+//! window-surface harness would need the main thread, which libtest keeps
+//! blocked. Linux/Xvfb (CI) and Windows run the real-context tests.
 
 use std::num::NonZeroU32;
 
@@ -11,10 +15,10 @@ use glutin::{
         ContextApi, ContextAttributesBuilder, NotCurrentGlContext as _, PossiblyCurrentContext,
         Version,
     },
-    display::{Display, DisplayApiPreference, GlDisplay as _},
+    display::{Display, GlDisplay as _},
     surface::{PbufferSurface, Surface, SurfaceAttributesBuilder},
 };
-use raw_window_handle::{RawDisplayHandle, XlibDisplayHandle};
+use raw_window_handle::RawDisplayHandle;
 
 pub(crate) struct TestDisplay {
     pub(crate) display: Display,
@@ -27,7 +31,7 @@ pub(crate) struct TestContext {
     pub(crate) context: PossiblyCurrentContext,
 }
 
-/// Serializes context tests: two parallel pbuffer tests share one X
+/// Serializes context tests: two parallel pbuffer tests share one
 /// display, so drive them one at a time. Hold the guard for the test.
 pub(crate) fn lock_display() -> std::sync::MutexGuard<'static, ()> {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -37,11 +41,35 @@ pub(crate) fn lock_display() -> std::sync::MutexGuard<'static, ()> {
 }
 
 impl TestDisplay {
-    /// Connect to the X display, or `None` when headless so local
+    /// Connect to the platform display, or `None` when headless so local
     /// runs stay green.
     pub(crate) fn connect() -> Option<Self> {
-        std::env::var_os("DISPLAY")?;
-        Some(Self::connect_strict().expect("DISPLAY is set but no GL display/config is available"))
+        // X11 can only attempt when `DISPLAY` names a server; other
+        // platforms attempt directly and skip gracefully on failure.
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm"),
+            not(target_os = "ios")
+        ))]
+        {
+            std::env::var_os("DISPLAY")?;
+            Some(
+                Self::connect_strict()
+                    .expect("DISPLAY is set but no GL display/config is available"),
+            )
+        }
+        #[cfg(not(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm"),
+            not(target_os = "ios")
+        )))]
+        {
+            Self::connect_strict()
+        }
     }
 
     fn connect_strict() -> Option<Self> {
@@ -56,16 +84,70 @@ impl TestDisplay {
         None
     }
 
-    fn try_connect() -> Option<Self> {
-        std::env::var_os("DISPLAY")?;
-        let display = unsafe {
-            Display::new(
-                RawDisplayHandle::Xlib(XlibDisplayHandle::new(None, 0)),
-                DisplayApiPreference::EglThenGlx(Box::new(|_reg| {})),
+    /// Platform display handle mirroring [`crate::display::create_display`]:
+    /// exactly one arm compiles per platform. The X11 arm needs `DISPLAY`;
+    /// Wayland-only hosts without XWayland skip (`None`).
+    fn test_display_handle() -> Option<RawDisplayHandle> {
+        #[cfg(target_os = "macos")]
+        {
+            Some(RawDisplayHandle::AppKit(
+                raw_window_handle::AppKitDisplayHandle::new(),
+            ))
+        }
+        #[cfg(all(target_os = "windows", not(target_family = "wasm")))]
+        {
+            Some(RawDisplayHandle::Windows(
+                raw_window_handle::WindowsDisplayHandle::new(),
+            ))
+        }
+        #[cfg(target_os = "android")]
+        {
+            Some(RawDisplayHandle::Android(
+                raw_window_handle::AndroidDisplayHandle::new(),
+            ))
+        }
+        #[cfg(target_os = "ios")]
+        {
+            Some(RawDisplayHandle::UiKit(
+                raw_window_handle::UiKitDisplayHandle::new(),
+            ))
+        }
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "android"),
+            not(target_family = "wasm"),
+            not(target_os = "ios")
+        ))]
+        {
+            std::env::var_os("DISPLAY")?;
+            Some(RawDisplayHandle::Xlib(
+                raw_window_handle::XlibDisplayHandle::new(None, 0),
+            ))
+        }
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "android",
+            target_os = "ios",
+            all(target_os = "windows", not(target_family = "wasm")),
+            all(
+                unix,
+                not(target_os = "macos"),
+                not(target_os = "android"),
+                not(target_family = "wasm"),
+                not(target_os = "ios")
             )
+        )))]
+        {
+            None
+        }
+    }
+
+    fn try_connect() -> Option<Self> {
+        let handle = Self::test_display_handle()?;
+        let display = crate::display::create_display(handle)
             .map_err(|error| eprintln!("GL test display initialization failed: {error:?}"))
-            .ok()?
-        };
+            .ok()?;
         let template = ConfigTemplateBuilder::new()
             .with_alpha_size(8)
             .with_surface_type(ConfigSurfaceTypes::PBUFFER)
@@ -81,6 +163,21 @@ impl TestDisplay {
             eprintln!("GL test display has no RGBA pbuffer config");
             None
         })?;
+        // CGL (and headless WGL without `WGL_ARB_pbuffer`) reports a config
+        // but rejects pbuffers: probe 1x1 here so `connect` skips gracefully
+        // instead of failing later at `make_pbuffer_current().expect(..)`.
+        {
+            let probe = SurfaceAttributesBuilder::<PbufferSurface>::new().build(
+                NonZeroU32::new(1).expect("probe extent is non-zero"),
+                NonZeroU32::new(1).expect("probe extent is non-zero"),
+            );
+            if unsafe { display.create_pbuffer_surface(&config, &probe) }
+                .map_err(|error| eprintln!("GL test pbuffer probe failed: {error:?}"))
+                .is_err()
+            {
+                return None;
+            }
+        }
         Some(Self { display, config })
     }
 
@@ -221,6 +318,13 @@ mod tests {
         drop(super::lock_display());
     }
 
+    #[cfg(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_os = "android"),
+        not(target_family = "wasm"),
+        not(target_os = "ios")
+    ))]
     #[test]
     fn connect_skips_headless_without_display() {
         if std::env::var_os("DISPLAY").is_some() {

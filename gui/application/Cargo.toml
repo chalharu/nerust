@@ -1,0 +1,8 @@
+[package]
+authors.workspace = true
+description = "UI-independent emulator application control"
+edition.workspace = true
+license.workspace = true
+name = "nerust_gui_application"
+rust-version.workspace = true
+version.workspace = true
