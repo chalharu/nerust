@@ -897,4 +897,520 @@ mod tests {
             .expect("language applies");
         assert_eq!(general.get(), "General");
     }
+
+    /// Filesystem backing for the validator: real directories (and
+    /// missing leaves beneath them) validate; plain files do not.
+    #[test]
+    fn filesystem_validator_accepts_dirs_and_rejects_files() {
+        let root =
+            std::env::temp_dir().join(format!("nerust-settings-validator-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("validator temp root");
+        let validator = FilesystemValidator;
+        assert!(validator.validate(root.as_path()).is_ok());
+        assert!(validator.validate(&root.join("missing-leaf")).is_ok());
+        let file = root.join("save.bin");
+        std::fs::write(&file, b"fixture").expect("validator temp file");
+        assert!(matches!(
+            validator.validate(&file),
+            Err(StoragePathError::NotDirectory)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Exit transitions without a backend view: clean drafts close
+    /// silently, dirty drafts prompt, and close aborts any capture.
+    #[test]
+    fn confirm_close_cancel_close_and_close_cover_exit_transitions() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        use nerust_settings_core::{editor::CaptureTarget, model::input::ShortcutAction};
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        assert!(editor.confirm_close(false));
+        assert!(editor.exit.get() == ExitChoice::Editing);
+        let vsync = editor.vm.video.view.get().vsync;
+        editor.vm.video.set_vsync(!vsync).expect("vsync applies");
+        assert!(editor.dirty());
+        assert!(!editor.confirm_close(false));
+        assert!(editor.exit.get() == ExitChoice::ConfirmLocal);
+        assert!(
+            editor
+                .close_prompt
+                .with(|prompt| *prompt == ExitChoice::ConfirmLocal)
+        );
+        // A pending prompt is not an approved discard; cancel is a no-op.
+        editor.cancel_close();
+        assert!(editor.exit.get() == ExitChoice::ConfirmLocal);
+        assert!(!editor.confirm_close(true));
+        assert!(editor.exit.get() == ExitChoice::ConfirmGlobal);
+        let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        editor
+            .vm
+            .capture
+            .start_capture(target)
+            .expect("capture starts");
+        editor.close();
+        assert!(editor.closed.get());
+        assert!(editor.vm.capture.view.get().target.is_none());
+    }
+
+    /// The status line reports the joined validation issues and clears
+    /// once the draft is valid again.
+    #[test]
+    fn validation_status_reports_and_clears_issues() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        editor.validation_status();
+        assert!(editor.status.with(|status| status.clone()).is_empty());
+        editor
+            .vm
+            .audio
+            .set_volume(200)
+            .expect("transact accepts out-of-range volume");
+        editor.validation_status();
+        assert!(
+            editor
+                .status
+                .with(|status| status.clone())
+                .contains("Master volume")
+        );
+        editor.vm.audio.set_volume(50).expect("volume applies");
+        editor.validation_status();
+        assert!(editor.status.with(|status| status.clone()).is_empty());
+    }
+
+    /// Apply re-baselines on success, surfaces backend errors on status,
+    /// and never calls the backend for an invalid draft.
+    #[test]
+    fn apply_persists_baseline_on_success_and_reports_failures() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let seen = Rc::new(RefCell::new(None::<SettingsSnapshot>));
+        let apply: Apply = Rc::new({
+            let seen = seen.clone();
+            move |snapshot: SettingsSnapshot| {
+                *seen.borrow_mut() = Some(snapshot);
+                Ok(())
+            }
+        });
+        let vsync = editor.vm.video.view.get().vsync;
+        editor.vm.video.set_vsync(!vsync).expect("vsync applies");
+        assert!(editor.dirty());
+        assert!(editor.apply(&apply).is_ok());
+        assert!(!editor.dirty());
+        assert!(seen.borrow().is_some());
+        assert!(editor.status.with(|status| status.clone()).is_empty());
+        let failing: Apply = Rc::new(|_| Err("backend down".into()));
+        editor.vm.video.set_vsync(vsync).expect("vsync applies");
+        assert!(editor.apply(&failing).is_err());
+        assert_eq!(editor.status.with(|status| status.clone()), "backend down");
+        assert!(editor.dirty());
+        let called = Rc::new(Cell::new(false));
+        let guarded: Apply = Rc::new({
+            let called = called.clone();
+            move |_| {
+                called.set(true);
+                Ok(())
+            }
+        });
+        editor
+            .vm
+            .audio
+            .set_volume(200)
+            .expect("transact accepts out-of-range volume");
+        assert!(editor.apply(&guarded).is_err());
+        assert!(!called.get());
+        assert!(
+            editor
+                .status
+                .with(|status| status.clone())
+                .contains("Master volume")
+        );
+    }
+
+    /// Footer commands without a view: cancel approves the discard,
+    /// keep resumes editing, and only the global discard quits.
+    #[test]
+    fn commands_drive_cancel_accept_discard_and_keep() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let view_slot = Rc::new(RefCell::new(None));
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit = Rc::new(Cell::new(false));
+        let quit_fn: Rc<dyn Fn()> = Rc::new({
+            let quit = quit.clone();
+            move || quit.set(true)
+        });
+        let commands = editor.commands(&apply, quit_fn, &view_slot);
+        assert!(commands.cancel.enabled.get());
+        assert!(commands.accept.enabled.get());
+        assert!(!commands.discard.enabled.get());
+        assert!(!commands.keep.enabled.get());
+        let _ = commands.cancel.invoke();
+        assert!(editor.exit.get() == ExitChoice::DiscardApproved);
+        assert!(!editor.dirty());
+        assert!(!commands.cancel.enabled.get());
+        editor.cancel_close();
+        assert!(editor.exit.get() == ExitChoice::Editing);
+        assert!(
+            editor
+                .close_prompt
+                .with(|prompt| *prompt == ExitChoice::Editing)
+        );
+        editor.cancel_close();
+        assert!(editor.exit.get() == ExitChoice::Editing);
+        let vsync = editor.vm.video.view.get().vsync;
+        editor.vm.video.set_vsync(!vsync).expect("vsync applies");
+        assert!(!editor.confirm_close(false));
+        assert!(commands.discard.enabled.get());
+        assert!(commands.keep.enabled.get());
+        let _ = commands.keep.invoke();
+        assert!(editor.exit.get() == ExitChoice::Editing);
+        assert!(!commands.discard.enabled.get());
+        assert!(!editor.confirm_close(false));
+        let _ = commands.discard.invoke();
+        assert!(editor.exit.get() == ExitChoice::DiscardApproved);
+        assert!(!quit.get());
+        editor.cancel_close();
+        assert!(!editor.confirm_close(true));
+        assert!(editor.exit.get() == ExitChoice::ConfirmGlobal);
+        let _ = commands.discard.invoke();
+        assert!(quit.get());
+    }
+
+    /// Accept applies valid drafts, no-ops on invalid ones, and leaves
+    /// the dialog open with the backend error on status when saving fails.
+    #[test]
+    fn accept_applies_on_valid_draft_and_stays_put_otherwise() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let applied = Rc::new(Cell::new(false));
+        let apply: Apply = Rc::new({
+            let applied = applied.clone();
+            move |_| {
+                applied.set(true);
+                Ok(())
+            }
+        });
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let view_slot = Rc::new(RefCell::new(None));
+        let commands = editor.commands(&apply, quit, &view_slot);
+        let vsync = editor.vm.video.view.get().vsync;
+        editor.vm.video.set_vsync(!vsync).expect("vsync applies");
+        assert!(commands.accept.enabled.get());
+        let _ = commands.accept.invoke();
+        assert!(applied.get());
+        assert!(editor.exit.get() == ExitChoice::DiscardApproved);
+        assert!(!editor.dirty());
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        editor
+            .vm
+            .audio
+            .set_volume(200)
+            .expect("transact accepts out-of-range volume");
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let view_slot = Rc::new(RefCell::new(None));
+        let commands = editor.commands(&apply, quit, &view_slot);
+        assert!(!commands.accept.enabled.get());
+        assert!(!commands.accept.invoke());
+        assert!(editor.exit.get() == ExitChoice::Editing);
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let vsync = editor.vm.video.view.get().vsync;
+        editor.vm.video.set_vsync(!vsync).expect("vsync applies");
+        let failing: Apply = Rc::new(|_| Err("backend down".into()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let view_slot = Rc::new(RefCell::new(None));
+        let commands = editor.commands(&failing, quit, &view_slot);
+        let _ = commands.accept.invoke();
+        assert!(editor.exit.get() == ExitChoice::Editing);
+        assert_eq!(editor.status.with(|status| status.clone()), "backend down");
+    }
+
+    /// Capture/clear commands start and end a session headlessly: the
+    /// prompt surfaces on status and clears with the binding.
+    #[test]
+    fn capture_and_clear_commands_update_prompt_and_status() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        use nerust_settings_core::{editor::CaptureTarget, model::input::ShortcutAction};
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let view_slot = Rc::new(RefCell::new(None));
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let commands = editor.commands(&apply, quit, &view_slot);
+        let target = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        let capture = (commands.capture)(target.clone());
+        let clear = (commands.clear)(target.clone());
+        assert!(capture.enabled.get());
+        let _ = capture.invoke();
+        assert!(editor.vm.capture.view.get().target.is_some());
+        assert!(!editor.status.with(|status| status.clone()).is_empty());
+        let _ = clear.invoke();
+        assert!(editor.vm.capture.view.get().target.is_none());
+        assert!(editor.status.with(|status| status.clone()).is_empty());
+        editor.close();
+        assert!(!capture.enabled.get());
+        assert!(!capture.invoke());
+    }
+
+    /// Binding write paths: setter failures and validation failures both
+    /// land on status, and closed editors reject every write.
+    #[test]
+    fn binding_write_errors_surface_on_status() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let input = editor
+            .vm
+            .inputs()
+            .first()
+            .expect("real registry exposes inputs")
+            .clone();
+        let slot = input
+            .view
+            .get()
+            .slots
+            .first()
+            .expect("nes exposes a slot")
+            .slot_id;
+        let writer: Binding<Option<String>> = editor.binding(
+            input.view.clone(),
+            |_| None,
+            Some(Rc::new(move |value: Option<String>| {
+                input.set_controller_slot(slot, value.as_deref())
+            })),
+        );
+        assert!(!writer.set(Some("not-a-real-profile".into())));
+        assert!(!editor.status.with(|status| status.clone()).is_empty());
+        // A passing setter with an invalid draft reports validation.
+        let view_slot = Rc::new(RefCell::new(None));
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let presentation = editor.presentation(editor.commands(&apply, quit, &view_slot));
+        editor
+            .vm
+            .audio
+            .set_volume(200)
+            .expect("transact accepts out-of-range volume");
+        assert!(presentation.muted.set(true));
+        assert!(presentation.status.get().contains("Master volume"));
+        editor.close();
+        assert!(!writer.set(None));
+    }
+
+    /// Presentation bindings mirror the draft and round-trip writes:
+    /// numbers convert, choices reposition, durations parse as text.
+    #[test]
+    fn presentation_bindings_mirror_draft_and_round_trip_writes() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        use nerust_settings_core::model::language::AppLanguage;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let view_slot = Rc::new(RefCell::new(None));
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let presentation = editor.presentation(editor.commands(&apply, quit, &view_slot));
+        assert_eq!(presentation.page.get(), "general");
+        assert!(presentation.status.get().is_empty());
+        assert!(!presentation.confirmation.get());
+        assert_eq!(
+            presentation.fullscreen.get(),
+            editor.vm.video.view.get().fullscreen_default
+        );
+        assert_eq!(presentation.vsync.get(), editor.vm.video.view.get().vsync);
+        assert_eq!(presentation.muted.get(), editor.vm.audio.view.get().muted);
+        assert_eq!(
+            presentation.volume.get(),
+            f64::from(editor.vm.audio.view.get().volume_percent)
+        );
+        assert_eq!(
+            presentation.latency.get(),
+            f64::from(editor.vm.audio.view.get().latency_ms)
+        );
+        assert_eq!(
+            presentation.directory.get(),
+            editor.vm.general.view.get().storage_directory
+        );
+        assert_eq!(
+            presentation.directory_visible.get(),
+            editor.vm.general.view.get().show_storage_directory
+        );
+        assert_eq!(
+            presentation.input_pages.get().len(),
+            editor.vm.inputs().len() + 1
+        );
+        assert_eq!(
+            presentation.system_pages.get().len(),
+            editor.vm.systems().len()
+        );
+        let general = editor.vm.general.view.get();
+        assert_eq!(
+            presentation.language.items.get().len(),
+            general.language_choices.len()
+        );
+        let position = choice_position(&general.language_choices, &general.language)
+            .map(|index| index.to_string())
+            .unwrap_or_default();
+        assert_eq!(presentation.language.selected.get(), position);
+        assert!(presentation.volume.set(42.0));
+        assert_eq!(editor.vm.audio.view.get().volume_percent, 42);
+        assert_eq!(
+            presentation.volume_label.get(),
+            format!(
+                "{}: {:.0}%",
+                ui_text(AppLanguage::English, UiText::MasterVolume),
+                presentation.volume.get()
+            )
+        );
+        assert_eq!(
+            presentation.latency_label.get(),
+            format!(
+                "{}: {:.0} ms",
+                ui_text(AppLanguage::English, UiText::Latency),
+                presentation.latency.get()
+            )
+        );
+        assert_eq!(
+            presentation.labels.title.get(),
+            format!("nerust {}", ui_text(AppLanguage::English, UiText::Settings))
+        );
+        // Subscribing observes the live property; dropping ends the watch.
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let subscription = presentation.volume.subscribe(Rc::new({
+            let seen = seen.clone();
+            move |value| seen.borrow_mut().push(value)
+        }));
+        assert!(!seen.borrow().is_empty());
+        drop(subscription);
+        assert!(!presentation.volume.set(150.0));
+        assert_eq!(editor.vm.audio.view.get().volume_percent, 42);
+        assert!(presentation.latency.set(50.0));
+        assert_eq!(editor.vm.audio.view.get().latency_ms, 50);
+        assert!(!presentation.latency.set(500.0));
+        assert_eq!(editor.vm.audio.view.get().latency_ms, 50);
+        // Directory writes map empty text to the default location.
+        let dir =
+            std::env::temp_dir().join(format!("nerust-settings-directory-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("directory temp root");
+        assert!(
+            presentation
+                .directory
+                .set(dir.to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            editor.vm.general.view.get().storage_directory,
+            dir.to_string_lossy()
+        );
+        assert!(presentation.directory.set(String::new()));
+        assert!(editor.vm.general.view.get().storage_directory.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        let japanese = choice_position(&general.language_choices, &AppLanguage::Japanese)
+            .map(|index| index.to_string())
+            .expect("japanese is a language choice");
+        assert!(presentation.language.selected.set(japanese));
+        assert_eq!(editor.vm.general.view.get().language, AppLanguage::Japanese);
+        assert_eq!(
+            presentation.labels.cancel.get(),
+            ui_text(AppLanguage::Japanese, UiText::Cancel).to_string()
+        );
+        assert!(!presentation.language.selected.set("999".into()));
+        assert!(!presentation.language.selected.set("bogus".into()));
+        assert!(presentation.info_duration.set("3000".into()));
+        assert_eq!(editor.vm.notifications.view.get().info_duration_ms, 3000);
+        assert!(!presentation.info_duration.set("soon".into()));
+        assert_eq!(editor.vm.notifications.view.get().info_duration_ms, 3000);
+        assert!(presentation.page.set("audio".into()));
+        assert_eq!(editor.page.with(|page| page.clone()), "audio");
+    }
+
+    /// The YAML command shims hand back the footer commands, so the
+    /// surface key handler and the buttons share one wiring.
+    #[test]
+    fn presentation_command_wiring_matches_footer_commands() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let view_slot = Rc::new(RefCell::new(None));
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let presentation = editor.presentation(editor.commands(&apply, quit, &view_slot));
+        let argument = Binding::constant(String::new());
+        let cancel = presentation.command_cancel(argument.clone());
+        let accept = presentation.command_accept(argument.clone());
+        let discard = presentation.command_discard(argument.clone());
+        let keep = presentation.command_keep(argument);
+        assert!(cancel.enabled.get());
+        assert!(accept.enabled.get());
+        assert!(!discard.enabled.get());
+        assert!(!keep.enabled.get());
+        let _ = cancel.invoke();
+        assert!(editor.exit.get() == ExitChoice::DiscardApproved);
+    }
+
+    /// Choice and integer helpers: positions map both ways, unknown ids
+    /// reject, and only finite in-range integers convert.
+    #[test]
+    fn choice_and_integer_helpers_cover_edges() {
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let backing = Store::new(2u8, executor.clone());
+        let selected = backing.bind(|value| *value, Some(|slot: &mut u8, value| *slot = value));
+        let choices = Binding::constant(vec![
+            ChoiceView {
+                value: 7u8,
+                label: "Seven".into(),
+            },
+            ChoiceView {
+                value: 2u8,
+                label: "Two".into(),
+            },
+        ]);
+        let bound = choice(choices, selected);
+        assert_eq!(bound.items.get().len(), 2);
+        assert_eq!(bound.items.get()[0].label, "Seven");
+        assert_eq!(bound.selected.get(), "1");
+        assert!(bound.selected.set("0".into()));
+        assert!(!bound.selected.set("9".into()));
+        assert!(!bound.selected.set("nope".into()));
+        assert_eq!(checked_integer(10.0, 10.0, 200.0), Ok(10));
+        assert_eq!(checked_integer(200.0, 10.0, 200.0), Ok(200));
+        assert!(checked_integer(9.0, 10.0, 200.0).is_err());
+        assert!(checked_integer(10.5, 10.0, 200.0).is_err());
+        let backing = Store::new(120u32, executor);
+        let duration =
+            integer_text(backing.bind(|value| *value, Some(|slot: &mut u32, value| *slot = value)));
+        assert_eq!(duration.get(), "120");
+        assert!(duration.set("45".into()));
+        assert_eq!(duration.get(), "45");
+        assert!(!duration.set("soon".into()));
+        assert!(!duration.set(String::new()));
+        assert_eq!(duration.get(), "45");
+    }
 }

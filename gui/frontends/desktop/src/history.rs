@@ -388,3 +388,107 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod history_headless_tests {
+    //! Closed-pane, filter-gating and command-projection paths.
+    use super::*;
+    use nerust_gui_shell::session::notification::NotificationLevel;
+
+    struct NoDispatch;
+    impl Executor for NoDispatch {
+        fn spawn(&self, _: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>) {
+            panic!("history headless must not dispatch");
+        }
+    }
+
+    fn lines() -> Vec<HistoryLine> {
+        [NotificationLevel::Info, NotificationLevel::Warning]
+            .into_iter()
+            .map(|level| HistoryLine {
+                datetime: "2026-10-31 12:00:00".into(),
+                level,
+                module: "m",
+                text: "t".into(),
+                count: 1,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn closed_pane_needs_no_refresh() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.model.close();
+        pane.filter.close();
+        assert!(!pane.needs_refresh(99, AppLanguage::English));
+    }
+
+    #[test]
+    fn refresh_is_noop_without_revision_or_filter_change() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        let data = lines();
+        pane.refresh(7, AppLanguage::English, &data);
+        assert!(pane.model.update(|model| model.count = "sentinel".into()));
+        pane.refresh(7, AppLanguage::English, &data);
+        assert_eq!(pane.model.snapshot().count, "sentinel");
+        assert!(pane.model.update(|model| model.count = "other".into()));
+        assert!(
+            pane.filter
+                .update(|selected| *selected = HistoryFilter::Warning.id().into())
+        );
+        assert!(pane.needs_refresh(7, AppLanguage::English));
+        pane.refresh(7, AppLanguage::English, &data);
+        assert_ne!(pane.model.snapshot().count, "other");
+    }
+
+    #[test]
+    fn presentation_commands_mirror_model_gates() {
+        let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
+        pane.refresh(7, AppLanguage::English, &lines());
+        let build = || Presentation {
+            title: pane.model.bind(|model| model.title.clone(), None),
+            level_label: pane.model.bind(|model| model.level_label.clone(), None),
+            clear_label: pane.model.bind(|model| model.clear_label.clone(), None),
+            close_label: pane.model.bind(|model| model.close_label.clone(), None),
+            count: pane.model.bind(|model| model.count.clone(), None),
+            choices: pane.model.bind(|model| model.choices.clone(), None),
+            selected: pane.filter.bind(
+                Clone::clone,
+                Some(|filter: &mut String, value| *filter = value),
+            ),
+            table: pane.model.bind(|model| model.table.clone(), None),
+            clear: pane
+                .model
+                .command(|model| !model.empty, |_, _: ()| {}, Binding::constant(())),
+            close: pane
+                .model
+                .command(|_| true, |_, _: ()| {}, Binding::constant(())),
+        };
+        let presentation = build();
+        assert!(
+            presentation
+                .command_clear(Binding::constant(String::new()))
+                .enabled
+                .get()
+        );
+        assert!(
+            presentation
+                .command_close(Binding::constant(String::new()))
+                .enabled
+                .get()
+        );
+        assert!(pane.model.update(|model| model.empty = true));
+        assert!(
+            !build()
+                .command_clear(Binding::constant(String::new()))
+                .enabled
+                .get()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "history headless")]
+    fn executor_rejects_async_work() {
+        NoDispatch.spawn(Box::pin(async {}));
+    }
+}
