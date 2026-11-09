@@ -88,6 +88,7 @@ kotlin {
 
 dependencies {
     val composeBomVersion = "2026.09.00"
+    val material3Version = "1.5.0-rc01"
     val composeBom = platform("androidx.compose:compose-bom:$composeBomVersion")
     val documentFileVersion = "1.1.0"
     val junitVersion = "4.13.2"
@@ -102,7 +103,7 @@ dependencies {
     // Material 3 Expressive (settings screen redesign): pin the 1.5.0 line
     // where MaterialExpressiveTheme/MotionScheme.expressive() live. Lift to
     // stable 1.5.x once the BOM manages it.
-    implementation("androidx.compose.material3:material3:1.5.0-rc01")
+    implementation("androidx.compose.material3:material3:$material3Version")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.documentfile:documentfile:$documentFileVersion")
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")
