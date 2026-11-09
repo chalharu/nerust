@@ -6,6 +6,11 @@
     <string name="settings_clear">解除</string>
     <string name="settings_close">設定を閉じる</string>
     <string name="settings_save">保存</string>
+    <string name="settings_error_title">エラー</string>
+    <string name="settings_ok">OK</string>
+    <string name="settings_on">オン</string>
+    <string name="settings_off">オフ</string>
+    <string name="settings_update_retry">再試行してください。直らない場合は設定を開き直してください。</string>
     <string name="settings_discard_title">変更を破棄しますか？</string>
     <string name="settings_discard_message">保存されていない設定は失われます。</string>
     <string name="settings_discard_confirm">破棄する</string>

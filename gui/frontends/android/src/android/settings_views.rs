@@ -274,12 +274,15 @@ fn refreshed_payload(
 
 /// Hardware key routing for capture (and future keyboard play): Android
 /// keycodes to `Key`. Only pressed events with an active capture mutate.
+/// Returns the refreshed payload plus whether the key was consumed as a
+/// binding. Releases and unmapped keycodes leave the capture pending and
+/// report `false` so the platform can handle them (volume, Back, ...).
 pub(super) fn apply_hardware_key(
     keycode: i32,
     pressed: bool,
     snapshot: &mut SettingsSnapshot,
     capture: &mut CaptureSlot,
-) -> Result<String, String> {
+) -> Result<(String, bool), String> {
     with_vm_deps(|deps| {
         if pressed
             && let Some((target, _)) = capture.clone()
@@ -292,8 +295,10 @@ pub(super) fn apply_hardware_key(
             vm.capture.apply_captured_key(key);
             *snapshot = vm.snapshot();
             *capture = None;
+            Ok((refreshed_payload(snapshot, deps, capture)?, true))
+        } else {
+            Ok((refreshed_payload(snapshot, deps, capture)?, false))
         }
-        refreshed_payload(snapshot, deps, capture)
     })
 }
 
@@ -955,7 +960,7 @@ fn build_sections(vm: &SettingsViewModel, snapshot: &SettingsSnapshot) -> Vec<Se
         build_storage_section(vm, language),
     ];
     sections.extend(build_system_sections(vm, language));
-    sections.extend(build_input_sections(vm, language));
+    sections.extend(build_input_sections(vm));
     // Canonical order owned by Rust; machine sections keep factory order
     // after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -1403,8 +1408,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
 /// the controller group row. Hidden from the category list: same level would
 /// repeat machine names. Contains slot assignment plus keyboard bindings
 /// (capture-capable now that hardware keys route into the session).
-fn build_input_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
-    let _ = language;
+fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
     vm.inputs()
         .iter()
         .map(|input| {
@@ -1827,10 +1831,24 @@ mod tests {
         let started = apply(&mut snapshot, &mut capture, &key, "start_capture", 0, 0);
         let pending = started.capture.expect("capture pending");
         assert!(!pending.prompt.is_empty());
-        let done = with_test_deps(|| {
+        // Unmapped keycodes and releases must not consume: the platform
+        // keeps handling them (volume, Back, ...) while capture stays open.
+        let (_, consumed_release) = with_test_deps(|| {
+            apply_hardware_key(29, false, &mut snapshot, &mut capture)
+                .expect("hardware key release probes")
+        });
+        assert!(!consumed_release, "release is not consumed");
+        assert!(capture.is_some(), "capture stays pending on release");
+        let (_, consumed_unknown) = with_test_deps(|| {
+            apply_hardware_key(999, true, &mut snapshot, &mut capture)
+                .expect("unknown keycode probes")
+        });
+        assert!(!consumed_unknown, "unmapped keycode is not consumed");
+        assert!(capture.is_some(), "capture stays pending on unknown key");
+        let (_, consumed) = with_test_deps(|| {
             apply_hardware_key(29, true, &mut snapshot, &mut capture).expect("hardware key applies")
         });
-        let _ = done;
+        assert!(consumed, "mapped press is consumed");
         assert!(capture.is_none(), "capture consumes after one key");
     }
 

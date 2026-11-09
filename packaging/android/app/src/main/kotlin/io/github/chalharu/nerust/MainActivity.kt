@@ -163,7 +163,8 @@ class MainActivity :
                 source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
                 source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
         if (!isController) {
-            return forwardHardwareKeyIfCapturing(event) || super.dispatchKeyEvent(event)
+            return routeSettingsKeyEvent(event.keyCode, event.action, event.source) ||
+                super.dispatchKeyEvent(event)
         }
         val key =
             when (event.keyCode) {
@@ -603,15 +604,35 @@ class MainActivity :
         )
     }
 
-    /** Route key events to Rust while a binding capture is pending. Swallows
-     * everything capturing so typing cannot leak into other fields. */
-    private fun forwardHardwareKeyIfCapturing(event: KeyEvent): Boolean {
+    /** Route a key event to Rust while a binding capture is pending. Returns
+     * true only when Rust consumed the key as a binding; unmapped keys and
+     * releases fall through so the platform keeps handling them. Shared by
+     * the activity dispatcher and the dialog key hook (the dialog window
+     * holds focus while settings are open, so activity dispatch never fires
+     * there). Gamepad-source keys stay out: gamepad capture is future work. */
+    private fun routeSettingsKeyEvent(
+        keyCode: Int,
+        action: Int,
+        source: Int,
+    ): Boolean {
+        val isController =
+            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
+                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        if (isController) return false
+        return forwardHardwareKeyIfCapturing(keyCode, action)
+    }
+
+    private fun forwardHardwareKeyIfCapturing(
+        keyCode: Int,
+        action: Int,
+    ): Boolean {
         val nav = settingsNavActions ?: return false
         if (!nav.isCapturing) return false
-        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return true
+        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return true
         val raw =
             try {
-                nativeHardwareKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
+                nativeHardwareKey(keyCode, action == KeyEvent.ACTION_DOWN)
             } catch (e: Exception) {
                 Log.e(TAG, "nativeHardwareKey failed", e)
                 null
@@ -624,10 +645,13 @@ class MainActivity :
                     null
                 }
             }
+        // Swallow only what Rust consumed as a binding; everything else
+        // (volume, unmapped keys, releases) keeps its platform behavior.
         if (doc != null && doc.optBoolean("consumed", false)) {
             nav.applyPayload(doc.toString())
+            return true
         }
-        return true
+        return false
     }
 
     fun applyScreenOrientation(value: Int) {
@@ -657,9 +681,14 @@ class MainActivity :
                 settingsContentDescription(
                     sections,
                     getString(R.string.settings_title),
+                    getString(R.string.settings_on),
+                    getString(R.string.settings_off),
                 ),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
+            onKeyEvent = { keyCode, event ->
+                routeSettingsKeyEvent(keyCode, event.action, event.source)
+            },
             onBackPressed = {
                 val nav = settingsNavActions
                 when {
@@ -723,7 +752,7 @@ class MainActivity :
             R.id.nerust_settings_hierarchy_probe,
             buildSettingsSections(sections).joinToString("\n") { section ->
                 val count = section.rows.count { it.kind != "header" }
-                "${section.label}: ${settingsCountLabel(count)}"
+                "${section.label}: ${resources.getQuantityString(R.plurals.settings_count, count, count)}"
             },
         )
     }

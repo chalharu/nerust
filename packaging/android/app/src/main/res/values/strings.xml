@@ -6,6 +6,11 @@
     <string name="settings_clear">Clear</string>
     <string name="settings_close">Close settings</string>
     <string name="settings_save">Save</string>
+    <string name="settings_error_title">Error</string>
+    <string name="settings_ok">OK</string>
+    <string name="settings_on">On</string>
+    <string name="settings_off">Off</string>
+    <string name="settings_update_retry">Please try again. If it keeps happening, reopen settings.</string>
     <string name="settings_discard_title">Discard changes?</string>
     <string name="settings_discard_message">Unsaved settings will be lost.</string>
     <string name="settings_discard_confirm">Discard</string>
