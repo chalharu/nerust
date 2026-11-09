@@ -119,14 +119,17 @@ pub(super) enum RowKind {
     Capture,
 }
 
-/// One pick-list entry: display label, opaque typed value, and whether the
-/// choice is currently selectable (slot conflicts disable taken profiles).
+/// One pick-list entry: display label, opaque typed value, whether the
+/// choice is currently selectable (slot conflicts disable taken profiles),
+/// and the owner slot label when disabled so Kotlin can explain why.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ChoiceWire {
     pub value: serde_json::Value,
     pub label: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
@@ -789,6 +792,7 @@ where
             value: serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
             label: label.clone(),
             enabled: true,
+            reason: String::new(),
         })
         .collect();
     let selected = wires
@@ -951,7 +955,7 @@ fn build_sections(vm: &SettingsViewModel, snapshot: &SettingsSnapshot) -> Vec<Se
         build_storage_section(vm, language),
     ];
     sections.extend(build_system_sections(vm, language));
-    sections.extend(build_input_sections(vm));
+    sections.extend(build_input_sections(vm, language));
     // Canonical order owned by Rust; machine sections keep factory order
     // after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -1399,12 +1403,14 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
 /// the controller group row. Hidden from the category list: same level would
 /// repeat machine names. Contains slot assignment plus keyboard bindings
 /// (capture-capable now that hardware keys route into the session).
-fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
+fn build_input_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
+    let _ = language;
     vm.inputs()
         .iter()
         .map(|input| {
             let view = input.view.get();
-            // Profiles taken by another slot cannot be picked here.
+            // Profiles taken by another slot cannot be picked here; keep the
+            // owner slot label so Kotlin can explain the disabled choice.
             let taken: std::collections::HashMap<String, String> = view
                 .slots
                 .iter()
@@ -1413,6 +1419,11 @@ fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                         .clone()
                         .map(|profile| (profile, slot.slot_id.as_str().to_string()))
                 })
+                .collect();
+            let slot_labels: std::collections::HashMap<String, String> = view
+                .slots
+                .iter()
+                .map(|slot| (slot.slot_id.as_str().to_string(), slot.label.clone()))
                 .collect();
             let mut rows: Vec<RowWire> = view
                 .slots
@@ -1436,12 +1447,17 @@ fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                             .unwrap_or(serde_json::Value::Null),
                     );
                     for (wire, choice) in row.choices.iter_mut().zip(slot.choices.iter()) {
-                        wire.enabled = match &choice.value {
-                            None => true,
+                        let owner = match &choice.value {
+                            None => None,
                             Some(profile) => taken
                                 .get(profile)
-                                .is_none_or(|owner| owner == slot.slot_id.as_str()),
+                                .filter(|owner| *owner != slot.slot_id.as_str()),
                         };
+                        wire.enabled = owner.is_none();
+                        wire.reason = owner
+                            .and_then(|owner| slot_labels.get(owner))
+                            .cloned()
+                            .unwrap_or_default();
                     }
                     row
                 })
@@ -1779,6 +1795,10 @@ mod tests {
             .find(|choice| choice.value == profile)
             .expect("same profile listed for player2");
         assert!(!taken.enabled, "taken profile disables elsewhere");
+        assert!(
+            !taken.reason.is_empty(),
+            "disabled choice names its owner slot"
+        );
         // ...but stays enabled in its own slot.
         let own = row(&next, p1_key)
             .choices

@@ -106,10 +106,11 @@ class DialogManager(private val activity: MainActivity) {
                 }
             }
 
+        // No theme wrapper here: every host (settings, error) brings its
+        // own expressive theme. A shared wrapper would nest themes and
+        // skew surface colors.
         composeView.setContent {
-            androidx.compose.material3.MaterialTheme {
-                content { dialog.dismiss() }
-            }
+            content { dialog.dismiss() }
         }
 
         activity.installComposeOwners(root)

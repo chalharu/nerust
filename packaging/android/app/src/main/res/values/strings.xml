@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_cancel">Cancel</string>
+    <string name="settings_clear">Clear</string>
+    <string name="settings_close">Close settings</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_discard_title">Discard changes?</string>
+    <string name="settings_discard_message">Unsaved settings will be lost.</string>
+    <string name="settings_discard_confirm">Discard</string>
+    <string name="settings_keep_editing">Keep editing</string>
+    <string name="settings_tap_to_assign">Tap to assign</string>
+    <string name="settings_used_in">Used in %1$s</string>
+    <string name="settings_used_elsewhere">Used in another slot</string>
+    <string name="settings_needs_attention">Needs attention before saving</string>
+    <string name="settings_update_failed">Couldn\'t update setting</string>
+    <plurals name="settings_count">
+        <item quantity="one">%d setting</item>
+        <item quantity="other">%d settings</item>
+    </plurals>
+</resources>

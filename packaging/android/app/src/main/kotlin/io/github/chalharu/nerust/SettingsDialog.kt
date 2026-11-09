@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -51,9 +54,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import kotlin.math.roundToLong
 import org.json.JSONObject
 
@@ -87,6 +97,7 @@ internal object SettingsSectionFallback {
 internal data class SettingsChoice(
     val label: String,
     val enabled: Boolean = true,
+    val reason: String = "",
 )
 
 /** One settings row as projected by Rust (`settings_views::RowWire`). */
@@ -132,6 +143,7 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                         SettingsChoice(
                             label = option.getString("label"),
                             enabled = option.optBoolean("enabled", true),
+                            reason = option.optString("reason", ""),
                         )
                 }
             }
@@ -179,8 +191,10 @@ internal data class SettingsNavActions(
     val canNavigateUp: Boolean,
     val isDirty: Boolean,
     val isCapturing: Boolean,
+    val isConfirming: Boolean,
     val navigateUp: () -> Unit,
     val requestCancel: () -> Unit,
+    val dismissConfirm: () -> Unit,
     val cancelCapture: () -> Unit,
     val applyPayload: (String) -> Unit,
 )
@@ -252,32 +266,41 @@ internal fun NerustErrorDialogCard(
     message: String,
     onDismissRequest: () -> Unit,
 ) {
-    NerustDialogHost {
-        NerustDialogCard(
-            title = "Error",
-            buttons = {
-                TextButton(onClick = onDismissRequest) { Text("OK") }
-            },
-        ) {
-            SelectionContainer {
-                Text(
-                    text = message,
-                    modifier =
-                        Modifier
-                            .heightIn(max = 480.dp)
-                            .verticalScroll(rememberScrollState()),
-                )
+    NerustExpressiveHost {
+        NerustDialogHost {
+            NerustDialogCard(
+                title = "Error",
+                buttons = {
+                    TextButton(onClick = onDismissRequest) { Text("OK") }
+                },
+            ) {
+                SelectionContainer {
+                    Text(
+                        text = message,
+                        modifier =
+                            Modifier
+                                .heightIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState()),
+                    )
+                }
             }
         }
     }
 }
 
-internal fun settingsContentDescription(sections: List<SettingsSection>): String =
+internal fun settingsContentDescription(
+    sections: List<SettingsSection>,
+    title: String = "Settings",
+): String =
     buildList {
-        add("Settings")
-        sections.flatMap { it.rows }.filter { it.kind != "header" }.forEach { row ->
-            add("${row.label}: ${settingsRowDisplayValue(row)}")
-        }
+        add(title)
+        sections
+            .filter { it.visible }
+            .flatMap { it.rows }
+            .filter { it.kind != "header" }
+            .forEach { row ->
+                add("${row.label}: ${settingsRowDisplayValue(row)}")
+            }
     }.joinToString("\n")
 
 internal fun settingsRowDisplayValue(row: SettingsRow): String =
@@ -352,10 +375,6 @@ internal fun NerustSettingsDialogCard(
 
     val activeSection = sections.find { it.id == activeSectionId }
     val activeRow = activeSection?.rows?.find { it.key == activeRowKey }
-    val title =
-        activeRow?.label
-            ?: activeSection?.label
-            ?: "Settings"
     val canNavigateUp = activeSection != null || activeRow != null
     val isCapturing = capturePrompt != null
 
@@ -375,34 +394,71 @@ internal fun NerustSettingsDialogCard(
         }
     }
 
-    onNavStateChanged(
-        SettingsNavActions(
-            canNavigateUp = canNavigateUp,
-            isDirty = isDirty,
-            isCapturing = isCapturing,
-            navigateUp = ::navigateUp,
-            requestCancel = ::requestCancel,
-            cancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
-            applyPayload = { raw ->
-                if (applyPayloadJson(raw)) isDirty = true
-            },
-        ),
-    )
+    // Publish exactly when navigation-relevant state changes; calling the
+    // callback directly during composition would re-trigger on every recompose.
+    LaunchedEffect(canNavigateUp, isDirty, isCapturing, confirmDiscard) {
+        onNavStateChanged(
+            SettingsNavActions(
+                canNavigateUp = canNavigateUp,
+                isDirty = isDirty,
+                isCapturing = isCapturing,
+                isConfirming = confirmDiscard,
+                navigateUp = ::navigateUp,
+                requestCancel = ::requestCancel,
+                dismissConfirm = { confirmDiscard = false },
+                cancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
+                applyPayload = { raw ->
+                    if (applyPayloadJson(raw)) isDirty = true
+                },
+            ),
+        )
+    }
+
+    val screenTitle = activeRow?.label ?: activeSection?.label ?: stringResource(R.string.settings_title)
+    val screenSubtitle =
+        when {
+            activeRow != null -> activeSection?.label
+            activeSection != null -> stringResource(R.string.settings_title)
+            else -> null
+        }
 
     NerustExpressiveHost {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(text = title) },
+                    title = {
+                        Column {
+                            Text(text = screenTitle)
+                            screenSubtitle?.let {
+                                Text(
+                                    text = it,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
                     navigationIcon = {
                         if (canNavigateUp) {
-                            TextButton(onClick = ::navigateUp) { Text("Back") }
+                            IconButton(onClick = ::navigateUp) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.settings_back),
+                                )
+                            }
                         } else {
-                            TextButton(onClick = ::requestCancel) { Text("Cancel") }
+                            IconButton(onClick = ::requestCancel) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.settings_close),
+                                )
+                            }
                         }
                     },
                     actions = {
-                        FilledTonalButton(onClick = onSave) { Text("Save") }
+                        FilledTonalButton(onClick = onSave, enabled = isDirty) {
+                            Text(stringResource(R.string.settings_save))
+                        }
                     },
                     colors =
                         TopAppBarDefaults.topAppBarColors(
@@ -446,7 +502,10 @@ internal fun NerustSettingsDialogCard(
                         "capture" -> {
                             sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
                         }
-                        else -> activeRowKey = row.key
+                        "choice" -> activeRowKey = row.key
+                        // toggle/number/info act inline or are static;
+                        // never push a detail level.
+                        else -> Unit
                     }
                 },
                 onClearCapture = { row ->
@@ -458,18 +517,20 @@ internal fun NerustSettingsDialogCard(
         if (confirmDiscard) {
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { confirmDiscard = false },
-                title = { Text("Discard changes?") },
-                text = { Text("Unsaved settings will be lost.") },
+                title = { Text(stringResource(R.string.settings_discard_title)) },
+                text = { Text(stringResource(R.string.settings_discard_message)) },
                 confirmButton = {
                     TextButton(
                         onClick = {
                             confirmDiscard = false
                             onDismissRequest()
                         },
-                    ) { Text("Discard") }
+                    ) { Text(stringResource(R.string.settings_discard_confirm)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") }
+                    TextButton(onClick = { confirmDiscard = false }) {
+                        Text(stringResource(R.string.settings_keep_editing))
+                    }
                 },
             )
         }
@@ -524,7 +585,9 @@ private fun SettingsScreenContent(
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = onCancelCapture) { Text("Cancel") }
+                    TextButton(onClick = onCancelCapture) {
+                        Text(stringResource(R.string.settings_cancel))
+                    }
                 }
             }
         }
@@ -540,6 +603,12 @@ private fun SettingsScreenContent(
                         .padding(vertical = 8.dp),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = stringResource(R.string.settings_needs_attention),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
                     issues.forEach { issue ->
                         Text(
                             text = "\u2022 $issue",
@@ -551,12 +620,18 @@ private fun SettingsScreenContent(
             }
         }
         commandError?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Text(
+                    text = stringResource(R.string.settings_update_failed),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
         when {
             activeRow != null && activeRow.kind == "choice" -> {
@@ -597,10 +672,15 @@ private fun SettingsCategoryList(
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         itemsIndexed(sections, key = { _, section -> section.id }) { _, section ->
+            // Summaries show only inline-editable rows; group/capture/info
+            // rows would leak a bare chevron or a binding label here.
             val summary =
-                section.rows.filter { it.kind != "header" }.take(2).joinToString(" · ") { row ->
-                    "${row.label}: ${settingsRowDisplayValue(row)}"
-                }
+                section.rows
+                    .filter { it.kind == "choice" || it.kind == "toggle" || it.kind == "number" }
+                    .take(2)
+                    .joinToString(" · ") { row ->
+                        "${row.label}: ${settingsRowDisplayValue(row)}"
+                    }
             Card(
                 onClick = { onSectionClick(section.id) },
                 shape = RoundedCornerShape(28.dp),
@@ -616,7 +696,12 @@ private fun SettingsCategoryList(
                         style = MaterialTheme.typography.titleLarge,
                     )
                     Text(
-                        text = settingsCountLabel(section.rows.size),
+                        text =
+                            pluralStringResource(
+                                R.plurals.settings_count,
+                                section.rows.size,
+                                section.rows.size,
+                            ),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -665,7 +750,7 @@ private fun SettingsSectionList(
                     shape = RoundedCornerShape(28.dp),
                     colors =
                         CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
                         ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -695,8 +780,9 @@ private fun SettingsSectionList(
                                 "group" -> {
                                     SettingsNavigationRow(
                                         title = row.label,
-                                        value = "\u203a",
+                                        value = "",
                                         semanticsLabel = "${row.key}: ${row.label}",
+                                        showChevron = true,
                                         onClick = { onRowClick(row) },
                                     )
                                 }
@@ -708,11 +794,10 @@ private fun SettingsSectionList(
                                     )
                                 }
                                 else -> {
-                                    SettingsNavigationRow(
+                                    SettingsInfoRow(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
                                         semanticsLabel = "${row.key}: ${row.label}",
-                                        onClick = { onRowClick(row) },
                                     )
                                 }
                             }
@@ -756,11 +841,16 @@ private fun SettingsToggleRow(
     row: SettingsRow,
     onToggle: (Boolean) -> Unit,
 ) {
+    val checked = row.selected == 1
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = { onToggle(row.selected != 1) })
+                .toggleable(
+                    value = checked,
+                    role = Role.Switch,
+                    onValueChange = onToggle,
+                )
                 .padding(horizontal = 24.dp, vertical = 12.dp)
                 .semantics { contentDescription = "${row.key}: ${row.label}" },
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -771,9 +861,11 @@ private fun SettingsToggleRow(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.titleMedium,
         )
+        // Row owns the toggle; the switch is a static indicator so a tap
+        // never fires twice and TalkBack announces a single switch.
         Switch(
-            checked = row.selected == 1,
-            onCheckedChange = onToggle,
+            checked = checked,
+            onCheckedChange = null,
         )
     }
 }
@@ -797,6 +889,8 @@ private fun SettingsSliderRow(
     LaunchedEffect(row.key, row.number) {
         sliderState.value = snap(row.number).toFloat()
     }
+    // No snap during the drag: the thumb tracks the finger and only the
+    // label previews the snapped step; the commit snaps on release.
     Column(
         modifier =
             Modifier
@@ -822,7 +916,7 @@ private fun SettingsSliderRow(
         Spacer(modifier = Modifier.height(8.dp))
         Slider(
             state = sliderState,
-            onValueChange = { v -> sliderState.value = snap(v.roundToLong()).toFloat() },
+            onValueChange = { v -> sliderState.value = v },
             onValueChangeFinished = { onCommit(snap(sliderState.value.roundToLong())) },
         )
     }
@@ -834,24 +928,32 @@ private fun SettingsCaptureRow(
     onStart: () -> Unit,
     onClear: () -> Unit,
 ) {
+    // Tap targets are siblings, not nested: the label column starts
+    // capture, the trailing button clears. Nested clickables would let a
+    // Clear tap also start a capture.
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onStart)
                 .padding(horizontal = 24.dp, vertical = 12.dp)
                 .semantics { contentDescription = "${row.key}: ${row.label}" },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .clickable(onClick = onStart)
+                    .padding(vertical = 4.dp),
+        ) {
             Text(text = row.label, style = MaterialTheme.typography.titleMedium)
             Text(
-                text = row.text.ifBlank { "Tap to assign" },
+                text = row.text.ifBlank { stringResource(R.string.settings_tap_to_assign) },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        TextButton(onClick = onClear) { Text("Clear") }
+        TextButton(onClick = onClear) { Text(stringResource(R.string.settings_clear)) }
     }
 }
 
@@ -870,12 +972,21 @@ private fun SettingsChoiceList(
                 shape = RoundedCornerShape(28.dp),
                 colors =
                     CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     ),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column {
                     row.choices.forEachIndexed { choiceIndex, choice ->
+                        val reason =
+                            choice.reason.ifBlank { null }?.let { owner ->
+                                if (owner.isBlank()) {
+                                    stringResource(R.string.settings_used_elsewhere)
+                                } else {
+                                    // Rust passes the owner slot label; Kotlin owns the sentence.
+                                    LocalContext.current.getString(R.string.settings_used_in, owner)
+                                }
+                            }
                         Row(
                             modifier =
                                 Modifier
@@ -889,16 +1000,26 @@ private fun SettingsChoiceList(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = choice.label,
-                                modifier = Modifier.weight(1f),
-                                color =
-                                    if (choice.enabled) {
-                                        MaterialTheme.colorScheme.onSurface
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = choice.label,
+                                    color =
+                                        if (choice.enabled) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                )
+                                if (!choice.enabled) {
+                                    Text(
+                                        text =
+                                            reason
+                                                ?: stringResource(R.string.settings_used_elsewhere),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                             RadioButton(
                                 selected = row.selected == choiceIndex,
                                 onClick = null,
@@ -919,6 +1040,7 @@ private fun SettingsNavigationRow(
     value: String,
     semanticsLabel: String,
     supportingText: String? = null,
+    showChevron: Boolean = false,
     onClick: () -> Unit,
 ) {
     Row(
@@ -937,6 +1059,41 @@ private fun SettingsNavigationRow(
                 Text(text = it, style = MaterialTheme.typography.bodySmall)
             }
         }
+        if (value.isNotBlank()) {
+            Text(text = value, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (showChevron) {
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsInfoRow(
+    title: String,
+    value: String,
+    semanticsLabel: String,
+) {
+    // Static readout: deliberately not clickable so it never pushes a
+    // detail level that renders nothing.
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+                .semantics { contentDescription = semanticsLabel },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f),
+        )
         Text(text = value, style = MaterialTheme.typography.bodyMedium)
     }
 }

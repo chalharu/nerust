@@ -104,6 +104,8 @@ dependencies {
     // where MaterialExpressiveTheme/MotionScheme.expressive() live. Lift to
     // stable 1.5.x once the BOM manages it.
     implementation("androidx.compose.material3:material3:$material3Version")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.documentfile:documentfile:$documentFileVersion")
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")

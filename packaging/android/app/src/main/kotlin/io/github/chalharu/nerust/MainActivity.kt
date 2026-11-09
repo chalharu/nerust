@@ -653,13 +653,23 @@ class MainActivity :
 
         dialogManager.show(
             dialogTag = SETTINGS_DIALOG_TAG,
-            contentDescription = settingsContentDescription(sections),
+            contentDescription =
+                settingsContentDescription(
+                    sections,
+                    getString(R.string.settings_title),
+                ),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onBackPressed = {
                 val nav = settingsNavActions
                 when {
                     nav == null -> false
+                    // The discard confirm is a Compose overlay inside the
+                    // settings dialog; close it before any navigation.
+                    nav.isConfirming -> {
+                        nav.dismissConfirm()
+                        true
+                    }
                     nav.isCapturing -> {
                         nav.cancelCapture()
                         true
@@ -727,7 +737,8 @@ class MainActivity :
                     choices.put(
                         JSONObject()
                             .put("label", choice.label)
-                            .put("enabled", choice.enabled),
+                            .put("enabled", choice.enabled)
+                            .put("reason", choice.reason),
                     )
                 }
                 array.put(
