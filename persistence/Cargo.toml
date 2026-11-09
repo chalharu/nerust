@@ -21,4 +21,4 @@ zip.workspace = true
 ignored = ["serde_bytes"]
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { features = ["Win32_Storage_FileSystem"], version = "=0.61.2" }
+windows-sys = { features = ["Win32_Storage_FileSystem"], workspace = true }
