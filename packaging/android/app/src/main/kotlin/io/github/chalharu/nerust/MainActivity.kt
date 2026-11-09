@@ -588,9 +588,7 @@ class MainActivity :
 
     internal fun showSettingsDialogForTest(sections: List<SettingsSection>) {
         showSettingsDialogInternal(
-            payload =
-                JSONObject()
-                    .put("sections", sectionsToJson(sections)),
+            payload = sectionsToJson(sections),
             requestId = null,
             ownedByTest = true,
         )
