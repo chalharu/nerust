@@ -415,11 +415,11 @@ internal fun NerustSettingsDialogCard(
     }
 
     val screenTitle = activeRow?.label ?: activeSection?.label ?: stringResource(R.string.settings_title)
+    // activeRow is looked up inside activeSection, so a non-null row implies
+    // a non-null section; `let` keeps that guarantee null-safe.
     val screenSubtitle =
-        when {
-            activeRow != null -> activeSection?.label
-            activeSection != null -> stringResource(R.string.settings_title)
-            else -> null
+        activeSection?.let { section ->
+            if (activeRow != null) section.label else stringResource(R.string.settings_title)
         }
 
     NerustExpressiveHost {
