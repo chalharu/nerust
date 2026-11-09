@@ -1130,10 +1130,10 @@ mod tests {
     }
 
     fn with_test_deps<T>(operation: impl FnOnce() -> T) -> T {
+        // Never reset: tests share the process-wide slot and run in parallel.
+        // Installs are equivalent, so a concurrent overwrite is benign.
         install_vm_deps(test_deps().factories, test_deps().rates);
-        let result = operation();
-        *VM_DEPS.lock().unwrap() = None;
-        result
+        operation()
     }
 
     fn test_payload() -> (SettingsSnapshot, ViewPayload) {
