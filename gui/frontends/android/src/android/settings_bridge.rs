@@ -7,7 +7,7 @@ use jni::objects::{JObject, JString, JValue};
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, SettingsDialogResult};
-use super::settings_views::{self, CaptureSlot, SETTINGS_SCHEMA_VERSION};
+use super::settings_views::{self, SETTINGS_SCHEMA_VERSION};
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::local::ScreenOrientation;
@@ -205,7 +205,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeHardwar
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
     let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<(i32, bool)> {
-        Ok((keycode, pressed != 0))
+        Ok((keycode, pressed))
     });
     let out = match parsed {
         jni::Outcome::Ok((keycode, pressed)) => bridge::with_settings(|state| {
