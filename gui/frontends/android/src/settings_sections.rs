@@ -6,6 +6,7 @@ use nerust_settings_core::model::language::AppLanguage;
 
 /// Canonical settings section ids in payload order.
 pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
+    "general",
     "audio",
     "video",
     "controls",

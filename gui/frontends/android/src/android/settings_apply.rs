@@ -111,11 +111,7 @@ impl super::AndroidFrontend {
             .storage_policy;
         if next.shared.persistence.storage_policy != StoragePolicy::AppSharedData
             && (next.shared.persistence.storage_policy != previous
-                || next
-                    .shared
-                    .persistence
-                    .storage_document_tree_uri
-                    .is_none())
+                || next.shared.persistence.storage_document_tree_uri.is_none())
         {
             self.pending_storage_settings = Some(next);
             match picker::request_open_document_tree(&self.app) {

@@ -197,15 +197,13 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSetting
     _activity: JObject<'_>,
     command: JString<'_>,
 ) -> jni::sys::jstring {
-    let parsed = bridge::with_callback_env(
-        &mut env,
-        |env| -> jni::errors::Result<String> { command.try_to_string(env) },
-    );
+    let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<String> {
+        command.try_to_string(env)
+    });
     let out = match parsed {
         jni::Outcome::Ok(command_json) => bridge::with_settings(|state| {
             let Some(draft) = state.draft.as_mut() else {
-                return serde_json::json!({"ok": false, "error": "no settings draft"})
-                    .to_string();
+                return serde_json::json!({"ok": false, "error": "no settings draft"}).to_string();
             };
             match settings_views::apply_command_to(draft, &command_json) {
                 Ok(sections) => serde_json::json!({"ok": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
@@ -214,12 +212,9 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSetting
         }),
         _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
     };
-    match bridge::with_callback_env(
-        &mut env,
-        |env| -> jni::errors::Result<jni::sys::jstring> {
-            Ok(env.new_string(out)?.into_raw())
-        },
-    ) {
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
+        Ok(env.new_string(out)?.into_raw())
+    }) {
         jni::Outcome::Ok(ptr) => ptr,
         _ => std::ptr::null_mut(),
     }

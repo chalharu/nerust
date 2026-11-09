@@ -221,8 +221,13 @@ pub(super) fn finish_snapshot(
         Rc::new(SafStorageValidator),
     )
     .map_err(|error| vec![error.to_string()])?;
-    vm.finish()
-        .map_err(|state| state.issues.iter().map(|issue| issue.message.clone()).collect())
+    vm.finish().map_err(|state| {
+        state
+            .issues
+            .iter()
+            .map(|issue| issue.message.clone())
+            .collect()
+    })
 }
 
 fn is_android_local_key(key: &str) -> bool {
@@ -284,7 +289,9 @@ fn apply_view_model_command(
     match command.key.as_str() {
         "general.language" => {
             let value: AppLanguage = choice(row, command.index)?;
-            vm.general.set_language(value).map_err(|error| error.to_string())
+            vm.general
+                .set_language(value)
+                .map_err(|error| error.to_string())
         }
         "general.storage_policy" => {
             let value: StoragePolicy = choice(row, command.index)?;
@@ -302,7 +309,9 @@ fn apply_view_model_command(
         }
         "audio.volume" => {
             let value: u8 = range_value(&command.key, command.number)?;
-            vm.audio.set_volume(value).map_err(|error| error.to_string())
+            vm.audio
+                .set_volume(value)
+                .map_err(|error| error.to_string())
         }
         "audio.sample_rate" => {
             let value: u32 = choice(row, command.index)?;
@@ -312,7 +321,9 @@ fn apply_view_model_command(
         }
         "audio.latency" => {
             let value: u16 = range_value(&command.key, command.number)?;
-            vm.audio.set_latency(value).map_err(|error| error.to_string())
+            vm.audio
+                .set_latency(value)
+                .map_err(|error| error.to_string())
         }
         "notifications.info_enabled" => {
             let value = toggle_value(row, command.index)?;
@@ -610,6 +621,14 @@ fn build_sections(vm: &SettingsViewModel, snapshot: &SettingsSnapshot) -> Vec<Se
     sections.extend(build_system_sections(vm));
     sections.extend(build_input_sections(vm));
     sections.push(build_shortcuts_section(vm));
+    // Canonical order owned by Rust; extras keep discovery order. Stable sort
+    // keeps unknown ids (input.*, shortcuts) after the known taxonomy.
+    sections.sort_by_key(|section| {
+        crate::settings_sections::SETTINGS_SECTION_IDS
+            .iter()
+            .position(|id| *id == section.id)
+            .unwrap_or(usize::MAX)
+    });
     sections
 }
 
@@ -924,7 +943,10 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
                 "controls.cartridge_rumble_target",
                 t(UiText::RumbleTarget),
                 &[
-                    (RumbleTarget::Auto, ui_text(language, UiText::Auto).to_string()),
+                    (
+                        RumbleTarget::Auto,
+                        ui_text(language, UiText::Auto).to_string(),
+                    ),
                     (
                         RumbleTarget::Handset,
                         ui_text(language, UiText::Handset).to_string(),
@@ -991,10 +1013,7 @@ fn build_system_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                                 .choices
                                 .iter()
                                 .map(|choice| {
-                                    (
-                                        choice.value.as_str().to_string(),
-                                        choice.label.clone(),
-                                    )
+                                    (choice.value.as_str().to_string(), choice.label.clone())
                                 })
                                 .collect::<Vec<_>>(),
                             &field.selected.as_str().to_string(),
@@ -1016,11 +1035,7 @@ fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                 .iter()
                 .map(|slot| {
                     choice_row(
-                        &format!(
-                            "input.{}.slot.{}",
-                            view.system_id,
-                            slot.slot_id.as_str()
-                        ),
+                        &format!("input.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                         slot.label.clone(),
                         &slot
                             .choices
@@ -1120,8 +1135,7 @@ mod tests {
     use nerust_nes_factory::NesFactory;
     use nerust_nes_settings::{NesSettings, NesVideoFilter};
     use nerust_settings_core::model::{
-        app_state::DesktopAppState, local::HostBackendLocalSettings,
-        shared::DesktopSharedSettings,
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     };
     use nerust_settings_traits::SystemSettings;
 
@@ -1279,13 +1293,7 @@ mod tests {
             .shared
             .systems
             .get(NesFactory.system_id().as_ref())
-            .map(|settings| {
-                settings
-                    .downcast_ref::<NesSettings>()
-                    .unwrap()
-                    .video
-                    .filter
-            })
+            .map(|settings| settings.downcast_ref::<NesSettings>().unwrap().video.filter)
             .unwrap();
         assert_eq!(nes, NesVideoFilter::NtscRgb);
     }

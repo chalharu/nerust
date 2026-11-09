@@ -377,7 +377,11 @@ impl AndroidFrontend {
     fn refresh_dialog_caches(&self) {
         settings::apply_screen_orientation(
             &self.app,
-            self.core.session.settings_snapshot().local.screen_orientation,
+            self.core
+                .session
+                .settings_snapshot()
+                .local
+                .screen_orientation,
         );
     }
 
