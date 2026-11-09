@@ -412,115 +412,48 @@ internal fun NerustSettingsDialogCard(
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ) { padding ->
-            Column(
+            SettingsScreenContent(
                 modifier =
                     Modifier
                         .fillMaxSize()
                         .padding(padding)
                         .padding(horizontal = 16.dp),
-            ) {
-                capturePrompt?.let { prompt ->
-                    Card(
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            ),
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = prompt,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(
-                                onClick = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
-                            ) { Text("Cancel") }
-                        }
-                    }
-                }
-                if (issues.isNotEmpty()) {
-                    Card(
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer,
-                            ),
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            issues.forEach { issue ->
-                                Text(
-                                    text = "\u2022 $issue",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                )
+                sections = sections,
+                activeSection = activeSection,
+                activeRow = activeRow,
+                issues = issues,
+                capturePrompt = capturePrompt,
+                commandError = commandError,
+                onCancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
+                onSelectChoice = { row, choiceIndex ->
+                    sendCommand(row.key, choiceIndex, 0L)
+                    activeRowKey = null
+                },
+                onToggle = { row, checked ->
+                    sendCommand(row.key, if (checked) 1 else 0, 0L)
+                },
+                onCommitNumber = { row, value ->
+                    sendCommand(row.key, 0, value)
+                },
+                onRowClick = { row ->
+                    when (row.kind) {
+                        "group" -> {
+                            if (sections.any { it.id == row.target }) {
+                                activeRowKey = null
+                                activeSectionId = row.target
                             }
                         }
+                        "capture" -> {
+                            sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
+                        }
+                        else -> activeRowKey = row.key
                     }
-                }
-                commandError?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
-                }
-                when {
-                    activeRow != null && activeRow.kind == "choice" -> {
-                        SettingsChoiceList(
-                            row = activeRow,
-                            onSelect = { choiceIndex ->
-                                sendCommand(activeRow.key, choiceIndex, 0L)
-                                activeRowKey = null
-                            },
-                        )
-                    }
-
-                    activeSection != null -> {
-                        SettingsSectionList(
-                            section = activeSection,
-                            onToggle = { row, checked ->
-                                sendCommand(row.key, if (checked) 1 else 0, 0L)
-                            },
-                            onCommitNumber = { row, value ->
-                                sendCommand(row.key, 0, value)
-                            },
-                            onRowClick = { row ->
-                                when (row.kind) {
-                                    "group" -> {
-                                        if (sections.any { it.id == row.target }) {
-                                            activeRowKey = null
-                                            activeSectionId = row.target
-                                        }
-                                    }
-                                    "capture" -> {
-                                        sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
-                                    }
-                                    else -> activeRowKey = row.key
-                                }
-                            },
-                            onClearCapture = { row ->
-                                sendCommand(row.key, 0, 0L, "clear_binding")
-                            },
-                        )
-                    }
-
-                    else -> {
-                        SettingsCategoryList(
-                            sections = sections.filter { it.visible },
-                            onSectionClick = { activeSectionId = it },
-                        )
-                    }
-                }
-            }
+                },
+                onClearCapture = { row ->
+                    sendCommand(row.key, 0, 0L, "clear_binding")
+                },
+                onSectionClick = { activeSectionId = it },
+            )
         }
         if (confirmDiscard) {
             androidx.compose.material3.AlertDialog(
@@ -554,6 +487,104 @@ internal fun parseIssues(payload: JSONObject): List<String> {
 
 internal fun parseCapture(payload: JSONObject): String? =
     payload.optJSONObject("capture")?.optString("prompt")?.ifBlank { null }
+
+@Composable
+private fun SettingsScreenContent(
+    modifier: Modifier,
+    sections: List<SettingsSection>,
+    activeSection: SettingsSection?,
+    activeRow: SettingsRow?,
+    issues: List<String>,
+    capturePrompt: String?,
+    commandError: String?,
+    onCancelCapture: () -> Unit,
+    onSelectChoice: (SettingsRow, Int) -> Unit,
+    onToggle: (SettingsRow, Boolean) -> Unit,
+    onCommitNumber: (SettingsRow, Long) -> Unit,
+    onRowClick: (SettingsRow) -> Unit,
+    onClearCapture: (SettingsRow) -> Unit,
+    onSectionClick: (String) -> Unit,
+) {
+    Column(modifier = modifier) {
+        capturePrompt?.let { prompt ->
+            Card(
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = prompt,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = onCancelCapture) { Text("Cancel") }
+                }
+            }
+        }
+        if (issues.isNotEmpty()) {
+            Card(
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    issues.forEach { issue ->
+                        Text(
+                            text = "\u2022 $issue",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
+        }
+        commandError?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
+        when {
+            activeRow != null && activeRow.kind == "choice" -> {
+                SettingsChoiceList(
+                    row = activeRow,
+                    onSelect = { choiceIndex -> onSelectChoice(activeRow, choiceIndex) },
+                )
+            }
+
+            activeSection != null -> {
+                SettingsSectionList(
+                    section = activeSection,
+                    onToggle = onToggle,
+                    onCommitNumber = onCommitNumber,
+                    onRowClick = onRowClick,
+                    onClearCapture = onClearCapture,
+                )
+            }
+
+            else -> {
+                SettingsCategoryList(
+                    sections = sections.filter { it.visible },
+                    onSectionClick = onSectionClick,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun SettingsCategoryList(

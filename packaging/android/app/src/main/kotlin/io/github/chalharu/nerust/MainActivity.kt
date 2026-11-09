@@ -163,31 +163,7 @@ class MainActivity :
                 source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
                 source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
         if (!isController) {
-            val nav = settingsNavActions
-            if (nav != null && nav.isCapturing &&
-                (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)
-            ) {
-                val raw =
-                    try {
-                        nativeHardwareKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "nativeHardwareKey failed", e)
-                        null
-                    }
-                val doc =
-                    raw?.let {
-                        try {
-                            JSONObject(it)
-                        } catch (e: JSONException) {
-                            null
-                        }
-                    }
-                if (doc != null && doc.optBoolean("consumed", false)) {
-                    nav.applyPayload(doc.toString())
-                }
-                return true
-            }
-            return super.dispatchKeyEvent(event)
+            return forwardHardwareKeyIfCapturing(event) || super.dispatchKeyEvent(event)
         }
         val key =
             when (event.keyCode) {
@@ -625,6 +601,33 @@ class MainActivity :
             requestId = requestId,
             ownedByTest = false,
         )
+    }
+
+    /** Route key events to Rust while a binding capture is pending. Swallows
+     * everything capturing so typing cannot leak into other fields. */
+    private fun forwardHardwareKeyIfCapturing(event: KeyEvent): Boolean {
+        val nav = settingsNavActions ?: return false
+        if (!nav.isCapturing) return false
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return true
+        val raw =
+            try {
+                nativeHardwareKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
+            } catch (e: Exception) {
+                Log.e(TAG, "nativeHardwareKey failed", e)
+                null
+            }
+        val doc =
+            raw?.let {
+                try {
+                    JSONObject(it)
+                } catch (e: JSONException) {
+                    null
+                }
+            }
+        if (doc != null && doc.optBoolean("consumed", false)) {
+            nav.applyPayload(doc.toString())
+        }
+        return true
     }
 
     fun applyScreenOrientation(value: Int) {
