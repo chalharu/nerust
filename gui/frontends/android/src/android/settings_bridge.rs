@@ -204,7 +204,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeHardwar
     keycode: jni::sys::jint,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
-    let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<(i32, bool)> {
+    let parsed = bridge::with_callback_env(&mut env, |_env| -> jni::errors::Result<(i32, bool)> {
         Ok((keycode, pressed))
     });
     let out = match parsed {
