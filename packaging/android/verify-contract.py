@@ -34,10 +34,11 @@ def sources():
     }
 
 
-KOTLIN_TYPES = {"String": "Ljava/lang/String;", "Int": "I", "Long": "J",
+_JAVA_STRING = "Ljava/lang/String;"
+KOTLIN_TYPES = {"String": _JAVA_STRING, "Int": "I", "Long": "J",
                 "Boolean": "Z", "Float": "F", "ByteArray": "[B",
                 "IntArray": "[I", "FloatArray": "[F", "Unit": "V"}
-RUST_TYPES = {"JString": "Ljava/lang/String;", "jstring": "Ljava/lang/String;",
+RUST_TYPES = {"JString": _JAVA_STRING, "jstring": _JAVA_STRING,
               "jint": "I", "jlong": "J",
               "jboolean": "Z", "jfloat": "F", "JByteArray": "[B", "JIntArray": "[I"}
 

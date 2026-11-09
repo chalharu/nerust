@@ -232,6 +232,9 @@ internal fun settingsRowDisplayValue(row: SettingsRow): String =
         else -> row.text
     }
 
+/** Fallback when a settings command fails before Rust answers. */
+private const val COMMAND_FAILED = "command failed"
+
 /** DTO-driven settings screen: sections from Rust, one synchronous command
  * per edit, save/dismiss only at the end. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -257,19 +260,19 @@ internal fun NerustSettingsDialogCard(
                 onCommand(settingsCommandJson(key, index, number))
                     ?: throw IllegalStateException("settings bridge returned null")
             } catch (e: Exception) {
-                commandError = e.message ?: "command failed"
+                commandError = e.message ?: COMMAND_FAILED
                 return
             }
         try {
             val doc = JSONObject(raw)
             if (!doc.optBoolean("ok", false)) {
-                commandError = doc.optString("error", "command failed")
+                commandError = doc.optString("error", COMMAND_FAILED)
                 return
             }
             commandError = null
             sections = parseSettingsSections(doc.getJSONObject("payload"))
         } catch (e: Exception) {
-            commandError = e.message ?: "command failed"
+            commandError = e.message ?: COMMAND_FAILED
         }
     }
 
