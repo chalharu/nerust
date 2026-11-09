@@ -99,7 +99,10 @@ dependencies {
     val androidxTestExtVersion = "1.3.0"
 
     implementation(composeBom)
-    implementation("androidx.compose.material3:material3")
+    // Material 3 Expressive (settings screen redesign): pin the 1.5.0 line
+    // where MaterialExpressiveTheme/MotionScheme.expressive() live. Lift to
+    // stable 1.5.x once the BOM manages it.
+    implementation("androidx.compose.material3:material3:1.5.0-rc01")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.documentfile:documentfile:$documentFileVersion")
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")

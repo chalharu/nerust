@@ -37,7 +37,8 @@ def sources():
 KOTLIN_TYPES = {"String": "Ljava/lang/String;", "Int": "I", "Long": "J",
                 "Boolean": "Z", "Float": "F", "ByteArray": "[B",
                 "IntArray": "[I", "FloatArray": "[F", "Unit": "V"}
-RUST_TYPES = {"JString": "Ljava/lang/String;", "jint": "I", "jlong": "J",
+RUST_TYPES = {"JString": "Ljava/lang/String;", "jstring": "Ljava/lang/String;",
+              "jint": "I", "jlong": "J",
               "jboolean": "Z", "jfloat": "F", "JByteArray": "[B", "JIntArray": "[I"}
 
 

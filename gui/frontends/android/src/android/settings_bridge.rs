@@ -1,26 +1,19 @@
-//! Settings bridge: dialog flight, cache slot, and JNI handoff.
-//! Model and codec stay pure; this module owns the single-flight state.
-
-use std::{collections::BTreeMap, sync::Arc};
+//! Settings bridge: versioned payload push plus synchronous command JNI.
+//! Screen truth (single flight plus draft snapshot) lives here; views and
+//! validation live in `settings_views`. Kotlin renders sections and echoes
+//! one command per edit; every JNI entry builds a throwaway view model.
 
 use jni::objects::{JObject, JString, JValue};
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, SettingsDialogResult};
-use super::settings_model::{AndroidSettings, SETTINGS_SCHEMA_VERSION};
-use super::settings_schema::SettingDef;
+use super::settings_views::{self, SETTINGS_SCHEMA_VERSION};
 use crate::settings_flight::SettingsRequestId;
+use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::local::ScreenOrientation;
 
-/// Cached [`AndroidSettings::setting_defs`], keyed by the complete model.
-/// Shared by handle, so cache hits never re-clone the whole table.
-pub(super) fn cached_setting_defs(current: &AndroidSettings) -> Arc<Vec<SettingDef>> {
-    bridge::with_settings(|state| {
-        AndroidSettings::cached_setting_defs_locked(&mut state.defs_cache, current)
-    })
-}
-
-/// Versioned JNI dialog result: schema plus keyed values or dismissal.
+/// Versioned JNI screen result: dismissal only. The accepted draft travels
+/// through the bridge vault, never through Kotlin.
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SettingsResultPayload {
@@ -28,24 +21,45 @@ struct SettingsResultPayload {
     request_id: SettingsRequestId,
     #[serde(default)]
     dismissed: bool,
-    #[serde(default)]
-    values: BTreeMap<String, usize>,
 }
 
-/// Update cached settings for the event-loop-owned asynchronous display request.
-pub(super) fn update_cached_settings(current: &AndroidSettings) {
-    bridge::with_settings(|state| {
-        state.cache = Some(current.clone());
-        state.defs_cache = None;
+/// Open the screen: stash the draft, then push the projected sections.
+/// Kotlin echoes commands against this draft until save or dismiss.
+pub(super) fn request_show_settings_dialog(
+    app: &AndroidApp,
+    snapshot: &SettingsSnapshot,
+) -> Result<bool, String> {
+    // Project before taking the flight: a projection failure must not wedge it.
+    let payload = settings_views::open_payload(snapshot)?;
+    let payload = bridge::with_settings(|state| {
+        let request_id = state.flight.begin()?;
+        state.draft = Some(snapshot.clone());
+        Some((request_id, payload))
     });
+    let Some((request_id, payload)) = payload else {
+        return Ok(false);
+    };
+    let tagged = serde_json::json!({
+        "schemaVersion": SETTINGS_SCHEMA_VERSION,
+        "requestId": request_id.0,
+        "payload": serde_json::from_str::<serde_json::Value>(&payload)
+            .map_err(|error| error.to_string())?,
+    })
+    .to_string();
+    bridge::post_to_activity(
+        app,
+        "show Android settings screen",
+        move |env, activity| show_settings_with_env_inner(env, &activity, &tagged),
+        Some(Box::new(move || {
+            // The push failed: drop the stashed draft with the dead flight.
+            bridge::with_settings(|state| state.draft = None);
+            publish_result(request_id, SettingsDialogResult::Dismissed)
+        })),
+    );
+    Ok(true)
 }
 
-/// Thread the dialog cache instead of rebuilding from the snapshot.
-/// `None` before the first refresh; callers fall back to `from_snapshot`.
-pub(super) fn cloned_cached_settings() -> Option<AndroidSettings> {
-    bridge::with_settings(|state| state.cache.clone())
-}
-
+/// Publish the current orientation without opening the screen.
 pub(super) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrientation) {
     // Route every raw `run_on_java_main_thread` through the bridge helper
     // so JNI failures share one log label.
@@ -70,53 +84,6 @@ pub(super) fn apply_screen_orientation(app: &AndroidApp, orientation: ScreenOrie
     );
 }
 
-fn begin_request(current: &AndroidSettings) -> Option<(SettingsRequestId, String)> {
-    bridge::with_settings(|state| {
-        let request_id = state.flight.begin()?;
-        let defs = AndroidSettings::cached_setting_defs_locked(&mut state.defs_cache, current);
-        Some((
-            request_id,
-            AndroidSettings::dialog_payload_from_defs(request_id.0, &defs, current.language),
-        ))
-    })
-}
-
-pub(super) fn take_result() -> Option<SettingsDialogResult> {
-    bridge::with_settings(|state| state.flight.take())
-}
-
-pub(super) fn is_dialog_open() -> bool {
-    bridge::with_settings(|state| state.flight.is_open())
-}
-
-pub(super) fn reset_transient() {
-    bridge::with_settings(|state| {
-        // Accepted user input survives suspension until the event loop consumes it.
-        state.flight.suspend();
-    });
-}
-
-pub(super) fn request_show_settings_dialog(
-    app: &AndroidApp,
-    current: &AndroidSettings,
-) -> Result<bool, String> {
-    let Some((request_id, payload)) = begin_request(current) else {
-        return Ok(false);
-    };
-
-    // Route every raw `run_on_java_main_thread` through the bridge helper;
-    // the on_failure synthesis keeps the gate unwedged on a dead bridge.
-    bridge::post_to_activity(
-        app,
-        "show Android settings dialog",
-        move |env, activity| show_settings_with_env_inner(env, &activity, &payload),
-        Some(Box::new(move || {
-            publish_result(request_id, SettingsDialogResult::Dismissed)
-        })),
-    );
-    Ok(true)
-}
-
 fn show_settings_with_env_inner(
     env: &mut jni::Env<'_>,
     activity: &JObject<'_>,
@@ -134,6 +101,8 @@ fn show_settings_with_env_inner(
 }
 
 fn publish_result(request_id: SettingsRequestId, result: SettingsDialogResult) {
+    // Draft ownership moves at the callback: save takes it, dismiss drops it.
+    // A stale accept must never touch the live draft, so this only gates flight.
     let accepted = bridge::with_settings(|state| state.flight.accept(request_id, result));
     if !accepted {
         log::warn!("ignoring stale Android settings result for request {request_id:?}");
@@ -147,23 +116,23 @@ fn resolve_pending_as_dismissed_for(request_id: SettingsRequestId) {
     publish_result(request_id, SettingsDialogResult::Dismissed);
 }
 
-// JNI callback for the settings dialog result.
-// Every dismissal carries versioned JSON with its request ID.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSettingsAreaVisible(
-    _env: jni::EnvUnowned<'_>,
-    _activity: JObject<'_>,
-    notifications_position: jni::sys::jint,
-    status_position: jni::sys::jint,
-) -> jni::sys::jboolean {
-    // Pure indices in, one flag out: the same-edge rule stays in Rust, so the
-    // dialog draft projection can never drift from the persisted model.
-    super::settings_schema::project_status_area_visible(
-        notifications_position.max(0) as usize,
-        status_position.max(0) as usize,
-    ) as jni::sys::jboolean
+pub(super) fn take_result() -> Option<SettingsDialogResult> {
+    bridge::with_settings(|state| state.flight.take())
 }
 
+pub(super) fn is_dialog_open() -> bool {
+    bridge::with_settings(|state| state.flight.is_open())
+}
+
+pub(super) fn reset_transient() {
+    bridge::with_settings(|state| {
+        // Accepted user input survives suspension until the event loop consumes it.
+        state.flight.suspend();
+    });
+}
+
+// JNI callback for the settings screen result: dismissal drops the draft,
+// save takes it into the flight for the event thread to validate and apply.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
     mut env: jni::EnvUnowned<'_>,
@@ -179,12 +148,21 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
     }) {
         jni::Outcome::Ok(Some(raw)) => match serde_json::from_str::<SettingsResultPayload>(&raw) {
             Ok(payload) if payload.schema_version == SETTINGS_SCHEMA_VERSION => {
-                let result = if payload.dismissed {
-                    SettingsDialogResult::Dismissed
-                } else {
-                    SettingsDialogResult::Applied(payload.values)
-                };
-                publish_result(payload.request_id, result);
+                let result = bridge::with_settings(|state| {
+                    if payload.dismissed {
+                        state.draft = None;
+                        Some(SettingsDialogResult::Dismissed)
+                    } else {
+                        state
+                            .draft
+                            .take()
+                            .map(SettingsDialogResult::Applied)
+                            .or(Some(SettingsDialogResult::Dismissed))
+                    }
+                });
+                if let Some(result) = result {
+                    publish_result(payload.request_id, result);
+                }
             }
             Ok(payload) => {
                 log::error!(
@@ -207,5 +185,42 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
         jni::Outcome::Panic(_) => {
             log::error!("Android settings dialog callback panicked");
         }
+    }
+}
+
+/// Synchronous settings command: one edit in, refreshed sections
+/// (or `{"ok":false,"error"}`) out. The draft lives in the bridge vault;
+/// the view model lives only for this call, so any calling thread is safe.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSettingsCommand(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    command: JString<'_>,
+) -> jni::sys::jstring {
+    let parsed = bridge::with_callback_env(
+        &mut env,
+        |env| -> jni::errors::Result<String> { command.try_to_string(env) },
+    );
+    let out = match parsed {
+        jni::Outcome::Ok(command_json) => bridge::with_settings(|state| {
+            let Some(draft) = state.draft.as_mut() else {
+                return serde_json::json!({"ok": false, "error": "no settings draft"})
+                    .to_string();
+            };
+            match settings_views::apply_command_to(draft, &command_json) {
+                Ok(sections) => serde_json::json!({"ok": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
+                Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
+            }
+        }),
+        _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
+    };
+    match bridge::with_callback_env(
+        &mut env,
+        |env| -> jni::errors::Result<jni::sys::jstring> {
+            Ok(env.new_string(out)?.into_raw())
+        },
+    ) {
+        jni::Outcome::Ok(ptr) => ptr,
+        _ => std::ptr::null_mut(),
     }
 }

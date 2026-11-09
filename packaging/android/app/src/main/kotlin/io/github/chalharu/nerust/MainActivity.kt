@@ -29,7 +29,6 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONException
 import org.json.JSONObject
-import kotlin.math.max
 
 private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
@@ -560,16 +559,16 @@ class MainActivity :
         chromeManager.removeDrawerOverlay()
     }
 
-    internal fun showSettingsDialogForTest(fields: List<SettingsField>) {
+    internal fun showSettingsDialogForTest(sections: List<SettingsSection>) {
         showSettingsDialogInternal(
-            content = SettingsDialogContent(fields = fields),
+            sections = sections,
             requestId = null,
             ownedByTest = true,
         )
     }
 
-    /** Show a modal Android settings dialog. Presents the versioned settings JSON from Rust.
-     * Save and dismiss return request-scoped JSON keyed by stable setting IDs. */
+    /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
+     * Save and dismiss return request-scoped JSON; edits ride synchronous per-row commands. */
     fun showSettingsDialog(payload: String) {
         val document =
             try {
@@ -587,52 +586,15 @@ class MainActivity :
             return
         }
         val requestId = document.getLong("requestId")
-        val sectionDocuments = document.getJSONArray("sections")
-        val parsed = mutableListOf<SettingsField>()
-        for (sectionIndex in 0 until sectionDocuments.length()) {
-            val section = sectionDocuments.getJSONObject(sectionIndex)
-            val sectionId = section.getString("id")
-            val sectionLabel =
-                section.optString("label").ifBlank {
-                    SettingsSectionFallback.labelFor(sectionId)
-                }
-            val fields = section.getJSONArray("fields")
-            for (fieldIndex in 0 until fields.length()) {
-                val field = fields.getJSONObject(fieldIndex)
-                val kind = field.optString("kind", "choice")
-                if (kind == "range") {
-                    parsed +=
-                        SettingsField(
-                            key = field.getString("key"),
-                            section = sectionId,
-                            sectionLabel = sectionLabel,
-                            label = field.getString("label"),
-                            kind = kind,
-                            choices = emptyList(),
-                            value = field.getInt("value"),
-                            visible = field.optBoolean("visible", true),
-                            rangeMin = field.getInt("min"),
-                            rangeMax = field.getInt("max"),
-                            unit = field.optString("unit", ""),
-                        )
-                } else {
-                    val options = field.getJSONArray("options")
-                    parsed +=
-                        SettingsField(
-                            key = field.getString("key"),
-                            section = sectionId,
-                            sectionLabel = sectionLabel,
-                            label = field.getString("label"),
-                            kind = kind,
-                            choices = List(options.length()) { options.getString(it) },
-                            value = field.getInt("value"),
-                            visible = field.optBoolean("visible", true),
-                        )
-                }
+        val sections =
+            try {
+                parseSettingsSections(document.getJSONObject("payload"))
+            } catch (e: JSONException) {
+                Log.e(TAG, "showSettingsDialog: malformed sections", e)
+                return
             }
-        }
         showSettingsDialogInternal(
-            content = SettingsDialogContent(fields = parsed),
+            sections = sections,
             requestId = requestId,
             ownedByTest = false,
         )
@@ -650,39 +612,15 @@ class MainActivity :
     }
 
     private fun showSettingsDialogInternal(
-        content: SettingsDialogContent,
+        sections: List<SettingsSection>,
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
-        val settings =
-            content.fields.map { field ->
-                val maxIndex =
-                    if (field.kind == "range") {
-                        (field.rangeMax - field.rangeMin).coerceAtLeast(0)
-                    } else {
-                        max(0, field.choices.lastIndex)
-                    }
-                AndroidSetting(
-                    key = field.key,
-                    section = field.section,
-                    sectionLabel = field.sectionLabel,
-                    label = field.label,
-                    kind = field.kind,
-                    choices = field.choices.ifEmpty { listOf("?") },
-                    rangeMin = field.rangeMin,
-                    rangeMax = field.rangeMax,
-                    unit = field.unit,
-                    visible = field.visible,
-                ) to field.value.coerceIn(0, maxIndex)
-            }
-        val keys = settings.map { it.first.key }
-        val initialSelections = settings.map { it.second }
-        val rows = settings.map { it.first }
         var resultSent = false
 
         dialogManager.show(
             dialogTag = SETTINGS_DIALOG_TAG,
-            contentDescription = settingsContentDescription(rows, initialSelections),
+            contentDescription = settingsContentDescription(sections),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
             onDismiss = {
@@ -692,29 +630,23 @@ class MainActivity :
                             .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
                             .put("requestId", requestId)
                             .put("dismissed", true)
-                            .put("values", JSONObject())
                             .toString(),
                     )
                 }
             },
         ) { dismiss ->
             NerustSettingsDialogCard(
-                settings = rows,
-                initialSelections = initialSelections,
+                initialSections = sections,
                 onDismissRequest = dismiss,
-                onPositionDraftChanged = { notificationsPosition, statusPosition ->
-                    nativeSettingsAreaVisible(notificationsPosition, statusPosition)
-                },
-                onSave = { selections ->
+                onCommand = { command -> nativeSettingsCommand(command) },
+                onSave = {
                     resultSent = true
                     if (requestId != null) {
-                        val values = JSONObject()
-                        keys.forEachIndexed { index, key -> values.put(key, selections[index]) }
                         val result =
                             JSONObject()
                                 .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
                                 .put("requestId", requestId)
-                                .put("values", values)
+                                .put("dismissed", false)
                         onSettingsDialogResult(result.toString())
                     }
                     dismiss()
@@ -723,8 +655,8 @@ class MainActivity :
         }
         dialogManager.rootViewForTag(SETTINGS_DIALOG_TAG)?.setTag(
             R.id.nerust_settings_hierarchy_probe,
-            buildSettingsSections(rows).joinToString("\n") { section ->
-                "${section.label}: ${settingsCountLabel(section.settingIndices.size)}"
+            buildSettingsSections(sections).joinToString("\n") { section ->
+                "${section.label}: ${settingsCountLabel(section.rows.size)}"
             },
         )
     }
@@ -777,10 +709,7 @@ class MainActivity :
 
     private external fun onSettingsDialogResult(result: String?)
 
-    private external fun nativeSettingsAreaVisible(
-        notificationsPosition: Int,
-        statusPosition: Int,
-    ): Boolean
+    private external fun nativeSettingsCommand(command: String): String?
 
     private external fun onActivityDestroyed(userInitiatedExit: Boolean)
 
