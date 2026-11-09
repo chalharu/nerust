@@ -10,4 +10,4 @@ version.workspace = true
 log.workspace = true
 nerust_render_traits = { features = ["renderer"], workspace = true }
 raw-window-handle.workspace = true
-softbuffer = "=0.4.8"
+softbuffer.workspace = true
